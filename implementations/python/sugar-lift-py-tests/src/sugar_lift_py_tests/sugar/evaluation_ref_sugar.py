@@ -102,6 +102,9 @@ class EvaluationRefSugar(ConstructedTermSugar):
     site: object = dataclass_field(compare=False)
     member: bool = False
     walrus: bool = False
+    # A generator expression's walrus: it writes when the generator is
+    # consumed, not where it is made.
+    deferred: bool = False
 
     @classmethod
     def witnesses(cls):
@@ -139,7 +142,29 @@ class EvaluationRefSugar(ConstructedTermSugar):
         """A walrus's reference whose key this temporal never received: the
         walrus never completed here, or its bind was not carried out of the
         operand that holds it.  Refused by name: the name may hold a write
-        older than the walrus, and the walrus is never evaluated again."""
+        older than the walrus, and the walrus is never evaluated again.
+
+        A ``deferred`` walrus is in a generator expression: it writes when the
+        generator is consumed, and nothing here consumed it with its write
+        carried out.  Whether it ran before this read is undecided, and the
+        read is refused by that name (``SugarNotWritten``)."""
+        if self.deferred:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="EvaluationRefSugar",
+                blame=self.site,
+                observed=(
+                    f"read of `{self.name}` after a generator expression whose "
+                    f"walrus writes it (evaluation {self.evaluation}): the "
+                    "write happens when the generator is consumed"
+                ),
+                requested="the walrus's write carried out of the generator's consumer",
+                fix=(
+                    "carry the write of a generator consumed in this frame "
+                    "out of its consumer; an unconsumed generator never wrote"
+                ),
+            )
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
         construction_panic_gap(

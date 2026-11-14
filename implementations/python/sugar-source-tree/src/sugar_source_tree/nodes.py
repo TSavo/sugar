@@ -340,6 +340,11 @@ _NESTED_COMPREHENSION_TEMPLATE = object()
 # what the cell holds once it is done (``_closure_cell_scope``).
 _CLOSURE_CELLS = object()
 
+# Set in the scope a generator expression substitutes its conditions and
+# element in: a walrus there writes when the generator is consumed, not where
+# it is made (``NamedExpr.substitute`` marks it ``deferred``).
+_DEFERRED_WALRUS = object()
+
 
 class TargetPatternConstructionGapV1(TypeError):
     """A target-pattern coordinate does not belong to its eager source owner."""
@@ -3352,6 +3357,7 @@ def _evaluation_ref(
     member=False,
     walrus: bool = False,
     cell: bool = False,
+    deferred: bool = False,
 ) -> "Node":
     """``EvaluationRef(evaluation, name)`` at ``span``: a read of ``name``
     rewritten to a reference to the evaluation bound under ``evaluation``
@@ -3368,7 +3374,10 @@ def _evaluation_ref(
     evaluated again.  ``cell`` marks a member reference to a comprehension's
     final member (``final_member_coordinate``) in the body of a lambda the
     comprehension stores: the lambda carries that binding in its closure
-    (``Lambda._construct_sugar``, ``LambdaSugar``)."""
+    (``Lambda._construct_sugar``, ``LambdaSugar``).  ``deferred`` marks a
+    walrus in a generator expression's element or conditions: it writes when
+    the generator is consumed, not where the generator is made, so where its
+    key is unbound the read is undecided by name."""
     from .backend import Leaf, materialize
     from .shadow import ShadowNode
 
@@ -3379,6 +3388,8 @@ def _evaluation_ref(
         slots = (*slots, ("walrus", Leaf(True)))
     if cell:
         slots = (*slots, ("cell", Leaf(True)))
+    if deferred:
+        slots = (*slots, ("deferred", Leaf(True)))
     return materialize(
         owner.unit,
         ShadowNode("EvaluationRef", span, slots),
@@ -4359,6 +4370,17 @@ class Node(Typed):
                 # to the enclosing block (their scope is the containing function).
                 for node in produced_stmt.walk():
                     if node.kind == "NamedExpr":
+                        if (
+                            live_loop_bindings is not None
+                            and node.target.kind == "Name"
+                            and node.target.id in live_loop_bindings
+                        ):
+                            # A walrus in a live loop's body writes once per
+                            # item, under that item's key: after the loop
+                            # its name is the loop's carried value (the last
+                            # item's write, latched as ``x += e``'s is), not
+                            # a reference to a key no item bound unqualified.
+                            continue
                         wb = node.substitution_binding(scope)
                         if wb:
                             wb = node._binding_entries(wb, scope)
@@ -13723,11 +13745,15 @@ class NamedExpr(Expression):
             *(
                 slot
                 for slot in desc.slots
-                if slot[0] not in ("evaluation", "evaluation_exit_path")
+                if slot[0] not in ("evaluation", "evaluation_exit_path", "deferred")
             ),
             ("evaluation", Leaf(self._evaluation_key(scope))),
             ("evaluation_exit_path", Leaf(self._evaluation_exit_path(scope))),
         )
+        if scope.get(_DEFERRED_WALRUS):
+            # In a generator expression's element or conditions: this walrus
+            # writes when the generator is consumed (``GeneratorExp``).
+            slots = (*slots, ("deferred", Leaf(True)))
         tags = occurrence_tags_of(rewritten)
         # As ``rewrite`` does: one evaluation's rewrite is still that
         # evaluation, and keeps its enclosing control context.
@@ -13743,8 +13769,10 @@ class NamedExpr(Expression):
         # (temporal choice 1, #7661).  Only a plain Name target binds.  The
         # read resolves through the key only: a walrus nested in an operand
         # carries its bind out to the enclosing statement on the value
-        # (``carry_walrus_binds``), and a comprehension's element writes it
-        # per member.  A walrus that was never substituted carries no key:
+        # (``carry_walrus_binds``), and a comprehension's element and
+        # conditions write it per member.  A walrus in a generator
+        # expression writes when the generator is consumed: its reference is
+        # ``deferred``.  A walrus that was never substituted carries no key:
         # it binds x to its value.
         if not isinstance(self.target, Name):
             return None
@@ -13758,6 +13786,7 @@ class NamedExpr(Expression):
                 evaluation,
                 self.target.id,
                 walrus=True,
+                deferred=getattr(self, "deferred", False) is True,
             )
         }
 
@@ -14172,10 +14201,10 @@ class ListComp(Expression):
             changed["generators"] = new_gens
         if de:
             changed["elt"] = new_elt
-        if not changed:
-            return self
-        rewritten = rewrite(self, **changed)
-        return rewritten
+        rewritten = rewrite(self, **changed) if changed else self
+        return ListComp._carrying_walrus_priors(
+            self, rewritten, (rewritten.elt,), scope
+        )
 
     def _try_unroll_to_display(self, scope):
         """The List display this comprehension dissolves to, or None. One
@@ -14270,20 +14299,109 @@ class ListComp(Expression):
         """True when a walrus would bind outside the comprehension coordinate.
 
         This -- not `_contains_forbidden_shape` -- is the obstruction every
-        comprehension kind consults when constructing its sugar, for the
-        positions whose bind the fold does not carry: a generator's iterable
-        and conditions, and a generator expression's element (run when it is
-        consumed).  A walrus in a list, set or dict comprehension's element
-        constructs: the element writes its key per member and the value
-        carries the last member's bind to the enclosing statement
-        (``ComprehensionSugar._finite_map``). A nested comprehension is no
-        obstruction at all: it is simply
-        another sugar in that position, constructed by its own
-        `_construct_sugar` when the element is lifted. All four kinds share
-        this one reader; `_contains_forbidden_shape` remains the separate,
-        stricter question asked only when DISSOLVING to a display.
+        comprehension kind consults when constructing its sugar, for the one
+        position whose bind no fold carries: a generator's iterable, where
+        Python rejects a walrus at compile time (PEP 572: "assignment
+        expression cannot be used in a comprehension iterable expression").
+        A walrus in an element, a key or value, or a condition constructs:
+        it writes its key per member and the value carries the last write to
+        the enclosing statement (``ComprehensionSugar``); a generator
+        expression's writes wait for the generator to be consumed
+        (``_DEFERRED_WALRUS``). A nested comprehension is no obstruction at
+        all: it is simply another sugar in that position, constructed by its
+        own `_construct_sugar` when the element is lifted. All four kinds
+        share this one reader; `_contains_forbidden_shape` remains the
+        separate, stricter question asked only when DISSOLVING to a display.
         """
         return any(node.kind == "NamedExpr" for root in roots for node in root.walk())
+
+    def _carrying_walrus_priors(self, node, roots: tuple, scope):
+        """``node`` (this comprehension, substituted) carrying its walrus
+        roster: each walrus in ``roots`` and its generators' conditions, as
+        ``(name, evaluation key)``, and the read of that name in the scope
+        the comprehension is evaluated in, before any member runs.
+
+        A list, set or dict comprehension whose members never reach a walrus
+        writes nothing: after it the name keeps the binding it had before,
+        and the read after it is that binding (``ComprehensionSugar``).  The
+        prior read is substitution's own read of the name at this point, the
+        same read a source ``name`` here would be, never the name looked up
+        by spelling at reduce.  ``node`` without a walrus is returned as it
+        is.
+
+        A walrus in a lambda binds the lambda's own scope, and a generator
+        expression's (``deferred``) writes when it is consumed: neither is a
+        write this comprehension makes or withholds, so neither is rostered.
+        """
+        from .backend import Children, Leaf, materialize
+        from .shadow import (
+            OccurrenceShadowNode,
+            ShadowNode,
+            _handle_of,
+            occurrence_tags_of,
+        )
+
+        roots = (*roots, *(guard for gen in node.generators for guard in gen.ifs))
+        candidates = [
+            walrus
+            for root in roots
+            for walrus in root.walk()
+            if walrus.kind == "NamedExpr"
+        ]
+        if not candidates:
+            return node
+        in_lambda = {
+            id(inner)
+            for root in roots
+            for lam in root.walk()
+            if lam.kind == "Lambda"
+            for inner in lam.walk()
+        }
+        walruses = [
+            walrus
+            for walrus in candidates
+            if walrus.target.kind == "Name"
+            and isinstance(getattr(walrus, "evaluation", None), str)
+            and getattr(walrus, "deferred", False) is not True
+            and id(walrus) not in in_lambda
+        ]
+        if not walruses:
+            return node
+        roster = tuple((walrus.target.id, walrus.evaluation) for walrus in walruses)
+        priors = tuple(
+            For._make_name(self, name).substitute(scope) for name, _key in roster
+        )
+        desc = node.ref.describe()
+        span = desc.raw_span or node.span
+        slots = (
+            *(
+                slot
+                for slot in desc.slots
+                if slot[0] not in ("walrus_roster", "walrus_priors")
+            ),
+            ("walrus_roster", Leaf(roster)),
+            ("walrus_priors", Children(tuple(_handle_of(prior) for prior in priors))),
+        )
+        tags = occurrence_tags_of(node)
+        shadow = (
+            OccurrenceShadowNode(desc.kind, span, slots, tags)
+            if tags
+            else ShadowNode(desc.kind, span, slots)
+        )
+        return materialize(node.unit, shadow, node.reporter, node.control_context)
+
+    def _walrus_prior_sugars(self) -> tuple:
+        """``(name, evaluation key, prior read sugar)`` for each walrus
+        ``_carrying_walrus_priors`` rostered; empty when it rostered none."""
+        roster = getattr(self, "walrus_roster", None)
+        if not roster:
+            return ()
+        return tuple(
+            (name, evaluation, prior.sugar())
+            for (name, evaluation), prior in zip(
+                roster, self.walrus_priors, strict=True
+            )
+        )
 
     def _calls_shadowed_range(self, iterable, scope) -> bool:
         return (
@@ -14335,11 +14453,12 @@ class ListComp(Expression):
         )
 
     def _construct_sugar(self):
-        # A walrus in the element constructs: the element writes the walrus's
+        # A walrus in the element or a condition constructs: it writes its
         # key per member, and the comprehension's value carries the last
-        # member's bind out to the enclosing statement
-        # (``ComprehensionSugar._finite_map``).  A walrus in an iterable or a
-        # condition stays loud (``_recurrence_generators``).
+        # write out to the enclosing statement; where no member writes it,
+        # the name keeps its prior binding (``walrus_priors``).  A walrus in
+        # an iterable is a Python compile error and stays loud
+        # (``_recurrence_generators``).
         generators = ListComp._recurrence_generators(self)
         if generators is None:
             return super()._construct_sugar()
@@ -14352,6 +14471,7 @@ class ListComp(Expression):
             generators=generators,
             element=self.elt.sugar(),
             site=self.fragment,
+            walrus_priors=ListComp._walrus_prior_sugars(self),
         )
 
     def _comprehension_target(self, target: "Node"):
@@ -14440,9 +14560,9 @@ class ListComp(Expression):
 
         specs = []
         for generator_index, gen in enumerate(self.generators):
-            if gen.is_async or ListComp._contains_named_expression(
-                self, (gen.iter, *gen.ifs)
-            ):
+            # A walrus in an iterable never compiles (PEP 572); a walrus in
+            # a condition writes per member (``ComprehensionSugar``).
+            if gen.is_async or ListComp._contains_named_expression(self, (gen.iter,)):
                 return None
             target = ListComp._comprehension_target(self, gen.target)
             if target is None:
@@ -14521,7 +14641,10 @@ class SetComp(Expression):
             changed["generators"] = new_gens
         if de:
             changed["elt"] = new_elt
-        return self if not changed else rewrite(self, **changed)
+        rewritten = rewrite(self, **changed) if changed else self
+        return ListComp._carrying_walrus_priors(
+            self, rewritten, (rewritten.elt,), scope
+        )
 
     def _try_unroll_to_display(self, scope):
         if len(self.generators) != 1 or ListComp._contains_forbidden_shape(
@@ -14529,7 +14652,13 @@ class SetComp(Expression):
         ):
             return None
         gen = self.generators[0]
-        if gen.is_async or ListComp._contains_forbidden_shape(self, (gen.iter,)):
+        if (
+            gen.is_async
+            or ListComp._contains_forbidden_shape(self, (gen.iter,))
+            # A walrus in a condition writes the enclosing scope per member:
+            # a display would drop the write.
+            or ListComp._contains_named_expression(self, gen.ifs)
+        ):
             return None
         new_iter, changed = self._substitute_field(gen.iter, scope)
         iterable = new_iter if changed else gen.iter
@@ -14572,8 +14701,8 @@ class SetComp(Expression):
         )
 
     def _construct_sugar(self):
-        # A walrus in the element constructs: the element writes its key per
-        # member (``ListComp._construct_sugar``).
+        # A walrus in the element or a condition constructs: it writes its
+        # key per member (``ListComp._construct_sugar``).
         generators = ListComp._recurrence_generators(self)
         if generators is None:
             return super()._construct_sugar()
@@ -14584,6 +14713,7 @@ class SetComp(Expression):
             generators=generators,
             element=self.elt.sugar(),
             site=self.fragment,
+            walrus_priors=ListComp._walrus_prior_sugars(self),
         )
 
 
@@ -14616,7 +14746,10 @@ class DictComp(Expression):
             new, d = self._substitute_field(getattr(self, fld), template_scope)
             if d:
                 changed[fld] = new
-        return self if not changed else rewrite(self, **changed)
+        rewritten = rewrite(self, **changed) if changed else self
+        return ListComp._carrying_walrus_priors(
+            self, rewritten, (rewritten.key, rewritten.value), scope
+        )
 
     def _try_unroll_to_display(self, scope):
         if len(self.generators) != 1 or ListComp._contains_forbidden_shape(
@@ -14624,7 +14757,13 @@ class DictComp(Expression):
         ):
             return None
         gen = self.generators[0]
-        if gen.is_async or ListComp._contains_forbidden_shape(self, (gen.iter,)):
+        if (
+            gen.is_async
+            or ListComp._contains_forbidden_shape(self, (gen.iter,))
+            # A walrus in a condition writes the enclosing scope per member:
+            # a display would drop the write.
+            or ListComp._contains_named_expression(self, gen.ifs)
+        ):
             return None
         new_iter, changed = self._substitute_field(gen.iter, scope)
         iterable = new_iter if changed else gen.iter
@@ -14704,6 +14843,7 @@ class DictComp(Expression):
             key=self.key.sugar(),
             element=self.value.sugar(),
             site=self.fragment,
+            walrus_priors=ListComp._walrus_prior_sugars(self),
         )
 
 
@@ -14714,9 +14854,18 @@ class GeneratorExp(Expression):
 
     def substitute(self, scope):
         """A comprehension: thread each generator's target, then substitute the
-        element against the scope with every target masked."""
+        element against the scope with every target masked.
+
+        A walrus in the element or a condition runs when the generator is
+        consumed, not here: it is substituted ``deferred``
+        (``_DEFERRED_WALRUS``), so a read after the generator is made does
+        not claim its write."""
         from .shadow import rewrite
 
+        if ListComp._contains_named_expression(
+            self, (self.elt, *(guard for gen in self.generators for guard in gen.ifs))
+        ):
+            scope = {**scope, _DEFERRED_WALRUS: True}
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
         template_scope = inner
         if ListComp._contains_forbidden_shape(self, (self.elt,)):
@@ -14730,11 +14879,12 @@ class GeneratorExp(Expression):
         return self if not changed else rewrite(self, **changed)
 
     def _construct_sugar(self):
-        # A generator's element runs when it is consumed, not here: a walrus
-        # in it would bind at a point this construction does not model, so
-        # it stays loud.
+        # A generator's element and conditions run when it is consumed, not
+        # here: a walrus in them writes nothing where the generator is made
+        # (``ComprehensionSugar`` carries no write for a generator), and its
+        # read is ``deferred`` (``GeneratorExp.substitute``).
         generators = ListComp._recurrence_generators(self)
-        if generators is None or ListComp._contains_named_expression(self, (self.elt,)):
+        if generators is None:
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 
@@ -16818,6 +16968,7 @@ class Name(Expression):
                     member=getattr(bound, "member", False) is True,
                     walrus=getattr(bound, "walrus", False) is True,
                     cell=getattr(bound, "cell", False) is True,
+                    deferred=getattr(bound, "deferred", False) is True,
                 )
             return bound
         span = self.line_col_span()
@@ -16969,7 +17120,9 @@ class EvaluationRef(Expression):
     marked ``cell``: the lambda carries that binding in its closure.
     A walrus's reference is marked
     ``walrus``: it resolves through the key only, and is refused where the
-    key was never bound.  In a live loop's body a carried name reads the loop
+    key was never bound (undecided by name where it is also ``deferred``: a
+    generator expression's walrus, which writes when the generator is
+    consumed).  In a live loop's body a carried name reads the loop
     header's evaluation of it (``_loop_header_evaluation_key``), which the
     recurrence binds per item.  Built by ``_evaluation_ref`` only.
     """
@@ -16992,6 +17145,7 @@ class EvaluationRef(Expression):
             site=self.fragment,
             member=getattr(self, "member", False) is True,
             walrus=getattr(self, "walrus", False) is True,
+            deferred=getattr(self, "deferred", False) is True,
         )
 
 

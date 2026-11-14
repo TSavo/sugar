@@ -18,7 +18,6 @@ from sugar_lift_py_tests.ir import (
 from sugar_lift_py_tests.proofir.formulas import _free_vars_in_ir_term
 from sugar_lift_py_tests.proofir.sorts import Sort
 from sugar_lift_py_tests.proofir.terms import term_from_ir
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
@@ -392,11 +391,14 @@ def test_every_symbolic_filter_becomes_an_ordered_guard():
     "source",
     [
         "[(y := x) for x in [1]]",
+        "[x for x in [1] if (y := x)]",
+        "((y := x) for x in [1])",
     ],
 )
-def test_unsupported_comprehension_structures_stay_loud(source):
-    with pytest.raises(SugarNotWritten):
-        _fn(f"def A():\n    return {source}\n").sugar()
+def test_a_walrus_comprehension_constructs(source):
+    # A walrus in an element or a condition writes its key per member (a
+    # generator's when it is consumed): it no longer stays loud (#7938, #7757).
+    _fn(f"def A():\n    return {source}\n").sugar()
 
 
 def test_nested_comprehension_substitutes_outer_capture_before_building():
@@ -414,14 +416,13 @@ def test_nested_comprehension_substitutes_outer_capture_before_building():
     assert value.term.args[1].body.args[0].name == "array"
 
 
-def test_walrus_comprehension_substitutes_outer_capture_before_own_gap():
+def test_walrus_comprehension_substitutes_outer_capture_before_building():
     fn = _fn(
         "def A():\n" "    value = 7\n" "    return [(captured := value) for x in [1]]\n"
     )
     expression = fn.substitute({}).body[-1].value
     assert expression.elt.value.value == 7
-    with pytest.raises(SugarNotWritten):
-        expression.sugar()
+    assert type(expression.sugar()).__name__ == "ComprehensionSugar"
 
 
 def test_existing_concrete_displays_keep_exact_terms():

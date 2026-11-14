@@ -136,6 +136,10 @@ class ComprehensionSugar(ConstructedTermSugar):
     element: ConstructedTermSugar
     key: ConstructedTermSugar | None = None
     site: object = dataclass_field(compare=False, default=None)
+    # ``(name, evaluation key, prior read)`` for each walrus in the element,
+    # key, value or a condition (``ListComp._carrying_walrus_priors``): where
+    # no member writes the name, it keeps the binding the prior read answers.
+    walrus_priors: tuple = dataclass_field(compare=False, default=())
 
     def __post_init__(self) -> None:
         if self.kind not in {
@@ -187,27 +191,45 @@ class ComprehensionSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> Outcome:
         if not self.generators:
             raise ValueError("comprehension recurrence requires a generator")
-        return self._desugar_generators(0, (), ctx)
+        return self._desugar_generators(0, (), ctx, writes=(), outer=ctx)
 
-    def _desugar_generators(self, index, resolved, ctx):
+    def _desugar_generators(self, index, resolved, ctx, *, writes, outer):
+        """``writes``: each walrus write a condition made so far, as
+        ``(bind, generator index, condition index)``.  ``outer``: the context
+        the comprehension is evaluated in, which a walrus's prior read reads
+        (``_walrus_prior``)."""
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            peel_walrus_binds,
+        )
+
         if index == len(self.generators):
             if self.key is not None:
+                # Python evaluates the key before the value: the value reads
+                # the key's walrus write.
                 return self.key.desugar(ctx).and_then(
-                    lambda key: self.element.desugar(ctx).and_then(
-                        lambda element: self._complete(resolved, element, key)
+                    lambda key: self.element.desugar(
+                        _with_writes(peel_walrus_binds(key)[0], ctx)
+                    ).and_then(
+                        lambda element: self._complete(
+                            resolved, element, key, writes=writes, outer=outer
+                        )
                     )
                 )
             return self.element.desugar(ctx).and_then(
-                lambda element: self._complete(resolved, element)
+                lambda element: self._complete(
+                    resolved, element, writes=writes, outer=outer
+                )
             )
         generator = self.generators[index]
         return generator.iterable.desugar(ctx).and_then(
             lambda iterable: self._after_iterable(
-                generator, iterable, index, resolved, ctx
+                generator, iterable, index, resolved, ctx, writes=writes, outer=outer
             )
         )
 
-    def _after_iterable(self, generator, iterable, index, resolved, ctx):
+    def _after_iterable(
+        self, generator, iterable, index, resolved, ctx, *, writes, outer
+    ):
         """Project finite maps when the iterable is an exact container floor.
 
         ``tuple(self._parse_exc(e) for e in (expected,))`` is the RaisesExc
@@ -281,6 +303,8 @@ class ComprehensionSugar(ConstructedTermSugar):
             self._symbolic_final_ctx(
                 generator, iterable, self._symbolic_member_ctx(generator, ctx)
             ),
+            writes=writes,
+            outer=outer,
         )
 
     def _finite_map(self, generator, iterable, ctx):
@@ -357,14 +381,24 @@ class ComprehensionSugar(ConstructedTermSugar):
 
         owner = str(self.site)
 
-        # A walrus in the element (``[(last := v) for v in xs]``) binds the
-        # enclosing scope on every member: each member's element writes its
-        # key, the next member starts from that write (``carried``), and the
+        # A walrus in the element (``[(last := v) for v in xs]``) or a
+        # condition binds the enclosing scope on every member that reaches
+        # it: each member's conditions, then its element, write their keys,
+        # the next member starts from those writes (``carried``), and the
         # comprehension's value carries the last write of each key out to the
-        # enclosing statement.  The element is evaluated once per member and
-        # its walrus value is never evaluated again.
+        # enclosing statement.  A name no member wrote (no member, or none
+        # that reached its walrus) keeps its prior binding
+        # (``_unwritten_priors``).  Each condition and element is evaluated
+        # once per member and its walrus value is never evaluated again.  A
+        # generator expression writes nothing here: its writes wait for it to
+        # be consumed.
         def project(index, projected, binds, carried):
-            if index == len(members):
+            if index == len(sifted):
+                binds = (
+                    ()
+                    if self.kind == "py.generatorexp"
+                    else (*self._unwritten_priors(binds, ctx), *binds)
+                )
                 if self.key is not None:
                     return ExitSet.completed(
                         carry_walrus_binds(binds, DictValue(tuple(projected)))
@@ -397,7 +431,14 @@ class ComprehensionSugar(ConstructedTermSugar):
                     )
                 )
 
-            inner_ctx = self._member_ctx(generator, members[index], carried)
+            member, keep, condition_writes = sifted[index]
+            # The member's conditions ran (``_sifted_members``) before its
+            # element: their writes come first.
+            binds = _last_binds((*binds, *condition_writes))
+            carried = bind_walrus_binds(condition_writes, carried)
+            if not keep:
+                return project(index + 1, projected, binds, carried)
+            inner_ctx = self._member_ctx(generator, member, carried)
             if not isinstance(inner_ctx, type(ctx)):
                 return inner_ctx
 
@@ -451,13 +492,9 @@ class ComprehensionSugar(ConstructedTermSugar):
         final_ctx = (
             self._final_member_ctx(generator, members[-1], ctx) if members else ctx
         )
-        if generator.filters:
-            kept = self._kept_members(generator, members, ctx)
-            if kept is None:
-                return NotProjected(
-                    FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE
-                )
-            members = kept
+        sifted = self._sifted_members(generator, members, ctx)
+        if sifted is None:
+            return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
         # Outcome.and_then owns terminal/guarded propagation. Every constructed
         # outcome propagates unchanged through its own continuation law and is
         # TRANSPORTED by ``Projected`` -- which is not a non-success cause.
@@ -621,36 +658,109 @@ class ComprehensionSugar(ConstructedTermSugar):
             )
         return ctx
 
-    def _kept_members(self, generator, members, ctx):
-        """The members every ``if`` filter keeps, when each verdict is decided.
+    def _sifted_members(self, generator, members, ctx):
+        """Each member, whether every ``if`` condition keeps it, and the
+        walrus writes its conditions made, when each verdict is decided.
 
-        Python evaluates a member's filters in order, stopping at the first
-        false one, and keeps the member only if all are true.  When every
-        filter reached reduces to a plain decided bool (no effect, no halt,
-        no symbolic guard), which members survive is fixed, so the map
-        projects over exactly those.  Any other verdict returns ``None`` and
-        the comprehension stays symbolic, as before.
+        Python evaluates a member's conditions in order, stopping at the
+        first false one, and keeps the member only if all are true.  A
+        walrus in a condition writes whether or not the member is kept: the
+        write reaches the next condition of the member and every later
+        member (``carried``).  When every condition reached reduces to a
+        plain decided bool (no effect, no halt, no symbolic guard), which
+        members survive is fixed, so the map projects over exactly those.
+        Any other verdict returns ``None`` and the comprehension stays
+        symbolic, as before.  Without conditions every member is kept and
+        nothing is evaluated here.
         """
-        kept = []
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            bind_walrus_binds,
+            peel_walrus_binds,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
+
+        if not generator.filters:
+            return tuple((member, True, ()) for member in members)
+        sifted = []
+        carried = ctx
         for member in members:
-            inner_ctx = self._member_ctx(generator, member, ctx)
+            inner_ctx = self._member_ctx(generator, member, carried)
             if not isinstance(inner_ctx, type(ctx)):
                 return None
             keep = True
+            wrote = ()
             for guard in generator.filters:
-                verdict = _decided_bool(guard.desugar(inner_ctx))
+                value = plain_completed_value(guard.desugar(inner_ctx))
+                if value is None:
+                    return None
+                binds, verdict_value = peel_walrus_binds(value)
+                verdict = _decided_verdict(verdict_value)
                 if verdict is None:
                     return None
+                wrote = (*wrote, *binds)
+                inner_ctx = bind_walrus_binds(binds, inner_ctx)
+                carried = bind_walrus_binds(binds, carried)
                 if not verdict:
                     keep = False
                     break
-            if keep:
-                kept.append(member)
-        return tuple(kept)
+            sifted.append((member, keep, wrote))
+        return tuple(sifted)
+
+    def _unwritten_priors(self, binds, ctx) -> tuple:
+        """A walrus write of its prior binding for each walrus whose name no
+        member wrote (``binds`` are the writes made): no member reached it,
+        so after the comprehension the name holds what it held before, read
+        in ``ctx`` (``_walrus_prior``).  A name whose prior read is not one
+        plain value (it was unbound, or its read partitions) gets none: a
+        read of it after the comprehension is refused by name, as an
+        unwritten walrus is (``EvaluationRefSugar``)."""
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            NamedExpressionValue,
+        )
+
+        written = {bind.name for bind in binds}
+        priors = []
+        for name, evaluation, _read in self.walrus_priors:
+            if name in written:
+                continue
+            prior = self._walrus_prior(name, evaluation, ctx)
+            if prior is None:
+                continue
+            priors.append(NamedExpressionValue(name, prior, evaluation=evaluation))
+        return tuple(priors)
+
+    def _walrus_prior(self, name, evaluation, ctx):
+        """The one plain value the walrus ``(name, evaluation)``'s name held
+        before the comprehension, read in ``ctx`` through the read
+        substitution made of it there (``walrus_priors``), else ``None``."""
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
+
+        for prior_name, prior_evaluation, read in self.walrus_priors:
+            if (prior_name, prior_evaluation) == (name, evaluation):
+                return plain_completed_value(read.desugar(ctx))
+        return None
 
     def _desugar_filters(
-        self, generator, filter_index, filters, iterable, index, resolved, ctx
+        self,
+        generator,
+        filter_index,
+        filters,
+        iterable,
+        index,
+        resolved,
+        ctx,
+        *,
+        writes,
+        outer,
     ):
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            peel_walrus_binds,
+        )
+
         if filter_index == len(generator.filters):
             return self._desugar_generators(
                 index + 1,
@@ -664,61 +774,52 @@ class ComprehensionSugar(ConstructedTermSugar):
                     ),
                 ),
                 ctx,
+                writes=writes,
+                outer=outer,
             )
-        return (
-            generator.filters[filter_index]
-            .desugar(ctx)
-            .and_then(
-                lambda guard: self._desugar_filters(
-                    generator,
-                    filter_index + 1,
-                    (*filters, guard),
-                    iterable,
-                    index,
-                    resolved,
-                    ctx,
-                )
-            )
-        )
 
-    def _complete(self, resolved, element, key=None) -> Outcome:
+        def after_guard(guard_value):
+            # A walrus in the condition writes for every member reaching it;
+            # the guard is the value it presents.
+            binds, guard = peel_walrus_binds(guard_value)
+            return self._desugar_filters(
+                generator,
+                filter_index + 1,
+                (*filters, guard),
+                iterable,
+                index,
+                resolved,
+                _with_writes(binds, ctx),
+                writes=(*writes, *((bind, index, filter_index) for bind in binds)),
+                outer=outer,
+            )
+
+        return generator.filters[filter_index].desugar(ctx).and_then(after_guard)
+
+    def _complete(self, resolved, element, key=None, *, writes, outer) -> Outcome:
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
-        from sugar_lift_py_tests.ir import (
-            PrimitiveSort,
-            _Lambda,
-            _intern_term,
-            ctor,
-            make_var,
-            subst_var_in_term,
-        )
         from sugar_lift_py_tests.floor.named_expression_value import (
+            carry_walrus_binds,
             peel_walrus_binds,
         )
+        from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import ExitSet
 
-        if peel_walrus_binds(element)[0] or (
-            key is not None and peel_walrus_binds(key)[0]
-        ):
-            # Over a symbolic iterable no member is ever evaluated: after the
-            # comprehension the walrus's name holds the last member's write,
-            # or its earlier value when there is none, and neither is one
-            # value this recurrence binds.  Refused by name, never read as the
-            # element's symbolic value.
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                owner="ComprehensionSugar._complete",
-                blame=self.site,
-                observed=(
-                    "a walrus in the element of a comprehension over a "
-                    "symbolic iterable"
-                ),
-                requested="the walrus's write from each member",
-                fix=(
-                    "project the comprehension over finite members "
-                    "(ComprehensionSugar._finite_map), or keep it loud"
-                ),
-            )
+        # Over a symbolic iterable the element (and a condition) is evaluated
+        # once, over the symbolic member: a walrus there presents its value
+        # to the fold and its write is carried out as the last member's
+        # write, guarded by some member writing (``_symbolic_writes``).
+        key_binds = ()
+        if key is not None:
+            key_binds, key = peel_walrus_binds(key)
+        element_binds, element = peel_walrus_binds(element)
+        writes = (
+            *writes,
+            *(
+                (bind, len(resolved) - 1, None)
+                for bind in (*key_binds, *element_binds)
+            ),
+        )
         owner = str(self.site)
         element_term = (
             ctor(
@@ -729,6 +830,96 @@ class ComprehensionSugar(ConstructedTermSugar):
             if key is not None
             else element.to_term(owner=owner)
         )
+        value = ComprehensionValue(
+            self._fold_term(self.kind, resolved, element_term, owner=owner)
+        )
+        if self.kind == "py.generatorexp":
+            # A generator's writes wait for it to be consumed.
+            return ExitSet.completed(value)
+        return ExitSet.completed(
+            carry_walrus_binds(
+                self._symbolic_writes(resolved, writes, outer, owner=owner), value
+            )
+        )
+
+    def _symbolic_writes(self, resolved, writes, ctx, *, owner) -> tuple:
+        """The walrus writes a comprehension over a symbolic iterable carries
+        out: for each walrus, its name after the comprehension.
+
+        The walrus writes for every member that reaches it, so the name
+        holds its write from the last such member when there is one, and
+        its prior binding (``_walrus_prior``, read in ``ctx``) when there is
+        none.  The members that reach it are those of every generator up to
+        its own, past every condition before it (``rows``); ``written`` is
+        the sequence of its writes over them, and the value is guarded by
+        that sequence being non-empty.
+
+        No write is carried (a read after the comprehension is refused by
+        name) for a walrus whose prior is not one plain value, or whose name
+        another walrus in the comprehension also writes: which of them wrote
+        last is not one value here.
+        """
+        from collections import Counter
+
+        from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            NamedExpressionValue,
+        )
+        from sugar_lift_py_tests.ir import atomic, ctor
+
+        writers = Counter(bind.name for bind, _generator, _condition in writes)
+        carried = []
+        for bind, generator_index, condition_index in writes:
+            if writers[bind.name] != 1:
+                continue
+            prior = self._walrus_prior(bind.name, bind.evaluation, ctx)
+            if prior is None:
+                continue
+            rows = tuple(resolved[: generator_index + 1])
+            if condition_index is not None:
+                target, coordinate, iterable, filters = rows[-1]
+                rows = (
+                    *rows[:-1],
+                    (target, coordinate, iterable, filters[:condition_index]),
+                )
+            written = self._fold_term(
+                "py.listcomp",
+                rows,
+                bind.assigned_value.to_term(owner=owner),
+                owner=owner,
+            )
+            last = SymbolicValue(
+                ctor(
+                    "python:comprehension.last_write",
+                    [written],
+                    symbol_kind="coordinate",
+                )
+            )
+            carried.append(
+                NamedExpressionValue(
+                    bind.name,
+                    GuardedValue(
+                        atomic("python.comprehension.wrote", [written]), last, prior
+                    ),
+                    evaluation=bind.evaluation,
+                )
+            )
+        return tuple(carried)
+
+    def _fold_term(self, kind, resolved, element_term, *, owner):
+        """The ``kind`` fold of ``element_term`` over the generator rows
+        ``resolved`` (outermost first): each row binds its target, guards
+        its destructuring and its conditions, and flat-maps the rows inside
+        it."""
+        from sugar_lift_py_tests.ir import (
+            PrimitiveSort,
+            _Lambda,
+            _intern_term,
+            ctor,
+            make_var,
+        )
+
         body = element_term
         recurrence_rows = []
         for target, binding_coordinate_cid, iterable, filters in reversed(resolved):
@@ -765,8 +956,8 @@ class ComprehensionSugar(ConstructedTermSugar):
                 symbol_kind="coordinate",
             )
         outer_coordinate, outer_iterable, outer_body = recurrence_rows[-1]
-        term = ctor(
-            self.kind,
+        return ctor(
+            kind,
             [
                 outer_iterable.to_term(owner=owner),
                 _intern_term(
@@ -776,7 +967,17 @@ class ComprehensionSugar(ConstructedTermSugar):
             ],
             symbol_kind="coordinate",
         )
-        return ExitSet.completed(ComprehensionValue(term))
+
+
+def _with_writes(binds, ctx):
+    """``ctx`` with the walrus writes ``binds`` applied, for what is
+    evaluated after them in the same member; ``ctx`` itself when there are
+    none or it carries no temporal."""
+    if not binds or ctx is None or not hasattr(ctx, "temporal"):
+        return ctx
+    from sugar_lift_py_tests.floor.named_expression_value import bind_walrus_binds
+
+    return bind_walrus_binds(binds, ctx)
 
 
 def _last_binds(binds) -> tuple:
@@ -791,20 +992,15 @@ def _last_binds(binds) -> tuple:
     return tuple(last.values())
 
 
-def _decided_bool(outcome):
-    """``True``/``False`` when ``outcome`` is a plain decided bool, else ``None``."""
+def _decided_verdict(value):
+    """``True``/``False`` when ``value`` (a condition's plain completed value,
+    its walrus writes peeled off) is a decided bool, else ``None``."""
     from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
         FalseBoolLiteralSugar,
     )
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        plain_completed_value,
-    )
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
-    value = plain_completed_value(outcome)
-    if value is None:
-        return None
     if isinstance(value, TrueBoolLiteralSugar):
         return True
     if isinstance(value, FalseBoolLiteralSugar):

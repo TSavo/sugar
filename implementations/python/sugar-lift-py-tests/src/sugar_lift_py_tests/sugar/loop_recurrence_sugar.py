@@ -531,10 +531,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
     def _latched(self, runtime, ctx, index):
         """The value of each carried name item ``index`` hands on: the latest
-        of the evaluation of the body's last binder of it (``x += e``), this
-        item's header, and a write of the name a binder that is no statement
-        evaluation made (an assignment, a nested loop's publication, a dynamic
-        unpack).  Read inside item ``index``, so each key is that item's."""
+        of the evaluation of the body's last binder of it (``x += e``, a
+        walrus ``(x := e)``), this item's header, and a write of the name a
+        binder that is no statement evaluation made (an assignment, a nested
+        loop's publication, a dynamic unpack).  Read inside item ``index``,
+        so each key is that item's.  The loop publishes the last item's
+        latch under the name's binding coordinate, which is what a read after
+        the loop reads (a walrus's included: ``_substitute_body_tracked``)."""
         from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
 
