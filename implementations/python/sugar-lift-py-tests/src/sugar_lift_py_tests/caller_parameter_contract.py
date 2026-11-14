@@ -883,22 +883,6 @@ class NativeOperationExitCarrierV1:
             ),
         )
 
-    def composed_beside(self):
-        """Every ``ExitSet.sequence`` composition enrolled on this carrier.
-
-        Each is the step that composes the arms already resolved beside the
-        carrier (``resolved``) with the carrier's exits once it discharges, in
-        the order enrolled. A reader of what a deferred outcome already
-        reduced (``unanswered_calls.owed_calls``) reads those arms here.
-        """
-        from sugar_lift_py_tests.outcome.exit_set import _SequencedBeside
-
-        return tuple(
-            step
-            for _count, _guards, step in self.exitset_continuations
-            if isinstance(step, _SequencedBeside)
-        )
-
     def unanswered_call(self):
         """The ``undecided`` member (``reason: unanswered``) this operation is
         owed as when its caller has no actual: no symbol, the operation's

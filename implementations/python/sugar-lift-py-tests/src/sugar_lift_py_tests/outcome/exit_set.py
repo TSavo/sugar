@@ -1336,9 +1336,7 @@ class _SequencedBeside:
 
     ``resolved`` is every arm ``sequence`` composed already, ``position``
     the slot the carrier's exits fill beneath ``prefix``, and ``rest`` the
-    later ``(position, prefix arm, carrier)`` entries still waiting. It is
-    a value, not a closure, so a reader of what a deferred outcome already
-    reduced reads its arms (``NativeOperationExitCarrierV1.composed_beside``).
+    later ``(position, prefix arm, carrier)`` entries still waiting.
     """
 
     resolved: tuple

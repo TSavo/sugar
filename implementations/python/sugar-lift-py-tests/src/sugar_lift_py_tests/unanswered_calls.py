@@ -71,45 +71,15 @@ def unanswered_call(symbol: str | None, site) -> UnansweredCallV1:
 def owed_calls(outcome) -> tuple[UnansweredCallV1, ...]:
     """Every unanswered call a reduction's final outcome owes, in arm order.
 
-    Read off the arms' ``owed`` slot. A deferred native operation
-    (``NativeOperationExitCarrierV1``) has no arms of its own until a caller
-    discharges it, but the arms ``ExitSet.sequence`` composed beside it and
-    the stopping faces of its short circuits were reduced: their items are
-    read there, and a later carrier waiting beside it is read the same way.
+    Read off the arms' ``owed`` slot by the one reader,
+    ``ExitSet.owed_items``. A function's reduction is always a set of arms
+    (``tree_enumerate.as_its_own_proof_states``): an operation that waits on
+    a caller's actual is its own arms there, owing what it owes, so nothing
+    is read off a deferred carrier's internals. Anything that is not a set
+    of arms is refused by name (``_require_exit_set``).
     """
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
-    owed = ExitSet(_reduced_arms(outcome)).owed_items()
+    exits = _require_exit_set(outcome, owner="unanswered_calls.owed_calls")
+    owed = exits.owed_items()
     return tuple(item for item in owed if isinstance(item, UnansweredCallV1))
-
-
-def _reduced_arms(outcome) -> tuple:
-    """Every reduced arm of ``outcome``, in arm order, for ``owed_calls``.
-
-    The arms of an ``ExitSet``; for a deferred carrier, the stopping faces of
-    its short circuits, then for each ``sequence`` composition enrolled on it
-    (``composed_beside``) the arms already resolved, the prefix arm its exits
-    go beneath, and each later waiting prefix arm followed by the reduced
-    arms of its carrier. Their debts are joined by the one reader,
-    ``ExitSet.owed_items``.
-    """
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-
-    if isinstance(outcome, ExitSet):
-        return outcome.exits
-    if not isinstance(outcome, NativeOperationExitCarrierV1):
-        return ()
-    arms = [
-        arm for _g, stopped, _c, _s in outcome.short_circuits for arm in stopped.exits
-    ]
-    for beside in outcome.composed_beside():
-        arms.extend(beside.resolved)
-        arms.append(beside.prefix)
-        for _position, prefix_exit, carrier in beside.rest:
-            arms.append(prefix_exit)
-            if carrier is not outcome:
-                arms.extend(_reduced_arms(carrier))
-    return tuple(arms)

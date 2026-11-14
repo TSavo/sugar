@@ -252,14 +252,12 @@ def test_sequence_refuses_an_uncomposable_consume_by_name():
 def test_sequence_defers_a_carrier_arm_beside_its_resolved_arms():
     """The former ``compose_prefix`` caller: a multi-arm prefix whose one
     completed arm answers a carrier is that carrier, composed by ``sequence``,
-    and the arms resolved beside it are read off it before discharge."""
+    and the arms resolved beside it stand once it discharges."""
     carrier, left, right = _carrier()
     halt = Halted(atomic("test.halts", []), _raise_effect("prefix"), None)
     prefix = ExitSet((Completed(atomic("test.completes", []), TermValue(0)), halt))
     composed = prefix.sequence(lambda _value: carrier)
     assert isinstance(composed, NativeOperationExitCarrierV1)
-    (beside,) = composed.composed_beside()
-    assert beside.resolved == (halt,)
     exits = composed.discharge(None, _actuals(left, right))
     discharged = carrier.discharge(None, _actuals(left, right))
     assert exits == prefix.sequence(lambda _value: discharged)
