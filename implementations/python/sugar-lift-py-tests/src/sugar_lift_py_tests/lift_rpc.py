@@ -118,25 +118,39 @@ def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
     """
     from sugar_source_tree.tree import SourceTree
 
-    return _context_manager_rows_for_paths(SourceTree(root).paths())
+    return _context_manager_rows_for_paths(SourceTree(root).paths(), root=root)
 
 
-def _context_manager_rows_for_paths(paths) -> List[Dict[str, Any]]:
+def _context_manager_rows_for_paths(paths, *, root: Path) -> List[Dict[str, Any]]:
     """The typed With occurrences of exactly these files, in the order given.
 
     A With row is a function of its own file. The corpus pass above and the
     per-source door below both come through here, so a one-file question and
     a whole-corpus question cannot disagree about a row.
+
+    Each file is read the one way a file is opened (``_source_file_at_seat``),
+    at the seat its own install states, so the row reads the same resident
+    unit the enumerate levels construct. It reads with no construction
+    context: these rows are what the context's table is built from.
     """
     from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
-    from sugar_lift_python_source.source_oracle import SourceUnavailable
+    from sugar_lift_python_source.source_oracle import (
+        SourceUnavailable,
+        install_root_for,
+    )
     from sugar_source_tree.nodes import AsyncWith, With
-    from sugar_source_tree.tree import SourceFile
 
     rows: List[Dict[str, Any]] = []
     for path in paths:
+        install_root = install_root_for(str(path))
         try:
-            source_file = SourceFile.from_path(path)
+            source_file = _source_file_at_seat(
+                path,
+                root=Path(root),
+                source_workspace_root=(
+                    None if install_root is None else Path(install_root)
+                ),
+            )
         except SourceUnavailable:
             continue
         for node in source_file.nodes():
@@ -283,7 +297,9 @@ class _PerSourceDemandRows:
         assert self._module_identities is not None
         return _join_call_identity_into_with_demands(
             _call_use_rows_for_units(self.root, units, self._module_identities),
-            _context_manager_rows_for_paths([path for path, _source, _cid in units]),
+            _context_manager_rows_for_paths(
+                [path for path, _source, _cid in units], root=self.root
+            ),
         )
 
 
@@ -387,6 +403,49 @@ def tree_construction_context_for_workspace(
     return TreeConstructionContextV1(refs, workspace_root=str(root))
 
 
+def _source_file_at_seat(
+    path: Path,
+    *,
+    root: Path,
+    source_workspace_root: Path | None = None,
+    reporter=None,
+    construction_context=None,
+):
+    """The one way a file becomes a node tree: its seat, then the resident unit.
+
+    Every open on the lift path comes through here: the one opener
+    (``open_source_file_for_construction``) with its construction context, and
+    the step-3 With reader with none, because its rows are what that context's
+    table is built from. The files are step 2's file list; no dependency module
+    is opened anywhere. ``reporter=None`` leaves a resident file's reporter as
+    it is.
+    """
+    from sugar_lift_python_source.source_oracle import workspace_path_source
+    from sugar_source_tree.tree import SourceFile
+
+    # TWO ROOTS, not one. `root` is the WORKSPACE authority: which tree this
+    # open belongs to, what `file_rel` resolves against, which walk session and
+    # construction context own it. `source_workspace_root` is the LOCUS
+    # authority: the root the minted address is stated against. For a
+    # first-party tree they coincide and this reads as before. For an INSTALLED
+    # corpus they must not: seats are recorded relative to the install root, so
+    # opening `.../site-packages/pandas/_testing/_hypothesis.py` under
+    # `root=.../site-packages/pandas` mints `_testing/_hypothesis.py` -- not a
+    # different spelling of the seat, an address no other checkout resolves,
+    # which `require_recorded_seat` refuses by name.
+    #
+    # The locus root is DERIVED ONCE, at the driver, from the distribution's own
+    # manifest (`locus_root_for_corpus` -> `install_root_for`) and carried here.
+    # Nothing on this path adds or strips a package prefix at comparison time:
+    # there is one spelling, minted once, against the root that states it.
+    locus_root = root if source_workspace_root is None else source_workspace_root
+    return SourceFile(
+        workspace_path_source(str(path), root=str(locus_root)),
+        reporter=reporter,
+        construction_context=construction_context,
+    )
+
+
 def open_source_file_for_construction(
     path: Path,
     *,
@@ -423,9 +482,7 @@ def open_source_file_for_construction(
         project_file_roster,
         walk_session_for,
     )
-    from sugar_lift_python_source.source_oracle import workspace_path_source
     from sugar_source_tree.reporter import NULL_REPORTER
-    from sugar_source_tree.tree import SourceFile
 
     if reporter is None:
         reporter = NULL_REPORTER
@@ -434,24 +491,10 @@ def open_source_file_for_construction(
             root,
             contract_refs=contract_refs,
         )
-    # TWO ROOTS, not one. `root` is the WORKSPACE authority: which tree this
-    # open belongs to, what `file_rel` resolves against, which walk session and
-    # construction context own it. `source_workspace_root` is the LOCUS
-    # authority: the root the minted address is stated against. For a
-    # first-party tree they coincide and this reads as before. For an INSTALLED
-    # corpus they must not: seats are recorded relative to the install root, so
-    # opening `.../site-packages/pandas/_testing/_hypothesis.py` under
-    # `root=.../site-packages/pandas` mints `_testing/_hypothesis.py` -- not a
-    # different spelling of the seat, an address no other checkout resolves,
-    # which `require_recorded_seat` refuses by name.
-    #
-    # The locus root is DERIVED ONCE, at the driver, from the distribution's own
-    # manifest (`locus_root_for_corpus` -> `install_root_for`) and carried here.
-    # Nothing on this path adds or strips a package prefix at comparison time:
-    # there is one spelling, minted once, against the root that states it.
-    locus_root = root if source_workspace_root is None else source_workspace_root
-    source_file = SourceFile(
-        workspace_path_source(str(path), root=str(locus_root)),
+    source_file = _source_file_at_seat(
+        path,
+        root=root,
+        source_workspace_root=source_workspace_root,
         reporter=reporter,
         construction_context=construction_context,
     )
@@ -2029,8 +2072,8 @@ def _roll_call_audit_leaf(
         # and a context-less tree paints every `With`
         # `RuntimeSelectedContextManager` regardless of resolvability -- one
         # panic per file, at the file's FIRST `with`, masking everything behind
-        # it. See scripts/construction_context_door_law.py; the production
-        # `functions` level and `audit_file_gaps` already open this way.
+        # it. See scripts/construction_context_door_law.py; every production
+        # level opens this way.
         source_file = open_source_file_for_construction(
             full_path,
             root=root,

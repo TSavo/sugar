@@ -241,14 +241,16 @@ def test_truthful_twin_neither_present_both_unresolved() -> None:
 
 def test_truthful_twin_roll_call_path_conserves_on_real_source(tmp_path: Path) -> None:
     """Live construction path: totals conserve; unresolved matches report.R."""
-    from sugar_lift_py_tests.tree_enumerate import source_audit_from_roll_call
+    from sugar_lift_py_tests.lift_rpc import _roll_call_audit_leaf
     from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.roll_call import discharge
     from sugar_source_tree.tree import SourceFile
 
     path = tmp_path / "m.py"
     path.write_text("def f():\n    return 1\n", encoding="utf-8")
-    audit = source_audit_from_roll_call(path, "m.py")
+    audit = _roll_call_audit_leaf(path, "m.py", root=tmp_path)["auxiliaryRows"][
+        "sourceAudit"
+    ]
 
     reporter = CollectingReporter()
     report = discharge(
