@@ -1644,10 +1644,13 @@ class SourceUnit:
         provider-gated imports included (#7851).  A row whose binding is not
         bound on every path (a ``try: import m`` / ``except ImportError``
         gate: unbound where the provider is absent) answers only a reader
-        that admits that gate fact (``admit_provider_gate``).
+        that admits that gate fact (``admit_provider_gate``).  The row is
+        read once the table is complete (``_Pass.decided_reference``): a
+        try-import gate the table recorded unevaluated is decided there,
+        through this unit's ``exception_type_identity`` and the one matcher.
         """
         runner = self._lexical_import_pass()
-        row = runner.reference_targets.get(span)
+        row = runner.decided_reference(span, self)
         if row is None:
             return None
         if not (row.bound_on_every_path or admit_provider_gate):

@@ -117,15 +117,33 @@ class _ImportDef:
     submodule_tail: tuple[str, ...] = ()
     # The optional-provider gate this binding came through, or ``None`` for an
     # ordinary import statement (see ``ImportReference.provider_gate``).
-    provider_gate: str | None = None
+    provider_gate: "str | TryImportGate | None" = None
 
 
 # ``name = pytest.importorskip("m")``: an absent provider halts at that call,
 # so every path past the statement reads the import.
 PROVIDER_GATE_IMPORTORSKIP = "pytest.importorskip"
-# ``try: import m`` / ``except ImportError``: an absent provider leaves the
-# name unbound, so a reference reads the import only where the provider exists.
-PROVIDER_GATE_TRY_IMPORT = "try-import"
+
+
+@dataclass(frozen=True)
+class TryImportGate:
+    """The gate fact of one ``try: import m`` / ``except ...`` statement,
+    recorded unevaluated by the lexical pass (#7757).
+
+    ``site`` is the ``try`` statement's coordinate; ``handlers`` are its
+    ``except`` clauses, each carrying its class expression (``type_``, None
+    for a bare ``except``) at its own position. Whether the gate closes --
+    every handler is decided to catch what an absent provider's import
+    raises -- is not read while the table is being built: it is decided once
+    the table is complete (``_Pass.try_import_gate_closes``), by the one
+    exception-class lookup and the one matcher. A closed gate leaves the
+    name unbound where the provider is absent, so a reference reads the
+    import only where the provider exists; a gate that does not close is the
+    plain join, where the import may have failed, and its rows read nothing.
+    """
+
+    site: tuple[int, int, int, int]
+    handlers: tuple = dataclass_field(compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -134,18 +152,19 @@ class ImportReference:
 
     ``target_symbol`` is the import-bound reference's target.  ``provider_gate``
     is the gate fact the binding carries: ``None`` for an import statement,
-    ``PROVIDER_GATE_IMPORTORSKIP`` or ``PROVIDER_GATE_TRY_IMPORT`` for an
-    optional provider.  Only a try-import row is not bound on every path that
-    reaches it; a reader that cannot carry the provider-absent face (a call,
-    a value use) does not read it.
+    ``PROVIDER_GATE_IMPORTORSKIP`` or a ``TryImportGate`` for an optional
+    provider.  A try-import row is read only through
+    ``_Pass.decided_reference`` (its gate decided); it is not bound on every
+    path that reaches it, so a reader that cannot carry the provider-absent
+    face (a call, a value use) does not read it.
     """
 
     target_symbol: str
-    provider_gate: str | None = None
+    provider_gate: "str | TryImportGate | None" = None
 
     @property
     def bound_on_every_path(self) -> bool:
-        return self.provider_gate != PROVIDER_GATE_TRY_IMPORT
+        return not isinstance(self.provider_gate, TryImportGate)
 
 
 @dataclass(frozen=True)
@@ -456,8 +475,9 @@ def _target_symbol(binding: _ImportDef, member: tuple[str, ...]) -> str:
 
 _NON_IMPORT = "non-import"
 _UNBOUND = "unbound"
-# The unbound face of a closed try-import provider gate: the name is unbound
-# because the provider's import failed into an ``except ImportError`` handler.
+# The unbound face of a try-import provider gate (``TryImportGate``): the name
+# is unbound because the provider's import failed into a handler that catches
+# it -- the gate's fact, decided once the table is complete.
 _PROVIDER_ABSENT = "provider-absent"
 Definition = _ImportDef | _ModuleFunctionDef | str
 State = dict[str, frozenset[Definition]]
@@ -613,6 +633,9 @@ class _Pass:
         self.binding_targets: dict[
             tuple[int, int, int, int, str], ImportReference
         ] = {}
+        # Each try-import gate's verdict, decided once the table is complete
+        # (``try_import_gate_closes``), keyed by the ``try`` coordinate.
+        self.gate_verdicts: dict[tuple[int, int, int, int], bool] = {}
         self.module_state = module_state or {}
         self.analyze_nested = analyze_nested
         self.class_outer_states: dict[int, State] = {}
@@ -674,9 +697,10 @@ class _Pass:
             # A name USE whose sole reaching definition is an import statement
             # is lexically bound to that import's target coordinate. One law:
             # unique ImportDef only -- shadowing, reassignment, an unbound join
-            # and wildcard ambiguity bind nothing.  A closed try-import gate
-            # (the import, or unbound because the provider is absent) records
-            # its row with that gate fact and enrolls no value use.
+            # and wildcard ambiguity bind nothing.  A try-import gate (the
+            # import, or unbound because the provider is absent) records its
+            # row with that gate fact, undecided until the table is complete
+            # (``decided_reference``), and enrolls no value use.
             value_binding = self._unique_import_def(node.id, state, allow_unbound=False)
             if value_binding is not None and not value_binding.submodule_tail:
                 self._record_reference(node, value_binding, ())
@@ -773,70 +797,61 @@ class _Pass:
         if _PROVIDER_ABSENT not in reaching or len(reaching) != 2:
             return None
         (definition,) = reaching - {_PROVIDER_ABSENT}
-        if (
-            not isinstance(definition, _ImportDef)
-            or definition.provider_gate != PROVIDER_GATE_TRY_IMPORT
+        if not isinstance(definition, _ImportDef) or not isinstance(
+            definition.provider_gate, TryImportGate
         ):
             return None
         return definition
 
-    @staticmethod
-    def _handler_class_identity(node: Node, state: State):
-        """The identity of the exception class the handler type ``node``
-        names, by the binding the read reaches, or None when this pass does
-        not decide it (#7757).
+    def decided_reference(
+        self, span: tuple[int, int, int, int], unit
+    ) -> ImportReference | None:
+        """The table's row at ``span`` once the table is complete, or None.
 
-        The answers of the one exception-class lookup
-        (``SourceUnit.exception_type_identity``), read with what exists while
-        that lookup's import table is being built -- this pass:
-
-        - a ``Name`` or ``Name.attr...`` chain whose head reaches exactly one
-          import here is that import's target symbol
-          (``exception_type_identity_of_import_target``): ``from builtins
-          import ImportError as IE`` keeps the builtin identity;
-        - a ``Name`` nothing in the source binds is the builtin it falls
-          through to (``SourceUnit.builtin_reference_at``, read off CPython's
-          symtable, not off the import table; a star import may bind any
-          name, so it binds none there).
-
-        Anything else -- a source class, a provider-gated or partly bound
-        name, a computed operand -- is None: undecided, never assumed.
+        A row carrying a ``TryImportGate`` is read through its gate's verdict
+        (``try_import_gate_closes``, asked of the reading ``unit``): a gate
+        that does not close is the plain join, where the import may have
+        failed, and binds nothing there -- no row.
         """
-        from sugar_source_tree.nodes import exception_type_identity_of_import_target
-
-        path = _Pass._attribute_export_path(node)
-        if path is None:
+        row = self.reference_targets.get(span)
+        if row is None:
             return None
-        local_name, exported_path = path
-        binding = _unique_import_def_from_state(state, local_name)
-        if binding is not None:
-            member = _member_path_after_submodule(binding, exported_path)
-            if member is None:
-                return None
-            return exception_type_identity_of_import_target(
-                _target_symbol(binding, member)
-            )
-        if exported_path or state.get(local_name, frozenset({_UNBOUND})) != frozenset(
-            {_UNBOUND}
+        gate = row.provider_gate
+        if isinstance(gate, TryImportGate) and not self.try_import_gate_closes(
+            gate, unit
         ):
             return None
-        target = node.unit.builtin_reference_at(local_name, node.line_col_span())
-        if target is None:
-            return None
-        return exception_type_identity_of_import_target(target)
+        return row
 
-    def _catches_import_error(self, handler: Node, state: State) -> bool:
-        """Whether ``handler`` is decided to catch what an absent provider's
-        import raises: ``ModuleNotFoundError`` (an ``ImportError``).
+    def try_import_gate_closes(self, gate: TryImportGate, unit) -> bool:
+        """Whether every handler of ``gate`` is decided to catch what an
+        absent provider's import raises: ``ModuleNotFoundError`` (#7757).
 
-        The handler's class is read by its binding
-        (``_handler_class_identity``), and whether it catches is the one
-        matcher's answer (``matches_raise_effect``) -- a tuple by its
-        disjunction, a bare ``except`` as ``BaseException`` -- so ``except
-        Exception`` catches it and an aliased or rebound name is judged by
-        what it is bound to, never by its spelling.  Only a decided match
-        gates; a member whose class is not decided here never catches.
+        Decided once the table is complete, never while it is being built:
+        each handler's class is the one exception-class lookup's answer
+        (``unit.exception_type_identity``, read at the class expression's
+        own position, so an aliased or rebound name is judged by what it is
+        bound to, never by its spelling), and whether it catches is the one
+        matcher's (``matches_raise_effect``) -- a tuple by its disjunction, a
+        bare ``except`` as ``BaseException``.  Only a decided match closes
+        the gate; a member whose class is not decided (``None``, the star
+        import's ``UndecidedExceptionClassV1``) never catches.
+
+        The verdict depends only on the handlers' names, read where the
+        handler type is evaluated: before the gate exists, where the gate's
+        own imports reach ungated, so a handler's row cites only earlier
+        gates and the decision is acyclic.
         """
+        verdict = self.gate_verdicts.get(gate.site)
+        if verdict is None:
+            verdict = all(
+                self._handler_catches_absent_provider(handler, unit)
+                for handler in gate.handlers
+            )
+            self.gate_verdicts[gate.site] = verdict
+        return verdict
+
+    def _handler_catches_absent_provider(self, handler: Node, unit) -> bool:
         from sugar_lift_py_tests.authenticated_exception_matching import (
             ExceptionClassOperand,
             MatchDecided,
@@ -845,20 +860,22 @@ class _Pass:
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_source_tree.nodes import UndecidedExceptionClassV1
 
         type_node = handler.type_
         if type_node is None:
             identities = (_builtin_exception_identity("BaseException")[0],)
         elif type_node.kind == "Tuple":
             identities = tuple(
-                self._handler_class_identity(item, state) for item in type_node.elts
+                unit.exception_type_identity(item) for item in type_node.elts
             )
         else:
-            identities = (self._handler_class_identity(type_node, state),)
+            identities = (unit.exception_type_identity(type_node),)
         operands = tuple(
             ExceptionClassOperand(identity)
             for identity in identities
             if identity is not None
+            and not isinstance(identity, UndecidedExceptionClassV1)
         )
         if not operands:
             return False
@@ -877,29 +894,33 @@ class _Pass:
         self,
         node: Statement,
         before: State,
-        handler_entry: State,
         body_out: State,
         joined: State,
     ) -> State:
-        """Record the closed optional-provider gate ``try: import m`` (or
-        ``try: from m import X``) / ``except ImportError`` in ``joined``.
+        """Record the optional-provider gate ``try: import m`` (or ``try:
+        from m import X``) / ``except ...`` in ``joined``, unevaluated.
 
-        A name an ``import`` or ``from ... import`` statement in the try body binds, unbound before
-        the ``try``, whose every handler is decided to catch the absent
-        provider's ``ModuleNotFoundError`` (``_catches_import_error``, read
-        where the handler's type is evaluated, ``handler_entry``) and leaves
-        the name as it found it: after the handlers join, it reaches as that
-        import or as unbound because the provider is absent.  That unbound
-        face is recorded as ``_PROVIDER_ABSENT`` and the import carries the
-        ``PROVIDER_GATE_TRY_IMPORT`` fact, so its references have rows in the
-        one table that say so.  Any other shape -- an undecided handler
-        included -- keeps the plain join, where the import may have failed.
+        A name an ``import`` or ``from ... import`` statement in the try body
+        binds, unbound before the ``try``, that every handler leaves as it
+        found it: after the handlers join, it reaches as that import or as
+        unbound because the provider is absent -- if the handlers catch what
+        an absent provider raises.  That is not read here: the table being
+        built is what the one exception-class lookup reads, so the import
+        carries the gate fact (``TryImportGate``: the handlers' class
+        expressions and positions) and the unbound face is recorded as
+        ``_PROVIDER_ABSENT``; its references' rows carry the fact, and the
+        gate is decided once the table is complete (``decided_reference``).
+        A gate that does not close is the plain join there.  Every reader
+        during the pass reads the gated shape exactly as the plain join
+        ``{import, unbound}``: neither is a unique import.
         """
-        if not node.handlers or not all(
-            self._catches_import_error(handler, handler_entry)
-            for handler in node.handlers
-        ):
+        if not node.handlers:
             return joined
+        span = node.line_col_span()
+        gate = TryImportGate(
+            (span.start_line, span.start_col, span.end_line, span.end_col),
+            tuple(node.handlers),
+        )
         gated = dict(joined)
         for statement in node.body:
             if statement.kind not in ("Import", "ImportFrom"):
@@ -924,7 +945,7 @@ class _Pass:
                     continue
                 gated[local] = frozenset(
                     {
-                        replace(definition, provider_gate=PROVIDER_GATE_TRY_IMPORT),
+                        replace(definition, provider_gate=gate),
                         _PROVIDER_ABSENT,
                     }
                 )
@@ -1277,9 +1298,7 @@ class _Pass:
                 if handler.name:
                     handler_state[handler.name] = frozenset({_NON_IMPORT})
                 paths.append(self.statements(handler.body, handler_state, scope))
-            joined = self._provider_gate(
-                node, state, handler_entry, paths[0], _join(*paths)
-            )
+            joined = self._provider_gate(node, state, paths[0], _join(*paths))
             joined = self.statements(node.orelse, joined, scope)
             return self.statements(node.finalbody, joined, scope)
         if node.kind in ("With", "AsyncWith"):
