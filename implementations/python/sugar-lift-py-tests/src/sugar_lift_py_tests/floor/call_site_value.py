@@ -1721,14 +1721,21 @@ class CallSiteValue(FloorValue):
         if not isinstance(outcome, ExitSet):
             return outcome
 
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            peel_walrus_binds,
+        )
+
         def body_completion(value):
+            # The Call's value under the callee stores it carries
+            # (``CallerStoreValue``): the demand reads the body itself.
+            _stores, call = peel_walrus_binds(value)
             if (
-                isinstance(value, CallSiteValue)
-                and value._retained_source_completion is not None
-                and value.term is self.term
-                and value.body is self.body
+                isinstance(call, CallSiteValue)
+                and call._retained_source_completion is not None
+                and call.term is self.term
+                and call.body is self.body
             ):
-                return value.retained_source_completion_outcome()
+                return call.retained_source_completion_outcome()
             return ExitSet.completed(value)
 
         return outcome.and_then(body_completion)
@@ -1856,11 +1863,35 @@ class CallSiteValue(FloorValue):
             )
             return retained
 
+        # What the callee did to objects the caller can see is the caller's on
+        # both arms, through the one projection (``caller_visible_stores``),
+        # wherever the call sits.  A completed arm carries the stores its body
+        # made on the Call's value (``CallerStoreValue``) to the statement
+        # that evaluates the call, which applies them as it applies a
+        # walrus's write (an assignment's value, an argument, a condition) or
+        # lays them in its record (``ExprStatementSugar``); a halt carries the
+        # stores its record holds into the caller's record here
+        # (``at_the_call``).  The callee's locals stay behind on both.
+        carries = carries_its_stores_to_the_caller(self)
+
+        def completed_at_the_call(value):
+            from sugar_lift_py_tests.floor.block_value import BlockValue
+            from sugar_lift_py_tests.floor.named_expression_value import (
+                carry_caller_stores,
+            )
+
+            stores = (
+                caller_visible_stores(value.statements)
+                if carries and isinstance(value, BlockValue)
+                else ()
+            )
+            return ExitSet.completed(carry_caller_stores(stores, retaining(value)))
+
         if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
             # A completed body seats its value on the Call.  A raise is never
             # a completion (#7821): it arrives as a halt and takes the arm
             # below, where it becomes the Call's own halted face.
-            return outcome.and_then(lambda value: ExitSet.completed(retaining(value)))
+            return outcome.and_then(completed_at_the_call)
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
@@ -1882,15 +1913,8 @@ class CallSiteValue(FloorValue):
         # Each completed arm continues as the Call retaining its value; each
         # halt continues as the Call's own halt, in the caller's record at the
         # call (``at_the_call``), never the callee's. Both are continuations
-        # beneath the arm, so its guard, faces and ``owed`` ride on.
-        #
-        # What the callee did to objects the caller can see is the caller's on
-        # both arms, through the one projection (``caller_visible_stores``):
-        # a completed arm's body is spliced by the statement that made the
-        # call (``ExprStatementSugar``); a halt carries the stores its record
-        # holds into the caller's record here. The callee's locals stay
-        # behind on both.
-        carries = carries_its_stores_to_the_caller(self)
+        # beneath the arm, so its guard, faces and ``owed`` ride on, and both
+        # carry the callee's caller-visible stores (above).
 
         def left_the_call(halt):
             # The frame the callee reduced under (``_reduce_callsite_body``).
@@ -1908,19 +1932,15 @@ class CallSiteValue(FloorValue):
                 call_owned(halt.effect, frame), state=at_the_call(ctx, stores)
             )
 
-        return outcome.sequence(
-            lambda value: ExitSet.completed(retaining(value)),
-            consume=left_the_call,
-        )
+        return outcome.sequence(completed_at_the_call, consume=left_the_call)
 
 
 def carries_its_stores_to_the_caller(call) -> bool:
     """Whether the receiver field stores ``call``'s body made are its
     caller's: a constructor (``__init__``) or a free function (no runtime
     dispatch receiver).  A method other than ``__init__`` keeps its receiver,
-    and its stores stay nested.  The one condition for both arms: a completed
-    body spliced by the statement that called it (``ExprStatementSugar``) and
-    a halt leaving it (``CallSiteValue.project_producer_outcome``)."""
+    and its stores stay nested.  The one condition for both arms of the call,
+    wherever it sits (``CallSiteValue.project_producer_outcome``)."""
     return call.body is not None and (
         call.target_name == "__init__"
         or call.target_name.endswith(".__init__")
@@ -1937,8 +1957,8 @@ def caller_visible_stores(entries) -> tuple:
     with ``true_guard``, and that is not a branch.  A store under a real
     branch guard stays in the callee's nested record; it is never flattened
     onto the receiver.  The one projection of what a callee did to objects
-    its caller sees, for a completed body (``ExprStatementSugar``) and for a
-    halt (``CallSiteValue.project_producer_outcome``)."""
+    its caller sees, for a completed body and for a halt, at the call
+    (``CallSiteValue.project_producer_outcome``)."""
     from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
         GuardedReceiverFieldStoreValue,
     )
@@ -1994,8 +2014,8 @@ def at_the_call(ctx, stores=()):
     What the callee did before its halt to an object the caller can see is
     not rolled back: ``stores`` (``caller_visible_stores``) are the record's
     entries, and each advances the caller's context
-    (``ReceiverFieldStoreValue.extend_scope``), as a completed call's
-    statement threads them (``ExprStatementSugar``).
+    (``ReceiverFieldStoreValue.extend_scope``), as a completed call's value
+    carries them to its statement (``CallerStoreValue``).
 
     Every halt a call publishes takes it, once, where it crosses the call
     boundary: the body's (``CallSiteValue.project_producer_outcome``) and,

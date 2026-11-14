@@ -251,6 +251,10 @@ def _object(node):
         elif kind == "ReceiverFieldStoreState":
             # ``o.x = v``: the object ``o`` was, with a field stored.
             node = _identity(node.receiver)
+        elif kind == "SourceCallActualAfter":
+            # An object after a source helper's stores (``_actual_after``):
+            # the state its one-door mutations left, of the same object.
+            node = _identity(node.state)
         else:
             break
         seen += 1
@@ -567,10 +571,19 @@ def _is_pure_call(call, scope) -> bool:
     return isinstance(func, Attribute) and isinstance(func.value, Constant)
 
 
-def _calls(statement, bound_refs, *, include_container_calls):
+def _threaded_header(statement):
+    """The part of a compound ``statement`` that threads its own calls before
+    its body (``If.substitute``: the test), or None."""
+    if getattr(statement, "kind", None) == "If":
+        return statement.test
+    return None
+
+
+def _calls(statement, bound_refs, *, include_container_calls, threaded=None):
     """Calls ``statement`` makes now: not inside a nested def, and not inside a
-    value a name was already bound to (that value's calls ran earlier).  An
-    f-string's replacement field is one: it runs ``format`` on its value
+    value a name was already bound to (that value's calls ran earlier), nor in
+    ``threaded`` (a header the statement threaded itself, ``_threaded_header``).
+    An f-string's replacement field is one: it runs ``format`` on its value
     (``_call_targets``)."""
     from .nodes import (
         AsyncFunctionDef,
@@ -584,11 +597,14 @@ def _calls(statement, bound_refs, *, include_container_calls):
 
     stack = [statement]
     seen = set()
+    header = None if threaded is None else _handle(threaded)
     while stack:
         current = stack.pop()
         if id(current) in seen:
             continue
         seen.add(id(current))
+        if header is not None and _handle(current) is header:
+            continue
         if current is not statement and _ref(current) in bound_refs:
             continue
         if isinstance(current, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef)):
@@ -651,18 +667,26 @@ def havoc_after(statement, pre_scope, scope):
     loop = isinstance(statement, (For, While, LoopRecurrenceStatement))
     targets = []
     applied = []
-    for call in _calls(statement, bound_refs, include_container_calls=loop):
-        helper = None if loop else source_helper_actual_states(call, bound_refs)
+    for call in _calls(
+        statement,
+        bound_refs,
+        include_container_calls=loop,
+        threaded=_threaded_header(statement),
+    ):
+        helper = (
+            None if loop else source_helper_actual_states(call, bound_refs, pre_scope)
+        )
         if helper is not None:
             havoc_targets, states = helper
             targets.extend(havoc_targets)
-            # A halt inside the helper leaves its actual in the state the
-            # helper holds at every halt only where nothing else the
-            # statement evaluates can halt first (``_the_call_alone``).
-            alone = _the_call_alone(statement, call)
+            # A halt inside the helper leaves an object in the state the
+            # helper holds at every halt only where nothing the statement
+            # evaluates before the call can halt first (``_halts_before``):
+            # one rule wherever the call sits.
+            before = _halts_before(statement, call)
             applied.extend(
-                (actual, state, index, holds and alone)
-                for actual, state, index, holds in states
+                (actual, state, label, holds and not before)
+                for actual, state, label, holds in states
             )
             continue
         if isinstance(call, PathContainerCall):
@@ -684,6 +708,14 @@ def havoc_after(statement, pre_scope, scope):
             )
             continue
         targets.extend(_call_targets(call, pre_scope, bound_refs))
+        # A source function this statement calls and does not follow may
+        # change a module object it reaches (its own globals and those of the
+        # source functions it calls): each the caller holds is exposed to it,
+        # as an operand handed to it is (``_OPERAND_RULES``).
+        targets.extend(
+            (node, _OPERAND_RULES, None)
+            for _name, node in _module_objects_reached(call, pre_scope)
+        )
     havocked = _rebind(statement, pre_scope, scope, targets)
     if not applied:
         return havocked
@@ -1763,14 +1795,22 @@ def _mutation_through(
 #   it does not project, an object only CONTAINED in an actual -- keeps the
 #   havoc: unknown after the call, never the pre-call contents.
 #
+# The objects followed are every one the helper reaches that its caller holds:
+# its actuals, and the module objects it (or a source function it calls by
+# name) reads as globals (``_module_objects_reached``). A source function that
+# is not followed exposes the same module objects to the havoc, as it does its
+# operands.
+#
 # The call's own halts are its faces at the call (the Call producer); a halt
 # path never reaches the statement's continuation. A handler that catches one
-# reads the actual in the state the helper holds at every halt inside it
+# reads the object in the state the helper holds at every halt inside it
 # (``holds_at_halt``, ``Try._mid_statement_state``): the same state the
 # completed path reads, when every statement of the body that may halt begins
-# with the actual already in it, or is the actual's own one-door mutation
-# (whose halt the state's re-read sees: it is then unknown). Otherwise a halt
-# carries the actual unknown, never the pre-call contents.
+# with the object already in it, or is the object's own one-door mutation
+# (whose halt the state's re-read sees: it is then unknown), and nothing the
+# caller's statement evaluates before the call may halt (``_halts_before``),
+# wherever in the statement the call sits. Otherwise a halt carries the
+# object unknown, never the pre-call contents.
 # ---------------------------------------------------------------------------
 
 _HELPER_STATEMENT_KINDS = frozenset(
@@ -1843,17 +1883,39 @@ def _closed_state(state, actual) -> bool:
                 return False
             node = _identity(call.receiver)
             continue
-        return same_object(node, actual)
+        if getattr(node, "kind", None) == "SourceCallActualAfter":
+            # A source helper the helper called left it there: the state its
+            # own one-door mutations left (``_actual_after``).
+            node = _identity(node.state)
+            continue
+        # The read the chain began from is the actual itself, never a value
+        # some other call left of the same object (``ReceiverAfterCall``):
+        # what that call did is not a mutation this projection states.
+        return _same_read(node, actual)
+
+
+def _same_read(node, actual) -> bool:
+    """``node`` and ``actual`` are one read of one binding: the same node, or
+    two reads of one formal's coordinate (``Name.substitute`` re-spans
+    each)."""
+    node, actual = _identity(node), _identity(actual)
+    if node is actual or _handle(node) is _handle(actual):
+        return True
+    return (
+        getattr(node, "kind", None) in _FORMAL_KINDS
+        and getattr(actual, "kind", None) in _FORMAL_KINDS
+        and _ref(node) == _ref(actual)
+    )
 
 
 def _mutated(state) -> bool:
     """Whether ``state`` is an object after a mutation through the one door
-    (its value is not the object's value before)."""
+    (its value is not the object's value before), or after a source helper's
+    such mutations (``SourceCallActualAfter``)."""
     node = _identity(state)
-    return (
-        getattr(node, "kind", None) == "PathAfterCall"
-        and node.mode == "root"
-        and not node.steps
+    kind = getattr(node, "kind", None)
+    return kind == "SourceCallActualAfter" or (
+        kind == "PathAfterCall" and node.mode == "root" and not node.steps
     )
 
 
@@ -1871,19 +1933,23 @@ def _closed_operand(node, *, kinds=_CLOSED_OPERAND_KINDS) -> bool:
     return True
 
 
-def source_helper_actual_states(call, bound_refs):
-    """``(havoc_targets, [(actual, state, index, holds_at_halt)])`` for a call
+def source_helper_actual_states(call, bound_refs, scope):
+    """``(havoc_targets, [(object, state, label, holds_at_halt)])`` for a call
     to a followable source helper, or None when the call is not one (it keeps
-    its havoc).  ``havoc_targets`` are ``_rebind``'s ``(object, rules,
-    subject)``.
+    its havoc, ``havoc_after``).  ``havoc_targets`` are ``_rebind``'s
+    ``(object, rules, subject)``.
 
-    The body is followed for every actual that is a bound object a call may
-    change (``_may_be_changed``, the exposure candidates), whatever it was
-    given: what the helper's mutation of it does is the one door's, decided
-    by the actual's value at reduce (``PathContainerCallSugar``), never by
-    the spelling of the actual's binding.
+    The objects the helper reaches that its caller holds are followed alike:
+    every actual that is a bound object a call may change
+    (``_may_be_changed``, the exposure candidates), whatever it was given,
+    and every module object the helper reaches (``_module_objects_reached``:
+    its globals and those of the source functions it calls) that ``scope``,
+    the caller's, binds -- the helper's read of it is the caller's object.
+    What the helper's mutation of one does is the one door's, decided by the
+    object's value at reduce (``PathContainerCallSugar``), never by the
+    spelling of its binding.
 
-    ``holds_at_halt``: ``state`` is the actual's state at every halt inside
+    ``holds_at_halt``: ``state`` is the object's state at every halt inside
     the call too (``_holds_at_every_halt``), so the one state stands on both
     the completed and the halted arm."""
     from .nodes import Call, Name, Starred
@@ -1900,7 +1966,8 @@ def source_helper_actual_states(call, bound_refs):
         for index, arg in enumerate(call.args)
         if _ref(arg) in bound_refs and _may_be_changed(arg)
     ]
-    if not actuals:
+    reached = _module_objects_reached(call, scope)
+    if not actuals and not reached:
         return None
     definition = call.unit.source_function_definition_for_call(call)
     if definition is None or not _straight_line_helper(definition):
@@ -1912,6 +1979,19 @@ def source_helper_actual_states(call, bound_refs):
     if key in _HELPERS_IN_PROGRESS:
         return None
     node_scope = {param.name: arg for param, arg in zip(params, call.args)}
+    havoc_targets = []
+    followed = [
+        (params[index].name, actual, f"actual:{index}") for index, actual in actuals
+    ]
+    for name, node in reached:
+        if name in node_scope:
+            # A formal of the same name hides the module object from the
+            # helper's body: what a function it calls does to it is not
+            # followed here, so it takes the havoc.
+            havoc_targets.append((node, None, None))
+            continue
+        node_scope[name] = node
+        followed.append((name, node, f"global:{name}"))
     edges: list = []
     _HELPERS_IN_PROGRESS.add(key)
     try:
@@ -1921,11 +2001,10 @@ def source_helper_actual_states(call, bound_refs):
     finally:
         _HELPERS_IN_PROGRESS.discard(key)
     # Before the body runs the call evaluates its operands: one that may
-    # halt halts with every actual as it was given.
+    # halt halts with every object as it was.
     operands_halt_free = all(
         _closed_operand(arg, kinds=_HALT_FREE_OPERAND_KINDS) for arg in call.args
     )
-    havoc_targets = []
     states = []
     claimed = {id(arg) for _index, arg in actuals}
     for index, arg in enumerate(call.args):
@@ -1934,8 +2013,7 @@ def source_helper_actual_states(call, bound_refs):
             for node in _exposed(arg, bound_refs)
             if id(node) not in claimed
         )
-    for index, actual in actuals:
-        name = params[index].name
+    for name, actual, label in followed:
         state = _state(net[name]) if name in net else actual
         if not _closed_state(state, actual):
             havoc_targets.append((actual, None, None))
@@ -1944,8 +2022,137 @@ def source_helper_actual_states(call, bound_refs):
             # The helper left the object as it was.
             continue
         holds = operands_halt_free and _holds_at_every_halt(edges, name, state)
-        states.append((actual, state, index, holds))
+        states.append((actual, state, label, holds))
     return havoc_targets, states
+
+
+def _module_objects_reached(call, scope):
+    """``[(name, node)]``: each module object a call to a source function
+    reaches -- a global the function reads, or one a source function it calls
+    by name reads, through every such call -- that ``scope`` (the caller's)
+    binds a mutable read of: ``node`` is the caller's read of it, ``name`` the
+    name a function reaching it reads it by.  A callee mutating one changes
+    the caller's object, on its completed and its halted arm alike.
+
+    Empty when the callee is no source function named at the call, or the
+    caller holds no module object a call may change (``_may_be_changed``).
+    A module body's own threading (``_MODULE_STATEMENT_STATES``) asks no
+    callee's module bindings: they are read off that threading."""
+    from .nodes import _MODULE_STATEMENT_STATES, Call, Name
+    from .panic import SugarNotWritten
+
+    if not isinstance(call, Call) or not isinstance(call.func, Name):
+        return []
+    if scope.get(_MODULE_STATEMENT_STATES) is not None:
+        return []
+    held = _held_module_objects(scope, call.unit)
+    if not held:
+        return []
+    try:
+        definition = call.unit.source_function_definition_for_call(call)
+    except SugarNotWritten:
+        return []
+    if definition is None:
+        return []
+    found = []
+    taken = set()
+    for owner, name, reference in _module_reads_reached(definition):
+        for held_name, node in held:
+            if _ref(node) in taken:
+                continue
+            if not (
+                same_object(node, reference)
+                or (
+                    # An object the caller's threading left an unknown of
+                    # (no prior to name it by) is the one its module name
+                    # binds, where caller and reader share the module.
+                    held_name == name
+                    and owner.unit is call.unit
+                    and _unnamed_unknown(node)
+                )
+            ):
+                continue
+            taken.add(_ref(node))
+            found.append((name, node))
+    return found
+
+
+def _unnamed_unknown(node) -> bool:
+    """An unknown minted at a call with no prior read to name the object by
+    (``_havoc`` with no conditions)."""
+    node = _identity(node)
+    return (
+        getattr(node, "kind", None) == "ReceiverAfterCall"
+        and getattr(node, "prior", None) is None
+    )
+
+
+def _held_module_objects(scope, unit):
+    """``[(name, read)]``: the caller's reads of the module objects ``scope``
+    binds by their module names (``SourceUnit.module_threaded_names``) that a
+    call may change (``_may_be_changed``)."""
+    threaded = unit.module_threaded_names()
+    held = []
+    for name, value in scope.items():
+        if not isinstance(name, str) or name not in threaded:
+            continue
+        node = _read_of(value)
+        if node is not None and _may_be_changed(node):
+            held.append((name, node))
+    return held
+
+
+def _module_reads_reached(definition):
+    """``[(reader, name, reference)]``: the module binding of each global
+    ``definition`` reads where it is called
+    (``FunctionDef._module_global_references``), and of each global a source
+    function it calls by name reads, through every such call; ``reader`` the
+    function that reads it, ``definition`` first.  A function whose module
+    read the module body does not decide is refused by name where its body
+    is reduced; it adds nothing here."""
+    from .nodes import FunctionDef
+    from .panic import SugarNotWritten
+
+    found = []
+    seen = set()
+    pending = [definition]
+    while pending:
+        current = pending.pop(0)
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        if not isinstance(current, FunctionDef):
+            continue
+        try:
+            references = current._module_global_references()
+        except SugarNotWritten:
+            references = {}
+        found.extend((current, name, references[name]) for name in sorted(references))
+        for inner in _body_calls_by_name(current):
+            try:
+                callee = inner.unit.source_function_definition_for_call(inner)
+            except SugarNotWritten:
+                callee = None
+            if callee is not None and id(callee) not in seen:
+                pending.append(callee)
+    return found
+
+
+def _body_calls_by_name(definition):
+    """The calls ``definition``'s body makes by a bare name, not inside a
+    nested ``def``, ``class`` or ``lambda`` (which run when called)."""
+    from .nodes import AsyncFunctionDef, Call, ClassDef, FunctionDef, Lambda, Name, Node
+
+    stack = list(definition.body)
+    while stack:
+        current = stack.pop()
+        if isinstance(current, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef)):
+            continue
+        if isinstance(current, Call) and isinstance(current.func, Name):
+            yield current
+        for _name, _index, child in current._child_edges():
+            if isinstance(child, Node):
+                stack.append(child)
 
 
 # Source statement nodes whose evaluation cannot raise (``Try._HALT_FREE_NODES``,
@@ -2022,19 +2229,88 @@ def _halts_only_in_its_store(statement, name, before, after) -> bool:
         return False
     if before is None or not _mutated(after):
         return False
-    receiver = getattr(after.call, "receiver", None)
+    receiver = getattr(getattr(after, "call", None), "receiver", None)
     return receiver is not None and same_object(_identity(receiver), before)
 
 
-def _the_call_alone(statement, call) -> bool:
-    """``statement`` is ``call`` in statement position: nothing else it
-    evaluates can halt before or after the call."""
-    if getattr(statement, "kind", None) != "Expr":
-        return False
-    value = getattr(statement, "value", None)
-    return value is call or (
-        value is not None and _handle(value) is _handle(call)
-    )
+def _halts_before(statement, call) -> bool:
+    """Whether something ``statement`` evaluates before ``call`` may halt.
+
+    Python evaluates a node's operands in order (an assignment's value before
+    its targets) and the node itself after them.  So what runs before
+    ``call`` is, at every node on the path from ``statement`` down to it, the
+    operands evaluated before the one that holds it.  A halt there leaves
+    every object as the statement found it; a halt inside ``call`` or after
+    it (the rest of the statement, the node that consumes the call's value)
+    finds the objects as the call left them.  One rule wherever the call
+    sits: a statement alone, an assignment's value, an argument, a
+    condition, a returned value.  A call the walk does not find may follow
+    anything."""
+    path = _path_to(statement, call)
+    if path is None:
+        return True
+    for node, position in path:
+        for _name, _index, earlier in _evaluation_order(node)[:position]:
+            if not _cannot_halt(earlier):
+                return True
+    return False
+
+
+def _evaluation_order(node):
+    """``node``'s child edges in the order Python evaluates them: an
+    assignment's value first, every other node its grammar order."""
+    edges = node._child_edges()
+    if getattr(node, "kind", None) in ("Assign", "AnnAssign"):
+        return (
+            *(edge for edge in edges if edge[0] == "value"),
+            *(edge for edge in edges if edge[0] != "value"),
+        )
+    return edges
+
+
+def _path_to(statement, call):
+    """``[(node, position)]`` from ``statement`` down to ``call``: each node
+    on the way and the position (``_evaluation_order``) of the child that
+    holds ``call``; None when ``call`` is not evaluated in ``statement``."""
+    from .nodes import AsyncFunctionDef, ClassDef, FunctionDef, Lambda, Node
+
+    target = _handle(call)
+    stack = [(statement, ())]
+    while stack:
+        node, path = stack.pop()
+        if node is call or _handle(node) is target:
+            return list(path)
+        if node is not statement and (
+            isinstance(node, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef))
+            or getattr(node, "kind", None) in _READ_KINDS
+        ):
+            continue
+        for position, (_name, _index, child) in enumerate(_evaluation_order(node)):
+            if isinstance(child, Node):
+                stack.append((child, (*path, (node, position))))
+    return None
+
+
+def _cannot_halt(node) -> bool:
+    """``node``'s evaluation cannot raise: a read of a binding
+    (``_READ_KINDS``), a constant, or a tuple or list display of such
+    (``Try._HALT_FREE_NODES``)."""
+    from .nodes import Node
+
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        kind = getattr(current, "kind", None)
+        if kind in _READ_KINDS or kind == "Constant":
+            continue
+        if kind not in ("Tuple", "List"):
+            return False
+        stack.extend(
+            child
+            for _name, _index, child in current._child_edges()
+            if isinstance(child, Node)
+        )
+    return True
 
 
 def _actual_after(site_node, state, label, tags, *, holds_at_halt=False):
@@ -2063,17 +2339,23 @@ def _apply_actual_states(statement, pre_scope, scope, havocked, applied):
     tags = occurrence_tags_of(statement)
     binding = {}
     havoc_names = []
-    for actual, state, index, holds_at_halt in applied:
+    for actual, state, label, holds_at_halt in applied:
         exact, containing = aliases(scope, actual)
         after = None
         for name in exact:
-            if name in binding or not _untouched(name, pre_scope, scope, havocked):
+            if name in binding:
+                if binding[name] is not after and name not in havoc_names:
+                    # Two calls of the statement changed the object: which
+                    # left it last is not followed here.
+                    havoc_names.append(name)
+                continue
+            if not _untouched(name, pre_scope, scope, havocked):
                 continue
             if after is None:
                 after = _actual_after(
                     statement,
                     state,
-                    f"actual:{index}",
+                    label,
                     tags,
                     holds_at_halt=holds_at_halt,
                 )

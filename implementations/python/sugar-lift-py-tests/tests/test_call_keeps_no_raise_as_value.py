@@ -213,3 +213,76 @@ def test_the_projection_stamps_the_call_on_a_raise_with_no_path(callsite) -> Non
     )
     (face,) = callsite.project_producer_outcome(keyed, None).exits
     assert face.effect.occurrence_id == "callee.py:2:4@call:inner"
+
+
+# ---------------------------------------------------------------------------
+# What the callee did to an object its caller sees: one projection, both arms.
+# ---------------------------------------------------------------------------
+
+
+def _caller_holding_a_receiver():
+    """A caller context binding ``box`` to an object, and the field store a
+    callee made on that object (``caller_visible_stores``' entries)."""
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor import (
+        ObjectValue,
+        ReceiverFieldStoreValue,
+        TermValue,
+    )
+
+    receiver = ObjectValue("Box", (), identity="box-1")
+    ctx = ReduceContext.root(owner="caller-visible-store").with_temporal(
+        ReduceContext.root(owner="caller-visible-store-seed").temporal.bind_value(
+            "box", receiver
+        )
+    )
+    store = ReceiverFieldStoreValue(receiver, "x", TermValue(1))
+    return ctx, store, receiver.with_field_store("x", TermValue(1))
+
+
+def test_a_halt_leaving_the_call_carries_the_callees_field_store(callsite) -> None:
+    """The callee stored ``box.x`` and raised: the halt reaches the caller at
+    the call with the store in its record, and the caller's ``box`` is the
+    object after the store (``at_the_call``), never the one before it."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import ExitSet, Halted
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    ctx, store, stored = _caller_holding_a_receiver()
+    raised = ExitSet.halted(
+        RaiseEffect.for_builtin("ValueError", blame="callee.py:3:4"),
+        state=_ReducedBlock((store,), True, ()),
+    )
+
+    (face,) = callsite.project_producer_outcome(raised, ctx).exits
+
+    assert isinstance(face, Halted)
+    assert face.state.entries == (store,)
+    assert face.state.context.temporal.value_for("box") == stored
+
+
+def test_a_completed_call_carries_the_callees_field_store_to_its_statement(
+    callsite,
+) -> None:
+    """The callee stored ``box.x`` and completed: the Call's value carries
+    the store (``CallerStoreValue``) through whatever consumes it, and the
+    statement that applies its writes sees ``box`` after the store -- the
+    same store the halt arm carries, wherever the call sits."""
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        bind_walrus_binds,
+        caller_stores_of,
+        peel_walrus_binds,
+    )
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    ctx, store, stored = _caller_holding_a_receiver()
+    completed = ExitSet.completed(BlockValue((store,), can_fall_through=True))
+
+    value = callsite.project_producer_outcome(completed, ctx).completed_value()
+
+    binds, call = peel_walrus_binds(value)
+    assert isinstance(call, CallSiteValue)
+    assert caller_stores_of(binds) == ((), (store,))
+    assert bind_walrus_binds(binds, ctx).temporal.value_for("box") == stored
