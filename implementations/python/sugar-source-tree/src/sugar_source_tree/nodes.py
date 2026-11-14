@@ -94,6 +94,12 @@ _SCOPE_OWNER_CID = object()
 _SUBSTITUTION_TRACE_BUILDER = object()
 _BINDING_ENTRY_FACTORY = object()
 _RECEIVER_FIELD_PROJECTIONS = object()
+# The iteration segments (innermost first) of the unrolled loop copy a body is
+# being substituted for.  A statement substituted once per iteration is one
+# evaluation per iteration; its evaluation coordinate
+# (``AugAssign._evaluation_key``) carries these so two iterations never share
+# one key.
+_EVALUATION_OCCURRENCE = object()
 # Set by a door that threads a module body for what it does AT IMPORT (the
 # export prefix).  A ``def`` statement binds a function object; its body does
 # not run until something calls it.  Under this key a body that cannot thread
@@ -3040,6 +3046,22 @@ def _iteration_copies(loop, index: int, statements) -> tuple:
 
     segment = iteration_segment(loop, index)
     return tuple(as_occurrence(statement, segment) for statement in statements)
+
+
+def _iteration_scope(loop, index: int, bindings, outer):
+    """The scope for substituting iteration ``index`` of ``loop``'s body:
+    ``bindings``, with that iteration's segment ahead of the segments
+    ``outer`` (the scope the loop itself was substituted in) already stood
+    for -- an inner loop's iteration inside this one."""
+    from .shadow import iteration_segment
+
+    return {
+        **bindings,
+        _EVALUATION_OCCURRENCE: (
+            iteration_segment(loop, index),
+            *outer.get(_EVALUATION_OCCURRENCE, ()),
+        ),
+    }
 
 
 class _Splice:
@@ -8185,9 +8207,36 @@ class AugAssign(Statement):
                     *desc.slots,
                     ("prior_read", Child(_handle_of(old_read))),
                     ("operator_site", Leaf(pre_sub_operator_site)),
+                    ("evaluation", Leaf(self._evaluation_key(scope))),
                 ),
             ),
             self.reporter,
+        )
+
+    def _evaluation_key(self, scope) -> str:
+        """The coordinate of this statement's one evaluation (temporal choice
+        1, #7661): its source occurrence and the loop iterations it is
+        substituted for.  ``AugAssignSugar`` binds its completed value under
+        this key; every later read substitution rewrites is an
+        ``EvaluationRef`` to it.  A re-substitution keeps the key it was given.
+        """
+        existing = getattr(self, "evaluation", None)
+        if isinstance(existing, str):
+            return existing
+        from sugar_lift_python_source.canonical import cid_of_json
+        from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+        from .shadow import occurrence_tags_of
+
+        return EVALUATION_PREFIX + cid_of_json(
+            {
+                "kind": "python-statement-evaluation-v1",
+                "statementFragmentCid": self.fragment.seal().cid,
+                "occurrence": [
+                    *scope.get(_EVALUATION_OCCURRENCE, ()),
+                    *occurrence_tags_of(self),
+                ],
+            }
         )
 
     def _mint_operator_site_from_structure(self):
@@ -8237,14 +8286,36 @@ class AugAssign(Statement):
         )
 
     def substitution_binding(self, scope):
-        # `x OP= e` — lexical rebind is evaluation-time ScopeRebind of the
-        # authenticated inplace result.  Thread the Name itself so later uses
-        # stay NameSugar and read temporal (not a substitute-time BinOp/__add__).
-        # Only a plain Name target binds.
+        # `x OP= e` binds `x` to a reference to this statement's one
+        # evaluation (temporal choice 1, #7661): AugAssignSugar binds the
+        # authenticated inplace result under the evaluation key, and every
+        # later read is an EvaluationRef to it -- never a substitute-time
+        # BinOp/__add__, never the name looked up by spelling.  Only a plain
+        # Name target binds.  A statement that was never substituted carries
+        # no key: it binds the Name itself, read from the temporal.
         del scope
         if not isinstance(self.target, Name):
             return None
-        return {self.target.id: self.target}
+        evaluation = getattr(self, "evaluation", None)
+        if not isinstance(evaluation, str):
+            return {self.target.id: self.target}
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode
+
+        return {
+            self.target.id: materialize(
+                self.unit,
+                ShadowNode(
+                    "EvaluationRef",
+                    self.target.span,
+                    (
+                        ("evaluation", Leaf(evaluation)),
+                        ("name", Leaf(self.target.id)),
+                    ),
+                ),
+                self.reporter,
+            )
+        }
 
     def _construct_sugar(self):
         """`<target> OP= <value>` — Name: project_inplace owns ScopeRebind.
@@ -8264,6 +8335,7 @@ class AugAssign(Statement):
             op_site = getattr(self, "operator_site", None)
             if op_site is None:
                 op_site = self._mint_operator_site_from_structure()
+            evaluation = getattr(self, "evaluation", None)
             return AugAssignSugar(
                 name=self.target.id,
                 left=prior.sugar(),
@@ -8272,6 +8344,7 @@ class AugAssign(Statement):
                 operation=self.op.project_inplace,
                 op_site=op_site,
                 site=self.fragment,
+                evaluation=evaluation if isinstance(evaluation, str) else None,
             )
         if isinstance(self.target, Attribute):
             from sugar_lift_py_tests.sugar.augassign_sugar import (
@@ -8500,7 +8573,9 @@ class For(Statement):
                         final_target_bindings = None
                         for index, element_bindings in enumerate(bindings):
                             final_target_bindings = element_bindings
-                            iter_scope = {**carried, **element_bindings}
+                            iter_scope = _iteration_scope(
+                                self, index, {**carried, **element_bindings}, scope
+                            )
                             new_body, _c = self._substitute_body(self.body, iter_scope)
                             # Each iteration is its own evaluation of the body.
                             new_body = _iteration_copies(self, index, new_body)
@@ -8523,6 +8598,13 @@ class For(Statement):
                                 if final_target_bindings is not None
                                 else carried
                             )
+                            # The else runs once, outside every iteration.
+                            else_scope = {
+                                **else_scope,
+                                _EVALUATION_OCCURRENCE: scope.get(
+                                    _EVALUATION_OCCURRENCE, ()
+                                ),
+                            }
                             else_body, _c = self._substitute_body(
                                 self.orelse, else_scope
                             )
@@ -8701,7 +8783,9 @@ class For(Statement):
         broke = False
         for index, element_bindings in enumerate(bindings):
             final_target_bindings = element_bindings
-            iteration = {**carried, **element_bindings}
+            iteration = _iteration_scope(
+                self, index, {**carried, **element_bindings}, scope
+            )
             reduced = self._substitute_controlled_suite(self.body, iteration)
             if reduced is None:
                 return None
@@ -8726,6 +8810,11 @@ class For(Statement):
                 if final_target_bindings is not None
                 else carried
             )
+            # The else runs once, outside every iteration.
+            else_scope = {
+                **else_scope,
+                _EVALUATION_OCCURRENCE: scope.get(_EVALUATION_OCCURRENCE, ()),
+            }
             else_body, _changed = self._substitute_body(self.orelse, else_scope)
             unrolled.extend(else_body)
         return tuple(unrolled), final_target_bindings
@@ -8981,7 +9070,9 @@ class While(Statement):
                     unrolled.extend(else_body)
                 return tuple(unrolled)
             if controlled:
-                reduced = For._substitute_controlled_suite(self, self.body, carried)
+                reduced = For._substitute_controlled_suite(
+                    self, self.body, _iteration_scope(self, index, carried, scope)
+                )
                 if reduced is None:
                     return None
                 new_body, carried, action = reduced
@@ -8989,6 +9080,7 @@ class While(Statement):
                 if action == "break":
                     return tuple(unrolled)
                 continue
+            carried = _iteration_scope(self, index, carried, scope)
             new_body, _c = self._substitute_body(self.body, carried)
             new_body = _iteration_copies(self, index, new_body)
             unrolled.extend(new_body)
@@ -15574,6 +15666,32 @@ class BindingCoordinateRef(Expression):
         )
 
         return BindingCoordinateRefSugar(self.coordinate, self.fragment)
+
+
+class EvaluationRef(Expression):
+    """A read rewritten to a reference to one statement's evaluation.
+
+    Temporal choice 1 (#7661): after ``x += e`` substitution rewrites a read
+    of ``x`` to ``EvaluationRef(<the statement's evaluation key>)``; the
+    statement binds its completed value under that key at reduce
+    (``AugAssign._evaluation_key``, ``EvaluationRefSugar``).
+    """
+
+    evaluation: str
+    name: str
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
+            EvaluationRefSugar,
+        )
+
+        return EvaluationRefSugar(
+            evaluation=self.evaluation, name=self.name, site=self.fragment
+        )
 
 
 class LoopBindingRef(Expression):

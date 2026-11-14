@@ -23,9 +23,24 @@ class GuardedFaces(FloorValue):
     can_fall_through: bool = True
     continuation_guard: Formula | None = None
     unconditional_entries: tuple = ()
+    # ``(evaluation key, value)``: the statement evaluations a completed arm
+    # made (``AugAssign._evaluation_key``).  A key names one statement inside
+    # one arm, so after the ``if`` it is read only by the phi's arm for that
+    # face, under that face's guard; it carries the arm's value there.
+    evaluations: tuple = ()
 
     def contribution(self):
         return (*self.unconditional_entries, *self.entries)
+
+    def extend_scope(self, ctx):
+        if not self.evaluations:
+            return ctx
+        from dataclasses import replace
+
+        temporal = ctx.temporal
+        for key, value in self.evaluations:
+            temporal = temporal.bind_value(key, value)
+        return replace(ctx, temporal=temporal)
 
     def inv_contribution(self):
         return tuple(

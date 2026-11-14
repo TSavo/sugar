@@ -7,6 +7,11 @@ from sugar_lift_py_tests.floor import FloorValue
 
 from .temporal_binding import TemporalBinding
 
+# A statement's one evaluation is bound under this prefix plus its coordinate
+# (``AugAssign._evaluation_key``). A Python identifier never holds ``:``, so
+# an evaluation key can never be read as a source name.
+EVALUATION_PREFIX = "evaluation:"
+
 
 @dataclass(frozen=True)
 class TemporalContext:
@@ -35,6 +40,21 @@ class TemporalContext:
             if binding.name == name:
                 return binding.value
         return None
+
+    def latest(self, *names: str) -> TemporalBinding | None:
+        """The binding of whichever of ``names`` was bound last, or None."""
+        for binding in reversed(self.bindings):
+            if binding.name in names:
+                return binding
+        return None
+
+    def evaluations(self) -> tuple[TemporalBinding, ...]:
+        """Every statement evaluation this temporal holds, by its key."""
+        return tuple(
+            binding
+            for binding in self.bindings
+            if binding.name.startswith(EVALUATION_PREFIX)
+        )
 
     def bind_value(
         self, name: str, value: FloorValue, *, blame: str | None = None

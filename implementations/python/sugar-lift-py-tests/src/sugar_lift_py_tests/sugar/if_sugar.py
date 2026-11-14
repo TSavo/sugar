@@ -9,8 +9,10 @@ effect red under `c`. That is the whole of `if`'s MEANING.
 The other half of an if -- what a name BINDS to after the branch (the phi
 `x = then_x if c else else_x`) -- is temporal, and lives entirely in
 `If.substitute` as an `IfExp` rewrite. So this sugar does NO binding join:
-the `GuardedFaces` it builds carries no bindings. substitute ages the
-bindings; this reads off the guarded facts.
+the `GuardedFaces` it builds binds no name. substitute ages the bindings;
+this reads off the guarded facts. What it carries out of the arms is the
+statement evaluations they made (`_arm_evaluations`): the phi's arm is a
+reference to one of them (temporal choice 1, #7661).
 
 The guard here is written from the pure-meaning primitives:
 `reduce_block_to_exitset` (block reduction), `entry.guarded(formula)`
@@ -117,6 +119,48 @@ def _is_linear(exits) -> bool:
         and isinstance(exits.exits[0], Completed)
         and exits.exits[0].guard == true_guard()
         and not exits.exits[0].faces
+    )
+
+
+_UNSEEN = object()
+
+
+def _arm_evaluations(arms, incoming) -> tuple:
+    """The statement evaluations the completed faces of an if's suites made.
+
+    Each key names one statement's evaluation (``AugAssign._evaluation_key``)
+    and a statement sits in one suite, so after the ``if`` a key is read only
+    by the phi's arm for that suite (``If.substitute``), under that suite's
+    guard.  The ``if`` carries those values out; it carries no name.  A key
+    that two completed faces bound to different values has no one value: it
+    is left out, and its read is the name read it was before.
+    """
+    from sugar_lift_py_tests.outcome import Completed
+
+    before = getattr(incoming, "temporal", None)
+    found: dict = {}
+    conflicted: set = set()
+    for arm in arms:
+        for exit_ in getattr(arm, "exits", ()):
+            if not isinstance(exit_, Completed):
+                continue
+            context = getattr(exit_.value, "context", None)
+            temporal = getattr(context, "temporal", None)
+            if temporal is None:
+                continue
+            for binding in temporal.evaluations():
+                if (
+                    before is not None
+                    and before.value_if_bound(binding.name) is binding.value
+                ):
+                    continue
+                prior = found.get(binding.name, _UNSEEN)
+                if prior is _UNSEEN:
+                    found[binding.name] = binding.value
+                elif prior is not binding.value:
+                    conflicted.add(binding.name)
+    return tuple(
+        (key, value) for key, value in found.items() if key not in conflicted
     )
 
 
@@ -386,6 +430,7 @@ class IfSugar(Sugar):
             else_face=else_face,
             observed_formula=observed_formula,
             authentication=authentication,
+            incoming=branch_ctx,
         )
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
@@ -432,6 +477,7 @@ class IfSugar(Sugar):
         else_face,
         observed_formula,
         authentication,
+        incoming=None,
     ) -> Outcome:
         from dataclasses import replace as _replace
 
@@ -527,6 +573,7 @@ class IfSugar(Sugar):
             can_fall_through=can_fall_through,
             continuation_guard=continuation_guard,
             unconditional_entries=unconditional_entries,
+            evaluations=_arm_evaluations((then_exits, else_exits), incoming),
         )
         if not halted:
             return Complete(faces)

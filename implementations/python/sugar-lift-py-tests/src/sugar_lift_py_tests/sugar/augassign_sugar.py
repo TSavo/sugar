@@ -23,12 +23,17 @@ class AugAssignSugar(Sugar):
       1. Evaluate ``left`` (prior binding) once
       2. Evaluate ``rhs`` once
       3. ``result = project_augmented / project_inplace`` (iadd edge, NotImplemented law)
-      4. On success: ``ScopeRebind(name, result)`` — iadd result IS the binding
-      5. On halt: no ScopeRebind (Incomplete.and_then never steps) — prior binding stands
+      4. On success: the iadd result IS the binding.  It is bound under the
+         statement's evaluation key (``evaluation``), which every later read
+         substitution rewrote (``EvaluationRef``) answers; and under the name,
+         for the readers substitution does not reach (a live loop's next item,
+         a class body, the export prefix's module bindings).
+      5. On halt: no rebind (Incomplete.and_then never steps) — prior binding stands
 
     Substitute does **not** thread ``_make_binop`` (__add__) as the rebind.
-    Later name uses stay as Name and read the temporal ScopeRebind.  Dual-eval
-    of discarded project_inplace + add-binding is the forbidden shape.
+    Dual-eval of discarded project_inplace + add-binding is the forbidden
+    shape.  A statement that was never substituted has no evaluation key and
+    rebinds the name alone.
     """
 
     name: str
@@ -38,6 +43,7 @@ class AugAssignSugar(Sugar):
     operation: Callable
     op_site: object = dataclass_field(compare=False)
     site: object = dataclass_field(compare=False)
+    evaluation: str | None = None
 
     @classmethod
     def witnesses(cls):
@@ -50,9 +56,6 @@ class AugAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
-        from sugar_lift_py_tests.outcome import Complete
-
         return self.left.desugar(ctx).and_then(
             lambda left: self.right.desugar(ctx).and_then(
                 lambda right: project_augmented(
@@ -61,8 +64,20 @@ class AugAssignSugar(Sugar):
                     operator=self.operator,
                     projector=self.operation,
                     site=self.op_site,
-                ).and_then(lambda result: Complete(ScopeRebind(self.name, result)))
+                ).and_then(self._rebind)
             )
+        )
+
+    def _rebind(self, result) -> Outcome:
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind, ScopeRebinds
+        from sugar_lift_py_tests.outcome import Complete
+
+        if self.evaluation is None:
+            return Complete(ScopeRebind(self.name, result))
+        # The name first, the evaluation last: a read of the evaluation is the
+        # latest of the two until something rebinds the name.
+        return Complete(
+            ScopeRebinds(((self.name, result), (self.evaluation, result)))
         )
 
 
