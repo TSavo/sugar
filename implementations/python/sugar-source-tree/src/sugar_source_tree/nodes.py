@@ -13276,32 +13276,6 @@ class With(Statement):
         except ContractRefProtocolError:
             return coordinate, _UNSEATED_MANAGER_ROW
 
-    def _published_generator_resource_testimony(self, item: WithItem):
-        """Return the producer's one closed generator-resource surface."""
-        context = self._require_construction_context(
-            owner="With._published_generator_resource_testimony"
-        )
-        from sugar_lift_py_tests.context_manager_resolution import (
-            SourceDerivedGeneratorResourceRefV1,
-            SourceFragmentCoordinateV1,
-            TreeConstructionContextV1,
-        )
-
-        if not isinstance(context, TreeConstructionContextV1):
-            return None
-        start_line, start_col, end_line, end_col = item._manager_use_site_span()
-        coordinate = SourceFragmentCoordinateV1(
-            self.unit.source_cid,
-            start_line,
-            start_col,
-            end_line,
-            end_col,
-        )
-        published = context.source_derived_contract_refs.get(coordinate)
-        if isinstance(published, SourceDerivedGeneratorResourceRefV1):
-            return published
-        return None
-
     def _published_non_manager_head(self, item: WithItem):
         """The producer's absence proof for a direct-call head, else None."""
         if not isinstance(item.context_expr, Call):
@@ -13538,16 +13512,11 @@ class With(Statement):
             _ = resolution.shared_expected_type_operand
             _ = resolution.shared_binding
             return resolution
-        from sugar_lift_py_tests.context_manager_resolution import (
-            SourceDerivedGeneratorResourceRefV1,
-        )
-
         if not isinstance(
             resolution,
             (
                 ContextManagerContractRefV1,
                 SourceDerivedContextManagerRefV1,
-                SourceDerivedGeneratorResourceRefV1,
                 FormalManagerRefV1,
             ),
         ):
@@ -13851,11 +13820,8 @@ class With(Statement):
                 has_exit=non_manager.has_exit,
             )
 
-        published_generator_resource = self._published_generator_resource_testimony(
-            item
-        )
         generator_manager = self._generator_manager_sugar(item)
-        if generator_manager is not None and published_generator_resource is None:
+        if generator_manager is not None:
             from sugar_lift_py_tests.sugar.generator_with_sugar import (
                 GeneratorObjectWithSugar,
                 GeneratorWithSugar,
@@ -13899,10 +13865,6 @@ class With(Statement):
                 FactoredSourceDerivedContextManagerRefV1,
                 FormalManagerRefV1,
                 SourceDerivedContextManagerRefV1,
-            )
-
-            from sugar_lift_py_tests.context_manager_resolution import (
-                SourceDerivedGeneratorResourceRefV1,
             )
 
             from sugar_lift_py_tests.context_manager_resolution import (
@@ -13963,11 +13925,6 @@ class With(Statement):
                     site=self.fragment,
                 )
 
-            generator_protocol = (
-                resolved_ref.generator_protocol
-                if isinstance(resolved_ref, SourceDerivedGeneratorResourceRefV1)
-                else None
-            )
             if isinstance(resolved_ref, FormalManagerRefV1) and isinstance(
                 resolved_ref.semantics, ProtocolResourceSemanticsV1
             ):
@@ -14002,10 +13959,11 @@ class With(Statement):
                     site=self.fragment,
                 )
 
-            if (
-                isinstance(resolved_ref, SourceDerivedContextManagerRefV1)
-                or generator_protocol is not None
+            if isinstance(
+                resolved_ref, SourceDerivedContextManagerRefV1
             ) and isinstance(resolved_ref.semantics, ProtocolResourceSemanticsV1):
+                from dataclasses import replace
+
                 from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
                     WithSourceResourceSugar,
                 )
@@ -14017,53 +13975,16 @@ class With(Statement):
                 enter_definition, exit_definition = (
                     self._require_native_resource_definitions(resolved_ref)
                 )
-                if generator_protocol is not None:
-                    from sugar_lift_py_tests.sugar.method_call_sugar import (
-                        MethodCallSugar,
-                    )
-                    from sugar_lift_py_tests.sugar.resource_coord_sugar import (
-                        ManagerRefSugar,
-                    )
-
-                    receiver = ManagerRefSugar(slot_id=manager_slot, site=self.fragment)
-                    enter_sugar = MethodCallSugar(
-                        receiver=receiver,
-                        name="__enter__",
-                        args=(),
-                        native_definition_coordinate=enter_definition,
-                        site=self.fragment,
-                    )
-                    exit_sugar = MethodCallSugar(
-                        receiver=receiver,
-                        name="__exit__",
-                        args=(
-                            item._make_exit_type_ref().sugar(),
-                            item._make_exit_value_ref().sugar(),
-                            item._make_exit_traceback_ref().sugar(),
-                        ),
-                        native_definition_coordinate=exit_definition,
-                        site=self.fragment,
-                    )
-                else:
-                    from dataclasses import replace
-
-                    enter_sugar = replace(
-                        item._make_enter_call().sugar(),
-                        native_definition_coordinate=enter_definition,
-                    )
-                    exit_sugar = replace(
-                        item._make_parametric_exit_call().sugar(),
-                        native_definition_coordinate=exit_definition,
-                    )
-                manager_sugar = (
-                    generator_manager
-                    if generator_protocol is not None
-                    else item.context_expr.sugar()
+                enter_sugar = replace(
+                    item._make_enter_call().sugar(),
+                    native_definition_coordinate=enter_definition,
                 )
-                if (
-                    generator_protocol is None
-                    and resolved_ref.call_actual_sugars is not None
-                ):
+                exit_sugar = replace(
+                    item._make_parametric_exit_call().sugar(),
+                    native_definition_coordinate=exit_definition,
+                )
+                manager_sugar = item.context_expr.sugar()
+                if resolved_ref.call_actual_sugars is not None:
                     from sugar_lift_py_tests.context_manager_resolution import (
                         SourceFragmentCoordinateV1,
                     )
@@ -14078,12 +13999,7 @@ class With(Statement):
                     manager=manager_sugar,
                     enter=enter_sugar,
                     exit=exit_sugar,
-                    protocol=self._protocol_at_exit_face(
-                        generator_protocol
-                        if generator_protocol is not None
-                        else resolved_ref.protocol,
-                        item,
-                    ),
+                    protocol=self._protocol_at_exit_face(resolved_ref.protocol, item),
                     summary=resolved_ref,
                     body=tuple(stmt.sugar() for stmt in self.body),
                     manager_slot_id=manager_slot,

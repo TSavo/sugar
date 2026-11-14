@@ -17,7 +17,6 @@ import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerResolutionGapV1,
-    SourceDerivedGeneratorResourceRefV1,
 )
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
@@ -141,10 +140,6 @@ def test_local_contextmanager_seats_its_own_frame(tmp_path):
         tmp_path, _manager(_SUPPRESSES_VALUE_ERROR, "pass")
     )
     context = source_file.root.unit.construction_context
-    assert not any(
-        isinstance(ref, SourceDerivedGeneratorResourceRefV1)
-        for ref in context.source_derived_contract_refs.values()
-    )
     assert len(context.source_manager_provider_calls) == 1
     assert type(with_node.sugar()) is GeneratorWithSugar
 
@@ -320,12 +315,8 @@ def test_a_body_stop_iteration_propagates_as_itself(tmp_path):
 
 
 def test_an_undecorated_local_generator_never_constructs_a_manager(tmp_path):
-    source_file, with_node = _with(
+    _source_file, with_node = _with(
         tmp_path, "def cm():\n    yield 1\ndef f():\n    with cm():\n        pass\n"
-    )
-    refs = source_file.root.unit.construction_context.source_derived_contract_refs
-    assert not any(
-        isinstance(ref, SourceDerivedGeneratorResourceRefV1) for ref in refs.values()
     )
     # ``cm()`` returns a generator object, which has no ``__enter__``: the
     # With raises the interpreter's own TypeError before enter and body

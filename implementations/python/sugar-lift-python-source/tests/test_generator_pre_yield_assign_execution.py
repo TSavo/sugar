@@ -13,7 +13,7 @@ import tempfile
 
 import pytest
 
-from sugar_lift_py_tests.floor import NoneValue, TermValue
+from sugar_lift_py_tests.floor import NoneValue
 from sugar_lift_py_tests.generator_construction import (
     AssignStepV1,
     AttributeAssignStepV1,
@@ -24,7 +24,6 @@ from sugar_lift_py_tests.generator_construction import (
 )
 from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
 
@@ -188,40 +187,3 @@ def test_tampered_assign_fragment_refuses_stable_step_identity():
     )
     assert prior.fragment_cid == authentic
     assert prior.fragment_cid != tampered_cid
-
-
-def test_enter_resource_outcome_runs_pre_yield_assign():
-    """Protocol enter path also executes AssignStep before yield."""
-    from types import SimpleNamespace
-
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceFragmentCoordinateV1,
-    )
-    from sugar_lift_python_source.manager_protocol_construction import (
-        EnteredGeneratorManagerStateV1,
-        construct_generator_backed_protocol,
-    )
-
-    steps = _steps("def g():\n    prior = None\n    yield 1\n")
-    frame = SimpleNamespace(
-        frame_cid=cid_of_json({"f": "pre-yield-enter"}),
-        generator_steps=steps,
-        runtime_entries=(),
-    )
-    enter = SourceFragmentCoordinateV1("blake3-512:" + "a" * 128, 1, 0, 2, 0)
-    exit_ = SourceFragmentCoordinateV1("blake3-512:" + "b" * 128, 3, 0, 4, 0)
-    protocol = construct_generator_backed_protocol(
-        frame=frame,
-        enter_definition=enter,
-        exit_definition=exit_,
-        exit_face_id="face",
-        construction_cid="blake3-512:" + "c" * 128,
-    )
-    outcome = protocol.enter_resource_outcome()
-    entered = outcome.completed_value()
-    assert isinstance(entered, EnteredGeneratorManagerStateV1)
-    assert entered.enter_value == TermValue(1)
-    assert any(
-        isinstance(b, GeneratorAssignBindingV1) and b.name == "prior"
-        for b in entered.machine.binding_state
-    )

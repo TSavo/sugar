@@ -925,16 +925,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context_manager_resolution.py:fd70f0ea43937688:1",
-      "line": 365,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context_manager_resolution.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"generator resource ref refuses non-generator protocol testimony\"",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/corpus_pin.py:e955cb08b6c029b4:1",
       "line": 351,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/corpus_pin.py",
@@ -3902,16 +3892,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "and refuses any halt that is not a proven absent-effect halt.",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:0bc688431d63f096:1",
-      "line": 2207,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"\"\"Return a construction gap when ``construct_generator_backed_protocol`` refused.",
       "wire_marker": "internal-only"
     },
     {
