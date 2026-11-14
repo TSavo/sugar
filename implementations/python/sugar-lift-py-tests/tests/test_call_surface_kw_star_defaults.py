@@ -149,19 +149,31 @@ def test_param_with_annotation_only_still_constructs() -> None:
 
 
 def test_frame_default_sugars_match_param_default_construction() -> None:
-    """Source-visible frame and Param.sugar share the same default door: the
-    frame reads the value the ``def`` statement bound under the default's
-    key (``DefaultValueSugar``), whose expression is that same sugar."""
+    """The source-visible frame reads the value the ``def`` statement bound
+    under each default's key (``DefaultValueSugar``) and never carries the
+    default expression; the statement evaluates exactly the sugar
+    ``Param.sugar`` constructs for it."""
     from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
+    from sugar_source_tree.nodes import (
+        _default_evaluation_key,
+        _definition_default_evaluations,
+    )
 
     tree = _sf("def f(a=1, b=2):\n    return a\n", "frame_defaults.py")
     function = next(n for n in tree.nodes() if isinstance(n, FunctionDef))
     frame = function.source_visible_call_frame()
     params = [n for n in tree.nodes() if isinstance(n, Param)]
     assert len(params) == 2
-    for param, frame_default in zip(params, frame.default_sugars, strict=True):
+    evaluated = _definition_default_evaluations(function)
+    for index, (param, frame_default) in enumerate(
+        zip(params, frame.default_sugars, strict=True)
+    ):
         sugar = param.sugar()
         assert isinstance(sugar, ParamSugar)
         assert isinstance(frame_default, DefaultValueSugar)
-        assert type(sugar.default) is type(frame_default.value)
+        assert not hasattr(frame_default, "value")
+        assert frame_default.evaluation == _default_evaluation_key(function, index)
+        key, statement_sugar = evaluated[index]
+        assert key == frame_default.evaluation
+        assert type(sugar.default) is type(statement_sugar)
         assert isinstance(sugar.default, ConstructedTermSugar)

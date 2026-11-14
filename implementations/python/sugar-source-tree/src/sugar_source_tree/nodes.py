@@ -9197,14 +9197,14 @@ class ClassDef(Statement):
         class body's ``read``: each default bound under its per-parameter key
         (``_default_evaluation_key``, #8020), which the class value carries
         to every call of the method (``ClassDefinitionValue.method_defaults``,
-        ``object_value.bind_method_call``).  A decorated method's descriptor
-        is the class body's descriptor table's, not applied here; its
-        defaults are evaluated where it is called, as before.  So is a
-        default that does not construct: its refusal is deferred to the
-        method's caller, as the method's own is
-        (``_construct_class_method_member``), never dropped."""
-        if not call_applies_own_frame(method):
-            return ()
+        ``object_value.bind_method_call``).  A decorated method
+        (``staticmethod``, ``classmethod``, ``property``) evaluates its
+        defaults the same way, before its decorators apply: its descriptor
+        is the class body's descriptor table's, not applied here, and every
+        call through it binds the carried values.  A default that does not
+        construct is not evaluated here: a call that omits it finds its key
+        unbound and is refused by name (``DefaultValueSugar``), never
+        dropped."""
         from sugar_lift_py_tests.sugar.class_definition_sugar import (
             ConstructedClassMethodDefaultsV1,
         )
@@ -9214,7 +9214,11 @@ class ClassDef(Statement):
         from sugar_source_tree.panic import SugarNotWritten
 
         try:
-            statement = _def_statement_sugar(method, read=read)
+            statement = (
+                _def_statement_sugar(method, read=read)
+                if call_applies_own_frame(method)
+                else _definition_defaults_sugar(method, read=read)
+            )
         except SugarNotWritten:
             return ()
         if not isinstance(statement, DefinitionDefaultsSugar):
@@ -17539,7 +17543,7 @@ class Lambda(Expression):
             # each default's key and its value carries
             # (``LambdaSugar.defaults``, ``LambdaCallable.defaults``).
             default_sugars=tuple(
-                _lambda_default_value_sugar(self, index)
+                _default_value_sugar(self, index)
                 for index, _param in enumerate(self.params)
             ),
             default_fragments=tuple(
@@ -17627,11 +17631,7 @@ class Lambda(Expression):
             # Python evaluates a lambda's defaults where the lambda expression
             # is evaluated, left to right: each default's key and sugar
             # (substituted in the scope the lambda stands in).
-            defaults=tuple(
-                (_default_evaluation_key(self, index), param.default.sugar())
-                for index, param in enumerate(self.params)
-                if param.default is not None
-            ),
+            defaults=_definition_default_evaluations(self),
         )
 
     def _closure_coordinates(self) -> tuple:
@@ -21811,9 +21811,13 @@ def _default_evaluation_key(definition, index: int) -> str:
 
 
 def _default_value_sugar(definition, index: int):
-    """What a call that omits ``definition``'s ``index``-th formal binds to
-    it: the value its ``def`` statement bound under the default's key
-    (``DefaultValueSugar``), or None for a formal with no default."""
+    """What a call that omits the ``index``-th formal of ``definition`` (a
+    ``def`` or a lambda) binds to it: the value its ``def`` statement or
+    lambda expression evaluated under the default's key
+    (``DefaultValueSugar``), bound where the call binds its actuals.  The
+    default expression is never evaluated at the call: a call where nothing
+    bound the key is refused by name.  None for a formal with no
+    default."""
     default = definition.params[index].default
     if default is None:
         return None
@@ -21821,43 +21825,41 @@ def _default_value_sugar(definition, index: int):
 
     return DefaultValueSugar(
         evaluation=_default_evaluation_key(definition, index),
-        value=default.sugar(),
         site=default.fragment,
     )
 
 
-def _lambda_default_value_sugar(lambda_, index: int):
-    """What a call that omits ``lambda_``'s ``index``-th formal binds to it:
-    the value the lambda expression evaluated under the default's key, which
-    the lambda value carries and the call binds (``LambdaCallable.defaults``,
-    ``object_value.bind_call``).  The default expression is never evaluated
-    at the call: a call whose callee carries no such value is refused by
-    name.  None for a formal with no default."""
-    default = lambda_.params[index].default
-    if default is None:
-        return None
-    from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
-
-    return DefaultValueSugar(
-        evaluation=_default_evaluation_key(lambda_, index),
-        value=None,
-        site=default.fragment,
+def _definition_default_evaluations(statement, *, read=None) -> tuple:
+    """``((key, sugar), ...)``: each default of the ``def`` statement or
+    lambda ``statement``, left to right, with the per-parameter key its value
+    is bound under (``_default_evaluation_key``).  The sugars are the
+    statement's own defaults, substituted in the scope the statement runs in
+    and read through ``read`` (by default each one's own sugar).  The one
+    construction of a definition's defaults: the undecorated statement
+    (``_definition_defaults_sugar``), the decorated one
+    (``_decorator_application_sugar``) and the lambda expression
+    (``Lambda._construct_sugar``) evaluate exactly these."""
+    return tuple(
+        (
+            _default_evaluation_key(statement, index),
+            param.default.sugar() if read is None else read(param.default),
+        )
+        for index, param in enumerate(statement.params)
+        if param.default is not None
     )
 
 
 def _definition_defaults_sugar(statement, *, read=None):
-    """An undecorated ``def`` statement in a body: it evaluates each default,
-    left to right, where it stands, and binds each completed value under the
+    """A ``def`` statement's defaults where its decorators apply nothing (an
+    undecorated statement in a body, or a class-body method, whose
+    descriptor is the class body's): it evaluates each default, left to
+    right, where it stands, and binds each completed value under the
     default's key (``_default_evaluation_key``), as an assignment binds its
     value (``AssignSugar``).  Every face of a default is the statement's.
     The defaults are the statement's own, substituted in the scope the
     statement runs in, so ``x = 1; def f(a=x): ...; x = 2`` binds 1.  A
     statement with no default reduces nothing (``InertSugar``)."""
-    defaults = tuple(
-        (index, param.default)
-        for index, param in enumerate(statement.params)
-        if param.default is not None
-    )
+    defaults = _definition_default_evaluations(statement, read=read)
     if not defaults:
         from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
@@ -21865,15 +21867,30 @@ def _definition_defaults_sugar(statement, *, read=None):
     from sugar_lift_py_tests.sugar.default_value_sugar import DefinitionDefaultsSugar
 
     return DefinitionDefaultsSugar(
-        values=tuple(
-            default.sugar() if read is None else read(default)
-            for _index, default in defaults
-        ),
+        values=tuple(sugar for _key, sugar in defaults),
         evaluations=tuple(
-            (_default_evaluation_key(statement, index), position)
-            for position, (index, _default) in enumerate(defaults)
+            (key, position) for position, (key, _sugar) in enumerate(defaults)
         ),
         site=statement.fragment,
+    )
+
+
+def module_final_default_keys(reader, site) -> tuple:
+    """The default keys of the ``def`` ``reader`` that its frame entry binds
+    when it is called at the module execution ``site`` from outside its
+    module's run (``call_site_sugar.with_module_final_globals``): each
+    per-parameter key (``_default_evaluation_key``) its module ``def``
+    statement bound in that run.  Empty for a lambda (its value carries its
+    defaults), for a ``def`` with no default, and while the reader's own
+    module body runs: the statement's reduction bound the keys there."""
+    if not isinstance(reader, (FunctionDef, AsyncFunctionDef)):
+        return ()
+    if _site_where_called(reader.unit, site) is not None:
+        return ()
+    return tuple(
+        _default_evaluation_key(reader, index)
+        for index, param in enumerate(reader.params)
+        if param.default is not None
     )
 
 
@@ -21945,7 +21962,9 @@ def _def_statement_sugar(statement, *, read=None):
     (substitution bound every later read of the name to the definition,
     ``_local_definition_binding``) evaluates its defaults, once, where it
     stands, and nothing else (``_definition_defaults_sugar``); a decorated
-    one runs its decorators once and binds the name to their result
+    one evaluates its decorator expressions, then its defaults (the same
+    per-parameter keys), builds the function value carrying them, applies
+    its decorators to that value once and binds the name to their result
     (``_decorated_statement_sugar``).  The function's own reduction is its
     own entry's (``tree_enumerate.function_universe_outcome``, a call's
     frame)."""
@@ -22039,7 +22058,12 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
 
     The decorator expressions are constructed where a module statement runs
     (``SourceUnit.module_execution_site``): the statement's own context, never
-    its caller's.  The definition's value is constructed where it is called.
+    its caller's, and so are the ``def``'s defaults
+    (``_definition_default_evaluations``), which the application evaluates
+    after the decorator expressions and before any decorator applies, under
+    the per-parameter keys; the function value it applies the decorators to
+    carries them, and every call of it binds them.  The definition's frame
+    is constructed where it is called.
     An ``async def`` or generator function is no value this carries: its
     decorators are evaluated and their application is the one ``undecided``
     citation (``DecoratorApplicationSugar.uncarried``).  Only a genuine
@@ -22075,11 +22099,19 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     padded = tuple(bindings)[: len(definition.decorators)]
     padded = padded + (None,) * (len(definition.decorators) - len(padded))
 
-    def construct_decorators():
-        return tuple(
+    def construct_statement():
+        # The decorator expressions, then the defaults: the order the
+        # statement evaluates them in.
+        decorators = tuple(
             _decorator_step(definition, decorator, bound)
             for decorator, bound in zip(definition.decorators, padded, strict=True)
         )
+        defaults = (
+            ()
+            if isinstance(definition, ClassDef)
+            else _definition_default_evaluations(definition)
+        )
+        return decorators, defaults
 
     frame = None
     class_sugar = None
@@ -22087,10 +22119,10 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     uncarried = False
     _FRAMES_UNDER_CONSTRUCTION.add(key)
     try:
-        decorators = (
-            construct_decorators()
+        decorators, defaults = (
+            construct_statement()
             if module_site is None
-            else construct_at_module_execution_site(module_site, construct_decorators)
+            else construct_at_module_execution_site(module_site, construct_statement)
         )
         if isinstance(definition, ClassDef):
             class_sugar = definition.sugar()
@@ -22114,6 +22146,7 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
         site=site,
         evaluation=evaluation,
         uncarried=uncarried,
+        defaults=defaults,
     )
 
 

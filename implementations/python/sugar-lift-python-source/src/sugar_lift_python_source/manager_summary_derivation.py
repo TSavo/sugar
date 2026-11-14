@@ -1342,7 +1342,8 @@ def _signature_for_behavior(behavior, semantics):
         if default_sugar is not None:
             # A default is read here: a deferred carrier is refused by name.
             outcome = _require_exit_set(
-                default_sugar.desugar(), owner="ManagerSummary.signature-default"
+                _declared_default_sugar(frame, index, default_sugar).desugar(),
+                owner="ManagerSummary.signature-default",
             )
             constructed = outcome.completed_value()
             # A signature default has no arm to carry an owed item on: an
@@ -1374,6 +1375,20 @@ def _signature_for_behavior(behavior, semantics):
             )
         )
     return ImportSignatureV2(tuple(parameters))
+
+
+def _declared_default_sugar(frame, index, default_sugar):
+    """The default the signature declares for the ``index``-th formal of
+    ``frame``: the defining ``def``'s (or lambda's) default expression, the
+    one its statement evaluates (``nodes._definition_default_evaluations``).
+    A def or lambda frame's own default (``DefaultValueSugar``) is the value
+    a call binds, read under a key only a call's binding holds; this reads
+    no call.  Any other frame's default is its expression already."""
+    from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
+
+    if not isinstance(default_sugar, DefaultValueSugar):
+        return default_sugar
+    return frame.owner.params[index].default.sugar()
 
 
 def _signature_to_value(signature):

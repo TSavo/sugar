@@ -1,9 +1,12 @@
 """A decorated ``def``/``class`` statement's value: ``d1(d2(<definition>))``.
 
-Python evaluates a statement's decorator expressions in source order, builds
-the function or class, then calls each decorator on it innermost first and
-binds the name to the last result (the language reference, "Function
-definitions" and "Class definitions").  ``DecoratorApplicationSugar`` is that
+Python evaluates a statement's decorator expressions in source order, then a
+``def``'s defaults, builds the function (carrying those default values) or
+class, then calls each decorator on it innermost first and binds the name to
+the last result (the language reference, "Function definitions" and "Class
+definitions").  So ``x = 1; @d def f(a=x): ...; x = 2`` binds ``a`` to 1 at
+every call that omits it, through whatever ``d`` returned that calls the
+function.  ``DecoratorApplicationSugar`` is that
 application, and the only one (#7757): the statement reduces it once and binds
 its result under the statement's evaluation key, a read of the name reads that
 key, and a call of the name calls the value it holds
@@ -137,6 +140,13 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
     # The definition is an ``async def`` or generator function, no value this
     # carries: the application is one unanswered call (``_uncarried``).
     uncarried: bool = False
+    # ``((key, sugar), ...)``: the ``def``'s defaults, left to right, under
+    # their per-parameter keys (``nodes._definition_default_evaluations``).
+    # Python evaluates them when the statement runs, after the decorator
+    # expressions and before any decorator applies; the function value the
+    # decorators receive carries them (``LambdaCallable.defaults``) and
+    # every call of it binds them (``object_value.bind_call``).
+    defaults: tuple = field(default=(), compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -191,7 +201,8 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         return temporal.value_if_bound(key)
 
     def _evaluate(self, remaining: tuple, evaluated: tuple, ctx) -> ExitSet:
-        # The decorator expressions, top to bottom, before the definition.
+        # The decorator expressions, top to bottom, then the defaults, before
+        # the definition.
         if remaining:
             head, *rest = remaining
             return head.evaluated(
@@ -200,10 +211,37 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
                     tuple(rest), evaluated + ((head, decorator),), ctx
                 ),
             )
-        if self.uncarried:
-            return self._uncarried(ctx)
-        return self._definition_value(ctx).and_then(
-            lambda value: self._apply(evaluated, value, ctx)
+
+        def define(defaults) -> ExitSet:
+            if self.uncarried:
+                return self._uncarried(ctx)
+            return self._definition_value(defaults, ctx).and_then(
+                lambda value: self._apply(evaluated, value, ctx)
+            )
+
+        return self._evaluated_defaults(ctx, define)
+
+    def _evaluated_defaults(self, ctx, then) -> ExitSet:
+        """The ``def``'s defaults evaluated where the statement runs, left to
+        right, each halt a face of the statement, then ``then(((key,
+        value), ...))`` on every completed path: the operands of the
+        function value, through the one operand door, as a lambda
+        expression's are (``LambdaSugar``)."""
+        if not self.defaults:
+            return then(())
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            reduce_operands,
+        )
+
+        keys = tuple(key for key, _sugar in self.defaults)
+        return reduce_operands(
+            tuple(sugar for _key, sugar in self.defaults), ctx
+        ).and_then(
+            lambda values: consume_operands(
+                lambda *completed: then(tuple(zip(keys, completed, strict=True))),
+                *values,
+            )
         )
 
     def _uncarried(self, ctx) -> ExitSet:
@@ -220,10 +258,12 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
             ctx,
         )
 
-    def _definition_value(self, ctx) -> ExitSet:
+    def _definition_value(self, defaults, ctx) -> ExitSet:
         if self.definition_class is not None:
             return self.definition_class.desugar(ctx)
-        return ExitSet.completed(_function_value(self.definition_frame, self.site))
+        return ExitSet.completed(
+            _function_value(self.definition_frame, self.site, defaults=defaults)
+        )
 
     def _apply(self, evaluated: tuple, value, ctx) -> ExitSet:
         # Innermost (last written) first.
@@ -244,9 +284,11 @@ def _returned(value, ctx) -> ExitSet:
     )
 
 
-def _function_value(frame, site):
+def _function_value(frame, site, *, defaults=()):
     """The function a source ``def`` builds: its own frame, called through
-    the one callable protocol (``LambdaCallable.callable_application_with``)."""
+    the one callable protocol (``LambdaCallable.callable_application_with``),
+    carrying the ``(key, value)`` of each default its statement evaluated
+    (``defaults``), which every call binds."""
     from sugar_lift_py_tests.floor import LambdaCallable
 
     owner = getattr(frame, "owner", None)
@@ -258,6 +300,7 @@ def _function_value(frame, site):
             f"{sealed.source_cid}@{sealed.start}:{sealed.end}#{sealed.cid}"
         ),
         source_call_frame=frame,
+        defaults=tuple(defaults),
     )
 
 

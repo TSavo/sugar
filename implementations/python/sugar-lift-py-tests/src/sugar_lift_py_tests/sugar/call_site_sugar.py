@@ -1248,6 +1248,10 @@ def with_module_final_globals(ctx, readers, *, site):
     entry, to the value the module body's own run bound it to: the one
     source of module-final values (``tree_enumerate.module_end_contexts``,
     the context each completed arm of THE module reduction ended with).
+    So is each default key of a reader that is a ``def``
+    (``nodes.module_final_default_keys``): its module ``def`` statement
+    evaluated the default once in that run, and a call that omits the
+    formal binds that value (``DefaultValueSugar``).
     The run evaluated each write once, whatever it wrote (a literal,
     ``x += e``, a call's result, a list), so its value is the module's,
     never a second evaluation of the write here.  A key the completed arms
@@ -1263,7 +1267,10 @@ def with_module_final_globals(ctx, readers, *, site):
     bound here, and the module run is not asked for.  ``ctx`` comes back
     unchanged when nothing is bound.
     """
-    from sugar_source_tree.nodes import module_final_global_references
+    from sugar_source_tree.nodes import (
+        module_final_default_keys,
+        module_final_global_references,
+    )
 
     keys = []
     for reader in readers:
@@ -1272,12 +1279,17 @@ def with_module_final_globals(ctx, readers, *, site):
             module_final_global_references(reader, site).items()
         ):
             _collect_final_evaluations(state, evaluations)
-        if not evaluations:
+        # The reader's own defaults, which its module ``def`` statement
+        # evaluated in the same run: a formal the call omits binds that
+        # value, never its default expression evaluated here.
+        defaults = module_final_default_keys(reader, site)
+        if not evaluations and not defaults:
             continue
         from sugar_lift_py_tests.tree_enumerate import module_end_contexts
 
         ends = module_end_contexts(reader.unit)
         keys.extend((reference.evaluation, ends) for reference in evaluations)
+        keys.extend((key, ends) for key in defaults)
     if not keys:
         return ctx
     from dataclasses import replace
@@ -1327,16 +1339,28 @@ def _module_end_value(ends, key):
 
 def _collect_final_evaluations(state, evaluations: list) -> None:
     """Every evaluation reference a module-final binding ``state`` reads
-    through: the reference itself, each arm of the phi the module block
-    built over a module ``if`` or ``try`` route (``IfExp`` on a
-    ``BranchResultRef``), and each arm of a binding joined over a slot
-    (``GuardedBinding``).  A definition, an import's row, an effect slot or
-    an unbound state reads no key."""
+    through: the reference itself, a decorated ``def``/``class`` statement's
+    value (``DecoratedDefinitionRef``: the key its statement bound the
+    decorators' result under, whose function carries the defaults the
+    statement evaluated), each arm of the phi the module block built over a
+    module ``if`` or ``try`` route (``IfExp`` on a ``BranchResultRef``), and
+    each arm of a binding joined over a slot (``GuardedBinding``).  An
+    undecorated definition, an import's row, an effect slot or an unbound
+    state reads no key."""
     from sugar_source_tree.binding_state import GuardedBinding, unwrap_binding_state
-    from sugar_source_tree.nodes import BranchResultRef, EvaluationRef, IfExp
+    from sugar_source_tree.nodes import (
+        BranchResultRef,
+        DecoratedDefinitionRef,
+        EvaluationRef,
+        IfExp,
+    )
 
     state = unwrap_binding_state(state)
     if isinstance(state, EvaluationRef):
+        evaluations.append(state)
+    elif isinstance(state, DecoratedDefinitionRef) and isinstance(
+        getattr(state, "evaluation", None), str
+    ):
         evaluations.append(state)
     elif isinstance(state, IfExp) and isinstance(state.test, BranchResultRef):
         _collect_final_evaluations(state.body, evaluations)

@@ -10,29 +10,29 @@ called, and a mutable default is shared by every call.
 The law has two halves, and this module owns both:
 
 - **The statement evaluates.** ``DefinitionDefaultsSugar`` is an undecorated
-  ``def`` statement in a body (``nodes._definition_defaults_sugar``): it
-  evaluates each default where the statement stands, through the one
-  assignment door (``evaluate_assignment_values``), and binds each completed
-  value under the default's key (``nodes._default_evaluation_key``).  Every
-  face of a default is the statement's.
+  ``def`` statement in a body, or a class-body method's
+  (``nodes._definition_defaults_sugar``): it evaluates each default where
+  the statement stands, through the one assignment door
+  (``evaluate_assignment_values``), and binds each completed value under the
+  default's key (``nodes._default_evaluation_key``).  Every face of a
+  default is the statement's.
 - **A call reads the key.** ``DefaultValueSugar`` is what a frame binds a
   formal the call omits to (``SourceVisibleCallFrameV1.bind_actuals``, the one
   binder every call form reaches through ``object_value.bind_call``): the
   value bound under the key, the same object for every call.
 
-A lambda's defaults follow the same law: the lambda expression evaluates them
-where it is evaluated (``LambdaSugar``), under the same per-formal keys, and
-its value carries them (``LambdaCallable.defaults``); every call binds what
-the value carries (``bind_carried_defaults``, from ``object_value.bind_call``)
-before the frame reads the keys.  A lambda's default expression is never
-evaluated at a call: a call whose callee carries no value for the key is
+The values reach the call's binding by one of four routes, each the value the
+statement evaluated once: the temporal the statement's own reduction bound
+them in (a call in the body that ran the ``def``); a value that carries them,
+bound by ``bind_call`` (``bind_carried_defaults``): a lambda value
+(``LambdaSugar``), a decorated ``def``'s function value, which its statement
+built after evaluating the defaults and before applying its decorators
+(``DecoratorApplicationSugar``), and a method's class
+(``ClassDefinitionValue.method_defaults``); and, for a module ``def`` called
+after import, the module run that ran its statement, read at the frame entry
+(``call_site_sugar.with_module_final_globals``).  A default expression is
+never evaluated at a call: a call where none of these bound the key is
 refused by name.
-
-Where no reduction running the ``def`` statement bound the key -- a module
-or class-body ``def``, whose statement is not reduced in the temporal of a
-call made after import, or a function called outside the frame that ran its
-``def`` -- the default expression is evaluated where the call stands, as it
-was before (#7757 residue).
 """
 
 from __future__ import annotations
@@ -86,14 +86,12 @@ class DefinitionDefaultsSugar(Sugar):
 @dataclass(frozen=True)
 class DefaultValueSugar(Sugar):
     """The value a call binds to a formal it omits: what the ``def``
-    statement bound under the default's key (``evaluation``), read where the
-    call runs (``evaluation_read_here``).  ``value`` is the default
-    expression's own sugar, evaluated only where no reduction running the
-    statement bound the key (see the module docstring); None for a lambda's
-    default, which only the lambda expression evaluates."""
+    statement or lambda expression bound under the default's key
+    (``evaluation``), read where the call runs (``evaluation_read_here``).
+    Where nothing bound the key the call is refused by name: the default
+    expression is evaluated only by its statement."""
 
     evaluation: str
-    value: Sugar | None
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -108,17 +106,16 @@ class DefaultValueSugar(Sugar):
         bound = self.bound_value(ctx)
         if bound is not None:
             return ExitSet.completed(bound)
-        if self.value is None:
-            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
-            raise SourceCallBindingGap(
-                "lambda default not carried by the called lambda value"
-            )
-        return self.value.desugar(ctx)
+        raise SourceCallBindingGap(
+            "default not bound where the call runs: no def statement or "
+            f"lambda expression evaluation reached the call ({self.evaluation})"
+        )
 
     def bound_value(self, ctx):
-        """The value the ``def`` statement bound under the key where the call
-        runs, or None where no reduction running the statement bound it."""
+        """The value the ``def`` statement or lambda expression bound under
+        the key where the call runs, or None where nothing bound it."""
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
         if temporal is None:
             return None
