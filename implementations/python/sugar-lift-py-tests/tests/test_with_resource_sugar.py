@@ -26,7 +26,6 @@ from sugar_lift_py_tests.floor.manager_coordinate import (
     ManagerCoordinate,
 )
 from sugar_lift_py_tests.floor.inv_value import InvValue
-from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
 from sugar_lift_py_tests.ir import atomic, make_var, not_
 from sugar_lift_py_tests.outcome import exit_disposition as exit_disposition_module
 from sugar_lift_py_tests.outcome.exit_disposition import exit_disposition_effect
@@ -67,14 +66,27 @@ def test_authenticated_pandas_303_builtin_open_resource_coordinate():
     assert ast.get_source_segment(source, item.optional_vars) == "outfile"
 
 
-def _halts(entries) -> list:
-    """The halted arms of the recorded entries in which every arm halts."""
+def _halts(out) -> list:
+    """The ``with``'s halted arms: a halt stays a halted arm (#7826); no
+    completed record holds one."""
+    return list(out.halts())
+
+
+def _completions(out) -> list:
+    """The ``with``'s completed arms."""
+    return [exit_ for exit_ in out.exits if isinstance(exit_, Completed)]
+
+
+def _completed_entries(out) -> list:
+    """Every entry the ``with``'s completed arms record."""
     return [
-        halt
-        for entry in entries
-        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
-        for halt in entry.halts()
+        entry for exit_ in _completions(out) for entry in exit_.value.contribution()
     ]
+
+
+def _falls_through(out) -> bool:
+    """Whether some completed arm of the ``with`` falls through past it."""
+    return any(exit_.value.can_fall_through for exit_ in _completions(out))
 
 
 class _FixedSugar(Sugar):
@@ -333,28 +345,38 @@ def test_enter_halt_skips_body_and_exit():
     out = sugar.desugar()
     assert body_ran == []
     assert exit_ran == []
-    reds = _halts(out.completed_value().contribution())
+    reds = _halts(out)
     assert len(reds) == 1
     assert reds[0].effect == enter_halt
+    assert _completions(out) == []
 
 
 def test_completed_body_runs_exit_with_three_explicit_none_coordinates():
     """Face 2: normal completion authenticates all three None arguments."""
     out = _resource(body=(_Pass(),), exit=_FixedSugar(ExitSet.completed(TermValue(0)))).desugar()
-    invs = [entry for entry in out.completed_value().contribution() if isinstance(entry, InvValue)]
-    exit_facts = [
-        inv
-        for inv in invs
-        if getattr(getattr(inv.formula, "args", (None,))[0], "name", None)
-        in {"exit_type", "exit_value", "exit_traceback"}
-    ]
-    assert len(exit_facts) == 3
-    assert {fact.formula.args[0].name for fact in exit_facts} == {
-        "exit_type",
-        "exit_value",
-        "exit_traceback",
-    }
-    assert all(fact.formula.args[1].value == "None" for fact in exit_facts)
+    assert _halts(out) == []
+    completions = _completions(out)
+    assert completions
+    # Every completed face carries the three explicit None coordinates.
+    for completion in completions:
+        invs = [
+            entry
+            for entry in completion.value.contribution()
+            if isinstance(entry, InvValue)
+        ]
+        exit_facts = [
+            inv
+            for inv in invs
+            if getattr(getattr(inv.formula, "args", (None,))[0], "name", None)
+            in {"exit_type", "exit_value", "exit_traceback"}
+        ]
+        assert len(exit_facts) == 3
+        assert {fact.formula.args[0].name for fact in exit_facts} == {
+            "exit_type",
+            "exit_value",
+            "exit_traceback",
+        }
+        assert all(fact.formula.args[1].value == "None" for fact in exit_facts)
 
 
 def test_raised_body_routes_exact_face_coordinates_to_exit():
@@ -431,7 +453,7 @@ def test_undecided_source_exit_keeps_both_faces_factored():
 def test_never_suppresses_restores_body_halt():
     sugar = _resource(body=(_Raise("ValueError"),))
     out = sugar.desugar()
-    reds = _halts(out.completed_value().contribution())
+    reds = _halts(out)
     assert any(r.effect.exception_name == "ValueError" for r in reds)
 
 
@@ -440,16 +462,18 @@ def test_typed_never_suppresses_preserves_conditional_raise_and_normal_face():
     effect = RaiseEffect.for_builtin("ValueError", occurrence="body.py:4:8")
 
     class _ConditionalRaise(Sugar):
+        # A canned statement binds nothing before its halts: the block's
+        # prefix is their record.
+        halts_at_statement_head = True
+
         def desugar(self, ctx=None):
             del ctx
-            return ExitSet.completed(
-                GuardedFaces(
-                    guard=guard,
-                    entries=(ExitSet.halted(effect).guarded(guard),),
-                    then_exits=True,
-                    else_exits=False,
-                    can_fall_through=True,
-                    continuation_guard=not_(guard),
+            # The raise is a halted arm under its guard beside the completed
+            # arm under the guard's negation (#7826): no record holds it.
+            return ExitSet(
+                (
+                    Halted(guard, effect),
+                    Completed(not_(guard), BlockValue((), can_fall_through=True)),
                 )
             )
 
@@ -463,13 +487,12 @@ def test_typed_never_suppresses_preserves_conditional_raise_and_normal_face():
         disposition=NeverSuppressesDispositionV1(),
         exit_probe=exit_runs,
     ).desugar()
-    contributions = out.completed_value().contribution()
-    raises = [halt for halt in _halts(contributions) if halt.effect == effect]
+    raises = [halt for halt in _halts(out) if halt.effect == effect]
     assert len(raises) == 1
     assert raises[0].guard == guard
-    assert out.completed_value().can_fall_through
+    assert _falls_through(out)
     assert exit_runs == [1]
-    assert all(entry is not None for entry in contributions)
+    assert all(entry is not None for entry in _completed_entries(out))
 
 
 def test_proven_contract_consumes_matching_body_halt():
@@ -480,7 +503,7 @@ def test_proven_contract_consumes_matching_body_halt():
     out = sugar.desugar()
     reds = [
         halt
-        for halt in _halts(out.completed_value().contribution())
+        for halt in _halts(out)
         if getattr(halt.effect, "exception_name", None) == "ValueError"
     ]
     assert reds == []
@@ -494,7 +517,7 @@ def test_runtime_selected_not_guessed():
     out = sugar.desugar()
     reds = [
         halt
-        for halt in _halts(out.completed_value().contribution())
+        for halt in _halts(out)
         if getattr(halt.effect, "exception_name", None) == "ValueError"
     ]
     assert len(reds) == 1
@@ -514,7 +537,7 @@ def test_native_exit_return_truthiness_decides_raise_suppression(
     ).desugar()
     raises = [
         halt
-        for halt in _halts(out.completed_value().contribution())
+        for halt in _halts(out)
         if getattr(halt.effect, "exception_name", None) == "ValueError"
     ]
     assert len(raises) == halt_count
@@ -527,12 +550,11 @@ def test_native_undecided_exit_return_keeps_both_suppression_faces():
         exit=_FixedSugar(ExitSet.completed(SymbolicValue(make_var("exit_result")))),
         disposition=ReturnTruthinessDispositionV1(),
     ).desugar()
-    contributions = out.completed_value().contribution()
     assert any(
         getattr(halt.effect, "exception_name", None) == "ValueError"
-        for halt in _halts(contributions)
+        for halt in _halts(out)
     )
-    assert out.completed_value().can_fall_through
+    assert _falls_through(out)
 
 
 def _undetermined_body():
@@ -557,10 +579,9 @@ def test_native_exit_return_truthiness_decides_undetermined_raise_suppression(
         exit=_FixedSugar(ExitSet.completed(exit_value)),
         disposition=ReturnTruthinessDispositionV1(),
     ).desugar()
-    contributions = out.completed_value().contribution()
-    raises = [halt for halt in _halts(contributions) if halt.effect == effect]
+    raises = [halt for halt in _halts(out) if halt.effect == effect]
     assert len(raises) == halt_count
-    assert out.completed_value().can_fall_through is (halt_count == 0)
+    assert _falls_through(out) is (halt_count == 0)
 
 
 def test_native_undecided_exit_keeps_both_undetermined_raise_faces():
@@ -570,11 +591,8 @@ def test_native_undecided_exit_keeps_both_undetermined_raise_faces():
         exit=_FixedSugar(ExitSet.completed(SymbolicValue(make_var("exit_result")))),
         disposition=ReturnTruthinessDispositionV1(),
     ).desugar()
-    assert any(
-        halt.effect == effect
-        for halt in _halts(out.completed_value().contribution())
-    )
-    assert out.completed_value().can_fall_through
+    assert any(halt.effect == effect for halt in _halts(out))
+    assert _falls_through(out)
 
 
 def test_truthy_native_exit_runs_but_cannot_suppress_loop_transfer():
@@ -588,10 +606,7 @@ def test_truthy_native_exit_runs_but_cannot_suppress_loop_transfer():
         disposition=ReturnTruthinessDispositionV1(),
     ).desugar()
     assert exit_runs == [1]
-    assert any(
-        halt.effect == transfer
-        for halt in _halts(out.completed_value().contribution())
-    )
+    assert any(halt.effect == transfer for halt in _halts(out))
 
 
 def test_native_exit_runs_on_early_return_value():
@@ -604,7 +619,7 @@ def test_native_exit_runs_on_early_return_value():
         disposition=ReturnTruthinessDispositionV1(),
     ).desugar()
     assert exit_runs == [1]
-    assert any(isinstance(entry, ReturnValue) for entry in out.completed_value().contribution())
+    assert any(isinstance(entry, ReturnValue) for entry in _completed_entries(out))
 
 
 def test_completed_body_survives_never_suppresses():
@@ -612,7 +627,7 @@ def test_completed_body_survives_never_suppresses():
     out = sugar.desugar()
     reds = [
         halt
-        for halt in _halts(out.completed_value().contribution())
+        for halt in _halts(out)
         if getattr(getattr(halt, "effect", None), "exception_name", None)
     ]
     assert reds == []
@@ -643,10 +658,10 @@ def test_resource_exit_runs_on_the_completed_and_the_halted_face(monkeypatch):
     halted = _resource(body=(_Raise("ValueError"),)).desugar()
 
     assert incoming_kinds == [Completed, Halted]
-    assert completed.completed_value().can_fall_through
+    assert _falls_through(completed)
     assert any(
         getattr(halt.effect, "exception_name", None) == "ValueError"
-        for halt in _halts(halted.completed_value().contribution())
+        for halt in _halts(halted)
     )
 
 
@@ -667,7 +682,7 @@ def test_lying_resource_exit_cannot_skip_the_halted_face(monkeypatch):
     with pytest.raises(AssertionError):
         assert any(
             getattr(halt.effect, "exception_name", None) == "ValueError"
-            for halt in _halts(out.completed_value().contribution())
+            for halt in _halts(out)
         )
 
 
@@ -775,7 +790,7 @@ def test_enter_result_and_manager_binding_facts():
         ),
     )
     out = sugar.desugar()
-    invs = [e for e in out.completed_value().contribution() if isinstance(e, InvValue)]
+    invs = [e for e in _completed_entries(out) if isinstance(e, InvValue)]
     names = []
     for inv in invs:
         f = inv.formula

@@ -75,7 +75,7 @@ from sugar_lift_py_tests.floor.formal_selected_manager import (
 )
 from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
 from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
     ContainerMutationStatementSugar,
@@ -281,7 +281,8 @@ def _returned(outcome) -> list:
         if record is not None:
             visit(record)
 
-    for exit_ in outcome_to_exitset(outcome).exits:
+    assert isinstance(outcome, ExitSet), outcome
+    for exit_ in outcome.exits:
         if isinstance(exit_, Completed):
             visit(exit_.value)
     return found

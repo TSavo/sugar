@@ -9,7 +9,7 @@ def _numbers(*values):
 
 
 def _values(result):
-    return tuple(item.value for item in result.value.elements)
+    return tuple(item.value for item in result.completed_value().elements)
 
 
 def test_finite_set_membership_is_decided_from_constructed_members():
@@ -18,9 +18,11 @@ def test_finite_set_membership_is_decided_from_constructed_members():
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
     finite = _numbers(1, 2)
-    assert isinstance(finite.contains(TermValue(2), "site").value, TrueBoolLiteralSugar)
     assert isinstance(
-        finite.contains(TermValue(3), "site").value, FalseBoolLiteralSugar
+        finite.contains(TermValue(2), "site").completed_value(), TrueBoolLiteralSugar
+    )
+    assert isinstance(
+        finite.contains(TermValue(3), "site").completed_value(), FalseBoolLiteralSugar
     )
 
 
@@ -37,7 +39,7 @@ def test_symbolic_finite_membership_emits_typed_obligation():
     result = (
         fresh(SetValue, (TermValue(1),))
         .contains(SymbolicValue(make_var("member")), "site")
-        .value
+        .completed_value()
     )
     assert isinstance(result.formula, _Atomic)
     assert result.formula.name == "python.set.contains"
@@ -64,4 +66,6 @@ def test_authenticated_set_constructor_closes_finite_dict_keys():
         CallableApplication((source,), (), "site"), None
     )
 
-    assert tuple(item.value for item in result.value.elements) == ("kept",)
+    assert tuple(item.value for item in result.completed_value().elements) == (
+        "kept",
+    )

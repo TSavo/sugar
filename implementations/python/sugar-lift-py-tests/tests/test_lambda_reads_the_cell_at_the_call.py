@@ -40,7 +40,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import CallSiteValue, LambdaCallable, TermValue
 from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 from sugar_lift_py_tests.temporal.temporal_context import projection_key
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -146,6 +146,13 @@ def _outcome(tmp_path: Path, source: str, stem: str):
     return function.sugar().desugar(None)
 
 
+def _exits(outcome) -> ExitSet:
+    """A reduction answers its exits; anything else (an undischarged
+    native-operation carrier) is not a result to read faces from."""
+    assert isinstance(outcome, ExitSet), outcome
+    return outcome
+
+
 def _returned(outcome) -> list:
     """Every value a completed face of ``outcome`` returns; a lambda call's
     value is the body its producer reduced with the cells the call carried."""
@@ -161,7 +168,7 @@ def _returned(outcome) -> list:
         if record is not None:
             visit(record)
 
-    for exit_ in outcome_to_exitset(outcome).exits:
+    for exit_ in _exits(outcome).exits:
         if isinstance(exit_, Completed):
             visit(exit_.value)
     return found
@@ -174,7 +181,7 @@ def _resolved(value):
         inner = _returned(outcome)
         if inner:
             return inner[-1]
-        return outcome_to_exitset(outcome).completed_value()
+        return _exits(outcome).completed_value()
     if isinstance(value, CallSiteValue) and value.body is not None:
         dug = value._dig_floor_or_none(
             ReduceContext.root(owner="lambda-cell"), owner="lambda-cell"
@@ -363,7 +370,7 @@ def test_a_carried_lambda_value_decides_where_it_is_called() -> None:
     outcome = carried.callable_application_with(
         CallableApplication((ONE,), (), "callback-call"), None
     )
-    value = outcome_to_exitset(outcome).completed_value()
+    value = _exits(outcome).completed_value()
     assert value is not None
     found = _returned(outcome) or [_resolved(value)]
     assert TermValue(3) in found, found

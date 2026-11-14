@@ -717,16 +717,10 @@ def test_second_handler_reads_first_handler_temporal_binding():
             bound = temporal.value_if_bound("x") if temporal is not None else None
             if bound is None:
                 return ExitSet.halted(
-                    RaiseEffect(
-                        exception_name="NameError",
-                        occurrence=AuthenticatedRaiseLocus.of("read-x-missing"),
-                    )
+                    RaiseEffect.for_builtin("NameError", occurrence="read-x-missing")
                 )
             return ExitSet.halted(
-                RaiseEffect(
-                    exception_name="RuntimeError",
-                    occurrence=AuthenticatedRaiseLocus.of("read-x-ok"),
-                )
+                RaiseEffect.for_builtin("RuntimeError", occurrence="read-x-ok")
             )
 
         @classmethod
@@ -932,10 +926,7 @@ def test_guarded_handler_faces_conjoin_body_guard():
                 (
                     Halted(
                         handler_atom,
-                        RaiseEffect(
-                            exception_name="RuntimeError",
-                            occurrence=AuthenticatedRaiseLocus.of("handler:re"),
-                        ),
+                        RaiseEffect.for_builtin("RuntimeError", occurrence="handler:re"),
                         None,
                     ),
                 )
@@ -1030,18 +1021,12 @@ def test_alternative_exceptional_faces_keep_separate_guards():
                 (
                     Halted(
                         g1,
-                        RaiseEffect(
-                            exception_name="KeyError",
-                            occurrence=AuthenticatedRaiseLocus.of("a1"),
-                        ),
+                        RaiseEffect.for_builtin("KeyError", occurrence="a1"),
                         None,
                     ),
                     Halted(
                         g2,
-                        RaiseEffect(
-                            exception_name="OSError",
-                            occurrence=AuthenticatedRaiseLocus.of("a2"),
-                        ),
+                        RaiseEffect.for_builtin("OSError", occurrence="a2"),
                         None,
                     ),
                 )
