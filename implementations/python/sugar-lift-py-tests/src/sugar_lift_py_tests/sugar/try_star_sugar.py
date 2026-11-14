@@ -141,7 +141,6 @@ class TryStarSugar(Sugar):
         from sugar_lift_py_tests.sugar.try_sugar import (
             _and_finally_with_raise_context,
             _beneath_type_read,
-            _halt_resumption,
             _try_outcome,
         )
         from sugar_source_tree.panic import SugarNotWritten
@@ -184,12 +183,12 @@ class TryStarSugar(Sugar):
             # Frontier: one face per body halt, then each handler branches it.
             # The face begins from the state the halt carries (``resumed``),
             # without the ``return`` entries its record holds: none is live
-            # on the halt's arm (``_halt_resumption``, as for ``except``).
+            # on the halt's arm (as for ``except``).
             frontier: list[_StarFace] = [
                 _StarFace(
                     path=ExitSet.completed(
                         resumed(
-                            _halt_resumption(exit_.state),
+                            exit_.state,
                             ctx,
                             owner="TryStarSugar.handler",
                             blame=self.site,

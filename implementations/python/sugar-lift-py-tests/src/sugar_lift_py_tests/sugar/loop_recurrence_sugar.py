@@ -1675,7 +1675,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     @staticmethod
     def _require_loop_control_state(state, *, target_bindings):
         """Authenticate a loop-control halt's record and the producer's
-        exact current reduction context in it; return the record.
+        exact current reduction context in it; return the record the loop
+        goes on from.
 
         A loop-control halt carries a record (``LoopControlSugar``): the
         entries the item made before it, spliced on by the block
@@ -1687,9 +1688,20 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         reduced block or accepting an ambient/foreign scope.  A halt with no
         record, or a record with no such context, is refused: its entries
         are never taken without it.
+
+        The loop goes on after the halt (the next item after a
+        ``continue``, the statement after the loop after a ``break``) from
+        the one record a continuation after a halt starts from
+        (``function_universe_sugar.resumed``): the record's entries and
+        context, without the ``return`` entries it holds (none is live on
+        the halt's arm; a ``return`` the item took before it leaves as its
+        own arm, ``_prior_return_face``).
         """
         from sugar_lift_py_tests.context.reduce_context import ReduceContext
-        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            _ReducedBlock,
+            resumed,
+        )
 
         if not isinstance(state, _ReducedBlock):
             raise TypeError("loop control omitted its record")
@@ -1704,7 +1716,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 raise TypeError(
                     "loop control state lacks exact iteration target identity"
                 )
-        return state
+        return resumed(
+            state,
+            context,
+            owner="LoopRecurrenceSugar.loop-control",
+            blame="LoopRecurrenceSugar.loop-control",
+        )
 
     def _finish_iterator(self, runtime, ctx, *, entries, carried, items=0):
         """The loop's outcome after its ``items`` items were exhausted."""

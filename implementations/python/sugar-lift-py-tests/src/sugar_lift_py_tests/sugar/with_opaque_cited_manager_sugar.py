@@ -239,6 +239,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
             halt_record,
             halts_recorded,
             reduce_block_to_exitset,
+            resumed,
         )
 
         # The manager is routed face by face: a deferred native-operation
@@ -304,10 +305,18 @@ class WithOpaqueCitedManagerSugar(Sugar):
                     # completed unless exit halts; a halted body leaves as BOTH
                     # faces under the exit result's undecidable truthiness.
                     # The exit runs after this face: its halt carries the
-                    # record the face left.
+                    # record the face left. A suppressed halt goes on after
+                    # the ``with`` from the one record a continuation after a
+                    # halt starts from (``resumed``).
                     after = ExitSet((body_exit,)).and_exit_truthiness(
                         self._exit_exitset(mgr_exit.value, record),
                         site=self.site,
+                        resume=lambda state: resumed(
+                            state,
+                            ctx,
+                            owner="WithOpaqueCitedManagerSugar.suppressed",
+                            blame=self.site,
+                        ),
                     )
                     parts.append(prepend_facts_to_exitset(after, enter_facts))
 

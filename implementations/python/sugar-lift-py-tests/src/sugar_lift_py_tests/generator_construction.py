@@ -2731,7 +2731,21 @@ class GeneratorConstructionV1:
         # record this frame left there (``_left_here``).
         exit_es = law._exit_exitset(step.manager_value, self._left_here())
         if incoming is not None:
-            return incoming.and_exit_truthiness(exit_es, site=step.site)
+            from sugar_lift_py_tests.sugar.function_universe_sugar import resumed
+
+            # A halt the exit suppresses goes on from the one record a
+            # continuation after a halt starts from (``resumed``): the frame
+            # it carries stays inside it.
+            return incoming.and_exit_truthiness(
+                exit_es,
+                site=step.site,
+                resume=lambda state: resumed(
+                    state,
+                    None,
+                    owner="GeneratorConstructionV1.suppressed",
+                    blame=step.site,
+                ),
+            )
         # The body reached the end of this ``with``: its exit runs on that
         # completion NOW, and only a completed exit continues to the steps
         # after it. Applying this exit over the continuation instead would

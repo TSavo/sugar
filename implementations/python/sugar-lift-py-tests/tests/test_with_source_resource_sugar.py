@@ -285,6 +285,82 @@ def test_source_truthy_exit_runs_but_cannot_suppress_loop_transfer(action):
     assert protocol.exit_calls == 1
 
 
+def _returns_of(record):
+    from sugar_lift_py_tests.floor import GuardedReturn
+
+    return tuple(
+        entry
+        for entry in record.entries
+        if isinstance(entry, (ReturnValue, GuardedReturn))
+    )
+
+
+def test_a_suppressed_halt_goes_on_without_the_dead_return_its_record_holds():
+    """``with S(): if c: return 1; raise E`` then ``return 3``, ``S.__exit__``
+    returning True: one return per record, 1 and 3.
+
+    The raise leaves after the guarded ``return 1``: its record holds that
+    return, dead on the raise's arm (the reducer guards the raise by the
+    return's fall-through, and ``return 1`` leaves as its own face). The
+    ``with`` suppresses the raise and goes on from the record a continuation
+    after a halt starts from (``resumed``): without that return, with no
+    fall-through guard or transform of the halted block. Carrying the halt's
+    record as it was put ``return 1`` beside ``return 3`` on one record (and
+    minted the ``return 1`` face a second time)."""
+    from sugar_lift_py_tests.floor import GuardedReturn
+    from sugar_lift_py_tests.ir import atomic
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _ReducedBlock,
+        reduce_block_to_exitset,
+    )
+
+    c = atomic("test.c", [])
+
+    def under_not_c(entries):
+        # What the ``if`` guards every later statement by: its fall-through.
+        return tuple(
+            GuardedReturn((not_(c),), entry.value)
+            if isinstance(entry, ReturnValue)
+            else entry
+            for entry in entries
+        )
+
+    # ``if c: return 1``: the record goes on under ``not c``, holding the
+    # guarded return.
+    after_if = _FixedSugar(
+        ExitSet.completed(
+            _ReducedBlock(
+                (GuardedReturn((c,), TermValue(1)),),
+                True,
+                (not_(c),),
+                (under_not_c,),
+            )
+        )
+    )
+    raise_e = _FixedSugar(
+        ExitSet.halted(
+            RaiseEffect.for_builtin("ValueError", occurrence="resource.py:6:8")
+        )
+    )
+    sugar, protocol = _truthiness_resource(
+        exit_value=TermValue(True), body=(after_if, raise_e)
+    )
+    return_3 = _FixedSugar(
+        ExitSet.completed(_ReducedBlock((ReturnValue(TermValue(3)),), False, ()))
+    )
+
+    exits = reduce_block_to_exitset((sugar, return_3), None)
+
+    assert protocol.exit_calls == 1
+    assert not any(isinstance(face, Halted) for face in exits.exits), exits
+    records = [face.value for face in exits.exits]
+    for record in records:
+        assert not record.can_fall_through, record
+        assert len(_returns_of(record)) == 1, record.entries
+    values = sorted(_returns_of(record)[0].value.value for record in records)
+    assert values == [1, 3], values
+
+
 def test_enter_as_binding_carries_object_occurrence_identity():
     entered = ObjectValue("RenamedResource", (), identity="object-occurrence-cid")
     sugar, _ = _truthiness_resource(

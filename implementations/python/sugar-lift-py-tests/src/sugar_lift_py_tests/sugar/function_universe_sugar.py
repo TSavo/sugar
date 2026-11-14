@@ -277,9 +277,13 @@ def halts_recorded(outcome, record: _ReducedBlock):
 
 
 def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
-    """The record a suite resumes from where a halt left: an ``except``
-    handler that caught it, a ``finally`` beneath it (or beneath a completed
-    face, ``TrySugar``), a ``with`` exit it reaches.
+    """The record a suite resumes from where a halt left: the one way every
+    continuation after a halt begins -- an ``except`` handler that caught
+    it, an ``except*`` handler's frontier, a ``finally`` beneath it (or
+    beneath a completed face, ``TrySugar``), a ``with`` exit it reaches, a
+    ``with`` that suppresses it and goes on after the statement
+    (``ExitSet.and_exit``/``and_exit_truthiness``, ``resume=``), and a
+    loop going on after its own ``break``/``continue``.
 
     A halt's record is everything the block reached before it halted --
     every store, rebind, container mutation and walrus bind, in its
@@ -299,6 +303,18 @@ def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
     re-emitted (``TrySugar``). A record reduced with no context (a nested
     record its producer built bare) reads ``ctx``.
 
+    The record's ``return`` entries (``_is_return_entry``) are dropped: none
+    is live on the halt's arm. A ``return`` reached under a guard before the
+    halt is one the halt's arm excludes (the reducer guards the halt by the
+    fall-through, and the ``return`` leaves as its own completed face beside
+    it, ``_prior_return_face``, where it stays); a ``return`` the halt
+    superseded (a raise in a ``with``'s ``__exit__`` after the body
+    returned) Python discarded when the halt was raised. So what resumes
+    never carries them: its own ``return`` never stands beside them, and
+    nothing re-emits them after it. A completed face's ``return`` entries
+    are pending, not dead: a ``finally`` beneath it sets them aside before
+    it resumes (``try_sugar._pending_returns``) and re-emits them after.
+
     Every halt carries a record (``halt_record``): its producer builds it.
     A halt whose state is no record -- ``None``, a bare context, any other
     payload -- holds nothing to resume from, and an empty record made up in
@@ -308,6 +324,9 @@ def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
     if isinstance(state, _ReducedBlock):
         return replace(
             state,
+            entries=tuple(
+                entry for entry in state.entries if not _is_return_entry(entry)
+            ),
             can_fall_through=True,
             fall_through=(),
             transforms=(),

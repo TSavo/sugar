@@ -261,7 +261,7 @@ def _and_finally_with_raise_context(
     took is still pending, so it follows the ``finally``'s entries), or the
     halt. Every arm's ``return`` entries are set aside the one way
     (``_pending_returns``): a completed face's are pending, a halt's record's
-    are dead on the halt's arm and are dropped (``_halt_resumption``). A
+    are dead on the halt's arm and ``resumed`` drops them. A
     ``finally`` that exits itself supersedes, and a pending ``return`` is
     discarded with the exit it belonged to. A ``finally`` whose arms still
     wait on the caller's actuals is composed once they discharge
@@ -326,12 +326,12 @@ def _and_finally_with_raise_context(
             )
 
         # The halt's record holds the ``return`` entries the body reached
-        # before it halted, none of them live on the halt's arm
-        # (``_halt_resumption``): the ``finally`` runs without them, and the
-        # halt it lets through leaves without them.
+        # before it halted, none of them live on the halt's arm: the
+        # ``finally`` resumes without them (``resumed``), and the halt it
+        # lets through leaves from the record the ``finally`` left.
         cleanup_es = cleanup(
             finalbody if finalbody_halted is None else finalbody_halted,
-            _halt_resumption(halt.state),
+            halt.state,
             in_context,
         )
         return _finally_beneath(
@@ -341,28 +341,6 @@ def _and_finally_with_raise_context(
         )
 
     return pre_finally.sequence(after_completion, consume=after_halt)
-
-
-def _halt_resumption(state):
-    """The record a suite resumes from where a halt left -- an ``except``
-    handler that caught it, a ``try*`` handler, a ``finally`` beneath it --
-    without the ``return`` entries the halt's record holds.
-
-    None of them is live on the halt's arm. A ``return`` reached under a
-    guard before the halt is one the halt's arm excludes: the reducer guards
-    every statement after a ``return`` by its fall-through
-    (``reduce_block_to_exitset``: the halt is ``guarded(continuation)``),
-    and that ``return`` leaves as its own completed face beside the halt
-    (``_prior_return_face``), where it stays. A ``return`` the halt
-    superseded (a raise in a ``with``'s ``__exit__`` after the body
-    returned) was discarded by Python when the halt was raised. So the
-    suite that resumes never carries them: its own ``return`` never stands
-    beside them, and nothing re-emits them after it. They are set aside
-    the one way a record's ``return`` entries are (``_pending_returns``)
-    and dropped; a state that is no block record is handed on whole, and
-    ``resumed`` refuses it by name."""
-    _dead, live = _pending_returns(state)
-    return live
 
 
 def _pending_returns(value):
@@ -376,7 +354,7 @@ def _pending_returns(value):
     entries (``_returns_after``), or discarded with the exit when the
     ``finally`` exits itself (Python: a ``return`` or raise in ``finally``
     replaces the pending return). A halt's record's ``return`` entries are
-    not pending: they are dead on the halt's arm (``_halt_resumption``).
+    not pending: they are dead on the halt's arm, and ``resumed`` drops them.
 
     A record holds every ``return`` it reached as one of its own entries
     (``_is_return_entry``, the one reading the block reducer makes of a
@@ -837,15 +815,10 @@ def _route_one_halt(
         # body did before it raised (its record's entries) and the context it
         # raised in, never the context the try began in -- without the
         # ``return`` entries that record holds, none of them live on the
-        # halt's arm (``_halt_resumption``), so a handler's own ``return``
-        # never stands beside them and a handler that falls through does not
-        # carry them on.
-        record = resumed(
-            _halt_resumption(exit_.state),
-            ctx,
-            owner="TrySugar.handler",
-            blame=site,
-        )
+        # halt's arm (``resumed``), so a handler's own ``return`` never
+        # stands beside them and a handler that falls through does not carry
+        # them on.
+        record = resumed(exit_.state, ctx, owner="TrySugar.handler", blame=site)
         # In-flight: bare re-raise. Observed: ``except ... as e`` / EffectRef
         # projects the same RaiseEffect this arm just matched — identity, not
         # a reconstructed E(). Observed must be installed BEFORE the body

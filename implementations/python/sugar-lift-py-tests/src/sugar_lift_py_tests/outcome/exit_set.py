@@ -1090,6 +1090,7 @@ class ExitSet(Generic[T]):
         exit_es: "ExitSet[object]",
         *,
         disposition: object,
+        resume=None,
     ) -> "ExitSet[object]":
         """Run a constructed exit over every body exit under ONE contract.
 
@@ -1110,6 +1111,14 @@ class ExitSet(Generic[T]):
         that completed still completes. An assertion boundary answers with its
         unmet effect, so a body that completed halts. Both go through this one
         expression.
+
+        A halt the contract consumes (it leaves as a completion: the ``with``
+        suppressed it) goes on after the statement from ``resume`` of its
+        state: the one record a continuation after a halt starts from
+        (``function_universe_sugar.resumed``), which the ``with`` binds to its
+        context and owner; every ``with`` passes it. ``None`` carries the
+        state as it is: the outcome-level laws read on their own, with no
+        suite going on after them.
         """
         from sugar_lift_py_tests.outcome.exit_disposition import (
             ConsumedObservation,
@@ -1117,22 +1126,38 @@ class ExitSet(Generic[T]):
             exit_disposition_effect,
         )
 
-        def _place(target: list, guard, verdict, carried, arm_faces, arm_owed):
+        def _completes(incoming):
+            """What an outgoing completion carries: the incoming completion's
+            value, or the record a consumed halt goes on from (``resume``)."""
+            if isinstance(incoming, Completed):
+                return incoming.value
+            return incoming.state if resume is None else resume(incoming.state)
+
+        def _place(target: list, guard, verdict, incoming, arm_faces, arm_owed):
             """One outgoing arm per verdict shape. Conserves the incoming arm."""
             if verdict is None:
-                target.append(Completed(guard, carried, arm_faces, arm_owed))
+                target.append(
+                    Completed(guard, _completes(incoming), arm_faces, arm_owed)
+                )
             elif isinstance(verdict, ConsumedObservation):
                 # Consumed AND authenticating a slot: the testimony rides the
                 # completed arm it belongs to, never a sibling arm.
                 target.append(
                     Completed(
                         guard,
-                        _carry_facts(carried, verdict.facts),
+                        _carry_facts(_completes(incoming), verdict.facts),
                         arm_faces,
                         arm_owed,
                     )
                 )
             else:
+                # The halt leaves (the incoming one let through, or the
+                # contract's own) from the incoming exit's state as it is.
+                carried = (
+                    incoming.value
+                    if isinstance(incoming, Completed)
+                    else incoming.state
+                )
                 target.append(Halted(guard, verdict, carried, arm_faces, arm_owed))
 
         exit_exits = exit_es.exits
@@ -1145,11 +1170,6 @@ class ExitSet(Generic[T]):
                 if isinstance(ex, Halted):
                     exits.append(Halted(guard, ex.effect, ex.state, faces, owed))
                     continue
-                carried = (
-                    incoming.value
-                    if isinstance(incoming, Completed)
-                    else incoming.state
-                )
                 verdict = exit_disposition_effect(disposition, incoming)
                 if isinstance(verdict, RetainedObligation):
                     # An undecidable contract predicate is not a verdict. The
@@ -1185,22 +1205,26 @@ class ExitSet(Generic[T]):
                             exits,
                             sub_guard,
                             sub_verdict,
-                            carried,
+                            incoming,
                             faces | {sub_face},
                             owed,
                         )
                     continue
-                _place(exits, guard, verdict, carried, faces, owed)
+                _place(exits, guard, verdict, incoming, faces, owed)
         return ExitSet(tuple(exits)).normalize()
 
-    def and_exit_truthiness(self, exit_es: "ExitSet[object]", *, site: object):
+    def and_exit_truthiness(
+        self, exit_es: "ExitSet[object]", *, site: object, resume=None
+    ):
         """Run a source-constructed ``__exit__`` and retain both truth faces.
 
         This is the source-derived counterpart of contract-selected
         ``and_exit``.  A completed exit result is interpreted only through the
         ordinary Python truth predicate.  On an incoming halt, truth consumes
         the effect and falsity restores that exact effect; neither face is
-        discarded.
+        discarded. The consumed halt goes on after the ``with`` from
+        ``resume`` of its state, as in ``and_exit``; falsity restores the
+        halt with its state as it is.
         """
         from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
@@ -1236,7 +1260,11 @@ class ExitSet(Generic[T]):
                 exits.append(
                     Completed(
                         _and_guards(guard, truth),
-                        incoming.state,
+                        (
+                            incoming.state
+                            if resume is None
+                            else resume(incoming.state)
+                        ),
                         faces | {truth_face},
                         owed,
                     )

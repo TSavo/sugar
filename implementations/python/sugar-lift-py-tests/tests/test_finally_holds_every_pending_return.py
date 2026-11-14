@@ -10,9 +10,10 @@ every such entry aside while the ``finally`` runs (``_pending_returns``): a
 completed face's is pending, re-emitted after the ``finally``'s entries where
 it falls through and discarded where the ``finally`` exits; a halt's record's
 is dead on the halt's arm (the halt is guarded by the return's fall-through,
-and the return leaves as its own completed face), so it is dropped
-(``_halt_resumption``) -- before a ``finally``, an ``except`` handler and an
-``except*`` handler alike. A handler's own ``return`` never stands beside
+and the return leaves as its own completed face), so it is dropped by the
+one record a continuation after a halt starts from
+(``function_universe_sugar.resumed``) -- before a ``finally``, an ``except``
+handler and an ``except*`` handler alike. A handler's own ``return`` never stands beside
 it, and a handler that falls through does not carry it into the tail.
 
 A ``finally`` whose statements wait on the caller's actuals (a subscript of a
