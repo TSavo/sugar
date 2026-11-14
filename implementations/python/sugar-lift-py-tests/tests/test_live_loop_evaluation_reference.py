@@ -879,6 +879,34 @@ def test_a_loop_in_each_if_arm_is_read_after_the_if() -> None:
     assert TermValue(0) not in returned, returned
 
 
+def test_a_loop_left_by_different_paths_in_an_if_is_read_after_the_if() -> None:
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # The loop in the ``if`` leaves by the ``break`` in item 0 (``x`` 1), by
+    # the ``break`` in item 1 (2), or by exhaustion (2): its key holds a
+    # different value on each path.  The ``if`` carries each path's value
+    # under that path's guard, so the read after the ``if`` is 1 or 2 on the
+    # arm the loop ran and 5 on the other: never refused, never a value no
+    # path left.  (``g()`` is concrete and runs item by item; a literal
+    # iterable is unrolled before any loop key is minted.)
+    function = _function(
+        "def f(c, d):\n"
+        "    x = 5\n"
+        "    if c:\n"
+        "        for x in g():\n"
+        "            if x == d:\n"
+        "                break\n"
+        "    return x\n" + _HELPERS
+    )
+    values = _returned_values(function_universe_outcome(function))
+    assert any(isinstance(value, GuardedValue) for value in values), values
+    returned = _flattened(values)
+    for value in (TermValue(1), TermValue(2), TermValue(5)):
+        assert value in returned, (value, returned)
+    assert TermValue(0) not in returned, returned
+
+
 def _loops_in_arms(function) -> list:
     """The live loops in the arms of ``function``'s ``if``, in source order."""
     from sugar_lift_py_tests.sugar.if_sugar import IfSugar

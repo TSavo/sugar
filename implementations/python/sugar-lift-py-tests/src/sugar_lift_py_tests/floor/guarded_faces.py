@@ -26,7 +26,9 @@ class GuardedFaces(FloorValue):
     # ``(evaluation key, value)``: the statement evaluations a completed arm
     # made (``AugAssign._evaluation_key``).  A key names one statement inside
     # one arm, so after the ``if`` it is read only by the phi's arm for that
-    # face, under that face's guard; it carries the arm's value there.
+    # face, under that face's guard; it carries the arm's value there.  Arms
+    # that bound one key to different values carry each arm's value under
+    # that arm's guard (``if_sugar._arm_evaluations``).
     evaluations: tuple = ()
 
     def contribution(self):

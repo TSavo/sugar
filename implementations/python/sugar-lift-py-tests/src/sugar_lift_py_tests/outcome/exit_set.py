@@ -395,6 +395,24 @@ def _assigned_rows(value) -> tuple:
     return getattr(context, "assigned_values", ()) or ()
 
 
+def _same_evaluations(left, right) -> bool:
+    """Whether two completed blocks' contexts hold every statement
+    evaluation (``TemporalContext.evaluations``) at one value."""
+    left_temporal = getattr(getattr(left, "context", None), "temporal", None)
+    right_temporal = getattr(getattr(right, "context", None), "temporal", None)
+    if left_temporal is right_temporal:
+        return True
+    return _evaluation_rows(left_temporal) == _evaluation_rows(right_temporal)
+
+
+def _evaluation_rows(temporal) -> dict:
+    """The statement evaluations ``temporal`` holds, by key."""
+    evaluations = getattr(temporal, "evaluations", None)
+    if evaluations is None:
+        return {}
+    return {binding.name: binding.value for binding in evaluations()}
+
+
 # Identity-retained destination hashes (#7664).  A frozen dataclass's hash is a
 # function of its content, which cannot change, so one live object hashes the
 # same forever.  ``normalize`` re-buckets the same arm values on every call
@@ -871,6 +889,12 @@ class ExitSet(Generic[T]):
                     # recorded values: merging them would keep the prior's
                     # value on both paths.
                     and _assigned_rows(exit_.value) == _assigned_rows(prior.value)
+                    # Arms that bound one statement evaluation to different
+                    # values (a loop left by its ``break`` on one path and
+                    # by exhaustion on another) are two paths: merged, the
+                    # prior's value would be read on both, and the other's
+                    # dropped.  Every evaluation key, one rule.
+                    and _same_evaluations(exit_.value, prior.value)
                 )
                 same_halted = (
                     isinstance(exit_, Halted)

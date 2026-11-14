@@ -11,8 +11,9 @@ The other half of an if -- what a name BINDS to after the branch (the phi
 `If.substitute` as an `IfExp` rewrite. So this sugar does NO binding join:
 the `GuardedFaces` it builds binds no name. substitute ages the bindings;
 this reads off the guarded facts. What it carries out of the arms is the
-statement evaluations they made (`_arm_evaluations`): the phi's arm is a
-reference to one of them (temporal choice 1, #7661).
+statement evaluations they made (`_arm_evaluations`), each under the guard
+of the arm that made it: the phi's arm is a reference to one of them
+(temporal choice 1, #7661).
 
 The guard here is written from the pure-meaning primitives:
 `reduce_block_to_exitset` (block reduction), `entry.guarded(formula)`
@@ -126,32 +127,36 @@ def _is_linear(exits) -> bool:
     )
 
 
-_UNSEEN = object()
-
-
 def _arm_evaluations(arms, incoming) -> tuple:
-    """The statement evaluations the completed faces of an if's suites made.
+    """The statement evaluations the completed arms of an if made, each key
+    with the value it holds on every path through the ``if``.
 
-    Each key names one statement's evaluation (``AugAssign._evaluation_key``)
-    and a statement sits in one suite, so after the ``if`` a key is read only
-    by the phi's arm for that suite (``If.substitute``), under that suite's
-    guard.  A walrus in the condition (``if (n := e):``) is evaluated before
-    either suite: its key is in every arm with the one value, and a read
-    after the ``if`` is no phi's arm.  ``incoming`` is the context before
-    the condition, so that key is carried too.  A live loop in a suite
-    publishes each name it carries under a binding coordinate under its own
-    key (``live_loop_construction.loop_post_binding_key``), an evaluation
-    key too: it is carried out the same way, and the phi's arm for that
-    suite reads it (``LoopBindingRefSugar``).  The ``if`` carries those
-    values out; it carries no name.  A key that two completed faces bound to
-    different values has no one value: it is left out, and its read is the
-    read it was before (a walrus's is refused, ``EvaluationRefSugar``).
+    ``arms`` are exit sets whose completed arms are the ``if``'s, each under
+    its own guard (the ``if`` hands its own exit set: each suite's arms
+    under that suite's polarity).  Each key names one statement's evaluation
+    (``AugAssign._evaluation_key``) and a statement sits in one suite, so
+    after the ``if`` a key is read only by the phi's arm for that suite
+    (``If.substitute``), under that suite's guard.  A walrus in the
+    condition (``if (n := e):``) is evaluated before either suite: its key is
+    in every arm with the one value, and a read after the ``if`` is no phi's
+    arm.  ``incoming`` is the context before the condition, so that key is
+    carried too.  A live loop in a suite publishes each name it carries under
+    a binding coordinate under its own key
+    (``live_loop_construction.loop_post_binding_key``), an evaluation key
+    too: it is carried out the same way, and the phi's arm for that suite
+    reads it (``LoopBindingRefSugar``).  The ``if`` carries those values
+    out; it carries no name.
+
+    One rule for every key (``_joined_evaluation``): the arms that bound it
+    answer one value, or each arm's own value under that arm's guard -- a
+    loop in a suite that leaves by a ``break`` on one path and by
+    exhaustion on another binds its key to a different value on each, and
+    the read after the ``if`` takes each path's value under its guard.
     """
     from sugar_lift_py_tests.outcome import Completed
 
     before = getattr(incoming, "temporal", None)
-    found: dict = {}
-    conflicted: set = set()
+    made: dict = {}
     for arm in arms:
         for exit_ in getattr(arm, "exits", ()):
             if not isinstance(exit_, Completed):
@@ -166,14 +171,40 @@ def _arm_evaluations(arms, incoming) -> tuple:
                     and before.value_if_bound(binding.name) is binding.value
                 ):
                     continue
-                prior = found.get(binding.name, _UNSEEN)
-                if prior is _UNSEEN:
-                    found[binding.name] = binding.value
-                elif prior is not binding.value:
-                    conflicted.add(binding.name)
-    return tuple(
-        (key, value) for key, value in found.items() if key not in conflicted
-    )
+                made.setdefault(binding.name, []).append(
+                    Completed(exit_.guard, binding.value, exit_.faces)
+                )
+    joined = ((key, _joined_evaluation(bound)) for key, bound in made.items())
+    return tuple((key, value) for key, value in joined if value is not None)
+
+
+def _joined_evaluation(arms):
+    """One evaluation key's value after the ``if``, from ``arms``: each a
+    completed arm of the ``if`` that bound the key, holding the value it
+    bound under the arm's guard and faces.
+
+    The arms that bound it to one value answer that value.  Arms that bound
+    it to different values answer the guarded value selecting each arm's own
+    value under that arm's guard: the completed face factored into one
+    ``GuardedValue`` chain through the one door that does it
+    (``ExitSet.factor_completed``), which admits it only when the arms are
+    provably exclusive.  Arms it cannot prove exclusive hold the key at two
+    values on one path: there is no one value to carry, the key is not
+    bound, and its read is refused by name (``EvaluationRefSugar``,
+    ``LoopBindingRefSugar``), never answered with one of the two.
+    """
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import ExitSetFactoringGap
+
+    first = arms[0].value
+    if all(arm.value is first for arm in arms):
+        return first
+    try:
+        factored = ExitSet(tuple(arms)).normalize().factor_completed()
+    except ExitSetFactoringGap:
+        return None
+    (arm,) = factored.exits
+    return arm.value
 
 
 @dataclass(frozen=True)
@@ -481,7 +512,9 @@ class IfSugar(Sugar):
             can_fall_through=can_fall_through,
             continuation_guard=continuation_guard,
             unconditional_entries=unconditional_entries,
-            evaluations=_arm_evaluations((then_exits, else_exits), incoming),
+            # Each suite's arms under its polarity: a key's value on each
+            # path is read under that path's own guard.
+            evaluations=_arm_evaluations((exits,), incoming),
         )
         if not exits.halts() and not exits.owed_items():
             return ExitSet.completed(faces)
