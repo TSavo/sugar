@@ -38,6 +38,25 @@ def test_opaque_operator_unary_minus_is_named_refusal() -> None:
     assert raised.value.observed == "SymbolicValue -"
 
 
+@pytest.mark.parametrize(("method", "operator"), (("multiply", "*"), ("power", "**")))
+def test_a_coordinate_spelled_len_gets_no_builtin_len_warrant(method, operator) -> None:
+    """``TermValue`` once read ``callee == "len"`` as the builtin's integer
+    result contract.  No minting site decides a coordinate is the builtin
+    ``len`` (#7757), so a coordinate merely spelled ``len`` -- a rebound
+    ``len`` spells the same -- is never folded into ``2 * call:len(...)``."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    spelled = OpaqueOpCallsite("len", TermValue(9), computed=None)
+    warranted = ctor(operator, [num(2), ctor("call:len", [num(9)])])
+    try:
+        outcome = getattr(TermValue(2), method)(spelled, "t.py:1", None)
+    except SugarNotWritten:
+        return  # refused by name
+    for face in outcome.exits:
+        if isinstance(face, Completed):
+            assert face.value.to_term(owner="test") != warranted
+
+
 def test_opaque_operator_declares_full_arithmetic_surface() -> None:
     expected = {
         "add",

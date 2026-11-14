@@ -1150,13 +1150,17 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.floor.string_value import StringValue
+        from sugar_source_tree.nodes import LanguageCallee
 
         def face_names_a_string(face) -> bool:
             if type(face) is StringValue:
                 return True
             if type(face) is CallSiteValue:
                 return face.names_a_string()
-            if type(face) is OpaqueOpCallsite and face.callee == "join":
+            if (
+                type(face) is OpaqueOpCallsite
+                and face.language_callee is LanguageCallee.STR_JOIN
+            ):
                 return True
             return False
 

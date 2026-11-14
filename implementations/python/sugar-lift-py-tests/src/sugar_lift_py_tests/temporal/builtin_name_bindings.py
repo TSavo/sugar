@@ -294,3 +294,13 @@ def builtin_name_temporal():
     )
     _EMPTY_BUILTIN_TEMPORAL = temporal
     return temporal
+
+
+def builtin_type_class():
+    """The value the builtin namespace binds ``type`` to.
+
+    A reader recognises the builtin ``type`` class by this object (``is``),
+    never by a value's spelling: a source ``class type`` (or any rebinding)
+    is another object, however its name is spelled (#7757).
+    """
+    return builtin_name_temporal().value_if_bound("type")

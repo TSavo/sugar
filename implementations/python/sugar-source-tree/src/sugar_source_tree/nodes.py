@@ -216,7 +216,9 @@ class LanguageCallee(_enum.Enum):
     BUILTIN_TYPE = "python:builtins.type"
     # The pure builtins that invoke a dunder of (or iterate) their operands;
     # what CPython documents each as doing over decided builtin operands is
-    # dispatched on these members (``source_call_resolution``).
+    # dispatched on these members (``source_call_resolution``).  The
+    # container-mutation law cites these, and the members after them, by
+    # the same binding (``container_mutation._cited``).
     BUILTIN_ABS = "python:builtins.abs"
     BUILTIN_ALL = "python:builtins.all"
     BUILTIN_ANY = "python:builtins.any"
@@ -245,6 +247,19 @@ class LanguageCallee(_enum.Enum):
     BUILTIN_SUM = "python:builtins.sum"
     BUILTIN_TUPLE = "python:builtins.tuple"
     BUILTIN_ZIP = "python:builtins.zip"
+    # The further builtins the container-mutation law cites: header readers
+    # that run no dunder of their operands (``id``/``isinstance``/
+    # ``issubclass``) and constructors of a builtin value of their operand's
+    # items (``bytes``/``complex``).
+    BUILTIN_BYTES = "python:builtins.bytes"
+    BUILTIN_COMPLEX = "python:builtins.complex"
+    BUILTIN_ID = "python:builtins.id"
+    BUILTIN_ISINSTANCE = "python:builtins.isinstance"
+    BUILTIN_ISSUBCLASS = "python:builtins.issubclass"
+    # ``str.join(iterable)``: a method of the builtin ``str`` whose result is
+    # always a ``str``.  No name binds it; ``StringValue``'s method fold mints
+    # it on the ``OpaqueOpCallsite`` of a join over an opaque iterable.
+    STR_JOIN = "python:builtins.str.join"
     # ``typing.final(f)``: sets ``f.__final__`` if it can and returns ``f``.
     TYPING_FINAL = "python:typing.final"
     # ``re.search`` / ``re.match`` / ``re.fullmatch``: the C-floor matchers.

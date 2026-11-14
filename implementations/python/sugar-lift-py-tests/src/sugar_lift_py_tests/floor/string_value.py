@@ -437,28 +437,16 @@ class StringValue(GuardStableValue):
 
         if isinstance(other, GuardedValue):
             return other.map_from_left("add", self, site, ctx)
-        if type(other) is OpaqueOpCallsite and other.callee == "str":
-            if type(other.computed) is StringValue:
-                from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_source_tree.nodes import LanguageCallee
 
-                return ExitSet.completed(StringValue(self.value + other.computed.value))
-            from sugar_lift_py_tests.effect import (
-                SequenceConcatenationRuntimeEffect,
-                runtime_effect_evidence,
-            )
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            return ExitSet.halted(
-                SequenceConcatenationRuntimeEffect(
-                    "string concatenation depends on runtime str() content; "
-                    f"owner=StringValue.add site={site}",
-                    **runtime_effect_evidence("py.sequence_concat", other, site),
-                )
-            )
-        if type(other) is OpaqueOpCallsite and other.callee == "join":
+        if (
+            type(other) is OpaqueOpCallsite
+            and other.language_callee is LanguageCallee.STR_JOIN
+        ):
             # "(" + ", ".join(ee.__name__ for ee in e) + ")" inside
             # _exception_type_name's multi-name arm. str.join always returns
-            # str; name concat without inventing the joined text.
+            # str; name concat without inventing the joined text.  Known by
+            # the callee its minting site decided, never the spelling.
             return CallSiteValue.named_string_concat(self, other, site)
         if type(other) is SymbolicValue:
             # str + symbolic: same native-operation ExitSet carrier as
@@ -698,13 +686,14 @@ def _fold_string_method(receiver: StringValue, operation):
     name = operation.name
     args = operation.arguments
 
-    def opaque_coordinate() -> ExitSet:
+    def opaque_coordinate(language_callee=None) -> ExitSet:
         return ExitSet.completed(
             OpaqueOpCallsite(
                 callee=name,
                 arg=receiver,
                 computed=None,
                 extra_args=tuple(args),
+                language_callee=language_callee,
             )
         )
 
@@ -754,8 +743,11 @@ def _fold_string_method(receiver: StringValue, operation):
             # -- the same abolished cap `floor/sequence_repetition.py` names, and
             # since that module went the panic was an ImportError, not a refusal.
             return ExitSet.completed(StringValue(receiver.value.join(parts)))
-        # Opaque iterable (vendor columns, symbolic seq): coordinate only.
-        return opaque_coordinate()
+        # Opaque iterable (vendor columns, symbolic seq): coordinate only,
+        # carrying what it is (``str.join``, whose result is a ``str``).
+        from sugar_source_tree.nodes import LanguageCallee
+
+        return opaque_coordinate(LanguageCallee.STR_JOIN)
 
     if name == "split":
         if len(args) == 0:

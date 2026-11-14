@@ -222,6 +222,37 @@ def test_a_pure_builtin_does_not_change_its_argument(tmp_path):
     )
 
 
+def test_a_name_rebound_from_a_pure_builtin_may_change_its_argument(tmp_path):
+    # ``sorted`` here is ``random.shuffle`` by its binding, never the pure
+    # builtin by its spelling (#7757): the list is unknown after the call,
+    # never the pre-call ``[1, 2]``.
+    source = (
+        "from random import shuffle as sorted\n"
+        "def f():\n"
+        "    r = [1, 2]\n"
+        "    x = sorted(r)\n"
+        "    return r\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert returns and all(_is_unknown_after_call(value, "r") for value in returns)
+
+
+def test_a_name_rebound_from_the_list_constructor_builds_no_decided_list(
+    tmp_path,
+):
+    # ``list`` here is ``collections.deque`` by its binding: its result is no
+    # decided list, so ``append`` is not the cited list store (#7757).
+    source = (
+        "from collections import deque as list\n"
+        "def f():\n"
+        "    r = list()\n"
+        "    r.append(1)\n"
+        "    return r\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert ListValue(_ints(1)) not in returns
+
+
 def test_an_undecided_receiver_stays_opaque_and_is_unknown_after(tmp_path):
     # The formal's method waits for the caller's actual (the ``method_call``
     # carrier); once a list is supplied, ``x`` is unknown after the call.

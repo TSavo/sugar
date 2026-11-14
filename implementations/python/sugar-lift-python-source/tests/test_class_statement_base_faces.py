@@ -236,6 +236,29 @@ def test_a_base_with_several_completions_builds_one_class_per_completion(
     ]
 
 
+def test_only_the_builtin_type_binding_is_retained_as_a_base(tmp_path: Path):
+    """``type`` is retained as a base by the object the builtin namespace
+    binds, never the spelling (#7757).  A source ``class type: pass`` seeds
+    a ``ClassValue`` named ``type`` equal field-for-field to the builtin's
+    (``module_class_value``); built over it, the class has no base, as for
+    any other generic class value.  Built over the builtin, it keeps it."""
+    from sugar_lift_py_tests.floor import BlockValue, ClassValue
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        builtin_type_class,
+    )
+
+    builtin = builtin_type_class()
+    shadow = ClassValue(name="type", bases=(), record=BlockValue(()))
+    assert shadow is not builtin
+
+    over_builtin = _with_base(tmp_path / "builtin", ExitSet.completed(builtin))
+    (kept,) = over_builtin.desugar().completed_value().base_classes
+    assert kept is builtin
+
+    over_shadow = _with_base(tmp_path / "shadow", ExitSet.completed(shadow))
+    assert over_shadow.desugar().completed_value().base_classes == ()
+
+
 def test_a_source_base_that_always_raises_is_the_statements_raise(tmp_path: Path):
     """The class body never runs after a base that raised: its refusal is
     not reached, and the base's raise is the statement's only face."""

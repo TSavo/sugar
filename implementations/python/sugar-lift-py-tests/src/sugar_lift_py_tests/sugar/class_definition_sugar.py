@@ -223,16 +223,22 @@ class ClassDefinitionSugar(Sugar):
         )
 
     def _construct(self, evaluated_bases, class_body) -> ExitSet:
-        from sugar_lift_py_tests.floor import BuiltinDictClassValue, ClassValue
+        from sugar_lift_py_tests.floor import BuiltinDictClassValue
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            builtin_type_class,
+        )
 
         base_values = []
         for value in evaluated_bases:
             if isinstance(value, (ClassDefinitionValue, BuiltinDictClassValue)):
                 base_values.append(value)
-            elif type(value) is ClassValue and value.name == "type":
-                # ``type`` is an exact Python builtin class binding. Retaining
-                # it is what lets zero-argument super in a source metaclass
-                # select type.__new__; no other generic ClassValue is admitted.
+            elif value is builtin_type_class():
+                # The builtin ``type`` class, by the object the builtin
+                # namespace binds (never the spelling: a source ``class
+                # type`` seeds an equal-looking ``ClassValue`` named
+                # ``type``). Retaining it is what lets zero-argument super in
+                # a source metaclass select type.__new__; no other generic
+                # ClassValue is admitted.
                 base_values.append(value)
             # Every other evaluated base (an opaque cited value, a symbolic
             # subscript) remains outside the class model and gains no

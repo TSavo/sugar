@@ -58,7 +58,13 @@ class BuiltinSuperValue(FloorValue):
                 fix="construct C3 super selection before dispatching this method",
             )
         base = bases[0]
-        if name == "__new__" and getattr(base, "name", None) == "type":
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            builtin_type_class,
+        )
+
+        # The builtin ``type`` by the object the builtin namespace binds,
+        # never a base that merely spells ``type``.
+        if name == "__new__" and base is builtin_type_class():
             return self._type_new(arguments, keywords, blame)
         from sugar_lift_py_tests.floor.builtin_dict_class_value import (
             BuiltinDictClassValue,
