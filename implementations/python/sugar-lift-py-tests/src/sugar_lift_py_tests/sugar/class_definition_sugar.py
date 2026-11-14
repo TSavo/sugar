@@ -141,6 +141,31 @@ class ClassDefinitionSugar(Sugar):
         return cid_of_json(self.preimage)
 
     def desugar(self, ctx: object = None) -> Outcome:
+        # A class statement runs once: Python binds the class it builds, and
+        # every ``Cls(...)`` reads that one class.  So a module-level statement
+        # is reduced once and its outcome kept with its sugar; every class call
+        # (``ClassConstructorBodySugar``) and every other read of the statement
+        # answers with that one outcome, never a second reduction (#7794).  A
+        # statement nested in a function runs at each call of that function,
+        # against that call's bindings, so it is reduced at each read.
+        if not self._is_module_statement():
+            return self._reduce_statement(ctx)
+        reduced = self.__dict__.get("_statement_outcome")
+        if reduced is None:
+            reduced = self._reduce_statement(ctx)
+            object.__setattr__(self, "_statement_outcome", reduced)
+        return reduced
+
+    def _is_module_statement(self) -> bool:
+        statement = self.class_definition
+        if statement is None:
+            return False
+        module = getattr(getattr(statement, "unit", None), "typed_module", None)
+        return module is not None and any(
+            item is statement for item in getattr(module, "body", ())
+        )
+
+    def _reduce_statement(self, ctx) -> Outcome:
         # Python evaluates the base expressions, in order, before the class
         # body runs; if one raises, the statement raises and no class exists.
         # So the bases are an ordinary operand fold (#7755): ``and_then`` runs
