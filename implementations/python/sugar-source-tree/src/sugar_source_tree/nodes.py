@@ -2477,6 +2477,32 @@ class SourceUnit:
             return None
         return table.get(span)
 
+    def attach_construction_context(self, context: object) -> None:
+        """The one write of the construction-context slot (#7757 item 5).
+
+        The opener's first stage parses a file once, with no context, for the
+        step-3 readers: their rows are what the context's table is built from,
+        so the context cannot exist at that parse. The opener then attaches
+        its context to that same unit, before population, instead of parsing
+        the file a second time. Nothing was constructed under the missing
+        context (``_require_construction_context`` refuses it), and every node
+        reads the slot live (``Node._coordinate``), so the tree constructs
+        under the attached context from here on.
+
+        The slot is written once. A unit that already carries a context
+        refuses: a unit keeps the context it was prepared under, and an open
+        under another context prepares its own unit (#7772).
+        """
+        if self.construction_context is not None:
+            raise BackendDefect(
+                blame=self.filename,
+                owner="SourceUnit.attach_construction_context",
+                observed="a unit that already carries a construction context",
+                requested="a unit the opener's first stage parsed with no context",
+                fix="an open under another context prepares its own unit",
+            )
+        object.__setattr__(self, "construction_context", context)
+
     def bind_typed_module(
         self,
         module: "Module",

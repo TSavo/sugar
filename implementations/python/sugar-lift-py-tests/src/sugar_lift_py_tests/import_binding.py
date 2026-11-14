@@ -1488,8 +1488,10 @@ def _run_lexical_import_pass(
 
     The file is opened by the opener's first stage (``_open_at_seat``), at the
     seat the opener reads, with no construction context: these rows are what
-    that context's table is built from, so population cannot run here. Lexical
-    product is §4-resident so a second open does not re-walk.
+    that context's table is built from, so population cannot run here. The
+    unit it parses is the one the opener later attaches its context to, so
+    the file is parsed once. Lexical product is §4-resident so a second open
+    does not re-walk.
     """
     from sugar_lift_py_tests.lift_rpc import _open_at_seat
     from sugar_source_tree.process_resident_file import (
