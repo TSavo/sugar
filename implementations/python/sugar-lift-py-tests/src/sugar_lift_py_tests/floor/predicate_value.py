@@ -59,9 +59,9 @@ class PredicateValue(FloorValue):
         del site
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             SymbolicValue(
                 ctor(
                     "py.getattr",
@@ -128,9 +128,9 @@ class PredicateValue(FloorValue):
         # A predicate flips by wrapping its formula in not_ -- the formula owns
         # the polarity, the carrier stays PredicateValue; operand callsites ride.
         from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 not_(self.formula),
                 self.site,
@@ -151,9 +151,9 @@ class PredicateValue(FloorValue):
     def truth(self, site):
         """An already-boolean predicate stands as its existing formula."""
         del site
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self)
+        return ExitSet.completed(self)
 
     def subscript(self, index, site):
         """Keep unknown scalar-versus-array predicate results visibly red.
@@ -167,9 +167,9 @@ class PredicateValue(FloorValue):
             SubscriptResultRuntimeEffect,
             runtime_effect_evidence,
         )
-        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Incomplete(
+        return ExitSet.halted(
             SubscriptResultRuntimeEffect(
                 "predicate subscript runtime boundary: PredicateValue runtime "
                 "result shape may be a scalar boolean or an indexable array; "
@@ -188,9 +188,9 @@ class PredicateValue(FloorValue):
             return super().bitwise_or(other, site)
         del site
         from sugar_lift_py_tests.ir import or_
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(PredicateValue(or_([self.formula, other.formula])))
+        return ExitSet.completed(PredicateValue(or_([self.formula, other.formula])))
 
     def bitwise_and(self, other, site):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
@@ -200,9 +200,9 @@ class PredicateValue(FloorValue):
         if type(other) is not PredicateValue:
             return super().bitwise_and(other, site)
         from sugar_lift_py_tests.ir import and_
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 and_([self.formula, other.formula]),
                 site,
@@ -216,9 +216,9 @@ class PredicateValue(FloorValue):
         if type(other) is not PredicateValue:
             return super().bitwise_xor(other, site)
         from sugar_lift_py_tests.ir import and_, not_, or_
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 or_(
                     [
@@ -244,9 +244,9 @@ class PredicateValue(FloorValue):
         # become definite under the asserted fact (assert x in domain → x is
         # one of the domain faces for the continuing tail).
         from sugar_lift_py_tests.floor.inv_value import InvValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             InvValue(
                 self.formula,
                 site,

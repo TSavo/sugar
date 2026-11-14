@@ -22,7 +22,7 @@ class StringValue(GuardStableValue):
         from sugar_lift_py_tests.floor.python_type_coordinate import (
             authenticated_python_type_spelling,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -33,7 +33,7 @@ class StringValue(GuardStableValue):
         authenticated = authenticated_python_type_spelling(
             type_term, owner="StringValue.python_isinstance", site=site
         )
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if authenticated == "str"
             else FalseBoolLiteralSugar(site=site)
@@ -47,7 +47,7 @@ class StringValue(GuardStableValue):
 
     def truth(self, site):
         # A string's truth is nonempty.
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -55,7 +55,7 @@ class StringValue(GuardStableValue):
             TrueBoolLiteralSugar,
         )
 
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if self.value
             else FalseBoolLiteralSugar(site=site)
@@ -68,12 +68,12 @@ class StringValue(GuardStableValue):
         from sugar_lift_py_tests.floor.none_value import NoneValue
 
         if type(other) is NoneValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
 
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
     # NO equals override: a string equality is a FACT, not a lift-time fold.
@@ -108,7 +108,7 @@ class StringValue(GuardStableValue):
         # Sugar. Ground cross-type is authenticated TypeError. Undecided peers
         # refuse named (no FOL invent).
         if type(other) is StringValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -116,7 +116,7 @@ class StringValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if self.value < other.value
                 else FalseBoolLiteralSugar(site=site)
@@ -130,7 +130,7 @@ class StringValue(GuardStableValue):
     def less_than_from_left(self, left, site):
         """``left < self`` when the RHS is a string — Sugar fold or TypeError."""
         if type(left) is StringValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -138,7 +138,7 @@ class StringValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if left.value < self.value
                 else FalseBoolLiteralSugar(site=site)
@@ -153,7 +153,7 @@ class StringValue(GuardStableValue):
         # Source-decided str lexicographic order is Sugar, not FOL invent and
         # not a named refusal of missing machinery.
         if type(other) is StringValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -161,7 +161,7 @@ class StringValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if self.value <= other.value
                 else FalseBoolLiteralSugar(site=site)
@@ -174,7 +174,7 @@ class StringValue(GuardStableValue):
 
     def greater_than(self, other, site):
         if type(other) is StringValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -182,7 +182,7 @@ class StringValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if self.value > other.value
                 else FalseBoolLiteralSugar(site=site)
@@ -195,7 +195,7 @@ class StringValue(GuardStableValue):
 
     def greater_equal(self, other, site):
         if type(other) is StringValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -203,7 +203,7 @@ class StringValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if self.value >= other.value
                 else FalseBoolLiteralSugar(site=site)
@@ -218,16 +218,18 @@ class StringValue(GuardStableValue):
         # A string knows its length: the count of characters.
         del site
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(TermValue(len(self.value)))
+        return ExitSet.completed(TermValue(len(self.value)))
 
     def slice_assign_iterable_with(self, operation, ctx):
         """Project the string's authenticated characters for slice assignment."""
         del operation, ctx
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(tuple(StringValue(character) for character in self.value))
+        return ExitSet.completed(
+            tuple(StringValue(character) for character in self.value)
+        )
 
     def attribute(self, name, site):
         # Bound methods and fields on a constructed string (``"{:.2f}".format``,
@@ -254,7 +256,7 @@ class StringValue(GuardStableValue):
         # TypeError for ground non-string needles; py.in when the needle is
         # symbolic/opaque. Never invent membership for unconstructed shapes.
         if type(item) is StringValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -262,7 +264,7 @@ class StringValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if item.value in self.value
                 else FalseBoolLiteralSugar(site=site)
@@ -273,9 +275,9 @@ class StringValue(GuardStableValue):
         if type(item) in (SymbolicValue, CallSiteValue):
             from sugar_lift_py_tests.floor.predicate_value import PredicateValue
             from sugar_lift_py_tests.ir import atomic
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(
+            return ExitSet.completed(
                 PredicateValue(
                     atomic(
                         "py.in",
@@ -337,7 +339,7 @@ class StringValue(GuardStableValue):
         # is TypeError; an index with undecided runtime semantics stays loud.
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if type(index) is SliceValue:
             bounds = (index.lower, index.upper, index.step)
@@ -359,13 +361,15 @@ class StringValue(GuardStableValue):
                         requested="ground Python string slice",
                         fix="use a nonzero literal integer step or emit ValueErrorRuntimeEffect",
                     )
-                return Complete(StringValue(self.value[slice(lower, upper, step)]))
+                return ExitSet.completed(
+                    StringValue(self.value[slice(lower, upper, step)])
+                )
 
         if type(index) is TermValue and isinstance(index.value, int):
             i = index.value
             n = len(self.value)
             if -n <= i < n:
-                return Complete(StringValue(self.value[i]))
+                return ExitSet.completed(StringValue(self.value[i]))
             from sugar_lift_py_tests.floor.ground_index_error import (
                 ground_index_error,
             )
@@ -423,9 +427,9 @@ class StringValue(GuardStableValue):
         # A string's addition IS concatenation: two strings fold to their join.
         # Anything else falls to the honest addition-floor gap.
         if type(other) is StringValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(StringValue(self.value + other.value))
+            return ExitSet.completed(StringValue(self.value + other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
@@ -435,16 +439,16 @@ class StringValue(GuardStableValue):
             return other.map_from_left("add", self, site)
         if type(other) is OpaqueOpCallsite and other.callee == "str":
             if type(other.computed) is StringValue:
-                from sugar_lift_py_tests.outcome import Complete
+                from sugar_lift_py_tests.outcome import ExitSet
 
-                return Complete(StringValue(self.value + other.computed.value))
+                return ExitSet.completed(StringValue(self.value + other.computed.value))
             from sugar_lift_py_tests.effect import (
                 SequenceConcatenationRuntimeEffect,
                 runtime_effect_evidence,
             )
-            from sugar_lift_py_tests.outcome import Incomplete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Incomplete(
+            return ExitSet.halted(
                 SequenceConcatenationRuntimeEffect(
                     "string concatenation depends on runtime str() content; "
                     f"owner=StringValue.add site={site}",
@@ -510,9 +514,9 @@ class StringValue(GuardStableValue):
         from sugar_lift_py_tests.floor.term_value import TermValue
 
         if type(other) is TermValue and isinstance(other.value, int):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(StringValue(self.value * other.value))
+            return ExitSet.completed(StringValue(self.value * other.value))
         if type(other) in (CallSiteValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
         if other.denotes_value() and other.runtime_type_is_decided():
@@ -551,12 +555,12 @@ class StringValue(GuardStableValue):
                 DynamicFormatRuntimeEffect,
                 runtime_effect_evidence,
             )
-            from sugar_lift_py_tests.outcome import Complete, Incomplete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             try:
-                return Complete(StringValue(self.value % ground))
+                return ExitSet.completed(StringValue(self.value % ground))
             except (KeyError, OverflowError, TypeError, ValueError) as exc:
-                return Incomplete(
+                return ExitSet.halted(
                     DynamicFormatRuntimeEffect(
                         "percent-format runtime boundary: Python rejected a "
                         "ground format application; "
@@ -569,10 +573,10 @@ class StringValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.ir import ctor, num, str_const
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if type(other) in (CallSiteValue, SymbolicValue, TupleValue):
-            return Complete(
+            return ExitSet.completed(
                 SymbolicValue(
                     ctor(
                         "py.format",
@@ -589,10 +593,10 @@ class StringValue(GuardStableValue):
     def _distribute_guarded_modulo(self, other, site):
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
-        from sugar_lift_py_tests.outcome import Complete, complete_value
+        from sugar_lift_py_tests.outcome import ExitSet, complete_value
 
         if isinstance(other, GuardedValue):
-            return Complete(
+            return ExitSet.completed(
                 GuardedValue(
                     other.guard,
                     complete_value(
@@ -618,7 +622,7 @@ class StringValue(GuardStableValue):
                         owner="StringValue.modulo guarded tuple element",
                     )
 
-                return Complete(
+                return ExitSet.completed(
                     GuardedValue(
                         element.guard,
                         branch(element.when_true),
@@ -681,19 +685,19 @@ def _fold_string_method(receiver: StringValue, operation):
     """Fold join/strip/split/splitlines (and strip family) or mint an opaque coordinate.
 
     ``operation`` carries ``name``, ``arguments`` and ``blame``. Returns an
-    Outcome when this method is owned, else None so the caller keeps the call
+    ExitSet when this method is owned, else None so the caller keeps the call
     loud for unrelated names.
     """
     from sugar_lift_py_tests.floor.array_literal import ArrayLiteral
     from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
     from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     name = operation.name
     args = operation.arguments
 
-    def opaque_coordinate() -> Complete:
-        return Complete(
+    def opaque_coordinate() -> ExitSet:
+        return ExitSet.completed(
             OpaqueOpCallsite(
                 callee=name,
                 arg=receiver,
@@ -704,11 +708,13 @@ def _fold_string_method(receiver: StringValue, operation):
 
     if name in {"strip", "lstrip", "rstrip"}:
         if len(args) == 0:
-            return Complete(StringValue(getattr(receiver.value, name)()))
+            return ExitSet.completed(StringValue(getattr(receiver.value, name)()))
         if len(args) == 1:
             chars = args[0]
             if isinstance(chars, StringValue):
-                return Complete(StringValue(getattr(receiver.value, name)(chars.value)))
+                return ExitSet.completed(
+                    StringValue(getattr(receiver.value, name)(chars.value))
+                )
             # Opaque / symbolic chars: mint call:strip(self, chars), never invent.
             return opaque_coordinate()
         return None
@@ -730,7 +736,7 @@ def _fold_string_method(receiver: StringValue, operation):
             TrueBoolLiteralSugar,
         )
 
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=operation.blame)
             if result
             else FalseBoolLiteralSugar(site=operation.blame)
@@ -745,13 +751,13 @@ def _fold_string_method(receiver: StringValue, operation):
             # used to PANIC above a static cap from the deleted `sugar.for_sugar`
             # -- the same abolished cap `floor/sequence_repetition.py` names, and
             # since that module went the panic was an ImportError, not a refusal.
-            return Complete(StringValue(receiver.value.join(parts)))
+            return ExitSet.completed(StringValue(receiver.value.join(parts)))
         # Opaque iterable (vendor columns, symbolic seq): coordinate only.
         return opaque_coordinate()
 
     if name == "split":
         if len(args) == 0:
-            return Complete(
+            return ExitSet.completed(
                 ArrayLiteral(
                     tuple(StringValue(part) for part in receiver.value.split())
                 )
@@ -759,7 +765,7 @@ def _fold_string_method(receiver: StringValue, operation):
         if len(args) == 1:
             sep = args[0]
             if isinstance(sep, StringValue):
-                return Complete(
+                return ExitSet.completed(
                     ArrayLiteral(
                         tuple(
                             StringValue(part)
@@ -768,7 +774,7 @@ def _fold_string_method(receiver: StringValue, operation):
                     )
                 )
             if _is_none_floor(sep):
-                return Complete(
+                return ExitSet.completed(
                     ArrayLiteral(
                         tuple(StringValue(part) for part in receiver.value.split(None))
                     )
@@ -779,7 +785,7 @@ def _fold_string_method(receiver: StringValue, operation):
             if isinstance(maxsplit, TermValue) and type(maxsplit.value) is int:
                 max_n = int(maxsplit.value)
                 if isinstance(sep, StringValue):
-                    return Complete(
+                    return ExitSet.completed(
                         ArrayLiteral(
                             tuple(
                                 StringValue(part)
@@ -788,7 +794,7 @@ def _fold_string_method(receiver: StringValue, operation):
                         )
                     )
                 if _is_none_floor(sep):
-                    return Complete(
+                    return ExitSet.completed(
                         ArrayLiteral(
                             tuple(
                                 StringValue(part)
@@ -803,7 +809,7 @@ def _fold_string_method(receiver: StringValue, operation):
         # str.splitlines([keepends]) — fold when keepends is static bool/0/1;
         # opaque keepends → coordinate only (never invent line breaks).
         if len(args) == 0:
-            return Complete(
+            return ExitSet.completed(
                 ArrayLiteral(
                     tuple(StringValue(part) for part in receiver.value.splitlines())
                 )
@@ -811,7 +817,7 @@ def _fold_string_method(receiver: StringValue, operation):
         if len(args) == 1:
             keep = args[0]
             if isinstance(keep):
-                return Complete(
+                return ExitSet.completed(
                     ArrayLiteral(
                         tuple(
                             StringValue(part)
@@ -820,7 +826,7 @@ def _fold_string_method(receiver: StringValue, operation):
                     )
                 )
             if isinstance(keep, TermValue) and type(keep.value) is int:
-                return Complete(
+                return ExitSet.completed(
                     ArrayLiteral(
                         tuple(
                             StringValue(part)

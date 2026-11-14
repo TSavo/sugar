@@ -30,6 +30,12 @@ def complete_value(outcome: Outcome, *, owner: str) -> FloorValue:
     from .exit_set import ExitSet
 
     if isinstance(outcome, ExitSet):
+        # One unconditional completed arm that owes nothing is the shape a
+        # linear ``Complete`` stood for (#7825); an owing arm keeps its debt
+        # and is refused below, exactly as ``collapse`` refused to linearize it.
+        value = outcome.completed_value()
+        if value is not None and not outcome.owed_items():
+            return value
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
         from sugar_lift_py_tests.gap.panic import construction_panic
 

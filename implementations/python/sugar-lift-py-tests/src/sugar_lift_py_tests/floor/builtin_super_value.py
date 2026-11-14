@@ -20,9 +20,9 @@ class BuiltinSuperValue(FloorValue):
 
     def attribute(self, name, site):
         del site
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(BuiltinSuperMethodValue(self, name))
+        return ExitSet.completed(BuiltinSuperMethodValue(self, name))
 
     def call_method_value(
         self,
@@ -65,7 +65,7 @@ class BuiltinSuperValue(FloorValue):
         )
         from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if (
             name == "__init__"
@@ -73,7 +73,7 @@ class BuiltinSuperValue(FloorValue):
             and not arguments
             and not keywords
         ):
-            return Complete(NoneValue())
+            return ExitSet.completed(NoneValue())
         if (
             name == "__setitem__"
             and isinstance(base, BuiltinDictClassValue)
@@ -97,7 +97,7 @@ class BuiltinSuperValue(FloorValue):
                 )
             key, value = arguments
             return self.receiver.mapping_builtin_setitem(key, value, blame).and_then(
-                lambda updated: Complete(
+                lambda updated: ExitSet.completed(
                     ReceiverOwnedMutationResult(self.receiver, updated, NoneValue())
                 )
             )
@@ -134,7 +134,7 @@ class BuiltinSuperValue(FloorValue):
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if len(arguments) != 4:
             construction_panic_gap(
@@ -160,7 +160,7 @@ class BuiltinSuperValue(FloorValue):
         # ``**kwds`` is evaluated and authenticated by MethodCallSugar.  It does
         # not alter the namespace identity represented by this Floor.
         del keywords
-        return Complete(
+        return ExitSet.completed(
             RuntimeClassValue(
                 name=name.value,
                 bases=tuple(bases.elements),

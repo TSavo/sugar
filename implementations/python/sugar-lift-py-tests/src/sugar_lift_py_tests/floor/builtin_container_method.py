@@ -97,9 +97,9 @@ def container_kind(value) -> str | None:
 
 def _pair(post, result):
     from .tuple_value import TupleValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    return Complete(TupleValue((post, result)))
+    return ExitSet.completed(TupleValue((post, result)))
 
 
 def _none():
@@ -295,15 +295,17 @@ def _then_pair(outcome):
     """A floor store's outcome as the pair: its post-state and ``None``.
 
     A store that raises is its halt, handed back unchanged."""
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    if isinstance(outcome, Incomplete):
+    if not isinstance(outcome, ExitSet):
+        return UNDECIDED
+    if outcome.halts() == outcome.exits:
         return outcome
-    if not isinstance(outcome, Complete):
+    post = outcome.completed_value()
+    if post is None or container_kind(post) is None:
         return UNDECIDED
-    if container_kind(outcome.value) is None:
-        return UNDECIDED
-    return _pair(outcome.value, _none())
+    # Rebuilt through ``sequence`` so the arm's ``owed`` rides onto the pair.
+    return outcome.sequence(lambda value: _pair(value, _none()))
 
 
 def _find_key(entries, key):

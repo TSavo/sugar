@@ -104,13 +104,13 @@ class ListIteratorValue(FloorValue):
 
     def next_with(self, operation, ctx):
         del ctx
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if self.index >= len(self.elements):
             return _stop_iteration(operation.blame, owner=operation.owner)
         yielded = self.elements[self.index]
         advanced = replace(self, index=self.index + 1)
-        return Complete(NextResult(yielded, advanced))
+        return ExitSet.completed(NextResult(yielded, advanced))
 
 
 @dataclass(frozen=True)
@@ -172,13 +172,13 @@ class TupleIteratorValue(FloorValue):
 
     def next_with(self, operation, ctx):
         del ctx
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if self.index >= len(self.elements):
             return _stop_iteration(operation.blame, owner=operation.owner)
         yielded = self.elements[self.index]
         advanced = replace(self, index=self.index + 1)
-        return Complete(NextResult(yielded, advanced))
+        return ExitSet.completed(NextResult(yielded, advanced))
 
 
 def _stop_iteration(site, *, owner: str):

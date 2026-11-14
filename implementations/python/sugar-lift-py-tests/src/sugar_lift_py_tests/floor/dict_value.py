@@ -34,7 +34,7 @@ class DictValue(GuardStableValue):
 
     def truth(self, site):
         """A constructed dict is truthy exactly when it has an entry."""
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -42,7 +42,7 @@ class DictValue(GuardStableValue):
             TrueBoolLiteralSugar,
         )
 
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if self.entries
             else FalseBoolLiteralSugar(site=site)
@@ -52,13 +52,13 @@ class DictValue(GuardStableValue):
         # Keys whose equality is undecided may have collapsed into one.
         from sugar_lift_py_tests.floor.membership import decided_distinct
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if not decided_distinct(tuple(key for key, _value in self.entries)):
             from sugar_lift_py_tests.floor.set_value import undecided_length
 
             return undecided_length(self, site)
-        return Complete(TermValue(len(self.entries)))
+        return ExitSet.completed(TermValue(len(self.entries)))
 
     def iter_with(self, operation, ctx):
         """``iter(dict)`` traverses authenticated keys in insertion order --
@@ -66,22 +66,22 @@ class DictValue(GuardStableValue):
         is undecided and the traversal stays a construction gap."""
         from sugar_lift_py_tests.floor.iterator_value import ListIteratorValue
         from sugar_lift_py_tests.floor.membership import decided_distinct
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if not decided_distinct(tuple(key for key, _value in self.entries)):
             return super().iter_with(operation, ctx)
         del operation, ctx
 
-        return Complete(
+        return ExitSet.completed(
             ListIteratorValue(tuple(key for key, _value in self.entries), index=0)
         )
 
     def slice_assign_iterable_with(self, operation, ctx):
         """Project insertion-ordered authenticated keys for slice assignment."""
         del operation, ctx
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(tuple(key for key, _value in self.entries))
+        return ExitSet.completed(tuple(key for key, _value in self.entries))
 
     def contains(self, item, site):
         # A guarded needle is not one needle: distribute into its faces and
@@ -130,9 +130,9 @@ class DictValue(GuardStableValue):
                 entries[found] = (entries[found][0], right_value)
             else:
                 entries.append((right_key, right_value))
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(DictValue(tuple(entries)))
+        return ExitSet.completed(DictValue(tuple(entries)))
 
     def attribute(self, name, site):
         # Bound methods and fields on a constructed dict (``{{}}.get``, ``mapping.items``) stay the
@@ -163,9 +163,9 @@ class DictValue(GuardStableValue):
             and required_frame is None
         ):
             from sugar_lift_py_tests.floor.tuple_value import TupleValue
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(
+            return ExitSet.completed(
                 TupleValue(
                     tuple(TupleValue((key, value)) for key, value in self.entries)
                 )
@@ -221,7 +221,7 @@ class DictValue(GuardStableValue):
         # Source-decided unhashable keys are TypeError. An index whose
         # hash/eq semantics are not source-decided stays the named refusal.
         from sugar_lift_py_tests.floor.membership import decided_unhashable
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if decided_unhashable(index):
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
@@ -234,7 +234,7 @@ class DictValue(GuardStableValue):
 
         found = _key_position(self.entries, index)
         if found is not None and found >= 0:
-            return Complete(self.entries[found][1])
+            return ExitSet.completed(self.entries[found][1])
         if found == -1:
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
@@ -263,7 +263,7 @@ class DictValue(GuardStableValue):
         from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_source_tree.panic import SugarNotWritten
 
         if site is None:
@@ -279,14 +279,14 @@ class DictValue(GuardStableValue):
         except SugarNotWritten:
             return self.undecided_subscript(index, site, owner="DictValue.subscript")
         return _opaque_subscript_faces(
-            Complete(SymbolicValue(term)), site, producer="DictValue.subscript"
+            ExitSet.completed(SymbolicValue(term)), site, producer="DictValue.subscript"
         )
 
     def setitem(self, index, value, site):
         guarded = self._guarded_setitem(index, value, site)
         if guarded is not None:
             return guarded
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         found = _key_position(self.entries, index)
         if found is not None:
@@ -296,7 +296,7 @@ class DictValue(GuardStableValue):
                 entries[found] = (entries[found][0], value)
             else:
                 entries.append((index, value))
-            return Complete(DictValue(tuple(entries)))
+            return ExitSet.completed(DictValue(tuple(entries)))
         from sugar_lift_py_tests.effect import (
             SubscriptStoreRuntimeEffect,
             runtime_effect_evidence,
@@ -321,7 +321,6 @@ class DictValue(GuardStableValue):
         """
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
         operands = (index, value)
         for position, operand in enumerate(operands):
@@ -333,22 +332,18 @@ class DictValue(GuardStableValue):
                 selected[position] = face
                 return self.setitem(*selected, site)
 
-            when_true = outcome_to_exitset(project(operand.when_true)).guarded(
-                operand.guard
-            )
-            when_false = outcome_to_exitset(project(operand.when_false)).guarded(
-                not_(operand.guard)
-            )
+            when_true = project(operand.when_true).guarded(operand.guard)
+            when_false = project(operand.when_false).guarded(not_(operand.guard))
             return when_true.union(when_false)
         return None
 
     def delitem(self, index, site):
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         found = _key_position(self.entries, index)
         if found is not None:
             if found >= 0:
-                return Complete(
+                return ExitSet.completed(
                     DictValue((*self.entries[:found], *self.entries[found + 1 :]))
                 )
             # Ground missing key: decidable KeyError — not a RuntimeEffect mint.

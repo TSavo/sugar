@@ -30,12 +30,14 @@ class GroundSequenceRepetitionValue(FloorValue):
     def length(self, site):
         del site
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(TermValue(len(self.elements) * max(self.repetitions, 0)))
+        return ExitSet.completed(
+            TermValue(len(self.elements) * max(self.repetitions, 0))
+        )
 
     def truth(self, site):
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -43,7 +45,7 @@ class GroundSequenceRepetitionValue(FloorValue):
             TrueBoolLiteralSugar,
         )
 
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if self.elements and self.repetitions > 0
             else FalseBoolLiteralSugar(site=site)

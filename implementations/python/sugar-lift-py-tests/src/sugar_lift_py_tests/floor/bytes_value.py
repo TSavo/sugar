@@ -26,7 +26,7 @@ class BytesValue(GuardStableValue):
         from sugar_lift_py_tests.floor.python_type_coordinate import (
             authenticated_python_type_spelling,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -37,7 +37,7 @@ class BytesValue(GuardStableValue):
         authenticated = authenticated_python_type_spelling(
             type_term, owner="BytesValue.python_isinstance", site=site
         )
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if authenticated == "bytes"
             else FalseBoolLiteralSugar(site=site)
@@ -45,7 +45,7 @@ class BytesValue(GuardStableValue):
 
     def equals(self, other, site):
         if type(other) is BytesValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -53,7 +53,7 @@ class BytesValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if self.value == other.value
                 else FalseBoolLiteralSugar(site=site)
@@ -64,9 +64,9 @@ class BytesValue(GuardStableValue):
         """Project the bytes object's authenticated integer members."""
         del operation, ctx
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(tuple(TermValue(byte) for byte in self.value))
+        return ExitSet.completed(tuple(TermValue(byte) for byte in self.value))
 
     def setitem(self, index, value, site):
         """Bytes are immutable: every subscript store is exact TypeError."""

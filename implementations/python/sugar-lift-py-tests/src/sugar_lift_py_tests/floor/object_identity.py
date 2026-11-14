@@ -32,7 +32,7 @@ def mutable_object_identity(left, right, site):
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import ctor, identity, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     left_type = _known_type(left)
     right_type = _known_type(right)
@@ -41,9 +41,9 @@ def mutable_object_identity(left, right, site):
             FalseBoolLiteralSugar,
         )
 
-        return Complete(FalseBoolLiteralSugar(site=site))
+        return ExitSet.completed(FalseBoolLiteralSugar(site=site))
     key = str_const(occurrence_key(site))
-    return Complete(
+    return ExitSet.completed(
         PredicateValue(
             identity(
                 ctor("python:object_at", (key, str_const("left"))),

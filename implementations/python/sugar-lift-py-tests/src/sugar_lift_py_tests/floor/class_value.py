@@ -55,12 +55,12 @@ class ClassValue(FloorValue):
         # Python type objects are always truthy. Dual-mode EffectBoundary
         # factories gate validation with ``if not expected_exception:``; the
         # class actual must stand as a condition without force-floor:truth:ClassValue.
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
             TrueBoolLiteralSugar,
         )
 
-        return Complete(TrueBoolLiteralSugar(site=site))
+        return ExitSet.completed(TrueBoolLiteralSugar(site=site))
 
     def is_identical(self, other, site):
         # An authenticated class object cannot be Python's None singleton.
@@ -69,12 +69,12 @@ class ClassValue(FloorValue):
         from sugar_lift_py_tests.floor.none_value import NoneValue
 
         if type(other) is NoneValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
 
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
     def attribute(self, name, site):
@@ -87,9 +87,9 @@ class ClassValue(FloorValue):
         """
         if name in {"__name__", "__qualname__"}:
             from sugar_lift_py_tests.floor.string_value import StringValue
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(StringValue(self.name))
+            return ExitSet.completed(StringValue(self.name))
         return super().attribute(name, site)
 
     def test_python_type(self, value, site):
@@ -111,7 +111,7 @@ class ClassValue(FloorValue):
         from sugar_lift_py_tests.floor.python_type_coordinate import (
             authenticated_python_type_spelling,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -124,15 +124,15 @@ class ClassValue(FloorValue):
             type_term, owner="ClassValue.python_isinstance", site=site
         )
         if authenticated_name in {"type", "object"}:
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         if authenticated_name in _CLASS_OBJECT_DISJOINT_TYPES:
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().python_isinstance(authenticated_name, type_term, site)
 
     def test_python_subtype(self, supertype, site):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -161,7 +161,7 @@ class ClassValue(FloorValue):
         while pending:
             candidate = pending.pop()
             if candidate is supertype:
-                return Complete(TrueBoolLiteralSugar(site=site))
+                return ExitSet.completed(TrueBoolLiteralSugar(site=site))
             key = id(candidate)
             if key in seen:
                 continue
@@ -178,7 +178,7 @@ class ClassValue(FloorValue):
                         fix="resolve every base through its lexical class coordinate",
                     )
                 pending.append(base)
-        return Complete(FalseBoolLiteralSugar(site=site))
+        return ExitSet.completed(FalseBoolLiteralSugar(site=site))
 
     def subscript(self, index, site):
         # Generic class subscript (Class[T]) is a type coordinate, not a dig.

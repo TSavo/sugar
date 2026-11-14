@@ -83,28 +83,31 @@ class ReceiverStatePartitionValue(FloorValue):
         as itself, so no consumer may seal over it.
         """
         from sugar_lift_py_tests.outcome import Completed, Halted
-        from sugar_lift_py_tests.outcome.exit_set import _and_guards
+        from sugar_lift_py_tests.outcome.exit_set import _and_guards, owed_union
         from dataclasses import replace
 
         halts = []
         completed = []
 
-        def walk(partition, outer):
+        def walk(partition, outer, outer_owed):
             for face in partition.exits.exits:
                 guard = face.guard if outer is None else _and_guards(outer, face.guard)
+                # A flattened face stands for its enclosing face too: it owes
+                # both (#7825, H4).
+                owed = owed_union(outer_owed, face.owed)
                 if isinstance(face, Completed):
                     if isinstance(face.value, ReceiverStatePartitionValue):
-                        if not walk(face.value, guard):
+                        if not walk(face.value, guard, owed):
                             return False
                         continue
-                    completed.append(replace(face, guard=guard))
+                    completed.append(replace(face, guard=guard, owed=owed))
                     continue
                 if not isinstance(face, Halted) or face.effect is None:
                     return False
-                halts.append(replace(face, guard=guard))
+                halts.append(replace(face, guard=guard, owed=owed))
             return True
 
-        if not walk(self, None):
+        if not walk(self, None, ()):
             return None
         return tuple(halts), tuple(completed)
 

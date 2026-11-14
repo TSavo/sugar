@@ -60,12 +60,12 @@ class UndeterminedExceptionValue(FloorValue):
         from sugar_lift_py_tests.floor.none_value import NoneValue
 
         if type(other) is NoneValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
 
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
 
@@ -120,7 +120,7 @@ class UndeterminedExceptionTypeValue(FloorValue):
         )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
             TrueBoolLiteralSugar,
         )
@@ -133,8 +133,8 @@ class UndeterminedExceptionTypeValue(FloorValue):
         if isinstance(native, BuiltinExceptionClassValue):
             identity = native.exception_type_identity()
             if _names_base_exception(identity):
-                return Complete(TrueBoolLiteralSugar(site=site))
-            return Complete(
+                return ExitSet.completed(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(
                 PredicateValue(
                     atomic(
                         "adt.is_python_type",
@@ -153,7 +153,7 @@ class UndeterminedExceptionTypeValue(FloorValue):
                 requested="authenticated class, tuple-of-classes, or symbolic type operand",
                 fix="construct the Python type operand or keep issubclass loudly unsupported",
             )
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 atomic(
                     "python.subtype",
@@ -170,11 +170,11 @@ class UndeterminedExceptionTypeValue(FloorValue):
     def is_identical(self, other, site):
         from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.outcome.exit_set import false_guard
 
         if isinstance(other, NoneValue):
-            return Complete(PredicateValue(false_guard(), site))
+            return ExitSet.completed(PredicateValue(false_guard(), site))
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
         construction_panic_gap(

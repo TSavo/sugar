@@ -75,7 +75,7 @@ def closed_complex_operation(
     """
     del site
     from sugar_lift_py_tests.floor.complex_value import ComplexValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     if type(left) is not ComplexValue and type(right) is not ComplexValue:
         return None
@@ -98,7 +98,7 @@ def closed_complex_operation(
         # and the theory cannot read back. Constructing the value would be
         # inventing that preimage, so the pair stays loud instead.
         return None
-    return Complete(ComplexValue(product.real, product.imag))
+    return ExitSet.completed(ComplexValue(product.real, product.imag))
 
 
 def complex_add(left, right, site):

@@ -243,16 +243,16 @@ class TupleCoordinateValue(FloorValue):
         """
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(PredicateValue(py_truthy(self.term), site))
+        return ExitSet.completed(PredicateValue(py_truthy(self.term), site))
 
     def subscript(self, index, site):
         return self.subscript_with_occurrence(index, site, None)
 
     def subscript_with_occurrence(self, index, site, occurrence):
         from sugar_lift_py_tests.floor.slice_value import SliceValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_source_tree.panic import SugarNotWritten
 
         if type(index) is not SliceValue:
@@ -265,7 +265,7 @@ class TupleCoordinateValue(FloorValue):
             # ``py.subscript`` over the construction term the same way
             # ``truth`` emits ``py.truthy`` and ``format_data_model`` names
             # ``call:__format__`` without inventing the formatted string.
-            return Complete(
+            return ExitSet.completed(
                 CallSiteValue(
                     target_name="__getitem__",
                     arg_values=(self, index),
@@ -298,7 +298,7 @@ class TupleCoordinateValue(FloorValue):
                 requested="same-source authenticated slice occurrence",
                 fix="transport the producer-minted Subscript occurrence unchanged",
             )
-        return Complete(
+        return ExitSet.completed(
             self._from_slice(source=self, index=index, use_occurrence=occurrence)
         )
 
@@ -313,7 +313,7 @@ class TupleCoordinateValue(FloorValue):
         from sugar_lift_py_tests.floor.python_type_coordinate import (
             authenticated_python_type_spelling,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -326,7 +326,7 @@ class TupleCoordinateValue(FloorValue):
             type_term, owner="TupleCoordinateValue.python_isinstance", site=site
         )
         if authenticated in {"tuple", "object"}:
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         if authenticated in {
             "list",
             "dict",
@@ -340,7 +340,7 @@ class TupleCoordinateValue(FloorValue):
             "type",
             "NoneType",
         }:
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().python_isinstance(authenticated, type_term, site)
 
     def test_python_type(self, value, site):
@@ -362,9 +362,9 @@ class TupleCoordinateValue(FloorValue):
         )
 
     def length(self, site):
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             TupleLengthValue(
                 target_name="len",
                 arg_values=(self,),

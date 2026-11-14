@@ -60,13 +60,13 @@ class ExitTypeCoordinate(FloorValue):
         from sugar_lift_py_tests.floor import ClassValue, SymbolicValue, TupleValue
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if type(supertype) is TupleValue:
             return supertype.test_python_subtype(self, site)
         if not isinstance(supertype, (ClassValue, SymbolicValue)):
             return _dynamic_subtype_operand(self, supertype, site)
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 atomic(
                     "python.subtype",
@@ -205,7 +205,7 @@ class RaisedExitTypeValue(FloorValue):
         )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -221,15 +221,15 @@ class RaisedExitTypeValue(FloorValue):
         if isinstance(native, BuiltinExceptionClassValue):
             expected = native.exception_type_identity()
             if expected == self.identity:
-                return Complete(TrueBoolLiteralSugar(site=site))
+                return ExitSet.completed(TrueBoolLiteralSugar(site=site))
             if self.mro is not None:
                 literal = (
                     TrueBoolLiteralSugar if expected in self.mro else FalseBoolLiteralSugar
                 )
-                return Complete(literal(site=site))
+                return ExitSet.completed(literal(site=site))
         if not isinstance(native, (ClassValue, SymbolicValue, BuiltinExceptionClassValue)):
             return _dynamic_subtype_operand(self, supertype, site)
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 atomic(
                     "python.subtype",
@@ -257,11 +257,11 @@ class RaisedExitTypeValue(FloorValue):
     def is_identical(self, other, site):
         from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.outcome.exit_set import false_guard
 
         if isinstance(other, NoneValue):
-            return Complete(PredicateValue(false_guard(), site))
+            return ExitSet.completed(PredicateValue(false_guard(), site))
         # Type coordinates do not by themselves identify an arbitrary Floor's
         # runtime value (an instance can carry its class's identity too).
         # Do not compare that metadata to a raw class/value predicate.

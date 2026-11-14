@@ -31,16 +31,16 @@ def repeat_sequence(sequence, count, site, *, elements, rebuild):
     """
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     if type(count) is TermValue and type(count.value) in (int, bool):
         n = count.value
         if len(elements) * max(n, 0) <= EAGER_MATERIALIZATION_BUDGET:
-            return Complete(rebuild(elements * n))
-        return Complete(SymbolicValue(repetition_term(sequence, count, site)))
+            return ExitSet.completed(rebuild(elements * n))
+        return ExitSet.completed(SymbolicValue(repetition_term(sequence, count, site)))
     if is_known_invalid_repetition_count(count):
         return known_invalid_repetition_type_error(sequence, count, site)
-    return Complete(SymbolicValue(repetition_term(sequence, count, site)))
+    return ExitSet.completed(SymbolicValue(repetition_term(sequence, count, site)))
 
 
 def repetition_term(sequence, count, site):

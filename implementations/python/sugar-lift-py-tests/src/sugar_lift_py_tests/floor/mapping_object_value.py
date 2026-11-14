@@ -96,13 +96,15 @@ class MappingObjectValue(ObjectValue):
 
     def mapping_builtin_setitem(self, index, value, site):
         """Apply authenticated builtin-dict storage without source redispatch."""
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         return (
             DictValue(self.entries)
             .setitem(index, value, site)
             .and_then(
-                lambda updated: Complete(self.mapping_with_entries(updated.entries))
+                lambda updated: ExitSet.completed(
+                    self.mapping_with_entries(updated.entries)
+                )
             )
         )
 
@@ -112,7 +114,7 @@ class MappingObjectValue(ObjectValue):
             ReceiverOwnedMutationResult,
         )
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         entries = value.statements if isinstance(value, BlockValue) else (value,)
         mutations = tuple(
@@ -130,16 +132,18 @@ class MappingObjectValue(ObjectValue):
                 requested="one authenticated __setitem__ receiver transition",
                 fix="preserve the source __setitem__ body mutation or keep loud",
             )
-        return Complete(mutations[0].receiver_after)
+        return ExitSet.completed(mutations[0].receiver_after)
 
     def delitem(self, index, site):
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         return (
             DictValue(self.entries)
             .delitem(index, site)
             .and_then(
-                lambda updated: Complete(self.mapping_with_entries(updated.entries))
+                lambda updated: ExitSet.completed(
+                    self.mapping_with_entries(updated.entries)
+                )
             )
         )
 
@@ -174,9 +178,9 @@ class MappingObjectValue(ObjectValue):
                 return self._mapping_get(arguments, blame)
             if name == "items" and not arguments and not self.has_method("items"):
                 from sugar_lift_py_tests.floor.tuple_value import TupleValue
-                from sugar_lift_py_tests.outcome import Complete
+                from sugar_lift_py_tests.outcome import ExitSet
 
-                return Complete(
+                return ExitSet.completed(
                     TupleValue(
                         tuple(TupleValue((key, value)) for key, value in self.entries)
                     )
@@ -195,7 +199,7 @@ class MappingObjectValue(ObjectValue):
         from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.floor.set_value import _closed_member_equal
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         key = arguments[0]
         default = arguments[1] if len(arguments) == 2 else NoneValue()
@@ -231,7 +235,7 @@ class MappingObjectValue(ObjectValue):
                 requested="one canonical mapping entry per key",
                 fix="repair mapping construction before get",
             )
-        return Complete(self.entries[matching[0]][1] if matching else default)
+        return ExitSet.completed(self.entries[matching[0]][1] if matching else default)
 
     def with_field_store(self, name, value):
         updated = super().with_field_store(name, value)

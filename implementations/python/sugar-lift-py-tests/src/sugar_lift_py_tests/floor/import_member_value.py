@@ -126,7 +126,7 @@ class ImportMemberValue(FloorValue):
         from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_source_tree.panic import SugarNotWritten
 
         if site is None:
@@ -146,7 +146,7 @@ class ImportMemberValue(FloorValue):
                 index, site, owner="ImportMemberValue.subscript"
             )
         return _opaque_subscript_faces(
-            Complete(SymbolicValue(term)),
+            ExitSet.completed(SymbolicValue(term)),
             site,
             producer="ImportMemberValue.subscript",
         )
@@ -165,9 +165,9 @@ class ImportMemberValue(FloorValue):
         """
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 py_truthy(self.to_term(owner="ImportMemberValue.truth")), site
             )
@@ -225,9 +225,9 @@ class ImportMemberValue(FloorValue):
             and not operation.keyword_names
             and len(operation.arguments) == 1
         ):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(operation.arguments[0])
+            return ExitSet.completed(operation.arguments[0])
         operation_name = self.c_floor_semantic_operation(language_callee)
         if operation_name is not None:
             decided = self._decide_c_floor_semantic(operation_name, operation, ctx)
@@ -311,11 +311,11 @@ def _import_member_runtime_effect(
         runtime_effect_evidence_from_terms,
     )
     from sugar_lift_py_tests.ir import ctor, str_const
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     member = value.to_term(owner="ImportMemberRuntimeEffect")
     operand = ctor(call_symbol("import_member"), [member])
-    return Incomplete(
+    return ExitSet.halted(
         ImportedModuleRuntimeEffect(
             "import-member runtime boundary: "
             f"`{shape}` requires evaluating authenticated export "

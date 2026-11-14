@@ -5,9 +5,9 @@ def native_type_tester(value, type_term, site, *, type_callsites=()):
     """Emit the reserved Python type tester over an already-cited coordinate."""
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import atomic
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    return Complete(
+    return ExitSet.completed(
         PredicateValue(
             atomic(
                 "adt.is_python_type",

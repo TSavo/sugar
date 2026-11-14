@@ -17,7 +17,7 @@ if TYPE_CHECKING:
         SequenceProjectionOperation,
     )
     from sugar_lift_py_tests.operations.subscript_operation import SubscriptOperation
-    from sugar_lift_py_tests.outcome import Outcome
+    from sugar_lift_py_tests.outcome import ExitSet
 
 BASE_CONSTRUCTION_GAP_METHOD_NAMES = tuple(
     name
@@ -60,10 +60,10 @@ class FloorValue:
         return self
 
     def project_operation_receiver_outcome(self, ctx: object, *, owner: str):
-        """Sequence an ordinary scalar receiver through the Outcome algebra."""
-        from sugar_lift_py_tests.outcome import Complete
+        """Sequence an ordinary scalar receiver through the exit algebra."""
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self.project_operation_receiver(ctx, owner=owner))
+        return ExitSet.completed(self.project_operation_receiver(ctx, owner=owner))
 
     def _floor_gap(
         self,
@@ -112,16 +112,16 @@ class FloorValue:
         # An expression statement discards ordinary values as support. A rebind
         # (ScopeRebind) overrides to keep itself so the block threads the scope.
         from sugar_lift_py_tests.floor.support_value import SupportValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(SupportValue(site=None))
+        return ExitSet.completed(SupportValue(site=None))
 
     def answer(self, ctx=None):
         # Default: a binding stands as itself (NameSugar asks; the value answers).
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         del ctx
-        return Complete(self)
+        return ExitSet.completed(self)
 
     def append_with(self, value, site):
         # Default: this value does not stand on the append floor -- it cannot answer
@@ -213,7 +213,7 @@ class FloorValue:
         self,
         operation: CallableApplication,
         ctx: ReduceContext | None,
-    ) -> Outcome:
+    ) -> ExitSet:
         del ctx
         return self._operation_construction_gap(operation, "callable_application_with")
 
@@ -226,7 +226,7 @@ class FloorValue:
         self,
         operation: InplaceBinaryOperatorOperation,
         ctx: ReduceContext | None,
-    ) -> Outcome:
+    ) -> ExitSet:
         return operation.inplace_default(self, ctx)
 
     def slice_assign_iterable_with(self, operation, ctx):
@@ -261,11 +261,11 @@ class FloorValue:
 
     def iter_with(
         self, operation: IteratorOperation, ctx: ReduceContext | None
-    ) -> Outcome:
+    ) -> ExitSet:
         del ctx
         return self._operation_construction_gap(operation, "iter_with")
 
-    def next_with(self, operation: NextOperation, ctx: ReduceContext | None) -> Outcome:
+    def next_with(self, operation: NextOperation, ctx: ReduceContext | None) -> ExitSet:
         del ctx
         return self._operation_construction_gap(operation, "next_with")
 
@@ -273,13 +273,13 @@ class FloorValue:
         self,
         operation: SequenceProjectionOperation,
         ctx: ReduceContext | None,
-    ) -> Outcome:
+    ) -> ExitSet:
         del ctx
         return self._operation_construction_gap(operation, "project_sequence_with")
 
     def subscript_with(
         self, operation: SubscriptOperation, ctx: ReduceContext | None
-    ) -> Outcome:
+    ) -> ExitSet:
         del ctx
         return self._operation_construction_gap(operation, "subscript_with")
 
@@ -423,7 +423,7 @@ class FloorValue:
         ``not`` has one operand; the second slot is an inert unit (``NoneValue``)
         with a null coordinate so discharge does not invent a second actual.
         The producer then negates only a *completed* truth face — never a halt
-        (``Complete.and_then`` / ``ExitSet.sequence`` already skip halted tails).
+        (``ExitSet.and_then`` / ``ExitSet.sequence`` already skip halted tails).
 
         An undecided actual must not emit ``py.truthy`` here: that would invent
         a total ``bool`` completion after the formal door deferred honestly.
@@ -490,10 +490,12 @@ class FloorValue:
             BoolOpTruthSelection,
         )
 
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         return self.truth(site).and_then(
-            lambda truth_value: Complete(BoolOpTruthSelection(self, truth_value))
+            lambda truth_value: ExitSet.completed(
+                BoolOpTruthSelection(self, truth_value)
+            )
         )
 
     def undecided_attribute(self, name, site, *, owner: str):
@@ -672,9 +674,9 @@ class FloorValue:
         # Match symbolic_term.py so coordinates join that vocabulary.
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="py.subscript",
                 arg_values=(self, index),
@@ -821,12 +823,12 @@ class FloorValue:
 
         if type(other) is NoneValue and decided_builtin_other_than_none(self):
             # ``x == None`` for a decided builtin ``x``: identity, so False.
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
 
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         if isinstance(other, ObjectValue) and other.has_method("__eq__"):
             return self._floor_gap(
                 owner="FloorValue.equals",
@@ -839,10 +841,10 @@ class FloorValue:
         # sort testimony. Ill-sorted bare equality cannot leave this door.
         from sugar_lift_py_tests.floor.equality_atom import resolve_equality_atom
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         formula, bridges = resolve_equality_atom(self, other, owner=str(site))
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 formula,
                 site,
@@ -861,9 +863,9 @@ class FloorValue:
         # Panic lives inside to_term when a side cannot enter FOL at all.
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import identity
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 identity(self.to_term(owner=str(site)), other.to_term(owner=str(site))),
                 site,
@@ -875,7 +877,7 @@ class FloorValue:
         # Operator-owned double dispatch: the RHS answers ``less_than_from_left``.
         # LAW_OF_ONE: ordering meaning is Sugar (or a ground arm that constructs
         # Sugar / an authenticated ground exit). The default door never mints
-        # Complete(PredicateValue) — that is a second mechanism.
+        # ExitSet.completed(PredicateValue) — that is a second mechanism.
         return other.less_than_from_left(self, site)
 
     def _refuse_ordering_meaning(
@@ -885,7 +887,7 @@ class FloorValue:
 
         Exactly one mechanism produces meaning: AST shadows → temporal rewrite
         → Sugar. An ordering OUTCOME is meaning. Minting
-        ``Complete(PredicateValue(py.lt/…))`` from a Python helper — even when
+        ``ExitSet.completed(PredicateValue(py.lt/…))`` from a Python helper — even when
         both types are source-decided and the atom would be "right" — is a
         second mechanism.
 
@@ -899,7 +901,7 @@ class FloorValue:
           undecided ``py.lt/le/gt/ge`` predicate completes only under
           ``python:compare.completes(python:compare(op, site))`` and an
           ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) halts
-          under the complement.  Never a sole ``Complete(PredicateValue)``.
+          under the complement.  Never a sole ``ExitSet.completed(PredicateValue)``.
         * **Decided (or non-undecided) with no ground arm**: construction
           panic. That is OUR missing Floor/Sugar arm, not source
           undecidability. Binary floor already panics decided missing pairs
@@ -944,7 +946,7 @@ class FloorValue:
             fix=(
                 "LAW_OF_ONE / PANIC=GAP: implement a ground pair arm that "
                 "constructs Sugar; never resolve_comparison_atom / "
-                "Complete(PredicateValue) on FloorValue defaults; never label "
+                "ExitSet.completed(PredicateValue) on FloorValue defaults; never label "
                 "a decided missing arm as SugarNotWritten"
             ),
         )
@@ -1192,9 +1194,9 @@ class FloorValue:
         del type_name
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 atomic(
                     "adt.is_python_type",

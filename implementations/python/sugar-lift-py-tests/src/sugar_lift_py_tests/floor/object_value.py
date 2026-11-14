@@ -20,7 +20,7 @@ if TYPE_CHECKING:
         SequenceProjectionOperation,
     )
     from sugar_lift_py_tests.operations.subscript_operation import SubscriptOperation
-    from sugar_lift_py_tests.outcome import Outcome
+    from sugar_lift_py_tests.outcome import ExitSet
 
 
 def _sugar_receiver_field_names(value, seen: set[int] | None = None) -> set[str]:
@@ -184,7 +184,7 @@ class ObjectValue(FloorValue):
             )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
@@ -192,7 +192,7 @@ class ObjectValue(FloorValue):
             if isinstance(
                 value, (PredicateValue, TrueBoolLiteralSugar, FalseBoolLiteralSugar)
             ) or (isinstance(value, TermValue) and type(value.value) is bool):
-                return Complete(value)
+                return ExitSet.completed(value)
             return self._floor_gap(
                 owner=owner,
                 blame=site,
@@ -207,7 +207,7 @@ class ObjectValue(FloorValue):
         def completed(block):
             # A scalar comparison cannot silently erase a completed callee's
             # stores/effect prefix. Halted faces keep their original state via
-            # Outcome.and_then; richer normal-state transport is still a gap.
+            # ExitSet.and_then; richer normal-state transport is still a gap.
             if (
                 not isinstance(block, BlockValue)
                 or len(block.statements) != 1
@@ -257,16 +257,16 @@ class ObjectValue(FloorValue):
         """Project an exact field from this constructed receiver state."""
         for field in reversed(self.fields):
             if field.name == name:
-                from sugar_lift_py_tests.outcome import Complete
+                from sugar_lift_py_tests.outcome import ExitSet
 
-                return Complete(field.value)
+                return ExitSet.completed(field.value)
         for method in reversed(self.methods):
             if method.name != name or method.descriptor_kind != "property":
                 continue
             from dataclasses import replace
 
             from sugar_lift_py_tests.effect import RaiseEffect
-            from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+            from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
             def attribute_owned(outcome):
                 if not isinstance(outcome, ExitSet):
@@ -310,9 +310,9 @@ class ObjectValue(FloorValue):
             )
         class_value = self._resolved_class_field(name)
         if class_value is not None:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(class_value)
+            return ExitSet.completed(class_value)
         selected = next(
             (method for method in reversed(self.methods) if method.name == name),
             None,
@@ -325,9 +325,9 @@ class ObjectValue(FloorValue):
             # receiver; nothing about the body is decided at the read.  A
             # staticmethod/classmethod binds differently and stays loud below.
             from sugar_lift_py_tests.floor.bound_method_value import BoundMethodValue
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(BoundMethodValue(self, name))
+            return ExitSet.completed(BoundMethodValue(self, name))
         if name in self.deleted_instance_fields:
             # Authenticated delattr removed this instance field — read is
             # AttributeError with delete→read lineage, not an undecided gap.
@@ -417,7 +417,7 @@ class ObjectValue(FloorValue):
         setter raises ``AttributeError`` on the **store** path — never by
         consulting :meth:`attribute` / the read path.
         """
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if any(
             method.name == name and method.descriptor_kind == "property"
@@ -430,7 +430,7 @@ class ObjectValue(FloorValue):
                 site=site,
                 owner="ObjectValue.setattr",
             )
-        return Complete(self.with_field_store(name, value))
+        return ExitSet.completed(self.with_field_store(name, value))
 
     def delattr(self, name, site):
         """``del self.name`` via instance-field delete or property refusal.
@@ -440,7 +440,7 @@ class ObjectValue(FloorValue):
         consulting :meth:`attribute` / the read path.  Missing ordinary
         fields also raise ``AttributeError``.
         """
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if any(
             method.name == name and method.descriptor_kind == "property"
@@ -467,7 +467,7 @@ class ObjectValue(FloorValue):
             if name in self.deleted_instance_fields
             else (*self.deleted_instance_fields, name)
         )
-        return Complete(
+        return ExitSet.completed(
             ObjectValue(
                 self.class_name,
                 remaining,
@@ -503,7 +503,7 @@ class ObjectValue(FloorValue):
 
     def iter_with(
         self, operation: IteratorOperation, ctx: ReduceContext | None
-    ) -> Outcome:
+    ) -> ExitSet:
         """``iter(obj)`` is the constructor-bound ``__iter__`` data-model method,
         applied under the caller's context like any call (#7757 item 12)."""
         return self.call_method_value(
@@ -514,7 +514,7 @@ class ObjectValue(FloorValue):
             ctx=ctx,
         )
 
-    def next_with(self, operation: NextOperation, ctx: ReduceContext | None) -> Outcome:
+    def next_with(self, operation: NextOperation, ctx: ReduceContext | None) -> ExitSet:
         return self.call_method_value(
             "__next__",
             (),
@@ -525,19 +525,19 @@ class ObjectValue(FloorValue):
 
     def subscript_with(
         self, operation: SubscriptOperation, ctx: ReduceContext | None
-    ) -> Outcome:
+    ) -> ExitSet:
         return operation.subscript_object(self, ctx)
 
     def project_sequence_with(
         self, operation: SequenceProjectionOperation, ctx: ReduceContext | None
-    ) -> Outcome:
+    ) -> ExitSet:
         return operation.project_object(self, ctx)
 
     def inplace_binary_operator_with(
         self,
         operation: InplaceBinaryOperatorOperation,
         ctx: ReduceContext | None,
-    ) -> Outcome:
+    ) -> ExitSet:
         method_name = _INPLACE_BINARY_DUNDER_METHODS.get(operation.operator)
         if method_name is None:
             return self._floor_gap(
@@ -568,7 +568,7 @@ class ObjectValue(FloorValue):
         ctx: Any | None = None,
         keywords: tuple[tuple[str, FloorValue], ...] = (),
         required_frame: object | None = None,
-    ) -> Outcome:
+    ) -> ExitSet:
         """``self.<name>(*arguments, **keywords)``: select, bind, apply.
 
         The application is the one a plain call ``f(...)`` uses

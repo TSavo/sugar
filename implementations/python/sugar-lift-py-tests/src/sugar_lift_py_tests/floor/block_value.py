@@ -79,11 +79,11 @@ class BlockValue(FloorValue):
             runtime_effect_evidence,
         )
         from sugar_lift_py_tests.floor.return_value import ReturnValue
-        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         op_label = getattr(operation, "operator", kind)
         if len(self.statements) != 1 or self.fall_through:
-            return Incomplete(
+            return ExitSet.halted(
                 BlockOperatorRuntimeEffect(
                     f"block {kind} operator runtime boundary: multi-exit or "
                     f"fall-through block cannot host `{op_label}` "
@@ -96,7 +96,7 @@ class BlockValue(FloorValue):
         if isinstance(exit_value, ReturnValue):
             exit_value = exit_value.value
         if not isinstance(exit_value, FloorValue):
-            return Incomplete(
+            return ExitSet.halted(
                 BlockOperatorRuntimeEffect(
                     f"block {kind} operator runtime boundary: single exit is "
                     f"`{type(exit_value).__name__}`, not a FloorValue; "

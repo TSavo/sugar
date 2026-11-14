@@ -72,43 +72,51 @@ class GuardedValue(FloorValue):
         return self._map("length", site)
 
     def _map(self, method: str, *args):
-        from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
-
-        if args and isinstance(args[0], GuardedValue):
-            other, *rest = args
-            true_outcome = self._map(method, other.when_true, *rest)
-            if isinstance(true_outcome, Incomplete):
-                return true_outcome.guarded(other.guard)
-            false_outcome = self._map(method, other.when_false, *rest)
-            if isinstance(false_outcome, Incomplete):
-                return false_outcome.guarded(not_(other.guard))
-            return Complete(
-                GuardedValue(other.guard, true_outcome.value, false_outcome.value)
-            )
-
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
+        from sugar_lift_py_tests.ir import not_
+        from sugar_lift_py_tests.outcome import ExitSet
 
         owner = f"GuardedValue._map({method})"
         blame = args[-1] if args else method
+        if args and isinstance(args[0], GuardedValue):
+            other, *rest = args
+            true_outcome = self._map(method, other.when_true, *rest)
+            if true_outcome.halts() == true_outcome.exits:
+                return true_outcome.guarded(other.guard)
+            false_outcome = self._map(method, other.when_false, *rest)
+            if false_outcome.halts() == false_outcome.exits:
+                return false_outcome.guarded(not_(other.guard))
+            true_outcome = require_single_value(
+                true_outcome, owner=owner, blame=blame, arm="when_true"
+            )
+            false_outcome = require_single_value(
+                false_outcome, owner=owner, blame=blame, arm="when_false"
+            )
+            # Rebuilt through ``sequence``: the joined arm owes what both owed.
+            return true_outcome.sequence(
+                lambda true_value: false_outcome.sequence(
+                    lambda false_value: ExitSet.completed(
+                        GuardedValue(other.guard, true_value, false_value)
+                    )
+                )
+            )
+
         true_outcome = getattr(self.when_true, method)(*args)
-        if isinstance(true_outcome, Incomplete):
+        if true_outcome.halts() == true_outcome.exits:
             return true_outcome.guarded(self.guard)
         false_outcome = getattr(self.when_false, method)(*args)
-        if isinstance(false_outcome, Incomplete):
+        if false_outcome.halts() == false_outcome.exits:
             return false_outcome.guarded(not_(self.guard))
         # Dual-edge partitions from undecided native dispatch (BinOp/Compare):
         # weaken each arm's faces under the branch guard and union.  Joining two
         # partitions into one GuardedValue arm is not honest; the exit algebra
         # already carries both completion and halt faces.
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.outcome.exit_set import (
-            Completed,
-            Halted,
-            outcome_to_exitset,
-        )
+        from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 
-        if isinstance(true_outcome, ExitSet) or isinstance(false_outcome, ExitSet):
+        if (
+            true_outcome.completed_value() is None
+            or false_outcome.completed_value() is None
+        ):
             from sugar_lift_py_tests.ir import and_ as and_formulas
 
             def _under(es: ExitSet, guard) -> tuple:
@@ -123,10 +131,9 @@ class GuardedValue(FloorValue):
                         faces.append(Completed(g, face.value, face.faces, face.owed))
                 return tuple(faces)
 
-            true_es = outcome_to_exitset(true_outcome)
-            false_es = outcome_to_exitset(false_outcome)
             return ExitSet(
-                _under(true_es, self.guard) + _under(false_es, not_(self.guard))
+                _under(true_outcome, self.guard)
+                + _under(false_outcome, not_(self.guard))
             ).normalize()
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=blame, arm="when_true"
@@ -134,14 +141,24 @@ class GuardedValue(FloorValue):
         false_outcome = require_single_value(
             false_outcome, owner=owner, blame=blame, arm="when_false"
         )
-        return Complete(
-            GuardedValue(self.guard, true_outcome.value, false_outcome.value)
+        # Rebuilt through ``sequence``: the joined arm owes what both owed.
+        return true_outcome.sequence(
+            lambda true_value: false_outcome.sequence(
+                lambda false_value: ExitSet.completed(
+                    GuardedValue(self.guard, true_value, false_value)
+                )
+            )
         )
 
     def _predicate(self, method: str, *args):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import and_, implies, not_
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.outcome.exit_set import (
+            Completed,
+            owed_union,
+            true_guard,
+        )
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -154,10 +171,10 @@ class GuardedValue(FloorValue):
         owner = f"GuardedValue._predicate({method})"
         blame = args[-1] if args else method
         true_outcome = getattr(self.when_true, method)(*args)
-        if isinstance(true_outcome, Incomplete):
+        if true_outcome.halts() == true_outcome.exits:
             return true_outcome.guarded(self.guard)
         false_outcome = getattr(self.when_false, method)(*args)
-        if isinstance(false_outcome, Incomplete):
+        if false_outcome.halts() == false_outcome.exits:
             return false_outcome.guarded(not_(self.guard))
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=blame, arm="when_true"
@@ -166,8 +183,8 @@ class GuardedValue(FloorValue):
             false_outcome, owner=owner, blame=blame, arm="when_false"
         )
 
-        true_value = true_outcome.value
-        false_value = false_outcome.value
+        true_value = true_outcome.completed_value()
+        false_value = false_outcome.completed_value()
 
         def formula(value):
             if isinstance(value, PredicateValue):
@@ -199,24 +216,33 @@ class GuardedValue(FloorValue):
                     implies(not_(self.guard), false_formula),
                 ]
             )
-        joined = Complete(
-            PredicateValue(
-                joined_formula,
-                args[-1],
-                operand_callsites=(
-                    *(
-                        true_value.operand_callsites
-                        if isinstance(true_value, PredicateValue)
-                        else ()
+        # One arm rebuilt from both: it owes what both owed (#7825, H4).
+        joined = ExitSet(
+            (
+                Completed(
+                    true_guard(),
+                    PredicateValue(
+                        joined_formula,
+                        args[-1],
+                        operand_callsites=(
+                            *(
+                                true_value.operand_callsites
+                                if isinstance(true_value, PredicateValue)
+                                else ()
+                            ),
+                            *(
+                                false_value.operand_callsites
+                                if isinstance(false_value, PredicateValue)
+                                else ()
+                            ),
+                        ),
                     ),
-                    *(
-                        false_value.operand_callsites
-                        if isinstance(false_value, PredicateValue)
-                        else ()
+                    owed=owed_union(
+                        true_outcome.owed_items(), false_outcome.owed_items()
                     ),
                 ),
             )
-        )
+        ).normalize()
         return joined
 
     def less_than_from_left(self, left, site):
@@ -236,36 +262,29 @@ class GuardedValue(FloorValue):
     def map_from_left(self, method: str, left, site):
         """Distribute a binary value operation whose guarded value is the RHS."""
         from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
 
         owner = f"GuardedValue.map_from_left({method})"
         true_outcome = getattr(left, method)(self.when_true, site)
-        if isinstance(true_outcome, Incomplete):
+        if true_outcome.halts() == true_outcome.exits:
             return true_outcome.guarded(self.guard)
         false_outcome = getattr(left, method)(self.when_false, site)
-        if isinstance(false_outcome, Incomplete):
+        if false_outcome.halts() == false_outcome.exits:
             return false_outcome.guarded(not_(self.guard))
-        from sugar_lift_py_tests.outcome import ExitSet
 
-        if isinstance(true_outcome, ExitSet) or isinstance(false_outcome, ExitSet):
-            from sugar_lift_py_tests.outcome.exit_set import (
-                outcome_to_exitset,
-                partition,
-            )
+        if (
+            true_outcome.completed_value() is None
+            or false_outcome.completed_value() is None
+        ):
+            from sugar_lift_py_tests.outcome.exit_set import partition
 
             true_face, false_face = partition(
                 ("GuardedValue.map_from_left", str(site), method, self.guard)
             )
-            return (
-                outcome_to_exitset(true_outcome)
-                .guarded(self.guard, true_face)
-                .union(
-                    outcome_to_exitset(false_outcome).guarded(
-                        not_(self.guard), false_face
-                    )
-                )
+            return true_outcome.guarded(self.guard, true_face).union(
+                false_outcome.guarded(not_(self.guard), false_face)
             )
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=site, arm="when_true"
@@ -273,23 +292,25 @@ class GuardedValue(FloorValue):
         false_outcome = require_single_value(
             false_outcome, owner=owner, blame=site, arm="when_false"
         )
-        return Complete(
-            GuardedValue(self.guard, true_outcome.value, false_outcome.value)
+        # Rebuilt through ``sequence``: the joined arm owes what both owed.
+        return true_outcome.sequence(
+            lambda true_value: false_outcome.sequence(
+                lambda false_value: ExitSet.completed(
+                    GuardedValue(self.guard, true_value, false_value)
+                )
+            )
         )
 
     def _predicate_from_left(self, method: str, left, site):
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
-
         true_outcome = getattr(left, method)(self.when_true, site)
-        if isinstance(true_outcome, Incomplete):
+        if true_outcome.halts() == true_outcome.exits:
             return true_outcome.guarded(self.guard)
         false_outcome = getattr(left, method)(self.when_false, site)
-        if isinstance(false_outcome, Incomplete):
+        if false_outcome.halts() == false_outcome.exits:
             from sugar_lift_py_tests.ir import not_
 
             return false_outcome.guarded(not_(self.guard))
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
-        from sugar_lift_py_tests.ir import not_
 
         owner = f"GuardedValue._predicate_from_left({method})"
         true_outcome = require_single_value(
@@ -298,8 +319,15 @@ class GuardedValue(FloorValue):
         false_outcome = require_single_value(
             false_outcome, owner=owner, blame=site, arm="when_false"
         )
-        joined = GuardedValue(self.guard, true_outcome.value, false_outcome.value)
-        return joined._predicate("truth", site)
+        # Rebuilt through ``sequence``: the joined predicate owes what both
+        # arms owed.
+        return true_outcome.sequence(
+            lambda true_value: false_outcome.sequence(
+                lambda false_value: GuardedValue(
+                    self.guard, true_value, false_value
+                )._predicate("truth", site)
+            )
+        )
 
     def subscript(self, index, site):
         return self._map("subscript", index, site)
@@ -344,15 +372,15 @@ class GuardedValue(FloorValue):
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
         from sugar_lift_py_tests.ir import not_
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         owner = "GuardedValue.project_sequence_with"
         blame = operation.blame
         true_outcome = self.when_true.project_sequence_with(operation, ctx)
-        if isinstance(true_outcome, Incomplete):
+        if true_outcome.halts() == true_outcome.exits:
             return true_outcome.guarded(self.guard)
         false_outcome = self.when_false.project_sequence_with(operation, ctx)
-        if isinstance(false_outcome, Incomplete):
+        if false_outcome.halts() == false_outcome.exits:
             return false_outcome.guarded(not_(self.guard))
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=blame, arm="when_true"
@@ -361,19 +389,26 @@ class GuardedValue(FloorValue):
             false_outcome, owner=owner, blame=blame, arm="when_false"
         )
         true_bindings = _require_rebind_roster(
-            true_outcome.value, owner=owner, blame=blame, arm="when_true"
+            true_outcome.completed_value(), owner=owner, blame=blame, arm="when_true"
         )
         false_bindings = _require_rebind_roster(
-            false_outcome.value, owner=owner, blame=blame, arm="when_false"
+            false_outcome.completed_value(),
+            owner=owner,
+            blame=blame,
+            arm="when_false",
         )
-        return Complete(
-            ScopeRebinds(
-                tuple(
-                    (name, GuardedValue(self.guard, true_member, false_member))
-                    for (name, true_member), (_, false_member) in zip(
-                        true_bindings, false_bindings, strict=True
-                    )
+        joined = ScopeRebinds(
+            tuple(
+                (name, GuardedValue(self.guard, true_member, false_member))
+                for (name, true_member), (_, false_member) in zip(
+                    true_bindings, false_bindings, strict=True
                 )
+            )
+        )
+        # Rebuilt through ``sequence``: the joined roster owes what both owed.
+        return true_outcome.sequence(
+            lambda _true: false_outcome.sequence(
+                lambda _false: ExitSet.completed(joined)
             )
         )
 
@@ -398,9 +433,9 @@ class GuardedValue(FloorValue):
             AppendRuntimeEffect,
             runtime_effect_evidence,
         )
-        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Incomplete(
+        return ExitSet.halted(
             AppendRuntimeEffect(
                 "append runtime boundary: guarded receiver has a branch without "
                 f"a constructed list post-state; value={value.to_term(owner=str(site))!r}; "

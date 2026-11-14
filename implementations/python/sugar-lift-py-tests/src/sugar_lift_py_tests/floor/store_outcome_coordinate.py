@@ -110,9 +110,11 @@ class StoreOutcomeCoordinate(FloorValue):
     def truth(self, site):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(PredicateValue(py_truthy(self.to_term(owner=str(site))), site))
+        return ExitSet.completed(
+            PredicateValue(py_truthy(self.to_term(owner=str(site))), site)
+        )
 
 
 def store_outcome_coordinate(effect) -> StoreOutcomeCoordinate:

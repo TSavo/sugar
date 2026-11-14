@@ -29,9 +29,9 @@ from .symbolic_value import SymbolicValue
 @dataclass(frozen=True)
 class MessageOpaqueValue(SymbolicValue):
     def _opaque(self):
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self)
+        return ExitSet.completed(self)
 
     # --- surfaces SymbolicValue refuses: yield another message opacity --------
     def attribute(self, name, site):

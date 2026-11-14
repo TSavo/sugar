@@ -55,9 +55,9 @@ class NamedExpressionValue(FloorValue):
 
     def as_expression_statement(self):
         """A bare ``(name := value)`` statement still binds ``name`` afterward."""
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self)
+        return ExitSet.completed(self)
 
     def contribution(self):
         return self.presented_value.contribution()
@@ -142,9 +142,9 @@ class NamedExpressionValue(FloorValue):
         return self.presented_value.attribute(name, site).and_then(self._carry)
 
     def _carry(self, presented: FloorValue):
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             NamedExpressionValue.carrying(
                 self.name, self.assigned_value, presented, self.evaluation
             )

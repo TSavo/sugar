@@ -73,7 +73,7 @@ class ListValue(GuardStableValue):
 
     def truth(self, site):
         # A list's truth is nonempty.
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -81,7 +81,7 @@ class ListValue(GuardStableValue):
             TrueBoolLiteralSugar,
         )
 
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if self.elements
             else FalseBoolLiteralSugar(site=site)
@@ -101,9 +101,9 @@ class ListValue(GuardStableValue):
         """``iter(list)`` → authenticated ``ListIteratorValue`` over members."""
         del operation, ctx
         from sugar_lift_py_tests.floor.iterator_value import ListIteratorValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(ListIteratorValue(self.elements, index=0))
+        return ExitSet.completed(ListIteratorValue(self.elements, index=0))
 
     @property
     def items(self) -> tuple:
@@ -114,9 +114,9 @@ class ListValue(GuardStableValue):
         # A list knows its length: the count of reduced elements.
         del site
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(TermValue(len(self.elements)))
+        return ExitSet.completed(TermValue(len(self.elements)))
 
     def contains(self, item, site):
         # A guarded needle is not one needle: distribute into its faces and
@@ -156,16 +156,16 @@ class ListValue(GuardStableValue):
         # Concrete history folds: the updated list is the old elements plus the
         # new value. Symbolic receivers stay on the default panic.
         del site
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(ListValue((*self.elements, value)))
+        return ExitSet.completed(ListValue((*self.elements, value)))
 
     def add(self, other, site):
         """Python list concatenation, or a cited coordinate for an opaque peer."""
         if type(other) is ListValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(ListValue((*self.elements, *other.elements)))
+            return ExitSet.completed(ListValue((*self.elements, *other.elements)))
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
 
         if type(other) is ComprehensionValue:
@@ -175,10 +175,10 @@ class ListValue(GuardStableValue):
             # genuine runtime operand and rejected/faulted on py.listcomp
             # bodies carrying _Lambda before effect/runtime_effect admitted them).
             from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             self_term = self.to_term(owner=str(site))
-            return Complete(
+            return ExitSet.completed(
                 ComprehensionValue(
                     ctor(
                         "+",
@@ -239,7 +239,7 @@ class ListValue(GuardStableValue):
         # is TypeError; an index with undecided runtime semantics stays loud.
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if isinstance(index, SliceValue):
             bounds = (index.lower, index.upper, index.step)
@@ -263,7 +263,7 @@ class ListValue(GuardStableValue):
                         site=site,
                         owner="ListValue.subscript",
                     )
-                return Complete(
+                return ExitSet.completed(
                     ListValue(tuple(self.elements[slice(lower, upper, step)]))
                 )
             return self.undecided_subscript(index, site, owner="ListValue.subscript")
@@ -272,7 +272,7 @@ class ListValue(GuardStableValue):
             i = index.value
             n = len(self.elements)
             if -n <= i < n:
-                return Complete(self.elements[i])
+                return ExitSet.completed(self.elements[i])
             from sugar_lift_py_tests.floor.ground_index_error import (
                 ground_index_error,
             )
@@ -295,7 +295,7 @@ class ListValue(GuardStableValue):
     def setitem(self, index, value, site):
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if isinstance(index, SliceValue):
             return self._setitem_slice(index, value, site)
@@ -310,7 +310,7 @@ class ListValue(GuardStableValue):
                     value,
                     *self.elements[resolved + 1 :],
                 )
-                return Complete(ListValue(updated))
+                return ExitSet.completed(ListValue(updated))
             from sugar_lift_py_tests.floor.ground_index_error import (
                 ground_index_error,
             )
@@ -346,7 +346,7 @@ class ListValue(GuardStableValue):
         from sugar_lift_py_tests.operations.slice_assign_iterable_operation import (
             SliceAssignIterableOperation,
         )
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         bounds = (index.lower, index.upper, index.step)
         if _slice_bounds_not_indices(bounds):
@@ -384,7 +384,7 @@ class ListValue(GuardStableValue):
         ).submit(value, None)
 
         # A decided TypeError is a halt: it never reaches the write step.
-        if isinstance(members_out, Incomplete):
+        if members_out.halts() == members_out.exits:
             return members_out
 
         def _write(members):
@@ -396,7 +396,7 @@ class ListValue(GuardStableValue):
                 # An undecided RHS: the store's own completed face, whose
                 # members no lift-time value names (its halted face is the
                 # sibling arm).
-                return Complete(members)
+                return ExitSet.completed(members)
             elements = list(self.elements)
             try:
                 elements[slice(lower, upper, step)] = list(members)
@@ -411,21 +411,21 @@ class ListValue(GuardStableValue):
                     site=site,
                     owner="ListValue.setitem",
                 )
-            return Complete(ListValue(tuple(elements)))
+            return ExitSet.completed(ListValue(tuple(elements)))
 
         return members_out.and_then(_write)
 
     def slice_assign_iterable_with(self, operation, ctx):
         """Authenticated finite members for slice-assignment RHS."""
         del operation, ctx
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self.elements)
+        return ExitSet.completed(self.elements)
 
     def delitem(self, index, site):
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if isinstance(index, SliceValue):
             bounds = (index.lower, index.upper, index.step)
@@ -450,7 +450,7 @@ class ListValue(GuardStableValue):
                         owner="ListValue.delitem",
                     )
                 selected = set(range(len(self.elements))[slice(lower, upper, step)])
-                return Complete(
+                return ExitSet.completed(
                     ListValue(
                         tuple(
                             value
@@ -477,7 +477,7 @@ class ListValue(GuardStableValue):
             n = len(self.elements)
             if -n <= i < n:
                 resolved = i if i >= 0 else n + i
-                return Complete(
+                return ExitSet.completed(
                     ListValue(
                         (*self.elements[:resolved], *self.elements[resolved + 1 :])
                     )

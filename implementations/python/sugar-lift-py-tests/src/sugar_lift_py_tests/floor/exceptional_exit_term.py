@@ -1,6 +1,6 @@
 """The one source-cited term of an exceptional exit.
 
-A raise is a halted face (an ``Incomplete`` or a ``Halted`` arm) whose effect
+A raise is a halted face (a ``Halted`` arm of an ``ExitSet``) whose effect
 is a ``RaiseEffect``.  Its term, and the citation law that guards it, need
 only that effect.
 """
