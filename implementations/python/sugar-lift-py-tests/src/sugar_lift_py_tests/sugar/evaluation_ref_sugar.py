@@ -4,11 +4,18 @@ Temporal choice 1 (#7661): substitution rewrites a read of ``x`` after
 ``x += e`` or ``(x := e)`` to ``EvaluationRef(<the evaluation's coordinate>)``,
 never to the bare name. The statement (or walrus) binds its completed value
 under that coordinate at reduce, and the read answers it: the value is not
-looked up by spelling. A comprehension's element and conditions read a target
-name the same way: the comprehension binds each member under the generator's
-(or the target leaf's) coordinate (``ComprehensionSugar._member_ctx``). After
-``a, b = f()`` a read of ``a`` is a reference to ``a``'s projection of the
-statement's coordinate (``projection_key``), bound by the unpack at reduce.
+looked up by spelling. After ``a, b = f()`` a read of ``a`` is a reference to
+``a``'s projection of the statement's coordinate (``projection_key``), bound
+by the unpack at reduce.
+
+A comprehension's element and conditions read a target name the same way
+(``member``): the comprehension binds every member, finite or symbolic, under
+the generator's (or the target leaf's) coordinate before any read of it
+(``ComprehensionSugar._member_ctx``, ``ComprehensionSugar._symbolic_member_ctx``).
+A member reference reads that coordinate only. It never reads the name, so a
+binding of the same spelling by an enclosing statement cannot leak in, and a
+member reference whose coordinate is unbound is a construction panic, not a
+name read.
 
 ``with pytest.raises(...) as e`` and ``except ... as e`` bind no name at
 reduce: substitution rewrites a read of ``e`` to the statement's observation
@@ -23,9 +30,10 @@ own, as each unrolled iteration's is (#7886). A live loop also reads a name
 it carries through its header: the value the item began with, bound per item
 by ``LoopRecurrenceSugar`` under the header's key.
 
-A write of the name that substitution does not see (an unsubstituted unpack)
-still binds the name. The read is then whichever of the two was bound last:
-the evaluation, or a later write of the name.
+For a statement's reference, a write of the name that substitution does not
+see (an unsubstituted unpack) still binds the name. The read is then
+whichever of the two was bound last: the evaluation, or a later write of the
+name.
 
 Where this temporal never received the evaluation, a walrus's reference reads
 the walrus's substituted value (``unevaluated``), the read it was before: a
@@ -74,6 +82,7 @@ class EvaluationRefSugar(ConstructedTermSugar):
     name: str
     site: object = dataclass_field(compare=False)
     unevaluated: object = None
+    member: bool = False
 
     @classmethod
     def witnesses(cls):
@@ -90,6 +99,8 @@ class EvaluationRefSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
+        if self.member:
+            return self._member(temporal)
         evaluated = False
         if temporal is not None:
             key = evaluation_here(self.evaluation)
@@ -104,3 +115,31 @@ class EvaluationRefSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
         return NameSugar(name=self.name, site=self.site).desugar(ctx)
+
+    def _member(self, temporal) -> Outcome:
+        """A comprehension member's coordinate, bound by the comprehension
+        before any read; unbound, the read panics and never reads the name.
+        The coordinate is bound and read inside one evaluation of the
+        comprehension, so it is not qualified (``evaluation_here``)."""
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        bound = (
+            temporal.value_if_bound(self.evaluation) if temporal is not None else None
+        )
+        if bound is None:
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="EvaluationRefSugar",
+                blame=self.site,
+                observed=(
+                    f"comprehension member `{self.name}` read with its "
+                    f"coordinate {self.evaluation} unbound"
+                ),
+                requested="the member bound by its comprehension before the read",
+                fix=(
+                    "reduce the read inside its ComprehensionSugar, which binds "
+                    "every member under its coordinate"
+                ),
+            )
+        return ExitSet.completed(bound)

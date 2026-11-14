@@ -3181,7 +3181,7 @@ def _holds_evaluation(statements) -> bool:
 
 
 def _evaluation_ref(
-    owner, span, evaluation: str, name: str, *, unevaluated=None
+    owner, span, evaluation: str, name: str, *, unevaluated=None, member=False
 ) -> "Node":
     """``EvaluationRef(evaluation, name)`` at ``span``: a read of ``name``
     rewritten to a reference to the evaluation bound under ``evaluation``
@@ -3191,13 +3191,18 @@ def _evaluation_ref(
     of them to the read's own site (``Name.substitute``).
 
     ``unevaluated`` (a walrus's substituted value) is a slot, not a child:
-    the read for a temporal the walrus's evaluation never reached."""
+    the read for a temporal the walrus's evaluation never reached.
+    ``member`` marks a comprehension member's reference: the comprehension
+    binds every member under ``evaluation`` before any read of it, so the
+    reference reads that coordinate only, never the name."""
     from .backend import Child, Leaf, materialize
     from .shadow import ShadowNode, _handle_of
 
     slots = (("evaluation", Leaf(evaluation)), ("name", Leaf(name)))
     if unevaluated is not None:
         slots = (*slots, ("unevaluated", Child(_handle_of(unevaluated))))
+    if member:
+        slots = (*slots, ("member", Leaf(True)))
     return materialize(
         owner.unit,
         ShadowNode("EvaluationRef", span, slots),
@@ -11721,15 +11726,20 @@ class Try(Statement):
         from .shadow import rewrite
 
         if type(self) is not Try:
+            # ``except*``: each handler is keyed as this evaluation's, as for
+            # ``except`` below, so a duplicated ``try ... except*`` observes
+            # one effect group per evaluation (temporal choice 1).
             changed = {}
-            new_handlers, d = self._substitute_field(self.handlers, scope)
-            if d:
+            handlers = Try._keyed_handlers(self, scope)
+            new_handlers, d = self._substitute_field(handlers, scope)
+            if d or handlers is not self.handlers:
                 changed["handlers"] = new_handlers
             for field_name in ("body", "orelse", "finalbody"):
                 new_value, d = self._substitute_body(getattr(self, field_name), scope)
                 if d:
                     changed[field_name] = new_value
-            return self if not changed else rewrite(self, **changed)
+            node = self if not changed else rewrite(self, **changed)
+            return self._keyed_evaluation(node, scope)
 
         changed = {}
         site_id = getattr(self, "try_route_site_id", None)
@@ -11759,17 +11769,7 @@ class Try(Statement):
 
         handler_nets = []
         new_handlers = []
-        # A try evaluated more than once (a loop iteration's copy, a
-        # duplicated ``finally``'s exit-path copy) observes one effect per
-        # evaluation: each handler is keyed as this evaluation's, so its
-        # slot -- the ``as`` name's EffectRef, the routing and a bare
-        # re-raise -- is never a sibling evaluation's (temporal choice 1).
-        evaluation = self._duplicated_evaluation_key(scope)
-        for handler_index, handler in enumerate(self.handlers):
-            if evaluation is not None:
-                from .shadow import rewrite_with_leaves
-
-                handler = rewrite_with_leaves(handler, {"evaluation": evaluation})
+        for handler_index, handler in enumerate(Try._keyed_handlers(self, scope)):
             handler_changed = {}
             new_type, type_changed = handler._substitute_field(handler.type_, scope)
             if type_changed:
@@ -11895,6 +11895,25 @@ class Try(Statement):
             node = self if not changed else rewrite(self, **changed)
         node = self._keyed_evaluation(node, scope)
         return _Splice((node,), merged) if merged else node
+
+    def _keyed_handlers(self, scope) -> tuple:
+        """This ``try``'s (or ``try ... except*``'s) handlers, each keyed as
+        this evaluation's when the statement is one of several evaluations of
+        its source (a loop iteration's copy, a duplicated ``finally``'s
+        exit-path copy; ``_duplicated_evaluation_key``).  A keyed handler's
+        slot (``ExceptHandler._effect_slot_id``) -- read by the ``as`` name's
+        EffectRef, the routing and a bare re-raise -- is then never a sibling
+        evaluation's (temporal choice 1).  ``self.handlers`` unchanged for a
+        statement evaluated once."""
+        evaluation = self._duplicated_evaluation_key(scope)
+        if evaluation is None:
+            return self.handlers
+        from .shadow import rewrite_with_leaves
+
+        return tuple(
+            rewrite_with_leaves(handler, {"evaluation": evaluation})
+            for handler in self.handlers
+        )
 
     def _rewrite_with_route_site(
         self, changed, site_id, edge_keys=(), finalbody_halted=None
@@ -13729,11 +13748,14 @@ class ListComp(Expression):
                     gen.target.span,
                     ListComp._generator_binding_coordinate(self, generator_index, gen),
                     target.source_name,
+                    member=True,
                 )
             }
         pattern = self.unit.require_target_pattern_for_target(gen.target)
         return {
-            leaf.id: _evaluation_ref(self, leaf.span, coordinate.cid, leaf.id)
+            leaf.id: _evaluation_ref(
+                self, leaf.span, coordinate.cid, leaf.id, member=True
+            )
             for leaf, coordinate in zip(
                 pattern.leaves, pattern.target_coordinates, strict=True
             )
@@ -16103,7 +16125,8 @@ class Name(Expression):
                 # binding site (the `x += e` target, a walrus target, a
                 # comprehension target, a live loop's header), which is not
                 # where this read sits.  Re-span to the read; the evaluation
-                # key (and a walrus's unevaluated value) is unchanged.
+                # key (a walrus's unevaluated value, a comprehension member's
+                # mark) is unchanged.
                 #
                 # An alias is not re-spanned: after ``y = x`` a read of ``y``
                 # is the reference the assignment read, at the assignment's
@@ -16119,6 +16142,7 @@ class Name(Expression):
                     bound.evaluation,
                     bound.name,
                     unevaluated=getattr(bound, "unevaluated", None),
+                    member=getattr(bound, "member", False) is True,
                 )
             return bound
         span = self.line_col_span()
@@ -16263,12 +16287,13 @@ class EvaluationRef(Expression):
     projection of the statement's key (``projection_key``).  In a
     comprehension's element and conditions a read of a target name is an
     ``EvaluationRef`` to the coordinate the comprehension binds each member
-    under (``ListComp._target_references``, ``ComprehensionSugar._member_ctx``).
-    A walrus's reference also carries its substituted value (``unevaluated``,
-    a slot, not a child), read only where the temporal never received the
-    evaluation.  In a live loop's body a carried name reads the loop
-    header's evaluation of it (``_loop_header_evaluation_key``), which the
-    recurrence binds per item.  Built by ``_evaluation_ref`` only.
+    under (``ListComp._target_references``, ``ComprehensionSugar``), marked
+    ``member``: it reads that coordinate only.  A walrus's reference also
+    carries its substituted value (``unevaluated``, a slot, not a child), read
+    only where the temporal never received the evaluation.  In a live loop's
+    body a carried name reads the loop header's evaluation of it
+    (``_loop_header_evaluation_key``), which the recurrence binds per item.
+    Built by ``_evaluation_ref`` only.
     """
 
     evaluation: str
@@ -16290,6 +16315,7 @@ class EvaluationRef(Expression):
             name=self.name,
             site=self.fragment,
             unevaluated=unevaluated,
+            member=getattr(self, "member", False) is True,
         )
 
 
