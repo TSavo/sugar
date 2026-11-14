@@ -810,7 +810,7 @@ def test_warning_category_star_imported_is_retained_and_owes(tmp_path):
     observed_builtin = WarningEffect(
         category_name="UserWarning",
         message=None,
-        blame=None,
+        site=None,
         category_identity=user_warning,
     )
     assert isinstance(

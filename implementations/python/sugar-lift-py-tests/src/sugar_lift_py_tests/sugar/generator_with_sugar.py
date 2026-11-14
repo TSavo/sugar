@@ -160,9 +160,7 @@ class GeneratorWithSugar(Sugar):
             # left (``face_record``), so nothing the body did is dropped by
             # it. A face with no record is stopped by name, never given one.
             exit_es = _left_the_frame(
-                generator_manager_exit(
-                    entered.machine, body_exit, blame=str(self.site)
-                ),
+                generator_manager_exit(entered.machine, body_exit, site=self.site),
                 face_record(
                     body_exit, owner="GeneratorWithSugar.body", blame=self.site
                 ),
