@@ -24,27 +24,11 @@ class Incomplete:
         return f"{base}; effect occurs under branch condition {conds}"
 
     def follow(self):
-        # Default: an effect halts the run; the rest of the block stays unreduced.
-        #
-        # A STORE is neither. `o.x = p` may complete (Python goes on to the next
-        # statement, the target stays assigned) or may halt (`__setattr__` /
-        # descriptor / `__setitem__` dispatch belongs to the runtime). Which one
-        # is RUNTIME-SELECTED, so BOTH faces are kept: continues under `not g`,
-        # halts under `g`, over the store's own authenticated occurrence
-        # coordinate. See floor/store_outcome_coordinate.py.
-        #
-        # Modelling a store as unconditionally continuing (what this returned
-        # before) claims assignment is infallible; modelling it as halting would
-        # drop every later binding and fabricate a construction gap. The guarded
-        # pair is the only spelling that states neither.
+        # An effect halts the run; the rest of the block stays unreduced. A
+        # store is not an Incomplete: its producer answers its two faces
+        # (floor/store_outcome_coordinate.py, ``store_faces``).
         from sugar_lift_py_tests.outcome.follow_step import FollowStep
-        from sugar_lift_py_tests.floor.store_outcome_coordinate import (
-            is_store_family_effect,
-            store_halted_guard,
-        )
 
-        if is_store_family_effect(self.effect):
-            return FollowStep.continue_with(halt_guard=store_halted_guard(self.effect))
         return FollowStep.halt(keeps_rest=True)
 
     def contribution(self):
@@ -89,18 +73,3 @@ class Incomplete:
         # never runs.
         del step
         return self
-
-
-def _effect_continues_control_flow(effect) -> bool:
-    """Retained name for the store family, now with the honest meaning: this
-    effect has a completed face at all (as opposed to halting outright).
-
-    It no longer means "this effect always continues" -- that claim was the
-    defect. The store family owns the sole membership list, in
-    floor/store_outcome_coordinate.py.
-    """
-    from sugar_lift_py_tests.floor.store_outcome_coordinate import (
-        is_store_family_effect,
-    )
-
-    return is_store_family_effect(effect)

@@ -249,9 +249,9 @@ class FloorValue:
             )
         from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
         from sugar_lift_py_tests.effect import runtime_effect_evidence
-        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
 
-        return Incomplete(
+        return store_faces(
             SubscriptStoreRuntimeEffect(
                 "list slice assignment RHS iterability is undecided at lift; "
                 f"owner={owner} site={site}",

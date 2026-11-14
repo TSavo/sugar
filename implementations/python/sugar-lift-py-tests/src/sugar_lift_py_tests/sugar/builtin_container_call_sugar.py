@@ -582,13 +582,11 @@ class SourceCallActualAfterSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.floor_value import FloorValue
-        from sugar_lift_py_tests.sugar.assigned_value import _carries_halts
 
         outcome = self.state.desugar(ctx)
         if (
             isinstance(outcome, Complete)
             and outcome.follow().continues
-            and not _carries_halts(outcome)
             and isinstance(outcome.value, FloorValue)
         ):
             return outcome

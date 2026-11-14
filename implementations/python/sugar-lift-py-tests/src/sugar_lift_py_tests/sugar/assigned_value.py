@@ -136,34 +136,6 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=()):
                 # and no later RHS or target runs. It is handed back as-is so
                 # the enclosing block routes it.
                 return outcome
-            if _carries_halts(outcome):
-                if len(values) == 1 and tail is None:
-                    # A linear view with a conditional halt: the block reducer
-                    # splits it into the statement's halt and its continuation.
-                    # Its completed value has no single face to record, so a
-                    # read keeps substitution.
-                    return outcome
-                # Beside other members or targets the halt has no seam to
-                # leave by here; refuse rather than drop it or run the rest
-                # on a path where it fired.
-                from sugar_lift_py_tests.gap.info import GapKind
-                from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-                construction_panic_gap(
-                    owner="evaluate_assignment_values",
-                    blame=getattr(sugar, "site", None),
-                    observed=(
-                        "an assignment RHS member reduced to one linear value "
-                        "carrying a conditional halt beside other members or "
-                        "store targets"
-                    ),
-                    requested="the member's halt and completed faces as an ExitSet",
-                    fix=(
-                        "split the linear halt into Halted/Completed faces before "
-                        "sequencing later members and targets"
-                    ),
-                    gap_kind=GapKind.FLOOR,
-                )
             if key is not None and _binds_live_name(active, bind, index):
                 # A live loop body rebinds names this RHS may read: a later
                 # read of this RHS must see this evaluation, not re-reduce
@@ -197,11 +169,3 @@ def _binds_live_name(ctx, bind, index) -> bool:
     over may since have been rebound."""
     del bind, index
     return bool(getattr(ctx, "live_loop_names", frozenset()))
-
-
-def _carries_halts(outcome) -> bool:
-    """A continuing ``Complete`` whose linear view holds a conditional halt.
-
-    Only the store family's second face is one: a completed record holds no
-    halt (#7826)."""
-    return outcome.follow().halt_guard is not None

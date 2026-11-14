@@ -295,7 +295,7 @@ class ListValue(GuardStableValue):
     def setitem(self, index, value, site):
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
 
         if isinstance(index, SliceValue):
             return self._setitem_slice(index, value, site)
@@ -323,8 +323,9 @@ class ListValue(GuardStableValue):
                 site=site,
             )
         from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
 
-        return Incomplete(
+        return store_faces(
             SubscriptStoreRuntimeEffect(
                 "list subscript store requires a concrete integer index or "
                 "ground SliceValue; "
@@ -356,8 +357,11 @@ class ListValue(GuardStableValue):
             )
         if not _slice_bounds_ground(bounds):
             from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+            from sugar_lift_py_tests.floor.store_outcome_coordinate import (
+                store_faces,
+            )
 
-            return Incomplete(
+            return store_faces(
                 SubscriptStoreRuntimeEffect(
                     "list slice assignment depends on runtime slice bounds; "
                     f"owner=ListValue.setitem site={site}",
@@ -384,6 +388,15 @@ class ListValue(GuardStableValue):
             return members_out
 
         def _write(members):
+            from sugar_lift_py_tests.floor.runtime_effect_testimony import (
+                RuntimeEffectTestimony,
+            )
+
+            if isinstance(members, RuntimeEffectTestimony):
+                # An undecided RHS: the store's own completed face, whose
+                # members no lift-time value names (its halted face is the
+                # sibling arm).
+                return Complete(members)
             elements = list(self.elements)
             try:
                 elements[slice(lower, upper, step)] = list(members)
@@ -412,7 +425,7 @@ class ListValue(GuardStableValue):
     def delitem(self, index, site):
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
 
         if isinstance(index, SliceValue):
             bounds = (index.lower, index.upper, index.step)
@@ -447,8 +460,11 @@ class ListValue(GuardStableValue):
                     )
                 )
             from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+            from sugar_lift_py_tests.floor.store_outcome_coordinate import (
+                store_faces,
+            )
 
-            return Incomplete(
+            return store_faces(
                 SubscriptStoreRuntimeEffect(
                     "list slice deletion depends on runtime slice bounds; "
                     f"owner=ListValue.delitem site={site}",
@@ -478,8 +494,9 @@ class ListValue(GuardStableValue):
                 site=site,
             )
         from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
+        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
 
-        return Incomplete(
+        return store_faces(
             SubscriptStoreRuntimeEffect(
                 "list subscript delete requires a concrete integer index; "
                 f"owner=ListValue.delitem site={site}",

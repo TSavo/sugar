@@ -17,14 +17,15 @@ Confirmed (pinned expected-red):
    true arm returns at once, and the false arm is never evaluated. ``x = [] if
    c else [2]; return x[0]`` keeps a completed face under ``not c``, but it
    holds no ``ReturnValue``; Python returns ``2`` there.
-4. ``generator_construction.py`` attribute-store step: an undecided
-   receiver's store answers the store family's two-faced ``Incomplete``, and
-   the step makes it ``ExitSet.halted``. A generator manager whose body stores
-   ``o.x = 1`` before ``yield`` never reaches its yield.
-6. ``outcome/exit_set.py`` ``outcome_to_exitset``: the store family's
-   ``Incomplete`` becomes one ``Halted`` arm. ``o.x += 1`` (through
-   ``ExitSet.and_then`` in ``AugAssignSugar``) has no completed face, so an
-   assert after it has no row.
+
+Confirmed and fixed by H2 of #7825 (the store family answers its two faces
+at the producer, ``store_faces``):
+
+4. ``generator_construction.py`` attribute-store step: a generator manager
+   whose body stores ``o.x = 1`` before ``yield`` reaches its yield on the
+   store's completed face.
+6. ``o.x += 1`` (through ``ExitSet.and_then`` in ``AugAssignSugar``) keeps
+   the face where getattr, add and setattr all complete.
 
 Struck (each test below records why): ``sugar/for_universal_sugar.py``
 (since deleted),
@@ -247,15 +248,6 @@ def test_generator_truthful_half_reaches_its_yield(tmp_path: Path) -> None:
     assert _generator_resume_faces(tmp_path, "y = 1") == ["YieldEffect"]
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "generator_construction.py attribute-store step: the store family's "
-        "two-faced Incomplete (continues under g, halts under not g) becomes "
-        "ExitSet.halted, so `o.x = 1` on an undecided receiver never reaches "
-        "the yield; the completed face is lost (#7827 item 4)"
-    ),
-)
 def test_generator_lying_half_reaches_its_yield_when_the_store_completes(
     tmp_path: Path,
 ) -> None:
@@ -326,15 +318,6 @@ def test_augassign_truthful_half_keeps_a_completed_face(tmp_path: Path) -> None:
     assert _verdict(tmp_path, source) == "open"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "outcome/exit_set.py outcome_to_exitset: the store family's Incomplete "
-        "from `o.x += 1` becomes one Halted arm (via ExitSet.and_then in "
-        "AugAssignSugar), so the face where getattr, add and setattr all "
-        "complete is lost and the assert after it has no row (#7827 item 6)"
-    ),
-)
 def test_augassign_lying_half_keeps_a_completed_face(tmp_path: Path) -> None:
     source = _STORE.format(line="o.x += 1", tail="assert 1 == 1\n")
 
