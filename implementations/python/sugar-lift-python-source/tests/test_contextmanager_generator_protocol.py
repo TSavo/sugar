@@ -162,6 +162,7 @@ def test_try_finally_runs_and_the_body_raise_propagates(tmp_path):
 
 def _function_rows(source_file, with_node):
     """Every return/halt ``f`` can leave by (the reader both consumers share)."""
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_source_tree.nodes import FunctionDef
 
     func = next(
@@ -178,8 +179,9 @@ def _function_rows(source_file, with_node):
                 entry.value
             ):
                 rows.append(("return", 7))
-            elif name == "Incomplete":
-                rows.append(("halt", getattr(entry.effect, "exception_name", None)))
+            elif isinstance(entry, ExitSet) and entry.halts() == entry.exits:
+                for halt in entry.halts():
+                    rows.append(("halt", getattr(halt.effect, "exception_name", None)))
     return type(with_node.sugar()), sorted(rows, key=lambda row: (row[0], str(row[1])))
 
 

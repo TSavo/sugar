@@ -39,8 +39,7 @@ from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
 from sugar_lift_py_tests.fixture_resource_obligation import (
     FixtureSuppliedResourceObligationV1,
 )
-from sugar_lift_py_tests.outcome import Complete, Incomplete
-from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 from sugar_lift_py_tests.sugar.resource_coord_sugar import (
@@ -872,8 +871,8 @@ def test_failure_entering_inner_assigned_resource_still_exits_outer():
     outer_exit, inner_exit = [], []
     halt = RaiseEffect.for_builtin("OSError", occurrence="inner.py:1:0")
     inner = _source_resource(
-        manager=_FixedSugar(Complete(_FloorValue("inner-mgr"))),
-        protocol=_ProbeProtocol(enter=Incomplete(halt), exit_probe=inner_exit),
+        manager=_FixedSugar(ExitSet.completed(_FloorValue("inner-mgr"))),
+        protocol=_ProbeProtocol(enter=ExitSet.halted(halt), exit_probe=inner_exit),
         summary=_never_suppresses_summary(),
         body=(),
         manager_slot_id="B",
@@ -882,9 +881,9 @@ def test_failure_entering_inner_assigned_resource_still_exits_outer():
         site=None,
     )
     outer = _source_resource(
-        manager=_FixedSugar(Complete(_FloorValue("outer-mgr"))),
+        manager=_FixedSugar(ExitSet.completed(_FloorValue("outer-mgr"))),
         protocol=_ProbeProtocol(
-            enter=Complete(_Entered(_FloorValue("entered"))),
+            enter=ExitSet.completed(_Entered(_FloorValue("entered"))),
             exit_probe=outer_exit,
         ),
         summary=_never_suppresses_summary(),
@@ -907,8 +906,8 @@ def test_discrimination_outer_exit_is_not_skipped_on_enter_halt():
     outer_exit, inner_exit = [], []
     halt = RaiseEffect.for_builtin("OSError", occurrence="inner.py:1:0")
     inner = _source_resource(
-        manager=_FixedSugar(Complete(_FloorValue("inner-mgr"))),
-        protocol=_ProbeProtocol(enter=Incomplete(halt), exit_probe=inner_exit),
+        manager=_FixedSugar(ExitSet.completed(_FloorValue("inner-mgr"))),
+        protocol=_ProbeProtocol(enter=ExitSet.halted(halt), exit_probe=inner_exit),
         summary=_never_suppresses_summary(),
         body=(),
         manager_slot_id="B",
@@ -917,9 +916,9 @@ def test_discrimination_outer_exit_is_not_skipped_on_enter_halt():
         site=None,
     )
     outer = _source_resource(
-        manager=_FixedSugar(Complete(_FloorValue("outer-mgr"))),
+        manager=_FixedSugar(ExitSet.completed(_FloorValue("outer-mgr"))),
         protocol=_ProbeProtocol(
-            enter=Complete(_Entered(_FloorValue("entered"))),
+            enter=ExitSet.completed(_Entered(_FloorValue("entered"))),
             exit_probe=outer_exit,
         ),
         summary=_never_suppresses_summary(),
@@ -1028,7 +1027,7 @@ class _ProbeProtocol:
             self._exit_probe.append(1)
         from sugar_lift_py_tests.floor import BlockValue
 
-        return Complete(BlockValue((), can_fall_through=True))
+        return ExitSet.completed(BlockValue((), can_fall_through=True))
 
 
 def _never_suppresses_summary():

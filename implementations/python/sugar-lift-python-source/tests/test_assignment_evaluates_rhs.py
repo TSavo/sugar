@@ -30,7 +30,7 @@ import pytest
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import _Atomic, _Connective, and_
-from sugar_lift_py_tests.outcome import Halted
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 
 from test_undetermined_raise_except_matching import _exits
 
@@ -51,10 +51,9 @@ def _rows(exits):
                 rows.append(("return", entry.value, and_([face.guard, *entry.guards])))
             elif name == "ReturnValue":
                 rows.append(("return", entry.value, face.guard))
-            elif name == "Incomplete":
-                rows.append(
-                    ("halt", entry.effect, and_([face.guard, *entry.branch_conditions]))
-                )
+            elif isinstance(entry, ExitSet) and entry.halts() == entry.exits:
+                for halt in entry.halts():
+                    rows.append(("halt", halt.effect, and_([face.guard, halt.guard])))
     return rows
 
 

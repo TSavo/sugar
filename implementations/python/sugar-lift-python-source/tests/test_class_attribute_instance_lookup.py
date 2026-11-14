@@ -19,7 +19,7 @@ from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.term_value import TermValue
-from sugar_lift_py_tests.outcome import Complete, Completed, Halted
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
@@ -146,11 +146,10 @@ def _assert_enter_returns(source_file, expected: int) -> None:
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    completed = func.sugar().desugar()
-    assert isinstance(completed, Complete)
-    assert isinstance(completed.value, UniverseValue)
+    completed = func.sugar().desugar().completed_value()
+    assert isinstance(completed, UniverseValue)
     enter_facts = []
-    for statement in completed.value.record.statements:
+    for statement in completed.record.statements:
         formula = getattr(statement, "formula", None)
         if getattr(formula, "name", None) != "=":
             continue

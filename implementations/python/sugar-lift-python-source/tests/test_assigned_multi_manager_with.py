@@ -7,7 +7,6 @@ import pytest
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.manager_summary_derivation import (
@@ -456,7 +455,7 @@ def test_truthful_local_two_assigned_generators_construct_and_desugar(
     sugar = site.sugar()
     assert isinstance(sugar, GeneratorWithSugar)
     outcome = sugar.desugar()
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
 
 
 def test_independent_manager_coordinates_survive_shared_provider_spelling(

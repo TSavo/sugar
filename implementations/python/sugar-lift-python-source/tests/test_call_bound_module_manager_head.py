@@ -46,7 +46,7 @@ from test_contextlib_suppress_source_exit_faces import _corpus, _open
 def _function_rows(source_file, with_node):
     """``(With consumer type, sorted rows f leaves by)``; a halt's row names
     its exception, or None when the effect names none."""
-    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome import ExitSet, Halted, outcome_to_exitset
     from sugar_source_tree.nodes import FunctionDef
 
     func = next(
@@ -63,8 +63,9 @@ def _function_rows(source_file, with_node):
                 entry.value
             ):
                 rows.add(("return", 7))
-            elif name == "Incomplete":
-                rows.add(("halt", getattr(entry.effect, "exception_name", None)))
+            elif isinstance(entry, ExitSet) and entry.halts() == entry.exits:
+                for halt in entry.halts():
+                    rows.add(("halt", getattr(halt.effect, "exception_name", None)))
     return type(with_node.sugar()), sorted(rows, key=repr)
 
 _OPT = (

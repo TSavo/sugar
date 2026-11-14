@@ -35,7 +35,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
 from sugar_lift_py_tests.ir import _Atomic
-from sugar_lift_py_tests.outcome import Complete, Completed, Halted
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.outcome.exit_set import ExitSet
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar

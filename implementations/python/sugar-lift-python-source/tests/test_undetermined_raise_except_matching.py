@@ -28,7 +28,7 @@ from sugar_lift_py_tests.floor.undetermined_exception_value import (
     UndeterminedExceptionValue,
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, outcome_to_exitset
 from sugar_source_tree.nodes import FunctionDef
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
@@ -71,10 +71,9 @@ def _entries(exits):
                 rows.append(("return", entry.value, face_guard + repr(entry.guards)))
             elif name == "ReturnValue":
                 rows.append(("return", entry.value, face_guard))
-            elif name == "Incomplete":
-                rows.append(
-                    ("halt", entry.effect, face_guard + repr(entry.branch_conditions))
-                )
+            elif isinstance(entry, ExitSet) and entry.halts() == entry.exits:
+                for halt in entry.halts():
+                    rows.append(("halt", halt.effect, face_guard + repr(halt.guard)))
     return rows
 
 

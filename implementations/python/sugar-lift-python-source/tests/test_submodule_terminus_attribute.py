@@ -19,7 +19,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.import_binding import authenticated_import_value_use_receipts
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.attribute_sugar import _submodule_terminus_module
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.nodes import Attribute
@@ -80,9 +80,10 @@ def test_the_submodule_occurrence_reads_as_its_module(tmp_path):
 
     outcome = terminus.sugar().desugar()
 
-    assert type(outcome) is Complete
-    assert type(outcome.value) is SymbolicValue
-    assert outcome.value.term == ctor("python:module", (str_const("pkg.sub"),))
+    assert type(outcome) is ExitSet
+    value = outcome.completed_value()
+    assert type(value) is SymbolicValue
+    assert value.term == ctor("python:module", (str_const("pkg.sub"),))
 
 
 def test_a_receipt_that_does_not_spell_the_attribute_refuses(tmp_path):

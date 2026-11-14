@@ -20,7 +20,7 @@ from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.import_binding import (
     authenticated_import_value_use_receipts,
 )
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 
@@ -72,8 +72,8 @@ def test_typing_final_returns_its_one_operand(tmp_path) -> None:
     member, site = _member(tmp_path, "typing.final")
     operand = StringValue("the decorated floor")
     out = member.callable_application_with(_Op([operand], site), None)
-    assert type(out) is Complete
-    assert out.value is operand
+    assert type(out) is ExitSet
+    assert out.completed_value() is operand
 
 
 def test_another_typing_member_stays_the_undecided_boundary(tmp_path) -> None:
@@ -82,7 +82,8 @@ def test_another_typing_member_stays_the_undecided_boundary(tmp_path) -> None:
     member, site = _member(tmp_path, "typing.runtime_checkable")
     operand = StringValue("the decorated floor")
     out = member.callable_application_with(_Op([operand], site), None)
-    assert type(out) is Incomplete
+    assert type(out) is ExitSet
+    assert out.exits and out.halts() == out.exits
 
 
 def test_typing_final_in_any_other_call_shape_stays_the_boundary(tmp_path) -> None:
@@ -91,8 +92,10 @@ def test_typing_final_in_any_other_call_shape_stays_the_boundary(tmp_path) -> No
     member, site = _member(tmp_path, "typing.final")
     operand = StringValue("the decorated floor")
     two = member.callable_application_with(_Op([operand, operand], site), None)
-    assert type(two) is Incomplete
+    assert type(two) is ExitSet
+    assert two.exits and two.halts() == two.exits
     keyword = member.callable_application_with(
         _Op([operand], site, keyword_names=("f",)), None
     )
-    assert type(keyword) is Incomplete
+    assert type(keyword) is ExitSet
+    assert keyword.exits and keyword.halts() == keyword.exits

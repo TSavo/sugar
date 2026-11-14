@@ -21,7 +21,7 @@ from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-from sugar_lift_py_tests.outcome import Complete, Halted
+from sugar_lift_py_tests.outcome import Halted
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
@@ -137,12 +137,11 @@ def test_inherited_source_constructor_constructs(tmp_path) -> None:
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    completed = func.sugar().desugar()
-    assert isinstance(completed, Complete)
-    assert isinstance(completed.value, UniverseValue)
+    completed = func.sugar().desugar().completed_value()
+    assert isinstance(completed, UniverseValue)
     returns = [
         statement
-        for statement in completed.value.record.statements
+        for statement in completed.record.statements
         if isinstance(statement, ReturnValue)
     ]
     assert len(returns) == 1
