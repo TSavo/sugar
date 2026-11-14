@@ -208,17 +208,24 @@ class ComputedCallSugar(ConstructedTermSugar):
                 blame=self.site,
                 term=term,
             ).producer_outcome(ctx)
-        from sugar_lift_py_tests.floor import BoundMethodValue, ClassDefinitionValue
+        from sugar_lift_py_tests.floor import (
+            BoundMethodValue,
+            ClassDefinitionValue,
+            LambdaCallable,
+        )
 
-        if isinstance(callee, (ClassDefinitionValue, BoundMethodValue)):
+        if isinstance(
+            callee, (ClassDefinitionValue, BoundMethodValue, LambdaCallable)
+        ):
             from sugar_lift_py_tests.callable_application import CallableApplication
 
             # A computed callee that reduced to a source class is constructor
             # application (``cls(None)`` after a classmethod binds cls); one
-            # that reduced to a bound method is that method's call.  Both bind
-            # and apply through the one routine.  Other computed callees stay
-            # a dig cue; this does not invent calling an import member or an
-            # unknown formal.
+            # that reduced to a bound method is that method's call; one that
+            # reduced to a lambda (``fs[0](x)``, a formal given a lambda) is
+            # the lambda's call.  Each binds and applies through the one
+            # routine.  Other computed callees stay a dig cue; this does not
+            # invent calling an import member or an unknown formal.
             return callee.callable_application_with(
                 CallableApplication(
                     positional + tuple(value for _, value in kw_values),

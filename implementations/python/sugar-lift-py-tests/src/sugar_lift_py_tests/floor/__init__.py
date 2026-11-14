@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from .array_literal import ArrayLiteral
-from .async_function_callable import AsyncFunctionCallable
 from .block_value import BlockValue
 from .boolop_truth_selection import BoolOpTruthSelection
 from .branch_result_coordinate import (
@@ -41,8 +40,6 @@ from .floor_dispatch_surface import (
     require_floor_dispatch_surface,
 )
 from .floor_value import BASE_CONSTRUCTION_GAP_METHOD_NAMES, FloorValue
-from .function_callable import FunctionCallable
-from .partial_function_callable import PartialFunctionCallable
 from .package_source_accounting_value import PackageSourceAccountingValue
 from .guarded_loop_control import GuardedLoopControl
 from .guarded_faces import GuardedFaces
@@ -92,7 +89,6 @@ from .universe_value import UniverseValue
 
 REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     ArrayLiteral,
-    AsyncFunctionCallable,
     BlockValue,
     BranchResultAuthentication,
     BranchResultCoordinate,
@@ -118,8 +114,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     EnteredManagerStateValue,
     ExceptionClassValue,
     LocalExceptionClassValue,
-    FunctionCallable,
-    PartialFunctionCallable,
     GuardedLoopControl,
     GuardedFaces,
     GuardedValue,
@@ -170,7 +164,6 @@ for _floor_type in REGISTERED_FLOOR_TYPES:
 
 __all__ = [
     "ArrayLiteral",
-    "AsyncFunctionCallable",
     "BASE_CONSTRUCTION_GAP_METHOD_NAMES",
     "BlockValue",
     "NamedExpressionValue",
@@ -197,8 +190,6 @@ __all__ = [
     "FLOOR_OPERATION_METHOD_NAMES",
     "FloorDispatchSurface",
     "FloorValue",
-    "FunctionCallable",
-    "PartialFunctionCallable",
     "GuardedLoopControl",
     "GuardedFaces",
     "GuardedValue",

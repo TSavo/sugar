@@ -9,7 +9,8 @@ coordinate (``Lambda._captured_bindings``), as a nested ``def`` does
 scope holds for the name at the call (``Call._closure_cells``), bound under
 that coordinate before the body runs (``ComputedCallSugar.captured``,
 ``with_captured_values``).  A lambda passed on, where the binding at its
-call is not known, is refused by name (``LambdaCallable.apply``).
+call is not known, is refused by name
+(``LambdaCallable.callable_application_with``).
 
 A lambda an eager comprehension stores still reads the comprehension's final
 member (#7944, #7949): that is the comprehension cell's value at the call.
@@ -220,8 +221,12 @@ def test_a_lambda_passed_on_refuses_by_name() -> None:
     assert lam._captured_bindings()[0] == ("x",)
     callable_ = lam.sugar().desugar(None).completed_value()
     assert isinstance(callable_, LambdaCallable)
+    from sugar_lift_py_tests.callable_application import CallableApplication
+
     with pytest.raises(SugarNotWritten):
-        callable_.apply(ONE, None)
+        callable_.callable_application_with(
+            CallableApplication((ONE,), (), "passed-on-call"), None
+        )
 
 
 def test_a_lambda_at_module_level_captures_nothing() -> None:

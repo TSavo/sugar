@@ -80,11 +80,12 @@ def test_symbolic_tuple_membership_emits_typed_obligation():
 
 
 def test_opaque_list_member_stays_loud():
-    from sugar_lift_py_tests.floor import FunctionCallable
+    from sugar_lift_py_tests.floor import LambdaCallable
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
+    opaque = LambdaCallable(parameters=(), body=None, construction_identity="opaque")
     with pytest.raises(ConstructionPanic):
-        _list(1).contains(FunctionCallable("opaque"), "site")
+        _list(1).contains(opaque, "site")
 
 
 def test_nested_list_membership_is_decided_from_constructed_members():

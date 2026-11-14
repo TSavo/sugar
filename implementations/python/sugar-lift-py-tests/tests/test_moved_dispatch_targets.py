@@ -18,7 +18,6 @@ import pytest
 
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
-    CallSiteValue,
     GroundSequenceRepetitionValue,
     ListValue,
     StringValue,
@@ -26,7 +25,6 @@ from sugar_lift_py_tests.floor import (
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.floor.function_callable import FunctionCallable
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.ir import _Ctor, make_var
 from sugar_lift_py_tests.outcome import ExitSet
@@ -316,37 +314,12 @@ def test_the_deleted_operation_methods_are_not_quietly_back() -> None:
 # -- sugar.install_source_dig.ContextualizedDigBody: DEAD, deleted ----------
 
 
-def test_binding_a_call_no_longer_reaches_a_deleted_dig_body() -> None:
-    """The hot path this task was really about.
-
-    Every successful `FunctionCallable.callsite` ran an unconditional
-    `from sugar_lift_py_tests.sugar.install_source_dig import
-    ContextualizedDigBody`, so it raised ModuleNotFoundError: not a panic, not a
-    typed refusal, not a family the census buckets -- the row came back short.
-    """
-    callable_ = FunctionCallable(
-        name="f",
-        parameters=("x",),
-        parameter_kinds=("positional",),
-        body=object(),
-    )
-
-    outcome = callable_.callsite((TermValue(1),), (), "call-site")
-
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), CallSiteValue)
-    assert outcome.completed_value().target_name == "f"
-
-
 def test_the_dig_body_type_exists_nowhere_so_no_arm_may_claim_it() -> None:
-    """Discriminating face: the type is gone AND its protocol is gone.
-
-    `call_scope_updates` was deleted rather than repointed because nothing in
-    the kit can answer `scope_after` / `callable_binding`. If a live type ever
-    grows them, rebuild the arm deliberately -- do not resurrect the guard.
-    """
+    """Discriminating face: the type is gone, and so is the callable that
+    reached for it (``FunctionCallable``, deleted with its own binder: every
+    call binds through ``object_value.bind_call``)."""
     assert not _resolves("sugar_lift_py_tests.sugar.install_source_dig")
-    assert not hasattr(FunctionCallable, "call_scope_updates")
+    assert not _resolves("sugar_lift_py_tests.floor.function_callable")
 
 
 # -- sugar.builtin_dunder_call_sugar: DEAD owner, claim deleted -------------

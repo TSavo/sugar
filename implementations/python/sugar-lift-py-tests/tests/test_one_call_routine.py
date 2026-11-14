@@ -230,3 +230,39 @@ def test_an_inline_lambda_call_takes_the_one_routine(monkeypatch) -> None:
     assert outcome.completed_value() is not None
     assert _bound_and_applied(bound, applied, "py.call")
     assert _every_applied_body_was_bound_by_the_one_binder(bound, applied)
+
+
+# ---------------------------------------------------------------------------
+# A lambda passed as a value and called there -- a callback, ``key=`` -- is the
+# same call: bound, then applied, so its body's raise is the caller's.
+# ---------------------------------------------------------------------------
+
+_KEY_CALLBACK = """\
+def fail(n):
+    raise ValueError('bad')
+
+
+def pick(items, key):
+    chosen = key(items)
+    return 3
+
+
+def test_pick():
+    value = pick(0, key=lambda n: {body})
+    assert value == 3
+"""
+
+
+def test_a_key_lambda_whose_body_raises_carries_the_raise_to_the_caller(
+    monkeypatch,
+) -> None:
+    outcome, bound, applied = _routed(monkeypatch, _KEY_CALLBACK.format(body="n"))
+    assert outcome.completed_value() is not None
+    assert _bound_and_applied(bound, applied, "py.call")
+    assert _every_applied_body_was_bound_by_the_one_binder(bound, applied)
+
+    outcome, bound, applied = _routed(monkeypatch, _KEY_CALLBACK.format(body="fail(n)"))
+    _only_raise(outcome, "ValueError")
+    assert _bound_and_applied(bound, applied, "py.call")
+    assert _bound_and_applied(bound, applied, "fail")
+    assert _every_applied_body_was_bound_by_the_one_binder(bound, applied)

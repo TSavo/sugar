@@ -329,18 +329,16 @@ def test_a_term_bearing_callable_never_enters_the_law() -> None:
 
     ``{List,Tuple}Value.contains x CallSiteValue`` was once implemented by
     treating any TERM-BEARING operand as undecided, measured, then reverted:
-    ``FunctionCallable`` carries a term too, and two pinned refusals
+    ``LambdaCallable`` carries a term too, and two pinned refusals
     (``test_opaque_list_member_stays_loud``, ``test_opaque_member_stays_loud``)
     say a callable is never a member. Carrying a term is not the
-    discriminator. Denoting a value is, and these two classes state nothing,
-    so they can never enter the law from either side -- however opaque their
-    operand happens to be.
+    discriminator. Denoting a value is, and this class states nothing, so it
+    can never enter the law from either side -- however opaque its operand
+    happens to be.
     """
-    from sugar_lift_py_tests.floor.function_callable import FunctionCallable
     from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
 
     callables = (
-        FunctionCallable("f"),
         LambdaCallable(parameters=("p",), body=None, construction_identity="lam"),
     )
 
