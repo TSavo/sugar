@@ -1320,17 +1320,24 @@ def with_module_final_globals(ctx, readers, *, site):
     never a second evaluation of the write here.  A live loop's publication
     is read the same way: its post-loop key (``nodes._live_loop_publication``)
     and its own key of a name it carries (``LoopBindingRef.post_key``) are
-    bound to what the loop left them as in the run, and each slot a phi of
-    the binding selects its arm by -- the loop's write slot
+    what the loop left them as in the run, and each slot a phi of the
+    binding selects its arm by -- the loop's write slot
     (``loop_write_slot``), a module ``if``'s -- is decided as the run
     decided it (``ground_branch_results``), so the read takes the arm the
-    run took.  A key the completed arms bound to different values has no
-    one value, and is not bound; nor is a slot they decided differently, or
-    that none decided.  Where the run completes on no arm, or no completed
-    arm bound the key, it is not bound: its read is refused by name, naming
-    the key (``EvaluationRefSugar._unbound``).  Where the run refuses, its
-    refusal is never caught: this frame entry is refused by the run's own
-    gap.  A global the module body does not
+    run took.
+
+    Each key is bound to its ``ModuleFinalValue``, and each slot to its
+    ``ModuleFinalDecision``: the module run is asked for only where a key
+    is read (``TemporalContext.value_read``) or a slot selects an arm
+    (``branch_result_read``), never at the frame entry.  A body that reads
+    no key and selects by no slot on the path it takes never asks for the
+    run, so a module whose run refuses refuses only the reads of its final
+    bindings, each at the read, by the run's own gap.  A key the completed
+    arms bound to different values has no one value; where the run
+    completes on no arm, or no completed arm bound the key, it has none
+    either: each such read is refused by name, naming the key
+    (``EvaluationRefSugar._unbound``).  A slot they decided differently, or
+    that none decided, reads as undecided.  A global the module body does not
     decide was refused by name when the body was constructed.  The name is
     never bound.
 
@@ -1344,7 +1351,7 @@ def with_module_final_globals(ctx, readers, *, site):
         module_final_global_references,
     )
 
-    keys = []
+    finals = []
     slots = []
     for reader in readers:
         evaluations = []
@@ -1353,19 +1360,18 @@ def with_module_final_globals(ctx, readers, *, site):
             module_final_global_references(reader, site).items()
         ):
             _collect_final_evaluations(state, evaluations, decisions)
+        finals.extend(ModuleFinalValue(reader.unit, key) for key in evaluations)
         # The reader's own defaults, which its module ``def`` statement
         # evaluated in the same run: a formal the call omits binds that
         # value, never its default expression evaluated here.
-        defaults = module_final_default_keys(reader, site)
-        if not evaluations and not defaults and not decisions:
-            continue
-        from sugar_lift_py_tests.tree_enumerate import module_end_contexts
-
-        ends = module_end_contexts(reader.unit)
-        keys.extend((key, ends) for key in evaluations)
-        keys.extend((key, ends) for key in defaults)
-        slots.extend((slot_id, ends) for slot_id in decisions)
-    if not keys and not slots:
+        finals.extend(
+            ModuleFinalValue(reader.unit, key)
+            for key in module_final_default_keys(reader, site)
+        )
+        slots.extend(
+            ModuleFinalDecision(reader.unit, slot_id) for slot_id in decisions
+        )
+    if not finals and not slots:
         return ctx
     from dataclasses import replace
 
@@ -1377,31 +1383,109 @@ def with_module_final_globals(ctx, readers, *, site):
     bound_any = False
     # Each slot a phi of a final binding selects its arm by (a live loop's
     # write slot, ``loop_write_slot``; a module ``if``'s), decided as the
-    # run decided it (``BranchResultDecision``, ``IfSugar``): the read
-    # takes that arm, whose key the run bound, never the arm it did not.
-    for slot_id, ends in slots:
+    # run decided it (``BranchResultDecision``, ``IfSugar``), where the phi
+    # selects: the read takes that arm, whose key the run bound, never the
+    # arm it did not.
+    for decision in slots:
         table = entered.ground_branch_results
-        if slot_id in table:
+        if decision.slot_id in table:
             continue
-        decided = _module_end_decision(ends, slot_id)
-        if decided is None:
-            continue
-        entered = replace(entered, ground_branch_results={**table, slot_id: decided})
+        entered = replace(
+            entered, ground_branch_results={**table, decision.slot_id: decision}
+        )
         bound_any = True
-    for key, ends in keys:
-        if entered.temporal.value_if_bound(key) is not None:
-            continue
-        value = _module_end_value(ends, key)
-        if value is None:
+    for final in finals:
+        if entered.temporal.value_if_bound(final.key) is not None:
             continue
         entered = replace(
             entered,
             temporal=entered.temporal.bind_value(
-                key, value, blame="with_module_final_globals"
+                final.key, final, blame="with_module_final_globals"
             ),
         )
         bound_any = True
     return entered if bound_any else ctx
+
+
+class ModuleFinalValue:
+    """What a frame entry binds a module-final key to
+    (``with_module_final_globals``): the value ``unit``'s module run bound
+    ``key`` to, demanded where the key is read, never where it is bound.
+
+    ``read`` asks for the run (``tree_enumerate.module_end_contexts``, run
+    once per unit, its refusal remembered as loudly as its answer): the
+    value every completed arm that bound the key agrees on, else None, and
+    the run's refusal raised at this read.  Every read of a key reads it
+    through ``TemporalContext.value_read``, which reads this.  ``settled``
+    is the same value only where the run has already answered, and asks
+    for nothing: what a scan over every binding reads (a store's alias
+    advance, ``ReceiverFieldStoreValue.extend_scope``), so a scan is never
+    a read of the module.
+    """
+
+    __slots__ = ("unit", "key")
+
+    def __init__(self, unit, key: str) -> None:
+        self.unit = unit
+        self.key = key
+
+    def __repr__(self) -> str:
+        return f"ModuleFinalValue({self.key!r})"
+
+    def read(self):
+        from sugar_lift_py_tests.tree_enumerate import module_end_contexts
+
+        return _module_end_value(module_end_contexts(self.unit), self.key)
+
+    def settled(self):
+        from sugar_lift_py_tests.tree_enumerate import held_module_end_contexts
+
+        ends = held_module_end_contexts(self.unit)
+        return None if ends is None else _module_end_value(ends, self.key)
+
+
+def settled_binding_value(value):
+    """``value`` as a scan over every binding of a temporal reads it: a
+    ``ModuleFinalValue`` only where its module run has already answered
+    (``ModuleFinalValue.settled``, else None), anything else as it is."""
+    if isinstance(value, ModuleFinalValue):
+        return value.settled()
+    return value
+
+
+class ModuleFinalDecision:
+    """What a frame entry decides a module slot by
+    (``with_module_final_globals``): how ``unit``'s module run decided
+    ``slot_id`` (a live loop's write slot, a module ``if``'s), asked for
+    where a phi selects its arm by the slot (``branch_result_read``), never
+    where it is bound.  ``read`` is the one decision every completed arm
+    that decided it agrees on, else None (undecided), and the run's refusal
+    raised at this read."""
+
+    __slots__ = ("unit", "slot_id")
+
+    def __init__(self, unit, slot_id: str) -> None:
+        self.unit = unit
+        self.slot_id = slot_id
+
+    def __repr__(self) -> str:
+        return f"ModuleFinalDecision({self.slot_id!r})"
+
+    def read(self):
+        from sugar_lift_py_tests.tree_enumerate import module_end_contexts
+
+        return _module_end_decision(module_end_contexts(self.unit), self.slot_id)
+
+
+def branch_result_read(table, slot_id):
+    """The decision ``table`` (``ground_branch_results``) holds for
+    ``slot_id`` as a selection by the slot reads it: a
+    ``ModuleFinalDecision`` asked for here, anything else as it is; None
+    where the slot is undecided."""
+    bound = table.get(slot_id)
+    if isinstance(bound, ModuleFinalDecision):
+        return bound.read()
+    return bound
 
 
 def _module_end_value(ends, key):

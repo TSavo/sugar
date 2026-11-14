@@ -31,8 +31,9 @@ built after evaluating the defaults and before applying its decorators
 (``ClassDefinitionValue.method_defaults``), which a class call reads for its
 ``__init__`` and ``__new__`` from the class statement's one outcome
 (``ClassConstructorBodySugar.bind_class_call``); and, for a module ``def`` called
-after import, the module run that ran its statement, read at the frame entry
-(``call_site_sugar.with_module_final_globals``).  A default expression is
+after import, the module run that ran its statement, bound at the frame entry
+(``call_site_sugar.with_module_final_globals``) and asked for only where the
+key is read (``TemporalContext.value_read``).  A default expression is
 never evaluated at a call: a call where none of these bound the key is
 refused by name.
 """
@@ -125,7 +126,7 @@ class DefaultValueSugar(Sugar):
             evaluation_read_here,
         )
 
-        return temporal.value_if_bound(evaluation_read_here(temporal, self.evaluation))
+        return temporal.value_read(evaluation_read_here(temporal, self.evaluation))
 
 
 def bind_carried_defaults(ctx, defaults):

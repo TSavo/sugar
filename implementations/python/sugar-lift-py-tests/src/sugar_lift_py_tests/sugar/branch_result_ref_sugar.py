@@ -17,7 +17,9 @@ class BranchResultRefSugar(ConstructedTermSugar):
 
         table = getattr(ctx, "ground_branch_results", None)
         if isinstance(table, dict):
-            bound = table.get(self.slot.slot_id)
+            from sugar_lift_py_tests.sugar.call_site_sugar import branch_result_read
+
+            bound = branch_result_read(table, self.slot.slot_id)
             if bound is not None:
                 return ExitSet.completed(bound)
         from sugar_lift_py_tests.floor.branch_result_coordinate import (

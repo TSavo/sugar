@@ -17,6 +17,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
+from sugar_source_tree.construction_cache import AmbientSet
 from sugar_source_tree.tree import SourceFile
 from sugar_source_tree.nodes import Assert, AsyncFunctionDef, FunctionDef
 
@@ -266,50 +267,104 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     return held
 
 
-# The units whose module run is under way, and each unit's module-end
-# contexts once read (``module_end_contexts``).
-_MODULE_RUNS_UNDER_WAY: set = set()
-_MODULE_END_CONTEXTS: dict = {}
+# Each unit's module run, remembered through the one door for memo rows
+# (``construction_cache``): the context each completed arm ended with, or
+# the refusal the run raised, re-raised on every hit.  Keyed by the unit's
+# id; the unit is pinned beside its rows, so the id is never recycled under
+# them.
+_MODULE_RUNS: dict = {}
+_MODULE_RUN_UNITS: dict = {}
+# The units whose module run is under way.  Ambient to every memo row: an
+# answer computed while another module's run is under way, that read that
+# run as under way, is served only where it is under way again.
+_MODULE_RUNS_UNDER_WAY: AmbientSet = AmbientSet("module_runs_under_way")
 
 
 def module_end_contexts(unit) -> tuple:
     """The context each completed arm of ``unit``'s module run ended with:
     the one source of module-final global values (#7757 item 7).
 
-    The run is THE module reduction (``owner_reduction`` with no owner).  A
-    function called after import reads a global through the module's final
-    binding of it, the key of the module body's last write; the value the
-    run bound under that key is its value, whatever the write evaluated (a
-    literal, ``x += e``, a call's result, a list), evaluated once
-    (``call_site_sugar.with_module_final_globals``).  Only completed arms:
-    a function is called after an import that completed.
+    The run is THE module reduction (``owner_reduction`` with no owner),
+    run once, at the root occurrence path, as an import runs it, wherever
+    it is asked for.  A function called after import reads a global
+    through the module's final binding of it, the key of the module body's
+    last write; the value the run bound under that key is its value,
+    whatever the write evaluated (a literal, ``x += e``, a call's result,
+    a list), evaluated once and read only where the key is read
+    (``call_site_sugar.ModuleFinalValue``).  Only completed arms: a
+    function is called after an import that completed.
 
     Empty, so each such read is refused by name, where the run completes on
     no arm (every arm halts), and where it is asked for while it runs (a
-    run that reaches, through another module's function, a function reading
-    this module's final binding).  Where the run refuses (a construction
-    gap), that refusal is never caught here: it reaches the reader that
-    asked for the module-final values, which is refused by the gap's own
-    name, where it was raised.  An answer read while another module's run
-    is under way is not kept: it may hold that cycle's refusal.
+    run that reaches, through another module's function, a read of this
+    module's final binding).  Where the run refuses (a construction gap),
+    the refusal is remembered as loudly as an answer, by the memo row's own
+    door (``construction_cache.close_row``), and the same refusal reaches
+    every read that asks: the run is never run again for the next reader,
+    and its refusal is never caught to read as an answer.
     """
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_lift_py_tests.occurrence import occurrence_path
+    from sugar_source_tree.construction_cache import (
+        abandon_row,
+        close_row,
+        open_row,
+        serve,
+    )
+    from sugar_source_tree.panic import SourceTreePanic
+
     key = id(unit)
-    held = _MODULE_END_CONTEXTS.get(key)
-    if held is not None and held[0] is unit:
-        return held[1]
     if key in _MODULE_RUNS_UNDER_WAY:
         return ()
-    keep = not _MODULE_RUNS_UNDER_WAY
+    memo = (key,)
+    reporter = unit.constructed_module.root.reporter
+    if _MODULE_RUN_UNITS.get(key) is unit:
+        row = serve(_MODULE_RUNS, memo, reporter)
+        if row is not None:
+            if row.panic is not None:
+                # The run's refusal, every time: the same panic, re-raised.
+                raise row.panic
+            return row.value
+    if len(_MODULE_RUNS) >= _OWNER_REDUCTIONS_BOUND:
+        _MODULE_RUNS.clear()
+        _MODULE_RUN_UNITS.clear()
+    computation = open_row()
+    # Running it is this computation's own act: never ambient to its row.
     _MODULE_RUNS_UNDER_WAY.add(key)
     try:
-        ends = owner_reduction(None, unit.constructed_module).ends
-    finally:
-        _MODULE_RUNS_UNDER_WAY.discard(key)
-    if keep:
-        if len(_MODULE_END_CONTEXTS) >= _OWNER_REDUCTIONS_BOUND:
-            _MODULE_END_CONTEXTS.clear()
-        _MODULE_END_CONTEXTS[key] = (unit, ends)
+        try:
+            with occurrence_path(()):
+                ends = owner_reduction(None, unit.constructed_module).ends
+        finally:
+            _MODULE_RUNS_UNDER_WAY.discard(key)
+    except (SourceTreePanic, ConstructionPanic) as panic:
+        # The two sanctioned construction gaps, remembered as loudly as an
+        # answer and raised on.
+        _MODULE_RUN_UNITS[key] = unit
+        close_row(_MODULE_RUNS, memo, computation, reporter, panic=panic)
+        raise
+    except BaseException:
+        # Anything else is a property of this traversal, never remembered.
+        abandon_row(computation)
+        raise
+    _MODULE_RUN_UNITS[key] = unit
+    close_row(_MODULE_RUNS, memo, computation, reporter, value=ends)
     return ends
+
+
+def held_module_end_contexts(unit):
+    """``unit``'s module-end contexts where its run has already answered
+    with them here (``module_end_contexts``), else None.  Never runs the
+    module: a run not yet asked for, under way, or refused holds none."""
+    from sugar_source_tree.construction_cache import serve
+
+    key = id(unit)
+    if _MODULE_RUN_UNITS.get(key) is not unit or key in _MODULE_RUNS_UNDER_WAY:
+        return None
+    row = serve(_MODULE_RUNS, (key,), unit.constructed_module.root.reporter)
+    if row is None or row.panic is not None:
+        return None
+    return row.value
 
 
 def assert_outcome(sf: SourceFile, span: Optional[dict]):
@@ -639,10 +694,10 @@ def function_universe_outcome(fn):
 
     A function reduced on its own is called from outside its module's run:
     its body reads each module global through the module's final binding,
-    and the frame entry every call takes binds those keys to the values the
-    module body's run bound them to (``call_site_sugar.
-    with_module_final_globals``, ``module_end_contexts``) before the body
-    runs.
+    and the frame entry every call takes binds those keys, before the body
+    runs, to the values the module body's run bound them to, each demanded
+    only where its key is read (``call_site_sugar.
+    with_module_final_globals``, ``module_end_contexts``).
     """
     from sugar_lift_py_tests.sugar.call_site_sugar import with_module_final_globals
     from sugar_source_tree.nodes import current_module_execution_site
