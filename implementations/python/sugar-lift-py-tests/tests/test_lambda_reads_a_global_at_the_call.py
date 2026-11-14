@@ -21,6 +21,13 @@ is read at the call (#7757 item 7, residue of #7975).
    a call after the comprehension (``final_member_coordinate``), refused by
    name where the call is placed in neither.  Never the member current where
    the lambda was made.
+4. A lambda a walrus lets escape a generator expression (``list((g :=
+   lambda: x) for x in xs)``) reads the cell the same way, a run being a
+   consumption of the generator: the member current at a call inside a run;
+   the final member at a call after it only where the generator is consumed
+   whole in place (``GeneratorExp._consumed_whole_in_place``); refused by
+   name everywhere else (a stored generator, ``any``, ``set``, a shadowed
+   ``list``).
 """
 
 from __future__ import annotations
@@ -46,6 +53,7 @@ from sugar_source_tree.nodes import (
     ClassDef,
     EvaluationRef,
     FunctionDef,
+    GeneratorExp,
     Lambda,
     ListComp,
     Name,
@@ -504,3 +512,122 @@ def test_a_condition_walrus_lambda_is_placed_by_its_call() -> None:
     after = ReduceContext.root(owner="after-the-comprehension")
     read = lam.body.desugar(_called(callable_, after))
     assert read == ExitSet.completed(TermValue(3))
+
+
+# -- 4. a lambda escaping a generator expression through a walrus ------------
+
+
+CONSUMED_IN_PLACE = (
+    "def f(xs):\n    ys = list((g := lambda: x) for x in xs)\n    return ys[0]()\n"
+)
+STORED = (
+    "def f(xs):\n"
+    "    gen = ((g := lambda: x) for x in xs)\n"
+    "    h = next(gen)\n"
+    "    return h()\n"
+)
+
+
+def _generator(source: str) -> GeneratorExp:
+    """The one generator expression of ``f``'s substituted body."""
+    body = _function(_source(source)).substitute({}).body
+    (gen,) = [
+        node
+        for statement in body
+        for node in statement.walk()
+        if isinstance(node, GeneratorExp)
+    ]
+    return gen
+
+
+def _consumed(consumer: str) -> str:
+    return (
+        f"def f(xs):\n    ys = {consumer}((g := lambda: x) for x in xs)\n"
+        "    return ys\n"
+    )
+
+
+def _escaping_generator(source: str):
+    """The generator's sugar, its one generator, and the escaping lambda's
+    sugar."""
+    gen = _generator(source)
+    sugar = gen.sugar()
+    assert isinstance(sugar, ComprehensionSugar)
+    assert sugar.kind == "py.generatorexp"
+    (lam,) = _lambdas([gen.elt])
+    lam_sugar = lam.sugar()
+    assert isinstance(lam_sugar, LambdaSugar)
+    return sugar, sugar.generators[0], lam_sugar
+
+
+def test_a_generator_walrus_lambda_reads_the_cell_at_the_call() -> None:
+    # Consumed in place or stored, the body never reads the member current
+    # where the lambda was made.
+    for source in (CONSUMED_IN_PLACE, STORED):
+        gen = _generator(source)
+        coordinate = ListComp._generator_binding_coordinate(
+            gen, 0, gen.generators[0]
+        )
+        (lam,) = _lambdas([gen.elt])
+        _assert_reads_the_cell_at_the_call(lam, coordinate)
+
+
+def test_only_a_generator_consumed_whole_in_place_places_its_final_member() -> (
+    None
+):
+    assert _generator(CONSUMED_IN_PLACE).sugar().final_member is True
+    assert _generator(_consumed("tuple")).sugar().final_member is True
+    assert _generator(_consumed("sorted")).sugar().final_member is True
+    # Stored and consumed later, or in part.
+    assert _generator(STORED).sugar().final_member is False
+    # ``any`` stops at the first deciding member; ``set`` hashes each member
+    # as it goes; ``iter`` keeps the generator.
+    for consumer in ("any", "all", "set", "iter"):
+        assert _generator(_consumed(consumer)).sugar().final_member is False
+    # A ``list`` that is not the builtin.
+    shadowed = (
+        "def f(xs, list):\n    ys = list((g := lambda: x) for x in xs)\n"
+        "    return ys\n"
+    )
+    assert _generator(shadowed).sugar().final_member is False
+
+
+def test_a_generator_consumed_in_place_reads_the_member_at_each_call() -> None:
+    sugar, generator, lam = _escaping_generator(CONSUMED_IN_PLACE)
+    member = generator.binding_coordinate_cid
+    evaluation = _evaluation(sugar, generator, TermValue(3))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.desugar(made).completed_value()
+    assert (final_member_coordinate(member), TermValue(3)) in callable_.closure
+    # Called inside the run, by a later member: the member current at the
+    # call, never the one it was made under.
+    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    read = lam.body.desugar(_called(callable_, later))
+    assert read == ExitSet.completed(TermValue(2))
+    # Called after ``list(...)`` drained it: the final member.
+    after = ReduceContext.root(owner="after-the-generator")
+    read = lam.body.desugar(_called(callable_, after))
+    assert read == ExitSet.completed(TermValue(3))
+
+
+def test_a_stored_generators_lambda_called_later_is_refused_by_name() -> None:
+    sugar, generator, lam = _escaping_generator(STORED)
+    member = generator.binding_coordinate_cid
+    evaluation = _evaluation(sugar, generator, TermValue(3))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.desugar(made).completed_value()
+    # No final member is placed, so none is carried.
+    assert all(
+        carried != final_member_coordinate(member)
+        for carried, _value in callable_.closure
+    )
+    # Inside a run of the generator: still the member current at the call.
+    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    read = lam.body.desugar(_called(callable_, later))
+    assert read == ExitSet.completed(TermValue(2))
+    # After it (``h = next(gen); h()``): how far it was consumed is not
+    # decided here, and the read is refused by name, never the member
+    # current where the lambda was made.
+    after = ReduceContext.root(owner="after-the-generator")
+    with pytest.raises(SugarNotWritten, match="not consumed whole in place"):
+        lam.body.desugar(_called(callable_, after))

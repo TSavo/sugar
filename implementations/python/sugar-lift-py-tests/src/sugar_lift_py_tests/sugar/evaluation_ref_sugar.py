@@ -60,7 +60,12 @@ evaluation of the comprehension that made the lambda -- the evaluation the
 lambda carries is the one running (``ComprehensionSugar._evaluation_ctx``) --
 the member current at the call; with no evaluation of the comprehension
 running, the final member the lambda carries; refused by name otherwise.
-Never the member current where the lambda was made.
+Never the member current where the lambda was made.  A generator
+expression's walrus lambda (``list((g := lambda: x) for x in xs)``) is read
+the same way: a run is a consumption of the generator, and the final member
+is carried only where the generator is consumed whole in place
+(``ComprehensionSugar.final_member``); a call after a generator consumed
+anywhere else (stored, ``next``, a ``for``, ``any``) is refused by name.
 
 ``with pytest.raises(...) as e`` and ``except ... as e`` bind no name at
 reduce: substitution rewrites a read of ``e`` to the statement's observation
@@ -414,7 +419,11 @@ class EvaluationRefSugar(ConstructedTermSugar):
                 final = temporal.value_if_bound(self.evaluation)
             if final is not None:
                 return ExitSet.completed(final)
-            placement = "after the comprehension, with no final member carried"
+            placement = (
+                "after the comprehension, with no final member carried (a "
+                "generator not consumed whole in place: the member at the "
+                "call depends on how far it has been consumed)"
+            )
         else:
             made = temporal.value_if_bound(lambda_evaluation_coordinate(self.current))
             if made is running:

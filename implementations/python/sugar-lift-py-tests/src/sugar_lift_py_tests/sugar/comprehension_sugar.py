@@ -149,6 +149,15 @@ class ComprehensionSugar(ConstructedTermSugar):
     # (``nodes._scope_after``).  A name that is not ``ordered`` has
     # no running value: its reads are refused by name.
     walrus_recurrence: tuple = dataclass_field(compare=False, default=())
+    # Whether the comprehension's final member is placed after it: what a
+    # lambda its walrus lets escape reads at a call outside every run of it
+    # (``_final_member_ctx``, ``_symbolic_final_ctx``).  An eager
+    # comprehension runs whole where it is made.  A generator expression
+    # runs when it is consumed: only where it is consumed whole in place
+    # (``GeneratorExp._consumed_whole_in_place``); anywhere else how far it
+    # has been consumed at a later call is not decided, no final member is
+    # placed, and that call is refused by name (``EvaluationRefSugar``).
+    final_member: bool = True
 
     def __post_init__(self) -> None:
         if self.kind not in {
@@ -696,12 +705,16 @@ class ComprehensionSugar(ConstructedTermSugar):
         reads (``LambdaCallable.closure``), so its body reduces after the
         comprehension is done. ``ctx`` unchanged when ``last`` does not
         destructure into the target: the comprehension halts on it, and no
-        stored lambda outlives it.
+        stored lambda outlives it.  ``ctx`` unchanged, too, where the final
+        member is not placed (``final_member``: a generator expression not
+        consumed whole in place).
         """
         from dataclasses import replace
 
         from sugar_source_tree.nodes import final_member_coordinate
 
+        if not self.final_member:
+            return ctx
         member_ctx = self._member_ctx(generator, last, ctx)
         if not isinstance(member_ctx, type(ctx)):
             return ctx
@@ -719,13 +732,16 @@ class ComprehensionSugar(ConstructedTermSugar):
         as ``_final_member_ctx`` binds a finite one: the final member of
         ``iterable`` (the member's final evaluation), and, for a destructuring
         target, each leaf's projection of it. A context that carries no
-        temporal is returned unchanged.
+        temporal is returned unchanged, as is one where the final member is
+        not placed (``final_member``).
         """
         from sugar_lift_py_tests.floor import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.temporal.context_helpers import bind_temporal
         from sugar_source_tree.nodes import final_member_coordinate
 
+        if not self.final_member:
+            return ctx
         if ctx is not None and not hasattr(ctx, "temporal"):
             return ctx
         final = ctor(

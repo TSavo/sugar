@@ -16033,9 +16033,15 @@ class NamedExpr(Expression):
         comprehension around the walrus through its name, so the value is
         substituted with that lambda marked (``_WALRUS_ESCAPES``): it reads
         each comprehension cell at its call
-        (``Lambda._cells_read_at_the_call``).  Not in a generator
-        expression's element or conditions (``_DEFERRED_WALRUS``): no
-        evaluation of it is placed there."""
+        (``Lambda._cells_read_at_the_call``).  In a generator expression's
+        element or conditions (``_DEFERRED_WALRUS``) too: the generator's
+        body runs when it is consumed, so the member at a call depends on
+        how far it has been consumed.  A call inside a run of the generator
+        reads the member current at the call; a call after it reads the
+        final member only where the generator is consumed whole in place
+        (``GeneratorExp._consumed_whole_in_place``), and is refused by name
+        everywhere else (``ComprehensionSugar.final_member``).  Never the
+        member current where the lambda was made."""
         from .backend import Leaf, materialize
         from .shadow import (
             OccurrenceShadowNode,
@@ -16045,7 +16051,7 @@ class NamedExpr(Expression):
         )
 
         value_scope = scope
-        if isinstance(self.target, Name) and not scope.get(_DEFERRED_WALRUS):
+        if isinstance(self.target, Name):
             escaping = _walrus_lambdas(self.value)
             if escaping:
                 escapes = scope.get(_WALRUS_ESCAPES, frozenset()) | escaping
@@ -16271,6 +16277,16 @@ _KEY_CALLBACK_BUILTINS = frozenset(
     ("python:builtins.sorted", "python:builtins.min", "python:builtins.max")
 )
 
+# Builtins that, given a generator as their one argument, drain it whole
+# before they return and run no code of the caller's between its members
+# (``GeneratorExp._consumed_whole_in_place``).  ``set``/``frozenset`` hash
+# each member and ``min``/``max``/``sum`` compare or add them as they go (a
+# member's own method may call a lambda the generator lets escape mid-run);
+# ``any``/``all`` stop at the first deciding member.
+_WHOLE_CONSUMER_BUILTINS = frozenset(
+    ("python:builtins.list", "python:builtins.tuple", "python:builtins.sorted")
+)
+
 
 def _cell_sugars(cells, names, coordinates) -> tuple:
     """``((name, coordinate cid, sugar), ...)``: for each captured name of a
@@ -16394,7 +16410,11 @@ class Lambda(Expression):
         (``_cells_read_at_the_call``): the member current at a call inside
         the evaluation that made it, the final member at a call after the
         comprehension, refused by name where the call is placed in neither.
-        Never the member current where the lambda was made.
+        A generator expression's walrus lambda (``((g := lambda: x) for x in
+        xs)``) reads its cell the same way; the final member is placed only
+        where the generator is consumed whole in place
+        (``GeneratorExp._consumed_whole_in_place``).  Never the member
+        current where the lambda was made.
 
         Every other enclosing function's local the body reads is read the
         same way a nested ``def`` reads one: through a captured coordinate
@@ -17951,7 +17971,8 @@ class GeneratorExp(Expression):
         # A generator's element and conditions run when it is consumed, not
         # here: a walrus in them writes nothing where the generator is made
         # (``ComprehensionSugar`` carries no write for a generator), and its
-        # read is ``deferred`` (``GeneratorExp.substitute``).
+        # read is ``deferred`` (``GeneratorExp.substitute``).  Its final
+        # member is placed only where it is consumed whole in place.
         generators = ListComp._recurrence_generators(self)
         if generators is None:
             return super()._construct_sugar()
@@ -17962,7 +17983,43 @@ class GeneratorExp(Expression):
             generators=generators,
             element=self.elt.sugar(),
             site=self.fragment,
+            final_member=self._consumed_whole_in_place(),
         )
+
+    def _consumed_whole_in_place(self) -> bool:
+        """Whether this generator is consumed whole where it is made: it is
+        the one argument, with no keyword, of a call of a builtin that
+        drains it before returning and runs no code of the caller's between
+        its members (``_WHOLE_CONSUMER_BUILTINS``: ``list(...)``,
+        ``tuple(...)``, ``sorted(...)``).  Then a lambda its walrus lets
+        escape, called after that call, reads the generator's final member
+        (``ComprehensionSugar.final_member``).
+
+        Anywhere else -- stored and consumed later or in part (``next``),
+        iterated by a ``for`` whose body runs between its members, drained
+        by ``any``/``all`` (which stop at the first deciding member), handed
+        to any other callee -- how far the generator has been consumed at a
+        later call is not decided here: no final member is placed, and a
+        call outside a run of the generator is refused by name
+        (``EvaluationRefSugar``).  A call inside a run reads the member
+        current at the call either way."""
+        owner = _function_holding(self)
+        root = owner if owner is not None else self.unit.typed_module
+        if root is None:
+            return False
+        position = _source_position(self)
+        for node in root.walk():
+            if not isinstance(node, Call) or len(node.args) != 1:
+                continue
+            if _source_position(node.args[0]) != position:
+                continue
+            if node.keywords or not isinstance(node.func, Name):
+                return False
+            builtin = self.unit.builtin_reference_at(
+                node.func.id, node.func.line_col_span()
+            )
+            return builtin in _WHOLE_CONSUMER_BUILTINS
+        return False
 
 
 class Await(Expression):
