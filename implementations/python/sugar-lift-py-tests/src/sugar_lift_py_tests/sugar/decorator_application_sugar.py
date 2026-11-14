@@ -198,7 +198,7 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
         )
 
         key = evaluation_read_here(temporal, self.evaluation)
-        return temporal.value_if_bound(key)
+        return temporal.value_read(key)
 
     def _evaluate(self, remaining: tuple, evaluated: tuple, ctx) -> ExitSet:
         # The decorator expressions, top to bottom, then the defaults, before

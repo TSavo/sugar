@@ -110,7 +110,9 @@ def _decided_arm(state: GuardedProjection, ctx):
     table = getattr(ctx, "ground_branch_results", None)
     if not isinstance(table, dict):
         return None
-    bound = table.get(state.slot.slot_id)
+    from sugar_lift_py_tests.sugar.call_site_sugar import branch_result_read
+
+    bound = branch_result_read(table, state.slot.slot_id)
     if isinstance(bound, TrueBoolLiteralSugar):
         return state.when_true
     if isinstance(bound, FalseBoolLiteralSugar):

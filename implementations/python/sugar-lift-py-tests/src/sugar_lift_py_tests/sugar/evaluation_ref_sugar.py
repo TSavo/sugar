@@ -239,7 +239,7 @@ class EvaluationRefSugar(ConstructedTermSugar):
             if temporal is None
             else evaluation_read_here(temporal, self.evaluation)
         )
-        bound = temporal.value_if_bound(key) if temporal is not None else None
+        bound = temporal.value_read(key) if temporal is not None else None
         if bound is not None:
             from sugar_lift_py_tests.outcome import ExitSet
 

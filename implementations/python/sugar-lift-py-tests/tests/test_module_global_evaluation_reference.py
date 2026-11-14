@@ -1259,7 +1259,8 @@ def test_a_name_a_live_loop_carries_binds_only_the_evaluation_too() -> None:
 # from outside its module's run: no module statement ran in its frame, so its
 # entry binds the key of each module-final binding its body reads
 # (``call_site_sugar.with_module_final_globals``), to the value the module
-# body's one run bound it to (``tree_enumerate.module_end_contexts``).  A
+# body's one run bound it to (``tree_enumerate.module_end_contexts``),
+# demanded where the key is read (``TemporalContext.value_read``).  A
 # module-level ``def`` statement never reduces its body, so a function that
 # raises or refuses is no face of that run.
 
@@ -1299,7 +1300,7 @@ def test_a_call_after_import_binds_the_final_key_at_frame_entry() -> None:
         blame=function.fragment,
     )
     assert halt is None
-    assert ctx.temporal.value_if_bound(second) == TermValue(2)
+    assert ctx.temporal.value_read(second) == TermValue(2)
     assert ctx.temporal.value_if_bound(first) is None
     # The key only: the name is never bound.
     assert ctx.temporal.value_if_bound("X") is None
@@ -1354,7 +1355,7 @@ def test_a_final_binding_reading_another_key_binds_the_module_runs_value() -> No
     (n_key,) = _assignment_keys(tree, "N")
     (x_key,) = _assignment_keys(tree, "X")
     ctx = _entered(tree)
-    assert ctx.temporal.value_if_bound(x_key) == _module_end_value(tree, x_key)
+    assert ctx.temporal.value_read(x_key) == _module_end_value(tree, x_key)
     assert ctx.temporal.value_if_bound(n_key) is None
 
 
@@ -1365,7 +1366,7 @@ def test_a_final_binding_to_a_list_display_is_the_module_runs_list() -> None:
     (key,) = _assignment_keys(tree, "X")
     ctx = _entered(tree)
     assert ctx is not None
-    assert ctx.temporal.value_if_bound(key) == _module_end_value(tree, key)
+    assert ctx.temporal.value_read(key) == _module_end_value(tree, key)
 
 
 def test_an_undecided_global_still_refuses_a_function_reduced_on_its_own() -> None:
@@ -1411,17 +1412,20 @@ def test_a_function_reduced_on_its_own_reads_a_module_loops_publication() -> Non
     # ``for i in g(): last = i`` at module level, then ``f`` reads ``last``
     # on its own: the frame entry binds the loop's post-loop key to what the
     # run's loop left it as (the last item, 2) and decides the loop's write
-    # slot as the run decided it (an item wrote it), so the read takes the
-    # post-loop key alone -- never the ``NameError`` arm no run took.
+    # slot as the run decided it (an item wrote it), each read where the
+    # read selects and reads, so the read takes the post-loop key alone --
+    # never the ``NameError`` arm no run took.
+    from sugar_lift_py_tests.sugar.call_site_sugar import branch_result_read
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 
     tree = _source(LOOP_FIRST_BOUND)
     final = _function(tree).unit.module_bindings_at(None, {"last"})["last"]
     ctx = _entered(tree)
     assert isinstance(
-        ctx.ground_branch_results.get(final.slot.slot_id), TrueBoolLiteralSugar
+        branch_result_read(ctx.ground_branch_results, final.slot.slot_id),
+        TrueBoolLiteralSugar,
     )
-    assert ctx.temporal.value_if_bound(final.when_true.evaluation) == TermValue(2)
+    assert ctx.temporal.value_read(final.when_true.evaluation) == TermValue(2)
     assert ctx.temporal.value_if_bound("last") is None
     outcome = function_universe_outcome(_function(tree))
     assert _returned_value(outcome) == TermValue(2)
@@ -1539,3 +1543,101 @@ def test_a_module_run_that_halts_refuses_the_read_by_its_key() -> None:
     with pytest.raises(ConstructionPanic) as refused:
         function_universe_outcome(_function(tree))
     assert key in refused.value.info.observed
+
+
+# -- a refused module run is asked for at a read, once ------------------------
+#
+# The frame entry binds each module-final key to its ``ModuleFinalValue``:
+# the module run is asked for only where a key is read, and is remembered,
+# its refusal as loudly as an answer, through the one door for memo rows
+# (``tree_enumerate.module_end_contexts``).  Each source below is its own,
+# so no other test's run of it is remembered.
+
+
+def _refusing_module_runs(monkeypatch) -> list:
+    """Every module body's run refuses by name; each run is counted."""
+    from sugar_lift_py_tests import tree_enumerate
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+    runs: list = []
+    reduce = tree_enumerate.owner_reduction
+
+    def refusing(owner, sf=None):
+        if owner is not None:
+            return reduce(owner, sf)
+        runs.append(sf)
+        construction_panic_gap(
+            owner="test",
+            blame="test",
+            observed="the module body's run refuses",
+            requested="a module run",
+            fix="none: the test refuses every module run",
+        )
+
+    monkeypatch.setattr(tree_enumerate, "owner_reduction", refusing)
+    return runs
+
+
+def test_a_function_reading_no_final_binding_completes_in_a_refused_module(
+    monkeypatch,
+) -> None:
+    # ``g``'s entry binds its default's key, but no path of its body reads
+    # it: the refused run is never asked for, and ``g`` completes.
+    from sugar_lift_py_tests.sugar.call_site_sugar import (
+        ModuleFinalValue,
+        enter_source_frame,
+    )
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+    from sugar_source_tree.nodes import module_final_default_keys
+
+    runs = _refusing_module_runs(monkeypatch)
+    tree = _source(
+        "X = 1\ndef g(a=X):\n    return 1\n# a refused run no read asks for\n"
+    )
+    function = _function(tree, "g")
+    (key,) = module_final_default_keys(function, None)
+    ctx, halt = enter_source_frame(
+        function.source_visible_call_frame(),
+        None,
+        owner="test",
+        blame=function.fragment,
+    )
+    assert halt is None
+    assert isinstance(ctx.temporal.value_if_bound(key), ModuleFinalValue)
+    assert runs == []
+    outcome = function_universe_outcome(function)
+    assert _returned_value(outcome) == TermValue(1)
+    assert runs == []
+
+
+def test_a_final_binding_read_is_refused_by_the_refused_run(monkeypatch) -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    runs = _refusing_module_runs(monkeypatch)
+    tree = _source(
+        "X = 1\ndef f():\n    return X\n# a refused run that one read asks for\n"
+    )
+    with pytest.raises(ConstructionPanic) as refused:
+        function_universe_outcome(_function(tree))
+    assert "the module body's run refuses" in refused.value.info.observed
+    assert len(runs) == 1
+
+
+def test_two_readers_of_a_refused_module_ask_for_one_run(monkeypatch) -> None:
+    # The second reader is refused by the run the first asked for: the same
+    # refusal, remembered, never a second run.
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    runs = _refusing_module_runs(monkeypatch)
+    tree = _source(
+        "X = 1\nY = 2\n"
+        "def f():\n    return X\n"
+        "def h():\n    return Y\n"
+        "# a refused run two reads ask for\n"
+    )
+    with pytest.raises(ConstructionPanic) as first:
+        function_universe_outcome(_function(tree))
+    with pytest.raises(ConstructionPanic) as second:
+        function_universe_outcome(_function(tree, "h"))
+    assert second.value is first.value
+    assert len(runs) == 1
