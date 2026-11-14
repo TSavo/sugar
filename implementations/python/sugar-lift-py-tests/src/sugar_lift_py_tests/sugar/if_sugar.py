@@ -344,8 +344,20 @@ class IfSugar(Sugar):
         # and preserve their guarded exits exactly as before.
         # Walrus (and any FloorValue with non-identity extend_scope) binds
         # before branch selection — Python makes the name visible in BOTH arms.
-        # Default FloorValue.extend_scope is identity.
-        branch_ctx = condition.extend_scope(ctx)
+        # Default FloorValue.extend_scope is identity.  The test is this
+        # statement's header: every walrus bind and callee store its value
+        # carried reaches both suites by the one header rule
+        # (``function_universe_sugar.header_record``), and the callee stores
+        # are laid before either suite, with the condition's own testimony
+        # (``carried``), as an assignment lays the stores its value carried.
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            header_record,
+            laid_in_record,
+        )
+
+        presented, header = header_record(condition, ctx)
+        branch_ctx = presented.extend_scope(ctx if header is None else header.context)
+        carried = () if header is None else header.entries
 
         if observed_formula in (false_guard(), true_guard()):
             selected = reduce_block_to_exitset(
@@ -362,7 +374,7 @@ class IfSugar(Sugar):
                 # under ``true``, so the constructor forked an impossible
                 # companion that completed WITHOUT the store where the call
                 # in fact raised.
-                return selected
+                return laid_in_record(carried, selected)
             then_exits, else_exits = (
                 (selected, ExitSet(()))
                 if observed_formula == true_guard()
@@ -402,6 +414,7 @@ class IfSugar(Sugar):
             # in the test bound its evaluation into ``branch_ctx``, so every
             # arm holds it and it is carried out of the if like an arm's own.
             incoming=ctx,
+            carried=carried,
         )
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
@@ -449,6 +462,7 @@ class IfSugar(Sugar):
         observed_formula,
         authentication,
         incoming=None,
+        carried=(),
     ) -> ExitSet:
         from dataclasses import replace as _replace
 
@@ -498,10 +512,16 @@ class IfSugar(Sugar):
         # that unused slot would inject BranchResultAuthentication into every
         # folded `if not args:` factory prefix, and prefix CIDs cannot project
         # that testimony. Symbolic splits still publish the slot authentication.
+        # ``carried``: the callee stores the condition's value carried
+        # (``header_record``), stored before either suite ran: they lead the
+        # condition's testimony on every arm.
         unconditional_entries = (
-            ()
-            if observed_formula in (false_guard(), true_guard())
-            else (authentication,)
+            *carried,
+            *(
+                ()
+                if observed_formula in (false_guard(), true_guard())
+                else (authentication,)
+            ),
         )
 
         entries = []

@@ -159,6 +159,21 @@ class RaiseSugar(Sugar):
                 resolve_in_flight_effect(ctx, self.in_flight_slot, blame=self.site)
             )
 
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            header_applied,
+        )
+        from sugar_lift_py_tests.sugar.match_sugar import _CompleteValueSugar
+
+        # The operand (then the cause) is this statement's header: a walrus
+        # bind or callee store its value carried is in the halt's record and
+        # context by the one header rule (``header_applied``), never dropped
+        # with the block's prefix.
+        headed, exception_out = header_applied(self, "exception", ctx)
+        if headed is not None:
+            return headed
+
         def halt(raised_value, cause_value=None):
             return ExitSet.halted(self._effect(raised_value, ctx, cause_value))
 
@@ -183,11 +198,20 @@ class RaiseSugar(Sugar):
                 return ExitSet.halted(raised_value.effect)
             if self.cause is None:
                 return halt(raised_value)
-            return self.cause.desugar(ctx).and_then(
+            # The cause is evaluated after the operand completed: its header
+            # is applied to the raise with the operand fixed.
+            headed, cause_out = header_applied(
+                replace(self, exception=_CompleteValueSugar(raised_value, self.site)),
+                "cause",
+                ctx,
+            )
+            if headed is not None:
+                return headed
+            return cause_out.and_then(
                 lambda cause_value: halt(raised_value, cause_value)
             )
 
-        return self.exception.desugar(ctx).and_then(after_exception)
+        return exception_out.and_then(after_exception)
 
 
 def _occurrence_key(blame):

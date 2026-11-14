@@ -41,10 +41,17 @@ class ConstructedClassMethodDefaultsV1:
 @dataclass(frozen=True)
 class _ClassBodyV1:
     """A completed class body: its fields, and each method default's
-    ``(key, value)`` the class value carries to its method calls."""
+    ``(key, value)`` the class value carries to its method calls.
+    ``entries``: the body's record -- the stores a callee its field values
+    called made on objects the class statement's frame sees
+    (``CallerStoreValue``), laid by the one door
+    (``function_universe_sugar.laid_in_record``) as an assignment lays them;
+    the class statement lays them in its block's record
+    (``ClassDefinitionValue.body_stores``)."""
 
     fields: tuple
     method_defaults: tuple = field(compare=False)
+    entries: tuple = ()
 
 
 def _written_initializer(value):
@@ -255,9 +262,13 @@ class ClassDefinitionSugar(Sugar):
             # authority or behavior here; its faces were already carried by
             # the fold.
         def construct_class(body):
-            body_value, method_defaults = body, ()
+            body_value, method_defaults, body_stores = body, (), ()
             if isinstance(body, _ClassBodyV1):
-                body_value, method_defaults = body.fields, body.method_defaults
+                body_value, method_defaults, body_stores = (
+                    body.fields,
+                    body.method_defaults,
+                    body.entries,
+                )
             value = ClassDefinitionValue(
                 self.class_name,
                 self.class_definition_cid,
@@ -271,6 +282,7 @@ class ClassDefinitionSugar(Sugar):
                 tuple(base_values),
                 class_definition=self.class_definition,
                 method_defaults=method_defaults,
+                body_stores=body_stores,
             )
             # The ``__init__`` a call of the class runs is the one the one
             # class-namespace lookup selects (``initializer_class``: this

@@ -7,7 +7,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.ir import ctor, eq, num, str_const
-from sugar_source_tree.nodes import Call, FunctionDef, With
+from sugar_source_tree.nodes import Call, FunctionDef, With, _Splice
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
@@ -64,7 +64,11 @@ def _with_sugar(
     context.source_call_frames[_coordinate(manager_call)] = (
         function.source_visible_call_frame()
     )
-    return with_node.substitute({}).sugar()
+    substituted = with_node.substitute({})
+    if isinstance(substituted, _Splice):
+        # The with publishes what its body left (``With._published``).
+        (substituted,) = substituted.statements
+    return substituted.sugar()
 
 
 def test_renamed_generator_manager_enters_at_first_yield_without_name_authority():

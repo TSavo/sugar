@@ -57,7 +57,18 @@ from sugar_lift_python_source.manager_summary_derivation import (
     _projected_manager_call_uses,
     populate_source_derived_resource_refs,
 )
+from sugar_source_tree.nodes import _Splice
 from sugar_source_tree.tree import SourceFile
+
+
+def _with_statement(with_node):
+    """The ``with`` statement substituted alone: it publishes what its body
+    left beside it (``With._published``)."""
+    substituted = with_node.substitute({})
+    if isinstance(substituted, _Splice):
+        (substituted,) = substituted.statements
+    return substituted
+
 
 _GUARD_SOURCE = (
     "class Guard:\n"
@@ -641,7 +652,7 @@ def test_renamed_source_generator_resources_use_the_same_closed_factory_arm(
     recording = RecordingDefinitionDoor(context.contract_refs)
     object.__setattr__(context, "contract_refs", recording)
 
-    resource = with_node.substitute({}).sugar()
+    resource = _with_statement(with_node).sugar()
 
     assert isinstance(resource, WithSourceResourceSugar)
     assert recording.calls == [
@@ -705,7 +716,7 @@ def test_renamed_pre_yield_branch_and_cleanup_spellings_share_one_resource_path(
 
     recording = RecordingDefinitionDoor(context.contract_refs)
     object.__setattr__(context, "contract_refs", recording)
-    resource = with_node.substitute({}).sugar()
+    resource = _with_statement(with_node).sugar()
 
     assert isinstance(resource, WithSourceResourceSugar)
     assert recording.calls == [

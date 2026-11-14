@@ -238,16 +238,23 @@ class WithOpaqueCitedManagerSugar(Sugar):
             face_record,
             halt_record,
             halts_recorded,
+            header_applied,
             reduce_block_to_exitset,
             resumed,
         )
 
+        # The manager is the ``with``'s header: a walrus bind or callee store
+        # its value carried reaches the body by the one header rule
+        # (``header_applied``), the stores laid in every arm's record.
+        headed, manager_out = header_applied(self, "manager", ctx)
+        if headed is not None:
+            return headed
         # The manager is routed face by face: a deferred native-operation
         # carrier is refused by name. A manager halt is at the head of the
         # ``with``: it carries the record of where it halted.
         manager_es = halts_recorded(
             _require_exit_set(
-                self.manager.desugar(ctx),
+                manager_out,
                 owner="WithOpaqueCitedManagerSugar.manager",
             ),
             halt_record(ctx),

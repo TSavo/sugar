@@ -951,11 +951,17 @@ class MatchSugar(Sugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halt_record,
             halts_recorded,
+            header_applied,
             plain_completed_value,
             reduce_block_to_exitset,
         )
 
-        subject_out = self.subject.desugar(ctx)
+        # The subject is this statement's header: a walrus bind or callee
+        # store its value carried reaches every case by the one header rule
+        # (``header_applied``), the stores laid in every arm's record.
+        headed, subject_out = header_applied(self, "subject", ctx)
+        if headed is not None:
+            return headed
         if not isinstance(subject_out, ExitSet):
             raise NotImplementedError(
                 f"match subject outcome not lifted: {type(subject_out).__name__}"
