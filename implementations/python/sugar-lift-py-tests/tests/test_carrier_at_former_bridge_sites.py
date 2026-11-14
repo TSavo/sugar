@@ -815,14 +815,17 @@ def test_loop_symbolic_item_carrier_composes_through_after_discharge():
     )
     loop = SimpleNamespace(target_cid="loop-target:" + "c" * 32)
     left_by = LoopRecurrenceSugar._leave_symbolic_item(
-        loop, body, "recurrence", atomic("test.item", [])
+        loop,
+        body,
+        lambda entries=(): ExitSet.completed(("recurrence", *entries)),
+        atomic("test.item", []),
     )
 
     assert isinstance(left_by, NativeOperationExitCarrierV1)
     exits = left_by.discharge(None, _actuals(left, right))
     assert isinstance(exits, ExitSet)
     values = [exit_.value for exit_ in exits.exits]
-    assert values.count("recurrence") == 1
+    assert values.count(("recurrence",)) == 1
     assert values.count(BlockValue((TermValue(3),), can_fall_through=False)) == 1
     assert all("test.item" in str(exit_.guard) for exit_ in exits.exits)
 

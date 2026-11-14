@@ -345,7 +345,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
 
         from sugar_lift_py_tests.floor import InvValue
-        from sugar_lift_py_tests.floor.block_value import BlockValue
 
         # The recurrence's value of each name the loop writes: one head per
         # name, keyed by what a read after the loop reads it through -- its
@@ -384,50 +383,49 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # coordinate, and each other written name's under its post-loop key,
         # with its write slot decided -- here as the guard that some item
         # wrote it, which the symbolic iterable does not decide true or false.
-        recurrence = BlockValue(
-            (
-                *self.iterable_writes,
-                *recurrences,
-                *self._publication(
-                    tuple(SymbolicValue(h) for h in heads),
-                    tuple(
-                        (
-                            post_key,
-                            SymbolicValue(h),
-                            atomic(
-                                "python.loop.wrote",
-                                [str_const(self.target_cid), str_const(post_key)],
-                            ),
-                        )
-                        for post_key, h in zip(post_keys, post_heads, strict=True)
-                    ),
+        published = (
+            *recurrences,
+            *self._publication(
+                tuple(SymbolicValue(h) for h in heads),
+                tuple(
+                    (
+                        post_key,
+                        SymbolicValue(h),
+                        atomic(
+                            "python.loop.wrote",
+                            [str_const(self.target_cid), str_const(post_key)],
+                        ),
+                    )
+                    for post_key, h in zip(post_keys, post_heads, strict=True)
                 ),
             ),
-            can_fall_through=True,
         )
-        # The item's target unpack runs first, whether or not the body has an
-        # outward face: the recurrence (and the item's body) are what follows
-        # its completed arm (``ExitSet.sequence``), and its halt (too few, too
-        # many, not iterable) is an arm of the recurrence as it is.  A body
-        # with no ``return``/``raise`` still unpacks every item.
+
+        def recurrence(entries=()):
+            # The loop leaves as its recurrence with what the item it leaves
+            # from left (``entries``), as a concrete loop leaves with what its
+            # items left (``_left_with``); no item: nothing.
+            return self._left_with(entries, published)
+
+        # The item's target unpack runs first: the item's body (and the
+        # recurrence) are what follows its completed arm
+        # (``ExitSet.sequence``), and its halt (too few, too many, not
+        # iterable) is an arm of the recurrence as it is.
         projected, enter, item = self._enter_symbolic_item(
             runtime, ctx, iterable, heads
         )
-        if not self.outward_faces:
-            return projected.and_then(
-                lambda _projections: ExitSet.completed(recurrence)
-            )
 
-        # The body has a ``return``/``raise``: the symbolic item runs the
-        # body once, through the one block composition a concrete item and a
-        # function body use (``reduce_block_to_exitset``), in the item's
-        # context.  Its reads of a carried name and of the target are
-        # references to their keys (``For.substitute``), bound here for that
-        # item exactly as for a concrete one (``_enter_symbolic_item``); its
-        # reads of what an earlier statement of the body wrote (an inner
-        # loop's publication) are bound by that statement, which ran ahead of
-        # it.  The loop's exits are the arms of that one run
-        # (``_leave_symbolic_item``).
+        # The symbolic item runs the body once, whether or not it has a
+        # ``return``/``raise``, through the one block composition a concrete
+        # item and a function body use (``reduce_block_to_exitset``), in the
+        # item's context: what it stores, mutates, owes and splits on is the
+        # loop's, as a concrete item's is.  Its reads of a carried name and of
+        # the target are references to their keys (``For.substitute``), bound
+        # here for that item exactly as for a concrete one
+        # (``_enter_symbolic_item``); its reads of what an earlier statement of
+        # the body wrote (an inner loop's publication) are bound by that
+        # statement, which ran ahead of it.  The loop's exits are the arms of
+        # that one run (``_leave_symbolic_item``).
         body_sugars, item_guard = self._symbolic_item()
 
         def run_item(projections):
@@ -460,7 +458,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             raise SugarNotWritten(
                 owner="LoopRecurrenceSugar.symbolic-item",
                 blame=self.site,
-                observed="an outward face with no symbolic item to run",
+                observed="a symbolic loop with no symbolic item to run",
                 requested="the loop body and its item guard from the construction",
                 fix=(
                     "construct the loop through construct_live_loop_recurrence, "
@@ -473,19 +471,26 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         """The loop's exits from the one run of the symbolic item's
         ``body`` (``reduce_block_to_exitset``'s arms), under ``guard``
         (an item runs), beside the recurrence under its negation (no item
-        runs: the loop leaves as it began).
+        runs: the loop leaves as it began).  ``recurrence(entries)`` is the
+        loop leaving as its recurrence with ``entries``, what the item left.
 
         Each arm leaves as a concrete item's does (``_after_iteration_state``,
         ``_after_loop_control``): an arm that does not fall through (a
         ``return``) leaves the loop with its entries; an arm that falls
-        through, and this loop's own ``break``/``continue``, leave the item
-        as the recurrence (the loop goes on); any other halt (a ``raise``, an
-        inner loop's or a call's) is an arm as it is.  An arm that falls
-        through after an earlier guarded ``return`` took its exit where that
-        return's guard held: it is split as the block composition splits a
-        later halt (``_prior_return_face``), the returned arm with its
-        entries, the recurrence under the fall-through guard.  Each exit is
-        an arm of the one run, so each is reported once."""
+        through leaves as the recurrence with its entries -- every store,
+        container mutation and rebind the item made, as a concrete item's
+        fall-through hands its entries on to the loop's publication -- and
+        this loop's own ``break``/``continue`` leaves as the recurrence with
+        what its halt carries (its state is the item's context, which holds
+        no entries, as a concrete item's break does); any other halt (a
+        ``raise``, an inner loop's or a call's) is an arm as it is.  Every
+        arm keeps the guard, partition faces and ``owed`` of the item's arm
+        it continues (``ExitSet.sequence``).  An arm that falls through after
+        an earlier guarded ``return`` took its exit where that return's guard
+        held: it is split as the block composition splits a later halt
+        (``_prior_return_face``), the returned arm with its entries, the
+        recurrence under the fall-through guard.  Each exit is an arm of the
+        one run, so each is reported once."""
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
@@ -503,7 +508,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         def leave(state):
             if not state.can_fall_through:
                 return returned(state)
-            goes_on = ExitSet.completed(recurrence)
+            goes_on = recurrence(state.entries)
             earlier = _prior_return_face(state, state.context)
             if earlier is None:
                 return goes_on
@@ -520,12 +525,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 isinstance(effect, LoopControlEffect)
                 and effect.target_cid == self.target_cid
             ):
-                return ExitSet.completed(recurrence)
+                return recurrence()
             return None
 
         def compose(body):
             left = body.sequence(leave, consume=own_control)
-            return ExitSet.completed(recurrence, not_(guard)).union(left.guarded(guard))
+            return recurrence().guarded(not_(guard)).union(left.guarded(guard))
 
         if isinstance(body, NativeOperationExitCarrierV1):
             # The body still waits on its caller's actuals: once it
@@ -1431,8 +1436,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         published last, under its post-loop key, with its write slot decided
         on this exit (``_post_loop_writes``): ``items`` items ran, and the
         ``else`` suite ran when ``else_ran``."""
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-
         temporal = getattr(ctx, "temporal", None)
         if temporal is None:
             raise TypeError("loop recurrence omitted its temporal context")
@@ -1452,13 +1455,28 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         posted = self._post_loop_writes(
             runtime, temporal, items=items, else_suite=else_ran
         )
+        return self._left_with(
+            entries,
+            self._publication(tuple(values), posted),
+            fall_through=fall_through,
+            can_fall_through=can_fall_through,
+        )
+
+    def _left_with(self, entries, published, *, fall_through=(), can_fall_through=True):
+        """The loop leaving with ``entries`` -- what its items (and its
+        ``else`` suite) left: every store, container mutation and rebind
+        they made, in the order they ran -- and ``published``, what it
+        publishes as it leaves (``_publication``, and the recurrence's step
+        for a symbolic loop).  The iterable's walrus writes
+        (``iterable_writes``) come first: the iterable ran before every
+        item.  One record, for a concrete loop (``_publish_runtime_bindings``)
+        and the recurrence alike (``_desugar_with_iterable``): what an item
+        left is carried out of the loop the one way."""
+        from sugar_lift_py_tests.floor.block_value import BlockValue
+
         return ExitSet.completed(
             BlockValue(
-                (
-                    *self.iterable_writes,
-                    *entries,
-                    *self._publication(tuple(values), posted),
-                ),
+                (*self.iterable_writes, *entries, *published),
                 fall_through=fall_through,
                 can_fall_through=can_fall_through,
             )
