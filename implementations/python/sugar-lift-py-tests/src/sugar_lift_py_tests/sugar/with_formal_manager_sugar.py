@@ -1,9 +1,9 @@
-"""Protocol-resource routing for a language-owned C-floor manager.
+"""Protocol-resource routing for a manager whose head is a formal parameter.
 
 Same ExitSet algebra as ``WithSourceResourceSugar``, but enter/exit are the
-language-owned protocol, not source ``MethodCallSugar`` definition coordinates.
-``_io`` has no authenticated source for those coordinates, and inventing them
-would be a lie.
+formal-selected manager protocol, not source ``MethodCallSugar`` definition
+coordinates. A formal parameter has no authenticated source for those
+coordinates, and inventing them would be a lie.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
 @dataclass(frozen=True)
-class WithLanguageOwnedResourceSugar(Sugar):
+class WithFormalManagerSugar(Sugar):
     manager: Sugar
     protocol: object
     summary: object
@@ -109,9 +109,9 @@ class WithLanguageOwnedResourceSugar(Sugar):
 
             raise SugarNotWritten(
                 blame=self.site,
-                owner="WithLanguageOwnedResourceSugar.desugar",
-                observed="language-owned manager protocol produced no face",
-                requested="one completed or halted language-owned manager face",
+                owner="WithFormalManagerSugar.desugar",
+                observed="formal manager protocol produced no face",
+                requested="one completed or halted formal manager face",
                 fix="keep empty protocol testimony loud",
             )
         result = parts[0]

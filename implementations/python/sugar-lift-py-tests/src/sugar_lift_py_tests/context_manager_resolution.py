@@ -871,13 +871,14 @@ class SourceDerivedGeneratorResourceRefV1:
 
 
 @dataclass(frozen=True)
-class LanguageOwnedContextManagerRefV1:
-    """A language-owned C-floor resource contract, not a source-derived body.
+class FormalManagerRefV1:
+    """A ``with`` whose head is a function's formal parameter, not a source body.
 
-    Published when export resolution names ``_io.StringIO`` or ``_io.BytesIO``
-    as ``artifact-module-absent``. The protocol is the documented IOBase law,
-    keyed on that authenticated gap and the running ``PythonRuntimeIdentity``,
-    never on a use-site spelling and never on invented source coordinates.
+    Minted only by ``mint_formal_selected_manager_ref`` for a formal-rooted
+    With head (``with p.m():`` / ``with self.x:``). The protocol is the
+    formal-selected manager law: each enter/exit call completes with an opaque
+    result or halts, keyed on the head and its use site, never on invented
+    source coordinates.
     """
 
     use_site: SourceFragmentCoordinateV1
@@ -972,7 +973,7 @@ def context_manager_resolution_outcome(resolution: object) -> str:
             SourceDerivedContextManagerRefV1,
             SourceDerivedGeneratorResourceRefV1,
             ContextManagerContractRefV1,
-            LanguageOwnedContextManagerRefV1,
+            FormalManagerRefV1,
         ),
     ):
         return "constructed"

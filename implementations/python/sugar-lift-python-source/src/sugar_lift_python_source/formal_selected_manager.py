@@ -11,15 +11,15 @@ from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.context_manager_contract import (
     EnterResultContractV1,
     ExitContractV1,
+    FormalManagerCallFacesCompletionV1,
     ImportSignatureV2,
-    LanguageOwnedCCallFacesCompletionV1,
     ProtocolResourceSemanticsV1,
     ReturnTruthinessDispositionV1,
     import_signature_to_value,
     semantics_to_value,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
-    LanguageOwnedContextManagerRefV1,
+    FormalManagerRefV1,
 )
 from sugar_lift_py_tests.floor.formal_selected_manager import (
     FormalSelectedManagerProtocol,
@@ -33,14 +33,14 @@ def mint_formal_selected_manager_ref(coordinate, head: str):
     site = coordinate.wire()
     site_key = json.dumps(site, sort_keys=True) if not isinstance(site, str) else site
     protocol = FormalSelectedManagerProtocol(head=head, site=site_key)
-    # The two-faced completion shape is the C-call one: each step completes
-    # with an opaque result or halts with an UndeterminedRaiseEffect.
+    # Each step completes with an opaque result or halts with an
+    # UndeterminedRaiseEffect.
     semantics = ProtocolResourceSemanticsV1(
         EnterResultContractV1(
-            PrimitiveSort("Value"), LanguageOwnedCCallFacesCompletionV1()
+            PrimitiveSort("Value"), FormalManagerCallFacesCompletionV1()
         ),
         ExitContractV1(
-            ReturnTruthinessDispositionV1(), LanguageOwnedCCallFacesCompletionV1()
+            ReturnTruthinessDispositionV1(), FormalManagerCallFacesCompletionV1()
         ),
     )
     signature = ImportSignatureV2(())
@@ -54,7 +54,7 @@ def mint_formal_selected_manager_ref(coordinate, head: str):
         "targetSymbol": target_symbol,
         "useSite": site,
     }
-    return LanguageOwnedContextManagerRefV1(
+    return FormalManagerRefV1(
         use_site=coordinate,
         summary_cid=cid_of_json(preimage),
         semantics=semantics,

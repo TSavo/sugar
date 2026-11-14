@@ -11291,14 +11291,14 @@ class With(Statement):
             ProtocolResourceSemanticsV1,
             SourceEnterFacesCompletionV1,
             SourceExitFacesCompletionV1,
-            LanguageOwnedCCallFacesCompletionV1,
+            FormalManagerCallFacesCompletionV1,
             TotalCompletionV1,
         )
         from sugar_lift_py_tests.context_manager_resolution import (
             ContextManagerContractRefV1,
             ContextManagerResolutionGapV1,
             FactoredSourceDerivedContextManagerRefV1,
-            LanguageOwnedContextManagerRefV1,
+            FormalManagerRefV1,
             SourceDerivedContextManagerRefV1,
         )
         from sugar_lift_py_tests.floor.formal_selected_manager import (
@@ -11376,7 +11376,7 @@ class With(Statement):
                 ContextManagerContractRefV1,
                 SourceDerivedContextManagerRefV1,
                 SourceDerivedGeneratorResourceRefV1,
-                LanguageOwnedContextManagerRefV1,
+                FormalManagerRefV1,
             ),
         ):
             backend_defect(
@@ -11399,9 +11399,9 @@ class With(Statement):
                 or (
                     isinstance(
                         semantics.enter.completion,
-                        LanguageOwnedCCallFacesCompletionV1,
+                        FormalManagerCallFacesCompletionV1,
                     )
-                    and isinstance(resolution, LanguageOwnedContextManagerRefV1)
+                    and isinstance(resolution, FormalManagerRefV1)
                     and isinstance(resolution.protocol, FormalSelectedManagerProtocol)
                 )
             )
@@ -11417,9 +11417,9 @@ class With(Statement):
                 or (
                     isinstance(
                         semantics.exit.completion,
-                        LanguageOwnedCCallFacesCompletionV1,
+                        FormalManagerCallFacesCompletionV1,
                     )
-                    and isinstance(resolution, LanguageOwnedContextManagerRefV1)
+                    and isinstance(resolution, FormalManagerRefV1)
                     and isinstance(resolution.protocol, FormalSelectedManagerProtocol)
                 )
             )
@@ -11568,7 +11568,7 @@ class With(Statement):
         )
         from sugar_lift_py_tests.context_manager_resolution import (
             ContextManagerContractRefV1,
-            LanguageOwnedContextManagerRefV1,
+            FormalManagerRefV1,
             SourceDerivedContextManagerRefV1,
         )
         from .shadow import rewrite
@@ -11589,7 +11589,7 @@ class With(Statement):
                 (
                     ContextManagerContractRefV1,
                     SourceDerivedContextManagerRefV1,
-                    LanguageOwnedContextManagerRefV1,
+                    FormalManagerRefV1,
                 ),
             ) or not isinstance(resolution.semantics, ProtocolResourceSemanticsV1):
                 return self
@@ -11708,7 +11708,7 @@ class With(Statement):
 
             from sugar_lift_py_tests.context_manager_resolution import (
                 FactoredSourceDerivedContextManagerRefV1,
-                LanguageOwnedContextManagerRefV1,
+                FormalManagerRefV1,
                 SourceDerivedContextManagerRefV1,
             )
 
@@ -11779,11 +11779,11 @@ class With(Statement):
                 if isinstance(resolved_ref, SourceDerivedGeneratorResourceRefV1)
                 else None
             )
-            if isinstance(resolved_ref, LanguageOwnedContextManagerRefV1) and isinstance(
+            if isinstance(resolved_ref, FormalManagerRefV1) and isinstance(
                 resolved_ref.semantics, ProtocolResourceSemanticsV1
             ):
-                from sugar_lift_py_tests.sugar.with_language_owned_resource_sugar import (
-                    WithLanguageOwnedResourceSugar,
+                from sugar_lift_py_tests.sugar.with_formal_manager_sugar import (
+                    WithFormalManagerSugar,
                 )
 
                 manager_slot = item._manager_slot_id()
@@ -11802,7 +11802,7 @@ class With(Statement):
                     manager_head = self._formal_head_with_operands(
                         manager_head, item.context_expr
                     )
-                return WithLanguageOwnedResourceSugar(
+                return WithFormalManagerSugar(
                     manager=manager_head,
                     protocol=resolved_ref.protocol,
                     summary=resolved_ref,
