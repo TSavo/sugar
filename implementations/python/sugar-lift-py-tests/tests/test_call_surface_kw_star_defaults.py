@@ -149,7 +149,11 @@ def test_param_with_annotation_only_still_constructs() -> None:
 
 
 def test_frame_default_sugars_match_param_default_construction() -> None:
-    """Source-visible frame and Param.sugar share the same default door."""
+    """Source-visible frame and Param.sugar share the same default door: the
+    frame reads the value the ``def`` statement bound under the default's
+    key (``DefaultValueSugar``), whose expression is that same sugar."""
+    from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
+
     tree = _sf("def f(a=1, b=2):\n    return a\n", "frame_defaults.py")
     function = next(n for n in tree.nodes() if isinstance(n, FunctionDef))
     frame = function.source_visible_call_frame()
@@ -158,5 +162,6 @@ def test_frame_default_sugars_match_param_default_construction() -> None:
     for param, frame_default in zip(params, frame.default_sugars, strict=True):
         sugar = param.sugar()
         assert isinstance(sugar, ParamSugar)
-        assert type(sugar.default) is type(frame_default)
+        assert isinstance(frame_default, DefaultValueSugar)
+        assert type(sugar.default) is type(frame_default.value)
         assert isinstance(sugar.default, ConstructedTermSugar)

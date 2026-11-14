@@ -323,13 +323,18 @@ class ObjectValue(FloorValue):
             (method for method in reversed(self.methods) if method.name == name),
             None,
         )
-        if selected is not None and selected.descriptor_kind is None:
-            # An ordinary function on the receiver's class, read off the
-            # instance, is a bound method (a non-data descriptor: no instance
-            # field shadows it here, the field arm above already answered).
-            # Its call dispatches through ``call_method_value`` on this very
-            # receiver; nothing about the body is decided at the read.  A
-            # staticmethod/classmethod binds differently and stays loud below.
+        if selected is not None and selected.descriptor_kind != "property":
+            # A function on the receiver's class, read off the instance, is
+            # the value its descriptor binds (a non-data descriptor: no
+            # instance field shadows it here, the field arm above already
+            # answered): a plain function a method bound to this receiver, a
+            # ``staticmethod`` the bare function, a ``classmethod`` a method
+            # bound to the receiver's class.  The value is this receiver and
+            # the name; its call dispatches through ``call_method_value`` on
+            # this very receiver, so the one method door binds the implicit
+            # first actual by the descriptor kind (``implicit_arguments``)
+            # exactly as ``obj.m()`` does.  Nothing about the body is decided
+            # at the read.
             from sugar_lift_py_tests.floor.bound_method_value import BoundMethodValue
             from sugar_lift_py_tests.outcome import ExitSet
 
