@@ -162,11 +162,26 @@ def temporally_rewritten_assert(sf: SourceFile, span: Optional[dict]):
     durable address.  Shadow rewrites deliberately borrow that address, but
     keeping the two roles explicit prevents a future caller from mistaking
     source lookup for construction readiness.
+
+    Its readers look for the calls inside the rewritten assert; nothing reduces
+    it. What the assert reduces to is read off its owner's one reduction
+    (``assert_outcome``, item 28).
     """
     source_assert = find_assert(sf, span)
     if source_assert is None:
         return None, None
 
+    owner = _assert_owner(sf, source_assert)
+    rewritten_owner = (owner or sf.root).substitute({})
+
+    for node in rewritten_owner.walk():
+        if isinstance(node, Assert) and _span_matches(node, span or {}):
+            return source_assert, node
+    return source_assert, None
+
+
+def _assert_owner(sf: SourceFile, source_assert):
+    """The narrowest function holding ``source_assert``; ``None`` for the module."""
     target = source_assert.line_col_span()
 
     def contains(node) -> bool:
@@ -176,25 +191,105 @@ def temporally_rewritten_assert(sf: SourceFile, span: Optional[dict]):
         )
 
     owners = [fn for fn in sf.functions() if contains(fn)]
-    if owners:
-        # Nested functions are also yielded by SourceFile.functions(); temporal
-        # ownership belongs to the narrowest one, never its enclosing function.
-        owner = min(
-            owners,
-            key=lambda fn: (
-                fn.line_col_span().end_line - fn.line_col_span().start_line,
-                fn.line_col_span().end_col - fn.line_col_span().start_col,
-            ),
-        )
-        rewritten_owner = owner.substitute({})
-    else:
+    if not owners:
         # Module assertions are temporally owned by the module block.
-        rewritten_owner = sf.root.substitute({})
+        return None
+    # Nested functions are also yielded by SourceFile.functions(); temporal
+    # ownership belongs to the narrowest one, never its enclosing function.
+    return min(
+        owners,
+        key=lambda fn: (
+            fn.line_col_span().end_line - fn.line_col_span().start_line,
+            fn.line_col_span().end_col - fn.line_col_span().start_col,
+        ),
+    )
 
-    for node in rewritten_owner.walk():
-        if isinstance(node, Assert) and _span_matches(node, span or {}):
-            return source_assert, node
-    return source_assert, None
+
+class OwnerReduction:
+    """One reduction of a function (or module) and what it recorded.
+
+    ``outcome`` is the reduction's outcome; ``asserts`` is every
+    ``(coordinate, outcome)`` an assert inside it reduced to, in reduction
+    order; ``calls`` its unanswered calls.
+    """
+
+    __slots__ = ("unit", "outcome", "asserts", "calls")
+
+    def __init__(self, unit, outcome, asserts, calls):
+        self.unit = unit
+        self.outcome = outcome
+        self.asserts = asserts
+        self.calls = calls
+
+
+_OWNER_REDUCTIONS: dict = {}
+_OWNER_REDUCTIONS_BOUND = 256
+
+
+def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
+    """THE reduction of a function (``owner``) or of a module (``owner`` None,
+    ``sf`` given), once per resident unit (#7757, inventory item 28).
+
+    Every reader of a function's reduction reads this one: the universe rows,
+    the link-unit enrollment, and the ``facts`` and ``implications`` rows of
+    each assert in it. An assert is therefore reduced once, in context, and
+    never alone. A refusal is not kept: it propagates to the reader, named.
+    The unanswered calls the reduction recorded reach the reader's open
+    collector whether the reduction ran now or earlier.
+    """
+    from sugar_lift_py_tests import assert_reductions
+    from sugar_lift_py_tests import unanswered_calls
+
+    node = owner if owner is not None else sf.root
+    lc = node.line_col_span()
+    key = (id(node.unit), node.kind, lc.start_line, lc.start_col, lc.end_line, lc.end_col)
+    held = _OWNER_REDUCTIONS.get(key)
+    if held is None or held.unit is not node.unit:
+        with unanswered_calls.collecting() as calls:
+            with assert_reductions.collecting() as asserts:
+                if owner is not None:
+                    outcome = function_universe_outcome(owner)
+                else:
+                    outcome = sf.root.sugar().desugar(None)
+        if len(_OWNER_REDUCTIONS) >= _OWNER_REDUCTIONS_BOUND:
+            _OWNER_REDUCTIONS.clear()
+        held = OwnerReduction(node.unit, outcome, tuple(asserts), tuple(calls))
+        _OWNER_REDUCTIONS[key] = held
+    unanswered_calls.replay(held.calls)
+    return held
+
+
+def assert_outcome(sf: SourceFile, span: Optional[dict]):
+    """Return ``(source_assert, outcome)``: what the assert at ``span`` reduced
+    to inside its owner's one reduction (``owner_reduction``).
+
+    ``outcome`` is ``None`` when the owner's reduction never reached the
+    assert. An assert reached more than once (a loop body, a recursive owner)
+    has no one outcome to read: that is refused by name, never answered with
+    one of its reaches.
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import source_coordinate
+    from sugar_source_tree.panic import SugarNotWritten
+
+    source_assert = find_assert(sf, span)
+    if source_assert is None:
+        return None, None
+    reduction = owner_reduction(_assert_owner(sf, source_assert), sf)
+    site = source_coordinate(source_assert.fragment).wire()
+    reached = [
+        outcome
+        for coordinate, outcome in reduction.asserts
+        if coordinate.wire() == site
+    ]
+    if len(reached) > 1:
+        raise SugarNotWritten(
+            owner="assert_outcome",
+            blame=source_assert.fragment,
+            observed=f"the assert is reached {len(reached)} times in its owner's reduction",
+            requested="one outcome for the assert",
+            fix="give each reach of the assert its own row, under its path",
+        )
+    return source_assert, (reached[0] if reached else None)
 
 
 def _span_matches(node, span: dict) -> bool:
@@ -223,20 +318,18 @@ def assert_memento(node, file_rel: str) -> dict:
     }
 
 
-def fact_of(node) -> Optional[Any]:
-    """Desugar the assertion; its InvValue's formula is the fact, on the wire.
+def fact_of(outcome) -> Optional[Any]:
+    """The assertion's InvValue's formula is the fact, on the wire.
 
-    ``node`` must be the result of ``temporally_rewritten_assert``, never the
-    parser-backed lookup node.  None when the assertion emits no fact (e.g.
-    inert support). No factory and no ambient context: the enclosing tree has
-    already expressed the temporal state.
+    ``outcome`` is what the assert reduced to in its owner's one reduction
+    (``assert_outcome``); the assert is never reduced here. None when the
+    assertion emits no fact (e.g. inert support) or was not reached.
     """
     import json
 
     from sugar_lift_py_tests.canonicalizer import encode_jcs
     from sugar_lift_py_tests.ir import formula_to_value
 
-    outcome = node.sugar().desugar(None)
     inv = getattr(outcome, "value", None)
     formula = getattr(inv, "formula", None)
     if formula is None:
@@ -678,7 +771,7 @@ def function_contract_rows(fn, file_rel: str):
 
     def_memento = function_def_memento(fn, file_rel)
     panic_loci, class_shapes = _source_sidecars_for_function(fn, file_rel)
-    outcome = function_universe_outcome(fn)
+    outcome = owner_reduction(fn).outcome
     if not isinstance(outcome, (Complete, ExitSet)):
         require_outcome_in_scope(outcome, fn.sugar())
         if not panic_loci and not class_shapes:

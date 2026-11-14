@@ -33,6 +33,17 @@ def collecting():
         _ACTIVE.reset(token)
 
 
+def replay(calls) -> None:
+    """Hand calls an earlier reduction recorded to the open collector, if any.
+
+    A reduction read from ``tree_enumerate.owner_reduction``'s memo is not run
+    again, so its unanswered calls reach the current collector this way.
+    """
+    collected = _ACTIVE.get()
+    if collected is not None:
+        collected.extend(calls)
+
+
 def record(symbol: str | None, site) -> None:
     """Record one unanswered call at ``site``, if a collector is open."""
     calls = _ACTIVE.get()
