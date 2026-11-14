@@ -221,26 +221,26 @@ def _floor_tuple_construct_fields(
     """
     if isinstance(receiver, ObjectValue):
         return _floor_object_tuple_fields(receiver, actuals)
-    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-    from sugar_lift_py_tests.floor.receiver_state_partition_value import (
-        ReceiverStatePartitionValue as RSP,
-    )
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    faces = []
     changed = False
-    for face in receiver.exits.exits:
-        if isinstance(face, Completed) and isinstance(
-            face.value, (ObjectValue, ReceiverStatePartitionValue)
-        ):
-            floored = _floor_tuple_construct_fields(face.value, actuals)
-            if floored is not face.value:
+
+    def floored(value):
+        # Each completed face continues as its floored receiver beneath
+        # itself (``ExitSet.sequence``), keeping its guard, faces and
+        # ``owed``. A constructor halt stands.
+        nonlocal changed
+        if isinstance(value, (ObjectValue, ReceiverStatePartitionValue)):
+            result = _floor_tuple_construct_fields(value, actuals)
+            if result is not value:
                 changed = True
-            faces.append(type(face)(face.guard, floored))
-        else:
-            faces.append(face)
+            value = result
+        return ExitSet.completed(value)
+
+    exits = receiver.exits.sequence(floored)
     if not changed:
         return receiver
-    return RSP(ExitSet(tuple(faces)))
+    return ReceiverStatePartitionValue(exits)
 
 
 def _floor_object_tuple_fields(
