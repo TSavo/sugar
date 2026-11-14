@@ -44,14 +44,6 @@ reason = "registry cache lock insert can panic only if another thread panicked w
 
 [[residue]]
 file = "src/kit_dispatch.rs"
-line = 507
-callee = "method:expect"
-category = "lock_poisoning_residue"
-tier_to_close = "irreducible"
-reason = "diagnostics lock push in record_dependency_proof_diagnostic can panic only if another thread panicked while recording dependency proof diagnostics."
-
-[[residue]]
-file = "src/kit_dispatch.rs"
 line = 543
 callee = "method:expect"
 category = "lock_poisoning_residue"

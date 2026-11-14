@@ -4,19 +4,14 @@
 // `Kit::testimony` and `Kit::source`, the two resolve verbs. Both are
 // LIFT-AND-SHIFT of an existing RPC mechanic -- no wire protocol change.
 //
-// `resolve_testimony` is `dependency_proofs_via_rpc` /
-// `dependency_proofs_for_command` / `decode_dependency_proof_entry`
-// (`sugar-cli/src/kit_dispatch.rs:262-504`), moved here as ONE function so
-// `Kit::testimony` (a single already-rendezvous'd kit) and
-// `kit_dispatch::dependency_proofs_via_rpc` (the CLI's multi-plugin
-// aggregator, which has no single `Kit` to hold -- it fans out across
-// every configured plugin command) call the SAME typed core rather than
-// each re-implementing the RPC + decode. This is the one path, re-homed,
-// not a second one: kit_dispatch keeps its per-plugin loop (constructing a
-// `LiftManifest`/rendezvous per plugin would add a live handshake round-trip
-// the aggregator never performed and no stub kit in the corpus answers --
-// out of scope for this seam, flagged rather than silently changed) but the
-// blob-decoding body underneath is this function, called once per command.
+// `resolve_testimony` is the RPC + blob decode that once lived in
+// `sugar-cli/src/kit_dispatch.rs` (`dependency_proofs_for_command` /
+// `decode_dependency_proof_entry`), moved here as ONE function behind
+// `Kit::testimony`. The CLI's multi-plugin RPC aggregator
+// (`kit_dispatch::dependency_proofs_via_rpc`), which `doctor` and self-check
+// used to stage dependency proofs, was a second staging door and is deleted
+// (item 39 on #7757): imports are staged only by mint, and doctor and
+// self-check read `.sugar/imports` as staged.
 //
 // `resolve_source` is new client-side plumbing for a wire method
 // (`sugar.plugin.resolve_source_memento`) that already exists SERVER-side

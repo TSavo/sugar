@@ -122,7 +122,7 @@ pub struct ProofBytes {
     /// WHO speaks these bytes (#3812/#3813). The Speaker travels WITH the
     /// ProofBytes from the point that KNOWS it -- the constructor site -- so
     /// no downstream loader ever guesses (or hardcodes) a role.
-    /// `dependency_proofs_via_rpc` stamps `Speaker::vendor` (a package
+    /// `resolve_testimony` stamps `Speaker::vendor` (a package
     /// manager's dependency catalog IS vendor testimony); a caller staging
     /// its own project's bytes stamps `Speaker::consumer`.
     pub speaker: Speaker,

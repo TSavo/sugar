@@ -507,6 +507,30 @@ fn install_dependency_proof_stub(project_dir: &Path, proof_cid: &str, proof_byte
     install_dependency_proof_stub_with_entry(project_dir, &entry);
 }
 
+/// Ask the stub kit for its dependency proofs through the one testimony core
+/// (`sugar_compiler::resolve::resolve_testimony`, behind `Kit::testimony`),
+/// the door mint's walk uses. The RPC aggregator that fanned this out across
+/// every plugin is gone: imports are staged only by mint (item 39 on #7757).
+fn stub_testimony(
+    project_dir: &Path,
+) -> Result<Vec<sugar_verifier::load_all_proofs::ProofBytes>, String> {
+    let command = vec![
+        "/bin/sh".to_string(),
+        project_dir.join("resolve-deps-stub.sh").display().to_string(),
+    ];
+    let resolution = sugar_compiler::resolve::resolve_testimony(
+        "rust-dependency-proof-stub",
+        &command,
+        Some(project_dir),
+        project_dir,
+    )
+    .map_err(|error| error.to_string())?;
+    match resolution.outcome {
+        sugar_compiler::resolve::TestimonyOutcome::Proofs(proofs) => Ok(proofs),
+        sugar_compiler::resolve::TestimonyOutcome::Unavailable { reason, .. } => Err(reason),
+    }
+}
+
 fn z3_available() -> bool {
     std::process::Command::new("z3")
         .arg("-version")
@@ -530,7 +554,7 @@ fn dependency_proof_without_cid_is_refused() {
     );
     install_dependency_proof_stub_with_entry(&project, &entry);
 
-    let err = sugar_cli::kit_dispatch::dependency_proofs_via_rpc(&project)
+    let err = stub_testimony(&project)
         .expect_err("dependency proof without cid must be a protocol error");
 
     assert!(
@@ -560,8 +584,7 @@ fn dependency_proof_with_wrong_cid_is_refused() {
     let wrong_cid = format!("blake3-512:{}", "0".repeat(128));
     install_dependency_proof_stub(&project, &wrong_cid, &proof_bytes);
 
-    let dependency_proofs = sugar_cli::kit_dispatch::dependency_proofs_via_rpc(&project)
-        .expect("resolve dependency proofs");
+    let dependency_proofs = stub_testimony(&project).expect("resolve dependency proofs");
     let runner = Runner::new(RunnerConfig {
         project_root: project.clone(),
         extra_proofs: dependency_proofs,
@@ -593,8 +616,7 @@ fn dependency_proof_with_correct_cid_loads() {
         publish_vendor_positive_contract(&vendor);
     install_dependency_proof_stub(&project, &bundle_cid, &proof_bytes);
 
-    let dependency_proofs = sugar_cli::kit_dispatch::dependency_proofs_via_rpc(&project)
-        .expect("resolve dependency proofs");
+    let dependency_proofs = stub_testimony(&project).expect("resolve dependency proofs");
     let runner = Runner::new(RunnerConfig {
         project_root: project.clone(),
         extra_proofs: dependency_proofs,
@@ -627,8 +649,7 @@ fn dependency_rpc_union_makes_vendor_contract_reachable() {
     install_dependency_proof_stub(&project, &bundle_cid, &proof_bytes);
     fs::remove_file(&proof_path).expect("remove dependency proof path after kit reads it");
 
-    let dependency_proofs = sugar_cli::kit_dispatch::dependency_proofs_via_rpc(&project)
-        .expect("resolve dependency proofs");
+    let dependency_proofs = stub_testimony(&project).expect("resolve dependency proofs");
     assert_eq!(dependency_proofs.len(), 1);
     assert_eq!(
         dependency_proofs[0].expected_cid.as_str(),
