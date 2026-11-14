@@ -743,10 +743,20 @@ class CallSiteSugar(ConstructedTermSugar):
             # Class.__init__). force_floor curries THIS frame's formal cids
             # with FloorValue actuals; mismatched outer formal refs stay
             # unspecialized and abort source-derived manager construction.
+            # The declaration frame is read again at the module execution site
+            # the call was constructed at: a body reads a module global as the
+            # module binds it where the call runs (#7757 item 7).
+            from sugar_source_tree.nodes import construct_at_module_execution_site
+
+            module_execution_site = getattr(
+                source_call_frame, "module_execution_site", None
+            )
             source_body = source_call_frame.body
             owner = getattr(source_call_frame, "owner", None)
             if owner is not None and hasattr(owner, "source_visible_constructor_frame"):
-                source_body = owner.source_visible_constructor_frame().body
+                source_body = construct_at_module_execution_site(
+                    module_execution_site, owner.source_visible_constructor_frame
+                ).body
             elif owner is not None and hasattr(owner, "source_visible_call_frame"):
                 # Imported helper calls are node-specialized when the caller's
                 # Sugar is built. Their FloorValue actuals are curried below,
@@ -754,10 +764,13 @@ class CallSiteSugar(ConstructedTermSugar):
                 # BindingCoordinateRefs match this frame's formal coordinates,
                 # not the caller's inlined formal nodes.
                 bound_class = getattr(source_call_frame, "bound_receiver_class", None)
-                declaration_frame = (
-                    owner.source_visible_call_frame()
-                    if bound_class is None
-                    else owner.bound_classmethod_call_frame(bound_class)
+                declaration_frame = construct_at_module_execution_site(
+                    module_execution_site,
+                    (
+                        owner.source_visible_call_frame
+                        if bound_class is None
+                        else lambda: owner.bound_classmethod_call_frame(bound_class)
+                    ),
                 )
                 if (
                     declaration_frame.frame_cid

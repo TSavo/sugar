@@ -31,6 +31,7 @@ carries the rewritten shape, then memoized like any other ref.
 
 from __future__ import annotations
 
+import bisect
 import builtins as _builtins_module
 import enum as _enum
 import symtable
@@ -114,8 +115,15 @@ _EVALUATION_EXIT_PATH = object()
 # substitutes it in its own frame, and a refusal there is that caller's, not
 # testimony about the statement that merely defined it.
 DEFER_DEFINITION_BODY_REFUSAL = object()
-# ``SourceUnit.module_binding_states`` while it threads the module body.
-_THREADING_MODULE = object()
+# Set by ``SourceUnit.module_binding_states`` while it threads the module
+# body: the table ``_substitute_body_tracked`` records the binding scope
+# standing before every statement it threads into, at any depth
+# (``ModuleBindingStatesV1.at``).
+_MODULE_STATEMENT_STATES = object()
+# A module binding the module body does not decide where it is read
+# (``SourceUnit.module_bindings_at``): the reader cites it by name and never
+# reads the name in its place.
+UNDECIDED_MODULE_BINDING = object()
 _MISSING = object()
 
 # Names the interpreter binds without a source binding: the module attributes
@@ -1028,6 +1036,11 @@ class SourceUnit:
     _module_binding_states_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
+    # ``(typed module, start offsets, module statements)``: the module body's
+    # statements in source order, for ``module_execution_site``.
+    _module_statement_starts_memo: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -1061,6 +1074,7 @@ class SourceUnit:
         object.__setattr__(self, "_module_name_rows_memo", None)
         object.__setattr__(self, "_module_evaluation_names_memo", None)
         object.__setattr__(self, "_module_binding_states_memo", None)
+        object.__setattr__(self, "_module_statement_starts_memo", None)
 
     def _published_enrollment_decisions(
         self, occurrence: SourceOccurrenceIdentityV1
@@ -1483,11 +1497,10 @@ class SourceUnit:
         return not (read & _DYNAMIC_GLOBAL_WRITERS)
 
     def module_evaluation_bound_names(self) -> frozenset:
-        """The names the module body binds, as it runs at import, through a
-        statement keyed as its own evaluation (``Statement._evaluation_key``)
-        that a frame can read: ``x += e`` and ``a, b = f()``.  (A walrus's
-        reference refuses where its key is unbound, so it is no module
-        binding a frame reads: ``_references_evaluations``.)
+        """The names the module body binds, as it runs at import, through an
+        evaluation a frame reads by its key (``Statement._evaluation_key``):
+        ``x += e``, ``a, b = f()`` and ``(x := e)`` (a walrus in a
+        comprehension binds the module's name too).
 
         Read off the typed tree, one walk per typed root.  A ``def``,
         ``lambda`` or ``class`` body is not import-time module code (a class
@@ -1510,6 +1523,8 @@ class SourceUnit:
                 target = node._dynamic_unpack_target()
                 if target is not None:
                     names.update(_unpack_target_names(target))
+            elif isinstance(node, NamedExpr) and isinstance(node.target, Name):
+                names.add(node.target.id)
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
                 continue
             stack.extend(child for _name, _index, child in node._child_edges())
@@ -1517,19 +1532,26 @@ class SourceUnit:
         object.__setattr__(self, "_module_evaluation_names_memo", (module, result))
         return result
 
-    def module_binding_states(self) -> "Optional[ModuleBindingStatesV1]":
+    def module_binding_states(self) -> "ModuleBindingStatesV1":
         """The module body threaded once, the way ``Module.substitute``
-        threads it: the binding of every name before each module statement,
-        and after the last.
+        threads it: the binding scope standing before every statement it
+        runs at import, at any depth (``ModuleBindingStatesV1.at``), and
+        after the last (``final``).
 
-        A reader outside the module block takes a module name from here:
-        a function body the module's final binding of a global it reads, a
-        module class body the binding standing when its class statement ran.
-        A ``def`` statement's body is not threaded (it does not run at
-        import).  A refusal threading the body is remembered and raised to
-        every reader that asks.  Asked again while the body is being
-        threaded (a statement's construction reached a reader of this
-        module), there is no answer yet: ``None``.
+        A reader outside the module block takes a module name from here,
+        through ``module_bindings_at``.  A ``def`` statement's body is not
+        threaded (it does not run at import).  A refusal threading the body
+        is remembered and raised to every reader that asks.
+
+        Asked again while the body is being threaded (a statement's
+        construction reached a reader of this module: a module-level live
+        loop calling a function), the answer is the threading so far:
+        ``at`` holds every statement threaded up to here, and ``final`` is
+        None.  The threading is the module's own, whoever asked first: it
+        runs under no call site (``_MODULE_EXECUTION_SITE``), and each
+        statement it records is a new point of it (``_MODULE_THREADING``),
+        so an answer read from a partly threaded body is served again only
+        at that same point.
         """
         from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
@@ -1537,19 +1559,25 @@ class SourceUnit:
             "SourceUnit.module_binding_states", blame=self.filename
         )
         memo = self._module_binding_states_memo
-        if memo is _THREADING_MODULE:
-            return None
         if memo is not None and memo[0] is module:
             if memo[1] is not None:
                 raise memo[1]
             return memo[2]
-        object.__setattr__(self, "_module_binding_states_memo", _THREADING_MODULE)
-        edges: list = []
+        record = _ModuleStatementRecord()
+        object.__setattr__(
+            self,
+            "_module_binding_states_memo",
+            (module, None, ModuleBindingStatesV1(at=record.at, final=None)),
+        )
+        site_token = _MODULE_EXECUTION_SITE.set(None)
+        threading_token = _MODULE_THREADING.set(object())
         try:
             _statements, _changed, final = module._substitute_body_tracked(
                 module.body,
-                {DEFER_DEFINITION_BODY_REFUSAL: True},
-                edge_states=edges,
+                {
+                    DEFER_DEFINITION_BODY_REFUSAL: True,
+                    _MODULE_STATEMENT_STATES: record,
+                },
             )
         except (SourceTreePanic, ConstructionPanic) as refusal:
             object.__setattr__(
@@ -1559,14 +1587,146 @@ class SourceUnit:
         except BaseException:
             object.__setattr__(self, "_module_binding_states_memo", None)
             raise
-        states = ModuleBindingStatesV1(
-            before={
-                statement.fragment.seal().cid: scope for statement, scope in edges
-            },
-            final=final,
-        )
+        finally:
+            # A scope that kept the record records nothing after this.
+            record.open = False
+            _MODULE_THREADING.reset(threading_token)
+            _MODULE_EXECUTION_SITE.reset(site_token)
+        states = ModuleBindingStatesV1(at=record.at, final=final)
         object.__setattr__(self, "_module_binding_states_memo", (module, None, states))
         return states
+
+    def module_execution_site(self, node) -> "Optional[ModuleExecutionSiteV1]":
+        """Where ``node`` (a call, or a class statement) runs while the module
+        body runs at import; None when it runs only when some function is
+        called (it sits in a ``def`` or ``lambda`` body), or when it sits in
+        no module statement.
+
+        The site is the chain of statements the module body runs ``node``
+        in, outermost first: the module statement, each compound statement
+        it nests in, and last the statement whose own expressions hold it.
+        A class body runs once, when its class statement runs, so a node in
+        a class body ends the chain at that class statement.  A node in a
+        generator expression's element, conditions or later iterables runs
+        when the generator is consumed, which the module body does not
+        decide (``lazy``).  Read off the typed tree by source span.
+        """
+        module = self.typed_module
+        if module is None:
+            return None
+        memo = self._module_statement_starts_memo
+        if memo is None or memo[0] is not module:
+            statements = tuple(module.body)
+            memo = (
+                module,
+                tuple(statement.span.start for statement in statements),
+                statements,
+            )
+            object.__setattr__(self, "_module_statement_starts_memo", memo)
+        _module, starts, statements = memo
+        span = node.span
+        index = bisect.bisect_right(starts, span.start) - 1
+        if index < 0:
+            return None
+        current = statements[index]
+        if not (current.span.start <= span.start and span.end <= current.span.end):
+            return None
+        chain: list = [current]
+        in_class = False
+        lazy = False
+        first_generator = False
+        while True:
+            entered = None
+            for field_name, index, child in current._child_edges():
+                if child.span.start <= span.start and span.end <= child.span.end:
+                    entered = (field_name, index, child)
+                    break
+            if entered is None:
+                break
+            field_name, index, child = entered
+            if field_name == "body" and isinstance(
+                current, (FunctionDef, AsyncFunctionDef, Lambda)
+            ):
+                return None
+            if field_name == "body" and isinstance(current, ClassDef):
+                in_class = True
+            if isinstance(current, GeneratorExp):
+                first_generator = field_name == "generators" and index == 0
+                lazy = lazy or not first_generator
+            elif first_generator:
+                # Only the first iterable is evaluated where the generator
+                # expression stands.
+                lazy = lazy or field_name != "iter"
+                first_generator = False
+            if isinstance(child, Statement) and not in_class:
+                chain.append(child)
+            current = child
+        return ModuleExecutionSiteV1(self, tuple(chain), lazy)
+
+    def module_bindings_at(self, site, names) -> dict:
+        """The module's binding of each of ``names`` where ``site`` runs
+        (``module_execution_site``), or with no site (a reader running after
+        the module body, called from outside its execution) the module's
+        final binding.
+
+        Each answer is the reference to the evaluation that binds the name
+        there (``_module_reference_state``), None where that binding is no
+        evaluation (the name is read by name, as it always was), or
+        ``UNDECIDED_MODULE_BINDING`` where the module body does not decide
+        it.  It does not decide it
+
+        - for a site in a generator's lazily evaluated part;
+        - for a name a walrus in the site's own statements binds (it may
+          run before or after the read);
+        - for a name the innermost recorded statement binds when that
+          statement is not the site's own (a statement the threading did
+          not record runs somewhere inside it), or when the site's own
+          statement is a ``while`` whose test holds the read (the test runs
+          again after the body);
+        - for a name whose binding differs between two threadings of the
+          site's statement (an unrolled loop's iterations, a ``finally``'s
+          two exit paths);
+        - for a name bound to a comprehension member's coordinate, which is
+          bound only inside its comprehension;
+        - for every name, read while the module body is being threaded by a
+          reader with no site (the final binding is not threaded yet), or
+          at a site the threading has not reached.
+        """
+        _MODULE_THREADING.get()
+        states = self.module_binding_states()
+        if site is None:
+            if states.final is None:
+                return {name: UNDECIDED_MODULE_BINDING for name in names}
+            return {
+                name: _module_reference_state(states.final.get(name)) for name in names
+            }
+        chain = site.chain
+        recorded = None
+        depth = len(chain) - 1
+        while depth >= 0:
+            recorded = states.at.get(_source_position(chain[depth]))
+            if recorded:
+                break
+            depth -= 1
+        if site.lazy or not recorded:
+            return {name: UNDECIDED_MODULE_BINDING for name in names}
+        undecided: set = set()
+        for statement in chain:
+            undecided |= _walrus_targets(statement)
+        anchor = chain[depth]
+        if anchor is not chain[-1] or isinstance(anchor, While):
+            undecided |= anchor.names_bound_within()
+        answers = {}
+        for name in names:
+            if name in undecided:
+                answers[name] = UNDECIDED_MODULE_BINDING
+                continue
+            bound = {id(unwrap_binding_state(scope.get(name))) for scope in recorded}
+            if len(bound) > 1:
+                answers[name] = UNDECIDED_MODULE_BINDING
+                continue
+            answers[name] = _module_reference_state(recorded[0].get(name))
+        return answers
 
     def language_callee_at(self, name: str, span) -> Optional["LanguageCallee"]:
         """The language-fixed callee a bare name read at ``span`` is bound to.
@@ -3439,9 +3599,10 @@ def final_member_coordinate(member_coordinate: str) -> str:
     )
 
 
-def _closure_position(node: "Node") -> tuple:
-    """The source occurrence a lambda is recognised by across substitution
-    (a rewrite borrows its origin's span)."""
+def _source_position(node: "Node") -> tuple:
+    """The source occurrence a node is recognised by across substitution (a
+    rewrite borrows its origin's span): a stored lambda, a module statement
+    the module threading recorded."""
     return (node.kind, node.span.start, node.span.end)
 
 
@@ -3463,7 +3624,7 @@ def _stored_closures(roots) -> frozenset:
     while pending:
         node = pending.pop()
         if isinstance(node, Lambda):
-            found.add(_closure_position(node))
+            found.add(_source_position(node))
         elif isinstance(node, (List, Tuple_, Set)):
             pending.extend(node.elts)
         elif isinstance(node, Dict):
@@ -3622,42 +3783,191 @@ def _loop_header_bindings(loop, names, scope) -> dict:
 class ModuleBindingStatesV1:
     """The module body threaded once (``SourceUnit.module_binding_states``).
 
-    ``before`` maps each module statement's fragment CID to the binding
-    scope standing when it runs; ``final`` is the scope after the last
-    statement: what a function reads a global as when it is called.
+    ``at`` maps the source position (``_source_position``) of every
+    statement the threading ran, at any depth, to the binding scope
+    standing when it began, once per time it was threaded (an unrolled
+    loop's iterations, a ``finally``'s exit paths); ``final`` is the scope
+    after the last statement: what a function called after the module body
+    reads a global as.  While the body is still being threaded ``at`` holds
+    the statements threaded so far and ``final`` is None.
     """
 
-    before: dict
-    final: dict
+    at: dict
+    final: Optional[dict]
 
 
-def _module_reference_state(state) -> "Optional[Node]":
+class _ModuleStatementRecord:
+    """The table ``SourceUnit.module_binding_states`` threads a module body
+    with (``_MODULE_STATEMENT_STATES``): ``at`` as ``ModuleBindingStatesV1``
+    holds it, open while that threading runs."""
+
+    __slots__ = ("at", "open")
+
+    def __init__(self) -> None:
+        self.at: dict = {}
+        self.open = True
+
+
+class ModuleExecutionSiteV1:
+    """Where a node runs while the module body runs at import
+    (``SourceUnit.module_execution_site``): the statements it runs in,
+    outermost first, and whether it sits in a generator's lazily evaluated
+    part.  Two sites are equal when they name the same statements of the
+    same unit: a remembered frame built at one is served at the other."""
+
+    __slots__ = ("unit", "chain", "lazy", "_key")
+
+    def __init__(self, unit, chain: tuple, lazy: bool) -> None:
+        self.unit = unit
+        self.chain = chain
+        self.lazy = lazy
+        self._key = (tuple(_source_position(statement) for statement in chain), lazy)
+
+    def __eq__(self, other: object) -> bool:
+        return (
+            isinstance(other, ModuleExecutionSiteV1)
+            and self.unit is other.unit
+            and self._key == other._key
+        )
+
+    def __ne__(self, other: object) -> bool:
+        return not self.__eq__(other)
+
+    __hash__ = None  # type: ignore[assignment]
+
+
+# Where the call being constructed runs while its module body runs at import
+# (``ModuleExecutionSiteV1``), set by the call (``Call._construct_sugar``) and
+# inherited by every construction it reaches: the callee's frame, the frames
+# that frame's calls reach.  None: the construction runs after the module
+# body, called from outside its execution.
+_MODULE_EXECUTION_SITE: AmbientVar = AmbientVar(
+    "sugar_module_execution_site", default=None
+)
+# A new token for each statement ``SourceUnit.module_binding_states`` records
+# while it threads a module body; None when no module body is being threaded.
+# Every reader of module bindings reads it, so an answer read from a partly
+# threaded body is served again only at that same point of that threading.
+_MODULE_THREADING: AmbientVar = AmbientVar("sugar_module_threading", default=None)
+
+
+def current_module_execution_site():
+    """The module execution site the construction running now is under
+    (``_MODULE_EXECUTION_SITE``), not recorded as a read.  A source call
+    frame carries it (``SourceVisibleCallFrameV1.module_execution_site``),
+    so the frame read again at reduce is read at the site its call was
+    constructed at.  A frame whose body does not depend on the site reads
+    the same at any site."""
+    return _MODULE_EXECUTION_SITE.now(None)
+
+
+def construct_at_module_execution_site(site, construct):
+    """``construct()`` under the module execution ``site``: a call the
+    module body runs (``Call._construct_sugar``), or a frame read again at
+    reduce at the site it was constructed at."""
+    if site == _MODULE_EXECUTION_SITE.now(None):
+        return construct()
+    token = _MODULE_EXECUTION_SITE.set(site)
+    try:
+        return construct()
+    finally:
+        _MODULE_EXECUTION_SITE.reset(token)
+
+
+def _walrus_targets(statement) -> frozenset:
+    """The names a walrus in ``statement``'s own expressions binds in the
+    enclosing scope: not in a statement it nests, nor in a ``lambda``,
+    ``def`` or ``class`` body (a walrus in a comprehension binds the
+    enclosing scope's name, and is one of these)."""
+    names: set = set()
+    pending = [
+        child
+        for _field, _index, child in statement._child_edges()
+        if not isinstance(child, Statement)
+    ]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, NamedExpr) and isinstance(node.target, Name):
+            names.add(node.target.id)
+        for field_name, _index, child in node._child_edges():
+            if isinstance(child, Statement) or (
+                field_name == "body" and isinstance(node, Lambda)
+            ):
+                continue
+            pending.append(child)
+    return frozenset(names)
+
+
+def _module_reference_state(state):
     """A module binding state as a reader outside the module block takes it:
     a reference to the evaluation of the module body's write of the name
-    (``EvaluationRef``), or the phi the module block built over such
-    references where the write sits in an arm of an ``if``.  Any other state
-    (an assignment's value, an unbound name) is no evaluation: None, and the
-    reader reads the name as before."""
+    (``EvaluationRef``: ``x += e``, an unpack's projection, a walrus), or
+    the phi the module block built over such references where the write
+    sits in an arm of an ``if``.  A comprehension member's coordinate is
+    bound only inside its comprehension, so a binding to one is
+    ``UNDECIDED_MODULE_BINDING`` wherever a reader outside it reads the
+    name.  Any other state (an assignment's value, an unbound name) is no
+    evaluation: None, and the reader reads the name as before."""
     state = unwrap_binding_state(state)
-    if isinstance(state, Node) and _references_evaluations(state):
-        return state
-    return None
+    if not isinstance(state, Node):
+        return None
+    kind = _evaluation_reference_kind(state)
+    if kind is None:
+        return None
+    if kind == "member":
+        return UNDECIDED_MODULE_BINDING
+    return state
 
 
-def _references_evaluations(node) -> bool:
+def _evaluation_reference_kind(node) -> Optional[str]:
+    """``"evaluation"`` for a reference to a statement's or a walrus's
+    evaluation (or a phi whose arms are such references or constants),
+    ``"member"`` where a comprehension member's coordinate is among them,
+    None for anything else."""
     if isinstance(node, EvaluationRef):
-        # A statement's evaluation (``x += e``, an unpack's projection), which
-        # a reader whose temporal never received it reads by name.  A
-        # walrus's reference refuses where its key is unbound, and a
-        # comprehension member's is bound only inside its comprehension:
-        # neither is a module binding a frame can read.
-        return not (getattr(node, "walrus", False) or getattr(node, "member", False))
+        return "member" if getattr(node, "member", False) else "evaluation"
     if not (isinstance(node, IfExp) and isinstance(node.test, BranchResultRef)):
-        return False
-    arms = (node.body, node.orelse)
-    return all(
-        isinstance(arm, Constant) or _references_evaluations(arm) for arm in arms
-    ) and any(_references_evaluations(arm) for arm in arms)
+        return None
+    kinds = [
+        _evaluation_reference_kind(arm)
+        for arm in (node.body, node.orelse)
+        if not isinstance(arm, Constant)
+    ]
+    if not kinds or None in kinds:
+        return None
+    return "member" if "member" in kinds else "evaluation"
+
+
+def _bound_module_references(reader, bindings: dict, *, owner: str) -> dict:
+    """``bindings`` (``SourceUnit.module_bindings_at``) as the scope a
+    reader of module names substitutes its body in: each name bound to the
+    reference to the evaluation that binds it where the reader runs.  A name
+    whose binding is no evaluation is left out (it is read by name).  A
+    name the module body does not decide there is cited ``undecided`` by
+    name; it is never read by name in its place."""
+    references = {}
+    for name in sorted(bindings):
+        binding = bindings[name]
+        if binding is UNDECIDED_MODULE_BINDING:
+            raise SugarNotWritten(
+                owner=owner,
+                blame=reader.fragment,
+                observed=(
+                    f"undecided module binding of `{name}` where "
+                    f"`{reader.name}` reads it"
+                ),
+                requested=(
+                    "the module binding the module body decides where this "
+                    "read runs"
+                ),
+                fix=(
+                    "decide the binding at the read's point of the module "
+                    "body; never read the name in its place"
+                ),
+            )
+        if binding is not None:
+            references[name] = binding
+    return references
 
 
 class _Splice:
@@ -4334,7 +4644,12 @@ class Node(Typed):
         occurrence instead of only at the block's end. An exit that leaves the
         block *at* a statement (a raise, or an opaque step that may halt)
         carries exactly the state recorded for that statement, which is what
-        exception routing must begin the selected handler from."""
+        exception routing must begin the selected handler from.
+
+        Threading a module body for its readers
+        (``SourceUnit.module_binding_states``), the scope carries the table
+        ``_MODULE_STATEMENT_STATES``: the same state is recorded there for
+        every statement, at any depth, by its source position."""
         from sugar_lift_py_tests.engine_log import reduction_span
 
         initial = dict(scope)
@@ -4345,6 +4660,12 @@ class Node(Typed):
             pre_statement_scope = dict(scope)
             if edge_states is not None:
                 edge_states.append((stmt, pre_statement_scope))
+            record = scope.get(_MODULE_STATEMENT_STATES)
+            if record is not None and record.open:
+                record.at.setdefault(_source_position(stmt), []).append(
+                    pre_statement_scope
+                )
+                _MODULE_THREADING.set(object())
             lc = stmt.line_col_span()
             with reduction_span(
                 sugar="SubstituteStatement",
@@ -6304,28 +6625,35 @@ class FunctionDef(Statement):
         """Every door that substitutes this function's body (its own sugar,
         its call frame, a constructor's initializer, a generator's steps)
         substitutes it here, so each one reads a module global the same way:
-        as the module's final binding of it (``_module_global_references``),
-        not as the name."""
+        as the module binds it where the function is called
+        (``_module_global_references``), not as the name."""
         references = self._module_global_references()
         if references:
             scope = {**scope, **references}
         return Node._substitute_body(self, statements, scope)
 
     def _module_global_references(self) -> dict:
-        """The module's final binding of each global this body reads, where
-        that binding is the evaluation of the module body's last write of it
-        (temporal choice 1, #7661).
+        """The module's binding of each global this body reads, where the
+        function is called, when that binding is the evaluation of a module
+        write of it (temporal choice 1, #7661).
 
-        A function runs after the module body has run, so a global it reads
-        holds the module's last write: ``x = 1; x += 1; x += 1`` binds a read
-        of ``x`` in any function of the module to the second ``x += 1``'s
-        evaluation, wherever the ``def`` stands.  A write in an arm of a
-        module-level ``if`` is read through the phi the module block builds
-        over it.  The global is the one CPython names (``symtable``:
-        implicit or declared ``global``, read in this body); a local, a
-        formal or a name an enclosing function binds is not one.  A global
-        whose final binding is no evaluation (``x = 1``) is read by name, as
-        before.
+        A function reads a global when it runs.  Called from outside the
+        module's execution (after import), it reads the module's last
+        write: ``x = 1; x += 1; x += 1`` binds a read of ``x`` to the second
+        ``x += 1``'s evaluation, wherever the ``def`` stands.  Called while
+        the module body runs (a call in the module body or in a class body,
+        or a call reached from one: ``_MODULE_EXECUTION_SITE``), it reads
+        the binding standing at that call: ``x = 1; x += 1; y = f(); x += 1``
+        binds the read to the first ``x += 1``'s evaluation.  A write in an
+        arm of a module-level ``if`` is read through the phi the module
+        block builds over it; a walrus's write through its evaluation.
+
+        The global is the one CPython names (``symtable``: implicit or
+        declared ``global``, read in this body); a local, a formal or a name
+        an enclosing function binds is not one.  A global whose binding
+        there is no evaluation (``x = 1``) is read by name, as before.  One
+        the module body does not decide there is cited ``undecided`` by
+        name (``SourceUnit.module_bindings_at``).
         """
         unit = self.unit
         if unit.typed_module is None:
@@ -6341,15 +6669,16 @@ class FunctionDef(Statement):
         } & candidates
         if not reads:
             return {}
-        states = unit.module_binding_states()
-        if states is None:
-            return {}
-        references = {}
-        for name in sorted(reads):
-            reference = _module_reference_state(states.final.get(name))
-            if reference is not None:
-                references[name] = reference
-        return references
+        site = _MODULE_EXECUTION_SITE.get()
+        if site is not None and site.unit is not unit:
+            # Another module's body calls this one's function after this
+            # module was imported: it reads this module's final binding.
+            site = None
+        return _bound_module_references(
+            self,
+            unit.module_bindings_at(site, reads),
+            owner="FunctionDef._module_global_references",
+        )
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         owner = self._active_initializer_owner()
@@ -6679,8 +7008,8 @@ class AsyncFunctionDef(Statement):
         return FunctionDef.substitute(self, scope)
 
     def _substitute_body(self, statements, scope):
-        """Same body door as FunctionDef: a global reads the module's final
-        binding of it."""
+        """Same body door as FunctionDef: a global reads the module's binding
+        of it where the function is called."""
         return FunctionDef._substitute_body(self, statements, scope)
 
     def _module_global_references(self) -> dict:
@@ -6984,15 +7313,17 @@ class ClassDef(Statement):
         where that binding is the evaluation of a module write of it
         (temporal choice 1, #7661).
 
-        A module-level class statement runs once, at import, in source
-        order: its body reads a module name as the module holds it when the
-        statement runs (``ModuleBindingStatesV1.before``), whoever calls
-        the class later and in whatever context (the class-call door,
-        #7794).  So ``x = 1; x += 1; class C: y = x; x += 1`` reads ``y`` as
-        the first ``x += 1``'s evaluation.  A name the class body binds
-        itself is not read from the module; a binding that is no evaluation
-        is read by name, as before.  A class that is not a module statement
-        reads its enclosing function's bindings and is not answered here.
+        A class statement the module body runs (at any depth: in an ``if``,
+        a loop, another class body) runs at import, in source order: its
+        body reads a module name as the module holds it when the statement
+        runs (``SourceUnit.module_bindings_at``), whoever calls the class
+        later and in whatever context (the class-call door, #7794).  So
+        ``x = 1; x += 1; class C: y = x; x += 1`` reads ``y`` as the first
+        ``x += 1``'s evaluation.  A name the class body binds itself is not
+        read from the module; a binding that is no evaluation is read by
+        name, as before; one the module body does not decide there is cited
+        ``undecided`` by name.  A class in a function body reads its
+        enclosing function's bindings and is not answered here.
         """
         unit = self.unit
         if unit.typed_module is None:
@@ -7013,18 +7344,14 @@ class ClassDef(Statement):
         reads = (reads & candidates) - bound_here
         if not reads:
             return {}
-        states = unit.module_binding_states()
-        if states is None:
+        site = unit.module_execution_site(self)
+        if site is None:
             return {}
-        before = states.before.get(self.fragment.seal().cid)
-        if before is None:
-            return {}
-        references = {}
-        for name in sorted(reads):
-            reference = _module_reference_state(before.get(name))
-            if reference is not None:
-                references[name] = reference
-        return references
+        return _bound_module_references(
+            self,
+            unit.module_bindings_at(site, reads),
+            owner="ClassDef._module_name_references",
+        )
 
     def _construct_sugar(self):
         """Construct source-visible class structure through body members.
@@ -13923,7 +14250,7 @@ class Lambda(Expression):
             scope = {k: v for k, v in scope.items() if k is not _CLOSURE_CELLS}
         bound = {p.name for p in self.params}
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
-        position = _closure_position(self)
+        position = _source_position(self)
         for stored, held in layers or ():
             if position in stored:
                 cell_reads = {
@@ -15290,6 +15617,24 @@ class Call(Expression):
         return projected
 
     def _construct_sugar(self):
+        """A call the module body runs at import
+        (``SourceUnit.module_execution_site``: in the module body or a class
+        body, not in a ``def`` or ``lambda`` body) constructs under that
+        site, so every function body it reaches -- its callee's frame, and
+        the frames that frame's calls reach -- reads a module global as the
+        module holds it at this call (``FunctionDef._module_global_references``).
+        Any other call constructs under the site it was reached from, or
+        none: called from outside the module's execution.  The call itself
+        constructs in ``_construct_call_sugar``."""
+        unit = self.unit
+        if not unit.module_evaluation_bound_names():
+            return self._construct_call_sugar()
+        site = unit.module_execution_site(self)
+        if site is None:
+            return self._construct_call_sugar()
+        return construct_at_module_execution_site(site, self._construct_call_sugar)
+
+    def _construct_call_sugar(self):
         """A call constructs its callee's sugar WITH the argument sugars.
         `<name>(<args>)` -> CallSiteSugar, the call-site coordinate (THE DIG
         CUE). `<receiver>.<name>(<args>)` -> MethodCallSugar, the method
