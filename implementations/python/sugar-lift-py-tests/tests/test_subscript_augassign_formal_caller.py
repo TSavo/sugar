@@ -667,6 +667,66 @@ def test_authenticated_get_halt_blocks_store_on_formal_discharge() -> None:
     assert exits.exits[0].effect.exception_name == "IndexError"
 
 
+def _operation_edge_object(stored: list):
+    """An ``ObjectValue`` whose read answers only through its own
+    ``subscript_with`` edge (never the legacy ``subscript``, which is the
+    ``FloorValue`` construction gap) and whose store records what it got."""
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+
+    class _Indexed(ObjectValue):
+        def subscript_with(self, operation, ctx):
+            del ctx
+            assert operation.index == TermValue(0)
+            return ExitSet.completed(TermValue(10))
+
+        def setitem(self, index, value, site, ctx):
+            del site, ctx
+            stored.append((index, value))
+            return ExitSet.completed(self)
+
+    return _Indexed("Indexed", ())
+
+
+def test_augassign_read_answers_through_the_one_subscript_door() -> None:
+    """``obj[k] += v`` reads as a source ``obj[k]`` reads: an object that owns
+    only ``subscript_with`` answers through it (the old ``.subscript`` read
+    reached the ``FloorValue.subscript`` construction gap)."""
+    stored: list = []
+    receiver = _operation_edge_object(stored)
+
+    out = _production_desugar(receiver, TermValue(0), TermValue(5))
+
+    assert out.completed_value() is not None, out
+    assert stored == [(TermValue(0), TermValue(15))]
+
+
+def test_formal_augassign_discharges_an_object_actual_through_the_door() -> None:
+    """The helper defers its read to the caller; the caller's ``ObjectValue``
+    actual answers the read through its ``subscript_with`` edge, then the
+    in-place add and the store run on it."""
+    function, pending = _helper_definition()
+    assert isinstance(pending, NativeOperationExitCarrierV1)
+    assert pending.demand.operator == "subscript"
+    coords = {
+        c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
+    }
+    stored: list = []
+
+    exits = pending.discharge(
+        None,
+        {
+            coords["obj"]: _operation_edge_object(stored),
+            coords["key"]: TermValue(0),
+            coords["rhs"]: TermValue(5),
+        },
+    )
+
+    assert isinstance(exits, ExitSet)
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Completed)
+    assert stored == [(TermValue(0), TermValue(15))]
+
+
 def test_attribute_augassign_is_attribute_path_not_subscript_path() -> None:
     """Attribute OP= uses AttributeAugAssignSugar — same substrate, distinct sugar."""
     from sugar_lift_py_tests.sugar.augassign_sugar import AttributeAugAssignSugar

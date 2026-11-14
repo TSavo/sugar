@@ -61,15 +61,16 @@ def test_the_identity_post_is_stated_inline(tmp_path: Path) -> None:
     assert post == {"kind": "atomic", "name": "=", "args": [_var("out"), _var("x")]}
 
 
-def test_an_indexing_post_is_stated_inline(tmp_path: Path) -> None:
-    # The receiver is not a formal: a formal's own subscript (``xs[0]``) is
-    # decided by its caller's actual (the ``subscript`` carrier) and states
-    # no post of its own.
+def test_a_compound_post_is_stated_inline(tmp_path: Path) -> None:
+    # No operation on a formal: a parameter in any operand of a subscript
+    # (``xs[0]``, ``[1, 2][i]``) is decided by its caller's actual (the
+    # ``subscript`` carrier) and states no post of its own.  A container
+    # built from the formal states a compound term.
     project = tmp_path / "linkunit"
     _stage_cli_project(
         project,
-        "def consume(i):\n    return [1, 2][i]\n\n\n"
-        "def test_consume():\n    assert consume(0) == 1\n",
+        "def consume(x):\n    return [x, 2]\n\n\n"
+        "def test_consume():\n    assert consume(1) == [1, 2]\n",
     )
     mint = mint_project(project)
     assert mint.returncode == 0, mint.stderr

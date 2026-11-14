@@ -492,3 +492,91 @@ def test_the_carrier_discharges_through_the_one_subscript_door() -> None:
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
     assert exits.exits[0].value == TermValue(42)
+
+
+# ---------------------------------------------------------------------------
+# A parameter in any operand position defers: the formal index (#7757)
+# ---------------------------------------------------------------------------
+
+
+def test_a_formal_index_on_a_known_list_defers_to_the_caller() -> None:
+    """``[1, 2][i]`` with ``i`` a parameter: the list is decided, the index is
+    not, so the read is the ``subscript`` carrier (index slot authenticated),
+    never the callee's undecided read."""
+    from sugar_lift_py_tests.operations.subscript_operation import (
+        discharge_subscript,
+    )
+
+    carrier, _, key_coordinate = _synthetic_carrier()
+    index = SymbolicValue(make_var("key"), key_coordinate)
+
+    pending = discharge_subscript(
+        ListValue((TermValue(1), TermValue(2))),
+        index,
+        carrier.site,
+        None,
+        owner="SubscriptSugar",
+    )
+
+    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
+    assert pending.demand.operator == "subscript"
+    assert pending.demand.operand_coordinate_cids == (
+        None,
+        key_coordinate.coordinate_cid,
+    )
+
+
+def test_a_formal_index_resolves_with_the_callers_actual() -> None:
+    from sugar_lift_py_tests.operations.subscript_operation import (
+        discharge_subscript,
+    )
+
+    carrier, _, key_coordinate = _synthetic_carrier()
+    pending = discharge_subscript(
+        ListValue((TermValue(1), TermValue(2))),
+        SymbolicValue(make_var("key"), key_coordinate),
+        carrier.site,
+        None,
+        owner="SubscriptSugar",
+    )
+
+    exits = pending.discharge(None, {key_coordinate.coordinate_cid: TermValue(1)})
+
+    assert exits.exits == (Completed(exits.exits[0].guard, TermValue(2)),)
+
+
+def test_a_formal_index_through_a_symbolic_receiver_is_the_same_carrier() -> None:
+    """The receiver's own ``subscript`` and the door mint the one demand."""
+    from sugar_lift_py_tests.operations.subscript_operation import (
+        discharge_subscript,
+    )
+
+    carrier, _, key_coordinate = _synthetic_carrier()
+    receiver = SymbolicValue(make_var("obj"))
+    index = SymbolicValue(make_var("key"), key_coordinate)
+
+    direct = receiver.subscript(index, carrier.site)
+    through_door = discharge_subscript(
+        receiver, index, carrier.site, None, owner="SubscriptSugar"
+    )
+
+    assert isinstance(direct, NativeOperationExitCarrierV1)
+    assert direct.demand.demand_cid == through_door.demand.demand_cid
+
+
+def test_a_source_formal_index_reaches_the_carrier() -> None:
+    from sugar_source_tree.nodes import FunctionDef
+
+    source = "def consume(i):\n    return [1, 2][i]\n"
+    tree = SourceFile(
+        (source, "formal-index-helper.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+
+    outcome = function.sugar().desugar(None)
+
+    assert isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
+    assert outcome.demand.operator == "subscript"
+    assert outcome.demand.operand_coordinate_cids[0] is None
+    assert outcome.demand.operand_coordinate_cids[1] is not None

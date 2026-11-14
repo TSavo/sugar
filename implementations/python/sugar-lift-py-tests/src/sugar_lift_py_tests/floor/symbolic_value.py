@@ -446,20 +446,15 @@ class SymbolicValue(FloorValue):
         return super().bitwise_invert(site)
 
     def subscript(self, index, site):
-        if self.formal_coordinate is not None:
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
+        # A parameter in either operand defers to the caller's actual: the
+        # one ``subscript`` mint (``defer_formal_subscript``).
+        from sugar_lift_py_tests.operations.subscript_operation import (
+            defer_formal_subscript,
+        )
 
-            return NativeOperationExitCarrierV1.mint(
-                site=site,
-                operator="subscript",
-                operands=(self, index),
-                coordinates=(
-                    self.formal_coordinate,
-                    getattr(index, "formal_coordinate", None),
-                ),
-            )
+        deferred = defer_formal_subscript(self, index, site)
+        if deferred is not None:
+            return deferred
         return self.undecided_subscript(
             index,
             site,
@@ -548,17 +543,48 @@ class SymbolicValue(FloorValue):
         return self.subscript(operation.index, operation.blame)
 
     def iter_with(self, operation, ctx):
-        """``iter(symbolic)``: its ``__iter__`` is not decided here, so the
-        call is the one two-faced unanswered outcome
-        (:meth:`undecided_iteration`).  A live ``for`` over a symbolic
-        iterable never submits this operation: it is the loop's recurrence."""
+        """``iter(symbolic)``.
+
+        A formal's ``iter`` is decided by its caller's actual: the ``iter``
+        carrier, discharged through ``project_iter`` (as every other
+        operation on a formal is).  Any other symbolic receiver's
+        ``__iter__`` is not decided here, so the call is the one two-faced
+        unanswered outcome (:meth:`undecided_iteration`).  A live ``for``
+        over a symbolic iterable never submits this operation: it is the
+        loop's recurrence."""
         del ctx
+        if self.formal_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=operation.blame,
+                operator="iter",
+                operands=(self,),
+                coordinates=(self.formal_coordinate,),
+            )
         return self.undecided_iteration(operation.blame, owner="SymbolicValue.iter")
 
     def next_with(self, operation, ctx):
-        """``next(symbolic)``: its ``__next__`` is not decided here, so the
-        call is the one two-faced unanswered outcome (:meth:`undecided_next`)."""
+        """``next(symbolic)``.
+
+        A formal's ``next`` is decided by its caller's actual: the ``next``
+        carrier, discharged through ``project_next``.  Any other symbolic
+        receiver's ``__next__`` is not decided here, so the call is the one
+        two-faced unanswered outcome (:meth:`undecided_next`)."""
         del ctx
+        if self.formal_coordinate is not None:
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            return NativeOperationExitCarrierV1.mint(
+                site=operation.blame,
+                operator="next",
+                operands=(self,),
+                coordinates=(self.formal_coordinate,),
+            )
         return self.undecided_next(operation.blame, owner="SymbolicValue.next")
 
     def project_sequence_with(self, operation, ctx):
