@@ -261,12 +261,18 @@ def module_value_name(value):
     return term.args[0].value
 
 
-def cpython_cited_fold(unprojected, arg_values, keyword_names, site=None):
+def cpython_cited_fold(
+    unprojected, arg_values, keyword_names, site=None, language_callee=None
+):
     """A stdlib call with no projected body whose result CPython's source decides.
 
     ``unprojected`` is the call's may-raise testimony: an off-population
     citation (``python:operator.index``) or an unprojected source function
     (``operator`` / ``index``).  Either names the same stdlib callee.
+
+    ``language_callee`` is the ``LanguageCallee`` the Call node bound the
+    callee to; ``importlib.import_module`` is recognised by that member (its
+    binding), never by the callee's name.
 
     ``operator.index(a)`` is ``_operator.index`` (Modules/_operator.c,
     ``_operator_index``: ``return PyNumber_Index(a);``).  In
@@ -290,7 +296,9 @@ def cpython_cited_fold(unprojected, arg_values, keyword_names, site=None):
         qualified = f"{unprojected.module_name}.{unprojected.definition_name}"
     else:
         return None
-    if qualified == "importlib.import_module":
+    from sugar_source_tree.nodes import LanguageCallee
+
+    if language_callee is LanguageCallee.IMPORTLIB_IMPORT_MODULE:
         # ``importlib.import_module(name)`` (Lib/importlib/__init__.py) with
         # a constant top-level absolute name and no ``package``: the pinned
         # environment decides whether that module exists.  When no finder

@@ -127,15 +127,21 @@ def _with_item_expr(tree, line, col):
     return None
 
 
-def runtime_selected_manager_head(source: str, start_line: int, start_col: int):
+def runtime_selected_manager_head(unit, start_line: int, start_col: int):
     """The head's source text when its manager is selected by name at run time.
+
+    ``unit`` is the typed ``SourceUnit`` the ``with`` belongs to; its source is
+    the text read here, and it answers how the callee of the binding statement
+    is bound.
 
     The head is a chain (attribute reads, constant-argument calls, operands on
     the outermost call) rooted at a local of the innermost function around the
     ``with`` whose only binding in that function is one top-level statement
     ``local = getattr(<object>, <name>)``, lexically before the ``with``, with
-    a ``<name>`` that is not a constant and the builtin ``getattr`` (the
-    module binds no ``getattr``).  At the ``with`` the local holds whatever
+    a ``<name>`` that is not a constant and a callee bound to the builtin
+    ``getattr`` (``LanguageCallee.BUILTIN_GETATTR``, by its binding: a module
+    or function that binds its own ``getattr`` does not qualify, an import of
+    ``builtins.getattr`` does).  At the ``with`` the local holds whatever
     attribute that run-time string names (``klass = getattr(module, klass)``
     then ``with klass(path) as f:``): no source decides the manager, so there
     is no callee to read.
@@ -149,6 +155,7 @@ def runtime_selected_manager_head(source: str, start_line: int, start_col: int):
     then:``): no frame knows that object's type, so no source decides the
     manager its enter result is.  Anything else returns ``None``.
     """
+    source = unit.source
     tree = parsed_module(source)
     if tree is None:
         return None
@@ -171,14 +178,12 @@ def runtime_selected_manager_head(source: str, start_line: int, start_col: int):
         if _formal_enter_result_binder(source, statement, root, expr):
             return ast.unparse(expr)
         return None
-    if name_bound_anywhere(tree, "getattr"):
-        return None
     if not (
         isinstance(statement, ast.Assign)
         and len(statement.targets) == 1
         and isinstance(statement.targets[0], ast.Name)
         and statement.targets[0].id == root
-        and _run_time_getattr(statement.value)
+        and _run_time_getattr(unit, statement.value)
     ):
         return None
     if statement.end_lineno >= expr.lineno:
@@ -298,14 +303,35 @@ def _contains(tree, node) -> bool:
     return any(child is node for child in ast.walk(tree))
 
 
-def _run_time_getattr(value) -> bool:
-    """``getattr(<object>, <non-constant name>)`` with no default."""
-    return (
+def _run_time_getattr(unit, value) -> bool:
+    """``getattr(<object>, <non-constant name>)`` with no default, its callee
+    bound to the builtin ``getattr`` (asked of the unit at the callee's own
+    coordinate, never read off its spelling)."""
+    if not (
         isinstance(value, ast.Call)
         and isinstance(value.func, ast.Name)
-        and value.func.id == "getattr"
         and len(value.args) == 2
         and not value.keywords
         and not any(isinstance(arg, ast.Starred) for arg in value.args)
         and not isinstance(value.args[1], ast.Constant)
+    ):
+        return False
+    from .nodes import LanguageCallee
+    from .spans import LineColSpan
+
+    callee = value.func
+    # ``ast`` columns are UTF-8 byte offsets; the unit's spans count codepoints.
+    lines = unit.source.split("\n")
+
+    def column(line: int, byte_col: int) -> int:
+        return len(lines[line - 1].encode("utf-8")[:byte_col].decode("utf-8"))
+
+    span = LineColSpan(
+        callee.lineno,
+        column(callee.lineno, callee.col_offset),
+        callee.end_lineno,
+        column(callee.end_lineno, callee.end_col_offset),
+    )
+    return (
+        unit.language_callee_at(callee.id, span) is LanguageCallee.BUILTIN_GETATTR
     )

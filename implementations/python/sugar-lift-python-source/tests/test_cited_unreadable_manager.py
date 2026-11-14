@@ -172,9 +172,23 @@ def test_a_proven_non_manager_head_is_not_cited(tmp_path):
     assert ("return", 7) not in rows
 
 
+def _unit(source: str):
+    """The typed unit of ``source``: the head reader asks it how names bind."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.tree import SourceFile
+
+    return SourceFile(
+        (source, "e.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).unit
+
+
 def test_only_a_run_time_string_selection_qualifies():
     def head(source, line=3):
-        return runtime_selected_manager_head(source, line, 9)
+        return runtime_selected_manager_head(_unit(source), line, 9)
 
     picked = "def f(m, n):\n    k = getattr(m, n)\n    with k(1):\n        pass\n"
     assert head(picked) == "k(1)"
@@ -189,6 +203,12 @@ def test_only_a_run_time_string_selection_qualifies():
     assert head("def f(m, n):\n    with k(1):\n        pass\n    k = getattr(m, n)\n", 2) is None
     # A module that binds its own ``getattr`` is not the builtin.
     assert head("getattr = g\n" + picked, 4) is None
+    # Nor is a function's own ``getattr`` parameter: the binding decides, not
+    # the spelling.
+    assert (
+        head("def f(m, n, getattr):\n    k = getattr(m, n)\n    with k(1):\n        pass\n")
+        is None
+    )
 
 
 _NOT_BRIDGED_HEADS = {
