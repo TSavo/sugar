@@ -691,7 +691,8 @@ def _replace_path(value, steps, post, check_shared):
             return None
         updated = list(entries)
         updated[position] = (entries[position][0], child)
-        return DictValue(tuple(updated))
+        # The same object: it keeps its ``allocation`` (``object_identity``).
+        return replace(value, entries=tuple(updated))
     if type(value) in (ListValue, TupleValue) and type(key) is int:
         elements = tuple(value.elements)
         if not -len(elements) <= key < len(elements):
@@ -708,7 +709,7 @@ def _replace_path(value, steps, post, check_shared):
             return None
         updated = list(elements)
         updated[position] = child
-        return type(value)(tuple(updated))
+        return replace(value, elements=tuple(updated))
     return None
 
 

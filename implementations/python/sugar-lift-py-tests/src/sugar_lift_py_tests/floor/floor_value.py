@@ -965,14 +965,25 @@ class FloorValue:
         from sugar_lift_py_tests.outcome import ExitSet
 
         formula, bridges = resolve_equality_atom(self, other, owner=str(site))
-        return ExitSet.completed(
-            PredicateValue(
-                formula,
-                site,
-                operand_callsites=(*self.callsites(), *other.callsites()),
-                derived_formulas=bridges,
-            )
+        predicate = PredicateValue(
+            formula,
+            site,
+            operand_callsites=(*self.callsites(), *other.callsites()),
+            derived_formulas=bridges,
         )
+        from sugar_lift_py_tests.floor.object_identity import holds_stale
+
+        if holds_stale(self) or holds_stale(other):
+            # ``==`` reads both operands' contents all the way down; a
+            # container whose contents are not current
+            # (``object_identity.contents_current``) is not read: the
+            # undecided equality, two-faced (``undecided_dispatch_faces``).
+            from sugar_lift_py_tests.sugar.comparison_op_sugar import (
+                undecided_dispatch_faces,
+            )
+
+            return undecided_dispatch_faces(predicate, site, "Eq")
+        return ExitSet.completed(predicate)
 
     def is_identical(self, other, site):
         # Default: EMIT. Identity is the ONE comparison whose SMT lowering is

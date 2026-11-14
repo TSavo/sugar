@@ -399,9 +399,14 @@ class BuiltinSemanticCallable(FloorValue):
         from sugar_lift_py_tests.floor import DictValue, ListValue, SetValue, TupleValue
         from sugar_lift_py_tests.outcome import ExitSet
 
+        from sugar_lift_py_tests.floor.object_identity import contents_stale
+
         if operation.keyword_names or len(operation.arguments) != 1:
             return None
         source = operation.arguments[0]
+        if contents_stale(source):
+            # Its members are not its contents now: not iterated here.
+            return None
         if isinstance(source, DictValue):
             return ExitSet.completed(SetValue(tuple(key for key, _ in source.entries)))
         if isinstance(source, SetValue):
@@ -439,11 +444,15 @@ class BuiltinSemanticCallable(FloorValue):
             SetValue,
             TupleValue,
         )
+        from sugar_lift_py_tests.floor.object_identity import contents_stale
         from sugar_lift_py_tests.outcome import ExitSet
 
         if operation.keyword_names or len(operation.arguments) != 1:
             return None
         source = operation.arguments[0]
+        if contents_stale(source):
+            # Its members are not its contents now: not iterated here.
+            return None
         if isinstance(source, TupleValue):
             return ExitSet.completed(source)
         if isinstance(source, (ListValue, SetValue)):
@@ -500,9 +509,14 @@ class BuiltinSemanticCallable(FloorValue):
             TrueBoolLiteralSugar,
         )
 
+        from sugar_lift_py_tests.floor.object_identity import contents_stale
+
         if operation.keyword_names or len(operation.arguments) != 1:
             return None
         source = operation.arguments[0]
+        if contents_stale(source):
+            # Its members are not its contents now: not iterated here.
+            return None
         if isinstance(source, DictValue):
             return ExitSet.completed(source)
         if not isinstance(source, (ListValue, TupleValue)):
@@ -511,6 +525,8 @@ class BuiltinSemanticCallable(FloorValue):
         keys: list = []
         values: list = []
         for item in source.elements:
+            if contents_stale(item):
+                return None
             if type(item) in (
                 TermValue,
                 NoneValue,

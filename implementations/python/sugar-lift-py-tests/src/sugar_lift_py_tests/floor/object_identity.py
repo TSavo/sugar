@@ -20,17 +20,25 @@ changed it since its contents were read.
 
 from __future__ import annotations
 
+# The ``allocation`` of an object made in the frame reading it by a
+# construction that names no source coordinate (a value built with no
+# ``allocation`` given, or at a site with none).  It is current
+# (``contents_current``); two such objects share it, so they are never
+# decided distinct.  Only ``arrived`` (and a post-state or a result computed
+# from a value that is not current) leaves a container with none.
+UNNAMED_CONSTRUCTION = "python:allocation:unnamed"
 
-def made_at(site) -> str | None:
+
+def made_at(site) -> str:
     """The ``allocation`` of an object a construction at ``site`` made.
 
     The site's source coordinate (``occurrence.site_coordinate_cid``),
     never its occurrence path: one construction evaluated twice (an unrolled
     loop, a re-entered body) makes two objects a single site cannot tell
-    apart, so two values made at one site are never decided distinct.  None
-    for a site with no source coordinate."""
+    apart, so two values made at one site are never decided distinct.
+    ``UNNAMED_CONSTRUCTION`` for a site with no source coordinate."""
     if not (hasattr(site, "line_col_span") and hasattr(site, "source_cid")):
-        return None
+        return UNNAMED_CONSTRUCTION
     from sugar_lift_py_tests.occurrence import site_coordinate_cid
 
     return site_coordinate_cid(site)
@@ -39,8 +47,63 @@ def made_at(site) -> str | None:
 def contents_current(value) -> bool:
     """Whether ``value``'s contents are its object's contents now: a
     construction in this frame made it, or it is the one door's post-state
-    of such an object."""
+    of such an object.
+
+    The one currency rule: every read of a builtin container's contents asks
+    it -- the cited fold (``_host_ground``), the one door's container law
+    (``builtin_container_method.apply``), and each floor read (``len``,
+    subscript and slicing, iteration and unpacking, ``in``, ``==``).  A
+    container that is not current (``contents_stale``) is read in the read's
+    own undecided form, never from the contents it holds."""
     return getattr(value, "allocation", None) is not None
+
+
+def contents_stale(value) -> bool:
+    """``value`` is a ``list``/``dict``/``set`` whose contents are not
+    current (``contents_current``): no read takes them."""
+    from .dict_value import DictValue
+    from .list_value import ListValue
+    from .set_value import SetValue
+
+    return type(value) in (ListValue, DictValue, SetValue) and not contents_current(
+        value
+    )
+
+
+def holds_stale(value, depth=0) -> bool:
+    """``value``, or a container in it at any depth, is ``contents_stale``: a
+    read of all of ``value``'s contents (``==``) would read stale ones."""
+    from .dict_value import DictValue
+    from .guarded_value import GuardedValue
+    from .list_value import ListValue
+    from .set_value import SetValue
+    from .tuple_value import TupleValue
+
+    if depth > 32 or contents_stale(value):
+        return True
+    kind = type(value)
+    if kind in (ListValue, SetValue, TupleValue):
+        return any(holds_stale(element, depth + 1) for element in value.elements)
+    if kind is DictValue:
+        return any(
+            holds_stale(key, depth + 1) or holds_stale(item, depth + 1)
+            for key, item in value.entries
+        )
+    if kind is GuardedValue:
+        return holds_stale(value.when_true, depth + 1) or holds_stale(
+            value.when_false, depth + 1
+        )
+    return False
+
+
+def made_if_current(site, *operands) -> str | None:
+    """The ``allocation`` of a new object an operation at ``site`` made from
+    ``operands``' contents (``xs + ys``, ``xs[1:]``, ``s | t``): ``made_at``
+    when every operand's contents are current, else None -- contents computed
+    from stale ones are not the new object's contents either."""
+    if any(contents_stale(operand) for operand in operands):
+        return None
+    return made_at(site)
 
 
 def arrived(value):

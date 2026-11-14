@@ -79,6 +79,26 @@ MUTATING_METHODS = {
 
 ANY_MUTATING_METHOD = frozenset().union(*MUTATING_METHODS.values())
 
+# Cited methods whose exits and result the law decides from the operands
+# alone, never from the receiver's contents.  On a receiver whose contents
+# are not current (``object_identity.contents_current``) only these are
+# applied; the post-state they leave is not current either (``_same_object``).
+CONTENTS_FREE_METHODS = {
+    "list": frozenset({"append", "extend", "insert", "clear", "reverse"}),
+    "dict": frozenset({"__setitem__", "update", "clear"}),
+    "set": frozenset(
+        {
+            "add",
+            "discard",
+            "update",
+            "clear",
+            "difference_update",
+            "intersection_update",
+            "symmetric_difference_update",
+        }
+    ),
+}
+
 
 def container_kind(value) -> str | None:
     """``list``/``dict``/``set`` for the lifter's own constructed containers."""
@@ -168,13 +188,19 @@ def _index_of(elements, needle):
 
 
 def finite_members(value):
-    """The members ``iter(value)`` yields, when the floor holds them all."""
+    """The members ``iter(value)`` yields, when the floor holds them all.
+
+    A container whose contents are not current holds none of them
+    (``object_identity.contents_stale``)."""
     from .dict_value import DictValue
     from .list_value import ListValue
+    from .object_identity import contents_stale
     from .set_value import SetValue
     from .string_value import StringValue
     from .tuple_value import TupleValue
 
+    if contents_stale(value):
+        return None
     if type(value) in (ListValue, TupleValue):
         return tuple(value.elements)
     if type(value) is DictValue:
@@ -215,13 +241,24 @@ def apply(kind, method, receiver, args, site, ctx):
     value, or its one halt, from the pinned interpreter
     (``container_mutator_result_fold``, #7757); the receiver's post-state is
     this law's.  The law's own read of the member (and its halt) is kept
-    only for a receiver or argument known only by its type."""
+    only for a receiver or argument known only by its type.
+
+    A receiver whose contents are not current (it arrived by binding,
+    ``object_identity.contents_current``) is not read: a method that reads
+    its contents (``pop``'s value, ``remove``'s membership, ``setdefault``,
+    an index's bound) is UNDECIDED, and the door applies it to an opaque
+    post-state (``_opaque_pair``); a contents-free one
+    (``CONTENTS_FREE_METHODS``) applies, its post-state not current."""
     from sugar_lift_py_tests.source_call_resolution import (
         container_mutator_result_fold,
     )
 
+    from .object_identity import contents_current
+
     owner = f"builtins.{kind}.{method}"
     if kind not in ("list", "dict", "set"):
+        return UNDECIDED
+    if not contents_current(receiver) and method not in CONTENTS_FREE_METHODS[kind]:
         return UNDECIDED
     cited = container_mutator_result_fold(receiver, method, tuple(args), site)
     if cited is not None and cited.halts() == cited.exits:
@@ -429,8 +466,10 @@ def _dict(method, receiver, args, site, owner):
     if method == "clear" and not args:
         return _pair(DictValue(()), _none())
     if method in ("update", "__ior__") and len(args) == 1:
+        from .object_identity import contents_stale
+
         other = args[0]
-        if type(other) is not DictValue:
+        if type(other) is not DictValue or contents_stale(other):
             return UNDECIDED
         updated = entries
         for key, value in other.entries:

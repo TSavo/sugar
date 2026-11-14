@@ -76,8 +76,13 @@ def member_equal(left, right):
         if type(left) is NoneValue and type(right) is NoneValue:
             return True
         # Nested sequence membership: ``[1] in [[1], [2]]`` is ground list
-        # equality on each element.
+        # equality on each element -- of contents that are current
+        # (``object_identity.contents_stale``); stale ones are not read.
         if type(left) in (ListValue, TupleValue) and type(left) is type(right):
+            from sugar_lift_py_tests.floor.object_identity import contents_stale
+
+            if contents_stale(left) or contents_stale(right):
+                return None
             return sequence_equal(left.elements, right.elements)
         if type(left) in (SetValue, DictValue) and type(left) is type(right):
             # Order-free equality the floor does not decide here.
@@ -159,7 +164,12 @@ def position(needle, members):
 
 def membership(container, item, members, *, kind, member_role, container_role, hashed, site):
     """``item in container`` over its ``members``: the ExitSet, or None when a
-    pair has no floor equality (the caller keeps its own loud refusal)."""
+    pair has no floor equality (the caller keeps its own loud refusal).
+
+    A container whose contents are not current
+    (``object_identity.contents_stale``) is not read: the test is its
+    undecided membership (``FloorValue.undecided_contains``), two-faced."""
+    from sugar_lift_py_tests.floor.object_identity import contents_stale
     from sugar_lift_py_tests.floor.set_value import _bool_result
 
     if hashed and decided_unhashable(item):
@@ -170,6 +180,8 @@ def membership(container, item, members, *, kind, member_role, container_role, h
             site=site,
             owner=f"python.{kind}.contains",
         )
+    if contents_stale(container):
+        return container.undecided_contains(item, site, owner=f"python.{kind}.contains")
     decisions = tuple(member_equal(item, member) for member in members)
     if any(decision is True for decision in decisions):
         return _bool_result(True, site)

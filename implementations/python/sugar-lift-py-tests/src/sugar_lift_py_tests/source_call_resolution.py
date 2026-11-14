@@ -221,7 +221,9 @@ def _host_ground(value, depth=0, visits=None):
     lists, tuples and dicts of them.  A set is not handed over: iterating a
     set of strings follows the per-process string hash, so what a builtin
     reads from it is not the same on every run.  A value known only by its
-    type (a call result, a comprehension, a formal) is not ground.
+    type (a call result, a comprehension, a formal) is not ground, and
+    neither is a list or dict, at any depth, whose contents are not current
+    (``object_identity.contents_stale``: it arrived by binding).
 
     ``visits`` (``id -> (position, object)``), when given, records each
     object handed over in the order the operands are walked: the order a
@@ -239,13 +241,14 @@ def _host_object(value, depth, visits):
     from .floor.dict_value import DictValue
     from .floor.list_value import ListValue
     from .floor.none_value import NoneValue
+    from .floor.object_identity import contents_stale
     from .floor.string_value import StringValue
     from .floor.term_value import TermValue
     from .floor.tuple_value import TupleValue
     from .sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from .sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
-    if depth > 32:
+    if depth > 32 or contents_stale(value):
         return _NOT_GROUND
     kind = type(value)
     if kind is TermValue:
@@ -584,23 +587,21 @@ def cited_container_method(receiver, name) -> bool:
     ``receiver`` is a ground ``list``/``tuple``/``dict`` (``_host_ground``) and
     ``name`` one of its documented methods that do not change it.  Its
     contents must be the object's contents at this call, which the value
-    says: a construction in this frame made it, or it is the one door's
-    post-state of such an object (``object_identity.contents_current``:
-    ``xs = 'a b'.split()`` as well as a display) -- or it is an immutable
-    value all the way down (a hashable tuple), whose contents nothing can
-    change.  A list or dict that reached the frame by binding (a
-    parameter's actual, an attribute, a global: ``object_identity.arrived``)
-    is not current (#7618: ``redirect_stdout.__exit__``'s ``pop``): no
-    contents read is decided on it here."""
-    from .floor.object_identity import contents_current
-
+    says, through the one currency rule ``_host_ground`` asks of every list
+    and dict it hands over (``object_identity.contents_current``: a
+    construction in this frame made it, or it is the one door's post-state
+    of such an object, ``xs = 'a b'.split()`` as well as a display) -- or
+    it is an immutable value all the way down (a hashable tuple), whose
+    contents nothing can change.  A list or dict that reached the frame by
+    binding (a parameter's actual, an attribute, a global:
+    ``object_identity.arrived``) is not ground (#7618:
+    ``redirect_stdout.__exit__``'s ``pop``): no contents read is decided on
+    it here."""
     raw = _host_ground(receiver)
     if raw is _NOT_GROUND or name not in _CITED_CONTAINER_METHODS.get(type(raw), ()):
         return False
-    if contents_current(receiver):
-        return True
     if type(raw) is not tuple:
-        return False
+        return True
     try:
         hash(raw)
     except TypeError:
@@ -900,12 +901,15 @@ def _hashable_members(value) -> bool:
 
 
 def _finite_members(value):
-    """The decided members a list/tuple/set display iterates, or None."""
+    """The decided members a list/tuple/set display iterates, or None (a
+    container whose contents are not current holds none,
+    ``object_identity.contents_stale``)."""
     from .floor.list_value import ListValue
+    from .floor.object_identity import contents_stale
     from .floor.set_value import SetValue
     from .floor.tuple_value import TupleValue
 
-    if type(value) in (ListValue, TupleValue, SetValue):
+    if type(value) in (ListValue, TupleValue, SetValue) and not contents_stale(value):
         return tuple(value.elements)
     return None
 
@@ -1161,7 +1165,7 @@ def builtin_typed_value(value, depth=0, *, shallow=False) -> bool:
     return False
 
 
-def builtin_list_construct(language_callee, arg_values, keyword_names=()):
+def builtin_list_construct(language_callee, arg_values, keyword_names=(), site=None):
     """``list(xs)`` over a sequence whose members and order are decided.
 
     The callee bound to the builtin ``list`` (``LanguageCallee.BUILTIN_LIST``,
@@ -1174,14 +1178,17 @@ def builtin_list_construct(language_callee, arg_values, keyword_names=()):
     list gives its elements, a dict gives its keys in insertion order, and a
     finite comprehension gives its projected members.  It never raises for
     these (``builtin_call_total``).  A set's order depends on hashing, so it
-    is not decided here, and neither is any other operand; those stay the
-    ordinary bodiless call.
+    is not decided here, and neither is any other operand -- nor a list or
+    dict whose contents are not current (``object_identity.contents_stale``);
+    those stay the ordinary bodiless call.  The new list is made at ``site``
+    (``object_identity.made_at``).
     """
     from sugar_source_tree.nodes import LanguageCallee
 
     from .floor.comprehension_value import ComprehensionValue
     from .floor.dict_value import DictValue
     from .floor.list_value import ListValue
+    from .floor.object_identity import contents_stale, made_at
     from .floor.tuple_value import TupleValue
     from .outcome import ExitSet
 
@@ -1190,13 +1197,17 @@ def builtin_list_construct(language_callee, arg_values, keyword_names=()):
     if len(arg_values) != 1:
         return None
     (source,) = arg_values
+    if contents_stale(source):
+        return None
     if type(source) in (TupleValue, ListValue):
-        return ExitSet.completed(ListValue(tuple(source.elements)))
-    if type(source) is DictValue:
-        return ExitSet.completed(ListValue(tuple(key for key, _ in source.entries)))
-    if type(source) is ComprehensionValue and source.finite_elements is not None:
-        return ExitSet.completed(ListValue(tuple(source.finite_elements)))
-    return None
+        members = tuple(source.elements)
+    elif type(source) is DictValue:
+        members = tuple(key for key, _ in source.entries)
+    elif type(source) is ComprehensionValue and source.finite_elements is not None:
+        members = tuple(source.finite_elements)
+    else:
+        return None
+    return ExitSet.completed(ListValue(members, allocation=made_at(site)))
 
 
 def builtin_dunder_call(language_callee, arg_values, keyword_names=()):
