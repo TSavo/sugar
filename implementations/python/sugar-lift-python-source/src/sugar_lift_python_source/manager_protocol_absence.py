@@ -397,9 +397,9 @@ def _scan_module(unit) -> bool:
         With,
     )
 
-    module = getattr(unit, "typed_module", None)
-    if module is None:
-        return False
+    module = unit._require_typed_module(
+        "manager_protocol_absence._scan_module", blame=unit.filename
+    )
     for node in module.walk():
         if isinstance(node, ImportFrom) and any(a.name == "*" for a in node.names):
             return False

@@ -111,16 +111,13 @@ def _bare(cls, **fields):
 
 
 def _expression(source: str):
-    from sugar_source_tree.backend import materialize
-    from sugar_source_tree.cpython_adapter import CPythonAstBackend
-    from sugar_source_tree.nodes import SourceUnit
-
-    unit = SourceUnit(
-        filename="<carrier-bridge-sites>",
-        source=source,
-        source_cid=blake3_512_of(source.encode("utf-8")),
+    """The expression ``source`` as the one statement of a file read through
+    the one door, so its unit carries its typed tree (#7757)."""
+    text = f"{source}\n"
+    tree = SourceFile(
+        (text, "<carrier-bridge-sites>", blake3_512_of(text.encode("utf-8")))
     )
-    return materialize(unit, CPythonAstBackend().expression(unit))
+    return tree.root.body[0].value
 
 
 def _raise_effect(name: str) -> RaiseEffect:
@@ -342,10 +339,10 @@ def test_discharge_projector_answering_a_carrier_is_refused_by_name(monkeypatch)
 def _contract_answering(monkeypatch, answer):
     from sugar_lift_py_tests import contract_expression
 
-    real = contract_expression.materialize
+    real = contract_expression._contract_body
 
-    def materialize(unit, ref):
-        node = real(unit, ref)
+    def contract_body(expr, available_names):
+        node = real(expr, available_names)
         monkeypatch.setattr(
             type(node),
             "substitute",
@@ -353,7 +350,7 @@ def _contract_answering(monkeypatch, answer):
         )
         return node
 
-    monkeypatch.setattr(contract_expression, "materialize", materialize)
+    monkeypatch.setattr(contract_expression, "_contract_body", contract_body)
     return contract_expression.parse_contract_expression
 
 

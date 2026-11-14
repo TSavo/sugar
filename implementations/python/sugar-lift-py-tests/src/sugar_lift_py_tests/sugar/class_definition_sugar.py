@@ -187,10 +187,10 @@ class ClassDefinitionSugar(Sugar):
         statement = self.class_definition
         if statement is None:
             return False
-        module = getattr(getattr(statement, "unit", None), "typed_module", None)
-        return module is not None and any(
-            item is statement for item in getattr(module, "body", ())
+        module = statement.unit._require_typed_module(
+            "ClassDefinitionSugar._is_module_statement", blame=statement.fragment
         )
+        return any(item is statement for item in module.body)
 
     def _reduce_statement(self, ctx) -> ExitSet:
         # Python evaluates the base expressions, in order, before the class
