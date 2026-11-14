@@ -322,7 +322,16 @@ class ClassDefinitionSugar(Sugar):
                 )
             )
 
-        outcome = evaluate_assignment_values(tuple(values), ctx, tail=bind_fields)
+        # A field that aliases an evaluation (``y = x`` after ``x += e``) is
+        # read after it through its own key: bind it, as every assignment does.
+        evaluations = tuple(
+            (item.evaluation_key, index)
+            for item, index in zip(selected, value_index)
+            if getattr(item, "evaluation_key", None) is not None
+        )
+        outcome = evaluate_assignment_values(
+            tuple(values), ctx, tail=bind_fields, evaluations=evaluations
+        )
         from sugar_lift_py_tests.outcome.exit_set import Completed
 
         if (

@@ -38,7 +38,10 @@ from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
     evaluation_here,
 )
 from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
-from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+from sugar_lift_py_tests.temporal.temporal_context import (
+    EVALUATION_PREFIX,
+    projection_key,
+)
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
     Assign,
@@ -265,10 +268,13 @@ def test_each_read_of_an_evaluation_is_spanned_at_its_use() -> None:
     read_x, read_y = ret.value.elts
     assert isinstance(read_x, EvaluationRef)
     assert isinstance(read_y, EvaluationRef)
-    assert read_x.evaluation == read_y.evaluation == aug.evaluation
-    # ``x`` is read at its own use; ``y`` reads what ``y = x`` read.
+    assert read_x.evaluation == aug.evaluation
+    # ``y`` reads its own projection of ``y = x``'s evaluation, never the
+    # reference ``y = x`` read; both reads are spanned at their own use.
+    assert read_y.evaluation == projection_key(assign.evaluation, "y")
+    assert read_y.name == "y"
     assert read_x.span != assign.value.span
-    assert read_y.span == assign.value.span
+    assert read_y.span != assign.value.span
 
 
 # -- class bodies and the module block ----------------------------------------

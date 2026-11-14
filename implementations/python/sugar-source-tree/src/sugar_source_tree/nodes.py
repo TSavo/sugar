@@ -3253,7 +3253,7 @@ def _exit_path_scope(clause_owner, path: str, bindings):
 def _holds_evaluation(statements) -> bool:
     """Whether a substituted suite holds a statement (or walrus) keyed as its
     own evaluation (``Statement._evaluation_key``: ``x += e``, ``a, b = f()``,
-    ``(x := e)``)."""
+    ``y = x`` where ``x`` reads an evaluation, ``(x := e)``)."""
     return any(
         isinstance(node, (AugAssign, Assign, NamedExpr))
         and isinstance(getattr(node, "evaluation", None), str)
@@ -6703,6 +6703,7 @@ class ClassDef(Statement):
                     and all(isinstance(target, Name) for target in item.targets)
                 ):
                     value_sugar = item.value.sugar()
+                    alias_keys = dict(item.alias_evaluations())
                     fields.extend(
                         ConstructedClassFieldV1(
                             target.id,
@@ -6710,6 +6711,7 @@ class ClassDef(Statement):
                             value_sugar,
                             binding_occurrence(target),
                             item.fragment.seal().cid,
+                            evaluation_key=alias_keys.get(target.id),
                         )
                         for target in item.targets
                     )
@@ -7712,11 +7714,15 @@ class Assign(Statement):
         # No retention: the relation is keyed by SOURCE OCCURRENCE, and the
         # rewrite denotes the same occurrence, so its row joins by construction.
         rewritten = self if not changes else rewrite(self, **changes)
-        if rewritten._dynamic_unpack_target() is None:
+        if rewritten._dynamic_unpack_target() is None and not (
+            rewritten._aliased_names()
+        ):
             return rewritten
         # ``a, b = f()``: the statement's one evaluation is unpacked at
-        # reduce.  Carry its key so every later read of a target is a
-        # reference to that target's projection of it (temporal choice 1).
+        # reduce.  ``y = x`` where ``x`` reads an evaluation: the statement
+        # evaluates that reference once, here.  Either way, carry the key so
+        # every later read of a target is a reference to that target's
+        # projection of it (temporal choice 1).
         leaves = {
             "evaluation": self._evaluation_key(scope),
             "evaluation_exit_path": self._evaluation_exit_path(scope),
@@ -7759,6 +7765,86 @@ class Assign(Statement):
             for name, leaf in _unpack_target_names(target).items()
         }
         return bindings or None
+
+    def _name_values(self) -> dict:
+        """The value node substitution binds each Name target to: the
+        right-hand side for ``y = e`` and ``a = b = e`` (Attribute/Subscript
+        targets among them bind no name), each display member for ``a, b =
+        p, q`` (a Name leaf beside store leaves included).  A non-display
+        unpack binds its targets to its projections instead and has none."""
+        if len(self.targets) == 1:
+            target = self.targets[0]
+            if isinstance(target, Name):
+                return {target.id: self.value}
+            if (
+                not isinstance(target, (Tuple_, List))
+                or self._dynamic_unpack_target() is not None
+            ):
+                return {}
+            name_only = self._destructured_binding()
+            if name_only is not None:
+                return dict(name_only)
+            pairs = self._flat_store_unpack_pairs()
+            if pairs is None:
+                return {}
+            return self._name_bindings_from_store_unpack(pairs)
+        if all(isinstance(t, (Name, Attribute, Subscript)) for t in self.targets):
+            return {t.id: self.value for t in self.targets if isinstance(t, Name)}
+        return {}
+
+    def _aliased_names(self) -> tuple:
+        """The Name targets whose value is a reference to an evaluation:
+        ``y = x`` after ``x += e``, a walrus, an unpack, a live loop's header
+        or another alias.  Each is bound to its own projection of this
+        statement's evaluation (``alias_evaluations``), never to the
+        reference it read: that reference names ``x``, and a read of ``y``
+        through it would answer a later rebind of ``x``."""
+        return tuple(
+            name
+            for name, value in self._name_values().items()
+            if isinstance(value, EvaluationRef)
+        )
+
+    def alias_evaluations(self) -> tuple:
+        """``(name, key)`` for each aliased Name target (``_aliased_names``):
+        ``key`` is the target's projection of this statement's evaluation
+        (``Statement._evaluation_key``, ``projection_key``).  The statement's
+        sugar binds the value it read for the name under that key at reduce,
+        and every later read of the name is a reference to it.  A statement
+        that was never substituted carries no key and has none."""
+        evaluation = getattr(self, "evaluation", None)
+        if not isinstance(evaluation, str) or self._dynamic_unpack_target() is not None:
+            return ()
+        from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+        return tuple(
+            (name, projection_key(evaluation, name)) for name in self._aliased_names()
+        )
+
+    def _alias_binding(self, binding):
+        """``binding`` with each aliased Name target bound to a reference to
+        its projection of this statement's evaluation.  Where that evaluation
+        never reached the temporal (a frame reading the name) the reference
+        is the name read, as a reference after ``x += e`` is."""
+        keys = dict(self.alias_evaluations())
+        if not binding or not keys:
+            return binding
+        leaves = {}
+        for target in self.targets:
+            leaves.update(_unpack_target_names(target))
+        return {
+            name: (
+                _evaluation_ref(
+                    self,
+                    leaves[name].span if name in leaves else self.span,
+                    keys[name],
+                    name,
+                )
+                if name in keys and isinstance(state, EvaluationRef)
+                else state
+            )
+            for name, state in binding.items()
+        }
 
     def _receiver_field_store_state(self, scope, new_value):
         """Thread ``name.attr = value`` into later reads of that exact name."""
@@ -8201,6 +8287,12 @@ class Assign(Statement):
         return super()._binding_site_and_path(name, 0)
 
     def substitution_binding(self, scope):
+        # A Name target whose value is a reference to an evaluation (``y =
+        # x`` after ``x += e``) binds to its own projection of this
+        # statement's evaluation, not to the reference it read.
+        return self._alias_binding(self._value_binding(scope))
+
+    def _value_binding(self, scope):
         # A single Name target binds its name to the already-substituted rhs.
         # A single Tuple/List target of plain Names destructures against a
         # matching display rhs (see _destructured_binding). A chain of plain
@@ -8436,6 +8528,7 @@ class Assign(Statement):
                 name=self.targets[0].id,
                 value=self.value.sugar(),
                 site=self.fragment,
+                evaluations=self.alias_evaluations(),
             )
 
         if len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
@@ -8448,6 +8541,7 @@ class Assign(Statement):
                         (name, val.sugar()) for name, val in bindings.items()
                     ),
                     site=self.fragment,
+                    evaluations=self.alias_evaluations(),
                 )
             # Flat Name|Attribute|Subscript leaves against a display RHS —
             # historical factory mass (dual-subscript / multi-attribute unpack).
@@ -8528,6 +8622,7 @@ class Assign(Statement):
                     bindings=tuple(name_bindings),
                     stores=tuple(stores),
                     site=self.fragment,
+                    evaluations=self.alias_evaluations(),
                 )
             target = self.targets[0]
             if not isinstance(self.value, (Tuple_, List)) and target.elts:
@@ -8602,6 +8697,7 @@ class Assign(Statement):
                 stores=(),
                 value=value_sugar,
                 site=self.fragment,
+                evaluations=self.alias_evaluations(),
             )
 
         if len(self.targets) > 1 and all(
@@ -8647,6 +8743,7 @@ class Assign(Statement):
                 stores=tuple(stores),
                 value=value_sugar,
                 site=self.fragment,
+                evaluations=self.alias_evaluations(),
             )
 
         if len(self.targets) == 1 and isinstance(
@@ -16245,26 +16342,16 @@ class Name(Expression):
                     ),
                     self.reporter,
                 )
-            if (
-                bound.kind == "EvaluationRef"
-                and bound.name == self.id
-                and bound.span != self.span
-            ):
+            if bound.kind == "EvaluationRef" and bound.span != self.span:
                 # The same reason: an evaluation reference was minted at its
                 # binding site (the `x += e` target, a walrus target, a
-                # comprehension target, a live loop's header), which is not
-                # where this read sits.  Re-span to the read; the evaluation
-                # key (a walrus's mark, a comprehension member's mark) is
-                # unchanged.
-                #
-                # An alias is not re-spanned: after ``y = x`` a read of ``y``
-                # is the reference the assignment read, at the assignment's
-                # occurrence.  In a live loop body every assignment records the
-                # value its right-hand side read under that occurrence
-                # (``assigned_value``), and that record is what keeps
-                # ``prev = t; t += v; use(prev)`` reading the value ``prev``
-                # was given; a reference re-spanned at ``use(prev)`` would miss
-                # the record and read the latest write of ``t``.
+                # comprehension target, a live loop's header, the target of
+                # ``y = x``), which is not where this read sits.  Re-span to
+                # the read; the evaluation key (a walrus's mark, a
+                # comprehension member's mark) is unchanged.  After ``y = x``
+                # the binding is ``y``'s own projection of the assignment's
+                # evaluation (``Assign.alias_evaluations``), so the key read
+                # here holds the value ``x`` had at ``y = x``.
                 return _evaluation_ref(
                     self,
                     self.span,
