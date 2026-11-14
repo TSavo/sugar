@@ -14,7 +14,13 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.floor import BuiltinExceptionClassValue, TermValue
+from sugar_lift_py_tests.floor import (
+    BuiltinExceptionClassValue,
+    BuiltinSemanticCallable,
+    SymbolicValue,
+    TermValue,
+)
+from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.source_call_resolution import (
     BuiltinValueCallV1,
     builtin_dunder_call,
@@ -24,6 +30,7 @@ from sugar_lift_py_tests.sugar.call_site_sugar import (
     CallSiteSugar,
     _lexically_unknown_head,
 )
+from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
 from sugar_source_tree.nodes import Call, LanguageCallee, Name
 
 from test_cited_unreadable_manager import _unit
@@ -185,6 +192,52 @@ def test_a_module_level_branch_rebinding_is_not_the_builtin():
     span = call.func.line_col_span()
     assert call.unit.builtin_reference_at("str", span) is None
     assert call.language_callee() is None
+
+
+_STAR_IMPORT_LEN = "from m import *\n\ndef f(o):\n    return len(o)\n"
+
+
+def test_a_call_bound_to_the_builtin_applies_the_builtin_floor_value():
+    sugar = _sugar(_call("def f(o):\n    return len(o)\n", "len"))
+    assert sugar._builtin_floor_value() is builtin_name_temporal().value_if_bound(
+        "len"
+    )
+
+
+@pytest.mark.parametrize("source", _shadowed("len") + [_STAR_IMPORT_LEN])
+def test_a_call_the_builtin_may_not_bind_applies_no_builtin_floor_value(source):
+    # The temporal floor still holds ``len`` by spelling; the call's binding
+    # does not reach it, so no builtin semantics apply.
+    assert _sugar(_call(source, "len"))._builtin_floor_value() is None
+
+
+def _type_operand(source: str):
+    """``int`` as the free operand of ``isinstance(o, int)`` in ``source``,
+    resolved at that call."""
+    call = _call(source, "isinstance")
+    free = SymbolicValue(make_var("int"))
+    resolved = BuiltinSemanticCallable(
+        operation="python.isinstance"
+    )._resolve_type_operand(free, call.fragment, 1)
+    return free, resolved
+
+
+def test_a_type_operand_bound_to_the_builtin_is_the_builtin_class():
+    _free, resolved = _type_operand("def f(o):\n    return isinstance(o, int)\n")
+    assert resolved is builtin_name_temporal().value_if_bound("int")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "from m import *\n\ndef f(o):\n    return isinstance(o, int)\n",
+        "int = str\n\ndef f(o):\n    return isinstance(o, int)\n",
+        "def f(o, int):\n    return isinstance(o, int)\n",
+    ],
+)
+def test_a_type_operand_the_builtin_may_not_bind_stays_free(source):
+    free, resolved = _type_operand(source)
+    assert resolved is free
 
 
 def test_a_head_nothing_binds_is_known_only_through_the_builtin_namespace():
