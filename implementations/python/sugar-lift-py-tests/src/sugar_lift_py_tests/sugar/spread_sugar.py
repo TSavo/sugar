@@ -496,12 +496,7 @@ def _unprojected_spread_call_faces(callsite, callee: str, site):
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        ExitSet,
-        Halted,
-        complement_guard,
-    )
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_lift_py_tests.source_call_resolution import _occurrence_result
 
     key = occurrence_key(site)
@@ -509,17 +504,12 @@ def _unprojected_spread_call_faces(callsite, callee: str, site):
         "python:spread_call.completes",
         [ctor("python:spread_call", (str_const(callee), str_const(key)))],
     )
-    return ExitSet(
-        (
-            Completed(completes, _occurrence_result(callsite, site)),
-            Halted(
-                complement_guard(completes),
-                UndeterminedRaiseEffect(
-                    blame=str(site),
-                    occurrence=key,
-                    producer_node_owner=f"UnprojectedSpreadCall:{callee}",
-                ),
-                None,
-            ),
-        )
-    ).normalize()
+    return ExitSet.two_faced(
+        _occurrence_result(callsite, site),
+        UndeterminedRaiseEffect(
+            blame=str(site),
+            occurrence=key,
+            producer_node_owner=f"UnprojectedSpreadCall:{callee}",
+        ),
+        guard=completes,
+    )

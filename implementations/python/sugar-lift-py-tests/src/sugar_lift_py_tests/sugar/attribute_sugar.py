@@ -296,12 +296,7 @@ def _unknown_receiver_attribute(receiver, name: str, site):
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        ExitSet,
-        Halted,
-        complement_guard,
-    )
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     key = occurrence_key(site)
     completes = atomic(
@@ -311,20 +306,15 @@ def _unknown_receiver_attribute(receiver, name: str, site):
     value = SymbolicValue(
         ctor(_ATTRIBUTE_RESULT, (term, str_const(name), str_const(key)))
     )
-    return ExitSet(
-        (
-            Completed(completes, value),
-            Halted(
-                complement_guard(completes),
-                UndeterminedRaiseEffect(
-                    blame=str(site),
-                    occurrence=key,
-                    producer_node_owner=f"UnknownAttribute:{dotted}",
-                ),
-                None,
-            ),
-        )
-    ).normalize()
+    return ExitSet.two_faced(
+        value,
+        UndeterminedRaiseEffect(
+            blame=str(site),
+            occurrence=key,
+            producer_node_owner=f"UnknownAttribute:{dotted}",
+        ),
+        guard=completes,
+    )
 
 
 def _dotted_of(term) -> str:

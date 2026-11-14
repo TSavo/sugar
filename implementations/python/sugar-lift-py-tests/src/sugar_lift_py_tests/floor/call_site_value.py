@@ -2048,12 +2048,7 @@ def _opaque_attribute_faces(receiver, name, site):
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        ExitSet,
-        Halted,
-        complement_guard,
-    )
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     if site is None:
         return receiver.undecided_attribute(name, site, owner="CallSiteValue.attribute")
@@ -2071,20 +2066,15 @@ def _opaque_attribute_faces(receiver, name, site):
         "python:attribute.completes",
         [ctor("python:attribute", (receiver_term, str_const(name), str_const(key)))],
     )
-    return ExitSet(
-        (
-            Completed(completes, member),
-            Halted(
-                complement_guard(completes),
-                UndeterminedRaiseEffect(
-                    blame=str(site),
-                    occurrence=key,
-                    producer_node_owner="CallSiteValue.attribute",
-                ),
-                None,
-            ),
-        )
-    ).normalize()
+    return ExitSet.two_faced(
+        member,
+        UndeterminedRaiseEffect(
+            blame=str(site),
+            occurrence=key,
+            producer_node_owner="CallSiteValue.attribute",
+        ),
+        guard=completes,
+    )
 
 
 def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"):
@@ -2100,12 +2090,7 @@ def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        ExitSet,
-        Halted,
-        complement_guard,
-    )
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     from sugar_lift_py_tests.occurrence import occurrence_key
 
@@ -2123,21 +2108,16 @@ def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"
         ),
     )
     completes = atomic("python:subscript.completes", [subscript])
-    return ExitSet(
-        (
-            Completed(completes, value, owed=owed),
-            Halted(
-                complement_guard(completes),
-                UndeterminedRaiseEffect(
-                    blame=str(site) if site is not None else None,
-                    occurrence=key if site is not None else None,
-                    producer_node_owner=producer,
-                ),
-                None,
-                owed=owed,
-            ),
-        )
-    ).normalize()
+    return ExitSet.two_faced(
+        value,
+        UndeterminedRaiseEffect(
+            blame=str(site) if site is not None else None,
+            occurrence=key if site is not None else None,
+            producer_node_owner=producer,
+        ),
+        guard=completes,
+        owed=owed,
+    )
 
 
 def _ground_scalar_return(value):
