@@ -209,17 +209,16 @@ class TryStarSugar(Sugar):
                 if face.residual.children:
                     effects.append(face.residual)
                 if effects:
-                    regrouped = regroup_except_star(original, effects)
-                    if regrouped is not None:
-                        retained.append(
-                            Halted(
-                                face.guard,
-                                regrouped,
-                                face.state,
-                                face.faces,
-                                face.owed,
-                            )
+                    # Never None: a face that owes a raise answers it (#7825).
+                    retained.append(
+                        Halted(
+                            face.guard,
+                            regroup_except_star(original, effects),
+                            face.state,
+                            face.faces,
+                            face.owed,
                         )
+                    )
                 else:
                     retained.append(
                         Completed(face.guard, face.state, face.faces, face.owed)

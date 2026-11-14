@@ -7,6 +7,7 @@ preallocated effect slot. No ambient tables; no second matching authority.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from sugar_lift_py_tests.context_manager_contract import (
     Contract,
@@ -22,6 +23,9 @@ from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.ir import atomic, ctor, eq, str_const
+
+if TYPE_CHECKING:
+    from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
 
 _EFFECT_ABSENT_NAME = "py.effect.none"
 _EFFECT_EXPECTED_OBLIGATION = "py.effect.expected"
@@ -51,6 +55,10 @@ class ObservedEffectBinding(FloorValue):
 
 class RuntimeSelectedReachedRouter(RuntimeError):
     """Raised when a ``RuntimeSelected`` contract reaches ``route``."""
+
+
+class EmptyExceptStarRegroup(RuntimeError):
+    """Raised when ``regroup_except_star`` is asked to regroup no effects."""
 
 
 @dataclass(frozen=True)
@@ -162,14 +170,22 @@ def route_except_star(effect, expected, *, slot_id=None, site=None):
     return GroupedRoutedOutcome(split.matched, split.residual, bindings)
 
 
-def regroup_except_star(original, effects):
-    """Regroup handler effects and residuals, restoring original topology when possible."""
+def regroup_except_star(original, effects) -> GroupedRaiseEffect:
+    """Regroup handler effects and residuals, restoring original topology when possible.
+
+    Always answers a group: a halt is never dropped (#7825). A regroup of
+    nothing is a caller bug, refused by name, never answered as ``None``.
+    """
     from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
     effects = tuple(effects)
     if not effects:
-        return None
+        raise EmptyExceptStarRegroup(
+            "regroup_except_star reached with no effects: the caller must "
+            "regroup only a matched subgroup, an exceptional raise or a "
+            "residual it holds, never ask for a group of nothing"
+        )
 
     def leaves(effect):
         if isinstance(effect, RaiseEffect):
