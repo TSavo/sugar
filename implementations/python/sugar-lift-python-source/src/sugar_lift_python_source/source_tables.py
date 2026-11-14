@@ -79,19 +79,17 @@ def source_lines(source: str) -> tuple[str, ...]:
 def source_segment(source: str, node: Any) -> str | None:
     """`ast.get_source_segment` semantics as a lookup against the line table.
 
-    Returns None when position information is missing, exactly as the stdlib
-    does. Column offsets are byte offsets into the UTF-8 encoding of each line.
-    Accepts any positioned node (typed Node attrs or residual dual AST).
+    Returns None when the node's end position is missing. Column offsets are
+    byte offsets into the UTF-8 encoding of each line. Accepts any positioned
+    node (typed Node attrs or residual dual AST); a value with no position
+    attributes is not a node and raises.
     """
-    try:
-        if node.end_lineno is None or node.end_col_offset is None:
-            return None
-        lineno = node.lineno - 1
-        end_lineno = node.end_lineno - 1
-        col_offset = node.col_offset
-        end_col_offset = node.end_col_offset
-    except AttributeError:
+    if node.end_lineno is None or node.end_col_offset is None:
         return None
+    lineno = node.lineno - 1
+    end_lineno = node.end_lineno - 1
+    col_offset = node.col_offset
+    end_col_offset = node.end_col_offset
     lines = source_lines(source)
     if end_lineno == lineno:
         return lines[lineno].encode()[col_offset:end_col_offset].decode()
