@@ -176,6 +176,54 @@ pub fn run(project_root: &Path) -> MementoPool {
     pool
 }
 
+/// Step 9 (ruling 3b on #7766; inventory item 40 on #7757): prove's input,
+/// by name and location, not by walking the root. That is the minted
+/// `.proof` files mint wrote at `project_root` and the imported `.proof`
+/// files mint staged directly in `project_root/.sugar/imports`. Nothing else
+/// under the root is read: not prove's own run receipts under `.sugar/runs`,
+/// and not a `.proof` file anywhere deeper in the tree.
+pub fn run_prove_inputs(project_root: &Path) -> MementoPool {
+    let _span = tracing::info_span!("load_all_proofs", root = %project_root.display()).entered();
+    info!(root = %project_root.display(), "load_all_proofs: reading the minted and imported .proof files");
+    let mut pool = MementoPool::default();
+    let imports = project_root.join(".sugar").join("imports");
+    for path in proof_files_in(project_root)
+        .into_iter()
+        .chain(proof_files_in(&imports))
+    {
+        let speaker = speaker_for_path(&path, Some(project_root));
+        debug!(path = %path.display(), role = ?speaker.role, "load_all_proofs: loading .proof file");
+        load_path_into_pool(&path, &mut pool, &speaker);
+    }
+    info!(
+        mementos = pool.mementos.len(),
+        load_errors = pool.load_errors.len(),
+        "load_all_proofs: complete"
+    );
+    for err in &pool.load_errors {
+        warn!(
+            proof_path = %err.proof_path,
+            reason = %err.reason,
+            "load_all_proofs: load error"
+        );
+    }
+    pool
+}
+
+/// The `.proof` files directly in `dir` (not below it), sorted by path.
+fn proof_files_in(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<PathBuf> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "proof") && path.is_file())
+        .collect();
+    out.sort();
+    out
+}
+
 pub fn run_with_files(project_root: &Path, proof_files: &[PathBuf]) -> MementoPool {
     let mut pool = run(project_root);
     load_files_into_pool(proof_files, &mut pool);
@@ -1087,6 +1135,55 @@ mod tests {
                 "conflicting-speaker survivor must be Consumer (order-independent)"
             );
         }
+    }
+
+    // Ruling 3b on #7766 (inventory item 40): prove reads the minted `.proof`
+    // at the root and the staged `.sugar/imports/*.proof`, by name and
+    // location. Its own run receipts and any `.proof` deeper in the tree are
+    // never read. Every file here is a forgery (its bytes do not hash to its
+    // name), so each one prove reads leaves a rule-1 load error naming it.
+    #[test]
+    fn prove_inputs_are_the_minted_and_staged_proofs_only() {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root =
+            std::env::temp_dir().join(format!("sugar-prove-inputs-{}-{nanos}", std::process::id()));
+        let name = |c: char| format!("blake3-512_{}.proof", c.to_string().repeat(128));
+        let write = |dir: PathBuf, file: String| {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(file), b"not a catalog").unwrap();
+        };
+        write(root.clone(), name('a'));
+        write(root.join(".sugar").join("imports"), name('b'));
+        write(root.join(".sugar").join("runs"), name('c'));
+        write(root.join(".sugar"), name('d'));
+        write(root.join("vendor"), name('e'));
+        write(root.join(".sugar").join("imports").join("pkg"), name('f'));
+
+        let pool = run_prove_inputs(&root);
+        let mut read: Vec<String> = pool
+            .load_errors
+            .iter()
+            .map(|err| {
+                Path::new(&err.proof_path)
+                    .strip_prefix(&root)
+                    .unwrap()
+                    .display()
+                    .to_string()
+            })
+            .collect();
+        read.sort();
+        assert_eq!(
+            read,
+            vec![format!(".sugar/imports/{}", name('b')), name('a'),],
+            "prove reads the root's .proof files and .sugar/imports only"
+        );
+
+        // The walk this replaces read every one of them.
+        assert_eq!(run(&root).load_errors.len(), 6);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     // #3813 (finding 2): `path_is_imported` is anchored to the active walk

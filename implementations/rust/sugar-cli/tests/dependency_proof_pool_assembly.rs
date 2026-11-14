@@ -286,13 +286,17 @@ fn publish_user_bridge(project_dir: &Path, target_cid: &str, target_bundle_cid: 
         callsite: None,
     });
     push_bridge(&mut graph, bridge);
-    write_proof(&project_dir.join(".sugar"), "@user/local-bridge", graph);
+    // Mint writes the project's own `.proof` at the project root; prove reads
+    // it there by name (ruling 3b on #7766), not by walking the tree.
+    write_proof(project_dir, "@user/local-bridge", graph);
 }
 
 fn publish_contradictory_implication_project() -> PathBuf {
     let project = unique_dir("contradictory-implication");
-    let proof_dir = project.join(".sugar");
-    fs::create_dir_all(&proof_dir).expect("mkdir proof dir");
+    // The project's own `.proof` sits at the project root, where mint writes
+    // it and where prove reads it (ruling 3b on #7766).
+    let proof_dir = project.clone();
+    fs::create_dir_all(project.join(".sugar")).expect("mkdir .sugar");
     install_smt_compiler_manifest(&project);
 
     let signer_seed: Ed25519Seed = [0x51u8; 32];
@@ -676,15 +680,25 @@ fn prove_reads_a_staged_dependency_and_refuses_cross_dependency_violation() {
         .arg(&project)
         .arg("--z3")
         .arg("z3")
-        .arg("--quiet")
+        .arg("--json")
         .output()
         .expect("run sugar prove");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert_eq!(
         output.status.code(),
         Some(1),
-        "cross-dependency bridge to must_be_positive(-1) must be refused\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        "cross-dependency bridge to must_be_positive(-1) must be refused\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let report: Json = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("parse prove JSON: {e}\n{stdout}\n{stderr}"));
+    assert!(
+        report["rows"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .any(|row| row["bridge"] == "must_be_positive" && row["status"] == "unsatisfied"),
+        "the call into the staged vendor contract must be refused on its merits: {report}"
     );
     let _ = fs::remove_dir_all(root);
 }
