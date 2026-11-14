@@ -293,9 +293,12 @@ def _ground_floor(raw, site, depth=0, visits=None):
       characters) has no such order: not held.
     - an ``enumerate`` iterator: the ``ListIteratorValue`` of its
       ``(index, member)`` pairs, consumed here from the fresh iterator.
+    - a ``dict_items`` view (``d.items()``): the ``TupleValue`` of its
+      ``(key, value)`` pairs, the value the floor holds for it.
 
-    A non-finite float, a ``frozenset``, any other iterator or any other
-    object is not held as a value here."""
+    A non-finite float, a ``frozenset``, a ``dict_keys``/``dict_values``
+    view, any other iterator or any other object is not held as a value
+    here."""
     import math
 
     from .floor.bytes_value import BytesValue
@@ -356,6 +359,14 @@ def _ground_floor(raw, site, depth=0, visits=None):
         if any(member is None for member in members):
             return None
         return ListIteratorValue(members)
+    if kind is type({}.items()):
+        # ``d.items()``: the tuple of its ``(key, value)`` pairs, in the dict's
+        # order -- the value the floor holds for an items view
+        # (``DictValue``/``MappingObjectValue`` ``items``).
+        members = tuple(_ground_floor(pair, site, depth + 1, visits) for pair in raw)
+        if any(member is None for member in members):
+            return None
+        return TupleValue(members)
     return None
 
 
@@ -516,6 +527,109 @@ def str_method_cited_fold(receiver, name, arguments, site):
         operands,
         site,
         owner=f"cpython_cited_fold:str.{name}",
+        callsite=None,
+        visits=visits,
+    )
+
+
+# The documented methods of ``list``/``tuple``/``dict`` that do not change the
+# receiver (Library Reference, "Built-in Types": *Common Sequence Operations*,
+# *Lists*, *Mapping Types*): their call on a ground receiver is answered by the
+# pinned interpreter's own method (``container_method_cited_fold``).  A set is
+# never handed over (``_host_ground``), so no set method is here.
+_CITED_CONTAINER_METHODS = {
+    list: frozenset({"copy", "count", "index"}),
+    tuple: frozenset({"count", "index"}),
+    dict: frozenset({"copy", "get", "items", "keys", "values"}),
+}
+
+# The mutating methods whose call value the container law reads from the
+# pinned interpreter (``container_mutator_result_fold``); the receiver's
+# post-state stays the law's (``floor/builtin_container_method``).
+_CITED_CONTAINER_MUTATOR_RESULTS = {
+    list: frozenset({"pop"}),
+    dict: frozenset({"pop", "popitem", "setdefault"}),
+}
+
+
+def cited_container_method(receiver, name, *, testified) -> bool:
+    """Whether ``container_method_cited_fold`` answers ``receiver.<name>(...)``.
+
+    ``receiver`` is a ground ``list``/``tuple``/``dict`` (``_host_ground``) and
+    ``name`` one of its documented methods that do not change it.  Its
+    contents must be the contents at this call: ``testified`` (the tree
+    decided the receiver's container and its state at the call:
+    ``decided_container_kind``), or an immutable value all the way down (a
+    hashable tuple), whose contents nothing can change.  A list or dict that
+    reached the call by binding (a formal's actual, an attribute) is not
+    testified at the call (#7618: ``redirect_stdout.__exit__``'s ``pop``): no
+    contents read is decided on it here."""
+    raw = _host_ground(receiver)
+    if raw is _NOT_GROUND or name not in _CITED_CONTAINER_METHODS.get(type(raw), ()):
+        return False
+    if testified:
+        return True
+    if type(raw) is not tuple:
+        return False
+    try:
+        hash(raw)
+    except TypeError:
+        return False
+    return True
+
+
+def container_method_cited_fold(receiver, name, arguments, site, callsite=None):
+    """``receiver.<name>(*arguments)`` on a ground container, decided, or None.
+
+    The caller asked ``cited_container_method`` first.  When every argument
+    is ground too, the outcome is the pinned interpreter's own method of the
+    receiver's type applied to them, through the door a builtin over ground
+    operands is decided by (``_host_applied``): ``[1, 2].index(3)`` is the one
+    ``ValueError`` halt, ``[1, 2, 1].count(1)`` is ``2``,
+    ``{'a': 1}.get('b')`` is ``None``.  A result the floor does not hold as a
+    value (a ``dict_keys`` view) completes as the call's coordinate
+    (``callsite``).  An argument known only by its type: None, and the call
+    keeps the receiver's other floors."""
+    visits: dict = {}
+    operands = _ground_operands((receiver, *arguments), visits)
+    if operands is None:
+        return None
+    host_type = type(operands[0])
+    if name not in _CITED_CONTAINER_METHODS.get(host_type, ()):
+        return None
+    return _host_applied(
+        getattr(host_type, name),
+        operands,
+        site,
+        owner=f"cpython_cited_fold:{host_type.__name__}.{name}",
+        callsite=callsite,
+        visits=visits,
+    )
+
+
+def container_mutator_result_fold(receiver, name, arguments, site):
+    """The value (or halt) of a mutating ``receiver.<name>(*arguments)``, or None.
+
+    The container law (``floor/builtin_container_method``) owns the
+    receiver's post-state; the call's value is the pinned interpreter's own
+    method applied to a fresh host copy of a ground receiver and ground
+    arguments (``_host_ground`` builds a new ``list``/``dict`` on every
+    call, so the copy's mutation is seen by nothing else): ``[1, 2].pop()``
+    is ``2``, ``[].pop()`` the one ``IndexError`` halt, ``{}.popitem()`` the
+    one ``KeyError`` halt.  A receiver or argument known only by its type:
+    None, and the law reads the member by its position."""
+    visits: dict = {}
+    operands = _ground_operands((receiver, *arguments), visits)
+    if operands is None:
+        return None
+    host_type = type(operands[0])
+    if name not in _CITED_CONTAINER_MUTATOR_RESULTS.get(host_type, ()):
+        return None
+    return _host_applied(
+        getattr(host_type, name),
+        operands,
+        site,
+        owner=f"cpython_cited_fold:{host_type.__name__}.{name}",
         callsite=None,
         visits=visits,
     )

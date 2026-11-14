@@ -20328,12 +20328,20 @@ class Call(Expression):
                 )
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
+            from .container_mutation import decided_container_kind
+
             return MethodCallSugar(
                 receiver=self.func.value.sugar(),
                 name=self.func.attr,
                 args=tuple(a.sugar() for a in self.args),
                 site=self.fragment,
                 keywords=keyword_sugars,
+                # The receiver's container and its state at this call are the
+                # tree's (a display, a builtin constructor, a cited mutation's
+                # post-state): a method that only reads it is decided there.
+                receiver_contents_testified=(
+                    decided_container_kind(self.func.value) is not None
+                ),
             )
         from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 

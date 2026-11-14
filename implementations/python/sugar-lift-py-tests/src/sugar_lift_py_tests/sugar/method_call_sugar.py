@@ -39,6 +39,12 @@ class MethodCallSugar(ConstructedTermSugar):
     exception_type_coordinate: object = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     native_definition_coordinate: object = dataclass_field(default=None, compare=False)
+    # The tree decided the receiver's container and its state at this call
+    # (``decided_container_kind``: a display, a builtin constructor, a cited
+    # mutation's post-state): its contents are the contents here, so a method
+    # that only reads them is decided by the cited fold
+    # (``container_method_cited_fold``).
+    receiver_contents_testified: bool = False
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(self.receiver, owner="MethodCallSugar.receiver")
@@ -200,6 +206,7 @@ class MethodCallSugar(ConstructedTermSugar):
             source_call_frame=self.source_call_frame,
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
+            receiver_contents_testified=self.receiver_contents_testified,
         )
 
 
@@ -215,16 +222,47 @@ def dispatch_method_call(
     exception_type_coordinate=None,
     exception_type_mro=None,
     may_defer=True,
+    receiver_contents_testified=False,
 ):
     """``receiver.name(*positional, **kw_values)`` selected by the receiver.
 
-    A floor of the receiver answers first (a source method body, a closed
+    A ground ``list``/``tuple``/``dict`` receiver whose contents are the
+    contents at this call, with ground arguments, calling a method that does
+    not change it, is decided by the cited fold alone
+    (``container_method_cited_fold``, #7757).  Otherwise a floor of the
+    receiver answers first (a source method body, a closed
     builtin method).  When none does and the receiver or an operand is a
     formal, the caller's actual selects the method: the call defers through
     ``NativeOperationExitCarrierV1`` with the ``method_call`` operator, whose
     projector re-runs this dispatch on the resolved actuals.  A built-in
     container whose method no floor decided, and a receiver this frame holds
     (a call's result, a builtin scalar), are two-faced (#7585)."""
+    if not kw_values and source_call_frame is None:
+        from sugar_lift_py_tests.source_call_resolution import (
+            cited_container_method,
+            container_method_cited_fold,
+        )
+
+        if cited_container_method(
+            receiver, name, testified=receiver_contents_testified
+        ):
+            folded = container_method_cited_fold(
+                receiver,
+                name,
+                tuple(positional),
+                site,
+                callsite=_method_callsite(
+                    name,
+                    receiver,
+                    positional,
+                    kw_values,
+                    site,
+                    exception_type_coordinate,
+                    exception_type_mro,
+                ),
+            )
+            if folded is not None:
+                return folded
     call_method_value = getattr(receiver, "call_method_value", None)
     supports_closed_method = getattr(receiver, "supports_closed_method", None)
     if callable(call_method_value) and (
@@ -261,31 +299,14 @@ def dispatch_method_call(
             requested="authenticated constructed receiver matching the method frame",
             fix="preserve receiver identity or keep authenticated dispatch loud",
         )
-    from sugar_lift_py_tests.floor import CallSiteValue
-    from sugar_lift_py_tests.ir import ctor, str_const
-
-    owner = str(site)
-    kwarg_terms = [
-        ctor("py.kwarg", [str_const(key), value.to_term(owner=owner)])
-        for key, value in kw_values
-    ]
-    term = ctor(
-        call_symbol(name),
-        [receiver.to_term(owner=owner)]
-        + [value.to_term(owner=owner) for value in positional]
-        + kwarg_terms,
-        symbol_kind="method-coordinate",
-    )
-    callsite = CallSiteValue(
-        target_name=name,
-        arg_values=(receiver, *positional, *(v for _, v in kw_values)),
-        parameters=(),
-        term=term,
-        body=None,
-        site=site,
-        runtime_dispatch_receiver=receiver,
-        exception_type_coordinate=exception_type_coordinate,
-        exception_type_mro=exception_type_mro,
+    callsite = _method_callsite(
+        name,
+        receiver,
+        positional,
+        kw_values,
+        site,
+        exception_type_coordinate,
+        exception_type_mro,
     )
     if may_defer:
         deferred = _defer_formal_method_call(name, receiver, positional, kw_values, site)
@@ -308,6 +329,44 @@ def dispatch_method_call(
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
     return UnknownCalleeCallV1(name).faces(callsite, site)
+
+
+def _method_callsite(
+    name,
+    receiver,
+    positional,
+    kw_values,
+    site,
+    exception_type_coordinate,
+    exception_type_mro,
+):
+    """The method coordinate ``call:<name>(receiver, args)`` of this call."""
+    from sugar_lift_py_tests.floor import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    owner = str(site)
+    kwarg_terms = [
+        ctor("py.kwarg", [str_const(key), value.to_term(owner=owner)])
+        for key, value in kw_values
+    ]
+    term = ctor(
+        call_symbol(name),
+        [receiver.to_term(owner=owner)]
+        + [value.to_term(owner=owner) for value in positional]
+        + kwarg_terms,
+        symbol_kind="method-coordinate",
+    )
+    return CallSiteValue(
+        target_name=name,
+        arg_values=(receiver, *positional, *(v for _, v in kw_values)),
+        parameters=(),
+        term=term,
+        body=None,
+        site=site,
+        runtime_dispatch_receiver=receiver,
+        exception_type_coordinate=exception_type_coordinate,
+        exception_type_mro=exception_type_mro,
+    )
 
 
 # Cited container methods whose exits and result the law decides from the
