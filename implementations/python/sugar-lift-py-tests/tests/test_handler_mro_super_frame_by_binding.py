@@ -1,11 +1,13 @@
 """Three readers decided by binding, never by spelling (#7757, leftovers of #8107).
 
-- The optional-provider gate ``try: import m`` / ``except ...``: the handler's
-  class is read by the binding it reaches (``_Pass._handler_class_identity``)
-  and whether it catches the absent provider's ``ModuleNotFoundError`` is the
-  one matcher's answer (``matches_raise_effect``). A superclass handler
-  (``Exception``, bare ``except``) gates; a rebound, imported or source class
-  never does by spelling; an undecided handler leaves the plain join.
+- The optional-provider gate ``try: import m`` / ``except ...``: the lexical
+  pass records the gate unevaluated (``TryImportGate``), and it is decided once
+  the table is complete: the handler's class by the one exception-class lookup
+  (``SourceUnit.exception_type_identity``) and whether it catches the absent
+  provider's ``ModuleNotFoundError`` by the one matcher
+  (``matches_raise_effect``). A superclass handler (``Exception``, bare
+  ``except``) gates; a rebound, imported or source class never does by
+  spelling; an undecided handler leaves the plain join.
 - A mapping object's dunders resolve through the class's MRO
   (``ClassDef.namespace_owner`` over the one base walk): a source override
   before ``dict`` wins, a source method after ``dict`` does not.
@@ -30,11 +32,10 @@ from sugar_lift_py_tests.floor.builtin_semantic_callable import (
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.import_binding import (
-    PROVIDER_GATE_TRY_IMPORT,
+    TryImportGate,
     _ImportDef,
     _Pass,
     _PROVIDER_ABSENT,
-    _UNBOUND,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
@@ -51,7 +52,34 @@ def _tree(source: str, name: str):
 # --- the optional-provider gate: the handler by binding, the one matcher -----
 
 
-def _reaching(source: str, name: str = "m") -> frozenset:
+def _row_after_the_try(source: str) -> tuple:
+    """The one table's decided row for a reference ``m`` after the ``try``:
+    with the gate fact admitted, and without it."""
+    tree = _tree(source + "m\n", "gate.py")
+    reference = next(
+        node for node in tree.nodes() if node.kind == "Name" and node.id == "m"
+    )
+    return (
+        tree.unit.import_reference_of(reference, admit_provider_gate=True),
+        tree.unit.import_reference_of(reference),
+    )
+
+
+def _gated(source: str) -> bool:
+    # The closed gate: the import where the provider exists, read only by a
+    # reader that carries the provider-absent face.
+    return _row_after_the_try(source) == ("python:m", None)
+
+
+def _plain(source: str) -> bool:
+    # The plain join: the import may have failed, so the name binds nothing.
+    return _row_after_the_try(source) == (None, None)
+
+
+def test_the_pass_records_the_gate_unevaluated() -> None:
+    # The pass does not read the handler's class while the table is being
+    # built: every handler shape carries the same unevaluated gate fact.
+    source = "try:\n    import m\nexcept ValueError:\n    pass\n"
     tree = _tree(source, "gate.py")
     runner = _Pass(
         source_cid=tree.unit.source_cid,
@@ -59,25 +87,11 @@ def _reaching(source: str, name: str = "m") -> frozenset:
         module_is_package=False,
         module_identities={},
     )
-    return runner.statements(tree.root.body, {}, tree.root).get(name, frozenset())
-
-
-def _gated(reaching: frozenset) -> bool:
-    imports = [value for value in reaching if isinstance(value, _ImportDef)]
-    return (
-        _PROVIDER_ABSENT in reaching
-        and len(imports) == 1
-        and imports[0].provider_gate == PROVIDER_GATE_TRY_IMPORT
-    )
-
-
-def _plain(reaching: frozenset) -> bool:
-    imports = [value for value in reaching if isinstance(value, _ImportDef)]
-    return (
-        _UNBOUND in reaching
-        and len(imports) == 1
-        and imports[0].provider_gate is None
-    )
+    reaching = runner.statements(tree.root.body, {}, tree.root)["m"]
+    (definition,) = (value for value in reaching if isinstance(value, _ImportDef))
+    assert _PROVIDER_ABSENT in reaching
+    assert isinstance(definition.provider_gate, TryImportGate)
+    assert runner.gate_verdicts == {}
 
 
 @pytest.mark.parametrize(
@@ -94,7 +108,7 @@ def _plain(reaching: frozenset) -> bool:
 def test_a_handler_that_catches_the_absent_provider_gates(handler: str) -> None:
     source = f"try:\n    import m\n{handler}\n    pass\n"
 
-    assert _gated(_reaching(source))
+    assert _gated(source)
 
 
 def test_an_aliased_builtin_is_judged_by_its_binding() -> None:
@@ -103,7 +117,7 @@ def test_an_aliased_builtin_is_judged_by_its_binding() -> None:
         "try:\n    import m\nexcept Missing:\n    pass\n"
     )
 
-    assert _gated(_reaching(source))
+    assert _gated(source)
 
 
 @pytest.mark.parametrize(
@@ -126,7 +140,7 @@ def test_an_aliased_builtin_is_judged_by_its_binding() -> None:
     ],
 )
 def test_an_undecided_or_missing_catch_keeps_the_plain_join(source: str) -> None:
-    assert _plain(_reaching(source))
+    assert _plain(source)
 
 
 # --- mapping objects: every dunder through the class's MRO -------------------
