@@ -5649,11 +5649,14 @@ class DecoratorUnresolvedV1:
 
     ``absent`` is the only member that means "nothing was there". Every other
     member is a lookup that failed, and the two must never share a value.
+    ``undecided`` is the one statement for a decorator nothing here answers
+    (no artifact authenticates its module): the exception never chooses the
+    label, and what was observed rides in the detail (#7757 item 4).
     """
 
     kind: Literal[
         "absent",
-        "artifact-authentication-failed",
+        "undecided",
         "module-absent-from-graph",
         "export-unresolved",
         "frame-construction-gap",
@@ -5733,8 +5736,13 @@ def _construct_decorator_function(
                 top_level, distribution_index=distribution_index
             )
         except DependencyArtifactAuthenticationError as exc:
+            from sugar_lift_py_tests.context_manager_resolution import (
+                UNDECIDED_GAP_KIND,
+            )
+
             return DecoratorUnresolvedV1(
-                "artifact-authentication-failed", f"{module_name}: {exc}"
+                UNDECIDED_GAP_KIND,
+                f"dependency artifact authentication failed for {module_name}: {exc}",
             )
         if session is not None and session.enabled:
             session.dependency_graphs[top_level] = authenticated_dependency

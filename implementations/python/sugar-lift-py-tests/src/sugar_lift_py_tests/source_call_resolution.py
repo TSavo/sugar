@@ -363,7 +363,13 @@ class OffPopulationSourceCallV1:
         from .ir import atomic, ctor, str_const
         from .occurrence import occurrence_key
         from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
+        from .unanswered_calls import record
 
+        # Not bridged: nothing here answers this call, so it is recorded once
+        # as the proof's `undecided` member (step 8), exactly as
+        # `UnknownCalleeCallV1` records its call -- the one import table's
+        # target symbol when the callee is import-bound, else none (Q5).
+        record(getattr(callsite, "authenticated_target_symbol", None), site)
         key = occurrence_key(site)
         call = ctor(
             "python:off_population_call",
