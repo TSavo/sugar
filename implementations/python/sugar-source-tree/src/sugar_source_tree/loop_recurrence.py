@@ -105,7 +105,7 @@ class LoopProjectedBindingProductSugar(ConstructedTermSugar):
 
         return read_binding(
             self.projection, read_name=self.name, read_site=self.site, ctx=ctx
-        ).collapse()
+        )
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import (

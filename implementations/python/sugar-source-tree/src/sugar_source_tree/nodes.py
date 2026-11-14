@@ -7897,13 +7897,15 @@ class Assign(Statement):
     def _constructed_floor_value(value):
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import _term_content_cid
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import outcome_to_exitset
         from .binding_provenance import ConstructedValueTestimonyV1
 
-        outcome = value.sugar().desugar()
-        if not isinstance(outcome, Complete):
+        outcome = outcome_to_exitset(value.sugar().desugar())
+        constructed = outcome.completed_value()
+        # A construction testimony has no arm to carry an owed item on: an
+        # owing value is not constructed here.
+        if constructed is None or outcome.owed_items():
             return None
-        constructed = outcome.value
         if isinstance(constructed, CallSiteValue):
             constructed = constructed.force_floor(
                 None,

@@ -74,7 +74,6 @@ def test_local_spread_kwargs_collects_match_actual(tmp_path):
     """Spread desugar binds ``match='boom'`` onto the constructor application."""
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.floor import StringValue
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.sugar.spread_sugar import SpreadCallSugar
     from sugar_lift_py_tests.temporal import builtin_name_temporal
     from sugar_lift_python_source.manager_summary_derivation import (
@@ -89,8 +88,7 @@ def test_local_spread_kwargs_collects_match_actual(tmp_path):
     outcome = _constructor_application_from_spread(
         sugar, ReduceContext(temporal=builtin_name_temporal())
     )
-    assert isinstance(outcome, Complete)
-    application = outcome.value
+    application = outcome.completed_value()
     assert application.keyword_names == ("match",)
     assert any(
         isinstance(argument, StringValue) and argument.value == "boom"

@@ -20,7 +20,7 @@ from sugar_lift_py_tests.floor.manager_coordinate import (
     ExitTypeCoordinate,
     ExitValueCoordinate,
 )
-from sugar_lift_py_tests.outcome import Complete, Completed
+from sugar_lift_py_tests.outcome import Completed
 
 from .canonical import cid_of_json
 from .manager_construction import ConstructedManagerBehaviorV1
@@ -362,7 +362,7 @@ def _completed_receiver_exits(receiver_state: ReceiverStatePartitionValue):
             continue
         if isinstance(face.value, ReceiverStatePartitionValue):
             for leaf in _completed_object_receivers(face.value):
-                faces.append(Completed(face.guard, leaf))
+                faces.append(Completed(face.guard, leaf, owed=face.owed))
     return ExitSet(tuple(faces))
 
 
@@ -522,6 +522,7 @@ def _resource_enter_transitions(receiver: ObjectValue, enter_outcome, *, blame: 
                 guard,
                 EnteredManagerStateValue(face.value, state),
                 faces,
+                face.owed,
             )
             for guard, state, faces in states
         )
@@ -695,8 +696,9 @@ def enter_generator_resource_outcome(protocol, *, ctx: object = None):
     """Allocate and resume the generator frame to its first yield.
 
     Shared by :class:`GeneratorBackedManagerProtocolV1` and lifecycle wrappers
-    that duck-type the same fields. Returns ``Complete(EnteredGeneratorManagerStateV1)``
-    on yield; typed-loud refusal when the machine cannot enter.
+    that duck-type the same fields. Returns
+    ``ExitSet.completed(EnteredGeneratorManagerStateV1)`` on yield; typed-loud
+    refusal when the machine cannot enter.
     """
     from sugar_lift_py_tests.generator_construction import (
         GeneratorConstructionV1,
@@ -763,11 +765,13 @@ def _project_generator_enter_result(protocol, machine, result):
         YieldEffect,
     )
     from sugar_lift_py_tests.ir import not_
-    from sugar_lift_py_tests.outcome import Complete, ExitSet, outcome_to_exitset
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_source_tree.panic import SugarNotWritten
 
     if isinstance(result, ExitSet):
-        return result.and_then(
+        # A nested enter's halts (an inner raise before the yield) are halted
+        # arms here: ``sequence`` passes them through untouched, owed and all.
+        return result.sequence(
             lambda value: _project_generator_enter_result(protocol, machine, value)
         )
     if isinstance(result, GuardedValue):
@@ -792,53 +796,49 @@ def _project_generator_enter_result(protocol, machine, result):
             return _project_generator_enter_result(protocol, machine, arm)
 
         return (
-            outcome_to_exitset(project_arm(result.when_true))
+            project_arm(result.when_true)
             .guarded(result.guard)
-            .union(
-                outcome_to_exitset(project_arm(result.when_false)).guarded(
-                    not_(result.guard)
-                )
-            )
+            .union(project_arm(result.when_false).guarded(not_(result.guard)))
         )
     if isinstance(result, YieldEffect):
-        enter_value = _floor_enter_value(result.value)
-        # Per-protocol enter ordinal distinguishes successive enters that
-        # content-address to the same machine suspension (double-exit is
-        # per entry, not per content twin).
-        ordinal = int(getattr(protocol, "_enter_ordinal", 0))
-        object.__setattr__(protocol, "_enter_ordinal", ordinal + 1)
-        entry_cid = cid_of_json(
-            {
-                "kind": "generator-resource-entry",
-                "schemaVersion": "1",
-                "protocolConstructionCid": protocol.protocol_construction_cid,
-                "instanceCoordinate": result.machine.instance_coordinate,
-                "resumeCoordinate": result.resume_coordinate,
-                "cursor": result.machine.cursor,
-                "enterOrdinal": ordinal,
-            }
-        )
-        entered = EnteredGeneratorManagerStateV1(
-            enter_value=enter_value,
-            machine=result.machine,
-            protocol_construction_cid=protocol.protocol_construction_cid,
-            entry_cid=entry_cid,
-        )
-        return Complete(entered)
-    # Nested enter can surface Incomplete (inner raise before yield).
-    from sugar_lift_py_tests.outcome import Incomplete
 
-    if isinstance(result, Incomplete):
-        return result
+        def enter(enter_value):
+            # Per-protocol enter ordinal distinguishes successive enters that
+            # content-address to the same machine suspension (double-exit is
+            # per entry, not per content twin).
+            ordinal = int(getattr(protocol, "_enter_ordinal", 0))
+            object.__setattr__(protocol, "_enter_ordinal", ordinal + 1)
+            entry_cid = cid_of_json(
+                {
+                    "kind": "generator-resource-entry",
+                    "schemaVersion": "1",
+                    "protocolConstructionCid": protocol.protocol_construction_cid,
+                    "instanceCoordinate": result.machine.instance_coordinate,
+                    "resumeCoordinate": result.resume_coordinate,
+                    "cursor": result.machine.cursor,
+                    "enterOrdinal": ordinal,
+                }
+            )
+            return ExitSet.completed(
+                EnteredGeneratorManagerStateV1(
+                    enter_value=enter_value,
+                    machine=result.machine,
+                    protocol_construction_cid=protocol.protocol_construction_cid,
+                    entry_cid=entry_cid,
+                )
+            )
+
+        # The yielded value is one completed arm; the entered state owes
+        # whatever constructing it owed.
+        return _floor_enter_value(result.value).sequence(enter)
     if isinstance(result, GeneratorTerminationV1):
         # Never-yield enter: Python's manager protocol raises at entry.
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.generator_entry_refusal import observed_entry_refusal
-        from sugar_lift_py_tests.outcome import Incomplete
 
         refusal = observed_entry_refusal()
         blame = str(machine.instance_coordinate)
-        return Incomplete(
+        return ExitSet.halted(
             RaiseEffect.for_builtin(
                 refusal.exception_name,
                 blame=blame,
@@ -877,7 +877,7 @@ def exit_generator_resource_outcome_for(protocol, entered, *, ctx: object = None
         GeneratorTransitionGapV1,
         YieldEffect,
     )
-    from sugar_lift_py_tests.outcome import Complete, ExitSet
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_source_tree.panic import SugarNotWritten
 
     if not isinstance(entered, EnteredGeneratorManagerStateV1):
@@ -958,55 +958,65 @@ def exit_generator_resource_outcome_for(protocol, entered, *, ctx: object = None
     # Authenticated suppression: generator CM exit is falsy unless the
     # machine returns an explicit truthy residual (none for ordinary GCM).
     # Never invent True — only the termination's return_value may speak.
-    return Complete(_suppression_block(after.return_value))
+    return _suppression_block(after.return_value)
 
 
 def _floor_enter_value(value: object):
-    """Project a yield payload into FloorValue currency when needed."""
+    """Project a yield payload into FloorValue currency when needed.
+
+    Answers one completed arm holding the FloorValue. A yielded sugar is
+    reduced, and the arm owes whatever that reduction owed.
+    """
     from sugar_lift_py_tests.floor.floor_value import FloorValue
     from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet, outcome_to_exitset
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
     if isinstance(value, FloorValue):
-        return value
+        return ExitSet.completed(value)
     if isinstance(value, Sugar):
-        outcome = value.desugar()
-        if isinstance(outcome, Complete):
-            return _floor_enter_value(outcome.value)
+        outcome = outcome_to_exitset(value.desugar())
+        if outcome.completed_value() is not None:
+            return outcome.sequence(_floor_enter_value)
         from sugar_source_tree.panic import SugarNotWritten
 
         raise SugarNotWritten(
             blame="generator-enter-yield",
             owner="GeneratorBackedManagerProtocolV1.enter_resource_outcome",
             observed=type(outcome).__name__,
-            requested="Complete FloorValue from yielded sugar",
+            requested="one completed FloorValue arm from yielded sugar",
             fix="construct the yield value or keep enter loud",
         )
     if value is None:
         from sugar_lift_py_tests.floor import NoneValue
 
-        return NoneValue()
+        return ExitSet.completed(NoneValue())
     if isinstance(value, (int, float, str, bool)):
-        return TermValue(value)
-    return TermValue(value)
+        return ExitSet.completed(TermValue(value))
+    return ExitSet.completed(TermValue(value))
 
 
 def _suppression_block(return_value: object):
-    """BlockValue carrying the authenticated exit return for suppression truth."""
+    """One completed arm: a BlockValue carrying the authenticated exit return
+    for suppression truth, owing whatever projecting that return owed."""
     from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
     from sugar_lift_py_tests.floor.floor_value import FloorValue
+    from sugar_lift_py_tests.outcome import ExitSet
 
     if return_value is None:
         # contextlib generator __exit__ returns False on normal StopIteration.
-        value: object = TermValue(False)
+        value = ExitSet.completed(TermValue(False))
     elif isinstance(return_value, FloorValue):
-        value = return_value
+        value = ExitSet.completed(return_value)
     elif isinstance(return_value, bool):
-        value = TermValue(return_value)
+        value = ExitSet.completed(TermValue(return_value))
     else:
         value = _floor_enter_value(return_value)
-    return BlockValue((ReturnValue(value),), can_fall_through=False)
+    return value.sequence(
+        lambda returned: ExitSet.completed(
+            BlockValue((ReturnValue(returned),), can_fall_through=False)
+        )
+    )
 
 
 def construct_generator_backed_protocol(

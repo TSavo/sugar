@@ -33,7 +33,7 @@ from sugar_lift_py_tests.generator_construction import (
     YieldEffect,
     YieldStepV1,
 )
-from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
+from sugar_lift_py_tests.outcome import outcome_to_exitset
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted, partition
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
@@ -86,8 +86,8 @@ def _protocol(*, frame=None, construction="blake3-512:" + "c" * 128):
 def test_enter_resource_outcome_yields_value_with_exact_machine_state():
     protocol = _protocol()
     outcome = protocol.enter_resource_outcome()
-    assert isinstance(outcome, Complete)
-    entered = outcome.value
+    assert outcome.completed_value() is not None
+    entered = outcome.completed_value()
     assert isinstance(entered, EnteredGeneratorManagerStateV1)
     assert entered.enter_value == TermValue(17)
     assert isinstance(entered.machine, GeneratorConstructionV1)
@@ -109,8 +109,8 @@ def test_enter_bound_generator_construction_preserves_exact_machine_testimony():
 
     outcome = protocol.enter_resource_outcome_for(machine)
 
-    assert isinstance(outcome, Complete)
-    entered = outcome.value
+    assert outcome.completed_value() is not None
+    entered = outcome.completed_value()
     assert entered.machine.instance_coordinate == machine.instance_coordinate
     assert entered.machine.allocation_coordinate == machine.allocation_coordinate
     assert entered.machine.reduction_context is reduction_context
@@ -328,7 +328,7 @@ def test_enter_projector_keeps_unsupported_guarded_arm_loud():
 
 def test_exit_outcome_for_resumes_exact_entered_machine_once():
     protocol = _protocol()
-    entered = protocol.enter_resource_outcome().value
+    entered = protocol.enter_resource_outcome().completed_value()
     exit_outcome = protocol.exit_outcome_for(entered)
     exits = outcome_to_exitset(exit_outcome)
     assert len(exits.exits) == 1
@@ -339,7 +339,7 @@ def test_exit_outcome_for_resumes_exact_entered_machine_once():
 
 def test_double_exit_of_same_entered_state_refuses():
     protocol = _protocol()
-    entered = protocol.enter_resource_outcome().value
+    entered = protocol.enter_resource_outcome().completed_value()
     protocol.exit_outcome_for(entered)
     with pytest.raises(SugarNotWritten, match="double exit"):
         protocol.exit_outcome_for(entered)
@@ -349,7 +349,7 @@ def test_wrong_protocol_face_resume_refuses():
     left = _protocol(construction="blake3-512:" + "1" * 128)
     right_frame = _frame(frame_cid=cid_of_json({"frame": "other"}))
     right = _protocol(frame=right_frame, construction="blake3-512:" + "2" * 128)
-    entered_left = left.enter_resource_outcome().value
+    entered_left = left.enter_resource_outcome().completed_value()
     with pytest.raises(SugarNotWritten, match="protocol construction CID mismatch"):
         right.exit_outcome_for(entered_left)
 
@@ -363,7 +363,7 @@ def test_wrong_entered_type_refuses():
 def test_suppression_truth_only_from_authenticated_exit_outcome():
     """Exit return is the sole suppression testimony — not a fabricated True."""
     protocol = _protocol()
-    entered = protocol.enter_resource_outcome().value
+    entered = protocol.enter_resource_outcome().completed_value()
     exit_outcome = protocol.exit_outcome_for(entered)
     block = outcome_to_exitset(exit_outcome).exits[0].value
     assert isinstance(block, BlockValue)
@@ -376,8 +376,8 @@ def test_suppression_truth_only_from_authenticated_exit_outcome():
 
 def test_identical_enters_mint_distinct_entry_cids_and_each_exits_once():
     protocol = _protocol()
-    first = protocol.enter_resource_outcome().value
-    second = protocol.enter_resource_outcome().value
+    first = protocol.enter_resource_outcome().completed_value()
+    second = protocol.enter_resource_outcome().completed_value()
     assert first.entry_cid != second.entry_cid
     protocol.exit_outcome_for(first)
     protocol.exit_outcome_for(second)
@@ -404,17 +404,17 @@ def test_pre_yield_inert_step_then_yield_still_enters():
         )
     )
     outcome = protocol.enter_resource_outcome()
-    assert isinstance(outcome, Complete)
-    assert outcome.value.enter_value == TermValue(99)
-    assert isinstance(outcome.value, EnteredGeneratorManagerStateV1)
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().enter_value == TermValue(99)
+    assert isinstance(outcome.completed_value(), EnteredGeneratorManagerStateV1)
     # Exit still once after inert-prefix enter.
-    exit_outcome = protocol.exit_outcome_for(outcome.value)
+    exit_outcome = protocol.exit_outcome_for(outcome.completed_value())
     face = outcome_to_exitset(exit_outcome).exits[0]
     assert face.value.statements[-1] == ReturnValue(TermValue(False))
 
 
 def test_pre_yield_never_yield_is_authenticated_entry_refusal():
-    """Exceptional control: return before any yield → Incomplete entry raise."""
+    """Exceptional control: return before any yield → halted entry raise."""
     protocol = _protocol(
         frame=_frame(
             steps=(ReturnStepV1(None),),
@@ -422,12 +422,13 @@ def test_pre_yield_never_yield_is_authenticated_entry_refusal():
         )
     )
     outcome = protocol.enter_resource_outcome()
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "RuntimeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "RuntimeError"
     # Message is vendor-observed refusal, not a silent gap.
-    assert outcome.effect.raised_value is not None
-    assert "yield" in str(outcome.effect.raised_value).lower()
+    assert halt.effect.raised_value is not None
+    assert "yield" in str(halt.effect.raised_value).lower()
 
 
 def test_pre_yield_assign_then_yield_enters_with_resource():
@@ -456,8 +457,8 @@ def test_pre_yield_assign_then_yield_enters_with_resource():
         )
     )
     outcome = protocol.enter_resource_outcome()
-    assert isinstance(outcome, Complete), type(outcome)
-    entered = outcome.value
+    assert outcome.completed_value() is not None, type(outcome)
+    entered = outcome.completed_value()
     assert isinstance(entered, EnteredGeneratorManagerStateV1)
     assert entered.enter_value == TermValue(42)
     assert entered.machine.suspended_resume_coordinate is not None
@@ -509,8 +510,8 @@ def test_pre_yield_suspension_assign_twin_does_not_impersonate_ordinary_assign()
         return
     # If enter somehow completes, it must be from the *inner* yield of the
     # suspension Assign — never by skipping to the trailing YieldStep.
-    assert isinstance(outcome, Complete)
-    entered = outcome.value
+    assert outcome.completed_value() is not None
+    entered = outcome.completed_value()
     assert isinstance(entered, EnteredGeneratorManagerStateV1)
     # Trailing "should-not-steal" would mean the suspension Assign was skipped.
     assert entered.enter_value != StringValue("should-not-steal"), (
@@ -537,5 +538,5 @@ def test_pre_yield_assign_and_inert_prefix_compose_then_yield():
         )
     )
     outcome = protocol.enter_resource_outcome()
-    assert isinstance(outcome, Complete)
-    assert outcome.value.enter_value == TermValue(7)
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().enter_value == TermValue(7)
