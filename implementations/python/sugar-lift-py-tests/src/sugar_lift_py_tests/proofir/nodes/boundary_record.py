@@ -13,7 +13,7 @@ from sugar_lift_py_tests.effect import (
     runtime_effect_evidence,
 )
 from sugar_lift_py_tests.ir import _json_like_to_value, eq, make_var, num
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 
 from . import (
     Provenance,
@@ -59,13 +59,15 @@ class BoundaryRecord:
     @classmethod
     def from_incomplete(
         cls,
-        incomplete: Incomplete,
+        incomplete: ExitSet,
         *,
         provenance: Provenance,
     ) -> BoundaryRecord:
-        if not isinstance(incomplete, Incomplete):
-            raise TypeError("BoundaryRecord.from_incomplete requires Incomplete")
-        return cls(effect=incomplete.effect, provenance=provenance)
+        """The record of one halt: an arm set whose one arm halts."""
+        halts = incomplete.halts() if isinstance(incomplete, ExitSet) else ()
+        if len(halts) != 1 or halts != incomplete.exits:
+            raise TypeError("BoundaryRecord.from_incomplete requires one halted arm")
+        return cls(effect=halts[0].effect, provenance=provenance)
 
     def denotation(self) -> None:
         return None
@@ -155,7 +157,7 @@ def _effectful_open_source() -> str:
     )
 
 
-def _runtime_effect_incomplete(reason: str) -> Incomplete:
+def _runtime_effect_incomplete(reason: str) -> ExitSet:
     import tempfile
 
     from sugar_lift_python_source.source_oracle import path_source
@@ -167,7 +169,7 @@ def _runtime_effect_incomplete(reason: str) -> Incomplete:
         handle.write("def _boundary_print(x):\n    print(x)\n")
         path = handle.name
     site = next(SourceFile(path_source(path)).functions()).fragment
-    return Incomplete(
+    return ExitSet.halted(
         CallResultTypeRuntimeEffect(
             reason,
             **runtime_effect_evidence("py.call", "print", site),

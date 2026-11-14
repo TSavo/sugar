@@ -9,7 +9,7 @@ Behind the desugar door three different things can happen, and folding any of
 them into ``R_desugar`` produces a number whose denominator is a lie:
 
 ``R_desugar``                 typed refusals (``SugarNotWritten``) and typed red
-                              effects (``Incomplete`` / ``Halted``).
+                              effects (``Halted`` arms).
 ``desugarConstructionPanics`` a construction-law None arm fired *during*
                               desugar. ``ConstructionPanic`` is a
                               ``BaseException``: neither ``except
@@ -148,7 +148,7 @@ def _fragment_coordinate(site: object) -> str | None:
 #
 # Two subdomains inside the lift are leaves by nature: ``ir`` (the proof-term /
 # formula language — terms hold no outcomes) and ``effect`` (an effect is
-# RECORDED at its Incomplete/Halted position; its interior is testimony, and
+# RECORDED at its Halted position; its interior is testimony, and
 # descending would recount a construction-total raise's effect as red).
 _SCALAR_TERMINALS = (str, bytes, bytearray, int, float, complex, bool, type, Enum)
 _WALK_DOMAIN = "sugar_lift_py_tests."
@@ -193,11 +193,11 @@ class OutcomeWalk:
         self.defects: list[str] = []
 
     def walk(self, outcome: object) -> "OutcomeWalk":
-        # The two effect-bearing outcome positions. Every other envelope
-        # (Complete, Completed, ExitSet, and every floor value) is walked
+        # The effect-bearing outcome position: a halted arm. Every other
+        # envelope (Completed, ExitSet, and every floor value) is walked
         # structurally as a dataclass, so a new envelope class cannot silently
         # hide an effect from the census.
-        from sugar_lift_py_tests.outcome import Halted, Incomplete
+        from sugar_lift_py_tests.outcome import Halted
 
         visited: set[int] = set()
         on_path: set[int] = set()
@@ -216,7 +216,7 @@ class OutcomeWalk:
                 continue
             visited.add(id(obj))
 
-            if isinstance(obj, (Incomplete, Halted)):
+            if isinstance(obj, Halted):
                 self.effects.append(obj.effect)
                 continue
             if _is_terminal(obj):

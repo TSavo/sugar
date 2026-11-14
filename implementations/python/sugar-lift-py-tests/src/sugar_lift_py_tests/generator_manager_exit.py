@@ -211,7 +211,6 @@ def _after_next(after, blame: str):
         GeneratorTransitionGapV1,
         YieldEffect,
     )
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     if isinstance(after, GeneratorTerminationV1):
@@ -224,8 +223,6 @@ def _after_next(after, blame: str):
         return _after_refused_yield(
             after.machine, observed_exit_refusals().did_not_stop, blame
         )
-    if isinstance(after, Incomplete):
-        return _after_next(ExitSet.halted(after.effect), blame)
     if isinstance(after, ExitSet):
         return _map_exits(after, lambda value: _after_next(value, blame), blame)
     if isinstance(after, GeneratorTransitionGapV1):
@@ -241,7 +238,6 @@ def _after_throw(after, thrown, blame: str):
         GeneratorTransitionGapV1,
         YieldEffect,
     )
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     if isinstance(after, GeneratorTerminationV1):
@@ -250,8 +246,6 @@ def _after_throw(after, thrown, blame: str):
         return _after_refused_yield(
             after.machine, observed_exit_refusals().did_not_stop_after_throw, blame
         )
-    if isinstance(after, Incomplete):
-        return _after_throw(ExitSet.halted(after.effect), thrown, blame)
     if isinstance(after, ExitSet):
         return _map_exits(
             after,
@@ -290,7 +284,7 @@ def _after_refused_yield(machine, message: str, blame: str):
             # A raise from close() supersedes the RuntimeError in flight.
             exits.append(face)
             continue
-        exits.append(Halted(face.guard, refusal, None, face.faces))
+        exits.append(Halted(face.guard, refusal, None, face.faces, face.owed))
     return ExitSet(tuple(exits)).normalize()
 
 
@@ -316,6 +310,7 @@ def _map_exits(exit_set, on_completed, blame: str, *, thrown=None):
                             effect,
                             face.state,
                             face.faces,
+                            face.owed,
                         ),
                     )
                 )
@@ -339,14 +334,17 @@ def _guard_with(exit_set, face):
         ExitSet,
         Halted,
         _and_guards,
+        owed_union,
     )
 
     out = []
     for inner in exit_set.exits:
         guard = _and_guards(face.guard, inner.guard)
         faces = face.faces | inner.faces
+        # The mapped face's debts ride onto every exit it produced.
+        owed = owed_union(face.owed, inner.owed)
         if isinstance(inner, Halted):
-            out.append(Halted(guard, inner.effect, inner.state, faces))
+            out.append(Halted(guard, inner.effect, inner.state, faces, owed))
         else:
-            out.append(Completed(guard, inner.value, faces))
+            out.append(Completed(guard, inner.value, faces, owed))
     return ExitSet(tuple(out)).normalize()

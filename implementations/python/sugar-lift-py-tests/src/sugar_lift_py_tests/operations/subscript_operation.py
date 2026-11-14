@@ -12,7 +12,7 @@ from typing import Any, ClassVar, NoReturn
 
 from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.ir import num
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 
 
 @dataclass(frozen=True)
@@ -61,8 +61,8 @@ class SubscriptOperation:
         if isinstance(index, SliceValue):
             return _subscript_string_slice(receiver, index, self.blame)
         if isinstance(index, TermValue) and type(index.value) is int:
-            return Complete(StringValue(receiver.value[index.value]))
-        return Complete(
+            return ExitSet.completed(StringValue(receiver.value[index.value]))
+        return ExitSet.completed(
             EncodedStringValue(
                 table=tuple(ord(ch) for ch in receiver.value),
                 indices=(_string_index_term(index),),
@@ -103,7 +103,7 @@ class SubscriptOperation:
         from sugar_lift_py_tests.floor import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
 
-        return Complete(
+        return ExitSet.completed(
             SymbolicValue(
                 ctor(
                     "py.subscript",
@@ -143,7 +143,7 @@ def _subscript_sequence(
         if item_index < 0:
             item_index += len(items)
         if 0 <= item_index < len(items):
-            return Complete(items[item_index])
+            return ExitSet.completed(items[item_index])
         _raise_subscript_gap(
             owner=owner,
             blame=str(blame),
@@ -179,7 +179,7 @@ def _subscript_string_slice(receiver, index, blame: object) -> Outcome:
     lower = _concrete_slice_bound(index.lower, blame)
     upper = _concrete_slice_bound(index.upper, blame)
     step = _concrete_slice_bound(index.step, blame)
-    return Complete(StringValue(receiver.value[slice(lower, upper, step)]))
+    return ExitSet.completed(StringValue(receiver.value[slice(lower, upper, step)]))
 
 
 def _concrete_slice_bound(value: Any | None, blame: object) -> int | None:

@@ -507,7 +507,11 @@ def function_universe_outcome(fn):
 
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor import ClassDefinitionValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import (
+        ExitSet,
+        NativeOperationExitCarrierV1,
+        outcome_to_exitset,
+    )
     from sugar_source_tree.panic import SugarNotWritten
 
     if not fn.params:
@@ -520,8 +524,15 @@ def function_universe_outcome(fn):
         )
     receiver_coordinate = fn._constructed_receiver_coordinate(owner, fn.params[0])
     definition_outcome = owner.sugar().desugar(None)
-    if not isinstance(definition_outcome, Complete) or not isinstance(
-        definition_outcome.value, ClassDefinitionValue
+    definition = (
+        None
+        if isinstance(definition_outcome, NativeOperationExitCarrierV1)
+        else outcome_to_exitset(definition_outcome)
+    )
+    if (
+        not isinstance(definition, ExitSet)
+        or definition.owed_items()
+        or not isinstance(definition.completed_value(), ClassDefinitionValue)
     ):
         raise SugarNotWritten(
             owner="function_universe_outcome",
@@ -530,7 +541,7 @@ def function_universe_outcome(fn):
             requested="the authenticated source class definition",
             fix="construct the initializer through its lexical class owner",
         )
-    receiver = definition_outcome.value.construct_receiver_state_from_block(
+    receiver = definition.completed_value().construct_receiver_state_from_block(
         None, receiver_coordinate.cid
     )
     root = ReduceContext.root(owner="function_universe_outcome")
@@ -549,22 +560,19 @@ def reduction_rows(outcome, *, owner, blame, def_memento):
 
     A function body's one reduction (``function_contract_rows``) becomes rows
     here and nowhere else; enumerate never applies a body at a call itself
-    (#7757 item 12: a contract is applied at prove). ``outcome`` is a
-    ``Complete`` (one arm under guard true) or an ``ExitSet`` of completed and
-    halted arms; ``owner`` states the name, formals and symbol when no arm
-    completed. ``None`` when the outcome is not a set of arms.
+    (#7757 item 12: a contract is applied at prove). ``outcome`` is an
+    ``ExitSet`` of completed and halted arms (one completed arm under guard
+    true is the one-arm case); ``owner`` states the name, formals and symbol
+    when no arm completed. ``None`` when the outcome is not a set of arms.
     """
     from sugar_lift_py_tests.floor.universe_value import (
         UniverseValue,
         exit_arms_payload_rows,
     )
-    from sugar_lift_py_tests.outcome import Complete, ExitSet
-    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, true_guard
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 
-    if isinstance(outcome, Complete):
-        arms = ((true_guard(), outcome.value),)
-        halted_sites = ()
-    elif isinstance(outcome, ExitSet):
+    if isinstance(outcome, ExitSet):
         arms = tuple(
             (exit_.guard, exit_.value)
             for exit_ in outcome.exits
@@ -617,28 +625,38 @@ def function_contract_rows(fn, file_rel: str):
     """A function's contract DTO rows, read off EVERY arm of its one reduction.
 
     `fn.sugar()` constructs the FunctionUniverseSugar; desugar reduces the body
-    to a ``Complete`` (one arm under guard true) or an ``ExitSet`` of completed
-    and halted arms. ``exit_arms_payload_rows`` projects all of them: the post
-    over every completed arm, and one row per assertion site (see there). A
-    ``Complete`` is the one-arm case and keeps its rows byte-for-byte.
+    to an ``ExitSet`` of completed and halted arms. ``exit_arms_payload_rows``
+    projects all of them: the post over every completed arm, and one row per
+    assertion site (see there). One completed arm under guard true is the
+    one-arm case.
 
     An outcome that is not a set of arms (a deferred native operation,
     ``NativeOperationExitCarrierV1``, whose arms exist only once a caller
-    discharges it with actuals, or a bare effect) emits no contract: the
-    function is (memento, None). Its carrier's own formula still meets the
-    scope law (``require_outcome_in_scope``). Every row is read off this one
+    discharges it with actuals) emits no contract: the function is
+    (memento, None). Its carrier's own formula still meets the scope law
+    (``require_outcome_in_scope``). A halt is an arm: a body that only halts
+    states its halted arms like any other set. Every row is read off this one
     reduction; no other lifter adds to it (#7767). A SugarNotWritten from an
     unported body statement propagates (the whole function is a frontier gap).
     """
-    from sugar_lift_py_tests.outcome import Complete, ExitSet
+    from sugar_lift_py_tests.outcome import (
+        NativeOperationExitCarrierV1,
+        Outcome,
+        outcome_to_exitset,
+    )
 
     def_memento = function_def_memento(fn, file_rel)
     outcome = owner_reduction(fn).outcome
-    if not isinstance(outcome, (Complete, ExitSet)):
+    if isinstance(outcome, NativeOperationExitCarrierV1) or not isinstance(
+        outcome, Outcome
+    ):
         require_outcome_in_scope(outcome, fn.sugar())
         return def_memento, None
     return def_memento, reduction_rows(
-        outcome, owner=fn.sugar(), blame=fn.fragment, def_memento=def_memento
+        outcome_to_exitset(outcome),
+        owner=fn.sugar(),
+        blame=fn.fragment,
+        def_memento=def_memento,
     )
 
 

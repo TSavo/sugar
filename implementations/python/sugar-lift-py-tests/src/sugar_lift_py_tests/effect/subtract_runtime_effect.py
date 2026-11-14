@@ -16,7 +16,7 @@ class SubtractRuntimeEffect(RuntimeEffect):
 def runtime_subtract(left, right, site):
     """Build one authenticated boundary for runtime subtraction dispatch."""
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     operand = ctor(
         "-",
@@ -25,7 +25,7 @@ def runtime_subtract(left, right, site):
             right.to_term(owner=str(site)),
         ],
     )
-    return Incomplete(
+    return ExitSet.halted(
         SubtractRuntimeEffect(
             "subtraction depends on runtime __sub__/__rsub__ dispatch; "
             f"left={type(left).__name__} right={type(right).__name__} site={site}",

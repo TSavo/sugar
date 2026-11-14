@@ -14,9 +14,9 @@ class UnaryPlusRuntimeEffect(RuntimeEffect):
 
 
 def runtime_unary_plus(operand, site):
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    return Incomplete(
+    return ExitSet.halted(
         UnaryPlusRuntimeEffect(
             "unary plus depends on the opaque call result's __pos__ dispatch; "
             f"site={site}",
