@@ -512,26 +512,252 @@ def test_try_gated_from_builtins_import_is_the_builtin(tmp_path):
     assert tree.unit.exception_type_mro(operand) is not None
 
 
-def test_star_imported_class_is_the_one_undecided_citation(tmp_path):
-    """A name a star import the lifter cannot read may bind is cited
-    undecided by name; an ancestry walk over it states nothing."""
-    from sugar_source_tree.panic import SugarNotWritten
+# ── The undecided citation (#7757, follow-up to #8086) ──
+#
+# A name only a star import the lifter cannot read may bind is never refused
+# and never answered: its identity is ``UndecidedExceptionClassV1``. Its read
+# owes the ``undecided`` member (reason ``unanswered``, no symbol), a match
+# against it is retained, and a call of it (or of a class with it as a base)
+# is the one unanswered call. ``unreadable_star_m`` exists nowhere.
+
+_STAR = "from unreadable_star_m import *\n"
+
+
+def _function(tmp_path: Path, name: str, source: str):
+    """The one function ``source`` defines, opened for construction."""
+    from with_resolution_fixture import source_file_with_preconstruction
+
+    path = tmp_path / name
+    path.write_text(source, encoding="utf-8")
+    return next(source_file_with_preconstruction(path).functions())
+
+
+def _owed_items(outcome):
+    """Every unanswered item ``outcome`` owes: on its arms, and on the
+    all-halting entries a completed arm's record carries."""
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    items = list(owed_calls(outcome))
+    for face in outcome.exits:
+        if not isinstance(face, Completed):
+            continue
+        record = getattr(face.value, "record", None)
+        for entry in getattr(record, "statements", ()):
+            if isinstance(entry, ExitSet):
+                items.extend(owed_calls(entry))
+    return items
+
+
+def _halt_effects(outcome):
+    """Every halt effect ``outcome`` leaves by: its halted arms, and the
+    all-halting entries a completed arm's record carries."""
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+
+    effects = []
+    for face in outcome.exits:
+        if isinstance(face, Halted):
+            effects.append(face.effect)
+        elif isinstance(face, Completed):
+            record = getattr(face.value, "record", None)
+            for entry in getattr(record, "statements", ()):
+                if isinstance(entry, ExitSet):
+                    effects.extend(halt.effect for halt in entry.halts())
+    return effects
+
+
+def _owed_at(items, line: int):
+    return [
+        item
+        for item in items
+        if item.symbol is None
+        and item.site is not None
+        and item.site.start_line == line
+    ]
+
+
+def test_star_imported_class_is_the_undecided_identity(tmp_path):
+    """The one lookup answers the undecided citation, typed: no refusal, no
+    class. Its coordinate is the read's own; it owes the member at the read;
+    no ancestry and no class value are read through it, nor through a class
+    whose base it is."""
+    from sugar_source_tree.nodes import UndecidedExceptionClassV1
 
     tree = _tree(
         tmp_path,
         "star.py",
-        "from pyarrow import *\n"
-        "class E(ArrowInvalid):\n"
+        _STAR
+        + "class E(ArrowInvalid):\n"
         "    pass\n"
         "def f():\n"
-        "    raise ArrowInvalid('x')\n",
+        "    raise ArrowInvalid('x')\n"
+        "def g():\n"
+        "    raise E('y')\n",
     )
     operand = _name(tree, "ArrowInvalid", 5)
-    with pytest.raises(SugarNotWritten) as refusal:
-        tree.unit.exception_type_identity(operand)
-    assert "undecided" in refusal.value.observed
-    # ``E``'s only base is undecided: the module states nothing about ``E``.
+    identity = tree.unit.exception_type_identity(operand)
+    assert isinstance(identity, UndecidedExceptionClassV1)
+    assert identity.name == "ArrowInvalid"
+    assert identity.coordinate() == ctor(
+        "python:exception_type_identity",
+        [str_const("undecided"), str_const(identity.read)],
+    )
+    # Two reads of the name never name one class.
+    base = _name(tree, "ArrowInvalid", 2)
+    assert tree.unit.exception_type_identity(base) != identity
+    (item,) = identity.owed()
+    assert item.symbol is None
+    assert item.site.start_line == 5
+    assert tree.unit.exception_type_mro(operand) is None
+    assert tree.unit.exception_class_value(operand) is None
+
+    # ``E`` is a source class; its only base is undecided, so its ancestry
+    # and its class value are not read, and the module states nothing.
+    local = _name(tree, "E", 7)
+    assert tree.unit.exception_type_identity(local).args[0].value == "source-class"
+    assert tree.unit.exception_type_mro(local) is None
+    assert tree.unit.exception_class_value(local) is None
     assert tree.unit.exception_class_ancestry() == ()
+
+
+def test_raise_of_a_star_imported_class_call_is_undetermined_and_owes(tmp_path):
+    """``raise X('x')``: the call is the one unanswered class call, so the
+    raise is of undetermined class and owes the member at the call."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+    function = _function(
+        tmp_path, "raise_star.py", _STAR + "def f():\n    raise ArrowInvalid('x')\n"
+    )
+    outcome = function.sugar().desugar()
+    effects = _halt_effects(outcome)
+    assert effects
+    assert all(isinstance(effect, UndeterminedRaiseEffect) for effect in effects)
+    assert _owed_at(_owed_items(outcome), 3)
+
+
+def test_raise_of_a_class_with_an_undecided_base_is_the_unanswered_class_call(
+    tmp_path,
+):
+    """``class E(X)`` with ``X`` undecided: ``raise E('y')`` constructs; the
+    call of ``E`` is the one unanswered class call (``UnknownCalleeCallV1``)
+    and owes the member."""
+    function = _function(
+        tmp_path,
+        "base_star.py",
+        _STAR + "class E(ArrowInvalid):\n    pass\ndef f():\n    raise E('y')\n",
+    )
+    outcome = function.sugar().desugar()
+    assert any(
+        getattr(effect, "producer_node_owner", None) == "UnknownCallee:E"
+        for effect in _halt_effects(outcome)
+    )
+    assert _owed_at(_owed_items(outcome), 5)
+
+
+def test_except_of_a_star_imported_class_is_retained_and_owes(tmp_path):
+    """``except X``: the arm constructs; the match against the undecided
+    class is retained over its coordinate, and every face that passed the
+    arm owes the member at the arm's type."""
+    function = _function(
+        tmp_path,
+        "except_star.py",
+        _STAR
+        + "def f(g):\n"
+        "    try:\n"
+        "        return g()\n"
+        "    except ArrowInvalid:\n"
+        "        return None\n",
+    )
+    outcome = function.sugar().desugar()
+    rendered = repr(outcome)
+    assert "adt.is_python_type" in rendered
+    assert "value='undecided'" in rendered
+    assert _owed_at(_owed_items(outcome), 5)
+
+
+def test_expected_star_imported_class_is_retained_and_owes(tmp_path):
+    """``with pytest.raises(X)``: the expected operand constructs with the
+    undecided coordinate, owes the member, and a raise matched against it is
+    retained, exactly as against an imported alias."""
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchRetained,
+        matches_raise_effect,
+    )
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    boundary = _boundary(
+        tmp_path,
+        _STAR
+        + "def f():\n"
+        "    with expect(ArrowInvalid):\n"
+        "        raise ValueError('x')\n",
+    )
+    outcome = boundary.manager.desugar()
+    expected = outcome.completed_value().arg_values[0]
+    assert isinstance(expected, AuthenticatedExceptionTypeValue)
+    identity = expected.exception_type_identity()
+    assert identity.args[0].value == "undecided"
+    assert _owed_at(owed_calls(outcome), 3)
+    probe = RaiseEffect.for_builtin("ValueError", occurrence="probe", blame="probe")
+    assert isinstance(matches_raise_effect(probe, expected), MatchRetained)
+
+
+def test_warning_category_star_imported_is_retained_and_owes(tmp_path):
+    """A warning category a star import may bind: ``warnings.warn(m, X)``
+    constructs; the category read owes the member, the observation carries
+    the undecided coordinate, and matching it against a builtin category (or
+    a builtin observation against it) is retained, never decided."""
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchRetained,
+        warning_effect_message_verdict,
+    )
+    from sugar_lift_py_tests.effect.warning_effect import WarningEffect
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+    from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+        AuthenticatedExceptionTypeSugar,
+    )
+    from sugar_lift_py_tests.sugar.warning_observation_producer import (
+        warning_observation_from_operands,
+    )
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    source = _STAR + "import warnings\ndef f():\n    warnings.warn('m', ArrowInvalid)\n"
+    # The warning reader constructs instead of refusing.
+    _function(tmp_path, "warn_star.py", source).sugar()
+
+    tree = _tree(tmp_path, "warn_star.py", source)
+    operand = _name(tree, "ArrowInvalid", 4)
+    identity = tree.unit.exception_type_identity(operand)
+    read = AuthenticatedExceptionTypeSugar(
+        operand.sugar(), identity, site=operand.fragment
+    ).desugar()
+    assert _owed_at(owed_calls(read), 4)
+    category = read.completed_value()
+    observation = warning_observation_from_operands(
+        (StringValue("m"), category), (), None
+    )
+    assert observation.effect.category_identity == identity.coordinate()
+
+    user_warning = _builtin_identity("UserWarning")
+    builtin = AuthenticatedExceptionTypeValue(
+        SymbolicValue(user_warning), user_warning, None, None
+    )
+    assert isinstance(
+        warning_effect_message_verdict(observation.effect, builtin, None),
+        MatchRetained,
+    )
+    observed_builtin = WarningEffect(
+        category_name="UserWarning",
+        message=None,
+        blame=None,
+        category_identity=user_warning,
+    )
+    assert isinstance(
+        warning_effect_message_verdict(observed_builtin, category, None),
+        MatchRetained,
+    )
 
 
 def test_local_and_builtin_classes_keep_their_identities(tmp_path):

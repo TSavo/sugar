@@ -1639,7 +1639,9 @@ class GeneratorConstructionV1:
             blame=step.fragment_cid,
         )
         for matcher, _body, _slot in step.handlers:
-            verdict = _effect_match_verdict(
+            # A probe, not a path: what reading the arm's type owes is owed by
+            # the routed faces (``_route_one_halt``), never by this question.
+            verdict, _read_owes = _effect_match_verdict(
                 probe, matcher, self._guard_evaluation_context(), site=step.site
             )
             if not (isinstance(verdict, MatchDecided) and verdict.value is False):
