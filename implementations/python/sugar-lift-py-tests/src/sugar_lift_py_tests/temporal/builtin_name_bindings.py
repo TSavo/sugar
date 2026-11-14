@@ -258,6 +258,41 @@ def builtin_exception_constructor_is_args_total(name: str) -> bool:
     return not (_builtin_exception_ancestry(root) & _PARTIAL_EXCEPTION_CONSTRUCTORS)
 
 
+def builtin_exception_construction_reads_values(
+    name: str, positional_count: int
+) -> bool:
+    """Whether a call of the builtin exception class bound to ``name`` with
+    ``positional_count`` positional actuals (no keyword) depends on what
+    those actuals are, not only on how many there are (CPython
+    Objects/exceptions.c):
+
+    - an args-total class (``builtin_exception_constructor_is_args_total``)
+      never does: it stores them as ``args``;
+    - under ``OSError``, ``oserror_parse_args`` reads 2 to 5 actuals
+      (``OSError_new`` selects the subclass by the errno,
+      ``oserror_init`` drops a non-``None`` filename from ``args``); any
+      other count is stored as ``args``;
+    - under ``SyntaxError``, ``SyntaxError_init`` parses the second of
+      exactly 2 actuals as the details tuple; any other count is stored as
+      ``args``;
+    - every other constructor of its own (the ``Unicode*Error`` signatures,
+      the exception groups) reads its actuals' types and values.
+
+    A name that is not a builtin exception answers True: nothing here says
+    what its constructor reads."""
+    if builtin_exception_constructor_is_args_total(name):
+        return False
+    root = canonical_builtin_exception_name(name)
+    if root not in BUILTIN_EXCEPTION_NAMES:
+        return True
+    ancestry = _builtin_exception_ancestry(root)
+    if "OSError" in ancestry:
+        return 2 <= positional_count <= 5
+    if "SyntaxError" in ancestry:
+        return positional_count == 2
+    return True
+
+
 def builtin_exception_constructor_rejects_keywords(name: str) -> bool:
     """Whether a call of the builtin exception class bound to ``name`` with
     any keyword actual raises TypeError: its constructor is BaseException's

@@ -8,7 +8,13 @@ builtin exception whose constructor is BaseException's law initializes through
 (``builtin_exception_constructor_rejects_keywords``).  So the call is that
 TypeError.  A class whose constructor may read keywords (``ImportError``,
 ``AttributeError``, ``NameError``) or is not BaseException's (``OSError``) is
-not read: the call is the one unanswered call, never a completion with args.
+not read over an actual known only by its type: the call is the one
+unanswered call, never a completion with args.
+
+Over ground actuals the pinned interpreter constructs the class
+(``builtin_exception_cited_fold``, #7757): ``OSError(2, 'x')`` is a
+``FileNotFoundError`` with ``args`` ``(2, 'x')``, ``SyntaxError('m', 5)`` is
+the TypeError, and ``.args`` reads what the construction stored.
 """
 
 from __future__ import annotations
@@ -67,24 +73,155 @@ def test_the_type_error_is_caught_by_an_except_type_error(tmp_path) -> None:
 
 @pytest.mark.parametrize(
     "callee",
-    ["ImportError('m', name='x')", "AttributeError('a', obj=1)", "OSError(2, x=1)"],
+    ["ImportError('m', name=v)", "AttributeError('a', obj=v)", "OSError(2, x=v)"],
 )
 def test_a_constructor_that_may_read_keywords_is_the_unanswered_call(
     tmp_path, callee
 ) -> None:
-    exits = _exits(tmp_path, f"def f():\n    return {callee}\n")
+    # ``v`` is known only by its type: what the constructor does with it is
+    # not read here.
+    exits = _exits(tmp_path, f"def f(v):\n    return {callee}\n")
     halts = [face.effect for face in exits.exits if isinstance(face, Halted)]
     assert len(owed_calls(exits)) == 1
     assert _owners(halts) == [f"UnknownCallee:{callee.split('(')[0]}"]
 
 
-# -- the bodiless ``.args`` read: BaseException's law, or no answer ---------
+# -- ground actuals: the pinned interpreter constructs (#7757) --------------
 
 
-def _bodiless_exception_call(class_name, *, keyword_names=()):
+def _completed_instance(exits):
+    """The one value ``f`` returns, on its one face."""
+    from test_assignment_evaluates_rhs import _rows
+
+    ((kind, value, _guard),) = _rows(exits)
+    assert kind == "return"
+    return value
+
+
+def test_ground_keywords_the_class_accepts_are_constructed_by_the_interpreter(
+    tmp_path,
+) -> None:
+    from sugar_lift_py_tests.floor import StringValue, TupleValue
+
+    value = _completed_instance(
+        _exits(tmp_path, "def f():\n    return ImportError('m', name='x')\n")
+    )
+    assert value.builtin_exception_class.name == "ImportError"
+    # ``ImportError('m', name='x').args == ('m',)``: keywords are never args.
+    assert value.constructed_args == TupleValue((StringValue("m"),))
+
+
+def test_ground_keywords_os_error_rejects_are_the_type_error(tmp_path) -> None:
+    (face,) = _exits(tmp_path, "def f():\n    return OSError(2, x=1)\n").exits
+    assert isinstance(face, Halted)
+    assert isinstance(face.effect, RaiseEffect)
+    assert face.effect.exception_name == "TypeError"
+
+
+def _exception_identity(name):
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    return ctor(
+        "python:exception_type_identity", [str_const("builtins"), str_const(name)]
+    )
+
+
+def test_os_error_with_an_errno_constructs_its_subclass(tmp_path) -> None:
+    # ``OSError(2, 'x')`` is a ``FileNotFoundError`` (``OSError_new`` selects
+    # the subclass by errno): never typed ``OSError``.
+    from sugar_lift_py_tests.floor import StringValue, TermValue, TupleValue
+
+    value = _completed_instance(
+        _exits(tmp_path, "def f():\n    return OSError(2, 'x')\n")
+    )
+    assert value.builtin_exception_class.name == "FileNotFoundError"
+    assert value.constructed_args == TupleValue((TermValue(2), StringValue("x")))
+    (face,) = _exits(tmp_path, "def f():\n    raise OSError(2, 'x')\n").exits
+    assert isinstance(face, Halted)
+    assert isinstance(face.effect, RaiseEffect)
+    assert face.effect.exception_type_coordinate == _exception_identity(
+        "FileNotFoundError"
+    )
+    (args_face,) = face.effect.raised_value.attribute("args", None, None).exits
+    assert args_face.value == TupleValue((TermValue(2), StringValue("x")))
+
+
+def test_os_error_args_drop_the_filename(tmp_path) -> None:
+    from sugar_lift_py_tests.floor import StringValue, TermValue, TupleValue
+
+    value = _completed_instance(
+        _exits(tmp_path, "def f():\n    return OSError(2, 'x', 'f')\n")
+    )
+    assert value.builtin_exception_class.name == "FileNotFoundError"
+    assert value.constructed_args == TupleValue((TermValue(2), StringValue("x")))
+
+
+def test_os_error_with_one_argument_stays_os_error(tmp_path) -> None:
+    from sugar_lift_py_tests.floor import StringValue, TupleValue
+
+    value = _completed_instance(
+        _exits(tmp_path, "def f():\n    return OSError('m')\n")
+    )
+    assert value.builtin_exception_class.name == "OSError"
+    assert value.constructed_args == TupleValue((StringValue("m"),))
+    (face,) = _exits(tmp_path, "def f():\n    raise OSError('m')\n").exits
+    assert isinstance(face, Halted)
+    assert face.effect.exception_type_coordinate == _exception_identity("OSError")
+
+
+def test_syntax_error_with_a_non_tuple_detail_is_the_type_error(tmp_path) -> None:
+    # ``SyntaxError('m', 5)``: ``SyntaxError_init`` reads its second actual
+    # as the details tuple; CPython raises TypeError.
+    (face,) = _exits(tmp_path, "def f():\n    return SyntaxError('m', 5)\n").exits
+    assert isinstance(face, Halted)
+    assert isinstance(face.effect, RaiseEffect)
+    assert face.effect.exception_name == "TypeError"
+
+
+@pytest.mark.parametrize("statement", ["return", "raise"])
+def test_os_error_over_a_symbolic_errno_is_the_unanswered_call(
+    tmp_path, statement
+) -> None:
+    # ``e`` is known only by its type, and OSError's class is chosen by its
+    # value: the one unanswered call, never a completion typed ``OSError``.
+    exits = _exits(tmp_path, f"def f(e):\n    {statement} OSError(e, 'x')\n")
+    halts = [face.effect for face in exits.exits if isinstance(face, Halted)]
+    assert len(owed_calls(exits)) == 1
+    assert "UnknownCallee:OSError" in _owners(halts)
+    assert not [effect for effect in halts if isinstance(effect, RaiseEffect)]
+
+
+def test_a_symbolic_actual_to_a_base_exception_law_class_is_stored_as_args(
+    tmp_path,
+) -> None:
+    from sugar_lift_py_tests.floor import StringValue
+
+    value = _completed_instance(
+        _exits(tmp_path, "def f(v):\n    return ValueError(v, 'b')\n")
+    )
+    assert value.builtin_exception_class.name == "ValueError"
+    assert len(value.constructed_args.elements) == 2
+    assert value.constructed_args.elements[1] == StringValue("b")
+
+
+def test_a_symbolic_message_alone_to_os_error_is_stored_as_args(tmp_path) -> None:
+    # ``OSError(m)``: one actual is never parsed (``oserror_parse_args``
+    # reads 2 to 5), so the class is ``OSError`` and ``args`` is ``(m,)``.
+    value = _completed_instance(
+        _exits(tmp_path, "def f(m):\n    return OSError(m)\n")
+    )
+    assert value.builtin_exception_class.name == "OSError"
+    assert len(value.constructed_args.elements) == 1
+
+
+# -- the bodiless ``.args`` read: what the construction stored --------------
+
+
+def _bodiless_exception_call(class_name, *, keyword_names=(), constructed_args=None):
     """A bodiless call of the builtin exception class ``class_name``, as the
     call site applies it: its binding's class, its raised type's coordinate,
-    three positional actuals (the last ones keywords when ``keyword_names``)."""
+    three positional actuals (the last ones keywords when ``keyword_names``),
+    and the ``args`` its construction stored, if any."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor import StringValue
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
@@ -109,25 +246,30 @@ def _bodiless_exception_call(class_name, *, keyword_names=()):
             [str_const("builtin"), str_const(class_name)],
         ),
         builtin_exception_class=builtin_name_temporal().value_if_bound(class_name),
+        constructed_args=constructed_args,
     )
 
 
-def test_a_base_exception_law_call_reads_its_positional_actuals_as_args() -> None:
+def test_the_args_read_is_what_the_construction_stored() -> None:
     from sugar_lift_py_tests.floor import StringValue, TupleValue
 
-    (face,) = _bodiless_exception_call("ValueError").attribute("args", None, None).exits
+    stored = TupleValue((StringValue("a"), StringValue("b")))
+    call = _bodiless_exception_call("OSError", constructed_args=stored)
+    (face,) = call.attribute("args", None, None).exits
     assert isinstance(face, Completed)
-    assert face.value == TupleValue(
-        (StringValue("a"), StringValue("b"), StringValue("c"))
-    )
+    assert face.value == stored
 
 
 @pytest.mark.parametrize(
-    "class_name", ["OSError", "FileNotFoundError", "SyntaxError", "IndentationError"]
+    "class_name",
+    ["ValueError", "OSError", "FileNotFoundError", "SyntaxError", "IndentationError"],
 )
-def test_a_constructor_of_its_own_never_reads_the_actuals_as_args(class_name) -> None:
-    # ``OSError('a', 'b', 'c').args == ('a', 'b')``: not BaseException's law,
-    # so ``.args`` is not the actuals; it is refused by name.
+def test_a_call_whose_construction_stored_no_args_never_reads_the_actuals(
+    class_name,
+) -> None:
+    # ``OSError('a', 'b', 'c').args == ('a', 'b')``: ``.args`` is never read
+    # from the actuals at the attribute; with nothing stored it is refused by
+    # name.
     from sugar_source_tree.panic import SugarNotWritten
 
     with pytest.raises(SugarNotWritten):

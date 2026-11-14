@@ -209,6 +209,16 @@ class CallSiteValue(FloorValue):
     builtin_exception_class: FloorValue | None = dataclass_field(
         default=None, compare=False, repr=False
     )
+    # The ``args`` tuple a bodiless builtin exception construction stored,
+    # decided where the call was constructed
+    # (``CallSiteSugar._builtin_exception_construction``): the pinned
+    # interpreter's over ground actuals (``builtin_exception_cited_fold``),
+    # else the positional actuals where the constructor stores them as they
+    # are (``builtin_exception_construction_reads_values`` False).  None
+    # where nothing decided it; ``.args`` is then refused by name.
+    constructed_args: FloorValue | None = dataclass_field(
+        default=None, compare=False, repr=False
+    )
     # The dynamic occurrence path this call was evaluated under
     # (``occurrence.current_path`` at mint). Its body reduces as the frame
     # ``path + (this call,)``: two calls of one function are two frames, and
@@ -366,29 +376,17 @@ class CallSiteValue(FloorValue):
             # ordinary unexecuted call still has no runtime type, so .args
             # stays a named third value rather than inventing a tuple.
             from sugar_lift_py_tests.floor.object_value import ObjectValue
-            from sugar_lift_py_tests.floor.tuple_value import TupleValue
             from sugar_lift_py_tests.outcome import ExitSet
 
             if self.bound_source_actuals is None:
-                # A bodiless call stores its positional actuals as ``args``
-                # only by BaseException's law: the callee's binding is a
-                # builtin exception class whose constructor is that law
-                # (``builtin_exception_constructor_is_args_total``) and no
-                # keyword was passed.  ``OSError(2, 'x', 'f').args`` is
-                # ``(2, 'x')``; a source, imported or runtime-selected class
-                # runs a constructor nothing here read.  Those leave
-                # ``.args`` a named third value, never the actuals.
-                from sugar_lift_py_tests.temporal.builtin_name_bindings import (
-                    builtin_exception_constructor_is_args_total,
-                )
-
-                class_name = getattr(self.builtin_exception_class, "name", None)
-                if (
-                    isinstance(class_name, str)
-                    and not self.keyword_names
-                    and builtin_exception_constructor_is_args_total(class_name)
-                ):
-                    return ExitSet.completed(TupleValue(elements=self.arg_values))
+                # A bodiless call's ``args`` is what its construction stored
+                # (``constructed_args``), decided where the call was
+                # constructed: ``OSError(2, 'x', 'f').args`` is ``(2, 'x')``
+                # by the pinned interpreter.  A source, imported or
+                # runtime-selected class runs a constructor nothing here
+                # read: ``.args`` is a named third value, never the actuals.
+                if self.constructed_args is not None:
+                    return ExitSet.completed(self.constructed_args)
                 return self.undecided_attribute(
                     name, site, owner="CallSiteValue.attribute"
                 )

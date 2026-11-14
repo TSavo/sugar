@@ -184,15 +184,13 @@ def _unknown_callee_call(sugar, source_call_frame, callsite):
 def _builtin_law_answers(sugar, callsite) -> bool:
     """A law the lifter models answers this bodiless builtin-bound call.
 
-    Each is read from the callee's binding, never its spelling: a builtin
-    exception class's construction (``callsite.builtin_exception_class``,
-    ``_applied_builtin_exception_class``), or a shape CPython documents as
-    never raising (``builtin_call_total`` on the bound ``LanguageCallee``:
-    ``type(obj)``, ``id(obj)``, ``callable(obj)``, ``object()``, ...).  A
-    builtin binding with none of these answers nothing: binding a name to
-    the builtin namespace is not a law for what that builtin does."""
-    if callsite.builtin_exception_class is not None:
-        return True
+    Read from the callee's binding, never its spelling: a shape CPython
+    documents as never raising (``builtin_call_total`` on the bound
+    ``LanguageCallee``: ``type(obj)``, ``id(obj)``, ``callable(obj)``,
+    ``object()``, ...).  A builtin exception class's construction never
+    reaches here (``_builtin_exception_construction``).  A builtin binding
+    with none of these answers nothing: binding a name to the builtin
+    namespace is not a law for what that builtin does."""
     from sugar_lift_py_tests.source_call_resolution import builtin_call_total
 
     return builtin_call_total(
@@ -202,10 +200,59 @@ def _builtin_law_answers(sugar, callsite) -> bool:
     )
 
 
+def _builtin_exception_construction(sugar, callsite, ctx):
+    """A bodiless call of a builtin exception class (``callsite.
+    builtin_exception_class``, by the callee's binding): its construction.
+
+    Over ground actuals the pinned interpreter decides it, through the one
+    cited fold (``builtin_exception_cited_fold``): the class it constructs
+    and the ``args`` it stores, or its ``TypeError``.  An actual known only
+    by its type:
+
+    - with a keyword actual, ``_builtin_exception_keyword_call``;
+    - where the class's constructor reads its actuals' values
+      (``builtin_exception_construction_reads_values``: ``OSError(e, 'x')``,
+      whose errno selects the subclass; ``SyntaxError('m', d)``, whose
+      details tuple is parsed; the ``Unicode*Error`` signatures; the
+      exception groups' members), the one unanswered call, whose completed
+      face names no class;
+    - otherwise the constructor stores its positional actuals as ``args``
+      (BaseException's law, or ``OSError(msg)``): the call completes holding
+      them (``constructed_args``)."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.source_call_resolution import (
+        UnknownCalleeCallV1,
+        builtin_exception_cited_fold,
+    )
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        builtin_exception_construction_reads_values,
+    )
+
+    folded = builtin_exception_cited_fold(callsite, sugar.site)
+    if folded is not None:
+        return folded
+    if callsite.keyword_names:
+        return _builtin_exception_keyword_call(sugar, callsite)
+    if builtin_exception_construction_reads_values(
+        callsite.builtin_exception_class.name, len(callsite.arg_values)
+    ):
+        return UnknownCalleeCallV1(sugar.spelled_target).faces(
+            replace(callsite, exception_type_coordinate=None, exception_type_mro=None),
+            sugar.site,
+        )
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    return replace(
+        callsite, constructed_args=TupleValue(tuple(callsite.arg_values))
+    ).producer_outcome(ctx)
+
+
 def _builtin_exception_keyword_call(sugar, callsite):
-    """``ValueError('x', code=1)``: a bodiless call of a builtin exception
+    """``ValueError(x, code=1)``: a bodiless call of a builtin exception
     class (``callsite.builtin_exception_class``, by the callee's binding)
-    with a keyword actual.
+    with a keyword actual and an actual known only by its type (over
+    ground actuals the interpreter decides it, ``builtin_exception_cited_fold``).
 
     Keyword values are never ``args``: ``BaseException_new`` stores only the
     positional actuals.  A class whose constructor is BaseException's law
@@ -914,11 +961,8 @@ class CallSiteSugar(ConstructedTermSugar):
         # actuals, and a call with no frame applies no body -- the callee's
         # universe (``formal_function_sugar``) is never reduced at the call.
         if callsite.body is None:
-            if (
-                callsite.builtin_exception_class is not None
-                and callsite.keyword_names
-            ):
-                return _builtin_exception_keyword_call(self, callsite)
+            if callsite.builtin_exception_class is not None:
+                return _builtin_exception_construction(self, callsite, ctx)
             unprojected = _import_bound_unanswered_call(self)
             if unprojected is None:
                 unprojected = _off_population_unanswered_call(self)

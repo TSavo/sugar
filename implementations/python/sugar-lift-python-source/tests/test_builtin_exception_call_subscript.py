@@ -45,7 +45,6 @@ def _only_type_error(exits) -> RaiseEffect:
         "def f():\n    e = ValueError('a')\n    return e[0]\n",
         "def f():\n    return KeyError('k')['k']\n",
         "def f():\n    return OSError(2, 'x')[0]\n",
-        "def f():\n    return ExceptionGroup('g', [ValueError('a')])[0]\n",
     ],
 )
 def test_builtin_exception_instance_subscript_is_a_ground_type_error(
@@ -53,6 +52,29 @@ def test_builtin_exception_instance_subscript_is_a_ground_type_error(
 ) -> None:
     effect = _only_type_error(_exits(tmp_path, body))
     assert "py.subscript" not in repr(effect)
+
+
+def test_an_exception_group_over_a_non_ground_member_is_the_unanswered_call(
+    tmp_path,
+) -> None:
+    # ``ExceptionGroup``'s constructor reads its members (a non-exception
+    # member is a TypeError, ``BaseExceptionGroup`` selects its subclass by
+    # them), and ``ValueError('a')`` is no ground value: the construction is
+    # the one unanswered call (#7757).  Its completed face is still a
+    # builtin exception instance, whose subscript is the TypeError.
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    from test_unprojected_method_call_faces import _owners
+
+    exits = _exits(
+        tmp_path, "def f():\n    return ExceptionGroup('g', [ValueError('a')])[0]\n"
+    )
+    halts = [face.effect for face in exits.exits if isinstance(face, Halted)]
+    assert not [face for face in exits.exits if isinstance(face, Completed)]
+    assert len(owed_calls(exits)) == 1
+    assert "UnknownCallee:ExceptionGroup" in _owners(halts)
+    raised = [e.exception_name for e in halts if isinstance(e, RaiseEffect)]
+    assert raised == ["TypeError"]
 
 
 def test_the_type_error_is_caught_by_an_except_type_error(tmp_path) -> None:

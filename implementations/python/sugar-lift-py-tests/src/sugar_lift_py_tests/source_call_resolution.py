@@ -452,14 +452,19 @@ def _builtin_ground_fold(language_callee, arg_values, keyword_names, site, calls
     )
 
 
-def _host_applied(function, operands, site, *, owner, callsite, visits, held=True):
+def _host_applied(
+    function, operands, site, *, owner, callsite, visits, held=True, holder=None
+):
     """``function(*operands)`` on the pinned interpreter, as an outcome, or None.
 
     A raise is the one ground halt with its builtin exception class (a host
     exception that is not a builtin one, a ``MemoryError`` or a
     ``RecursionError`` decides nothing: None).  A completion is the result's
     floor value when ``held`` and the floor holds it (``_ground_floor``),
-    else the call's coordinate (``callsite``), else None."""
+    else the call's coordinate (``callsite``), else None.  ``holder``, when
+    given, is the one reader of the result instead (a constructed builtin
+    exception instance, ``builtin_exception_cited_fold``): its floor value,
+    or None when the floor does not hold it (nothing is decided)."""
     import builtins
 
     from .outcome import ExitSet
@@ -480,6 +485,9 @@ def _host_applied(function, operands, site, *, owner, callsite, visits, held=Tru
         from .floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(exception_name=raised, site=site, owner=owner)
+    if holder is not None:
+        value = holder(result)
+        return None if value is None else ExitSet.completed(value)
     value = _ground_floor(result, site, visits=visits) if held else None
     if value is None:
         value = _occurrence_result(callsite, site)
@@ -632,6 +640,117 @@ def container_mutator_result_fold(receiver, name, arguments, site):
         owner=f"cpython_cited_fold:{host_type.__name__}.{name}",
         callsite=None,
         visits=visits,
+    )
+
+
+def builtin_exception_cited_fold(callsite, site):
+    """A bodiless call of a builtin exception class over ground actuals, decided.
+
+    ``callsite.builtin_exception_class`` is the class the callee's binding
+    names (``CallSiteSugar._applied_builtin_exception_class``), never its
+    spelling.  When every actual, positional and keyword, is a ground value
+    (``_host_ground``), the pinned interpreter's own class is applied to
+    them through the one door a builtin over ground operands is decided by
+    (``_host_applied``), and the interpreter decides what the call is:
+
+    - ``OSError(2, 'x')`` constructs a ``FileNotFoundError`` whose ``args``
+      is ``(2, 'x')`` (``OSError_new`` selects the subclass by errno);
+      ``OSError('m')`` an ``OSError``; ``OSError(2, 'x', 'f').args`` is
+      ``(2, 'x')``;
+    - ``SyntaxError('m', 5)`` and ``ValueError('a', code=1)`` are the one
+      ``TypeError`` halt.
+
+    The completed value is the call holding the class the interpreter
+    constructed, by its builtin binding (``builtin_exception_class``), and
+    the ``args`` tuple it stored (``constructed_args``): each member that
+    is an operand the call handed over is that actual's own floor value,
+    any other member its ground floor value.  Where the call's site
+    authenticated it as the raised exception (``exception_type_coordinate``)
+    and the interpreter constructed another class, the coordinate is that
+    class's.  A result the floor does not hold decides nothing.
+
+    An actual known only by its type: None, and
+    ``CallSiteSugar._builtin_exception_construction`` decides what the call
+    is (#7757)."""
+    import builtins
+    from dataclasses import replace
+
+    from .floor.builtin_exception_class_value import BuiltinExceptionClassValue
+    from .floor.ground_exit import _builtin_exception_identity
+    from .floor.tuple_value import TupleValue
+    from .temporal.builtin_name_bindings import (
+        BUILTIN_EXCEPTION_NAMES,
+        builtin_name_temporal,
+        canonical_builtin_exception_name,
+    )
+
+    name = getattr(callsite.builtin_exception_class, "name", None)
+    if not isinstance(name, str) or name not in BUILTIN_EXCEPTION_NAMES:
+        return None
+    applied = getattr(builtins, name, None)
+    if not isinstance(applied, type) or not issubclass(applied, BaseException):
+        return None
+    keyword_names = tuple(callsite.keyword_names or ())
+    arg_values = tuple(callsite.arg_values)
+    positional_count = len(arg_values) - len(keyword_names)
+    visits: dict = {}
+    operands = _ground_operands(arg_values, visits)
+    if operands is None:
+        return None
+
+    def construct(*actuals):
+        return applied(
+            *actuals[:positional_count],
+            **dict(zip(keyword_names, actuals[positional_count:])),
+        )
+
+    def instance(result):
+        result_name = type(result).__name__
+        if (
+            result_name not in BUILTIN_EXCEPTION_NAMES
+            or getattr(builtins, result_name, None) is not type(result)
+        ):
+            return None
+        result_class = builtin_name_temporal().value_if_bound(result_name)
+        if not isinstance(result_class, BuiltinExceptionClassValue):
+            return None
+        members = []
+        for member in result.args:
+            held = next(
+                (
+                    value
+                    for operand, value in zip(operands, arg_values)
+                    if operand is member
+                ),
+                None,
+            )
+            if held is None:
+                held = _ground_floor(member, site, visits=visits)
+            if held is None:
+                return None
+            members.append(held)
+        constructed = replace(
+            callsite,
+            builtin_exception_class=result_class,
+            constructed_args=TupleValue(tuple(members)),
+        )
+        if callsite.exception_type_coordinate is None or (
+            result_name == canonical_builtin_exception_name(name)
+        ):
+            return constructed
+        identity, mro = _builtin_exception_identity(result_name)
+        return replace(
+            constructed, exception_type_coordinate=identity, exception_type_mro=mro
+        )
+
+    return _host_applied(
+        construct,
+        operands,
+        site,
+        owner=f"cpython_cited_fold:{name}",
+        callsite=None,
+        visits=visits,
+        holder=instance,
     )
 
 

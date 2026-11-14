@@ -254,12 +254,12 @@ def test_observed_exception_info_type_is_the_language_class() -> None:
 
 
 def test_exception_callsite_args_are_the_constructor_arguments() -> None:
-    """An authenticated exception instance projects ``.args`` as those actuals."""
+    """An authenticated exception instance projects ``.args`` as what its
+    construction stored (``constructed_args``, #7757)."""
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
     from sugar_lift_py_tests.ir import ctor, str_const
-    from sugar_source_tree.panic import SugarNotWritten
 
     boom = StringValue("boom")
     identity = ctor(
@@ -273,6 +273,7 @@ def test_exception_callsite_args_are_the_constructor_arguments() -> None:
         term=ctor("call:ValueError", [str_const("boom")]),
         body=None,
         exception_type_coordinate=identity,
+        constructed_args=TupleValue(elements=(boom,)),
     )
     projected = instance.attribute("args", site=None, ctx=None)
     assert projected.completed_value() is not None
