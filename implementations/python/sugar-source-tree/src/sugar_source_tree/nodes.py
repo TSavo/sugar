@@ -1518,12 +1518,16 @@ class SourceUnit:
         return member_target_symbol(f"python:{module_name}", (name,))
 
     def _lexical_import_pass(self):
-        """The ONE lexical import pass over this unit (#7837), or None before a
-        typed root exists. Process-resident: the kit's own demand walk over the
-        same content is this walk."""
-        module = self.typed_module
-        if module is None:
-            return None
+        """The ONE lexical import pass over this unit (#7837). Process-resident:
+        the kit's own demand walk over the same content is this walk.
+
+        The door binds the typed tree before any reader runs
+        (``Backend.materialize_module`` builds the tree structurally, then
+        ``bind_typed_module``), so there is no window before the tree: a unit
+        without it refuses by name (``_require_typed_module``)."""
+        module = self._require_typed_module(
+            "SourceUnit._lexical_import_pass", blame=self.filename
+        )
         from sugar_source_tree.process_resident_file import (
             get_or_prepare_lexical_import_pass,
         )
@@ -1547,9 +1551,10 @@ class SourceUnit:
         """The target symbol of the import-bound reference at ``span`` (#7837).
 
         ``span`` is the reference's own coordinate: a Name, or a whole
-        ``Name.attr...`` chain whose head is import-bound. ``None`` when this
-        module has no typed root yet or nothing at that coordinate is uniquely
-        import-bound -- the node keeps its ordinary construction.
+        ``Name.attr...`` chain whose head is import-bound. ``None`` when
+        nothing at that coordinate is uniquely import-bound -- the node keeps
+        its ordinary construction.  A unit with no typed root refuses by name
+        (``_lexical_import_pass``).
 
         The one table is the only source of an imported name's target,
         provider-gated imports included (#7851).  A row whose binding is not
@@ -1558,8 +1563,6 @@ class SourceUnit:
         that admits that gate fact (``admit_provider_gate``).
         """
         runner = self._lexical_import_pass()
-        if runner is None:
-            return None
         row = runner.reference_targets.get(span)
         if row is None:
             return None
@@ -1607,9 +1610,10 @@ class SourceUnit:
     def import_binding_reference(self, statement, local: str) -> Optional[object]:
         """The one import table's row for the binding the ``import`` or
         ``from ... import`` ``statement`` makes of ``local``
-        (``ImportReference``), or None: no typed root, or the table binds
-        ``local`` there to nothing it names (an unresolvable relative
-        import, ``import a.b`` binding the package ``a``).
+        (``ImportReference``), or None: the table binds ``local`` there to
+        nothing it names (an unresolvable relative import, ``import a.b``
+        binding the package ``a``).  A unit with no typed root refuses by
+        name (``_lexical_import_pass``).
 
         The same pass, and the same speller, as every reference row
         (``import_reference_target``): the module threading binds the name
@@ -1617,8 +1621,6 @@ class SourceUnit:
         itself.
         """
         runner = self._lexical_import_pass()
-        if runner is None:
-            return None
         span = statement.line_col_span()
         return runner.binding_targets.get(
             (span.start_line, span.start_col, span.end_line, span.end_col, local)
@@ -1995,11 +1997,12 @@ class SourceUnit:
         when the generator is consumed, which the module body does not
         decide (``lazy``).  A ``for`` or ``with`` statement asked for its own
         site (its implicit ``__next__`` or ``__exit__``) runs after its body
-        too (``after_body``).  Read off the typed tree by source span.
+        too (``after_body``).  Read off the typed tree by source span; a unit
+        with no typed root refuses by name (``_require_typed_module``).
         """
-        module = self.typed_module
-        if module is None:
-            return None
+        module = self._require_typed_module(
+            "SourceUnit.module_execution_site", blame=self.filename
+        )
         memo = self._module_statement_starts_memo
         if memo is None or memo[0] is not module:
             statements = tuple(module.body)
@@ -2213,9 +2216,9 @@ class SourceUnit:
             return None
         receipts = self._lexical_value_use_receipts
         if receipts is None:
-            module = self.typed_module
-            if module is None:
-                return None
+            module = self._require_typed_module(
+                "SourceUnit.import_value_use_receipt", blame=span
+            )
             from sugar_lift_py_tests.import_binding import (
                 authenticated_import_value_use_receipts,
             )
@@ -3011,16 +3014,14 @@ class SourceUnit:
         local/free/nonlocal shadow or competing module binding keeps the
         allocation definition unauthenticated, and a module ``def`` of that
         name is no allocation.  Behavior is checked separately; it never
-        participates in identity admission.
+        participates in identity admission.  A unit with no typed root
+        refuses by name (``_require_typed_module``): a call is read only
+        through the door that binds its tree.
         """
+        self._require_typed_module(
+            "SourceUnit.source_allocation_definition_for_call", blame=self.filename
+        )
         if not isinstance(call.func, Name):
-            return None
-        # A directly materialized Call/Assign still owns its ordinary sugar.
-        # Absence of the SourceFile-bound module means only that class identity
-        # cannot be authenticated here; it must not revoke the existing call
-        # construction path.
-        module = self.typed_module
-        if module is None:
             return None
         span = call.line_col_span()
         definition = self.module_definition_at(call.func.id, span)
@@ -19141,10 +19142,13 @@ class GeneratorExp(Expression):
         call outside a run of the generator is refused by name
         (``EvaluationRefSugar``).  A call inside a run reads the member
         current at the call either way."""
+        # The function roster and the module root are both the door's
+        # (``bind_typed_module``): a unit without them refuses by name.
+        module = self.unit._require_typed_module(
+            "GeneratorExp._consumed_whole_in_place", blame=self.fragment
+        )
         owner = _function_holding(self)
-        root = owner if owner is not None else self.unit.typed_module
-        if root is None:
-            return False
+        root = owner if owner is not None else module
         position = _source_position(self)
         for node in root.walk():
             if not isinstance(node, Call) or len(node.args) != 1:

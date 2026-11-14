@@ -21,12 +21,39 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.audit_only.collect_construction_gaps import (
     collect_construction_panic,
 )
-from sugar_source_tree.backend import BackendCouldNotParse, materialize
-from sugar_source_tree.cpython_adapter import _Handle
-from sugar_source_tree.nodes import SourceUnit
+from sugar_source_tree.backend import BackendCouldNotParse
+from sugar_source_tree.nodes import (
+    AnnAssign,
+    Assign,
+    AsyncFunctionDef,
+    AugAssign,
+    FunctionDef,
+)
 from sugar_source_tree.panic import SourceTreePanic, SugarNotWritten
+from sugar_source_tree.tree import SourceFile
 
 ASSIGNMENT = (ast.Assign, ast.AnnAssign, ast.AugAssign)
+
+
+def _paired(natives: list, typed: list) -> dict[int, object]:
+    """Each native label node's typed node (keyed by the native's ``id``).
+
+    Both lists hold one node per source statement of the same kinds, so in
+    source-position order they agree one to one; a disagreement is loud.
+    """
+
+    def typed_start(node) -> tuple[int, int]:
+        span = node.line_col_span()
+        return (span.start_line, span.start_col)
+
+    native_order = sorted(natives, key=lambda node: (node.lineno, node.col_offset))
+    typed_order = sorted(typed, key=typed_start)
+    if len(native_order) != len(typed_order) or any(
+        type(native).__name__ != type(node).__name__
+        for native, node in zip(native_order, typed_order)
+    ):
+        raise RuntimeError("native labels and the typed tree disagree")
+    return {id(native): node for native, node in zip(native_order, typed_order)}
 
 
 def _installed_package_root(package: str) -> Path:
@@ -168,11 +195,22 @@ def measure(
             if not native_assignments:
                 counts["files_without_assignment"] += 1
                 continue
-            unit = SourceUnit(filename=filename, source=source, source_cid=source_cid)
+            # The one door: the unit is read with its typed tree bound.  The
+            # native ``ast`` stays a measurement label only; each label is
+            # paired with the typed node at its own source position.
+            source_file = SourceFile((source, filename, source_cid))
+            typed_assignments = _paired(
+                native_assignments,
+                [
+                    node
+                    for node in source_file.nodes()
+                    if isinstance(node, (Assign, AnnAssign, AugAssign))
+                ],
+            )
             for native in (() if object_field_only else native_assignments):
                 shape = _shape(native)
                 direct[shape]["total"] += 1
-                node = materialize(unit, _Handle(unit, native))
+                node = typed_assignments[id(native)]
                 try:
                     _, gap = collect_construction_panic(
                         f"{path}:{getattr(native, 'lineno', 0)}", node.sugar
@@ -209,6 +247,18 @@ def measure(
                     )
                 ]
             )
+            typed_functions = _paired(
+                [
+                    node
+                    for node in ast.walk(parsed)
+                    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                ],
+                [
+                    node
+                    for node in source_file.nodes()
+                    if isinstance(node, (FunctionDef, AsyncFunctionDef))
+                ],
+            )
             for native_function in functions:
                 enclosing_functions["total"] += 1
                 object_field_candidate = _has_object_field_candidate(
@@ -228,7 +278,7 @@ def measure(
                         if isinstance(node, ASSIGNMENT)
                     }
                 )
-                function = materialize(unit, _Handle(unit, native_function))
+                function = typed_functions[id(native_function)]
                 try:
                     _, gap = collect_construction_panic(
                         f"{path}:{native_function.lineno}", function.sugar

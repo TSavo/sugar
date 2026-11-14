@@ -19,10 +19,10 @@ from collections import Counter
 from pathlib import Path
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.backend import BackendCouldNotParse, materialize
-from sugar_source_tree.cpython_adapter import _Handle
-from sugar_source_tree.nodes import SourceUnit
+from sugar_source_tree.backend import BackendCouldNotParse
+from sugar_source_tree.nodes import AsyncFunctionDef, FormattedValue, FunctionDef
 from sugar_source_tree.panic import SourceTreePanic, SugarNotWritten
+from sugar_source_tree.tree import SourceFile
 
 
 def _installed_package_root(package: str) -> Path:
@@ -70,14 +70,10 @@ def measure(root: Path) -> dict[str, object]:
                 counts["files_completed"] += 1
                 continue
             counts["files_with_formatted_value"] += 1
-            unit = SourceUnit(
-                filename=filename,
-                source=source,
-                source_cid=source_cid,
-            )
+            # The one door: the unit is read with its typed tree bound.
+            source_file = SourceFile((source, filename, source_cid))
             formatted_values = [
-                materialize(unit, _Handle(unit, native_node))
-                for native_node in native_nodes
+                node for node in source_file.nodes() if isinstance(node, FormattedValue)
             ]
             for node in formatted_values:
                 counts["formatted_value_total"] += 1
@@ -100,16 +96,14 @@ def measure(root: Path) -> dict[str, object]:
 
             function_nodes = [
                 node
-                for node in ast.walk(parsed)
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                for node in source_file.nodes()
+                if isinstance(node, (FunctionDef, AsyncFunctionDef))
                 and any(
-                    isinstance(descendant, ast.FormattedValue)
-                    for descendant in ast.walk(node)
+                    isinstance(descendant, FormattedValue) for descendant in node.walk()
                 )
             ]
-            for native_function in function_nodes:
+            for function in function_nodes:
                 roll_call["functions_with_formatted_value"] += 1
-                function = materialize(unit, _Handle(unit, native_function))
                 try:
                     function.sugar()
                 except SugarNotWritten as panic:
