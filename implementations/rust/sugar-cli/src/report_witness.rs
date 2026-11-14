@@ -197,71 +197,15 @@ impl WitnessMintOptions {
     }
 }
 
+/// A witness source. Item 5 on #7766: prove packages nothing, so the
+/// prove-report, command and file sources that `sugar prove --emit-witnesses`
+/// built are gone; a typed JSON claim (`sugar emit`) is the one source.
 #[derive(Debug, Clone)]
 pub(crate) enum WitnessSource {
-    #[allow(dead_code)]
-    // constructed via WitnessSource::{report,command,file} from cmd_prove (binary) and report_witness unit tests
-    Report(ReportWitnessSource),
-    Command(CommandWitnessSource),
-    File(FileWitnessSource),
     JsonClaim(JsonWitnessSource),
 }
 
 impl WitnessSource {
-    #[allow(dead_code)] // constructors used by cmd_prove (binary) and report_witness unit tests
-    pub(crate) fn report(project_root: &Path, report: Json, replay_pins: Json) -> Self {
-        Self::Report(ReportWitnessSource {
-            project_root: project_root.to_path_buf(),
-            report,
-            replay_pins,
-        })
-    }
-
-    #[allow(dead_code)] // constructors used by cmd_prove (binary) and report_witness unit tests
-    pub(crate) fn command(
-        project_root: &Path,
-        name: impl Into<String>,
-        command: Vec<String>,
-        evidence: Json,
-    ) -> Result<Self, String> {
-        if command.is_empty() {
-            return Err(witness_seam_violation(
-                "command witness without a command",
-                "WitnessSource::Command carried an empty command vector",
-                "construct WitnessSource::Command with the configured command argv before minting",
-            ));
-        }
-        Ok(Self::Command(CommandWitnessSource {
-            project_root: project_root.to_path_buf(),
-            name: checked_witness_name(name)?,
-            command,
-            evidence,
-        }))
-    }
-
-    #[allow(dead_code)] // constructors used by cmd_prove (binary) and report_witness unit tests
-    pub(crate) fn file(
-        project_root: &Path,
-        name: impl Into<String>,
-        path: impl Into<String>,
-        evidence: Json,
-    ) -> Result<Self, String> {
-        let path = path.into();
-        if path.trim().is_empty() {
-            return Err(witness_seam_violation(
-                "file witness without a path",
-                "WitnessSource::File carried an empty project-relative path",
-                "construct WitnessSource::File with the configured evidence path before minting",
-            ));
-        }
-        Ok(Self::File(FileWitnessSource {
-            project_root: project_root.to_path_buf(),
-            name: checked_witness_name(name)?,
-            path,
-            evidence,
-        }))
-    }
-
     pub(crate) fn json_claim(
         name: impl Into<String>,
         claim_kind: WitnessClaimKind,
@@ -275,29 +219,6 @@ impl WitnessSource {
             evidence,
         }))
     }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct ReportWitnessSource {
-    project_root: PathBuf,
-    report: Json,
-    replay_pins: Json,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct CommandWitnessSource {
-    project_root: PathBuf,
-    name: String,
-    command: Vec<String>,
-    evidence: Json,
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct FileWitnessSource {
-    project_root: PathBuf,
-    name: String,
-    path: String,
-    evidence: Json,
 }
 
 #[derive(Debug, Clone)]
@@ -480,74 +401,6 @@ pub(crate) fn mint_witness_bundle(
 
 fn prepare_witness(source: WitnessSource) -> Result<PreparedWitness, String> {
     match source {
-        WitnessSource::Report(source) => {
-            let summary = json!({
-                "totalCallsites": source.report.get("totalCallsites").cloned().unwrap_or(Json::Null),
-                "discharged": source.report.get("discharged").cloned().unwrap_or(Json::Null),
-                "violations": source.report.get("violations").cloned().unwrap_or(Json::Null),
-                "refused": source.report.get("refused").cloned().unwrap_or(Json::Null),
-                "loadErrors": source
-                    .report
-                    .get("loadErrors")
-                    .and_then(Json::as_array)
-                    .map(|a| a.len())
-                    .unwrap_or(0),
-            });
-            let report_cid = jcs_cid(&source.report);
-            let replay_pins_cid = jcs_cid(&source.replay_pins);
-            let evidence = json!({
-                "kind": "sugar-prove-report-evidence",
-                "schemaVersion": "1",
-                "reportCid": report_cid,
-                "replayPinsCid": replay_pins_cid,
-                "report": source.report,
-                "replayPins": source.replay_pins,
-            });
-            let claim_body = json!({
-                "kind": "sugar-prove-report-witness",
-                "schemaVersion": "1",
-                "reportCid": report_cid,
-                "replayPinsCid": replay_pins_cid,
-                "project": source.project_root.display().to_string(),
-                "summary": summary,
-            });
-            Ok(PreparedWitness {
-                name: "prove-report".to_string(),
-                claim_kind: WitnessClaimKind::new("sugar-prove-report-witness")?,
-                claim_body,
-                evidence,
-            })
-        }
-        WitnessSource::Command(source) => {
-            let claim_body = json!({
-                "kind": "sugar-command-witness",
-                "schemaVersion": "1",
-                "name": &source.name,
-                "command": &source.command,
-                "project": source.project_root.display().to_string(),
-            });
-            Ok(PreparedWitness {
-                name: source.name,
-                claim_kind: WitnessClaimKind::new("sugar-command-witness")?,
-                claim_body,
-                evidence: source.evidence,
-            })
-        }
-        WitnessSource::File(source) => {
-            let claim_body = json!({
-                "kind": "sugar-file-witness",
-                "schemaVersion": "1",
-                "name": &source.name,
-                "path": &source.path,
-                "project": source.project_root.display().to_string(),
-            });
-            Ok(PreparedWitness {
-                name: source.name,
-                claim_kind: WitnessClaimKind::new("sugar-file-witness")?,
-                claim_body,
-                evidence: source.evidence,
-            })
-        }
         WitnessSource::JsonClaim(source) => Ok(PreparedWitness {
             name: source.name,
             claim_kind: source.claim_kind,
@@ -661,23 +514,6 @@ mod tests {
         format!("blake3-512:{}", fill.to_string().repeat(128))
     }
 
-    fn report_bundle(project_root: &Path, report: &Json, replay_pins: &Json) -> WitnessBundle {
-        WitnessBundle::from_source(
-            WitnessSource::report(project_root, report.clone(), replay_pins.clone()),
-            WitnessMintOptions::default(),
-        )
-        .expect("report source becomes bundle")
-    }
-
-    fn mint_report_for_test(
-        project_root: &Path,
-        report: &Json,
-        replay_pins: &Json,
-        out_dir: &Path,
-    ) -> Result<ReportWitnessProof, String> {
-        mint_witness_bundle(report_bundle(project_root, report, replay_pins), out_dir)
-    }
-
     fn mint_json_for_test(
         name: &str,
         claim_kind: &str,
@@ -714,16 +550,17 @@ mod tests {
             }],
             "loadErrors": []
         });
-        let replay_pins = json!({
-            "kind": "sugar-prove-replay-pins",
-            "schemaVersion": "1",
-            "solvers": []
-        });
         let bundle = WitnessBundle::from_source(
-            WitnessSource::report(Path::new("/tmp/project"), report, replay_pins),
+            WitnessSource::json_claim(
+                "bundle",
+                WitnessClaimKind::new("test-claim").expect("claim kind"),
+                json!({"kind": "test-claim", "rows": report["rows"].clone()}),
+                json!({"kind": "test-evidence", "report": report}),
+            )
+            .expect("json claim source"),
             WitnessMintOptions::default(),
         )
-        .expect("report source becomes a typed witness bundle");
+        .expect("json claim source becomes a typed witness bundle");
 
         let minted = mint_witness_bundle(bundle, temp.path()).expect("typed bundle minted");
         let witness_body: Json = serde_json::from_slice(
@@ -857,46 +694,6 @@ mod tests {
     }
 
     #[test]
-    fn prove_report_mints_witness_proof_bundle() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let report = json!({
-            "totalCallsites": 0,
-            "discharged": 1,
-            "violations": 0,
-            "refused": 0,
-            "rows": [{
-                "propertyCid": "blake3-512:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "verification": {
-                    "kind": "consistency",
-                    "linkedPosts": [{
-                        "targetProofCid": "blake3-512:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                    }]
-                }
-            }],
-            "loadErrors": []
-        });
-
-        let replay_pins = json!({
-            "kind": "sugar-prove-replay-pins",
-            "schemaVersion": "1",
-            "solvers": []
-        });
-        let minted = mint_report_for_test(
-            Path::new("/tmp/project"),
-            &report,
-            &replay_pins,
-            temp.path(),
-        )
-        .expect("report witness minted");
-
-        assert!(minted.proof_cid.starts_with("blake3-512:"));
-        assert!(minted.witness_cid.starts_with("blake3-512:"));
-        assert!(minted.evidence_cid.starts_with("blake3-512:"));
-        assert!(minted.proof_file.exists());
-        assert!(minted.evidence_file.exists());
-    }
-
-    #[test]
     fn json_witness_refuses_bad_prefix_extra_input_cid() {
         let temp = tempfile::tempdir().expect("tempdir");
         let options = WitnessMintOptions::default()
@@ -941,28 +738,17 @@ mod tests {
     }
 
     #[test]
-    fn prove_report_witness_proof_contains_pointer_not_body() {
+    fn witness_proof_contains_pointer_not_body() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let report = json!({
-            "totalCallsites": 0,
-            "discharged": 1,
-            "violations": 0,
-            "refused": 0,
-            "rows": [],
-            "loadErrors": []
-        });
-        let replay_pins = json!({
-            "kind": "sugar-prove-replay-pins",
-            "schemaVersion": "1",
-            "solvers": []
-        });
-        let minted = mint_report_for_test(
-            Path::new("/tmp/project"),
-            &report,
-            &replay_pins,
+        let minted = mint_json_for_test(
+            "bundle",
+            "test-claim",
+            &json!({"kind": "test-claim", "summary": {"discharged": 1}}),
+            &json!({"kind": "test-evidence", "report": {"rows": []}}),
             temp.path(),
+            WitnessMintOptions::default(),
         )
-        .expect("report witness minted");
+        .expect("witness minted");
 
         let proof_bytes = std::fs::read(&minted.proof_file).expect("read witness proof");
         let graph = ProofGraph::read(&proof_bytes).expect("decode proof");
