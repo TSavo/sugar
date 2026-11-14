@@ -193,7 +193,9 @@ def remember_constructed_value_cid_v2(value: object, cid: str) -> None:
 # helpers in progress.  The row records each such value as it is read, and is
 # served only where every one of them is still equal now.  Anywhere else is a
 # miss, and the coordinate computes a row of its own beside the first.  A
-# value the computation set itself is not ambient to it.
+# value the computation set itself is not ambient to it while its own set is
+# in force; once that set is reset (or that member discarded) the value is
+# ambient again, and a later read records it.
 #
 # Ambient state is readable only through ``AmbientVar`` / ``AmbientSet``:
 # reading it any other way is a dependency no row can see.
@@ -212,8 +214,9 @@ class _Computation:
     def __init__(self) -> None:
         # (source, member) -> the value read, first read wins.
         self.reads: dict[tuple, Any] = {}
-        # (source, member) this computation set itself: never ambient to it.
-        self.internal: set[tuple] = set()
+        # (source, member) -> how many of this computation's own sets of it
+        # are in force: never ambient to it while one is.
+        self.internal: dict[tuple, int] = {}
         # (method, args) testimony and nested MemoRow objects, in order.
         self.testimony: list = []
 
@@ -229,9 +232,36 @@ def _read(probe: tuple, value: Any) -> None:
             top.reads[probe] = value
 
 
-def _wrote(probe: tuple) -> None:
-    if _OPEN:
-        _OPEN[-1].internal.add(probe)
+def _wrote(probe: tuple) -> "_Computation | None":
+    """The computation in flight sets ``probe`` itself: not ambient to it
+    until ``_released``.  Returns that computation, for the release."""
+    if not _OPEN:
+        return None
+    top = _OPEN[-1]
+    top.internal[probe] = top.internal.get(probe, 0) + 1
+    return top
+
+
+def _released(computation: "_Computation | None", probe: tuple) -> None:
+    """One set of ``probe`` by ``computation`` is no longer in force."""
+    if computation is None:
+        return
+    held = computation.internal.get(probe, 0)
+    if held <= 1:
+        computation.internal.pop(probe, None)
+    else:
+        computation.internal[probe] = held - 1
+
+
+class _AmbientToken:
+    """What ``AmbientVar.set`` returns: the ``ContextVar`` token, and the
+    computation the set belongs to, released on ``reset``."""
+
+    __slots__ = ("token", "computation")
+
+    def __init__(self, token, computation) -> None:
+        self.token = token
+        self.computation = computation
 
 
 def _absorb(reads: dict) -> None:
@@ -247,8 +277,11 @@ class AmbientVar:
     """A ``ContextVar`` construction reads under memo rows.
 
     ``get`` records the value on the computation in flight; ``set`` marks the
-    variable as that computation's own.  Same ``get`` / ``set`` / ``reset`` as
-    the ``ContextVar`` it wraps.
+    variable as that computation's own until the matching ``reset``.  Same
+    ``get`` / ``set`` / ``reset`` as the ``ContextVar`` it wraps.
+
+    ``now`` is the value without a read: it is for ``MemoRow.holds`` alone,
+    which compares a row's recorded reads with the present.
     """
 
     __slots__ = ("_var",)
@@ -268,26 +301,29 @@ class AmbientVar:
         _read((self, None), value)
         return value
 
-    def set(self, value: Any):
-        _wrote((self, None))
-        return self._var.set(value)
+    def set(self, value: Any) -> _AmbientToken:
+        return _AmbientToken(self._var.set(value), _wrote((self, None)))
 
-    def reset(self, token) -> None:
-        self._var.reset(token)
+    def reset(self, token: _AmbientToken) -> None:
+        self._var.reset(token.token)
+        _released(token.computation, (self, None))
 
 
 class AmbientSet:
     """A process set whose membership construction reads under memo rows.
 
     ``member in s`` records the answer for that member on the computation in
-    flight; ``add`` marks that member as the computation's own.
+    flight; ``add`` marks that member as the computation's own until the
+    matching ``discard``.  ``now`` is for ``MemoRow.holds`` alone.
     """
 
-    __slots__ = ("name", "_members")
+    __slots__ = ("name", "_members", "_owners")
 
     def __init__(self, name: str) -> None:
         self.name = name
         self._members: set = set()
+        # member -> the computation each ``add`` of it marked, innermost last.
+        self._owners: dict = {}
 
     def now(self, member: object) -> bool:
         return member in self._members
@@ -298,11 +334,16 @@ class AmbientSet:
         return value
 
     def add(self, member: object) -> None:
-        _wrote((self, member))
+        self._owners.setdefault(member, []).append(_wrote((self, member)))
         self._members.add(member)
 
     def discard(self, member: object) -> None:
         self._members.discard(member)
+        owners = self._owners.get(member)
+        if owners:
+            _released(owners.pop(), (self, member))
+            if not owners:
+                del self._owners[member]
 
     def __len__(self) -> int:
         return len(self._members)
