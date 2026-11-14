@@ -266,7 +266,8 @@ class _GeneratorTryFinallyStepsV1:
 @dataclass(frozen=True)
 class _GeneratorTryFinallyExpansionV1:
     statement: object
-    cleanup: "_GeneratorCleanupTermsV1 | _GeneratorCleanupAbsentV1"
+    # The suite's FinallyStepV1, or None when the cleanup is unnameable.
+    cleanup: object
 
 
 @dataclass(frozen=True)
@@ -6558,8 +6559,25 @@ class FunctionDef(Statement):
         return self._source_visible_generator_steps_from(substituted_body)
 
     def _source_visible_generator_steps_from(self, body):
-        if not self._owns_yield(body):
+        if not FunctionDef._owns_yield(body):
             return None
+        name_statement, _branch_steps = FunctionDef._generator_step_producer()
+        return FunctionDef._generator_top_level_steps(body, name_statement)
+
+    @staticmethod
+    def _generator_step_producer(with_step=None):
+        """The one generator step producer: ``(name_statement, branch_steps)``.
+
+        ``name_statement`` names one statement as a generator step (or says
+        it cannot); ``branch_steps`` names a suite (a branch, a ``try`` body,
+        a cleanup suite, a nested ``with`` body), or None when any statement
+        in it is unnameable.  A top-level generator body
+        (``_generator_top_level_steps``) and a nested ``with`` body a manager
+        derivation seats (``manager_summary_derivation``) are both named
+        here.  ``with_step`` names a ``with`` statement for a caller that
+        resolves its manager (a cited-opaque manager); without it a ``with``
+        is unnameable here and a top-level body keeps it opaque.
+        """
         from sugar_lift_py_tests.generator_construction import (
             AssignStepV1,
             AttributeAssignStepV1,
@@ -6571,19 +6589,104 @@ class FunctionDef(Statement):
             ForStepV1,
             IfStepV1,
             InertStepV1,
-            OpaqueStepV1,
             RaiseStepV1,
             ReturnStepV1,
             TermStepV1,
+            YieldAssignStepV1,
+            YieldAssignUnpackV1,
             YieldFromStepV1,
             YieldStepV1,
         )
+        from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
         from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-
-        steps = []
 
         absent_step = _GeneratorStepAbsentV1()
         absent_cleanup = _GeneratorCleanupAbsentV1()
+
+        def suspension_step(value):
+            """The suspension a ``yield`` / ``yield from`` expression performs
+            as a step, or None when a delegated iterable is not a constructed
+            term (``YieldFromStepV1`` requires one)."""
+            if isinstance(value, Yield):
+                operand = value.value
+                return YieldStepV1(None if operand is None else operand.sugar())
+            iterable = value.value.sugar()
+            if not isinstance(iterable, ConstructedTermSugar):
+                return None
+            occurrence = value.fragment
+            return YieldFromStepV1(iterable, occurrence, occurrence.seal().cid)
+
+        def yield_assign_step(statement):
+            """``<targets> = yield v`` / ``<targets> = yield from xs`` as
+            ``YieldAssignStepV1``, or None.
+
+            The targets an ordinary assignment binds by value: one Name
+            (``y = ...``, ``y: T = ...``), a chain of Names (``a = b =
+            ...``), or a flat unpack of Names with at most one ``*Name``
+            (``a, b = ...``, ``a, *b = ...``).  Each Name carries the key
+            substitution bound its later reads to: ``target_evaluations``
+            for a Name or a chain, the Name's projection of the statement's
+            evaluation for an unpack (``Assign._unpack_projection_binding``).
+            Store targets and nested unpacks are not named here.
+            """
+            if isinstance(statement, Assign):
+                targets = statement.targets
+            elif isinstance(statement, AnnAssign) and statement.value is not None:
+                targets = (statement.target,)
+            else:
+                return None
+            operand = statement.value.value
+            if operand is not None and FunctionDef._owns_yield((operand,)):
+                # ``y = yield (yield v)``: the operand suspends first.
+                return None
+            suspension = suspension_step(statement.value)
+            if suspension is None:
+                return None
+            unpack = None
+            if all(isinstance(target, Name) for target in targets):
+                keys = dict(statement.target_evaluations())
+                bound = tuple((target.id, keys.get(target.id)) for target in targets)
+            elif (
+                len(targets) == 1
+                and isinstance(targets[0], (Tuple_, List))
+                and targets[0].elts
+            ):
+                target = targets[0]
+                if all(isinstance(item, Name) for item in target.elts):
+                    unpack = YieldAssignUnpackV1(
+                        tuple(item.id for item in target.elts)
+                    )
+                else:
+                    parts = statement._flat_starred_name_parts(target)
+                    if parts is None:
+                        return None
+                    prefix, star_name, suffix = parts
+                    unpack = YieldAssignUnpackV1(prefix, star_name, suffix)
+                names = (
+                    *unpack.prefix_names,
+                    *(() if unpack.star_name is None else (unpack.star_name,)),
+                    *unpack.suffix_names,
+                )
+                evaluation = getattr(statement, "evaluation", None)
+                if isinstance(evaluation, str):
+                    from sugar_lift_py_tests.temporal.temporal_context import (
+                        projection_key,
+                    )
+
+                    bound = tuple(
+                        (name, projection_key(evaluation, name)) for name in names
+                    )
+                else:
+                    bound = tuple((name, None) for name in names)
+            else:
+                return None
+            return YieldAssignStepV1(
+                suspension,
+                bound,
+                statement.fragment.seal().cid,
+                unpack=unpack,
+                occurrence=statement.fragment,
+            )
 
         def name_statement(statement):
             """One nameable step, or None when the vocabulary cannot perform it.
@@ -6596,66 +6699,47 @@ class FunctionDef(Statement):
             so real/renamed generator managers advance through source-visible
             control to their first yield without consumer reconstruction.
             """
-            if isinstance(statement, Expr) and isinstance(statement.value, Yield):
-                value = statement.value.value
-                return _GeneratorNamedStepV1(
-                    YieldStepV1(None if value is None else value.sugar())
-                )
-            if isinstance(statement, Expr) and isinstance(statement.value, YieldFrom):
-                occurrence = statement.value.fragment
-                return _GeneratorNamedStepV1(
-                    YieldFromStepV1(
-                        statement.value.value.sugar(),
-                        occurrence,
-                        occurrence.seal().cid,
-                    )
-                )
-            if (
-                isinstance(statement, Assign)
-                and len(statement.targets) == 1
-                and isinstance(statement.targets[0], Name)
-                and isinstance(statement.value, Yield)
-                and (
-                    statement.value.value is None
-                    or not self._owns_yield((statement.value.value,))
-                )
+            if isinstance(statement, Expr) and isinstance(
+                statement.value, (Yield, YieldFrom)
             ):
-                # ``y = yield v``: the yield, then the assignment of the value
-                # its resume sends, keyed as the assignment's evaluation
-                # (``target_evaluations``) that substitution bound ``y`` to.
-                from sugar_lift_py_tests.generator_construction import (
-                    YieldAssignStepV1,
-                )
-
-                value = statement.value.value
-                name = statement.targets[0].id
-                return _GeneratorNamedStepV1(
-                    YieldAssignStepV1(
-                        YieldStepV1(None if value is None else value.sugar()),
-                        name,
-                        statement.fragment.seal().cid,
-                        dict(statement.target_evaluations()).get(name),
-                    )
-                )
+                step = suspension_step(statement.value)
+                if step is None:
+                    return absent_step
+                return _GeneratorNamedStepV1(step)
+            if isinstance(statement, (Assign, AnnAssign)) and isinstance(
+                statement.value, (Yield, YieldFrom)
+            ):
+                # The suspension, then the assignment of the value its resume
+                # brings, bound to each target as an ordinary assignment binds
+                # it (``YieldAssignStepV1``).
+                step = yield_assign_step(statement)
+                if step is None:
+                    return absent_step
+                return _GeneratorNamedStepV1(step)
             if isinstance(statement, Return):
                 return _GeneratorNamedStepV1(
                     ReturnStepV1(
                         None if statement.value is None else statement.value.sugar()
                     )
                 )
-            if isinstance(statement, Raise) and not self._owns_yield((statement,)):
+            if isinstance(statement, Raise) and not FunctionDef._owns_yield((statement,)):
                 # Validation arms (``if bad: raise …``) and cleanup raises —
                 # RaiseSugar rides the step; transition halts with the effect.
+                # A grouped raise (``GroupedRaiseSugar``) is not a RaiseStepV1:
+                # its testimony is a RaiseSugar's.
+                raise_sugar = statement.sugar()
+                if not isinstance(raise_sugar, RaiseSugar):
+                    return absent_step
                 return _GeneratorNamedStepV1(
                     RaiseStepV1(
-                        statement.sugar(),
+                        raise_sugar,
                         statement.fragment.seal().cid,
                     )
                 )
             if (
                 isinstance(statement, Expr)
                 and isinstance(statement.value, Constant)
-                and not self._owns_yield((statement,))
+                and not FunctionDef._owns_yield((statement,))
             ):
                 # EVALUATED AND DISCARDED IS NOTHING. A bare `Constant`
                 # expression -- the docstring case -- owes no effect, no
@@ -6663,11 +6747,11 @@ class FunctionDef(Statement):
                 # machine refuse at a statement that asks for nothing and name
                 # the WRONG blocker. It is stepped, not performed.
                 return _GeneratorNamedStepV1(InertStepV1(statement.kind))
-            if isinstance(statement, Pass) and not self._owns_yield((statement,)):
+            if isinstance(statement, Pass) and not FunctionDef._owns_yield((statement,)):
                 return _GeneratorNamedStepV1(InertStepV1(statement.kind))
             if (
                 isinstance(statement, Expr)
-                and not self._owns_yield((statement,))
+                and not FunctionDef._owns_yield((statement,))
                 and not isinstance(statement.value, (Yield, YieldFrom))
             ):
                 # Bare expression statements (cleanup / setup calls): admit the
@@ -6680,7 +6764,7 @@ class FunctionDef(Statement):
                 return absent_step
             if (
                 isinstance(statement, Assign)
-                and not self._owns_yield((statement,))
+                and not FunctionDef._owns_yield((statement,))
                 and len(statement.targets) == 1
                 and isinstance(statement.targets[0], Name)
             ):
@@ -6693,7 +6777,7 @@ class FunctionDef(Statement):
                 )
             if (
                 isinstance(statement, Assign)
-                and not self._owns_yield((statement,))
+                and not FunctionDef._owns_yield((statement,))
                 and len(statement.targets) == 1
                 and isinstance(statement.targets[0], Attribute)
             ):
@@ -6710,7 +6794,7 @@ class FunctionDef(Statement):
                 )
             if (
                 isinstance(statement, AnnAssign)
-                and not self._owns_yield((statement,))
+                and not FunctionDef._owns_yield((statement,))
                 and isinstance(statement.target, Name)
                 and statement.value is not None
             ):
@@ -6721,7 +6805,7 @@ class FunctionDef(Statement):
                         statement.fragment.seal().cid,
                     )
                 )
-            if isinstance(statement, Assert) and not self._owns_yield((statement,)):
+            if isinstance(statement, Assert) and not FunctionDef._owns_yield((statement,)):
                 from sugar_lift_py_tests.context_manager_resolution import (
                     SourceFragmentCoordinateV1,
                 )
@@ -6741,7 +6825,7 @@ class FunctionDef(Statement):
                         occurrence=statement.fragment,
                     )
                 )
-            if isinstance(statement, ImportFrom) and not self._owns_yield((statement,)):
+            if isinstance(statement, ImportFrom) and not FunctionDef._owns_yield((statement,)):
                 from sugar_lift_py_tests.context_manager_resolution import (
                     SourceFragmentCoordinateV1,
                 )
@@ -6760,7 +6844,7 @@ class FunctionDef(Statement):
                         occurrence=statement.fragment,
                     )
                 )
-            if isinstance(statement, Import) and not self._owns_yield((statement,)):
+            if isinstance(statement, Import) and not FunctionDef._owns_yield((statement,)):
                 from sugar_lift_py_tests.context_manager_resolution import (
                     SourceFragmentCoordinateV1,
                 )
@@ -6823,7 +6907,7 @@ class FunctionDef(Statement):
             if (
                 isinstance(statement, For)
                 and not statement.orelse
-                and not self._owns_yield((statement,))
+                and not FunctionDef._owns_yield((statement,))
             ):
                 body_steps = branch_steps(statement.body)
                 target_coordinates = generator_for_target_coordinates(statement)
@@ -6857,7 +6941,7 @@ class FunctionDef(Statement):
                     or isinstance(statement.body[0].value.value, (Name, Constant))
                 )
                 and all(
-                    not self._owns_yield(handler.body)
+                    not FunctionDef._owns_yield(handler.body)
                     and all(
                         isinstance(item, (Pass, Raise, Return))
                         or (
@@ -6902,26 +6986,41 @@ class FunctionDef(Statement):
                 # statement-by-statement so a yield is never swallowed by a
                 # single Opaque Try when only a peer loop is unnameable.
                 body_steps = branch_steps(statement.body)
-                cleanup = cleanup_terms(statement.finalbody)
-                if body_steps is not None and isinstance(
-                    cleanup, _GeneratorCleanupTermsV1
-                ):
-                    cleanup_step = FinallyStepV1(cleanup.terms)
+                cleanup_step = finally_step(statement.finalbody)
+                if body_steps is not None and cleanup_step is not None:
                     return _GeneratorTryFinallyStepsV1(
                         compose_finally(body_steps, cleanup_step)
                     )
-                cleanup_steps = branch_steps(statement.finalbody)
-                if body_steps is not None and cleanup_steps is not None:
-                    return _GeneratorTryFinallyStepsV1(
-                        compose_finally(
-                            body_steps,
-                            FinallyStepV1((), cleanup_steps=cleanup_steps),
-                        )
-                    )
-                if body_steps is None and self._owns_yield(statement.body):
-                    return _GeneratorTryFinallyExpansionV1(statement, cleanup)
+                if body_steps is None and FunctionDef._owns_yield(statement.body):
+                    return _GeneratorTryFinallyExpansionV1(statement, cleanup_step)
                 return absent_step
+            if isinstance(statement, With) and with_step is not None:
+                step = with_step(statement)
+                if step is None:
+                    return absent_step
+                return _GeneratorNamedStepV1(step)
             return absent_step
+
+        def finally_step(finalbody):
+            """A handler-free ``finally`` suite as one ``FinallyStepV1``, or None.
+
+            Cleanup the steps name runs through the cleanup sub-machine
+            (``cleanup_steps``), a term-only call included: the statements
+            path (``reduce_block_to_exitset``) can complete a call without
+            reducing a source-visible body (#7530).  ``pass`` is skipped, so a
+            pass-only suite is empty cleanup.  A suite the steps cannot name
+            whose statements are all constructed terms is the statements
+            path's.
+            """
+            cleanup_steps = branch_steps(
+                tuple(item for item in finalbody if not isinstance(item, Pass))
+            )
+            if cleanup_steps is not None:
+                return FinallyStepV1((), cleanup_steps=cleanup_steps)
+            cleanup = cleanup_terms(finalbody)
+            if isinstance(cleanup, _GeneratorCleanupTermsV1):
+                return FinallyStepV1(cleanup.terms)
+            return None
 
         def branch_steps(body):
             """Steps for one branch/suite, or None if any shape is unnameable.
@@ -6986,13 +7085,13 @@ class FunctionDef(Statement):
                     # A structured cleanup step is not a term. Let the typed
                     # step path below own it without probing ``For.sugar``.
                     return absent_cleanup
-                if isinstance(item, Expr) and not self._owns_yield((item,)):
+                if isinstance(item, Expr) and not FunctionDef._owns_yield((item,)):
                     value_sugar = item.value.sugar()
                     if isinstance(value_sugar, ConstructedTermSugar):
                         terms.append(value_sugar)
                         continue
                     return absent_cleanup
-                if isinstance(item, Raise) and not self._owns_yield((item,)):
+                if isinstance(item, Raise) and not FunctionDef._owns_yield((item,)):
                     # Raise is a step, not a Finally term; refuse pure-term suite.
                     return absent_cleanup
                 try:
@@ -7005,6 +7104,20 @@ class FunctionDef(Statement):
                 return absent_cleanup
             return _GeneratorCleanupTermsV1(tuple(terms))
 
+        return name_statement, branch_steps
+
+    @staticmethod
+    def _generator_top_level_steps(body, name_statement):
+        """A generator body's steps: each statement ``name_statement`` names,
+        an honest ``OpaqueStepV1`` for each it cannot, and a closing
+        ``ReturnStepV1`` (falling off the end returns None)."""
+        from sugar_lift_py_tests.generator_construction import (
+            OpaqueStepV1,
+            ReturnStepV1,
+        )
+
+        steps = []
+
         def append_statement(statement):
             produced = name_statement(statement)
             if isinstance(produced, _GeneratorTryFinallyStepsV1):
@@ -7013,8 +7126,8 @@ class FunctionDef(Statement):
             if isinstance(produced, _GeneratorTryFinallyExpansionV1):
                 for nested in produced.statement.body:
                     append_statement(nested)
-                if isinstance(produced.cleanup, _GeneratorCleanupTermsV1):
-                    steps.append(FinallyStepV1(produced.cleanup.terms))
+                if produced.cleanup is not None:
+                    steps.append(produced.cleanup)
                 else:
                     steps.append(
                         OpaqueStepV1(
@@ -7032,14 +7145,14 @@ class FunctionDef(Statement):
                 steps.append(
                     OpaqueStepV1(
                         statement.kind,
-                        carries_suspension=self._owns_yield((statement,)),
+                        carries_suspension=FunctionDef._owns_yield((statement,)),
                     )
                 )
                 return
             steps.append(
                 OpaqueStepV1(
                     statement.kind,
-                    carries_suspension=self._owns_yield((statement,)),
+                    carries_suspension=FunctionDef._owns_yield((statement,)),
                 )
             )
 

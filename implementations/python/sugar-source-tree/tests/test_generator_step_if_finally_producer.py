@@ -351,6 +351,12 @@ def test_nonhalting_guard_twin_executes_only_selected_branch() -> None:
 
 
 def test_finally_cleanup_call_is_constructed_term_not_expr_statement() -> None:
+    # A term-only cleanup runs through the cleanup sub-machine (#7530): the
+    # call is a TermStepV1 over its ConstructedTermSugar, never an
+    # ExprStatementSugar, and never the statements path.
+    from sugar_lift_py_tests.generator_construction import TermStepV1
+    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
+
     steps = _steps(
         "def manager():\n"
         "    try:\n"
@@ -361,11 +367,12 @@ def test_finally_cleanup_call_is_constructed_term_not_expr_statement() -> None:
     finally_steps = [s for s in steps if isinstance(s, FinallyStepV1)]
     assert len(finally_steps) == 1
     cleanup = finally_steps[0]
-    assert cleanup.statements
-    assert not any(isinstance(s, ExprStatementSugar) for s in cleanup.statements)
-    from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
-
-    assert all(isinstance(s, ConstructedTermSugar) for s in cleanup.statements)
+    assert cleanup.statements == ()
+    assert len(cleanup.cleanup_steps) == 1
+    (term_step,) = cleanup.cleanup_steps
+    assert isinstance(term_step, TermStepV1)
+    assert isinstance(term_step.term, ConstructedTermSugar)
+    assert not isinstance(term_step.term, ExprStatementSugar)
 
 
 def test_raw_expr_statement_sugar_payload_refused_by_finally_step() -> None:
@@ -556,11 +563,12 @@ def test_branch_occurrence_tamper_changes_fragment_cid() -> None:
 
 
 def test_unsupported_x_yield_in_branch_keeps_whole_if_opaque() -> None:
-    # ``x = yield 1`` is YieldAssignStepV1; ``x = yield from xs`` is not named.
+    # ``x = yield 1`` and ``x = yield from xs`` are YieldAssignStepV1; a store
+    # target of a yield is not named.
     steps = _steps(
-        "def manager(c, xs):\n"
+        "def manager(c, o):\n"
         "    if c:\n"
-        "        x = yield from xs\n"
+        "        o.x = yield 1\n"
         "    yield 2\n"
     )
     assert isinstance(steps[0], OpaqueStepV1)

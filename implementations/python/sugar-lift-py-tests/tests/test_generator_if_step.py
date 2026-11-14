@@ -29,10 +29,10 @@ OCCURRENCE (`targetCid`), pinned by
 same law at a second producer.
 
 THE BOUND. Only when EVERY step in both branches is one the vocabulary can
-already execute. `x = yield v` is `YieldAssignStepV1` (the sent value binds
-`x`); `x = yield from xs` owes the delegation's return value, which no step
-binds, so a branch holding one keeps the whole `If` opaque and loud. Naming a
-step we cannot resume is worse than an honest `OpaqueStepV1`.
+already name. `x = yield v` and `x = yield from xs` are `YieldAssignStepV1`
+(the sent value binds `x`; after a delegation the bind of its return value is
+refused by name); a store target of a yield (`o.x = yield v`) is not named, so
+a branch holding one keeps the whole `If` opaque and loud.
 """
 
 from __future__ import annotations
@@ -106,8 +106,9 @@ def _completed(exits) -> list:
         ),
         # A yield assignment in a branch is a named step.
         ("def g(c):\n    if c:\n        x = yield 1\n", IfStepV1),
-        # THE BOUND: a branch holding a shape we cannot resume stays opaque.
-        ("def g(c, xs):\n    if c:\n        x = yield from xs\n", OpaqueStepV1),
+        ("def g(c):\n    if c:\n        x = yield from (1, 2)\n", IfStepV1),
+        # THE BOUND: a branch holding a shape we cannot name stays opaque.
+        ("def g(c, o):\n    if c:\n        o.x = yield 1\n", OpaqueStepV1),
     ),
 )
 def test_the_producer_admits_only_a_wholly_nameable_branch(source, first_step) -> None:
