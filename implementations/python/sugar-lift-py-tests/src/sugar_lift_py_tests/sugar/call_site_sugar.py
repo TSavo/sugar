@@ -100,36 +100,6 @@ def _off_population_unanswered_call(sugar):
     return UnknownCalleeCallV1(sugar.spelled_target)
 
 
-def _lexically_unknown_head(site, head: str) -> bool:
-    """``head`` is bound nowhere in ``site``'s module, or only by an import.
-
-    A head bound nowhere is known only when its read at ``site`` falls through
-    to the builtin namespace (``SourceUnit.builtin_reference_at``, the read's
-    binding); the spelling is never asked whether some builtin has it."""
-    unit = getattr(site, "unit", None)
-    table = getattr(unit, "module_symtable", None)
-    if table is None:
-        return False
-    imported = False
-
-    def visit(scope) -> bool:
-        nonlocal imported
-        try:
-            symbol = scope.lookup(head)
-        except KeyError:
-            symbol = None
-        if symbol is not None:
-            if symbol.is_imported():
-                imported = True
-            elif symbol.is_assigned() or symbol.is_namespace() or symbol.is_parameter():
-                return True
-        return any(visit(child) for child in scope.get_children())
-
-    if visit(table):
-        return False
-    return imported or unit.builtin_reference_at(head, site.line_col_span) is None
-
-
 def _resolved_manager_construction(sugar) -> bool:
     """This call is a ``with`` item's manager, which the manager resolution
     resolved: its construction faces are that resolution's testimony, not an

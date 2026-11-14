@@ -36,6 +36,14 @@ from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_source_tree.nodes import LanguageCallee
 
 
+def _completed_member(outcome):
+    """The value of the one completed arm of a two-faced attribute read."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    return done.value
+
+
 def _split(receiver: str, *arguments):
     return _fold_string_method(
         StringValue(receiver),
@@ -123,8 +131,11 @@ def test_guarded_append_asks_the_marker_of_an_operator_face() -> None:
 def test_type_name_attribute_read_names_a_string() -> None:
     receiver = SymbolicValue(make_var("expected"))
 
-    member = receiver.attribute("__qualname__", "symbolic-qualname", None)
-    member = member.completed_value()
+    # The read is two-faced (the receiver need not have one); its completed
+    # face is the marked coordinate.
+    member = _completed_member(
+        receiver.attribute("__qualname__", "symbolic-qualname", None)
+    )
 
     assert type(member) is CallSiteValue
     assert member.type_name_attribute
@@ -161,8 +172,10 @@ def test_user_function_spelled_name_does_not_name_a_string(spelling: str) -> Non
 
 
 def test_named_string_concat_carries_its_marker() -> None:
-    name = SymbolicValue(make_var("exc_type")).attribute("__name__", "name-attr", None)
-    concat = name.completed_value().add(StringValue("()"), "concat", None)
+    name = _completed_member(
+        SymbolicValue(make_var("exc_type")).attribute("__name__", "name-attr", None)
+    )
+    concat = name.add(StringValue("()"), "concat", None)
     concat = concat.completed_value()
 
     assert type(concat) is CallSiteValue

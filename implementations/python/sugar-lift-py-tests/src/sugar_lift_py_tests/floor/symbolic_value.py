@@ -467,37 +467,42 @@ class SymbolicValue(FloorValue):
         )
 
     def attribute(self, name, site, ctx):
-        """Name ``__name__`` / ``__qualname__`` as a coordinate, without inventing the string.
+        """``self.name``: the one two-faced undecided read
+        (``undecided_attribute``), whatever bound the receiver -- a formal, a
+        free name, a module alias with no member receipt (``import sys``;
+        ``sys.maxsize``).  Nothing here decides the receiver's runtime type or
+        its ``__getattribute__``, so every member may raise.
 
-        RaisesExc's absent-effect diagnostic formats
-        ``self.expected_exceptions[0].__name__``. A class actual already
-        exposes the authenticated type name. When that element is the
-        constructor formal, guessing AttributeError or inventing a concrete
-        type name is dishonest. The spelling is still decidable: emit
-        ``attr:__name__(receiver)`` the same way ``format_data_model`` names
-        ``call:__format__`` without inventing the formatted string.
+        ``__name__`` / ``__qualname__`` complete as a coordinate, without
+        inventing the string: RaisesExc's absent-effect diagnostic formats
+        ``self.expected_exceptions[0].__name__``, and guessing a concrete type
+        name is dishonest.  The spelling is still decidable: the completed
+        face is ``attr:__name__(receiver)``, marked as the type-name read
+        (``type_name_attribute``), the same way ``format_data_model`` names
+        ``call:__format__`` without inventing the formatted string.  It keeps
+        the read's raise face: an object need not have a ``__name__``.
         """
-        if name in {"__name__", "__qualname__"}:
-            from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-            from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.outcome import ExitSet
+        outcome = self.undecided_attribute(name, site, owner="SymbolicValue.attribute")
+        if name not in {"__name__", "__qualname__"}:
+            return outcome
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import ExitSet
 
-            return ExitSet.completed(
-                CallSiteValue(
-                    target_name=name,
-                    arg_values=(self,),
-                    parameters=(),
-                    term=ctor(
-                        f"attr:{name}",
-                        [self.to_term(owner=str(site))],
-                        symbol_kind="method-coordinate",
-                    ),
-                    body=None,
-                    site=site,
-                    type_name_attribute=True,
-                )
-            )
-        return self.undecided_attribute(name, site, owner="SymbolicValue.attribute")
+        type_name = CallSiteValue(
+            target_name=name,
+            arg_values=(self,),
+            parameters=(),
+            term=ctor(
+                f"attr:{name}",
+                [self.to_term(owner=str(site))],
+                symbol_kind="method-coordinate",
+            ),
+            body=None,
+            site=site,
+            type_name_attribute=True,
+        )
+        return outcome.and_then(lambda _member: ExitSet.completed(type_name))
 
     def contains(self, item, site):
         # Membership on an unknown container is a third value: neither

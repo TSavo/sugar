@@ -18,22 +18,36 @@ def test_guard_does_not_become_symbolic_value_content_identity() -> None:
     assert value.post_contribution() == ()
 
 
+def _completed_member(outcome):
+    """The value of the one completed arm of a two-faced attribute read."""
+    from sugar_lift_py_tests.outcome import Completed
+
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    return done.value
+
+
 def test_symbolic_name_attribute_is_a_coordinate_not_an_invented_string() -> None:
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor
+    from sugar_lift_py_tests.outcome import Halted
 
     value = SymbolicValue(make_var("expected"))
     site = "symbolic-name-attr"
     outcome = value.attribute("__name__", site, None)
 
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), CallSiteValue)
-    assert outcome.completed_value().target_name == "__name__"
-    assert outcome.completed_value().term == ctor(
+    member = _completed_member(outcome)
+    assert isinstance(member, CallSiteValue)
+    assert member.target_name == "__name__"
+    assert member.term == ctor(
         "attr:__name__",
         [value.to_term(owner=str(site))],
         symbol_kind="method-coordinate",
     )
+    # The read keeps its raise face: an object need not have a ``__name__``.
+    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == "SymbolicValue.attribute"
 
 
 def test_symbolic_unknown_attribute_stays_undecided() -> None:
@@ -108,16 +122,19 @@ def test_joined_str_names_unground_interpolation_as_an_fstring_coordinate(
     # ``unknown.__name__`` is not a decided builtin, so formatting it runs a
     # ``__format__`` that may be user code: the f-string is the one unanswered
     # call, completing only under its atom and halting undetermined under its
-    # complement.
+    # complement.  A symbolic receiver's ``__name__`` read is itself the one
+    # two-faced undecided read, so its own raise face may stand beside it.
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 
     assert isinstance(outcome, ExitSet), outcome
     (completed,) = [e for e in outcome.exits if isinstance(e, Completed)]
-    (halted,) = [e for e in outcome.exits if isinstance(e, Halted)]
-    assert completed.guard.name == "python:unknown_callee_call.completes"
-    assert isinstance(halted.effect, UndeterminedRaiseEffect)
-    assert halted.effect.producer_node_owner == "UnknownCallee:format"
+    halts = [e for e in outcome.exits if isinstance(e, Halted)]
+    assert "python:unknown_callee_call.completes" in repr(completed.guard)
+    assert all(isinstance(halt.effect, UndeterminedRaiseEffect) for halt in halts)
+    owners = {halt.effect.producer_node_owner for halt in halts}
+    assert "UnknownCallee:format" in owners
+    assert owners <= {"UnknownCallee:format", "SymbolicValue.attribute"}
     assert isinstance(completed.value, CallSiteValue)
     assert getattr(completed.value.term, "name", None) == "python:fstring"
 
@@ -176,7 +193,7 @@ def _name_attribute_callsite():
     """``exc_type.__name__`` as the attribute read mints it (its marker,
     ``type_name_attribute``), never a hand-spelled ``attr:__name__`` term."""
     receiver = SymbolicValue(make_var("exc_type"))
-    name = receiver.attribute("__name__", "name-attr", None).completed_value()
+    name = _completed_member(receiver.attribute("__name__", "name-attr", None))
     assert name.type_name_attribute
     return name
 
