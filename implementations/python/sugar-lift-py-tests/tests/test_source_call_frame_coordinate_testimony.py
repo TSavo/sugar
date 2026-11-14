@@ -286,9 +286,11 @@ def _binding(term):
 
 
 def _pin_term():
-    from sugar_lift_python_source.value_pins import mutable_global_pin_term
+    from sugar_lift_python_source.ir import ctor, str_const
 
-    return mutable_global_pin_term("_global_config", "dict")
+    return ctor(
+        "python:mutable_global_pin", str_const("_global_config"), str_const("dict")
+    )
 
 
 def test_a_carried_pin_term_canonicalizes_as_a_value():

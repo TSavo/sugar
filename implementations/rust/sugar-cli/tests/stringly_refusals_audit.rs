@@ -138,16 +138,6 @@ const EXPECTED_STRINGLY_REFUSAL_EMISSIONS: &[ExpectedSite] = &[
     ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/sugar-compiler/src/kit_path/path_executor.rs", line: 154, needle: ".ok_or_else(|| PathExecutionError::Refused(Box::new(missing_kit_refusal(step))))?;", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
     ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/sugar-compiler/src/kit_path/path_executor.rs", line: 224, needle: "Err(PathExecutionError::Refused(Box::new(", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
     ExpectedSite { ground: "path-composition-refusal-effect", path: "implementations/rust/sugar-compiler/src/kit_path/path_executor.rs", line: 332, needle: "PathExecutionError::Refused(Box::new(prove_not_supported_refusal(step)))", replacement: "CompositionEffect::MissingRequirement from PathExecutionError" },
-    ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 32, needle: "VALUE_PIN_REFUSAL_KIND = \"value-pin-refused\"", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
-    ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 33, needle: "ENUM_PIN_REFUSAL_KIND = \"enum-pin-refused\"", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
-    ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 121, needle: "scan.refusals.append(_pin_refusal(candidate, refusal_reason))", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
-    ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 126, needle: "scan.refusals.append(_pin_refusal(candidate, exc.reason))", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
-    ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 211, needle: "_pin_refusal(", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
-    ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 222, needle: "_pin_refusal(", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
-    ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 230, needle: "_pin_refusal(", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
-    ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 240, needle: "scan.refusals.append(_pin_refusal(candidate, exc.reason))", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
-    ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 265, needle: "_pin_refusal(", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
-    ExpectedSite { ground: "python-value-pin-effect", path: "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py", line: 275, needle: "scan.refusals.append(_pin_refusal(value_candidate, exc.reason))", replacement: "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason" },
     ExpectedSite { ground: "rust-walk-source-effect-status", path: "implementations/rust/sugar-walk/src/bin/walk_rpc.rs", line: 17881, needle: "\"status\": \"refused\",", replacement: "RustWalk source effect status variant with source ledger ground" },
     ExpectedSite { ground: "solver-batch-refusal-effect", path: "implementations/rust/sugar-verifier/src/solvers/batch.rs", line: 168, needle: "raw: ObligationVerdict::Refused,", replacement: "SolverEffect::BatchRefused carrying solver and job" },
     ExpectedSite { ground: "solver-unsupported-construct-effect", path: "implementations/rust/sugar-verifier/src/solvers/subprocess.rs", line: 212, needle: "ObligationVerdict::Refused,", replacement: "SolverEffect::UnsupportedConstruct{symbol}" },
@@ -298,9 +288,6 @@ fn classify_emission(path: &str, line: &str, context: &str) -> Option<&'static s
     if is_python_unsupported_syntax_constructor(line) {
         return Some("python-unsupported-syntax-effect");
     }
-    if path.contains("sugar_lift_python_source/value_pins.py") && is_value_pin_refusal(line) {
-        return Some("python-value-pin-effect");
-    }
     if path.contains("sugar_lift_py_tests/kit_rpc/effect_dto.py")
         && line.contains("status: str = \"refused\"")
     {
@@ -427,13 +414,6 @@ fn is_python_unsupported_syntax_constructor(line: &str) -> bool {
         || line.contains("return _UnsupportedSyntax")
         || line.contains("self.refused = _UnsupportedSyntax")
         || line.contains("self._refuse(")
-}
-
-fn is_value_pin_refusal(line: &str) -> bool {
-    (line.contains("_pin_refusal(") && !line.starts_with("def _pin_refusal"))
-        || line.contains("scan.refusals.append(_pin_refusal")
-        || line.contains("VALUE_PIN_REFUSAL_KIND =")
-        || line.contains("ENUM_PIN_REFUSAL_KIND =")
 }
 
 fn is_rust_lift_refusal_effect(line: &str) -> bool {
@@ -625,7 +605,6 @@ fn replacement_for_ground(ground: &str) -> &'static str {
         "python-proofir-refusal-record" => "ProofIREffect node with typed effect_kind and provenance",
         "python-source-oracle-effect" => "SourceOracleEffect::{Absent,Drifted} carrying source memento",
         "python-unsupported-syntax-effect" => "PythonLiftEffect variant for the refused syntax ground",
-        "python-value-pin-effect" => "PythonLiftEffect::ValuePinRejected/EnumPinRejected carrying candidate and reason",
         "rust-lift-duration-effect" => "RustLiftEffect::DurationCarrierEmbedding carrying boundary and carrier ground",
         "rust-lift-effect" => "RustLiftEffect variant carrying the source/runtime ground",
         "rust-lift-terminal-classifier" => "RustLiftEffect classifier enum instead of reason-prose whitelist",

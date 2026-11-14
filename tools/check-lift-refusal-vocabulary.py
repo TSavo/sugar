@@ -119,11 +119,7 @@ def wire_marker_for(path: str, text: str, speaker: str) -> str:
         return "wire-protocol:effect-kind"
     if path.endswith("/literal_call_report.py"):
         return "wire-protocol:factory-report-diagnostic"
-    if (
-        path.endswith("/lifter.py")
-        or path.endswith("/value_pins.py")
-        or path.endswith("/rpc.py")
-    ):
+    if path.endswith("/lifter.py") or path.endswith("/rpc.py"):
         return "wire-protocol:lift-report-payload"
     return "internal-only"
 

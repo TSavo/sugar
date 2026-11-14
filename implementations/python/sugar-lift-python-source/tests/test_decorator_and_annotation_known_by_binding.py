@@ -3,18 +3,18 @@ never by their spelling (#7757).
 
 ``contextlib.contextmanager`` (``call_applies_own_frame``),
 ``dataclasses.dataclass`` and the field markers it reads by identity
-(``ClassDef._dataclass_generated_init_fields``), the ``typing.Final``
-qualifier (``value_pins._is_final_annotation``) and the builtin ``open``
+(``ClassDef._dataclass_generated_init_fields``) and the builtin ``open``
 are each reached only through the unit's binding lookup
 (``SourceUnit.language_callee_of`` / ``builtin_reference_at``): an aliased
-import reaches them, a source definition spelled the same does not.
+import reaches them, a source definition spelled the same does not.  An
+annotation naming a binding the lifter does not read (an import of a module
+other than the markers' own) may be a marker: the dataclass's ``__init__``
+is then undecided, never written as if the field were plain.
 """
 
 from __future__ import annotations
 
-from sugar_lift_python_source.value_pins import _is_final_annotation
 from sugar_source_tree.nodes import (
-    AnnAssign,
     Call,
     ClassDef,
     FunctionDef,
@@ -33,18 +33,6 @@ def _node(source: str, kind, name: str):
         if isinstance(node, kind) and node.name == name:
             return unit, node
     raise AssertionError(f"no {kind.__name__} {name!r}")
-
-
-def _annotation(source: str, target: str):
-    unit = _unit(source)
-    for node in unit.typed_module.walk():
-        if (
-            isinstance(node, AnnAssign)
-            and isinstance(node.target, Name)
-            and node.target.id == target
-        ):
-            return node.annotation
-    raise AssertionError(f"no annotated {target!r}")
 
 
 def _open_call(source: str):
@@ -151,17 +139,79 @@ def test_a_source_class_named_classvar_is_an_ordinary_field():
     assert tuple(name for name, *_ in fields) == ("x",)
 
 
-# --- typing.Final ---
+def _field_names(source: str):
+    """The fields of class ``P``'s dataclass-written ``__init__``, or None
+    where that ``__init__`` is undecided (the class call is then the one
+    unanswered call, ``builtin_decorator_application``)."""
+    _, point = _node(source, ClassDef, "P")
+    fields = point._dataclass_generated_init_fields()
+    return None if fields is None else tuple(name for name, *_ in fields)
 
 
-def test_an_aliased_final_confesses():
-    annotation = _annotation("from typing import Final as F\n\nX: F = 1\n", "X")
-    assert _is_final_annotation(annotation)
+def test_a_marker_imported_through_another_module_leaves_init_undecided():
+    # ``typing_extensions.ClassVar`` may be ``typing.ClassVar``: only that
+    # module's proof could say, so the field is never read as plain.
+    assert (
+        _field_names(
+            "from dataclasses import dataclass\n"
+            "from typing_extensions import ClassVar\n\n"
+            "@dataclass\n"
+            "class P:\n"
+            "    x: ClassVar[int] = 0\n"
+        )
+        is None
+    )
+    assert (
+        _field_names(
+            "import dataclasses\n"
+            "import typing_extensions\n\n"
+            "@dataclasses.dataclass\n"
+            "class P:\n"
+            "    x: typing_extensions.ClassVar[int] = 0\n"
+        )
+        is None
+    )
 
 
-def test_a_source_class_named_final_confesses_nothing():
-    annotation = _annotation("class Final:\n    pass\n\nX: Final = 1\n", "X")
-    assert not _is_final_annotation(annotation)
+def test_any_annotation_bound_outside_the_read_modules_leaves_init_undecided():
+    assert (
+        _field_names(
+            "from dataclasses import dataclass\n"
+            "import numpy as np\n\n"
+            "@dataclass\n"
+            "class P:\n"
+            "    x: np.ndarray\n"
+        )
+        is None
+    )
+    # A module-level alias is an assignment, not a binding read here.
+    assert (
+        _field_names(
+            "from dataclasses import dataclass\n"
+            "from typing import ClassVar\n\n"
+            "CV = ClassVar\n\n"
+            "@dataclass\n"
+            "class P:\n"
+            "    x: CV[int] = 0\n"
+        )
+        is None
+    )
+
+
+def test_annotations_bound_in_the_read_modules_write_init():
+    assert _field_names(
+        "from dataclasses import dataclass\n"
+        "import typing\n"
+        "from typing import Optional\n\n"
+        "class Q:\n"
+        "    pass\n\n"
+        "@dataclass\n"
+        "class P:\n"
+        "    a: int\n"
+        "    b: Optional[Q]\n"
+        "    c: typing.List[int]\n"
+        "    d: int | None = None\n"
+    ) == ("a", "b", "c", "d")
 
 
 # --- the builtin open ---

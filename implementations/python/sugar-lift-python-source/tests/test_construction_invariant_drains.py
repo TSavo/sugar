@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_python_source import ast_template, value_pins
+from sugar_lift_python_source import ast_template
 from sugar_lift_python_source import typed_node_api as typed
 
 
@@ -15,14 +15,9 @@ def test_every_statement_consumer_is_total_and_future_variants_are_loud() -> Non
 
     with pytest.raises(ast_template.UnsupportedStatementVariant):
         ast_template.stmt_to_template(node, [])
-    with pytest.raises(value_pins.UnsupportedStatementVariant):
-        list(value_pins._statement_binding_events(node))
 
 
 def test_current_statement_grammar_is_the_explicit_partition() -> None:
     running = ast_template.AST_STATEMENT_TYPES
     assert ast_template.AST_STATEMENT_TYPE_NAMES == {item.__name__ for item in running}
-    assert value_pins.AST_STATEMENT_TYPES == running
-    assert value_pins.AST_STATEMENT_TYPE_NAMES == {item.__name__ for item in running}
     assert issubclass(ast_template.UnsupportedStatementGrammar, RuntimeError)
-    assert issubclass(value_pins.UnsupportedStatementGrammar, RuntimeError)

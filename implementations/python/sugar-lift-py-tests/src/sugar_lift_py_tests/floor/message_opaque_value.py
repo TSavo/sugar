@@ -4,9 +4,7 @@ When manager receipt seating defers an unresolved value-use because the
 reachability slice proved it flows ONLY to a failure-message attribute (never
 the suppress/raise decision), and the contract force-floor nonetheless reaches
 that coordinate on a symbolic message branch, the value-use consumer yields a
-``MessageOpaqueValue`` instead of refusing.  The manager's contract does not
-depend on it, so carrying it opaquely is honest — its ONLY basis is the
-one-sided ``frame_value_use_is_message_only`` proof.
+``MessageOpaqueValue`` instead of refusing.
 
 It is a ``SymbolicValue`` subclass so the whole "symbolic value flows through
 arithmetic / string / format operations" machinery the lift already has for
