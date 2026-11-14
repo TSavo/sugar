@@ -68,6 +68,13 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
         resumed,
     )
 
+    def resume(state):
+        # A body halt the exit suppresses goes on after the ``with`` from the
+        # one record a continuation after a halt starts from (``resumed``).
+        return resumed(
+            state, ctx, owner="WithSourceResourceSugar.suppressed", blame=resource.site
+        )
+
     # The manager, its enter and its exit are each routed face by face here:
     # a deferred native-operation carrier at any of them is refused by name.
     # A manager call coordinate is not its returned receiver. Perform its
@@ -196,15 +203,19 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                         routed = ExitSet((body_face,)).and_exit(
                             exit_es,
                             disposition=NeverSuppressesDispositionV1(),
+                            resume=resume,
                         )
                     else:
                         routed = ExitSet((body_face,)).and_exit_truthiness(
-                            _exit_return_values(exit_es), site=resource.site
+                            _exit_return_values(exit_es),
+                            site=resource.site,
+                            resume=resume,
                         )
                 else:
                     routed = ExitSet((body_face,)).and_exit(
                         exit_es,
                         disposition=disposition,
+                        resume=resume,
                     )
                 parts.append(
                     prepend_facts_to_exitset(

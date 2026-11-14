@@ -109,6 +109,7 @@ class GeneratorWithSugar(Sugar):
             face_record,
             halt_record,
             reduce_block_to_exitset,
+            resumed,
         )
 
         if isinstance(entered, ExitSet):
@@ -139,6 +140,14 @@ class GeneratorWithSugar(Sugar):
         # The generator-backed manager's __exit__ per body exit: an
         # exception is thrown in at the yield, anything else resumes it.
         body_es = reduce_block_to_exitset(self.body, ctx)
+
+        def resume(state):
+            # A body halt the generator suppresses goes on after the ``with``
+            # from the one record a continuation after a halt starts from.
+            return resumed(
+                state, ctx, owner="GeneratorWithSugar.suppressed", blame=self.site
+            )
+
         routed_faces = []
         for body_exit in body_es.exits:
             # ``__exit__`` runs after the body face it closes: each of its
@@ -159,11 +168,11 @@ class GeneratorWithSugar(Sugar):
                 # Return/break/continue are not exceptions: __exit__(None, ...)
                 # runs and its result is ignored; the body's own exit stands.
                 routed = ExitSet((body_exit,)).and_exit(
-                    exit_es, disposition=NeverSuppressesDispositionV1()
+                    exit_es, disposition=NeverSuppressesDispositionV1(), resume=resume
                 )
             else:
                 routed = ExitSet((body_exit,)).and_exit_truthiness(
-                    exit_es, site=self.site
+                    exit_es, site=self.site, resume=resume
                 )
             routed_faces.append(routed)
         # The routed body faces are siblings: they join through the one join.

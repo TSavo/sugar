@@ -128,6 +128,36 @@ def test_a_generator_frame_lives_inside_its_halts_record() -> None:
     assert halt.state.frame is frame
 
 
+def test_a_suite_resumes_from_the_records_entries_and_context_without_its_returns() -> (
+    None
+):
+    # The one record a continuation after a halt starts from: the record's
+    # entries in its context, every ``return`` entry dropped (dead on the
+    # halt's arm), going on with no fall-through guard and no transform.
+    from sugar_lift_py_tests.floor import GuardedReturn, ReturnValue
+
+    ctx = ReduceContext.root(owner="every-halt-record.resumed")
+    guard = atomic("test.resumed", [])
+    state = _ReducedBlock(
+        (
+            TermValue(1),
+            GuardedReturn((guard,), TermValue(2)),
+            TermValue(3),
+            ReturnValue(TermValue(4)),
+        ),
+        False,
+        (not_(guard),),
+        (lambda entries: entries,),
+        context=ctx,
+    )
+    record = resumed(state, None, owner="test.resumed", blame="test")
+    assert record.entries == (TermValue(1), TermValue(3))
+    assert record.can_fall_through
+    assert record.fall_through == ()
+    assert record.transforms == ()
+    assert record.context is ctx
+
+
 def test_a_face_without_a_record_is_refused_by_name() -> None:
     bare = Halted(atomic("test.face", []), _effect(), None)
     with pytest.raises(SugarNotWritten) as refused:

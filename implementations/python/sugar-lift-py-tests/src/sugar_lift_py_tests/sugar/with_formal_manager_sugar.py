@@ -42,6 +42,7 @@ class WithFormalManagerSugar(Sugar):
             halt_record,
             halts_recorded,
             reduce_block_to_exitset,
+            resumed,
         )
         from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
             _project_manager_receiver,
@@ -131,6 +132,12 @@ class WithFormalManagerSugar(Sugar):
                         ),
                         self.summary.semantics.exit.disposition,
                         self.site,
+                        resume=lambda state: resumed(
+                            state,
+                            ctx,
+                            owner="WithFormalManagerSugar.suppressed",
+                            blame=self.site,
+                        ),
                     )
                     parts.append(
                         prepend_facts_to_exitset(
@@ -153,8 +160,11 @@ class WithFormalManagerSugar(Sugar):
         return result.normalize()
 
 
-def _route_body_face(body_face, exit_es, disposition, site):
+def _route_body_face(body_face, exit_es, disposition, site, *, resume):
     """Route one body face through exit under the protocol's typed disposition.
+
+    A body halt the exit suppresses goes on after the ``with`` from
+    ``resume`` of its record (``function_universe_sugar.resumed``).
 
     ``ReturnTruthiness`` is the same law ``WithSourceResourceSugar`` applies:
     an exception (a leaf or a group) is suppressed only under the truth of the
@@ -177,13 +187,15 @@ def _route_body_face(body_face, exit_es, disposition, site):
     )
 
     if not isinstance(disposition, ReturnTruthinessDispositionV1):
-        return ExitSet((body_face,)).and_exit(exit_es, disposition=disposition)
+        return ExitSet((body_face,)).and_exit(
+            exit_es, disposition=disposition, resume=resume
+        )
     if isinstance(body_face, Halted) and not isinstance(
         body_face.effect, (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect)
     ):
         return ExitSet((body_face,)).and_exit(
-            exit_es, disposition=NeverSuppressesDispositionV1()
+            exit_es, disposition=NeverSuppressesDispositionV1(), resume=resume
         )
     return ExitSet((body_face,)).and_exit_truthiness(
-        _exit_return_values(exit_es), site=site
+        _exit_return_values(exit_es), site=site, resume=resume
     )

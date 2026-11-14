@@ -109,7 +109,15 @@ class WithResourceSugar(Sugar):
             halt_record,
             halts_recorded,
             reduce_block_to_exitset,
+            resumed,
         )
+
+        def resume(state):
+            # A body halt the exit suppresses goes on after the ``with`` from
+            # the one record a continuation after a halt starts from.
+            return resumed(
+                state, ctx, owner="WithResourceSugar.suppressed", blame=self.site
+            )
 
         # The manager, the enter, the body and the exit all run under the
         # ``with`` statement's own context: there is no second way to reduce
@@ -219,7 +227,7 @@ class WithResourceSugar(Sugar):
                         )
                     ):
                         after = face.and_exit_truthiness(
-                            face_exit_es, site=self.site
+                            face_exit_es, site=self.site, resume=resume
                         )
                     else:
                         disposition = (
@@ -229,7 +237,9 @@ class WithResourceSugar(Sugar):
                             )
                             else self.disposition
                         )
-                        after = face.and_exit(face_exit_es, disposition=disposition)
+                        after = face.and_exit(
+                            face_exit_es, disposition=disposition, resume=resume
+                        )
                     after = prepend_facts_to_exitset(
                         after, (*mgr_facts, *enter_facts, *face_facts)
                     )

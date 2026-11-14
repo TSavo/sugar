@@ -72,6 +72,7 @@ class WithEffectBoundarySugar(Sugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halt_record,
             halts_recorded,
+            resumed,
         )
 
         # The manager is routed face by face: a deferred native-operation
@@ -191,6 +192,12 @@ class WithEffectBoundarySugar(Sugar):
                         body_es,
                         boundary_exit_es=boundary_exit_es,
                         disposition=disposition,
+                        resume=lambda state: resumed(
+                            state,
+                            ctx,
+                            owner="WithEffectBoundarySugar.suppressed",
+                            blame=self.site,
+                        ),
                     )
                 )
 
@@ -308,8 +315,11 @@ def replace_exit_guard(exit_, guard):
     return exit_
 
 
-def _route_raise_boundary(body_es, *, boundary_exit_es, disposition):
+def _route_raise_boundary(body_es, *, boundary_exit_es, disposition, resume):
     """Route only halts that carry a possible exception-type subject.
+
+    A halt the boundary consumes goes on after the ``with`` from ``resume``
+    of its record (``function_universe_sugar.resumed``).
 
     A wholly nameless ``RaiseEffect`` -- no name, authenticated type identity,
     or raised value -- has no operand on which the boundary can state its type
@@ -340,7 +350,7 @@ def _route_raise_boundary(body_es, *, boundary_exit_es, disposition):
             candidates.append(face)
 
     routed = ExitSet(tuple(candidates)).and_exit(
-        boundary_exit_es, disposition=disposition
+        boundary_exit_es, disposition=disposition, resume=resume
     )
     if not outside:
         return routed
