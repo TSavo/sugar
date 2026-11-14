@@ -228,7 +228,6 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
 
     label: str
     site: object = dataclass_field(compare=False)
-    evaluation_token: object = dataclass_field(default=None, compare=False)
     prior: object = None
     subjects: tuple = ()
     rules: tuple = ()
@@ -397,7 +396,12 @@ class PathContainerCallSugar(ConstructedTermSugar):
     args: tuple
     fallback: object
     site: object = dataclass_field(compare=False)
-    evaluation_token: object = dataclass_field(default=None, compare=False)
+    # The key the ordinary call (``fallback``) reads its receiver through
+    # (``container_mutation._container_call``): ``_call`` binds the receiver
+    # it evaluated there, once, before the call.  None for a call whose
+    # fallback reads no receiver of this operation (``super().m(...)``, an
+    # item store, delete or in-place operator).
+    receiver_evaluation: str | None = None
     # Names the unknown the receiver is after an ordinary call.
     label: str = "receiver"
     # ``d[k] = v`` evaluates ``v`` before the target ``d`` and key ``k``.
@@ -593,13 +597,14 @@ class PathContainerCallSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor import builtin_container_method as law
         from sugar_lift_py_tests.floor.call_site_value import receiver_after_its_call
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
-        from sugar_lift_py_tests.sugar.assigned_value import assigned_key
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
         )
 
-        key = assigned_key(self.receiver)
         unknown = _unknown_after(self.site, self.label)
+        base = ctx if ctx is not None else ReduceContext.root(
+            owner="PathContainerCallSugar"
+        )
 
         def ordinary(call_ctx, post=unknown, receiver=None, presented=None):
             # The receiver after an ordinary call the value says may change
@@ -624,9 +629,14 @@ class PathContainerCallSugar(ConstructedTermSugar):
             )
 
         outcome = self.receiver.desugar(ctx)
-        if key is None and plain_completed_value(outcome) is None:
-            # No occurrence to answer a second read from: the ordinary call
-            # is the one evaluation.
+        if (
+            self.receiver_evaluation is None
+            and self.frame_receiver is None
+            and plain_completed_value(outcome) is None
+        ):
+            # No key the ordinary call reads its receiver through: the
+            # ordinary call, which reads its own receiver, is the one
+            # evaluation.
             return ordinary(ctx)
 
         from sugar_lift_py_tests.floor.named_expression_value import (
@@ -645,14 +655,9 @@ class PathContainerCallSugar(ConstructedTermSugar):
                 # transition of the receiver presents its result
                 # (``_super_call_value``), which ``x = super().m()`` and a
                 # ``return`` of it read.
-                base = ctx if ctx is not None else ReduceContext.root(
-                    owner="PathContainerCallSugar"
-                )
                 call_ctx = base.with_temporal(
                     base.temporal.bind_value(self.frame_receiver, receiver)
                 )
-                if key is not None:
-                    call_ctx = call_ctx.with_assigned_value(key, receiver)
                 return ordinary(
                     call_ctx, self._after(receiver), receiver, _super_call_value
                 )
@@ -696,12 +701,22 @@ class PathContainerCallSugar(ConstructedTermSugar):
                 if _may_change(receiver, self.method, False, False)
                 else receiver
             )
-            if key is None:
+            if self.receiver_evaluation is None:
                 return ordinary(ctx, post, receiver)
-            base = ctx if ctx is not None else ReduceContext.root(
-                owner="PathContainerCallSugar"
+            # The ordinary call reads the receiver through its key: the one
+            # evaluation above, bound where the call reads it
+            # (``evaluation_here``: this live loop item's), never the
+            # receiver evaluated again.
+            from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
+                evaluation_here,
             )
-            return ordinary(base.with_assigned_value(key, receiver), post, receiver)
+
+            held = base.with_temporal(
+                base.temporal.bind_value(
+                    evaluation_here(self.receiver_evaluation), receiver
+                )
+            )
+            return ordinary(held, post, receiver)
 
         return outcome.and_then(on_receiver)
 
@@ -924,7 +939,6 @@ class PathAfterCallSugar(ConstructedTermSugar):
     mode: str
     unshared: bool
     site: object = dataclass_field(compare=False)
-    evaluation_token: object = dataclass_field(default=None, compare=False)
     # Names the unknown this read is when the call decided nothing.
     label: str = ""
     # No steps: the read of the name this rebinds, before the call.
@@ -1005,7 +1019,6 @@ class SourceCallActualAfterSugar(ConstructedTermSugar):
     state: Sugar
     label: str
     site: object = dataclass_field(compare=False)
-    evaluation_token: object = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):

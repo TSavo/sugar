@@ -1568,6 +1568,7 @@ def _container_call(
     operator_kind=None,
     operator_site=None,
     frame_receiver=None,
+    evaluation=None,
 ):
     """One mutating operation's ``PathContainerCall``: the call is evaluated
     once and the receiver's value decides it (``PathContainerCallSugar``).
@@ -1577,9 +1578,37 @@ def _container_call(
     have none (their ordinary operation is the floor's own).  ``label``
     names the unknown its receiver is after an ordinary call.
     ``frame_receiver``: the call is ``super().m(...)`` on the frame's
-    receiver formal of that name (``nodes._super_door``)."""
+    receiver formal of that name (``nodes._super_door``).
+
+    ``evaluation`` is the key the operation's pair is bound under.  The
+    operation evaluates its receiver once; the ordinary call (``fallback``
+    on ``receiver``) reads it through the receiver's own projection of that
+    key (``receiver_evaluation``), which ``PathContainerCallSugar`` binds
+    before the call, never the receiver evaluated again."""
     from .backend import Child, Children, Leaf, MaybeChild
     from .shadow import _handle_of
+
+    receiver_evaluation = None
+    if (
+        fallback is not None
+        and evaluation is not None
+        and frame_receiver is None
+        and getattr(getattr(fallback, "func", None), "value", None) is receiver
+    ):
+        from .nodes import _evaluation_ref
+        from .shadow import rewrite
+        from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+        receiver_evaluation = projection_key(evaluation, "<receiver>")
+        held = _evaluation_ref(
+            site_node,
+            receiver.span,
+            receiver_evaluation,
+            label,
+            place=True,
+            of=receiver,
+        )
+        fallback = rewrite(fallback, func=rewrite(fallback.func, value=held))
 
     fields = (
         ("receiver", Child(_handle_of(receiver))),
@@ -1600,6 +1629,8 @@ def _container_call(
         )
     if frame_receiver is not None:
         fields = (*fields, ("frame_receiver", Leaf(frame_receiver)))
+    if receiver_evaluation is not None:
+        fields = (*fields, ("receiver_evaluation", Leaf(receiver_evaluation)))
     return _materialize(site_node, "PathContainerCall", fields, tags)
 
 
@@ -1771,6 +1802,7 @@ def setdefault_mutation_statement(statement, scope, *, name, call, target_name=N
         inner,
         tags,
         label=name if name is not None else "receiver",
+        evaluation=evaluation,
     )
     key = ground_subscript_key(inner.args[0])
     step = ("undecided", None) if key is None else ("item", key)
@@ -1873,6 +1905,11 @@ def name_mutation_statement(
     from .shadow import occurrence_tags_of
 
     tags = occurrence_tags_of(statement)
+    # The statement evaluates the call once and binds its pair under its own
+    # key; the object after it and the call's value read that key.  ``r +=
+    # x`` binds its in-place result under the statement's key, as Python
+    # binds ``r`` to it, and the pair under a key of its own.
+    evaluation = statement._evaluation_key(scope)
     call = _container_call(
         site,
         receiver,
@@ -1885,12 +1922,8 @@ def name_mutation_statement(
         operator_kind=operator_kind,
         operator_site=operator_site,
         frame_receiver=frame_receiver,
+        evaluation=evaluation,
     )
-    # The statement evaluates the call once and binds its pair under its own
-    # key; the object after it and the call's value read that key.  ``r +=
-    # x`` binds its in-place result under the statement's key, as Python
-    # binds ``r`` to it, and the pair under a key of its own.
-    evaluation = statement._evaluation_key(scope)
     rebinds_name = inplace and target_name == name
     pair_key = evaluation
     if rebinds_name and isinstance(evaluation, str):
@@ -2040,6 +2073,11 @@ def _mutation_through(
         # for the store to rebind.
         return None
     tags = occurrence_tags_of(statement)
+    # The statement evaluates the call once and binds its pair under its own
+    # key; the root after it, the object after it and the call's value read
+    # that key, never the call (and its operands) evaluated again.
+    if evaluation is None:
+        evaluation = statement._evaluation_key(scope)
     path_call = _container_call(
         site,
         receiver,
@@ -2051,6 +2089,7 @@ def _mutation_through(
         value_first=value_first,
         operator_kind=operator_kind,
         operator_site=operator_site,
+        evaluation=evaluation,
     )
     shape = root if shape_root is None else _identity(shape_root)
     member = _static_member(shape, steps)
@@ -2067,11 +2106,6 @@ def _mutation_through(
         # The root after an earlier call through this same path holds that
         # call's object there.
         member = shape.inner
-    # The statement evaluates the call once and binds its pair under its own
-    # key; the root after it, the object after it and the call's value read
-    # that key, never the call (and its operands) evaluated again.
-    if evaluation is None:
-        evaluation = statement._evaluation_key(scope)
     inner = _path_after(
         site,
         path_call,

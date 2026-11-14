@@ -209,8 +209,8 @@ class ClassDefinitionSugar(Sugar):
         one occurrence runs once, and the sugar it was read from keeps it
         (``statement_run`` shares it).  Every other class statement runs at
         each of its runs -- each item of a loop around it, each call of the
-        function it stands in -- and no run is answered from another's: a
-        record is keyed on its occurrence (``assigned_value.assigned_key``)."""
+        function it stands in -- and no run is answered from another's: no
+        evaluation is answered from a record of an earlier one."""
         if not self._is_module_statement():
             return self._reduce_statement(ctx)
         origin = self.__dict__.get("_run_of", self)

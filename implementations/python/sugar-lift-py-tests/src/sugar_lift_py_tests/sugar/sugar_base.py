@@ -131,7 +131,7 @@ class Sugar(ABC):
     def __init_subclass__(cls, **kwargs):
         super().__init_subclass__(**kwargs)
         own = cls.__dict__.get("desugar")
-        if own is None or getattr(own, "_answers_assigned_value", False):
+        if own is None or getattr(own, "_one_evaluation", False):
             return
         if getattr(own, "__isabstractmethod__", False):
             return
@@ -152,22 +152,10 @@ class Sugar(ABC):
                 if path != current_path():
                     with occurrence_path(path):
                         return desugar(self, ctx, *args, **kwargs)
-            # A RHS an assignment statement already evaluated in THIS
-            # occurrence answers with the value of the face it completed
-            # under; a read never re-evaluates it (sugar/assigned_value.py).
-            # Every record is keyed on its occurrence
-            # (``assigned_value.assigned_key``), so no evaluation is ever
-            # answered from another occurrence's record -- an earlier loop
-            # item's, another unrolled copy's, another call's.
-            if ctx is not None and getattr(ctx, "assigned_values", None):
-                from sugar_lift_py_tests.sugar.assigned_value import (
-                    _MISS,
-                    recorded_value,
-                )
-
-                value = recorded_value(ctx, self)
-                if value is not _MISS:
-                    return ExitSet.completed(value)
+            # Every evaluation is this one: a read of a value a statement
+            # already evaluated is a reference to the statement's evaluation
+            # key (``EvaluationRefSugar``), given at construction, never this
+            # sugar answered from a record (sugar/assigned_value.py).
             # A sugar stamped with where the module body runs its node
             # reduces there: an implicit call it makes (``__add__``,
             # ``__getitem__``, a property getter) reads a module global as
@@ -184,7 +172,7 @@ class Sugar(ABC):
             # (``_recorded_at_its_head``).
             return _recorded_at_its_head(self, ctx, outcome, evaluator)
 
-        desugar._answers_assigned_value = True
+        desugar._one_evaluation = True
         cls.desugar = desugar
 
     @classmethod

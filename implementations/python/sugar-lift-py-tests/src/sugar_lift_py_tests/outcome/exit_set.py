@@ -365,12 +365,6 @@ def _unhashable_destination_count() -> int:
     return len(_UNHASHABLE_DESTINATIONS)
 
 
-def _assigned_rows(value) -> tuple:
-    """The assignment values a completed block's context records."""
-    context = getattr(value, "context", None)
-    return getattr(context, "assigned_values", ()) or ()
-
-
 def _same_evaluations(left, right) -> bool:
     """Whether two completed blocks' contexts hold every statement
     evaluation (``TemporalContext.evaluations``) at one value."""
@@ -889,16 +883,12 @@ class ExitSet(Generic[T]):
                     isinstance(exit_, Completed)
                     and isinstance(prior, Completed)
                     and exit_.value == prior.value
-                    # Arms that completed an assignment with different values
-                    # (``y = -x if c else 0``) hold equal records but different
-                    # recorded values: merging them would keep the prior's
-                    # value on both paths.
-                    and _assigned_rows(exit_.value) == _assigned_rows(prior.value)
                     # Arms that bound one statement evaluation to different
-                    # values (a loop left by its ``break`` on one path and
-                    # by exhaustion on another) are two paths: merged, the
-                    # prior's value would be read on both, and the other's
-                    # dropped.  Every evaluation key, one rule.
+                    # values (``y = -x if c else 0``; a loop left by its
+                    # ``break`` on one path and by exhaustion on another)
+                    # are two paths: merged, the prior's value would be read
+                    # on both, and the other's dropped.  Every evaluation
+                    # key, one rule.
                     and _same_evaluations(exit_.value, prior.value)
                 )
                 same_halted = (

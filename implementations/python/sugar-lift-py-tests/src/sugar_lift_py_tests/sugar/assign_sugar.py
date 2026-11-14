@@ -579,10 +579,9 @@ def _ordered_targets(order, bind, evaluations, stores):
 def _reduce_targets(targets, active, ctx):
     """The statement's store targets, after its RHS completed.
 
-    Where the RHS recorded nothing and bound no evaluation this is the block
-    the statement always reduced to; where it recorded completed values or
-    bound a Name target's evaluation, the targets' exits carry that context
-    on to the next statement.
+    Where the RHS bound no evaluation this is the block the statement always
+    reduced to; where it bound one (a Name target's, a value a store reads),
+    the targets' exits carry that context on to the next statement.
     """
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
@@ -592,8 +591,7 @@ def _reduce_targets(targets, active, ctx):
     from sugar_lift_py_tests.sugar.assigned_value import AssignedNames
 
     if (
-        getattr(active, "assigned_values", ()) == getattr(ctx, "assigned_values", ())
-        and (ctx is None or getattr(active, "temporal", None) is ctx.temporal)
+        (ctx is None or getattr(active, "temporal", None) is ctx.temporal)
         # A Name target bound among the stores (``AssignedNames``) is carried
         # on by the targets' record, as one bound before them is.
         and not any(isinstance(target, AssignedNames) for target in targets)
