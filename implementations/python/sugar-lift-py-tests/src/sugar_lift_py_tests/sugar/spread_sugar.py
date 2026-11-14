@@ -413,28 +413,29 @@ class SpreadCallSugar(ConstructedTermSugar):
             arg_terms.append(term)
         term = ctor("python:call", [callee_term, *arg_terms])
 
-        framed = self._framed_call(values, term, ctx)
-        if framed is not None:
-            return framed
+        def unanswered() -> ExitSet:
+            # No frame projected the call: no body, contract or floor answered
+            # for the callee at this site, so it is the one unanswered call,
+            # two-faced and owed (#7585, #7757), never a completion.
+            from sugar_lift_py_tests.source_call_resolution import (
+                UnknownCalleeCallV1,
+            )
 
-        callsite = CallSiteValue(
-            target_name=self.callee_name or "python:call",
-            arg_values=tuple(values),
-            parameters=(),
-            term=term,
-            body=None,
-            site=self.site,
-        )
-        # No frame projected the call: no body, contract or floor answered for
-        # the callee at this site, so it is the one unanswered call, two-faced
-        # and owed (#7585, #7757), never a completion.
-        from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+            callsite = CallSiteValue(
+                target_name=self.callee_name or "python:call",
+                arg_values=tuple(values),
+                parameters=(),
+                term=term,
+                body=None,
+                site=self.site,
+            )
+            return UnknownCalleeCallV1(self.callee_name or "python:call").faces(
+                callsite, self.site
+            )
 
-        return UnknownCalleeCallV1(self.callee_name or "python:call").faces(
-            callsite, self.site
-        )
+        return self._framed_call(values, term, ctx, unanswered)
 
-    def _framed_call(self, values, term, ctx) -> ExitSet | None:
+    def _framed_call(self, values, term, ctx, unanswered) -> ExitSet:
         """The call into an enrolled source frame, through the plain call's routine.
 
         The ``*``/``**`` actuals are projected onto the positional and keyword
@@ -444,19 +445,30 @@ class SpreadCallSugar(ConstructedTermSugar):
         runs once, at the Call, its halts are the call's own faces and its
         completion is retained, so a consumer never replays it.
 
+        A class call ``C(*t)`` / ``C(**kw)`` is the class call ``C(...)`` is
+        (``ClassConstructorBodySugar.bind_class_call``): the class
+        statement's one outcome is read, and on each completed face the
+        projected actuals bind with the constructor defaults the class value
+        carries, so a formal the call omits binds what its ``def`` statement
+        evaluated, never an undecided read.
+
         A star operand projects only when it is a decided ``TupleValue``, and
         a double-star binds only when it is a constructed DictValue
-        (``bind_actuals``); any other operand leaves the call bodyless
-        (``None``), its two faces minted by the caller.
+        (``bind_actuals``); any other operand, and a call no frame is enrolled
+        for, is the one unanswered call (``unanswered``).
         """
         frame = self.source_call_frame
         if frame is None:
-            return None
+            return unanswered()
         from sugar_lift_py_tests.floor import TupleValue
         from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
         from sugar_lift_py_tests.sugar.call_site_sugar import (
             bind_source_frame_call,
             enter_source_frame,
+            source_frame_body,
+        )
+        from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
+            ClassConstructorBodySugar,
         )
 
         positional: list = []
@@ -470,14 +482,14 @@ class SpreadCallSugar(ConstructedTermSugar):
                 # iterable unpacking).  Any other operand keeps the call
                 # bodyless rather than inventing an arity.
                 if type(value) is not TupleValue:
-                    return None
+                    return unanswered()
                 positional.extend(value.elements)
             elif role == "keyword":
                 keywords.append((name, value))
             elif role == "double-star":
                 keywords.append(("**", value))
             else:
-                return None
+                return unanswered()
         ctx, module_halt = enter_source_frame(
             frame, ctx, owner="SpreadCallSugar._finish", blame=self.site
         )
@@ -487,18 +499,30 @@ class SpreadCallSugar(ConstructedTermSugar):
         def unbound(*, observed, **_testimony):
             raise SourceCallBindingGap(observed)
 
-        try:
-            callsite = bind_source_frame_call(
-                self.callee_name or "python:call",
-                tuple(positional),
-                tuple(keywords),
-                frame=frame,
-                ctx=ctx,
-                owner="SpreadCallSugar._finish",
-                blame=self.site,
-                term=term,
-                refuse=unbound,
-            )
-        except SourceCallBindingGap:
-            return None
-        return callsite.producer_outcome(ctx)
+        def apply(defaults, body) -> ExitSet:
+            # The one binder; actuals it cannot bind leave the call unanswered.
+            try:
+                callsite = bind_source_frame_call(
+                    self.callee_name or "python:call",
+                    tuple(positional),
+                    tuple(keywords),
+                    frame=frame,
+                    ctx=ctx,
+                    owner="SpreadCallSugar._finish",
+                    blame=self.site,
+                    term=term,
+                    refuse=unbound,
+                    body=body,
+                    defaults=defaults,
+                )
+            except SourceCallBindingGap:
+                return unanswered()
+            return callsite.producer_outcome(ctx)
+
+        body = source_frame_body(
+            frame, owner="SpreadCallSugar._finish", blame=self.site
+        )
+        if isinstance(body, ClassConstructorBodySugar):
+            # ``C(*t)`` / ``C(**kw)``: THE class call (``bind_class_call``).
+            return body.bind_class_call(ctx, apply, site=self.site)
+        return apply((), body)
