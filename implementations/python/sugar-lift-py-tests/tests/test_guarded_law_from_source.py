@@ -104,7 +104,7 @@ def corpus(tmp_path: Path) -> Path:
 
 def _functions(root: Path):
     source_file = open_source_file_for_construction(
-        root / "guarded_categories.py", root=root, populate_derived=True
+        root / "guarded_categories.py", root=root
     )
     return {function.name: function for function in source_file.functions()}
 

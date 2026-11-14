@@ -79,9 +79,7 @@ def _ordinary_call(tmp_path, *, helper: str, caller: str):
         path,
         root=tmp_path,
         reporter=reporter,
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
     root, testimony = _testimony_root(source, reporter)
     definition = next(
         node

@@ -218,7 +218,7 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
     refs = provisional_contract_refs_from_demands(tmp_path)
     ctx = tree_construction_context_for_workspace(tmp_path, contract_refs=refs)
     source_file = open_source_file_for_construction(
-        path, root=tmp_path, construction_context=ctx, populate_derived=False
+        path, root=tmp_path, construction_context=ctx
     )
     # Use-site coordinate from the provisional demand (same seat With uses).
     assert len(refs.by_use_site) == 1
@@ -267,7 +267,7 @@ def test_unconstructed_with_item_is_counted_not_silently_dropped(tmp_path: Path)
     refs = provisional_contract_refs_from_demands(tmp_path)
     ctx = tree_construction_context_for_workspace(tmp_path, contract_refs=refs)
     source_file = open_source_file_for_construction(
-        path, root=tmp_path, construction_context=ctx, populate_derived=True
+        path, root=tmp_path, construction_context=ctx
     )
     rows = module._tally_cm_resolutions(ctx, source_cid=source_file.unit.source_cid)
     sites = module._ast_site_prevalence(path)
@@ -299,7 +299,7 @@ def test_effective_tally_includes_contract_refs_not_only_source_derived(
     refs = provisional_contract_refs_from_demands(tmp_path)
     ctx = tree_construction_context_for_workspace(tmp_path, contract_refs=refs)
     source_file = open_source_file_for_construction(
-        path, root=tmp_path, construction_context=ctx, populate_derived=True
+        path, root=tmp_path, construction_context=ctx
     )
     # Old defect shape: derived empty, provisional has the gap.
     assert len(ctx.source_derived_contract_refs) == 0

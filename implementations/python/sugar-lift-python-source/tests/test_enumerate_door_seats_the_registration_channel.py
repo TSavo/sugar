@@ -375,7 +375,7 @@ def test_a_resident_tree_is_seated_onto_its_nodes_not_just_its_file() -> None:
 
     collector = CollectingReporter()
     second = open_source_file_for_construction(
-        target, root=root, reporter=collector, populate_derived=False
+        target, root=root, reporter=collector
     )
     assert second.reporter is collector
     unseated = [n for n in second.nodes() if n.reporter is not collector]

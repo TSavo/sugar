@@ -55,7 +55,6 @@ def _open(root: Path):
         root / "e.py",
         root=root,
         reporter=CollectingReporter(),
-        distribution="tiny-corpus",
         source_workspace_root=root,
         resolution_session=SourceResolutionSession(
             enrolled_distributions=frozenset({"tiny-corpus", "cpython-stdlib:contextlib"})

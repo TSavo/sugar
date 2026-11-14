@@ -1718,41 +1718,6 @@ def _exception_class_testimony_or_absence(unit, node):
         return None
 
 
-def _qualified_enrollment_coordinate(
-    path,
-    *,
-    source_workspace_root,
-    distribution: str | None,
-) -> str:
-    """Qualify a source seat from authenticated authority, never path guesses."""
-    from pathlib import Path
-
-    if not distribution:
-        raise ValueError(
-            "source workspace distribution authority is required; "
-            "refusing to infer it from a relative path segment"
-        )
-    try:
-        relative = (
-            Path(path).resolve().relative_to(Path(source_workspace_root).resolve())
-        )
-    except ValueError as error:
-        raise ValueError(
-            "source seat is outside the authenticated source workspace: "
-            f"path={path} source_workspace_root={source_workspace_root}"
-        ) from error
-    parts = relative.parts
-    # An install-root seat already carries its distribution prefix; a package
-    # root seat does not. Preserve one canonical distribution-qualified form.
-    if parts and parts[0] == distribution:
-        return "/".join(parts)
-    return "/".join((distribution, *parts))
-
-
-class MissingEnrolledDistributionRoster(ValueError):
-    """The caller omitted the authenticated population authority."""
-
-
 def populate_source_derived_resource_refs(
     source_file,
     *,
@@ -1762,12 +1727,13 @@ def populate_source_derived_resource_refs(
     artifact_graph_cache: dict | None = None,
     session=None,
     selected_coordinates: frozenset | None = None,
-    source_workspace_root=None,
-    distribution: str | None = None,
 ) -> None:
     """Preconstruct imported resource managers and freeze exact use-site rows.
 
-    ``session`` owns every resolution memo for this population. Multi-resolve
+    ``session`` owns every resolution memo for this population. Its roster is
+    step 2's file list (``project_file_roster``), which this function never
+    widens; what the code imports joins through ``imported_modules``.
+    Multi-resolve
     owners (file-open, package enumeration, census walk via ``walk_session_for``)
     must pass one shared session so export/frame amortization is real across
     receipts, consumer files, and same-content re-open under one workspace.
@@ -1807,32 +1773,9 @@ def populate_source_derived_resource_refs(
     # Multi-resolve owner entry: one session for every receipt in this loop.
     # Do not call session_or_new inside the receipt loop.
     session = session_or_new(session)
-    # Population membrane: pin enrolls the consumer distribution (first path
-    # segment under the locus root); other modules join only when the code
-    # imports them (below), never by a listed package name.
-    if source_workspace_root is not None:
-        _qualified_enrollment_coordinate(
-            path,
-            source_workspace_root=source_workspace_root,
-            distribution=distribution,
-        )
-    if distribution is not None:
-        from .resolution_session import _require_enrolled_distribution_roster
-
-        # Never NARROW a session's declared population mid-walk: the walk
-        # session was minted with the full roster; this open contributes its
-        # corpus distribution to it. What the code imports joins through
-        # ``imported_modules``, never through a declared list.
-        session.enrolled_distributions = _require_enrolled_distribution_roster(
-            frozenset({distribution})
-        ) | (session.enrolled_distributions or frozenset())
-    elif session.enrolled_distributions is None:
-        raise MissingEnrolledDistributionRoster(
-            "missing-enrolled-distribution-roster: distribution authority was not "
-            "supplied; refusing to infer an enrolled population from a path segment"
-        )
     # Population follows imports: the modules this code imports, read from
-    # the one import table, join the population. Never narrowed mid-walk.
+    # the one import table, join the population. Never narrowed mid-walk. The
+    # roster itself (step 2's file list) is never widened here.
     session.imported_modules = (
         session.imported_modules | source_file.unit.imported_modules()
     )

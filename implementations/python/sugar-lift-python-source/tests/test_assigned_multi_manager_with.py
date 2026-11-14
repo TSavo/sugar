@@ -48,9 +48,7 @@ def _real_tree():
     return open_source_file_for_construction(
         path,
         root=root,
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
 
 
 def _line_32_with(tree):
@@ -80,9 +78,7 @@ def test_local_two_name_managers_project_both_reaching_calls(tmp_path: Path) -> 
     tree = open_source_file_for_construction(
         source,
         root=tmp_path,
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
     site = next(
         node
         for node in tree.nodes()
@@ -127,9 +123,7 @@ def test_local_single_name_manager_projects_reaching_call(tmp_path: Path) -> Non
     tree = open_source_file_for_construction(
         source,
         root=tmp_path,
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
     projected = _projected_manager_call_uses(tree)
     rows = sorted(
         (call.line_col_span().start_line, coordinate.start_line, coordinate.start_col)
@@ -230,9 +224,7 @@ def test_undecided_rebinding_does_not_invent_a_second_manager_call(
     tree = open_source_file_for_construction(
         source,
         root=tmp_path,
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
 
     projected = _projected_manager_call_uses(tree)
     rows = [
@@ -257,9 +249,7 @@ def test_same_spelled_names_bound_elsewhere_do_not_authenticate(tmp_path: Path) 
     tree = open_source_file_for_construction(
         source,
         root=tmp_path,
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
     site = next(
         node
         for node in tree.nodes()

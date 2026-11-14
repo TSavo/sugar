@@ -91,9 +91,7 @@ def _raise_effects(root: Path) -> dict[str, RaiseEffect]:
     """
     path = root / "ground_exits.py"
     assert path.is_absolute()
-    source_file = open_source_file_for_construction(
-        path, root=root, populate_derived=True
-    )
+    source_file = open_source_file_for_construction(path, root=root)
     effects: dict[str, RaiseEffect] = {}
     for function in source_file.functions():
         outcome = function.sugar().desugar(None)

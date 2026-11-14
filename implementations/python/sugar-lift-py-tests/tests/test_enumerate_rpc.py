@@ -436,7 +436,9 @@ def test_functions_level_uses_the_canonical_construction_open(
     path, kwargs, filename = opened[0]
     assert path == project / "mathy.py"
     assert kwargs["root"] == project
-    assert kwargs["populate_derived"] is False
+    # The one opener has no way to skip population (#7796).
+    assert "populate_derived" not in kwargs
+    assert "distribution" not in kwargs
     assert filename == "mathy.py"
 
 

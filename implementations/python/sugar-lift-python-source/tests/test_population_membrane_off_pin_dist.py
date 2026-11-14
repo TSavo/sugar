@@ -9,9 +9,9 @@ Measured on tip after #7057 family: one open of
 ``_pytest.*`` while stdlib was already 0.001s (113 off-pop cites).  Median
 open in a 29-file sample was 0.586s; this file was 5.725s — 10×.
 
-Law: the pin enrolls corpus files (``pandas``), not CPython and not
-test-only deps.  Session ``enrolled_distributions`` names the pin;
-``populate_source_derived_resource_refs`` sets it from the consumer path.
+Law: the population is the lift's own file list (step 2), not CPython and
+not test-only deps. The opener's walk session carries it as
+``project_file_roster(root)`` (#7796).
 """
 
 from __future__ import annotations
@@ -69,8 +69,6 @@ def test_pandas_test_open_never_materializes_pytest() -> None:
             path,
             root=address_root,
             construction_context=TreeConstructionContextV1.for_source_call_construction(),
-            populate_derived=True,
-            distribution="pandas",
             source_workspace_root=corpus,
         )
     finally:

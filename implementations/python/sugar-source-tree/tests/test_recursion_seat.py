@@ -44,9 +44,7 @@ def _open(tmp_path, source: str):
         path,
         root=tmp_path,
         reporter=CollectingReporter(),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
 
 
 def _calls(sugar):

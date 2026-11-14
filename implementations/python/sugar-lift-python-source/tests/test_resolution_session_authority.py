@@ -653,11 +653,11 @@ def test_file_open_door_threads_resolution_session(tmp_path: Path, monkeypatch) 
 
     monkeypatch.setattr(msd, "populate_source_derived_resource_refs", capture)
 
-    distribution = "session-authority-fixture"
+    from sugar_lift_python_source.resolution_session import project_file_roster
+
     open_source_file_for_construction(
         path,
         root=root,
-        distribution=distribution,
         source_workspace_root=root,
     )
     assert len(seen) == 1
@@ -665,8 +665,12 @@ def test_file_open_door_threads_resolution_session(tmp_path: Path, monkeypatch) 
         "file-open dropped the session; populate fell back to session_or_new and "
         "the multi-resolve owner no longer owns amortization"
     )
+    # The population is step 2's file list for the root, and nothing else.
+    assert seen[0].enrolled_distributions == project_file_roster(root)
 
-    shared = SourceResolutionSession(enrolled_distributions=frozenset({distribution}))
+    shared = SourceResolutionSession(
+        enrolled_distributions=frozenset({"session-authority-fixture"})
+    )
     seen.clear()
     open_source_file_for_construction(path, root=root, resolution_session=shared)
     assert seen == [shared], "explicit package session must reach populate unchanged"

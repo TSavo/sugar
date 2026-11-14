@@ -1,24 +1,27 @@
-"""The population follows from what the code imports, never from a list.
+"""The roster is step 2's file list; the rest of the population follows imports.
 
-Board 33982802518: cmResolutions constructed 0 / cited-opaque 5,812 /
-unconstructed 2,245, because stdlib was refused by KIND and every
-non-corpus distribution by absence from a one-name roster. The population
-is the corpus distribution plus every top-level module the code imports,
-read from the one import table (#7837, #7851, #7859). No package name is
-listed in code or in the environment.
+Every ``sugar.enumerate`` level opens its file through the one opener, and the
+opener populates under the walk session for the root (#7796). That session's
+roster is ``project_file_roster(root)``: the content CID of every file step 2
+lists. No distribution is enrolled by name and no module by a module-scoped
+entry or a standing extra. A module is enrolled when the source its artifact
+seats for it is a listed file, or when the opened code imports its top-level
+module (``imported_modules``, read from the one import table; #7859, #7866).
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from sugar_lift_python_source import resolution_session
+from sugar_lift_python_source.manager_construction import _graph_is_off_population
 from sugar_lift_python_source.resolution_session import (
     SourceResolutionSession,
     clear_walk_sessions,
-    population_admits,
+    project_file_roster,
 )
+from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_contract import (
     EffectBoundarySemanticsV1,
     NeverSuppressesDispositionV1,
@@ -27,7 +30,6 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.context_manager_resolution import (
     SourceDerivedContextManagerRefV1,
 )
-from sugar_lift_py_tests.corpus_pin import pin_corpus
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.term_value import TermValue
@@ -39,114 +41,94 @@ from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResou
 from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
 
-
-def test_no_package_name_is_listed_in_code_or_the_environment() -> None:
-    """Nothing is enrolled by a hard-coded name or a declared list: the
-    population is the corpus distribution plus what the code imports."""
-    assert not hasattr(resolution_session, "STANDING_EXTRA_POPULATIONS")
-    assert not hasattr(resolution_session, "ENROLLED_POPULATIONS_ENV")
-    assert not hasattr(resolution_session, "declared_extra_populations")
+def setup_function() -> None:
+    clear_walk_sessions()
 
 
-def test_an_import_admits_its_own_top_level_module_only() -> None:
-    roster = frozenset({"tiny-corpus"})
-    imported = frozenset({"contextlib", "numpy"})
-    assert population_admits(roster, "cpython-stdlib", "contextlib", imported)
-    assert population_admits(roster, "numpy", "numpy._core._ufunc_config", imported)
-    assert not population_admits(roster, "cpython-stdlib", "warnings", imported)
-    assert not population_admits(roster, "cpython-stdlib", "contextlib")
-    # No module, no admission by import: an import never admits a module no
-    # artifact authenticates.
-    assert not population_admits(roster, "contextlib", None, imported)
+def teardown_function() -> None:
+    clear_walk_sessions()
 
 
-def test_module_scoped_entry_admits_only_its_module() -> None:
-    roster = frozenset({"pandas", "cpython-stdlib:contextlib"})
-    assert population_admits(roster, "pandas", "pandas.core.frame")
-    assert population_admits(roster, "cpython-stdlib", "contextlib")
-    assert not population_admits(roster, "cpython-stdlib", "warnings")
-    assert not population_admits(roster, "cpython-stdlib", None)
-    assert population_admits(frozenset({"cpython-stdlib"}), "cpython-stdlib", "warnings")
-    assert not population_admits(roster, "pytest", "_pytest.raises")
-
-
-NULLCONTEXT = (
-    "from contextlib import nullcontext\n"
-    "\n"
-    "def f():\n"
-    "    with nullcontext():\n"
-    "        return 1\n"
-)
-
-
-def _corpus(tmp_path: Path, **files: str) -> Path:
-    root = tmp_path / "c"
+def _project(tmp_path: Path, **files: str) -> Path:
+    root = tmp_path / "p"
     root.mkdir()
     for name, source in files.items():
-        (root / name).write_text(source, encoding="utf-8")
-    (tmp_path / "c.identity.json").write_text(
-        json.dumps({"distribution": "tiny-corpus", "version": "0.0.1"}), encoding="utf-8"
-    )
-    pin_corpus(root, distribution="tiny-corpus", version="0.0.1")
+        target = root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(source, encoding="utf-8")
     return root
 
 
-def _open(root: Path, name: str, *, session=None):
-    clear_walk_sessions()
-    kwargs = {
-        "root": root,
-        "reporter": CollectingReporter(),
-        "distribution": "tiny-corpus",
-        "source_workspace_root": root,
-    }
-    if session is not None:
-        kwargs["resolution_session"] = session
-    return open_source_file_for_construction(root / name, **kwargs)
-
-
-def test_population_follows_from_imports_alone(tmp_path) -> None:
-    """A corpus-only roster, nothing declared, no distribution passed: the
-    one thing that enrolls contextlib is that the code imports it.
-
-    Before the open the session holds no imported module and contextlib is
-    off-population; the open reads the one import table, so contextlib joins
-    and ``nullcontext`` is derived from its source. ``warnings`` is not
-    imported, so it stays off-population.
-    """
-    from types import SimpleNamespace
-
-    from sugar_lift_py_tests.canonicalizer import blake3_512_of
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
+def _graph(cid: str | None, *, files: tuple[str, ...] = ()):
+    return SimpleNamespace(
+        modules=SimpleNamespace(source_cid_of=lambda _name: cid),
+        files=tuple(SimpleNamespace(content_cid=item) for item in files),
     )
-    from sugar_lift_python_source.manager_construction import (
-        _graph_is_off_population,
-    )
-    from sugar_lift_python_source.manager_summary_derivation import (
-        populate_source_derived_resource_refs,
-    )
-    from sugar_source_tree.tree import SourceFile
 
-    root = _corpus(tmp_path, **{"nc.py": NULLCONTEXT})
-    path = root / "nc.py"
-    source = path.read_text(encoding="utf-8")
-    context = TreeConstructionContextV1.for_source_call_construction()
-    tree = SourceFile(
-        (source, str(path), blake3_512_of(source.encode("utf-8"))),
-        construction_context=context,
+
+def test_no_package_name_is_listed_in_code_or_the_environment() -> None:
+    for name in (
+        "STANDING_EXTRA_POPULATIONS",
+        "ENROLLED_POPULATIONS_ENV",
+        "declared_extra_populations",
+        "enrolled_population_roster",
+        "population_admits",
+    ):
+        assert not hasattr(resolution_session, name), name
+
+
+def test_roster_is_the_content_cid_of_every_listed_file(tmp_path) -> None:
+    root = _project(
+        tmp_path,
+        **{"a.py": "x = 1\n", "pkg/b.py": "y = 2\n", "pkg/__init__.py": ""},
     )
-    assert tree.unit.imported_modules() == frozenset({"contextlib"})
-    session = SourceResolutionSession(enrolled_distributions=frozenset({"tiny-corpus"}))
-    stdlib = SimpleNamespace(distribution_name="cpython-stdlib")
-    assert session.imported_modules == frozenset()
-    assert _graph_is_off_population(stdlib, session=session, module_name="contextlib")
-    populate_source_derived_resource_refs(tree, root=root, path=path, session=session)
-    assert session.enrolled_distributions == frozenset({"tiny-corpus"})
-    assert session.imported_modules == frozenset({"contextlib"})
-    assert not _graph_is_off_population(stdlib, session=session, module_name="contextlib")
-    assert _graph_is_off_population(stdlib, session=session, module_name="warnings")
-    ref = next(iter(context.source_derived_contract_refs.values()))
-    assert isinstance(ref, SourceDerivedContextManagerRefV1), ref
+    (root / "notes.txt").write_text("not a source file\n", encoding="utf-8")
+    expected = frozenset(
+        path_source(str(root / name))[2]
+        for name in ("a.py", "pkg/b.py", "pkg/__init__.py")
+    )
+    roster = project_file_roster(root)
+    assert roster == expected
+    for name in ("cpython-stdlib:contextlib", "numpy", "pytest", "cpython-stdlib"):
+        assert name not in roster
+
+
+def test_the_open_populates_under_the_file_roster(tmp_path, monkeypatch) -> None:
+    """No level opens without populating, and none names a distribution."""
+    from sugar_lift_python_source import manager_summary_derivation as msd
+
+    root = _project(tmp_path, **{"a.py": "x = 1\n"})
+    seen: list[object] = []
+    original = msd.populate_source_derived_resource_refs
+
+    def capture(source_file, *, root, path, session=None, **kwargs):
+        seen.append(session)
+        return original(source_file, root=root, path=path, session=session, **kwargs)
+
+    monkeypatch.setattr(msd, "populate_source_derived_resource_refs", capture)
+    open_source_file_for_construction(root / "a.py", root=root)
+    assert len(seen) == 1
+    assert seen[0].enrolled_distributions == project_file_roster(root)
+
+
+def test_a_listed_file_or_an_import_enrolls_a_module() -> None:
+    session = SourceResolutionSession(
+        enrolled_distributions=frozenset({"blake3-512:listed"})
+    )
+    listed = _graph("blake3-512:listed", files=("blake3-512:listed",))
+    other = _graph("blake3-512:other", files=("blake3-512:other",))
+    assert not _graph_is_off_population(listed, session=session, module_name="m")
+    assert _graph_is_off_population(other, session=session, module_name="m")
+    assert not _graph_is_off_population(listed, session=session)
+    assert _graph_is_off_population(other, session=session)
+    # The code imports ``m``: its artifact's module joins the population.
+    session.imported_modules = frozenset({"m"})
+    assert not _graph_is_off_population(other, session=session, module_name="m.sub")
+    assert _graph_is_off_population(other, session=session, module_name="n")
+    # An import never admits a module the artifact holds no source for, nor a
+    # module no artifact authenticates.
+    assert _graph_is_off_population(_graph(None), session=session, module_name="m")
+    assert _graph_is_off_population(None, session=session, module_name="m")
 
 
 def test_importing_contextlib_stops_citing_nullcontext(tmp_path) -> None:
@@ -163,8 +145,10 @@ def test_importing_contextlib_stops_citing_nullcontext(tmp_path) -> None:
         "    with nullcontext():\n"
         "        raise ValueError('boom')\n"
     )
-    root = _corpus(tmp_path, **{"nc.py": source})
-    source_file = _open(root, "nc.py")
+    root = _project(tmp_path, **{"nc.py": source})
+    source_file = open_source_file_for_construction(
+        root / "nc.py", root=root, reporter=CollectingReporter()
+    )
     refs = source_file.root.unit.construction_context.source_derived_contract_refs
     assert len(refs) == 2
     for ref in refs.values():

@@ -345,7 +345,7 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
     path = root / "pandas/tests/io/formats/test_ipython_compat.py"
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = open_source_file_for_construction(
-        path, root=root, construction_context=context, populate_derived=False
+        path, root=root, construction_context=context
     )
     populate_source_derived_resource_refs(
         tree,
@@ -417,7 +417,7 @@ def test_real_pandas_option_context_runs_authenticated_enter_body_and_exit():
     path = root / "pandas/tests/io/formats/test_ipython_compat.py"
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = open_source_file_for_construction(
-        path, root=root, construction_context=context, populate_derived=False
+        path, root=root, construction_context=context
     )
     populate_source_derived_resource_refs(
         tree,
@@ -480,7 +480,7 @@ def test_real_option_context_published_ref_selects_source_resource_at_constructi
     path = root / "pandas/tests/io/formats/test_ipython_compat.py"
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = open_source_file_for_construction(
-        path, root=root, construction_context=context, populate_derived=False
+        path, root=root, construction_context=context
     )
     populate_source_derived_resource_refs(
         tree,
@@ -558,7 +558,7 @@ def test_real_option_context_executes_its_source_body_and_exit():
     path = root / "pandas/tests/io/formats/test_ipython_compat.py"
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = open_source_file_for_construction(
-        path, root=root, construction_context=context, populate_derived=False
+        path, root=root, construction_context=context
     )
     populate_source_derived_resource_refs(
         tree,

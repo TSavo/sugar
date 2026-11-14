@@ -131,8 +131,6 @@ def _open_json_once():
             root=locus,
             reporter=reporter,
             construction_context=ctx,
-            populate_derived=True,
-            distribution="pandas",
             source_workspace_root=corpus,
         )
     except SugarNotWritten:

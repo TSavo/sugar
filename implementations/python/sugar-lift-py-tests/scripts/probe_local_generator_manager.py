@@ -158,7 +158,6 @@ def arm_local(corpus, session) -> None:
             path,
             root=corpus,
             source_workspace_root=locus_root,
-            distribution="pandas",
         )
         binds = (source_file.unit.module_direct_bindings or {}).get(name, ())
         print(f"    module_direct_bindings[{name!r}] -> {len(binds)} binding(s)")

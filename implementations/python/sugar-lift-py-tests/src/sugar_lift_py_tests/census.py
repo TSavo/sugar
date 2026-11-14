@@ -88,7 +88,6 @@ def census(root: Path) -> int:
                     root=root,
                     reporter=reporter,
                     contract_refs=contract_refs,
-                    populate_derived=True,
                 )
             except SugarNotWritten as gap:
                 # Derivation can hit a real missing sugar before any function

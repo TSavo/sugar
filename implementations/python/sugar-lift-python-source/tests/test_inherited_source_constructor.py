@@ -104,7 +104,6 @@ def _open(root: Path, name: str, *, session):
         root / name,
         root=root,
         reporter=CollectingReporter(),
-        distribution="tiny-corpus",
         source_workspace_root=root,
         resolution_session=session,
     )
@@ -177,21 +176,9 @@ def test_own_initializer_does_not_inherit_the_base_formals(tmp_path) -> None:
     failure used to be caught inside the opener, and the file opened with the
     ``with`` left underived (#7795)."""
     from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-    from sugar_source_tree.nodes import ClassDef
 
     root = _corpus(tmp_path, **{"e.py": OWN_INIT})
-    clear_walk_sessions()
-    unpopulated = open_source_file_for_construction(
-        root / "e.py",
-        root=root,
-        reporter=CollectingReporter(),
-        populate_derived=False,
-        source_workspace_root=root,
-    )
-    named = next(
-        n for n in unpopulated.nodes() if isinstance(n, ClassDef) and n.name == "Named"
-    )
-    assert named.source_visible_constructor_frame().parameters == ()
-
+    # Every open populates (#7796): there is no unpopulated open to read the
+    # constructor frame from first, so the open itself is the observation.
     with pytest.raises(SourceCallBindingGap, match="unconsumed call actual"):
         _open(root, "e.py", session=_session())

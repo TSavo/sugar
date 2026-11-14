@@ -49,7 +49,6 @@ def _sf(source: str, name: str = "t.py") -> SourceFile:
         root=root,
         reporter=CollectingReporter(),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
     )
 
 

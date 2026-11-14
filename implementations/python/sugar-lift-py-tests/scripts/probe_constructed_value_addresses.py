@@ -141,8 +141,6 @@ def main(argv: list[str] | None = None) -> int:
                 reporter=reporter,
                 construction_context=enumerate_construction_context(corpus),
                 source_workspace_root=locus_root,
-                populate_derived=True,
-                distribution="pandas",
             )
             discharge(source_file)
         except ConstructionPanic:

@@ -81,7 +81,7 @@ def _resident_bare_then_seated(target: Path, root: Path):
 
     collector = CollectingReporter()
     seated = open_source_file_for_construction(
-        target, root=root, reporter=collector, populate_derived=False
+        target, root=root, reporter=collector
     )
     assert seated.unit is first.unit, (
         "the two opens did not share one resident unit; the seat spellings "

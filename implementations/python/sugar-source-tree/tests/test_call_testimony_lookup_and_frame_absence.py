@@ -88,9 +88,7 @@ def _class_constructor_call(tmp_path):
         path,
         root=tmp_path,
         reporter=collector,
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
     reporter = ConstructionTestimonyReporterV1(
         collector, SubstitutionTraceBuilderV1(source.unit.source_cid)
     )

@@ -276,7 +276,7 @@ def _measure_constructed(module, path: Path, workspace: Path) -> dict[str, Any]:
         refs = provisional_contract_refs_from_demands(iso)
         ctx = tree_construction_context_for_workspace(iso, contract_refs=refs)
         source_file = open_source_file_for_construction(
-            plant, root=iso, construction_context=ctx, populate_derived=False
+            plant, root=iso, construction_context=ctx
         )
         if len(refs.by_use_site) != 1:
             raise RuntimeError(
@@ -343,8 +343,6 @@ def _measure_opaque(module, path: Path, workspace: Path) -> dict[str, Any]:
             plant,
             root=iso,
             construction_context=ctx,
-            populate_derived=True,
-            distribution="recensus_path_smoke",
             source_workspace_root=iso,
         )
         resolution_rows = module._tally_cm_resolutions(

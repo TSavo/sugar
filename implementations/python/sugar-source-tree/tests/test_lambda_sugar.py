@@ -25,9 +25,7 @@ def _lambda(tmp_path, source: str) -> Lambda:
         path,
         root=tmp_path,
         reporter=CollectingReporter(),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
     return next(n for n in source_file.nodes() if isinstance(n, Lambda))
 
 
@@ -52,9 +50,7 @@ def test_lambda_default_formal_folds_into_the_owner(tmp_path) -> None:
     path.write_text("def check(df, f=lambda x: x.sum()):\n    return f(df)\n")
     source_file = open_source_file_for_construction(
         path, root=tmp_path, reporter=CollectingReporter(),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
     param = next(n for n in source_file.nodes() if isinstance(n, Param) and n.default is not None)
     sugar = param.sugar()
     assert isinstance(sugar, ParamSugar)
@@ -73,9 +69,7 @@ def test_lambda_formals_are_its_own_never_the_enclosing_defs(tmp_path) -> None:
     path.write_text("def g(x, f=lambda x: x):\n    return f(x)\n")
     source_file = open_source_file_for_construction(
         path, root=tmp_path, reporter=CollectingReporter(),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
     g = next(f for f in source_file.functions() if f.name == "g")
     node = next(n for n in source_file.nodes() if isinstance(n, Lambda))
     sugar = node.sugar()

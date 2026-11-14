@@ -93,7 +93,6 @@ def _derive(tmp_path: Path, use: str):
             corpus / "use.py",
             root=corpus,
             reporter=CollectingReporter(),
-            distribution="tiny-corpus",
             source_workspace_root=corpus,
         )
         refs = source_file.root.unit.construction_context.source_derived_contract_refs
