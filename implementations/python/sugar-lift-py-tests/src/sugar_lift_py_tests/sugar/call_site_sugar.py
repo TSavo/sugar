@@ -191,7 +191,7 @@ def _unknown_callee_call(sugar, ctx):
     The callee name has no binding in this reduction's scope (an undefined
     name, or a dotted module member the import door did not cite), and no
     contract, gap, language-owned floor or source frame speaks for it."""
-    if sugar.contract_resolution_gap is not None or sugar.contract_ref is not None:
+    if sugar.contract_resolution_gap is not None:
         return None
     if sugar.site is None or sugar.formal_function_sugar is not None:
         return None
@@ -235,7 +235,6 @@ class CallSiteSugar(ConstructedTermSugar):
     args: tuple[ConstructedTermSugar, ...]
     site: object = dataclass_field(compare=False)
     keywords: tuple[tuple[str, ConstructedTermSugar], ...] = ()
-    contract_ref: Any = dataclass_field(default=None, compare=False)
     contract_resolution_gap: str | None = dataclass_field(default=None, compare=False)
     # The import door's receipt for this call when nothing answers its symbol
     # (#7762): the linker's gap is "target not in corpus" or "no authenticated
@@ -407,26 +406,9 @@ class CallSiteSugar(ConstructedTermSugar):
         definition_authority.extend(
             str_const(cid) for cid in self.formal_coordinate_cids
         )
-        if self.contract_ref is None:
-            contract_authority = ctor("python:no-resolved-call-contract", ())
-        else:
-            from sugar_lift_py_tests.call_contract_resolution import (
-                ResolvedCallContractRefV1,
-            )
-
-            if not isinstance(self.contract_ref, ResolvedCallContractRefV1):
-                raise TypeError(
-                    f"{owner} requires authenticated ResolvedCallContractRefV1, "
-                    f"got {type(self.contract_ref).__name__}"
-                )
-            contract_authority = ctor(
-                "python:resolved-call-contract",
-                (
-                    str_const(self.contract_ref.resolution_cid),
-                    str_const(self.contract_ref.contract_cid),
-                ),
-                symbol_kind="coordinate",
-            )
+        # The kit applies no contract to a call (step 6 as amended); the
+        # coordinate keeps its constant contract slot so no call CID moves.
+        contract_authority = ctor("python:no-resolved-call-contract", ())
         positional = tuple(argument.to_term(owner=owner) for argument in self.args)
         keywords = tuple(
             ctor(
@@ -533,7 +515,7 @@ class CallSiteSugar(ConstructedTermSugar):
         Read from the callee's temporal binding, never its spelling: a user
         class or rebinding named ``ValueError`` is not a builtin exception.
         """
-        if ctx is None or source_call_frame is not None or self.contract_ref is not None:
+        if ctx is None or source_call_frame is not None:
             return None
         from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
 
@@ -580,7 +562,6 @@ class CallSiteSugar(ConstructedTermSugar):
         if (
             ctx is None
             or source_call_frame is not None
-            or self.contract_ref is not None
             or len(positional) != 1
             or kw_values
         ):
@@ -681,8 +662,6 @@ class CallSiteSugar(ConstructedTermSugar):
                 "builtin" if hasattr(builtins, self.target_name) else "coordinate"
             ),
         )
-        if self.contract_ref is not None:
-            return self._collect_bridged(positional)
         source_body = None
         source_frame_cid = None
         native_operation_actuals = None
@@ -984,72 +963,6 @@ class CallSiteSugar(ConstructedTermSugar):
             carrier_actuals=callsite.bound_native_actuals_by_coordinate,
         )
         return produced
-
-    def _collect_bridged(self, positional: tuple) -> Outcome:
-        from sugar_lift_py_tests.floor.bridged_contract_value import (
-            BridgedContractValue,
-        )
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import _Ctor, _free_vars_in_term, subst_var_in_term
-        from sugar_lift_py_tests.outcome import Complete
-        from sugar_source_tree.panic import SugarNotWritten
-
-        reference = self.contract_ref
-        if len(reference.formals) != len(positional):
-            raise SugarNotWritten(
-                owner="CallSiteSugar.desugar",
-                blame=self.site,
-                observed="signature mismatch",
-                requested="actual arguments matching the authenticated import signature",
-                fix="correct the call signature or keep the call loud",
-            )
-        term = reference.return_term
-        if term is None:
-            raise SugarNotWritten(
-                owner="CallSiteSugar.desugar",
-                blame=self.site,
-                observed="authenticated contract has no exact return equality",
-                requested="exact structural return testimony",
-                fix="strengthen the contract or keep the imported value loud",
-            )
-        if not _free_vars_in_term(term) <= set(reference.formals):
-            raise SugarNotWritten(
-                owner="CallSiteSugar.desugar",
-                blame=self.site,
-                observed="authenticated structural return contains an unbound projection",
-                requested="return variables authenticated by the target formal list",
-                fix="reject the stale or lying contract reference",
-            )
-        for formal, actual in zip(reference.formals, positional):
-            term = subst_var_in_term(term, formal, actual.to_term(owner=str(self.site)))
-        if not isinstance(term, _Ctor) or term.name not in {
-            "tuple",
-            "python:tuple",
-            "python:list",
-        }:
-            raise SugarNotWritten(
-                owner="CallSiteSugar.desugar",
-                blame=self.site,
-                observed="authenticated contract has no exact structural return",
-                requested="structural return term carried by the target contract",
-                fix="strengthen the target contract or keep the imported value loud",
-            )
-        callsite = CallSiteValue(
-            target_name=self.target_name,
-            arg_values=positional,
-            parameters=reference.formals,
-            term=term,
-            body=None,
-            site=self.site,
-            target_contract_cid=reference.contract_cid,
-            authenticated_target_symbol=reference.bridge_source_symbol,
-        )
-        return Complete(
-            BridgedContractValue(
-                term, reference.contract_cid, reference.member_cid, callsite
-            )
-        )
-
 
 
 def _actual_reduce_context(ctx):

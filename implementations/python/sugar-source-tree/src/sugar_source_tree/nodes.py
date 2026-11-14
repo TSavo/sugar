@@ -13771,7 +13771,6 @@ class Call(Expression):
             # discharge; without it the Name registers and never answers.
             self.func.discharge_by_substitution()
 
-            contract_ref = None
             contract_resolution_gap = None
             resolution = None
             from sugar_lift_py_tests.call_contract_resolution import (
@@ -13903,7 +13902,7 @@ class Call(Expression):
                         f"call-graph-cycle:{cycle.definition.name}"
                         f"@{cycle.definition.line_col_span().start_line}"
                     )
-                if recursion_seat is not None and contract_ref is None:
+                if recursion_seat is not None:
                     contract_resolution_gap = recursion_seat
                 if lexical_row is not None:
                     if source_call_frame is not None:
@@ -13980,7 +13979,6 @@ class Call(Expression):
                 site=self.fragment,
                 call_occurrence=coordinate,
                 keywords=keyword_sugars,
-                contract_ref=contract_ref,
                 contract_resolution_gap=contract_resolution_gap,
                 import_target_symbol=import_target_symbol,
                 source_call_frame=source_call_frame,

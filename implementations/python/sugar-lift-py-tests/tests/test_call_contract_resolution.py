@@ -11,10 +11,9 @@ from sugar_lift_py_tests.call_contract_resolution import (
     ResolvedCallContractRefsV1,
     decode_resolved_call_contract_refs,
 )
-from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
+from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
-from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests import lift_rpc
 from sugar_source_tree.panic import BackendDefect, SugarNotWritten
 
@@ -118,7 +117,9 @@ def test_call_distinguishes_non_enrolled_local_call_from_missing_enrolled_row(tm
     calls = list(node for node in tree.nodes() if isinstance(node, Call))
 
     assert local_site not in call_refs.enrolled_use_sites
-    assert calls[0].sugar().contract_ref is None
+    local = calls[0].sugar()
+    assert local.contract_resolution_gap is None
+    assert local.import_target_symbol is None
     with pytest.raises(BackendDefect, match="enrolled call demand missing"):
         calls[1].sugar()
 
@@ -141,49 +142,15 @@ def _reference() -> ResolvedCallContractRefV1:
     )
 
 
-def test_authenticated_structural_return_projects_from_one_bridged_contract():
-    sugar = CallSiteSugar(
-        target_name="pair",
-        args=(NameSugar("value", site="value"),),
-        site="consumer.py:2",
-        contract_ref=_reference(),
-    )
-
-    outcome = sugar.desugar(None)
-
-    assert isinstance(outcome, Complete)
-    assert outcome.value.to_term(owner="test") == ctor(
-        "python:tuple", [make_var("value"), make_var("value")]
-    )
-    assert outcome.value.contract_cid == CID
-    assert outcome.value.member_cid == MEMBER_CID
-    assert outcome.value.callsites()[0].target_contract_cid == CID
-    assert outcome.value.callsites()[0].authenticated_target_symbol == (
-        "python:pandas.fixture.pair"
-    )
-
-
-def test_unresolved_or_non_structural_reference_stays_loud():
+def test_an_unresolved_reference_stays_loud():
     unresolved = CallSiteSugar(
         target_name="missing",
         args=(),
         site="consumer.py:2",
-        contract_ref=None,
         contract_resolution_gap="unresolved-symbol",
     )
     with pytest.raises(SugarNotWritten, match="unresolved-symbol"):
         unresolved.desugar(None)
-
-    non_structural = _reference().__class__(
-        **{**_reference().__dict__, "return_term": ctor("call:other", [str_const("x")])}
-    )
-    with pytest.raises(SugarNotWritten, match="structural return"):
-        CallSiteSugar(
-            target_name="pair",
-            args=(NameSugar("value", site="value"),),
-            site="consumer.py:2",
-            contract_ref=non_structural,
-        ).desugar(None)
 
 
 def test_off_population_call_desugars_to_a_callsite_not_a_gap():
@@ -302,22 +269,6 @@ def test_python_intake_rejects_stale_semantic_contract_cid():
         CallContractRefProtocolError, match="stale semantic contract CID"
     ):
         _decode_ref(raw)
-
-
-def test_return_projection_with_unauthenticated_free_name_stays_loud():
-    reference = _reference().__class__(
-        **{
-            **_reference().__dict__,
-            "return_term": ctor("python:tuple", [make_var("not_a_formal")]),
-        }
-    )
-    with pytest.raises(SugarNotWritten, match="unbound projection"):
-        CallSiteSugar(
-            target_name="pair",
-            args=(NameSugar("value", site="value"),),
-            site="consumer.py:2",
-            contract_ref=reference,
-        ).desugar(None)
 
 
 def test_import_demand_enrollment_has_positional_arity_and_module_identity(tmp_path):

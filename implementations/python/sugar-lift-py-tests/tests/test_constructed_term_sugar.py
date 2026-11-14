@@ -1,12 +1,10 @@
 """Closed constructed-Sugar canonical term admission."""
 
 from dataclasses import dataclass, replace
-from types import MappingProxyType
 
 import pytest
 
-from sugar_lift_py_tests.call_contract_resolution import ResolvedCallContractRefV1
-from sugar_lift_py_tests.ir import PrimitiveSort, ctor, str_const
+from sugar_lift_py_tests.ir import ctor, str_const
 from sugar_lift_py_tests.generator_construction import YieldStepV1
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
@@ -93,26 +91,7 @@ def _comprehension_generator(iterable, *, filters=()):
     )
 
 
-def _contract(letter: str) -> ResolvedCallContractRefV1:
-    cid = "blake3-512:" + letter * 128
-    return ResolvedCallContractRefV1(
-        resolution_cid=cid,
-        demand_cid="blake3-512:" + "d" * 128,
-        use_site=None,
-        import_binding_cid="blake3-512:" + "i" * 128,
-        catalog_cid="blake3-512:" + "c" * 128,
-        member_cid="blake3-512:" + "m" * 128,
-        contract_cid=cid,
-        bridge_source_symbol="ignored-spelling",
-        formals=("value",),
-        sorts=(PrimitiveSort("Value"),),
-        return_term=None,
-        source_warrant_cids=(),
-        contract_decl=MappingProxyType({"kind": "contract"}),
-    )
-
-
-def _call(*, site=None, args=("a", "b"), keywords=(), definition="d", contract=None):
+def _call(*, site=None, args=("a", "b"), keywords=(), definition="d"):
     if site is None:
         site = _call_sites()[0]
     coordinate = _Coordinate("blake3-512:" + definition * 128)
@@ -121,7 +100,6 @@ def _call(*, site=None, args=("a", "b"), keywords=(), definition="d", contract=N
         args=tuple(_Operand(value) for value in args),
         keywords=tuple((name, _Operand(value)) for name, value in keywords),
         exception_type_coordinate=coordinate,
-        contract_ref=contract,
         site=site,
     )
 
@@ -242,12 +220,6 @@ def test_equivalent_call_reconstruction_has_the_same_term():
     )
 
 
-def test_changed_resolved_contract_authority_changes_call_term():
-    assert _call(contract=_contract("a")).to_term(owner="first-contract") != _call(
-        contract=_contract("b")
-    ).to_term(owner="second-contract")
-
-
 def test_exception_definition_term_is_canonical_call_authority():
     first = replace(
         _call(),
@@ -274,8 +246,6 @@ def test_exception_definition_term_is_canonical_call_authority():
         _call(keywords=(("left", "a"), ("right", "b"))),
         _call(keywords=(("right", "b"), ("left", "a"))),
         _call(definition="e"),
-        _call(contract=_contract("a")),
-        _call(contract=_contract("b")),
     ),
     ids=(
         "occurrence",
@@ -284,8 +254,6 @@ def test_exception_definition_term_is_canonical_call_authority():
         "keyword-arguments",
         "keyword-order",
         "definition-coordinate",
-        "first-contract-authority",
-        "changed-contract-authority",
     ),
 )
 def test_changed_call_preimage_changes_term(variant):
