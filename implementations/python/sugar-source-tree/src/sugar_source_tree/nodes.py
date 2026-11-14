@@ -1555,8 +1555,9 @@ class SourceUnit:
         writes through a ``global`` declaration (it changes whenever that
         body runs).  Every reader cites these ``undecided`` by name.  A
         binding the threading does not carry past one statement (a ``match``
-        capture, a live loop's writes, a ``type`` alias) is undecided only
-        from that statement on (``_module_uncarried_names``)."""
+        capture, a live loop's uncarried writes, a ``try ... except*``
+        write) is undecided only from that statement on
+        (``_module_uncarried_names``)."""
         return self._module_global_rows()[1]
 
     def _module_global_rows(self) -> Tuple[frozenset, frozenset]:
@@ -4572,25 +4573,59 @@ def _module_threads(scope, name: str) -> bool:
     return record is not None and record.open and name in record.names
 
 
-def _module_uncarried_names(statement, live_loop_bindings) -> frozenset:
+def _module_uncarried_names(statement, live_loop_bindings, scope) -> frozenset:
     """The names ``statement`` binds whose binding the module threading does
     not carry past it: every name a live loop binds that its recurrence
-    does not publish (its target, a write it does not carry), and every
-    name a ``match`` (its captures, its cases' writes), a ``try ...
-    except*`` or a ``del`` of a nested target (``del (a, b)``) binds --
-    none exports a binding.  From the statement on, each is
-    ``UNDECIDED_MODULE_BINDING`` for a reader, never the binding standing
-    before it."""
+    does not publish (its target, a write it does not carry), every name a
+    ``match`` binds (its captures, its cases' writes), and every name a
+    ``try ... except*`` binds other than an ``as`` name it unbinds
+    (``_except_star_unbound_names``) -- none exports a binding.  ``scope``
+    is the binding standing before the statement.  From the statement on,
+    each is ``UNDECIDED_MODULE_BINDING`` for a reader, never the binding
+    standing before it."""
     if live_loop_bindings is not None:
         return statement.names_bound_within() - frozenset(live_loop_bindings)
-    if isinstance(statement, Delete):
-        lowered = (Name, Attribute, Subscript)
-        if all(isinstance(target, lowered) for target in statement.targets):
-            return frozenset()
-        return statement.names_bound_within()
-    if isinstance(statement, (Match, TryStar)):
+    if isinstance(statement, TryStar):
+        return statement.names_bound_within() - _except_star_unbound_names(
+            statement, scope
+        )
+    if isinstance(statement, Match):
         return statement.names_bound_within()
     return frozenset()
+
+
+def _except_star_unbound_names(statement, scope) -> frozenset:
+    """The ``as`` names of a ``try ... except*`` ``statement`` that are
+    unbound after it, while the module body is threaded for its readers
+    (``_module_threads``): a handler binds its ``as`` name to its effect slot
+    (``EffectRef``, ``ExceptHandler.substitute``) and unbinds it when the
+    handler ends, so a name unbound before the statement (``scope``), which
+    nothing else in the statement binds, is unbound after it on every route.
+    A name bound before it keeps that binding on the route no handler took,
+    which no route slot of ``except*`` decides; a builtin name falls back to
+    the builtin once unbound: neither is one."""
+    names = {handler.name for handler in statement.handlers if handler.name}
+    if not names:
+        return frozenset()
+    blocks = (
+        *statement.body,
+        *statement.orelse,
+        *statement.finalbody,
+        *(item for handler in statement.handlers for item in handler.body),
+    )
+    written = frozenset().union(*(item.names_bound_within() for item in blocks))
+    unbound = set()
+    for name in names - written:
+        if not _module_threads(scope, name):
+            continue
+        if hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
+            continue
+        state = scope.get(name, _MISSING)
+        if state is _MISSING or isinstance(
+            unwrap_binding_state(state), UnboundBinding
+        ):
+            unbound.add(name)
+    return frozenset(unbound)
 
 
 def _module_import_binding(statement, scope):
@@ -4637,10 +4672,11 @@ def _module_reference_state(state):
     sits in an arm of an ``if`` or a ``try`` route; an import's row in the
     one import table (``ImportBindingRef``), alone or as such an arm.  The
     other statements that bind a module name decide it too: an undecorated
-    ``def`` or ``class`` binds its definition (the read is the definition's
-    own binding, as a local definition's is), an ``except ... as`` handler
-    its effect slot (``EffectRef``), and ``del`` (or the end of that
-    handler) unbinds it -- the read is a ``NameError`` halt
+    ``def`` or ``class`` binds its definition and ``type X = ...`` its alias
+    (the read is the statement's own binding, as a local definition's is),
+    an ``except ... as`` or ``except* ... as`` handler its effect slot
+    (``EffectRef``), and ``del`` (each name of ``del (a, b)``, or the end of
+    that handler) unbinds it -- the read is a ``NameError`` halt
     (``GuardedBindingRead``).  A comprehension member's coordinate is bound
     only inside its comprehension, so a binding to one is
     ``UNDECIDED_MODULE_BINDING`` wherever a reader outside it reads the
@@ -4651,7 +4687,9 @@ def _module_reference_state(state):
     state = unwrap_binding_state(state)
     if isinstance(state, UnboundBinding):
         return state
-    if isinstance(state, (FunctionDef, AsyncFunctionDef, ClassDef, EffectRef)):
+    if isinstance(
+        state, (FunctionDef, AsyncFunctionDef, ClassDef, TypeAlias, EffectRef)
+    ):
         return state
     if not isinstance(state, Node):
         return UNDECIDED_MODULE_BINDING
@@ -5479,7 +5517,9 @@ class Node(Typed):
             if record is not None and record.open:
                 # A reader of the module never reads, past this statement, a
                 # binding the threading did not carry through it.
-                uncarried = _module_uncarried_names(stmt, live_loop_bindings)
+                uncarried = _module_uncarried_names(
+                    stmt, live_loop_bindings, pre_statement_scope
+                )
                 uncarried &= record.names
                 if uncarried:
                     scope = dict(scope)
@@ -9103,7 +9143,12 @@ class Delete(Statement):
     def substitute(self, scope):
         """Lower supported targets to ordered delete operations."""
         if any(not isinstance(t, (Name, Attribute, Subscript)) for t in self.targets):
-            return self._substitute_children(scope)
+            # A target list is a binding site: the names it deletes are
+            # masked, never substituted (``substitution_binding`` reads them).
+            bound = self.names_bound_within()
+            return self._substitute_children(
+                {key: value for key, value in scope.items() if key not in bound}
+            )
 
         if len(self.targets) == 1 and isinstance(self.targets[0], Subscript):
             from .container_mutation import mutation_statement
@@ -9145,6 +9190,23 @@ class Delete(Statement):
                 )
             operations.append(operation)
         return operations[0] if len(operations) == 1 else _Splice(tuple(operations))
+
+    def substitution_binding(self, scope):
+        """A delete ``substitute`` does not lower (a nested target, ``del (a,
+        b)``) deletes its target list's leaves left to right, so each name
+        among them is unbound after it, as a lowered ``DeleteName`` unbinds
+        its own (``_deleted_name_binding``).  Threading a module body for its
+        readers (``_module_threads``), a reader after it reads a
+        ``NameError`` halt.  Anywhere else it binds nothing."""
+        binding = {}
+        pending = list(reversed(self.targets))
+        while pending:
+            target = pending.pop()
+            if isinstance(target, (Tuple_, List)):
+                pending.extend(reversed(target.elts))
+            elif isinstance(target, Name) and _module_threads(scope, target.id):
+                binding.update(_deleted_name_binding(target.id, target.fragment))
+        return binding or None
 
     def _construct_sugar(self):
         """Construct the exact module-level subscript-delete statement."""
@@ -11036,11 +11098,12 @@ class TypeAlias(Statement):
 
     def substitution_binding(self, scope):
         """Threading a module body for its readers, ``type X = ...`` binds a
-        name a reader reads to an alias object that is not constructed:
-        ``UNDECIDED_MODULE_BINDING`` from here on, never the binding before
-        it.  Anywhere else it binds nothing."""
+        name a reader reads to the alias the statement makes, as a ``def``
+        or ``class`` binds its definition: the reader's read is the alias
+        statement's own binding of the name (``Name.substitute``), never the
+        binding before it.  Anywhere else it binds nothing."""
         if isinstance(self.name, Name) and _module_threads(scope, self.name.id):
-            return {self.name.id: UNDECIDED_MODULE_BINDING}
+            return {self.name.id: self}
         return None
 
 
@@ -14688,6 +14751,20 @@ class TryStar(Statement):
     def substitute(self, scope):
         """Same block-aware substitute as Try (identical fields)."""
         return Try.substitute(self, scope)
+
+    def substitution_binding(self, scope):
+        """Threading a module body for its readers, a handler's ``as`` name
+        unbound before the statement is unbound after it: the handler ends
+        by unbinding it, and no other route binds it
+        (``_except_star_unbound_names``).  A reader after the statement
+        reads a ``NameError`` halt.  Anywhere else it binds nothing."""
+        names = _except_star_unbound_names(self, scope)
+        binding = {}
+        for handler in self.handlers:
+            if handler.name in names and handler.name not in binding:
+                # The handler ends with ``del <name>``.
+                binding.update(_deleted_name_binding(handler.name, handler.fragment))
+        return binding or None
 
     def _construct_sugar(self):
         """Construct the distinct except* router with authenticated type operands."""
@@ -19094,15 +19171,17 @@ class Name(Expression):
             # module read keeps the name, as with no binding at all; a
             # reader outside the module block is cited undecided instead.
             return self
-        if isinstance(bound, (FunctionDef, AsyncFunctionDef, ClassDef)):
-            # A local definition bound this name: the read is the ordinary
-            # name, resolved by the definition's own runtime binding, never
-            # the definition statement spliced into expression position.
+        if isinstance(bound, (FunctionDef, AsyncFunctionDef, ClassDef, TypeAlias)):
+            # A local definition (or a module ``type`` alias) bound this
+            # name: the read is the ordinary name, resolved by the
+            # definition's own runtime binding, never the definition
+            # statement spliced into expression position.
             return self
         if isinstance(bound, ImportBindingRef):
             # An import bound this name: a read the one import table rows
             # with the same target resolves through the table at its own
-            # coordinate; any other read is the import's row, never a name.
+            # coordinate; any other read is the import's row, which
+            # constructs as the one read of the name does.
             span = self.line_col_span()
             read = (span.start_line, span.start_col, span.end_line, span.end_col)
             if self.unit.import_reference_target(read) == bound.target_symbol:
@@ -19193,71 +19272,82 @@ class Name(Expression):
         """A name constructs NameSugar with its identifier. A name is a leaf:
         nothing to build from children, only to look up against the temporal
         scope when the body reduces (an unbound name panics there, loudly).
+        The construction is the one read of a name (``_name_read_sugar``)."""
+        return _name_read_sugar(self, self.id)
 
-        A seated import value-use receipt for ``from re import Pattern``
-        constructs the same ImportMemberSugar Attribute uses for ``re.Pattern``.
-        A module-alias Name (``import re``) has no member path and stays a
-        NameSugar so we do not invent an empty-path import member.
-        """
-        span = self.line_col_span()
-        receipt = self.unit.import_value_use_receipt(
-            (span.start_line, span.start_col, span.end_line, span.end_col)
+
+def _name_read_sugar(node, name: str):
+    """The one construction of a read of the name ``name`` at ``node``'s
+    coordinate: a ``Name`` the source spells, and the import table's row an
+    import binds the name to (``ImportBindingRef``) where the module threading
+    carries it to a reader.
+
+    A seated import value-use receipt at the coordinate (``from re import
+    Pattern``) constructs the same ImportMemberSugar Attribute uses for
+    ``re.Pattern``.  A module-alias read (``import re``) has no member path,
+    and a coordinate the lexical pass enrolls no value use at has no receipt:
+    either stays a NameSugar, the name's free symbolic in the meaning layer,
+    so no empty-path import member is invented.
+    """
+    span = node.line_col_span()
+    receipt = node.unit.import_value_use_receipt(
+        (span.start_line, span.start_col, span.end_line, span.end_col)
+    )
+    from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+
+    if type(receipt) is AuthenticatedImportUseV1:
+        receipt.revalidate()
+        site = receipt.use["useSite"]
+        if (
+            receipt.source_cid != node.unit.source_cid
+            or site.get("sourceCid") != node.unit.source_cid
+            or (
+                site.get("startLine"),
+                site.get("startCol"),
+                site.get("endLine"),
+                site.get("endCol"),
+            )
+            != (span.start_line, span.start_col, span.end_line, span.end_col)
+        ):
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                blame=node.fragment,
+                owner="Name._construct_sugar",
+                observed="import value-use receipt does not own this Name",
+                requested="same-source exact Name occurrence testimony",
+                fix="consume the receipt only at its producer-minted useSite",
+            )
+        from sugar_lift_py_tests.floor.import_member_value import (
+            _import_member_export_path,
         )
-        from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
 
-        if type(receipt) is AuthenticatedImportUseV1:
-            receipt.revalidate()
-            site = receipt.use["useSite"]
-            if (
-                receipt.source_cid != self.unit.source_cid
-                or site.get("sourceCid") != self.unit.source_cid
-                or (
-                    site.get("startLine"),
-                    site.get("startCol"),
-                    site.get("endLine"),
-                    site.get("endCol"),
-                )
-                != (span.start_line, span.start_col, span.end_line, span.end_col)
-            ):
+        if _import_member_export_path(receipt):
+            from sugar_lift_py_tests.sugar.import_member_sugar import (
+                ImportMemberSugar,
+            )
+
+            qualified_name = receipt.target_symbol
+            if not qualified_name.startswith("python:"):
                 from sugar_source_tree.panic import BackendDefect
 
                 raise BackendDefect(
-                    blame=self.fragment,
+                    blame=node.fragment,
                     owner="Name._construct_sugar",
-                    observed="import value-use receipt does not own this Name",
-                    requested="same-source exact Name occurrence testimony",
-                    fix="consume the receipt only at its producer-minted useSite",
+                    observed=f"target_symbol={qualified_name!r}",
+                    requested="authenticated python: import target symbol",
+                    fix="preserve the lexical receipt targetSymbol unchanged",
                 )
-            from sugar_lift_py_tests.floor.import_member_value import (
-                _import_member_export_path,
+            qualified_name = qualified_name[len("python:") :]
+            return ImportMemberSugar(
+                qualified_name=qualified_name,
+                receipt=receipt,
+                site=node.fragment,
             )
 
-            if _import_member_export_path(receipt):
-                from sugar_lift_py_tests.sugar.import_member_sugar import (
-                    ImportMemberSugar,
-                )
+    from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
-                qualified_name = receipt.target_symbol
-                if not qualified_name.startswith("python:"):
-                    from sugar_source_tree.panic import BackendDefect
-
-                    raise BackendDefect(
-                        blame=self.fragment,
-                        owner="Name._construct_sugar",
-                        observed=f"target_symbol={qualified_name!r}",
-                        requested="authenticated python: import target symbol",
-                        fix="preserve the lexical receipt targetSymbol unchanged",
-                    )
-                qualified_name = qualified_name[len("python:") :]
-                return ImportMemberSugar(
-                    qualified_name=qualified_name,
-                    receipt=receipt,
-                    site=self.fragment,
-                )
-
-        from sugar_lift_py_tests.sugar.name_sugar import NameSugar
-
-        return NameSugar(name=self.id, site=self.fragment)
+    return NameSugar(name=name, site=node.fragment)
 
 
 class FormalRef(Expression):
@@ -19440,9 +19530,9 @@ class ImportBindingRef(Expression):
 
     A read the table rows with this same target resolves through the table
     at its own coordinate (``Name.substitute`` keeps the name).  Anywhere
-    else -- an arm of a phi, a read the table does not row -- the import's
-    value is not constructed: the read constructs and refuses by name when
-    reduced, never the name read in its place.
+    else -- an arm of a phi, a read the table does not row -- the row is the
+    read: it constructs exactly as an ordinary read of the name does
+    (``_name_read_sugar``), at the row's coordinate.
     """
 
     name: str
@@ -19453,11 +19543,7 @@ class ImportBindingRef(Expression):
         return self
 
     def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.import_binding_ref_sugar import (
-            ImportBindingRefSugar,
-        )
-
-        return ImportBindingRefSugar(self.name, self.target_symbol, self.fragment)
+        return _name_read_sugar(self, self.name)
 
 
 def _local_definition_binding(definition, scope):
@@ -19616,6 +19702,12 @@ class GuardedBindingRead(Expression):
         )
 
 
+def _deleted_name_binding(name: str, cause) -> dict:
+    """The binding a ``del`` leaves its name in: unbound, a read of it is a
+    ``NameError`` halt."""
+    return {name: UnboundBinding(name=name, cause=cause)}
+
+
 class DeleteName(Statement):
     """A plain-name delete carrying its pre-delete availability."""
 
@@ -19628,7 +19720,7 @@ class DeleteName(Statement):
 
     def substitution_binding(self, scope):
         del scope
-        return {self.name: UnboundBinding(name=self.name, cause=self.fragment)}
+        return _deleted_name_binding(self.name, self.fragment)
 
     def _construct_sugar(self):
         from sugar_lift_py_tests.sugar.delete_name_sugar import DeleteNameSugar
