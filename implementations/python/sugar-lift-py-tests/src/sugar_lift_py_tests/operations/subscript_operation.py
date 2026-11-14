@@ -69,16 +69,6 @@ class SubscriptOperation:
             )
         )
 
-    def subscript_array(self, receiver, ctx: object) -> ExitSet:
-        index = force_floor(self.index, ctx, owner=f"{self.owner} array index")
-        return _subscript_sequence(
-            receiver.items,
-            _unwrap_index(index),
-            owner=self.owner,
-            blame=self.blame,
-            observed_name="ArrayLiteral",
-        )
-
     def subscript_tuple(self, receiver, ctx: object) -> ExitSet:
         index = force_floor(self.index, ctx, owner=f"{self.owner} tuple index")
         return _subscript_sequence(

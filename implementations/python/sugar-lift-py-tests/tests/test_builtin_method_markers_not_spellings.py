@@ -240,6 +240,52 @@ def test_append_to_a_ground_split_takes_the_list_display_law() -> None:
         assert type(result.completed_value()) is NoneValue
 
 
+def _splitlines(receiver: str, *arguments):
+    return _fold_string_method(
+        StringValue(receiver),
+        SimpleNamespace(
+            name="splitlines",
+            arguments=tuple(arguments),
+            owner="test",
+            blame="fold-splitlines",
+        ),
+    ).completed_value()
+
+
+def test_splitlines_with_a_bool_keepends_folds_to_the_list_floor() -> None:
+    """``s.splitlines(True)`` crashed the lifter: the fold asked
+    ``isinstance(keep)`` with one argument.  The bool floor is the literal."""
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    def lines(*parts):
+        return ListValue(tuple(StringValue(part) for part in parts))
+
+    source = "a\nb\r\nc"
+    kept = _splitlines(source, TrueBoolLiteralSugar(site="keep"))
+    dropped = _splitlines(source, FalseBoolLiteralSugar(site="drop"))
+
+    assert kept == lines(*source.splitlines(True)) == lines("a\n", "b\r\n", "c")
+    assert dropped == lines(*source.splitlines(False)) == lines("a", "b", "c")
+    # Discriminating: the two literals are two answers, not one.
+    assert kept != dropped
+    assert _splitlines(source) == dropped
+    assert _splitlines(source, TermValue(1)) == kept
+    assert _splitlines(source, TermValue(0)) == dropped
+
+
+def test_splitlines_with_an_opaque_keepends_only_coordinates() -> None:
+    minted = _splitlines("a\nb", SymbolicValue(make_var("keep")))
+
+    assert type(minted) is OpaqueOpCallsite
+    assert minted.computed is None
+
+
 def test_join_over_a_ground_split_still_folds() -> None:
     joined = _fold_string_method(
         StringValue("-"),

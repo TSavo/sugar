@@ -17,7 +17,6 @@ import importlib.util
 import pytest
 
 from sugar_lift_py_tests.floor import (
-    ArrayLiteral,
     GroundSequenceRepetitionValue,
     ListValue,
     StringValue,
@@ -105,23 +104,33 @@ def test_dynamic_isinstance_keeps_a_value_owned_term_refusal_loud() -> None:
 # -- sugar.for_sugar cap -> floor/sequence_repetition.py --------------------
 #
 # `STATIC_UNFOLD_LIMIT` / `finite_unfold_cap_panic` were the abolished cap.
-# ArrayLiteral was the straggler that never joined the one repetition law.
+# `ArrayLiteral` had no producer left once a ground `str.split` folded to the
+# list floor (#8055), so it is deleted; a list is `ListValue` (#7757).
 
 
-def test_array_repetition_folds_the_same_law_list_and_tuple_fold() -> None:
+def test_the_deleted_array_literal_floor_is_not_quietly_back() -> None:
+    """Discriminating face: a second list floor nothing produces stays gone."""
+    import sugar_lift_py_tests.floor as floor
+
+    assert not _resolves("sugar_lift_py_tests.floor.array_literal")
+    assert not _resolves("sugar_lift_py_tests.floor.builder_state")
+    assert not hasattr(floor, "ArrayLiteral")
+    assert not hasattr(floor, "BuilderState")
+
+
+def test_list_repetition_folds_the_one_repetition_law() -> None:
     element = TermValue(7)
 
-    outcome = ArrayLiteral((element,)).multiply(TermValue(64), "multiply-site", None)
+    outcome = ListValue((element,)).multiply(TermValue(64), "multiply-site", None)
 
     assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), ArrayLiteral)
-    assert outcome.completed_value().items == (element,) * 64
+    assert isinstance(outcome.completed_value(), ListValue)
+    assert outcome.completed_value().elements == (element,) * 64
 
 
 @pytest.mark.parametrize(
     "sequence, count",
     [
-        (ArrayLiteral((TermValue(7),)), 1000),
         (ListValue((TermValue(7),)), 1000),
         (TupleValue((TermValue(7),)), 1000),
     ],
@@ -144,8 +153,8 @@ def test_no_cardinality_refuses_a_concrete_repetition(sequence, count) -> None:
 
 
 def test_a_symbolic_count_is_the_same_closed_coordinate() -> None:
-    """The array's private `SequenceRepetitionRuntimeEffect` arm is gone too."""
-    outcome = ArrayLiteral((TermValue(7),)).multiply(
+    """A symbolic count repeats to the one closed `python:sequence_repeat`."""
+    outcome = ListValue((TermValue(7),)).multiply(
         SymbolicValue(make_var("n")), "multiply-site", None
     )
 
@@ -168,7 +177,7 @@ def test_static_join_folds_at_any_cardinality() -> None:
     """`",".join([...])` over more parts than the abolished cap allowed."""
     from sugar_lift_py_tests.floor.string_value import _fold_string_method
 
-    parts = ArrayLiteral(tuple(StringValue(str(n)) for n in range(300)))
+    parts = ListValue(tuple(StringValue(str(n)) for n in range(300)))
 
     outcome = _fold_string_method(
         StringValue(","), _MethodCallOperation("join", (parts,))

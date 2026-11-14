@@ -201,3 +201,69 @@ def test_a_source_method_through_a_path_never_keeps_the_old_root(tmp_path):
         "    return c\n"
     )
     assert _unknown_after_call(_only_return(tmp_path, source))
+
+
+# -- A name bound to a value the source does not type (#7757) ---------------
+#
+# ``parts = 'a b'.split()`` binds ``parts`` to the lifter's ``ListValue``, but
+# the right-hand side is not a list display, so the tree never decided the
+# receiver: the append ran on the list and ``parts`` was rebound to an unknown
+# after it.  The path door with no steps asks the value the binding holds, so
+# a list display and a folded ``str.split`` are one case.
+
+
+def _strings(*values):
+    return tuple(StringValue(value) for value in values)
+
+
+def test_append_to_a_ground_split_is_read_through_the_name(tmp_path):
+    source = (
+        "def f():\n"
+        "    parts = 'a b'.split()\n"
+        "    parts.append('c')\n"
+        "    return parts\n"
+    )
+    assert _only_return(tmp_path, source) == ListValue(_strings("a", "b", "c"))
+
+
+def test_a_ground_split_and_a_display_append_alike(tmp_path):
+    split = (
+        "def f():\n"
+        "    parts = 'a b'.split()\n"
+        "    alias = parts\n"
+        "    parts.append('c')\n"
+        "    return (alias, parts)\n"
+    )
+    display = split.replace("'a b'.split()", "['a', 'b']")
+    expected = TupleValue(
+        (ListValue(_strings("a", "b", "c")), ListValue(_strings("a", "b", "c")))
+    )
+    assert _only_return(tmp_path / "split", split) == expected
+    assert _only_return(tmp_path / "display", display) == expected
+
+
+def test_a_pop_from_a_ground_split_binds_the_element_and_the_rest(tmp_path):
+    source = (
+        "def f():\n"
+        "    parts = 'a b'.split()\n"
+        "    x = parts.pop()\n"
+        "    return (x, parts)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(
+        (StringValue("b"), ListValue(_strings("a")))
+    )
+
+
+def test_a_value_holding_a_ground_split_is_unknown_after_its_append(tmp_path):
+    # Discriminating: the object's own name reads the post-state; a value that
+    # merely holds it is unknown, never the pre-call ``[['a', 'b']]``.
+    source = (
+        "def f():\n"
+        "    parts = 'a b'.split()\n"
+        "    outer = [parts]\n"
+        "    parts.append('c')\n"
+        "    return outer\n"
+    )
+    value = _only_return(tmp_path, source)
+    assert value != ListValue((ListValue(_strings("a", "b")),))
+    assert _unknown_after_call(value)

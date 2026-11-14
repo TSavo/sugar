@@ -577,6 +577,10 @@ class PathAfterCallSugar(ConstructedTermSugar):
         post = pair.elements[0]
         if law.container_kind(post) is None:
             return unknown
+        if not self.steps:
+            # No path (``bound_receiver_mutation_statement``): the root is
+            # the object the call changed, and its post-state is the object.
+            return ExitSet.completed(post)
         rooted = plain_completed_value(self.root.desugar(ctx))
         if rooted is None:
             return unknown
