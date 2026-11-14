@@ -38,6 +38,9 @@ class WithFormalManagerSugar(Sugar):
             prepend_facts_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            face_record,
+            halt_record,
+            halts_recorded,
             reduce_block_to_exitset,
         )
         from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
@@ -47,18 +50,24 @@ class WithFormalManagerSugar(Sugar):
 
         # The manager, its construction, its enter and its exit are each
         # routed face by face here: a deferred native-operation carrier at any
-        # of them is refused by name.
+        # of them is refused by name. A manager, construction or enter halt
+        # is at the head of the ``with``: it carries the record of where it
+        # halted (``halts_recorded``).
         manager_out = _require_exit_set(
             self.manager.desugar(ctx), owner="WithFormalManagerSugar.manager"
         )
-        manager_es = manager_out.sequence(
-            lambda value: _project_manager_receiver(value, ctx)
+        manager_es = halts_recorded(
+            manager_out.sequence(lambda value: _project_manager_receiver(value, ctx)),
+            halt_record(ctx),
         )
         construct = getattr(self.protocol, "construct_manager", None)
         if construct is not None:
-            manager_es = _require_exit_set(
-                manager_es.sequence(lambda value: construct(value, ctx)),
-                owner="WithFormalManagerSugar.construct",
+            manager_es = halts_recorded(
+                _require_exit_set(
+                    manager_es.sequence(lambda value: construct(value, ctx)),
+                    owner="WithFormalManagerSugar.construct",
+                ),
+                halt_record(ctx),
             )
         parts = []
         for manager_face in manager_es.exits:
@@ -73,9 +82,12 @@ class WithFormalManagerSugar(Sugar):
             # and faces and owes what it owes; the exit routing carries a body
             # face's debts onto every arm it leaves through.
             enter_es = ExitSet((manager_face,)).sequence(
-                lambda manager: _require_exit_set(
-                    self.protocol.enter_resource_outcome_for(manager, ctx),
-                    owner="WithFormalManagerSugar.enter",
+                lambda manager: halts_recorded(
+                    _require_exit_set(
+                        self.protocol.enter_resource_outcome_for(manager, ctx),
+                        owner="WithFormalManagerSugar.enter",
+                    ),
+                    halt_record(ctx),
                 )
             )
             for enter_face in enter_es.exits:
@@ -105,9 +117,18 @@ class WithFormalManagerSugar(Sugar):
                     face_facts = ExitFaceBinding.from_body_exit(
                         self.exit_face_id, body_face
                     ).to_facts(site=self.site, guard=body_face.guard)
+                    # The exit runs after this body face: a halt of it that
+                    # offers no record carries the record the face left.
                     routed = _route_body_face(
                         body_face,
-                        exit_es,
+                        halts_recorded(
+                            exit_es,
+                            face_record(
+                                body_face,
+                                owner="WithFormalManagerSugar.exit",
+                                blame=self.site,
+                            ),
+                        ),
                         self.summary.semantics.exit.disposition,
                         self.site,
                     )

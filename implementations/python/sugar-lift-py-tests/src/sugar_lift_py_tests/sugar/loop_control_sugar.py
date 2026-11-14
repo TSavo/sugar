@@ -29,9 +29,9 @@ class LoopControlSugar(Sugar):
         The record's context is the one the statement received at its
         source occurrence, which the loop authenticates
         (``LoopRecurrenceSugar._require_loop_control_state``)."""
-        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+        from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 
         return ExitSet.halted(
             LoopControlEffect(self.action, self.target_cid, self.occurrence_cid),
-            state=_ReducedBlock((), False, (), context=ctx),
+            state=halt_record(ctx),
         )

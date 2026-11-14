@@ -39,13 +39,19 @@ class GeneratorWithSugar(Sugar):
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
+            halt_record,
+            halts_recorded,
             reduce_block_to_exitset,
         )
 
         # The manager is routed face by face: a deferred native-operation
-        # carrier is refused by name.
-        manager_es = _require_exit_set(
-            self.manager.desugar(ctx), owner="GeneratorWithSugar.manager"
+        # carrier is refused by name. A manager halt is at the head of the
+        # ``with``: it carries the record of where it halted.
+        manager_es = halts_recorded(
+            _require_exit_set(
+                self.manager.desugar(ctx), owner="GeneratorWithSugar.manager"
+            ),
+            halt_record(ctx),
         )
         if not manager_es.exits:
             # No manager face is reachable: the statement completes with an
@@ -77,11 +83,16 @@ class GeneratorWithSugar(Sugar):
             prepend_facts_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
             reduce_block_to_exitset,
         )
 
         if isinstance(entered, ExitSet):
-            return entered.sequence(
+            # A halt of the first resume is the enter's, at the head of the
+            # ``with``: one that offers no record carries the record of where
+            # the ``with`` began (``halts_recorded``).
+            return halts_recorded(entered, halt_record(ctx)).sequence(
                 lambda value: self._consume_enter_outcome(value, machine, ctx)
             )
         if isinstance(entered, GeneratorConstructionV1):
@@ -89,7 +100,7 @@ class GeneratorWithSugar(Sugar):
             # first suspension.
             return self._consume_enter_outcome(entered.resume(), machine, ctx)
         if isinstance(entered, GeneratorTerminationV1):
-            return self._entry_refusal_exit(machine, entered)
+            return self._entry_refusal_exit(machine, ctx)
         if isinstance(entered, GeneratorTransitionGapV1):
             self._loud(entered.observed, "opaque generator transition")
         if not isinstance(entered, YieldEffect):
@@ -133,16 +144,20 @@ class GeneratorWithSugar(Sugar):
         return prepend_facts_to_exitset(result, facts)
 
     @staticmethod
-    def _entry_refusal_exit(machine, termination: GeneratorTerminationV1):
+    def _entry_refusal_exit(machine, ctx):
         """Turn first-resume termination into the authenticated raise ExitSet arm.
 
         Observation lives in ``generator_entry_refusal`` (vendor conversion).
         This consumer only asks for it — no vendor module name here
         (``generator_construction_law``). The manager face's guard, faces and
         ``owed`` are the composition's (``ExitSet.sequence`` in ``desugar``).
+        The refusal halts at the head of the ``with``, before its body: it
+        carries the empty record where it halted (``halt_record``), onto
+        which the block composition splices what ran before the ``with``.
         """
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.generator_entry_refusal import observed_entry_refusal
+        from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 
         refusal = observed_entry_refusal()
         blame = str(machine.instance_coordinate)
@@ -152,7 +167,7 @@ class GeneratorWithSugar(Sugar):
             blame=blame,
             raised_value=refusal.message,
         )
-        return ExitSet.halted(effect, state=termination)
+        return ExitSet.halted(effect, state=halt_record(ctx))
 
     def _loud(self, observed: str, label: str):
         from sugar_source_tree.panic import SugarNotWritten
@@ -202,12 +217,18 @@ class GeneratorObjectWithSugar(Sugar):
         from sugar_lift_py_tests.generator_object_with_refusal import (
             observed_generator_object_with_refusal,
         )
-        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+        )
 
         refusal = observed_generator_object_with_refusal(self.object_kind)
         blame = str(self.site)
-        manager_es = _require_exit_set(
-            self.manager.desugar(ctx), owner="GeneratorObjectWithSugar.manager"
+        manager_es = halts_recorded(
+            _require_exit_set(
+                self.manager.desugar(ctx), owner="GeneratorObjectWithSugar.manager"
+            ),
+            halt_record(ctx),
         )
         def refused(generator):
             if not isinstance(generator, GeneratorConstructionV1):
@@ -231,9 +252,10 @@ class GeneratorObjectWithSugar(Sugar):
                 producer_node_owner="GeneratorObjectWithSugar",
             )
             # The with halts at its head: nothing was reached inside the
-            # statement, so its state is the empty record the block reducer
-            # splices its prefix onto.
-            return ExitSet.halted(effect, state=_ReducedBlock((), True, ()))
+            # statement, so its state is the empty record where it halted
+            # (``halt_record``), which the block reducer splices its prefix
+            # onto.
+            return ExitSet.halted(effect, state=halt_record(ctx))
 
         # The refusal runs beneath each completed manager face
         # (``ExitSet.sequence``): it keeps the face's guard, faces and
@@ -274,14 +296,20 @@ class NonManagerObjectWithSugar(Sugar):
         from sugar_lift_py_tests.manager_protocol_absence_refusal import (
             observed_non_manager_with_refusal,
         )
-        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+        )
 
         refusal = observed_non_manager_with_refusal(
             self.type_name, has_enter=self.has_enter, has_exit=self.has_exit
         )
         blame = str(self.site)
-        manager_es = _require_exit_set(
-            self.manager.desugar(ctx), owner="NonManagerObjectWithSugar.manager"
+        manager_es = halts_recorded(
+            _require_exit_set(
+                self.manager.desugar(ctx), owner="NonManagerObjectWithSugar.manager"
+            ),
+            halt_record(ctx),
         )
         def refused(_head):
             effect = RaiseEffect.for_builtin(
@@ -291,8 +319,9 @@ class NonManagerObjectWithSugar(Sugar):
                 raised_value=refusal.message,
                 producer_node_owner="NonManagerObjectWithSugar",
             )
-            # Halted at the head: the empty record the reducer splices onto.
-            return ExitSet.halted(effect, state=_ReducedBlock((), True, ()))
+            # Halted at the head: the empty record where it halted
+            # (``halt_record``), which the reducer splices onto.
+            return ExitSet.halted(effect, state=halt_record(ctx))
 
         # The refusal runs beneath each completed head face
         # (``ExitSet.sequence``): it keeps the face's guard, faces and

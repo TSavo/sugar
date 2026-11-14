@@ -61,6 +61,9 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
         prepend_facts_to_exitset,
     )
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        face_record,
+        halt_record,
+        halts_recorded,
         reduce_block_to_exitset,
         resumed,
     )
@@ -68,12 +71,15 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
     # The manager, its enter and its exit are each routed face by face here:
     # a deferred native-operation carrier at any of them is refused by name.
     # A manager call coordinate is not its returned receiver. Perform its
-    # source outcome once, preserving exceptional faces before enter.
+    # source outcome once, preserving exceptional faces before enter. A
+    # manager or enter halt is at the head of the ``with``: it carries the
+    # record of where it halted (``halts_recorded``).
     manager_out = _require_exit_set(
         resource.manager.desugar(ctx), owner="WithSourceResourceSugar.manager"
     )
-    manager_es = manager_out.sequence(
-        lambda value: _project_manager_receiver(value, ctx)
+    manager_es = halts_recorded(
+        manager_out.sequence(lambda value: _project_manager_receiver(value, ctx)),
+        halt_record(ctx),
     )
     parts = []
     for manager_face in manager_es.exits:
@@ -84,9 +90,12 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
             resource.manager_slot_id, manager_face.value
         ).to_facts(site=resource.site)
         enter_es = ExitSet((manager_face,)).sequence(
-            lambda manager: _require_exit_set(
-                resource.protocol.enter_resource_outcome_for(manager, ctx),
-                owner="WithSourceResourceSugar.enter",
+            lambda manager: halts_recorded(
+                _require_exit_set(
+                    resource.protocol.enter_resource_outcome_for(manager, ctx),
+                    owner="WithSourceResourceSugar.enter",
+                ),
+                halt_record(ctx),
             )
         )
         for enter_face in enter_es.exits:
@@ -123,24 +132,32 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                 # ``__exit__`` runs where the body left this face: a body
                 # halt's record (``resumed``), or the record the body
                 # completed with -- never the context the ``with`` began in.
-                exit_es = (
-                    _require_exit_set(
-                        concrete_exit(
-                            entered,
-                            body_face,
-                            resumed(
-                                body_face.state
-                                if isinstance(body_face, Halted)
-                                else body_face.value,
-                                ctx,
-                                owner="WithSourceResourceSugar.exit",
-                                blame=resource.site,
-                            ).context,
-                        ),
-                        owner="WithSourceResourceSugar.exit",
-                    )
-                    if concrete_exit is not None
-                    else abstract_exit
+                # A halt of it that offers no record of its own carries that
+                # face's record (``halts_recorded``).
+                record = face_record(
+                    body_face,
+                    owner="WithSourceResourceSugar.exit",
+                    blame=resource.site,
+                )
+                exit_es = halts_recorded(
+                    (
+                        _require_exit_set(
+                            concrete_exit(
+                                entered,
+                                body_face,
+                                resumed(
+                                    record,
+                                    ctx,
+                                    owner="WithSourceResourceSugar.exit",
+                                    blame=resource.site,
+                                ).context,
+                            ),
+                            owner="WithSourceResourceSugar.exit",
+                        )
+                        if concrete_exit is not None
+                        else abstract_exit
+                    ),
+                    record,
                 )
                 face_facts = ExitFaceBinding.from_body_exit(
                     resource.exit_face_id, body_face

@@ -2584,7 +2584,9 @@ class GeneratorConstructionV1:
                 contract_ref=step.contract_ref,
                 site=step.site,
             )
-            enter_es = law._enter_exitset(resolved_manager)
+            # A generator frame's halt state is its machine's, not a block
+            # record: the enter's halt keeps the frame's (none) here.
+            enter_es = law._enter_exitset(resolved_manager, None)
 
             def continue_enter(enter_value):
                 binding = NestedCitedOpaqueEnteredBindingV1(
@@ -2660,7 +2662,9 @@ class GeneratorConstructionV1:
             contract_ref=step.contract_ref,
             site=step.site,
         )
-        exit_es = law._exit_exitset(step.manager_value)
+        # A generator frame's halt state is its machine's, not a block record:
+        # the exit's halt keeps the frame's (none) here.
+        exit_es = law._exit_exitset(step.manager_value, None)
         if incoming is not None:
             return incoming.and_exit_truthiness(exit_es, site=step.site)
         # The body reached the end of this ``with``: its exit runs on that

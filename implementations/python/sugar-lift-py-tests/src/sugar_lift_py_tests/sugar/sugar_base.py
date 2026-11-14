@@ -53,9 +53,11 @@ class Sugar(ABC):
     # then completing, returning or raising. It binds nothing before its own
     # halt, so a halted arm it hands back without a temporal record halted at
     # the head of the statement: the enclosing block's prefix IS that arm's
-    # pre-halt state. Compound statements (with/try/finally) never set this;
-    # their stateless halts (an ``__exit__`` or cleanup raise) happen after a
-    # body ran and the prefix would erase that body's record.
+    # pre-halt state. Compound statements (if/for/while/with/try/match) never
+    # set this: some of their halts happen after a body ran, and the prefix
+    # would erase that body's record. Every halt they hand back carries its
+    # own record instead (``function_universe_sugar.halt_record``: the empty
+    # one where it halted, for a halt at the statement's head).
     halts_at_statement_head: ClassVar[bool] = False
 
     def __init_subclass__(cls, **kwargs):

@@ -312,7 +312,16 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             loop = replace(self, iterable_writes=self._iterable_writes(binds))
             return loop._desugar_with_iterable(presented, written_by(iterable, ctx))
 
-        return iterable_sugar.desugar(ctx).and_then(with_iterable)
+        # A halt of the iterable halted before any item ran: it carries the
+        # record of where it halted (``halts_recorded``), onto which the block
+        # composition splices what ran before the loop.
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+        )
+
+        iterated = halts_recorded(iterable_sugar.desugar(ctx), halt_record(ctx))
+        return iterated.and_then(with_iterable)
 
     def _iterable_writes(self, binds):
         """The iterable's walrus writes (``binds``, ``peel_walrus_binds``
@@ -417,17 +426,26 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             from sugar_lift_py_tests.operations.iterator_operation import (
                 IteratorOperation,
             )
+            from sugar_lift_py_tests.sugar.function_universe_sugar import (
+                halt_record,
+                halts_recorded,
+            )
 
             runtime_ctx, carried, early = self._start(runtime, ctx)
             if early is not None:
-                return early
-            return (
-                IteratorOperation(owner="LoopRecurrenceSugar", blame=self.site)
-                .submit(iterable, runtime_ctx)
-                .and_then(
-                    lambda iterator: self._advance_iterator(
-                        iterator, runtime, runtime_ctx, entries=(), carried=carried
-                    )
+                # A pre-loop value halted before the first item: it carries
+                # the record of where it halted (``halts_recorded``).
+                return halts_recorded(early, halt_record(ctx))
+            # ``iter`` runs before any item: its halt carries the record of
+            # where it halted (``halts_recorded``).
+            iterator_operation = IteratorOperation(
+                owner="LoopRecurrenceSugar", blame=self.site
+            )
+            return halts_recorded(
+                iterator_operation.submit(iterable, runtime_ctx), halt_record(ctx)
+            ).and_then(
+                lambda iterator: self._advance_iterator(
+                    iterator, runtime, runtime_ctx, entries=(), carried=carried
                 )
             )
 
@@ -835,16 +853,24 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.operations.next_operation import NextOperation
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
             reduce_block_to_exitset,
         )
 
         # The item's ``next`` is read arm by arm (exhaustion, the NextResult):
-        # a deferred native-operation carrier here is refused by name.
-        outcome = _require_exit_set(
-            NextOperation(owner="LoopRecurrenceSugar", blame=self.site).submit(
-                iterator, ctx
+        # a deferred native-operation carrier here is refused by name. A halt
+        # of it halted where the items before it left (``ctx``): it carries
+        # that record (``halts_recorded``), and leaves the loop with what
+        # those items did (``_left_with``).
+        outcome = halts_recorded(
+            _require_exit_set(
+                NextOperation(owner="LoopRecurrenceSugar", blame=self.site).submit(
+                    iterator, ctx
+                ),
+                owner="LoopRecurrenceSugar.next",
             ),
-            owner="LoopRecurrenceSugar.next",
+            halt_record(ctx),
         )
         if outcome.exits and outcome.halts() == outcome.exits:
             effect = outcome.exits[0].effect
@@ -884,13 +910,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             runtime.target_pattern, next_result.value, ctx
         )
         # On a halted arm assignment has not begun: the positional-unpack
-        # Floor owns the halt and the exact context entering this iteration
-        # is its state.  The item runs beneath each completed arm: one plain
-        # roster, or the completed face of a symbolic member's runtime unpack
-        # beside its halt.
+        # Floor owns the halt, and its record is the empty one in the exact
+        # context entering this iteration (``halt_record``).  The item runs
+        # beneath each completed arm: one plain roster, or the completed face
+        # of a symbolic member's runtime unpack beside its halt.
         projected = ExitSet(
             tuple(
-                replace(face, state=ctx) if isinstance(face, Halted) else face
+                replace(face, state=halt_record(ctx))
+                if isinstance(face, Halted)
+                else face
                 for face in projected.exits
             )
         ).normalize()
@@ -1078,9 +1106,16 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         (``_start``).  A test that does not decide where the first item
         begins leaves the loop its recurrence, as a ``while`` whose items do
         not run (``_desugar_with_iterable``)."""
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+        )
+
         runtime_ctx, carried, early = self._start(runtime, ctx)
         if early is not None:
-            return early
+            # A pre-loop value halted before the first item: it carries the
+            # record of where it halted (``halts_recorded``).
+            return halts_recorded(early, halt_record(ctx))
         return self._test_item(
             runtime, runtime_ctx, entries=(), carried=carried, index=0, before=ctx
         )
@@ -1103,6 +1138,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             _is_true,
             _require_exit_set,
         )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+        )
         from sugar_source_tree.panic import SugarNotWritten
 
         if index >= runtime.fuel:
@@ -1121,9 +1160,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
         with entered(loop_iteration_segment(self.target_cid, index)):
             item_ctx = self._enter_header(runtime, ctx, carried)
-            test = _require_exit_set(
-                runtime.test_sugar.desugar(item_ctx),
-                owner="LoopRecurrenceSugar.while-test",
+            # A halt of the test halted where this item began, after the
+            # items before it: it carries that record (``halts_recorded``) and
+            # leaves the loop with what they did (``_left_with``).
+            test = halts_recorded(
+                _require_exit_set(
+                    runtime.test_sugar.desugar(item_ctx),
+                    owner="LoopRecurrenceSugar.while-test",
+                ),
+                halt_record(item_ctx),
             )
             tested = test.sequence(
                 lambda value: ExitSet.completed(
@@ -1436,9 +1481,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             projected = self._project_iteration_target(
                 pattern, SymbolicValue(element), header_ctx
             )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
+
+        # The unpack's halt carries the empty record in the context entering
+        # the item (``halt_record``), as a concrete item's does.
         projected = ExitSet(
             tuple(
-                replace(exit_, state=ctx) if isinstance(exit_, Halted) else exit_
+                replace(exit_, state=halt_record(ctx))
+                if isinstance(exit_, Halted)
+                else exit_
                 for exit_ in projected.exits
             )
         ).normalize()
@@ -1813,13 +1864,16 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         composition binds a completed loop's (``reduce_block_to_exitset``),
         so an enclosing loop reads its latch from what this loop published.
         Its guard, faces and ``owed`` are its arm's: the caller composes
-        beneath it (``ExitSet.sequence``).  With nothing to carry its state
+        beneath it (``ExitSet.sequence``).  With nothing to carry its record
         is left as it is, by identity (``function_universe_sugar._prefixed``'s
-        law).  A halt with no record (none, or the bare context a target
-        unpack's halt holds) is given one; any other payload has no entries
-        to carry them beside and is refused by name: what the items did is
-        never dropped beside it."""
+        law).  Every halt carries a record, built by its producer
+        (``function_universe_sugar.halt_record``: an unpack's, ``next``'s
+        and a ``while`` test's halt included); a halt whose state is no
+        record (``None``, a bare context, any other payload) is refused by
+        name, never given an empty one: what ran before it is never dropped
+        beside what the items did."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
+        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
         before = (*self.iterable_writes, *entries)
         if halt is None:
@@ -1831,35 +1885,28 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 )
             )
         state = halt.state
+        if not isinstance(state, _ReducedBlock):
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="LoopRecurrenceSugar.left-with",
+                blame=self.site,
+                observed=(
+                    f"a {type(halt.effect).__name__} halt leaving a live loop "
+                    f"from a {type(state).__name__} state, not a record"
+                ),
+                requested=(
+                    "the halt's record, to carry what the loop's items did "
+                    "beside what ran before the halt"
+                ),
+                fix=(
+                    "halt with a record at the producer (halt_record); never "
+                    "make one up in its place, never drop what the items did"
+                ),
+            )
         if before or published:
             from dataclasses import replace
 
-            from sugar_lift_py_tests.context.reduce_context import ReduceContext
-            from sugar_lift_py_tests.sugar.function_universe_sugar import (
-                _ReducedBlock,
-            )
-
-            if state is None or isinstance(state, ReduceContext):
-                state = _ReducedBlock((), False, (), context=state)
-            if not isinstance(state, _ReducedBlock):
-                from sugar_source_tree.panic import SugarNotWritten
-
-                raise SugarNotWritten(
-                    owner="LoopRecurrenceSugar.left-with",
-                    blame=self.site,
-                    observed=(
-                        f"a {type(halt.effect).__name__} halt leaving a live loop "
-                        f"from a {type(state).__name__} state, not a record"
-                    ),
-                    requested=(
-                        "the halt's record, to carry what the loop's items did "
-                        "beside what ran before the halt"
-                    ),
-                    fix=(
-                        "halt with a record (a block's halt state); never drop "
-                        "what the items did"
-                    ),
-                )
             context = state.context
             if published and context is not None:
                 context = BlockValue(published).extend_scope(context)

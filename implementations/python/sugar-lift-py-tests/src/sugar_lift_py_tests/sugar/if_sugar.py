@@ -241,6 +241,8 @@ class IfSugar(Sugar):
             return cond.and_then(lambda value: self._desugar_condition(value, ctx))
         from sugar_lift_py_tests.outcome import Halted
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
             plain_completed_value,
         )
 
@@ -250,8 +252,13 @@ class IfSugar(Sugar):
             # A condition that may raise (an unknown callee completes or
             # raises): each completed face selects its suites under its own
             # guard; a halted face never reaches either suite. Returning the
-            # condition's faces as the statement's dropped both suites.
-            return cond.sequence(lambda value: self._select_on_face(value, ctx))
+            # condition's faces as the statement's dropped both suites. A
+            # halted face halted before either suite ran: it carries the
+            # record of where the condition halted (``halts_recorded``), onto
+            # which the block composition splices what ran before the ``if``.
+            return halts_recorded(cond, halt_record(ctx)).sequence(
+                lambda value: self._select_on_face(value, ctx)
+            )
         condition = plain_completed_value(cond)
         if condition is None:
             return cond

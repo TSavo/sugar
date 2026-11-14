@@ -141,8 +141,13 @@ class WithOpaqueCitedManagerSugar(Sugar):
             )
         return project(owner="WithOpaqueCitedManagerSugar")
 
-    def _enter_exitset(self, manager_value):
-        """Enter: completed under ``g``, halted under ``not g``.  Both kept."""
+    def _enter_exitset(self, manager_value, record):
+        """Enter: completed under ``g``, halted under ``not g``.  Both kept.
+
+        The halt is at the head of the ``with``: nothing of the statement
+        ran before it, so it carries ``record``, the empty record where it
+        halted (``halt_record``), onto which the block composition splices
+        what ran before the ``with``."""
         from sugar_lift_py_tests.effect import ContextManagerEnterRuntimeEffect
         from sugar_lift_py_tests.effect.runtime_effect import runtime_effect_evidence
         from sugar_lift_py_tests.floor.opaque_manager_protocol_coordinate import (
@@ -168,7 +173,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
         return ExitSet(
             (
                 Completed(opaque_completed_guard(completed), result),
-                Halted(opaque_halted_guard(completed), effect, None),
+                Halted(opaque_halted_guard(completed), effect, record),
             )
         )
 
@@ -183,14 +188,16 @@ class WithOpaqueCitedManagerSugar(Sugar):
         kind = getattr(roster, "resolution_kind", "call-target-off-population")
         return _CITED_BECAUSE.get(kind, f"it is cited as {kind}")
 
-    def _exit_exitset(self, manager_value):
+    def _exit_exitset(self, manager_value, record):
         """Exit: completed with an OPEN result under ``g``, halted under ``not g``.
 
         The completed face carries the exit's open result coordinate rather
         than a decided boolean.  ``and_exit_truthiness`` reads its truthiness
         and, finding it undecidable, keeps both suppression faces.  The halted
         face is what keeps ``__exit__`` fallible: collapsing it would claim a
-        cited manager cannot fail while closing.
+        cited manager cannot fail while closing.  The exit runs after the
+        body face it closes, so its halt carries ``record``, what that face
+        left (``face_record``): nothing the body did is dropped by it.
         """
         from sugar_lift_py_tests.effect import ContextManagerExitRuntimeEffect
         from sugar_lift_py_tests.effect.runtime_effect import runtime_effect_evidence
@@ -216,7 +223,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
         return ExitSet(
             (
                 Completed(opaque_completed_guard(completed), result),
-                Halted(opaque_halted_guard(completed), effect, None),
+                Halted(opaque_halted_guard(completed), effect, record),
             )
         )
 
@@ -228,13 +235,21 @@ class WithOpaqueCitedManagerSugar(Sugar):
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
+            face_record,
+            halt_record,
+            halts_recorded,
             reduce_block_to_exitset,
         )
 
         # The manager is routed face by face: a deferred native-operation
-        # carrier is refused by name.
-        manager_es = _require_exit_set(
-            self.manager.desugar(ctx), owner="WithOpaqueCitedManagerSugar.manager"
+        # carrier is refused by name. A manager halt is at the head of the
+        # ``with``: it carries the record of where it halted.
+        manager_es = halts_recorded(
+            _require_exit_set(
+                self.manager.desugar(ctx),
+                owner="WithOpaqueCitedManagerSugar.manager",
+            ),
+            halt_record(ctx),
         )
         parts: list = []
 
@@ -248,8 +263,9 @@ class WithOpaqueCitedManagerSugar(Sugar):
             # enter face (``ExitSet.sequence``): each takes the face's guard
             # and faces and owes what it owes; the exit routing carries a body
             # face's debts onto every arm it leaves through.
-            enter_es = ExitSet((mgr_exit,)).sequence(self._enter_exitset)
-            exit_es = self._exit_exitset(mgr_exit.value)
+            enter_es = ExitSet((mgr_exit,)).sequence(
+                lambda manager: self._enter_exitset(manager, halt_record(ctx))
+            )
 
             for enter_exit in enter_es.exits:
                 if isinstance(enter_exit, Halted):
@@ -274,26 +290,24 @@ class WithOpaqueCitedManagerSugar(Sugar):
                 )
 
                 for body_exit in body_es.exits:
-                    if isinstance(body_exit, Halted) and body_exit.state is None:
-                        # A halt with no recorded state bound nothing in the
-                        # body before it.  Its suppressed face continues after
-                        # the ``with`` from that empty prefix; left as ``None``
-                        # it is a completion with no record, which the
-                        # enclosing reducer cannot sequence.
-                        body_exit = Halted(
-                            body_exit.guard,
-                            body_exit.effect,
-                            _ReducedBlock(
-                                entries=(), can_fall_through=True, fall_through=()
-                            ),
-                            body_exit.faces,
-                            body_exit.owed,
-                        )
+                    # Every body face carries a record (the block composition
+                    # gives every halt one): a suppressed halt continues after
+                    # the ``with`` from it, and the exit runs where it left.
+                    # One without a record is refused by name, never given an
+                    # empty one: what the body did is never dropped.
+                    record = face_record(
+                        body_exit,
+                        owner="WithOpaqueCitedManagerSugar.body",
+                        blame=self.site,
+                    )
                     # ONE router for both questions. A completed body leaves
                     # completed unless exit halts; a halted body leaves as BOTH
                     # faces under the exit result's undecidable truthiness.
+                    # The exit runs after this face: its halt carries the
+                    # record the face left.
                     after = ExitSet((body_exit,)).and_exit_truthiness(
-                        exit_es, site=self.site
+                        self._exit_exitset(mgr_exit.value, record),
+                        site=self.site,
                     )
                     parts.append(prepend_facts_to_exitset(after, enter_facts))
 

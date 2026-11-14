@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import ClassVar
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -29,6 +30,12 @@ class AssertSugar(Sugar):
     test: Sugar
     site: object = dataclass_field(compare=False)
     message: object | None = dataclass_field(compare=False, default=None)
+    # A simple statement: it evaluates its test, then completes or halts,
+    # binding nothing before its own halt. A halted arm of its test halted at
+    # the head of the statement, so the enclosing block's prefix is its
+    # record (``reduce_block_to_exitset``), as for every expression
+    # statement.
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):
