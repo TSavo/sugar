@@ -31,7 +31,7 @@ from sugar_repo_root import resolve_repo_root
 
 ROOT = resolve_repo_root()
 
-# Source trees showcases put on PYTHONPATH for bind_rpc / lean lift.
+# Source trees showcases put on PYTHONPATH for the Python kit.
 SOURCE_PATHS = (
     ROOT / "implementations/python/sugar-lift-python-source/src",
     ROOT / "implementations/python/sugar-lift-py-tests/src",
@@ -111,7 +111,7 @@ def _run_import_check(
 
 
 def check_source_pythonpath() -> list[Failure]:
-    """Showcases stage bind_rpc with repo src on PYTHONPATH — that must work."""
+    """Showcases stage the Python kit with repo src on PYTHONPATH — that must work."""
     failures: list[Failure] = []
     missing = [p for p in SOURCE_PATHS if not p.is_dir()]
     if missing:

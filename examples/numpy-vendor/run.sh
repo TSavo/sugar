@@ -1,21 +1,10 @@
 #!/usr/bin/env bash
-# numpy VENDOR: ship a .proof + a witness package for the whole library.
+# numpy VENDOR: ship a witness package for a numpy consumer's passing tests.
 #
-# Imagine you are the numpy maintainer. You want to start shipping correctness:
-# a signed `.proof` of your surface and a witness package of your passing tests,
-# so any consumer can `verify` it -- recomputing, trusting nothing.
+# A signed witness `.proof` of passing tests, so any consumer can `verify` it --
+# recomputing, trusting nothing. NO CODE CHANGES to numpy and NO HAND-WRITTEN
+# SHIM. numpy itself has no proof to import (not bridged).
 #
-# This run does exactly that, with NO CODE CHANGES to numpy and NO HAND-WRITTEN
-# SHIM:
-#
-#   SUGAR     — the universal lifter reads numpy's installed python source and
-#               lifts every module-level function as sugar (symbol = qualified
-#               path, e.g. `lib._function_base_impl.rot90`). Lean SourceMemento
-#               mode: the `.proof` carries CIDs + spans, NOT inline bodies; the
-#               body is resolved on demand from the installed numpy. ~2900
-#               functions, one ~14MB `.proof`, ~16s. numpy.add is a C ufunc with
-#               no python body -- it is simply not among the python functions
-#               lifted; the thousands that ARE python all lift.
 #   WITNESS   — the pytest-witness kit RUNS a numpy test and content-addresses
 #               the run into a signed WitnessMemento. The run body is written to
 #               a CID-named witness PACKAGE (`.sugar/witnesses/<cid>.witness`),
@@ -25,9 +14,9 @@
 #               witness body; rust blake3's it ITSELF and compares to the pinned
 #               CID. A body that does not recompute is refused, loudly.
 #
-# Scope note (no silent caps): this demo sugar-lifts ALL of numpy but RUNS ONE
-# numpy test for the witness (the flow is identical per test; numpy's full suite
-# is 179 files and minutes long). Point pytest-witness at more tests to scale.
+# Scope note (no silent caps): this demo RUNS ONE numpy test for the witness
+# (the flow is identical per test; numpy's full suite is 179 files and minutes
+# long). Point pytest-witness at more tests to scale.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
@@ -56,40 +45,6 @@ if [ "$needs_python_env" = "1" ]; then
     -e "$REPO/implementations/python/sugar-lift-python-source" \
     -e "$REPO/implementations/python/sugar-lift-py-pytest-witness"
 fi
-NUMPY_DIR="$("$VENV/bin/python" -c 'import numpy,os;print(os.path.dirname(numpy.__file__))')"
-
-echo "== stage the vendor lift config in numpy's own tree =="
-# The bind lifter only READS source (AST); it does not import numpy. working_dir
-# is a NEUTRAL path so the kit's own imports are not shadowed by numpy/typing.
-mkdir -p "$NUMPY_DIR/.sugar/lift/python-bind"
-cat > "$NUMPY_DIR/.sugar/config.toml" <<EOF
-[[plugins]]
-name = "python-bind-lift"
-kind = "lift"
-surface = "python-bind"
-[solvers]
-default = "z3"
-[solvers.z3]
-binary = "z3"
-flags = ["-smt2", "-in"]
-EOF
-cat > "$NUMPY_DIR/.sugar/lift/python-bind/manifest.toml" <<EOF
-name = "python-bind-lift"
-version = "0.1.0"
-kind = "lift"
-command = ["/usr/bin/env", "SUGAR_LEAN_SOURCE=1", "PYTHONPATH=$PP", "$VENV/bin/python", "-m", "sugar_lift_python_source.bind_rpc", "--rpc"]
-working_dir = "$REPO"
-[capabilities]
-authoring_surfaces = ["python-bind"]
-EOF
-
-echo "== sugar-lift ALL numpy -> numpy.proof (lean: CIDs, not inline bodies) =="
-mkdir -p "$HERE/out"
-rm -f "$HERE"/out/*.proof
-time "$BIN" mint --project "$NUMPY_DIR" --out "$HERE/out" --library-bindings --quiet
-PROOF="$(ls "$HERE"/out/*.proof)"
-echo "  numpy.proof: $(du -h "$PROOF" | cut -f1), $("$BIN" dump "$PROOF" 2>/dev/null | grep -oE 'members *: *[0-9]+' | grep -oE '[0-9]+') sugar members"
-
 echo "== a numpy consumer + its test (code file separate from the test) =="
 cd "$HERE"
 rm -rf .sugar/witnesses

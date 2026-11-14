@@ -16,8 +16,5 @@ dependencies = [
 [project.optional-dependencies]
 test = ["pytest>=7"]
 
-[project.scripts]
-sugar-bind-lift-python = "sugar_lift_python_source.bind_rpc:main"
-
 [tool.setuptools.packages.find]
 where = ["src"]

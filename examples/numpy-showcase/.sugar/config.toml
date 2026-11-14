@@ -5,7 +5,7 @@
 # prove  : the test contracts discharge (consistent) / refuse (contradictory).
 # verify : signed witness mementos cite the discharging solver.
 #
-# The pytest and python-bind lift surfaces both self-resolve their `.proof`s.
+# The pytest lift surface self-resolves its `.proof`s.
 # (recognize/materialize were retired; ingress is lift of native source.)
 [[plugins]]
 name = "python-numpy-testing-lift"
@@ -16,11 +16,6 @@ surface = "python-numpy-testing"
 name = "pytest-witness-lift"
 kind = "lift"
 surface = "python-pytest-witness"
-
-[[plugins]]
-name = "python-bind-lift"
-kind = "lift"
-surface = "python-bind"
 
 [solvers]
 default = "z3"

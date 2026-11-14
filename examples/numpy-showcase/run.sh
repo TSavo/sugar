@@ -1,17 +1,10 @@
 #!/usr/bin/env bash
 # The numpy showcase showdown: all the verbs over one operation, numpy.rot90.
 #
-#   sugar-lift  — the universal lifter reads numpy's INSTALLED python source and
-#                 lifts numpy.rot90 as sugar into a lean .proof (CIDs + spans, no
-#                 inline bodies) staged in .sugar/imports/. The symbol is the
-#                 PUBLIC name (`numpy.rot90`), derived from numpy's __init__
-#                 re-exports; the SourceMemento still points at the real source
-#                 (lib/_function_base_impl.py), so the oracle resolves the body
-#                 from the installed numpy on demand. (numpy.add is a C ufunc with
-#                 no python body -- rot90 is real python, which is why it lifts.)
-#   mint        — three lift surfaces conjoin into one .proof: sugar (python-bind,
-#                 code IDENTITY) + contract (numpy.testing, the PROPOSITION) +
-#                 witness (pytest-witness, the EVIDENCE).
+#   mint        — two lift surfaces conjoin into one .proof: contract
+#                 (numpy.testing, the PROPOSITION) + witness (pytest-witness, the
+#                 EVIDENCE). numpy has no proof to import, so its calls stay
+#                 unbound edges (not bridged).
 #   prove       — the GOOD test discharges two ways (numpy.testing z3 CONSISTENT
 #                 AND pytest-witness WITNESSED); the degenerate test (the same
 #                 rot90 element asserted == 2 AND == 9) is REFUSED both ways
@@ -25,7 +18,6 @@ set -uo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 BIN="$("$REPO/bin/sugarbin" --profile release)"
-PP="$REPO/implementations/python/sugar-lift-python-source/src:$REPO/implementations/python/sugar-lift-py-tests/src"
 
 # The pytest-witness lifter RUNS numpy's test, and the numpy.testing lifter
 # introspects numpy.testing to classify the assertion vocabulary -- both need
@@ -57,46 +49,14 @@ then
     -e "$REPO/implementations/python/sugar-lift-python-source" \
     -e "$REPO/implementations/python/sugar-lift-py-pytest-witness"
 fi
-NUMPY_DIR="$("$VENV/bin/python" -c 'import numpy,os;print(os.path.dirname(numpy.__file__))')"
 
 cd "$HERE"
 rm -f blake3-512_*.proof 2>/dev/null || true
 rm -rf .sugar/runs .sugar/witnesses 2>/dev/null || true
 rm -f .sugar/imports/*.proof 2>/dev/null || true
 
-echo "== sugar-lift numpy -> .sugar/imports/ (lean: CIDs, not inline bodies) =="
-# Stage the universal-lift config in numpy's own installed tree (mirrors
-# numpy-vendor). The bind lifter only READS source (AST); working_dir is a
-# NEUTRAL path so the kit's own imports are not shadowed by numpy/typing.
-mkdir -p "$NUMPY_DIR/.sugar/lift/python-bind"
-cat > "$NUMPY_DIR/.sugar/config.toml" <<EOF
-[[plugins]]
-name = "python-bind-lift"
-kind = "lift"
-surface = "python-bind"
-[solvers]
-default = "z3"
-[solvers.z3]
-binary = "z3"
-flags = ["-smt2", "-in"]
-EOF
-cat > "$NUMPY_DIR/.sugar/lift/python-bind/manifest.toml" <<EOF
-name = "python-bind-lift"
-version = "0.1.0"
-kind = "lift"
-command = ["/usr/bin/env", "SUGAR_LEAN_SOURCE=1", "PYTHONPATH=$PP", "$VENV/bin/python", "-m", "sugar_lift_python_source.bind_rpc", "--rpc"]
-working_dir = "$REPO"
-[capabilities]
-authoring_surfaces = ["python-bind"]
-EOF
-mkdir -p .sugar/imports
-"$BIN" mint --project "$NUMPY_DIR" --out .sugar/imports --library-bindings --quiet
-NUMPY_PROOF="$(ls .sugar/imports/*.proof)"
-echo "  numpy sugar .proof: $(du -h "$NUMPY_PROOF" | cut -f1) (public symbol numpy.rot90, lean SourceMemento)"
-
-echo "== mint ALL THREE lifters -> one .proof =="
-# sugar (python-bind, code IDENTITY) + contract (numpy.testing, the PROPOSITION)
-# + witness (pytest-witness, the EVIDENCE).
+echo "== mint both lifters -> one .proof =="
+# contract (numpy.testing, the PROPOSITION) + witness (pytest-witness, the EVIDENCE).
 "$BIN" mint --out . --library-bindings >/dev/null
 
 echo "== prove (consistency AND witness) =="

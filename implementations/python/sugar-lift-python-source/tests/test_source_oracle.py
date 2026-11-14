@@ -1,42 +1,49 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
-import os
 from pathlib import Path
 import sys
 
 import pytest
 
 from sugar_lift_python_source import typed_node_api as typed
-from sugar_lift_python_source.bind_lifter import (
-    _body_source_locator,
-    lift_source,
-    source_memento_of,
-)
 from sugar_lift_python_source.ast_template import function_param_names, stmt_to_template
 from sugar_lift_python_source.canonical import blake3_512_of, template_cid_of_json
 from sugar_lift_python_source.source_oracle import (
     SourceUnavailable,
+    _body_source_locator,
     installed_module_source,
     resolve_source_memento,
 )
 
 
+def _function_memento(rel: str, source: str, name: str) -> dict:
+    """A SourceMemento for function `name`: locus + CIDs, ZERO content."""
+    tree = typed.parse(source, filename=rel)
+    fn = next(
+        n
+        for n in typed.walk(tree)
+        if isinstance(n, (typed.FunctionDef, typed.AsyncFunctionDef)) and n.name == name
+    )
+    full = _body_source_locator(fn, rel, source.splitlines(keepends=True))
+    return {
+        "source_function_name": name,
+        "file": full["file"],
+        "span": full["span"],
+        "source_cid": full["source_cid"],
+        "template_cid": full["template_cid"],
+    }
+
+
 def _memento(tmp_path: Path, rel: str, source: str) -> dict:
-    """Lift `source` and return a SourceMemento: locus + CIDs, ZERO content."""
+    """Write `source` and return the SourceMemento of its first function."""
     (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
     (tmp_path / rel).write_text(source, encoding="utf-8")
-    entry = next(
-        e
-        for e in lift_source(source, rel, layer="library-bindings").ir
-        if e.get("kind") == "library-sugar-binding-entry"
+    tree = typed.parse(source, filename=rel)
+    name = next(
+        n.name
+        for n in typed.walk(tree)
+        if isinstance(n, (typed.FunctionDef, typed.AsyncFunctionDef))
     )
-    bs = entry["body_source"]
-    return {
-        "source_function_name": entry["source_function_name"],
-        "file": bs["file"],
-        "span": bs["span"],
-        "source_cid": bs["source_cid"],
-        "template_cid": bs["template_cid"],
-    }
+    return _function_memento(rel, source, name)
 
 
 def test_oracle_resolves_when_source_aligns(tmp_path: Path) -> None:
@@ -142,15 +149,7 @@ def test_oracle_resolves_dotted_method_envelope_name(tmp_path: Path) -> None:
     path = tmp_path / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(src, encoding="utf-8")
-    tree = typed.parse(src, filename=rel)
-    fn = next(
-        n
-        for n in typed.walk(tree)
-        if isinstance(n, (typed.FunctionDef, typed.AsyncFunctionDef))
-        and n.name == "get_signature"
-    )
-    full = _body_source_locator(fn, rel, src.splitlines(keepends=True))
-    memento = dict(source_memento_of(full))
+    memento = _function_memento(rel, src, "get_signature")
     memento["source_function_name"] = "Algo.get_signature"
 
     out = resolve_source_memento(str(tmp_path), memento)
@@ -206,23 +205,6 @@ def test_oracle_refuses_loudly_when_source_drifts(tmp_path: Path) -> None:
     with pytest.raises(SourceUnavailable) as exc:
         resolve_source_memento(str(tmp_path), memento)
     assert "misaligned" in str(exc.value)
-
-
-def test_lean_lift_omits_inline_source_but_keeps_cids(tmp_path: Path) -> None:
-    src = "def add(x, y):\n    return x + y\n"
-    (tmp_path / "calc.py").write_text(src, encoding="utf-8")
-    os.environ["SUGAR_LEAN_SOURCE"] = "1"
-    try:
-        entry = next(
-            e
-            for e in lift_source(src, "calc.py", layer="library-bindings").ir
-            if e.get("kind") == "library-sugar-binding-entry"
-        )
-    finally:
-        os.environ.pop("SUGAR_LEAN_SOURCE", None)
-    bs = entry["body_source"]
-    assert "body_text" not in bs and "ast_template" not in bs  # signs the real code
-    assert bs["source_cid"] and bs["template_cid"] and bs["span"]  # by CID + locus
 
 
 # ---------------------------------------------------------------------------
