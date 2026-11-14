@@ -3945,16 +3945,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:b1899d1ce1f39bdf:1",
-      "line": 2312,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "\"nested manager protocol construction refused\",",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py:b261411d613f2318:1",
       "line": 677,
       "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_summary_derivation.py",
