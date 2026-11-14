@@ -322,8 +322,8 @@ class ClassDefinitionSugar(Sugar):
                 )
             )
 
-        # A field that aliases an evaluation (``y = x`` after ``x += e``) is
-        # read after it through its own key: bind it, as every assignment does.
+        # A field is read after it through its own key (``y = x + 1; z =
+        # y``): bind it, as every assignment does.
         evaluations = tuple(
             (item.evaluation_key, index)
             for item, index in zip(selected, value_index)

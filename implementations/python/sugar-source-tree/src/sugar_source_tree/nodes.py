@@ -3499,9 +3499,9 @@ def _exit_path_scope(clause_owner, path: str, bindings):
 def _holds_evaluation(statements) -> bool:
     """Whether a substituted suite holds a statement (or walrus) keyed as its
     own evaluation (``Statement._evaluation_key``: ``x += e``, ``a, b = f()``,
-    ``y = x`` where ``x`` reads an evaluation, ``(x := e)``)."""
+    ``y = e``, ``y: T = e``, ``(x := e)``)."""
     return any(
-        isinstance(node, (AugAssign, Assign, NamedExpr))
+        isinstance(node, (AugAssign, Assign, AnnAssign, NamedExpr))
         and isinstance(getattr(node, "evaluation", None), str)
         for statement in statements
         for node in statement.walk()
@@ -3539,13 +3539,15 @@ def _evaluation_ref(
     walrus: bool = False,
     cell: bool = False,
     deferred: bool = False,
+    of: "Optional[Node]" = None,
 ) -> "Node":
     """``EvaluationRef(evaluation, name)`` at ``span``: a read of ``name``
     rewritten to a reference to the evaluation bound under ``evaluation``
     (temporal choice 1, #7661).  The one constructor of that node: an
     ``x += e`` statement's evaluation, an ``(x := e)`` walrus's, a
-    comprehension generator's binding of one member, and the re-span of any
-    of them to the read's own site (``Name.substitute``).
+    comprehension generator's binding of one member, an assignment's target
+    (``Assign.target_evaluations``), and the re-span of any of them to the
+    read's own site (``Name.substitute``).
 
     ``member`` marks a comprehension member's reference: the comprehension
     binds every member under ``evaluation`` before any read of it, so the
@@ -3558,7 +3560,15 @@ def _evaluation_ref(
     (``Lambda._construct_sugar``, ``LambdaSugar``).  ``deferred`` marks a
     walrus in a generator expression's element or conditions: it writes when
     the generator is consumed, not where the generator is made, so where its
-    key is unbound the read is undecided by name."""
+    key is unbound the read is undecided by name.
+
+    ``of`` is the right-hand side an assignment's target was given: which
+    object the name denotes, never its value.  The value is the key's; the
+    object is what a store on it reaches (``container_mutation._identity``:
+    ``r = []; a = r; r.append(1)`` changes what ``a`` names too) and which
+    lambda a call through the name applies (``Call._construct_sugar``).  It
+    is a leaf, not a child: nothing walks into it and its sugar is never
+    built from it."""
     from .backend import Leaf, materialize
     from .shadow import ShadowNode
 
@@ -3571,6 +3581,8 @@ def _evaluation_ref(
         slots = (*slots, ("cell", Leaf(True)))
     if deferred:
         slots = (*slots, ("deferred", Leaf(True)))
+    if of is not None:
+        slots = (*slots, ("of", Leaf(of)))
     return materialize(
         owner.unit,
         ShadowNode("EvaluationRef", span, slots),
@@ -5952,9 +5964,13 @@ class FunctionDef(Statement):
             )
             for index, param in enumerate(params)
         )
+        captured_names, captured_coordinates = self._captured_bindings()
         formal_scope = {
-            param.name: self._make_coordinate_ref(param, coordinate)
-            for param, coordinate in zip(params, coordinates, strict=True)
+            **self._captured_scope(),
+            **{
+                param.name: self._make_coordinate_ref(param, coordinate)
+                for param, coordinate in zip(params, coordinates, strict=True)
+            },
         }
         if bound_receiver is not None:
             formal_scope[self.params[0].name] = For._make_name(
@@ -6020,13 +6036,63 @@ class FunctionDef(Statement):
                     statement.fragment.seal().cid for statement in substituted_body
                 )
             ),
+            captured_names=captured_names,
+            captured_coordinates=captured_coordinates,
         )
 
-    def lacks_captured_binding_testimony(self) -> bool:
-        """Whether CPython classifies a closure binding we cannot yet seat."""
+    def _captured_bindings(self) -> tuple:
+        """``(names, coordinates)``: each enclosing function's local this body
+        reads (CPython's free variables, ``nonlocal`` ones excepted), and the
+        coordinate the frame reads it through.
+
+        Python reads such a name from the enclosing frame's cell when the
+        function is called: the binding the enclosing scope holds at the
+        call, never the one it held where the ``def`` stood.  So the body
+        reads it as a captured coordinate, like a formal, and the call binds
+        it: a call in the enclosing body carries the binding its own scope
+        holds for the name (``Call._closure_cells``) and binds its value under
+        the coordinate (``CallSiteSugar._captured_values``).  The name itself
+        is never read.  ``__class__`` (the cell a class body gives a method
+        that uses ``super()``) is the class's, not an enclosing function's
+        local, and is not captured here."""
+        table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
+        names = tuple(
+            sorted(
+                symbol.get_name()
+                for symbol in table.get_symbols()
+                if symbol.is_free()
+                and not symbol.is_nonlocal()
+                and symbol.get_name() != "__class__"
+            )
+        )
+        if not names:
+            return (), ()
+        from sugar_source_tree.binding_provenance import BindingCoordinateV1
+
+        owner_cid = self.fragment.seal().cid
+        return names, tuple(
+            BindingCoordinateV1.mint(owner_cid, self.fragment, ("captured", name))
+            for name in names
+        )
+
+    def _captured_scope(self) -> dict:
+        """Each captured name (``_captured_bindings``) to its coordinate ref."""
+        names, coordinates = self._captured_bindings()
+        return {
+            name: self._make_coordinate_ref(self, coordinate)
+            for name, coordinate in zip(names, coordinates, strict=True)
+        }
+
+    def lacks_captured_binding_testimony(self, covered=frozenset()) -> bool:
+        """Whether CPython classifies a closure binding we cannot seat: a
+        ``nonlocal`` name (the body writes the enclosing cell), or a free
+        name the call does not bind (``covered``: the captured names a call
+        in the enclosing body carries, ``Call._closure_cells``)."""
         table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
         return any(
-            symbol.is_free() or symbol.is_nonlocal() for symbol in table.get_symbols()
+            symbol.is_nonlocal()
+            or (symbol.is_free() and symbol.get_name() not in covered)
+            for symbol in table.get_symbols()
         )
 
     def _source_visible_body(self, scope):
@@ -6034,6 +6100,7 @@ class FunctionDef(Statement):
             SourceVisibleFunctionBodySugar,
         )
 
+        scope = {**self._captured_scope(), **scope}
         substituted_body, _ = self._substitute_body(self.body, scope)
         if self._source_visible_generator_steps_from(substituted_body) is not None:
             return SourceVisibleFunctionBodySugar((), self.fragment)
@@ -7057,9 +7124,17 @@ class AsyncFunctionDef(Statement):
         """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
         return FunctionDef._source_visible_generator_steps(self, *args, **kwargs)
 
-    def lacks_captured_binding_testimony(self) -> bool:
+    def lacks_captured_binding_testimony(self, covered=frozenset()) -> bool:
         """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
-        return FunctionDef.lacks_captured_binding_testimony(self)
+        return FunctionDef.lacks_captured_binding_testimony(self, covered)
+
+    def _captured_bindings(self) -> tuple:
+        """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
+        return FunctionDef._captured_bindings(self)
+
+    def _captured_scope(self) -> dict:
+        """Frame-door helper shared with FunctionDef (see source_visible_call_frame)."""
+        return FunctionDef._captured_scope(self)
 
     def _construct_sugar(self):
         """L1a: FunctionUniverse body construction — same door as FunctionDef."""
@@ -7466,7 +7541,7 @@ class ClassDef(Statement):
                     and all(isinstance(target, Name) for target in item.targets)
                 ):
                     value_sugar = body_read(item.value)
-                    alias_keys = dict(item.alias_evaluations())
+                    target_keys = dict(item.target_evaluations())
                     fields.extend(
                         ConstructedClassFieldV1(
                             target.id,
@@ -7474,7 +7549,7 @@ class ClassDef(Statement):
                             value_sugar,
                             binding_occurrence(target),
                             item.fragment.seal().cid,
-                            evaluation_key=alias_keys.get(target.id),
+                            evaluation_key=target_keys.get(target.id),
                         )
                         for target in item.targets
                     )
@@ -7487,6 +7562,9 @@ class ClassDef(Statement):
                                 item.fragment.seal().cid,
                                 body_read(item.value),
                                 binding_occurrence(item.target),
+                                evaluation_key=dict(item.target_evaluations()).get(
+                                    item.target.id
+                                ),
                             )
                         )
                     continue
@@ -8411,6 +8489,33 @@ def _has_authenticated_source_method(receiver, name: str) -> bool:
     return bool(getattr(value, "has_method", lambda _name: False)(name))
 
 
+def _keyed_target_binding(statement, binding, keys: dict, targets) -> dict:
+    """``binding`` (each target name to the value node substitution gave it)
+    with every name in ``keys`` bound instead to a reference to its key, at
+    its target leaf: the one way an assignment's target is read after it
+    (``Assign``, ``AnnAssign``).  The value node rides on the reference as
+    the object the name denotes (``_evaluation_ref``, ``of``)."""
+    if not binding or not keys:
+        return binding
+    leaves = {}
+    for target in targets:
+        leaves.update(_unpack_target_names(target))
+    return {
+        name: (
+            _evaluation_ref(
+                statement,
+                leaves[name].span if name in leaves else statement.span,
+                keys[name],
+                name,
+                of=state if isinstance(state, Node) else None,
+            )
+            if name in keys
+            else state
+        )
+        for name, state in binding.items()
+    }
+
+
 def _unpack_target_names(target) -> dict:
     """The Name leaves an unpacking target binds, by name: every Name under
     its Tuple/List/Starred structure, never the receiver or index of an
@@ -8478,14 +8583,14 @@ class Assign(Statement):
         # rewrite denotes the same occurrence, so its row joins by construction.
         rewritten = self if not changes else rewrite(self, **changes)
         if rewritten._dynamic_unpack_target() is None and not (
-            rewritten._aliased_names()
+            rewritten._keyed_names()
         ):
             return rewritten
         # ``a, b = f()``: the statement's one evaluation is unpacked at
-        # reduce.  ``y = x`` where ``x`` reads an evaluation: the statement
-        # evaluates that reference once, here.  Either way, carry the key so
-        # every later read of a target is a reference to that target's
-        # projection of it (temporal choice 1).
+        # reduce.  ``y = e``, whatever ``e`` is: the statement evaluates ``e``
+        # once, here.  Either way, carry the key so every later read of a
+        # target is a reference to that target's projection of it (temporal
+        # choice 1).
         leaves = {
             "evaluation": self._evaluation_key(scope),
             "evaluation_exit_path": self._evaluation_exit_path(scope),
@@ -8555,59 +8660,41 @@ class Assign(Statement):
             return {t.id: self.value for t in self.targets if isinstance(t, Name)}
         return {}
 
-    def _aliased_names(self) -> tuple:
-        """The Name targets whose value is a reference to an evaluation:
-        ``y = x`` after ``x += e``, a walrus, an unpack, a live loop's header
-        or another alias.  Each is bound to its own projection of this
-        statement's evaluation (``alias_evaluations``), never to the
-        reference it read: that reference names ``x``, and a read of ``y``
-        through it would answer a later rebind of ``x``."""
-        return tuple(
-            name
-            for name, value in self._name_values().items()
-            if isinstance(value, EvaluationRef)
-        )
+    def _keyed_names(self) -> tuple:
+        """Every Name target this statement binds by value
+        (``_name_values``): ``y = e`` whatever ``e`` is, each Name of a chain
+        (``y = z = e``), each Name leaf of a display unpack (``a, b = p,
+        q``).  Each is bound to its own projection of this statement's
+        evaluation (``target_evaluations``), never to the right-hand side: a
+        read of ``y`` that inlined ``e`` evaluated ``e`` again where ``y`` was
+        read, against whatever had been rebound since (``x += 1; y = x + 0;
+        x += 1; return y``)."""
+        return tuple(self._name_values())
 
-    def alias_evaluations(self) -> tuple:
-        """``(name, key)`` for each aliased Name target (``_aliased_names``):
+    def target_evaluations(self) -> tuple:
+        """``(name, key)`` for each keyed Name target (``_keyed_names``):
         ``key`` is the target's projection of this statement's evaluation
         (``Statement._evaluation_key``, ``projection_key``).  The statement's
-        sugar binds the value it read for the name under that key at reduce,
-        and every later read of the name is a reference to it.  A statement
-        that was never substituted carries no key and has none."""
+        sugar binds the value its right-hand side completed with under that
+        key at reduce, and every later read of the name is a reference to it.
+        A statement that was never substituted carries no key and has none."""
         evaluation = getattr(self, "evaluation", None)
         if not isinstance(evaluation, str) or self._dynamic_unpack_target() is not None:
             return ()
         from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
         return tuple(
-            (name, projection_key(evaluation, name)) for name in self._aliased_names()
+            (name, projection_key(evaluation, name)) for name in self._keyed_names()
         )
 
-    def _alias_binding(self, binding):
-        """``binding`` with each aliased Name target bound to a reference to
-        its projection of this statement's evaluation.  Where that evaluation
-        never reached the temporal (a frame reading the name) the reference
-        is the name read, as a reference after ``x += e`` is."""
-        keys = dict(self.alias_evaluations())
-        if not binding or not keys:
-            return binding
-        leaves = {}
-        for target in self.targets:
-            leaves.update(_unpack_target_names(target))
-        return {
-            name: (
-                _evaluation_ref(
-                    self,
-                    leaves[name].span if name in leaves else self.span,
-                    keys[name],
-                    name,
-                )
-                if name in keys and isinstance(state, EvaluationRef)
-                else state
-            )
-            for name, state in binding.items()
-        }
+    def _keyed_binding(self, binding):
+        """``binding`` with each keyed Name target bound to a reference to its
+        projection of this statement's evaluation, carrying the right-hand
+        side it was given as the object it denotes (``_evaluation_ref``,
+        ``of``)."""
+        return _keyed_target_binding(
+            self, binding, dict(self.target_evaluations()), self.targets
+        )
 
     def _receiver_field_store_state(self, scope, new_value):
         """Thread ``name.attr = value`` into later reads of that exact name."""
@@ -9050,10 +9137,9 @@ class Assign(Statement):
         return super()._binding_site_and_path(name, 0)
 
     def substitution_binding(self, scope):
-        # A Name target whose value is a reference to an evaluation (``y =
-        # x`` after ``x += e``) binds to its own projection of this
-        # statement's evaluation, not to the reference it read.
-        return self._alias_binding(self._value_binding(scope))
+        # Every Name target binds to its own projection of this statement's
+        # evaluation, never to the right-hand side (``_keyed_names``).
+        return self._keyed_binding(self._value_binding(scope))
 
     def _value_binding(self, scope):
         # A single Name target binds its name to the already-substituted rhs.
@@ -9291,7 +9377,7 @@ class Assign(Statement):
                 name=self.targets[0].id,
                 value=self.value.sugar(),
                 site=self.fragment,
-                evaluations=self.alias_evaluations(),
+                evaluations=self.target_evaluations(),
             )
 
         if len(self.targets) == 1 and isinstance(self.targets[0], (Tuple_, List)):
@@ -9304,7 +9390,7 @@ class Assign(Statement):
                         (name, val.sugar()) for name, val in bindings.items()
                     ),
                     site=self.fragment,
-                    evaluations=self.alias_evaluations(),
+                    evaluations=self.target_evaluations(),
                 )
             # Flat Name|Attribute|Subscript leaves against a display RHS —
             # historical factory mass (dual-subscript / multi-attribute unpack).
@@ -9385,7 +9471,7 @@ class Assign(Statement):
                     bindings=tuple(name_bindings),
                     stores=tuple(stores),
                     site=self.fragment,
-                    evaluations=self.alias_evaluations(),
+                    evaluations=self.target_evaluations(),
                 )
             target = self.targets[0]
             if not isinstance(self.value, (Tuple_, List)) and target.elts:
@@ -9460,7 +9546,7 @@ class Assign(Statement):
                 stores=(),
                 value=value_sugar,
                 site=self.fragment,
-                evaluations=self.alias_evaluations(),
+                evaluations=self.target_evaluations(),
             )
 
         if len(self.targets) > 1 and all(
@@ -9506,7 +9592,7 @@ class Assign(Statement):
                 stores=tuple(stores),
                 value=value_sugar,
                 site=self.fragment,
-                evaluations=self.alias_evaluations(),
+                evaluations=self.target_evaluations(),
             )
 
         if len(self.targets) == 1 and isinstance(
@@ -9784,8 +9870,12 @@ class AnnAssign(Statement):
         attribute/subscript target is a STORE, exactly as a plain Assign's is:
         its receiver is an ordinary expression and is substituted, so an
         authenticated object place or a constructed receiver reaches the store
-        the same way through either spelling."""
-        from .shadow import rewrite
+        the same way through either spelling.
+
+        A Name target with a value is ``y = e``: the statement evaluates ``e``
+        once, here, and carries its key, so every later read of ``y`` is a
+        reference to ``y``'s projection of it (``target_evaluations``)."""
+        from .shadow import rewrite, rewrite_with_leaves
 
         changed = {}
         for fld in ("annotation", "value"):
@@ -9796,17 +9886,48 @@ class AnnAssign(Statement):
             new_target = _substituted_store_target(self, self.target, scope)
             if new_target is not None:
                 changed["target"] = new_target
-        return self if not changed else rewrite(self, **changed)
+        rewritten = self if not changed else rewrite(self, **changed)
+        if self.value is None or not isinstance(self.target, Name):
+            return rewritten
+        return rewrite_with_leaves(
+            rewritten,
+            {
+                "evaluation": self._evaluation_key(scope),
+                "evaluation_exit_path": self._evaluation_exit_path(scope),
+            },
+        )
+
+    def target_evaluations(self) -> tuple:
+        """``((name, key),)`` for a Name target with a value, as
+        ``Assign.target_evaluations``: ``key`` is the name's projection of this
+        statement's evaluation.  A bare declaration, a store target, or a
+        statement never substituted has none."""
+        evaluation = getattr(self, "evaluation", None)
+        if (
+            self.value is None
+            or not isinstance(self.target, Name)
+            or not isinstance(evaluation, str)
+        ):
+            return ()
+        from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+        return ((self.target.id, projection_key(evaluation, self.target.id)),)
 
     def substitution_binding(self, scope):
         # Only an annotated assignment WITH a value binds; a bare `x: int` is a
-        # declaration and binds nothing. A Name target binds lexically; an
+        # declaration and binds nothing. A Name target binds to its own
+        # projection of this statement's evaluation, as Assign's does; an
         # attribute/subscript target over an authenticated object place threads
         # that place forward, the same store Assign reports.
         if self.value is None:
             return None
         if isinstance(self.target, Name):
-            return {self.target.id: self.value}
+            return _keyed_target_binding(
+                self,
+                {self.target.id: self.value},
+                dict(self.target_evaluations()),
+                (self.target,),
+            )
         if isinstance(self.target, (Attribute, Subscript)):
             threaded = _store_target_binding(self, self.target, scope)
             if threaded is not None:
@@ -9815,10 +9936,11 @@ class AnnAssign(Statement):
         return None
 
     def _construct_sugar(self):
-        """`<target>: <annotation> [= <value>]` -- a plain Name target is
-        INERT at the meaning layer. If there is a value, its binding already
-        threaded via substitution_binding, exactly as a plain Assign's does;
-        the rebind rode into the tail and this node contributes nothing more.
+        """`<target>: <annotation> [= <value>]` -- a plain Name target with a
+        value is the assignment ``<target> = <value>``: ``AssignSugar``
+        evaluates the value at this statement (its halts are the
+        statement's) and binds it under the target's key
+        (``target_evaluations``), which every later read references.
         If there is no value, it is a bare declaration: no bytecode runs, no
         binding is introduced, nothing happens at runtime at all.  A bare
         attribute annotation is different: CPython evaluates the receiver and
@@ -9831,6 +9953,15 @@ class AnnAssign(Statement):
         is the same runtime store owned by Assign.  A bare Attribute therefore
         reuses the ordinary expression-statement path for its receiver only.
         Other bare non-Name annotations stay loud."""
+        if isinstance(self.target, Name) and self.value is not None:
+            from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+
+            return AssignSugar(
+                name=self.target.id,
+                value=self.value.sugar(),
+                site=self.fragment,
+                evaluations=self.target_evaluations(),
+            )
         if isinstance(self.target, Name):
             from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
 
@@ -10185,39 +10316,44 @@ class For(Statement):
         )
 
     def _iteration_unpacks(self, elements, bindings, scope):
-        """``for a, b in [p, q]``: each iteration's unpack of its item.
+        """``for y in [x]``, ``for a, b in [p, q]``: each iteration's binding
+        of its item.
 
-        A destructuring target pairs a display element by substitution
-        (``TargetPatternV1.bindings_for``).  An element that is not a display
-        (a name, a call, a constant) has no members substitution can pair, so
-        the iteration evaluates it once and unpacks it: the iteration opens
-        with ``<target> = <element>``, keyed as that iteration's own
-        evaluation (``_iteration_scope``, as #7886 keys ``x += e``), and each
-        target binds to a reference to its projection of that evaluation
-        (temporal choice 1, #7661) -- never the name read by spelling.  The
-        unpack's sugar binds each member under its projection at reduce
-        (``DynamicUnpackAssignSugar``).
+        Every iteration opens with ``<target> = <element>``, keyed as that
+        iteration's own evaluation (``_iteration_scope``, as #7886 keys ``x
+        += e``), and each target name binds to a reference to its projection
+        of that evaluation (temporal choice 1, #7661;
+        ``Assign.target_evaluations``) -- never the element inlined at each
+        read of the name, which read ``x`` again wherever ``y`` was read,
+        after the body had rebound it (``for y in [x]: x = 9; r = y``).  A
+        display element is paired by the assignment's own display unpack
+        (``MultiAssignSugar``); any other element (a name, a call, a constant)
+        is evaluated once and unpacked (``DynamicUnpackAssignSugar``).  The
+        assignment's sugar binds each target under its projection at reduce.
 
         The element is already substituted (the iterable was evaluated once,
-        before the loop), so the unpack is keyed, not substituted again: a
+        before the loop), so the store is keyed, not substituted again: a
         later iteration's rebinding never reaches an earlier element.
 
-        Returns ``(unpacks, bindings)``: per iteration, the unpack statement
-        (or None) and the target bindings (None where a display did not
+        Returns ``(unpacks, bindings)``: per iteration, the keyed store (or
+        None) and the target bindings (None where a display did not
         destructure, which stays loud).
         """
-        if self.target.kind not in ("Tuple", "List"):
-            return (None,) * len(elements), bindings
         from .shadow import rewrite_with_leaves
 
         unpacks = []
         resolved = []
+        destructures = self.target.kind in ("Tuple", "List")
         for index, (element, binding) in enumerate(
             zip(elements, bindings, strict=True)
         ):
             # A display that did not destructure stays loud; a ``*xs`` member
             # of the iterable display is no one item.
-            if binding is not None or element.kind in ("Tuple", "List", "Starred"):
+            if element.kind == "Starred" or (
+                destructures
+                and binding is None
+                and element.kind in ("Tuple", "List")
+            ):
                 unpacks.append(None)
                 resolved.append(binding)
                 continue
@@ -10240,7 +10376,7 @@ class For(Statement):
         Only literal-decidable branch guards are selected.  A symbolic guard
         returns ``None`` so the source loop remains typed and loud/opaque.
         ``unpacks`` (``_iteration_unpacks``) opens each iteration with its
-        keyed unpack of a non-display item.
+        keyed binding of its item.
         """
         unrolled = []
         carried = dict(scope)
@@ -15491,6 +15627,11 @@ class Call(Expression):
         if snapshot is not None:
             return snapshot
         rewritten = self._substitute_children(scope)
+        cells = self._closure_cells(scope)
+        if cells:
+            from .shadow import rewrite_with_leaves
+
+            rewritten = rewrite_with_leaves(rewritten, {"closure_cells": cells})
         if (
             rewritten is not self
             and isinstance(rewritten, Call)
@@ -15505,6 +15646,70 @@ class Call(Expression):
     args: Tuple[Expression, ...]
     keywords: Tuple[Keyword, ...]
     _child_fields = ("func", "args", "keywords")
+
+    def _closure_cells(self, scope) -> tuple:
+        """``((name, binding), ...)``: what a call of a local ``def`` reads
+        for each enclosing local the function's body reads
+        (``FunctionDef._captured_bindings``) -- the binding this scope holds
+        for the name here, at the call, as every other read of the name here
+        is (``Name.substitute``).  Python reads the enclosing cell when the
+        function runs, so ``y = 1; def g(): return y; y = 2; g()`` reads
+        ``y``'s binding of ``y = 2``.  The call binds each value under the
+        frame's captured coordinate (``CallSiteSugar``); the name is never
+        read in the callee.
+
+        Empty when the callee is not a local ``def`` this scope binds, when a
+        read name is ``nonlocal`` (the body writes the cell), or when a read
+        name has no value binding here (unbound, or bound to a definition or
+        an import): the call then stays refused by name
+        (``CallSiteSugar``)."""
+        func = self.func
+        if not isinstance(func, Name) or func.id not in scope:
+            return ()
+        from .binding_state import unwrap_binding_state
+
+        definition = unwrap_binding_state(scope[func.id])
+        if not isinstance(definition, FunctionDef):
+            return ()
+        names, _coordinates = definition._captured_bindings()
+        if not names or definition.lacks_captured_binding_testimony(
+            covered=frozenset(names)
+        ):
+            return ()
+        cells = []
+        for name in names:
+            if name not in scope:
+                return ()
+            read = For._make_name(self, name)
+            binding = read.substitute(scope)
+            read.discharge_by_substitution()
+            if not isinstance(binding, Node) or binding.kind in (
+                "Name",
+                "GuardedBindingRead",
+            ):
+                return ()
+            cells.append((name, binding))
+        return tuple(cells)
+
+    def _captured_cells(self, frame) -> tuple:
+        """``((name, coordinate cid, sugar), ...)`` for ``frame``'s captured
+        names (``FunctionDef._captured_bindings``) from the cells this call
+        carries (``_closure_cells``); empty unless every one is carried."""
+        names = tuple(getattr(frame, "captured_names", ()) or ())
+        if not names:
+            return ()
+        cells = getattr(self, "closure_cells", None)
+        if not cells:
+            return ()
+        by_name = dict(cells)
+        if any(name not in by_name for name in names):
+            return ()
+        return tuple(
+            (name, coordinate.cid, by_name[name].sugar())
+            for name, coordinate in zip(
+                names, frame.captured_coordinates, strict=True
+            )
+        )
 
     def _locals_snapshot(self, scope) -> "Optional[Node]":
         """``locals()`` before any other local is bound: a dict of the formals.
@@ -15874,6 +16079,7 @@ class Call(Expression):
                 ),
                 expected_definition_ref=projected_definition,
                 language_callee=language_callee,
+                captured=self._captured_cells(bound_frame),
             )
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import (
@@ -16045,6 +16251,7 @@ class Call(Expression):
                 expected_definition_ref=expected_definition,
                 native_operation_formal_coordinates=tuple(formal_coordinates),
                 language_callee=language_callee,
+                captured=self._captured_cells(source_call_frame),
             )
         if isinstance(self.func, Attribute):
             # Lexical import binding is the ONLY door to a closed callee
@@ -16093,14 +16300,23 @@ class Call(Expression):
         from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 
         source_call_frame = None
-        if isinstance(self.func, Lambda):
+        # ``f = lambda x: ...; f(1)``: the read of ``f`` is a reference to
+        # its assignment's evaluation, which denotes the lambda it was given
+        # (``_evaluation_ref``, ``of``).  Which function is called is that
+        # object's; the callee's value is still the key's.
+        callee = self.func
+        while isinstance(callee, EvaluationRef) and isinstance(
+            getattr(callee, "of", None), Node
+        ):
+            callee = callee.of
+        if isinstance(callee, Lambda):
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
             if any(keyword.arg is None for keyword in self.keywords):
                 raise SourceCallBindingGap(
                     "spread keyword requires typed variadic projection"
                 )
-            source_call_frame = self.func.source_visible_call_frame().bind_node_actuals(
+            source_call_frame = callee.source_visible_call_frame().bind_node_actuals(
                 self.args,
                 tuple(
                     (keyword.arg, keyword.value)
@@ -17386,12 +17602,13 @@ class Name(Expression):
                 # The same reason: an evaluation reference was minted at its
                 # binding site (the `x += e` target, a walrus target, a
                 # comprehension target, a live loop's header, the target of
-                # ``y = x``), which is not where this read sits.  Re-span to
+                # ``y = e``), which is not where this read sits.  Re-span to
                 # the read; the evaluation key (a walrus's mark, a
-                # comprehension member's mark) is unchanged.  After ``y = x``
-                # the binding is ``y``'s own projection of the assignment's
-                # evaluation (``Assign.alias_evaluations``), so the key read
-                # here holds the value ``x`` had at ``y = x``.
+                # comprehension member's mark) and the object it denotes
+                # (``of``) are unchanged.  After ``y = e`` the binding is
+                # ``y``'s own projection of the assignment's evaluation
+                # (``Assign.target_evaluations``), so the key read here holds
+                # the value ``e`` had at ``y = e``.
                 return _evaluation_ref(
                     self,
                     self.span,
@@ -17401,6 +17618,7 @@ class Name(Expression):
                     walrus=getattr(bound, "walrus", False) is True,
                     cell=getattr(bound, "cell", False) is True,
                     deferred=getattr(bound, "deferred", False) is True,
+                    of=getattr(bound, "of", None),
                 )
             return bound
         span = self.line_col_span()

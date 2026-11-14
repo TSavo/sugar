@@ -246,6 +246,13 @@ class CallSiteSugar(ConstructedTermSugar):
     # binding, never its spelling; ``None`` for every other callee. What the
     # language decides for that callee is dispatched on this member.
     language_callee: Any = dataclass_field(default=None, compare=False)
+    # ``((name, coordinate cid, sugar), ...)``: a call of a local ``def`` in
+    # its enclosing body carries, for each enclosing local the body reads, the
+    # binding the enclosing scope holds at the call
+    # (``Call._closure_cells``).  Its value is bound under the frame's
+    # captured coordinate before the body runs (``_captured_values``); the
+    # name is never read in the callee.
+    captured: tuple = dataclass_field(default=(), compare=False)
 
     def __post_init__(self) -> None:
         for argument in self.args:
@@ -459,14 +466,14 @@ class CallSiteSugar(ConstructedTermSugar):
                     for symbol in table.get_symbols()
                     if symbol.is_free() or symbol.is_nonlocal()
                 )
-            if free_names and not getattr(
-                self.source_call_frame, "captured_binding_coordinates", ()
-            ):
+            carried = {name for name, _cid, _sugar in self.captured}
+            uncarried = tuple(name for name in free_names if name not in carried)
+            if uncarried:
                 raise SugarNotWritten(
                     owner="CallSiteSugar.desugar",
                     blame=self.site,
                     observed=(
-                        "closure bindings lack producer coordinates: " f"{free_names!r}"
+                        "closure bindings lack producer coordinates: " f"{uncarried!r}"
                     ),
                     requested="captured binding coordinate testimony",
                     fix=("enroll producer-owned closure actuals before body reduction"),
@@ -563,6 +570,70 @@ class CallSiteSugar(ConstructedTermSugar):
             return None
         return term
 
+    def _captured_values(self, ctx) -> tuple:
+        """``((name, coordinate cid, value), ...)``: each carried enclosing
+        binding (``captured``) read here, at the call, in the caller's
+        context -- the enclosing scope's binding of the name at the point of
+        the call.  A read that does not complete with one plain value is
+        refused by name: the callee's body never reads the name instead."""
+        if not self.captured:
+            return ()
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        actual_ctx = _actual_reduce_context(ctx)
+        values = []
+        for name, cid, sugar in self.captured:
+            value = plain_completed_value(sugar.desugar(actual_ctx))
+            if value is None:
+                raise SugarNotWritten(
+                    owner="CallSiteSugar.captured",
+                    blame=self.site,
+                    observed=(
+                        f"enclosing binding of `{name}` read at the call did not "
+                        "complete with one value"
+                    ),
+                    requested="the enclosing scope's value of the name at the call",
+                    fix="read the captured binding as one completed value",
+                )
+            values.append((name, cid, value))
+        return tuple(values)
+
+    def _with_captured_values(self, ctx, frame, captured_values):
+        """``ctx`` with each captured value bound under ``frame``'s captured
+        coordinate for its name (``FunctionDef._captured_bindings``), as a
+        formal's actual is bound under its coordinate."""
+        if not captured_values:
+            return ctx
+        from sugar_lift_py_tests.temporal import curry_temporal
+        from sugar_source_tree.panic import SugarNotWritten
+
+        coordinates = {
+            name: coordinate.cid
+            for name, coordinate in zip(
+                getattr(frame, "captured_names", ()),
+                getattr(frame, "captured_coordinates", ()),
+                strict=True,
+            )
+        }
+        if any(coordinates.get(name) != cid for name, cid, _value in captured_values):
+            raise SugarNotWritten(
+                owner="CallSiteSugar.captured",
+                blame=self.site,
+                observed="captured binding coordinate is not the frame's",
+                requested="the frame's own captured coordinate for each name",
+                fix="carry the captured cells minted for this exact frame",
+            )
+        return curry_temporal(
+            _actual_reduce_context(ctx),
+            tuple(cid for _name, cid, _value in captured_values),
+            tuple(value for _name, _cid, value in captured_values),
+            owner="CallSiteSugar captured bindings",
+            blame=self.target_name,
+        )
+
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
@@ -643,10 +714,20 @@ class CallSiteSugar(ConstructedTermSugar):
             ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
             for name, value in kw_values
         ]
+        # What the callee reads from its enclosing scope is an input of this
+        # call as its actuals are: two calls that read different values are
+        # two coordinates.
+        captured_values = self._captured_values(ctx)
+        closure_terms = [
+            ctor("py.closure", [str_const(name), value.to_term(owner=owner)])
+            for name, _cid, value in captured_values
+        ]
         spelled = self.spelled_target
         term = ctor(
             call_symbol(spelled),
-            [value.to_term(owner=owner) for value in positional] + kwarg_terms,
+            [value.to_term(owner=owner) for value in positional]
+            + kwarg_terms
+            + closure_terms,
             symbol_kind=("builtin" if hasattr(builtins, spelled) else "coordinate"),
         )
         source_body = None
@@ -683,9 +764,10 @@ class CallSiteSugar(ConstructedTermSugar):
             )
 
             closure_owner = source_call_frame.owner
-            if (
-                isinstance(closure_owner, (SourceFunctionDef, SourceAsyncFunctionDef))
-                and closure_owner.lacks_captured_binding_testimony()
+            if isinstance(
+                closure_owner, (SourceFunctionDef, SourceAsyncFunctionDef)
+            ) and closure_owner.lacks_captured_binding_testimony(
+                covered=frozenset(name for name, _cid, _value in captured_values)
             ):
                 from sugar_source_tree.panic import SugarNotWritten
 
@@ -709,6 +791,7 @@ class CallSiteSugar(ConstructedTermSugar):
                     fix="construct a typed source frame or keep the call loud",
                 )
             ctx = _with_frame_mutable_globals(ctx, source_call_frame)
+            ctx = self._with_captured_values(ctx, source_call_frame, captured_values)
             module_halt = _frame_module_halt(source_call_frame)
             if module_halt is not None:
                 return module_halt

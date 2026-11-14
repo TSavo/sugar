@@ -6,10 +6,16 @@ never to the bare name. The statement (or walrus) binds its completed value
 under that coordinate at reduce, and the read answers it: the value is not
 looked up by spelling. After ``a, b = f()`` a read of ``a`` is a reference to
 ``a``'s projection of the statement's coordinate (``projection_key``), bound
-by the unpack at reduce. After ``y = x`` where ``x`` reads an evaluation, a
-read of ``y`` is a reference to ``y``'s projection of the assignment's
-coordinate, bound by the assignment at reduce (``Assign.alias_evaluations``):
-the value ``x`` held at ``y = x``, never ``x`` read again where ``y`` is used.
+by the unpack at reduce. After ``y = e`` (whatever ``e`` is; ``y: T = e``; an
+unrolled ``for y in [e]``'s iteration), a read of ``y`` is a reference to
+``y``'s projection of the assignment's coordinate, bound by the assignment at
+reduce (``Assign.target_evaluations``): the value ``e`` had at ``y = e``,
+never ``e`` evaluated again where ``y`` is used.
+
+A nested ``def`` reads an enclosing local through a captured coordinate its
+call binds from the enclosing scope's binding at the call
+(``FunctionDef._captured_bindings``, ``Call._closure_cells``), never this
+reference read in the callee's frame.
 
 A comprehension's element and conditions read a target name the same way
 (``member``): the comprehension binds every member, finite or symbolic, under
@@ -59,9 +65,9 @@ comprehension's element writes it per member, so a temporal that never
 received the key is one where the walrus never completed, or where its bind
 was not carried: the read is refused there by name. The name is never read in
 its place (it may hold a write older than the walrus) and the walrus's value
-is never evaluated again. Otherwise (``x += e`` in a nested frame, a reduction
-of the expression alone, a live loop reduced as its recurrence and not per
-item) the read is the name read it always was.
+is never evaluated again. Otherwise (a lambda's body called outside the scope
+that built it, a reduction of the expression alone, a live loop reduced as
+its recurrence and not per item) the read is the name read it always was.
 """
 
 from __future__ import annotations

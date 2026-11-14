@@ -483,6 +483,11 @@ class SourceVisibleCallFrameV1:
         repr=False,
         metadata={"testimony": "lookup"},
     )
+    #: The enclosing function's locals the body reads (its free names), and
+    #: the coordinate each is read through (``FunctionDef._captured_bindings``).
+    #: A call binds each from its own scope's binding at the call.
+    captured_names: tuple[str, ...] = ()
+    captured_coordinates: tuple[BindingCoordinateV1, ...] = ()
     frame_cid: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -576,6 +581,17 @@ class SourceVisibleCallFrameV1:
                 "exceptionName": getattr(effect, "exception_name", None),
                 "occurrence": str(getattr(effect, "occurrence_id", None)),
             }
+        if len(self.captured_names) != len(self.captured_coordinates):
+            raise SourceCallBindingGap(
+                "captured binding names and coordinates are cross-wired"
+            )
+        if self.captured_names:
+            preimage["capturedBindings"] = [
+                {"name": name, "coordinate": coordinate.wire()}
+                for name, coordinate in zip(
+                    self.captured_names, self.captured_coordinates, strict=True
+                )
+            ]
         if self.declaration_frame_cid is not None:
             preimage["declarationFrameCid"] = self.declaration_frame_cid
         if self.constructed_new_method is not None:
