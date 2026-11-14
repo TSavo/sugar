@@ -85,12 +85,14 @@ class BinOpSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            written_by,
         )
 
         method = BINOP_METHODS[self.op_kind]
 
         # Both sides are operands: a walrus in either (``(x := 5) + 1``) binds
-        # once, through the one operand door.
+        # once, through the one operand door.  The right side is evaluated
+        # after the left, with the left's walrus writes applied.
         def apply(left, right):
             return getattr(
                 left.project_operation_receiver(
@@ -106,7 +108,7 @@ class BinOpSugar(ConstructedTermSugar):
             )
 
         return self.left.desugar(ctx).and_then(
-            lambda left: self.right.desugar(ctx).and_then(
+            lambda left: self.right.desugar(written_by(left, ctx)).and_then(
                 lambda right: consume_operands(apply, left, right)
             )
         )

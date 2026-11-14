@@ -241,6 +241,31 @@ def bind_walrus_binds(binds, ctx):
     return ctx
 
 
+def written_by(operand, ctx):
+    """``ctx`` with the walrus writes ``operand`` (an evaluated operand)
+    carries applied (``bind_walrus_binds``): the context an operand evaluated
+    after it is evaluated in.
+
+    Python evaluates operands left to right and a walrus writes when it
+    completes, so an operand after it reads its write: in ``(y := f(x)) and
+    y > 0`` the right operand's ``y`` is the walrus's value.  A consumer that
+    evaluates one operand after another (``BinOpSugar``, ``BoolOpSugar``, a
+    comparison, ``ChainedCompareSugar``, ``IfExpSugar``'s arms after its test)
+    hands the later one this context, and the earlier one to the one operand
+    door (``consume_operands``) as before.  A read after a walrus in its
+    statement is a reference to the walrus's key (``nodes._scope_after``);
+    inside a comprehension only this bind holds that key in the member
+    (``ComprehensionSugar._written``): where no consumer evaluated the read
+    in this context, the read is refused by name.  ``ctx`` itself when the
+    operand carries no write or ``ctx`` is a context that holds no temporal;
+    with no context at all, the writes are bound on a root one
+    (``NamedExpressionValue.bind``)."""
+    binds, _presented = peel_walrus_binds(operand)
+    if not binds or (ctx is not None and not hasattr(ctx, "temporal")):
+        return ctx
+    return bind_walrus_binds(binds, ctx)
+
+
 def consume_operands(step, *operands):
     """``step`` applied to the values ``operands`` present, each completed
     result carrying every walrus bind the operands carry, in evaluation order.

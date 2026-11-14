@@ -141,11 +141,13 @@ class ComprehensionSugar(ConstructedTermSugar):
     # no member writes the name, it keeps the binding the prior read answers.
     walrus_priors: tuple = dataclass_field(compare=False, default=())
     # ``(name, running coordinate, ordered)`` for each name a walrus in the
-    # comprehension writes (``ListComp._walrus_recurrence``): every read of
-    # the name inside the comprehension reads the running coordinate, which
-    # ``_recurrence_start`` binds to the prior binding and ``_written``
-    # rebinds at every write.  A name that is not ``ordered`` has no
-    # running value: its reads are refused by name.
+    # comprehension writes (``ListComp._walrus_recurrence``): a read of the
+    # name inside the comprehension that no walrus of it writes before within
+    # its element, key, value or condition reads the running coordinate,
+    # which ``_recurrence_start`` binds to the prior binding and ``_written``
+    # rebinds after every write; a read after one reads that walrus's key
+    # (``nodes._scope_after``).  A name that is not ``ordered`` has
+    # no running value: its reads are refused by name.
     walrus_recurrence: tuple = dataclass_field(compare=False, default=())
 
     def __post_init__(self) -> None:
@@ -215,7 +217,9 @@ class ComprehensionSugar(ConstructedTermSugar):
                 # the key's walrus write.
                 return self.key.desugar(ctx).and_then(
                     lambda key: self.element.desugar(
-                        self._written(peel_walrus_binds(key)[0], ctx)
+                        self._written(
+                            peel_walrus_binds(key)[0], ctx, finite=False
+                        )
                     ).and_then(
                         lambda element: self._complete(
                             resolved, element, key, writes=writes, outer=outer
@@ -245,8 +249,16 @@ class ComprehensionSugar(ConstructedTermSugar):
         ``python.tuple.construct`` floor the outer ``tuple(...)`` call; without
         it the generator stays an opaque coordinate and ``not expected_exceptions``
         refuses at the UnaryOp producer.
+
+        A comprehension of several generators is projected when a walrus in
+        it writes a name it reads (``walrus_recurrence``): the running value
+        threads through the members in nested loop order (each outer member,
+        then every inner member under it), which one evaluation over symbolic
+        members does not hold.  Without one it stays the symbolic fold.
         """
-        if index == 0 and len(self.generators) == 1:
+        if index == 0 and (
+            len(self.generators) == 1 or self._running_coordinates(finite=True)
+        ):
             from sugar_lift_py_tests.sugar.finite_projection import (
                 FiniteProjectionNonSuccessV1,
                 FiniteProjectionRefusalV1,
@@ -317,12 +329,6 @@ class ComprehensionSugar(ConstructedTermSugar):
     def _finite_map(self, generator, iterable, ctx):
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
         from sugar_lift_py_tests.floor.dict_value import DictValue
-        from sugar_lift_py_tests.floor.list_value import ListValue
-        from sugar_lift_py_tests.floor.iterator_value import (
-            ListIteratorValue,
-            TupleIteratorValue,
-        )
-        from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.ir import (
             PrimitiveSort,
             _Lambda,
@@ -337,34 +343,26 @@ class ComprehensionSugar(ConstructedTermSugar):
         )
         from sugar_source_tree.nodes import TargetPatternEnrolledV1
 
-        members = None
-        if isinstance(iterable, (TupleValue, ListValue)):
-            members = iterable.elements
-        elif isinstance(iterable, (ListIteratorValue, TupleIteratorValue)):
-            members = iterable.elements[iterable.index :]
-        elif (
-            isinstance(iterable, ComprehensionValue)
-            and iterable.finite_elements is not None
-        ):
-            members = iterable.finite_elements
+        members = _finite_members(iterable)
         if members is None:
             return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
-        target = generator.target
-        if generator.filters and not hasattr(ctx, "temporal"):
+        # ``generator`` first, then each nested generator, outermost first.
+        levels = (generator, *self.generators[1:])
+        if any(level.filters for level in levels) and not hasattr(ctx, "temporal"):
             return NotProjected(
                 FiniteProjectionNonSuccessV1.PROJECTION_UNAVAILABLE_IN_CONTEXT
             )
-        if target.coordinates is not None and generator.target_pattern is None:
-            # The producer's OWN enrollment answer decides which fact this is.
-            # ENROLLED + missing pattern is a stranded authenticated lookup, not
-            # an absence, and it may not be spent as a symbolic completion.
-            if isinstance(
-                generator.target_pattern_enrollment, TargetPatternEnrolledV1
-            ):
-                return NotProjected(
-                    FiniteProjectionNonSuccessV1.AUTHENTICATED_LOOKUP_FAILED
-                )
-            return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
+        for level in levels:
+            if level.target.coordinates is not None and level.target_pattern is None:
+                # The producer's OWN enrollment answer decides which fact this
+                # is. ENROLLED + missing pattern is a stranded authenticated
+                # lookup, not an absence, and it may not be spent as a symbolic
+                # completion.
+                if isinstance(level.target_pattern_enrollment, TargetPatternEnrolledV1):
+                    return NotProjected(
+                        FiniteProjectionNonSuccessV1.AUTHENTICATED_LOOKUP_FAILED
+                    )
+                return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
         if ctx is None or not hasattr(ctx, "temporal"):
             return NotProjected(
                 FiniteProjectionNonSuccessV1.PROJECTION_UNAVAILABLE_IN_CONTEXT
@@ -384,6 +382,9 @@ class ComprehensionSugar(ConstructedTermSugar):
             carry_walrus_binds,
             peel_walrus_binds,
         )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
 
         owner = str(self.site)
 
@@ -401,66 +402,94 @@ class ComprehensionSugar(ConstructedTermSugar):
         # once per member, after the members before it, and its walrus value
         # is never evaluated again.  A generator expression writes nothing
         # here: its writes wait for it to be consumed.
-        def project(index, projected, binds, carried):
-            if index == len(members):
-                binds = (
-                    ()
-                    if self.kind == "py.generatorexp"
-                    else self._carried_out(binds, ctx)
-                )
-                if self.key is not None:
-                    return ExitSet.completed(
-                        carry_walrus_binds(binds, DictValue(tuple(projected)))
-                    )
-                if projected:
-                    element_term = projected[0].to_term(owner=owner)
-                else:
-                    element_term = ctor(
-                        "python:loop.latch", [], symbol_kind="coordinate"
-                    )
-                term = ctor(
-                    self.kind,
-                    [
-                        iterable.to_term(owner=owner),
-                        _intern_term(
-                            _Lambda(
-                                generator.binding_coordinate_cid,
-                                PrimitiveSort("Value"),
-                                element_term,
-                            )
-                        ),
-                        ctor("python:loop.exhaustion", [], symbol_kind="coordinate"),
-                    ],
-                    symbol_kind="coordinate",
-                )
+        #
+        # Several generators run as nested loops: under each outer member
+        # that its conditions keep, the next generator's iterable is
+        # evaluated (it reads the outer member and the writes so far), and
+        # its members run in order before the next outer member.  The writes
+        # thread through that order: ``carried`` passes from each member to
+        # the next at every depth.
+        def finish(projected, binds, _carried):
+            binds = (
+                () if self.kind == "py.generatorexp" else self._carried_out(binds, ctx)
+            )
+            if self.key is not None:
                 return ExitSet.completed(
-                    carry_walrus_binds(
-                        binds,
-                        ComprehensionValue(term, finite_elements=tuple(projected)),
-                    )
+                    carry_walrus_binds(binds, DictValue(tuple(projected)))
+                )
+            if projected:
+                element_term = projected[0].to_term(owner=owner)
+            else:
+                element_term = ctor("python:loop.latch", [], symbol_kind="coordinate")
+            term = ctor(
+                self.kind,
+                [
+                    iterable.to_term(owner=owner),
+                    _intern_term(
+                        _Lambda(
+                            generator.binding_coordinate_cid,
+                            PrimitiveSort("Value"),
+                            element_term,
+                        )
+                    ),
+                    ctor("python:loop.exhaustion", [], symbol_kind="coordinate"),
+                ],
+                symbol_kind="coordinate",
+            )
+            return ExitSet.completed(
+                carry_walrus_binds(
+                    binds,
+                    ComprehensionValue(term, finite_elements=tuple(projected)),
+                )
+            )
+
+        def project(depth, members, index, projected, binds, carried, done):
+            """Member ``index`` of ``members`` (generator ``depth``'s) and
+            every member after it, then ``done``."""
+            level = levels[depth]
+            if index == len(members):
+                return done(projected, binds, carried)
+
+            def after(projected, binds, carried):
+                return project(
+                    depth, members, index + 1, projected, binds, carried, done
                 )
 
-            inner_ctx = self._member_ctx(generator, members[index], carried)
+            inner_ctx = self._member_ctx(level, members[index], carried)
             if not isinstance(inner_ctx, type(ctx)):
-                if generator.filters:
+                if level.filters:
                     # The member does not destructure: its conditions are
                     # not decided here.
                     raise _UndecidedMember
                 return inner_ctx
             # The member's conditions run before its element, after every
             # earlier member: their writes come first.
-            keep, condition_writes, inner_ctx = self._sifted(generator, inner_ctx)
+            keep, condition_writes, inner_ctx = self._sifted(level, inner_ctx)
             binds = _last_binds((*binds, *condition_writes))
-            carried = self._written(condition_writes, carried)
+            carried = self._written(condition_writes, carried, finite=True)
             if not keep:
-                return project(index + 1, projected, binds, carried)
+                return after(projected, binds, carried)
+            if depth + 1 < len(levels):
+                # The next generator's members, under this member: its
+                # iterable reads this member and every write before it.
+                inner = levels[depth + 1]
+                inner_members = _finite_members(
+                    plain_completed_value(inner.iterable.desugar(inner_ctx))
+                )
+                if inner_members is None:
+                    # Not a finite container: the nested members are not
+                    # fixed here, and the comprehension stays symbolic.
+                    raise _UndecidedMember
+                return project(
+                    depth + 1, inner_members, 0, projected, binds, inner_ctx, after
+                )
 
             def written(wrote):
                 """The member's walrus writes: on the next member's context
                 and on what the comprehension carries out."""
                 return (
                     _last_binds((*binds, *wrote)),
-                    self._written(wrote, carried),
+                    self._written(wrote, carried, finite=True),
                 )
 
             if self.key is not None:
@@ -469,15 +498,14 @@ class ComprehensionSugar(ConstructedTermSugar):
                     key_binds, key = peel_walrus_binds(key_value)
                     # Python evaluates the key before the value: the value
                     # reads the key's walrus write.
-                    value_ctx = self._written(key_binds, inner_ctx)
+                    value_ctx = self._written(key_binds, inner_ctx, finite=True)
                     return self.element.desugar(value_ctx).and_then(
                         lambda value_value: after_value(key_binds, key, value_value)
                     )
 
                 def after_value(key_binds, key, value_value):
                     value_binds, value = peel_walrus_binds(value_value)
-                    return project(
-                        index + 1,
+                    return after(
                         (*projected, (key, value)),
                         *written((*key_binds, *value_binds)),
                     )
@@ -486,8 +514,7 @@ class ComprehensionSugar(ConstructedTermSugar):
 
             def after_element(element_value):
                 element_binds, element = peel_walrus_binds(element_value)
-                return project(
-                    index + 1,
+                return after(
                     (
                         *projected,
                         element.project_operation_receiver(
@@ -506,10 +533,19 @@ class ComprehensionSugar(ConstructedTermSugar):
             self._final_member_ctx(generator, members[-1], ctx) if members else ctx
         )
         try:
-            projected = project(0, (), (), self._recurrence_start(final_ctx, ctx))
+            projected = project(
+                0,
+                members,
+                0,
+                (),
+                (),
+                self._recurrence_start(final_ctx, ctx),
+                finish,
+            )
         except _UndecidedMember:
-            # A condition's verdict is not one decided bool for some member:
-            # which members survive is not fixed, and the comprehension stays
+            # A condition's verdict is not one decided bool for some member,
+            # or a nested generator's iterable is not a finite container:
+            # which members run is not fixed, and the comprehension stays
             # symbolic.
             return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
         # ExitSet.and_then owns terminal/guarded propagation. Every constructed
@@ -709,21 +745,22 @@ class ComprehensionSugar(ConstructedTermSugar):
             if verdict is None:
                 raise _UndecidedMember
             wrote = (*wrote, *binds)
-            inner_ctx = self._written(binds, inner_ctx)
+            inner_ctx = self._written(binds, inner_ctx, finite=True)
             if not verdict:
                 return False, wrote, inner_ctx
         return True, wrote, inner_ctx
 
-    def _running_coordinates(self) -> dict:
+    def _running_coordinates(self, *, finite: bool) -> dict:
         """Each ``ordered`` name of ``walrus_recurrence``, to the coordinate
         its running value is bound under.
 
-        Empty for a comprehension of several generators: a member of an
+        Empty over symbolic members of several generators: a member of an
         inner generator reads the writes of the inner members before it,
         which one evaluation over symbolic members does not hold, so no
         running value is bound and the reads are refused by name.  The
-        finite projection takes one generator only."""
-        if len(self.generators) != 1:
+        ``finite`` projection runs the members of every generator in nested
+        loop order, and threads the running value through them."""
+        if not finite and len(self.generators) != 1:
             return {}
         return {
             name: coordinate
@@ -731,13 +768,22 @@ class ComprehensionSugar(ConstructedTermSugar):
             if ordered
         }
 
-    def _written(self, binds, ctx):
+    def _written(self, binds, ctx, *, finite: bool):
         """``ctx`` with the walrus writes ``binds`` applied in evaluation
-        order, for what is evaluated after them: each walrus's key
-        (``bind_walrus_binds``), and the running value of its name
-        (``_running_coordinates``), so a later read of the name in the
-        comprehension reads the last write before it.  ``ctx`` itself when
-        there are none or it carries no temporal."""
+        order, for the element, key, value or condition evaluated after them:
+        the running value of each ``ordered`` name (``_running_coordinates``),
+        so a later read of the name in the comprehension reads the last write
+        before it; for any other name, each walrus's key
+        (``bind_walrus_binds``).
+
+        The key of an ``ordered`` name's walrus is never bound here: a read
+        after the walrus within one element, key, value or condition reads
+        it (``nodes._scope_after``), and only the consumer that
+        evaluates that read after the walrus binds it, with this member's
+        write (``named_expression_value.written_by``).  Where that bind did
+        not reach the read, the key is unbound and the read is refused by
+        name, never an earlier member's write.  ``ctx`` itself when there
+        are none or it carries no temporal."""
         if not binds or ctx is None or not hasattr(ctx, "temporal"):
             return ctx
         from dataclasses import replace
@@ -746,8 +792,15 @@ class ComprehensionSugar(ConstructedTermSugar):
             bind_walrus_binds,
         )
 
-        ctx = bind_walrus_binds(binds, ctx)
-        running = self._running_coordinates()
+        ordered = {
+            name
+            for name, _coordinate, is_ordered in self.walrus_recurrence
+            if is_ordered
+        }
+        ctx = bind_walrus_binds(
+            tuple(bind for bind in binds if bind.name not in ordered), ctx
+        )
+        running = self._running_coordinates(finite=finite)
         temporal = ctx.temporal
         for bind in binds:
             coordinate = running.get(bind.name)
@@ -765,7 +818,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         write of the member before it, which one evaluation over the
         symbolic member does not have, so a read before the member's own
         write is refused by name."""
-        running = self._running_coordinates()
+        running = self._running_coordinates(finite=True)
         if not running:
             return ctx
         from dataclasses import replace
@@ -881,7 +934,7 @@ class ComprehensionSugar(ConstructedTermSugar):
                 iterable,
                 index,
                 resolved,
-                self._written(binds, ctx),
+                self._written(binds, ctx, finite=False),
                 writes=(*writes, *((bind, index, filter_index) for bind in binds)),
                 outer=outer,
             )
@@ -1072,6 +1125,27 @@ class _UndecidedMember(Exception):
     """A finite member whose conditions are not decided here
     (``ComprehensionSugar._sifted``): the finite projection does not apply and
     the comprehension stays symbolic (``_finite_map``)."""
+
+
+def _finite_members(iterable):
+    """The members ``iterable`` yields when it is an exact finite container
+    (a list or tuple, an iterator over one from its position, a projected
+    comprehension), else ``None``."""
+    from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
+    from sugar_lift_py_tests.floor.iterator_value import (
+        ListIteratorValue,
+        TupleIteratorValue,
+    )
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    if isinstance(iterable, (TupleValue, ListValue)):
+        return iterable.elements
+    if isinstance(iterable, (ListIteratorValue, TupleIteratorValue)):
+        return iterable.elements[iterable.index :]
+    if isinstance(iterable, ComprehensionValue) and iterable.finite_elements is not None:
+        return iterable.finite_elements
+    return None
 
 
 def _last_binds(binds) -> tuple:

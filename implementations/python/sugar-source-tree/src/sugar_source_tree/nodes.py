@@ -3748,52 +3748,206 @@ def _scope_after(scope, evaluated, substituted):
     return scope
 
 
-def _reads_precede_writes(segment, name: str, in_lambda: set) -> bool:
-    """Whether every read of ``name`` in ``segment`` (one element, key, value,
-    condition or iterable of a comprehension) is evaluated before every
-    walrus of ``name`` in it writes: it sits inside the value of each such
-    walrus, which is evaluated whole before the walrus writes.  A read
-    anywhere else in the segment (after a walrus of it, or before one, which
-    is not told apart here), or in a lambda (``in_lambda``: it runs when the
-    lambda is called), is not.  A read is a ``Name`` of ``name`` that is not
-    a walrus's target, or a running-value reference to it a substitution
-    already made (``recurrence``)."""
+# Expression kinds that evaluate their children in declared order
+# (``_child_fields``, then index within a field): the order a walrus under
+# one child and a read under a later one run in.  ``IfExp`` evaluates its
+# test first and then one arm (``_evaluation_rank``).  Any other kind is not
+# ordered here: a walrus and a read under two of its children are not told
+# apart, and the name's reads are refused by name.
+_DECLARED_ORDER_KINDS = frozenset(
+    {
+        "Attribute",
+        "Await",
+        "BinOp",
+        "BoolOp",
+        "Call",
+        "Compare",
+        "Dict",
+        "DictItem",
+        "FormattedValue",
+        "JoinedStr",
+        "Keyword",
+        "List",
+        "NamedExpr",
+        "Set",
+        "Slice",
+        "Starred",
+        "Subscript",
+        "Tuple",
+        "UnaryOp",
+    }
+)
 
-    def field(walrus, slot):
-        # The child the walk reaches, by identity.
-        return next(child for edge, _index, child in walrus.children() if edge == slot)
+# Kinds whose children run later, per member, or not at all: a walrus under
+# one of them does not run on every evaluation that reaches a read after it.
+_DEFERRED_SCOPE_KINDS = frozenset(
+    {"Lambda", "ListComp", "SetComp", "DictComp", "GeneratorExp", "Comprehension"}
+)
 
+
+def _segment_edges(segment):
+    """``(parents, shared, nodes)`` of ``segment``: each node's
+    ``(parent, field, index)`` edge by id, the ids of nodes reached under two
+    parents (a shared node has no one place in the evaluation order), and
+    every node, root first.  The edges are the ``children()`` a walk reaches,
+    by identity."""
+    parents: dict = {}
+    shared: set = set()
+    nodes = [segment]
+    seen = {id(segment)}
+    stack = [segment]
+    while stack:
+        node = stack.pop()
+        for field, index, child in node.children():
+            if id(child) in seen:
+                shared.add(id(child))
+                continue
+            seen.add(id(child))
+            parents[id(child)] = (node, field, index)
+            nodes.append(child)
+            stack.append(child)
+    return parents, shared, nodes
+
+
+def _segment_path(node, parents) -> list:
+    """``node``'s edges from its segment's root, outermost first, each as
+    ``(parent, field, index, child)``."""
+    path = []
+    while id(node) in parents:
+        parent, field, index = parents[id(node)]
+        path.append((parent, field, index, node))
+        node = parent
+    path.reverse()
+    return path
+
+
+def _evaluation_rank(parent, field: str, index) -> "Optional[tuple]":
+    """Where the child at ``(field, index)`` of ``parent`` runs among its
+    siblings, or None where the order is not modeled here."""
+    if parent.kind == "IfExp":
+        return (("test", "body", "orelse").index(field), 0)
+    if parent.kind in _DECLARED_ORDER_KINDS:
+        return (type(parent)._child_fields.index(field), index or 0)
+    return None
+
+
+def _written_before(walrus, node, parents, shared) -> "Optional[bool]":
+    """Whether ``walrus`` writes before ``node`` (a read, or another walrus's
+    write) in one evaluation of their segment.  A walrus inside ``node``
+    (``node`` a walrus whose value holds it) writes first; a ``node`` inside
+    the walrus's value is evaluated before it writes.  Otherwise their
+    common parent orders the two children they sit under; two arms of one
+    conditional expression never both run.  None where the order is not
+    decided here (a shared node, a parent whose order is not modeled)."""
+    walrus_path = _segment_path(walrus, parents)
+    node_path = _segment_path(node, parents)
+    if any(id(edge[3]) in shared for edge in (*walrus_path, *node_path)):
+        return None
+    depth = 0
+    while (
+        depth < len(walrus_path)
+        and depth < len(node_path)
+        and walrus_path[depth][3] is node_path[depth][3]
+    ):
+        depth += 1
+    if depth == len(walrus_path):
+        return False
+    if depth == len(node_path):
+        return True
+    parent, walrus_field, walrus_index, _child = walrus_path[depth]
+    _parent, node_field, node_index, _node = node_path[depth]
+    if parent.kind == "IfExp" and {walrus_field, node_field} == {"body", "orelse"}:
+        return False
+    walrus_rank = _evaluation_rank(parent, walrus_field, walrus_index)
+    node_rank = _evaluation_rank(parent, node_field, node_index)
+    if walrus_rank is None or node_rank is None:
+        return None
+    return walrus_rank < node_rank
+
+
+def _running_reads_ordered(segment, name: str, coordinate: str) -> bool:
+    """Whether every read of the running value of ``name`` (``coordinate``)
+    left in ``segment`` (one element, key, value, condition or later
+    iterable of a comprehension, substituted) runs before every walrus of
+    ``name`` in it writes, in Python's evaluation order.
+
+    Substitution gives a read after a walrus in its statement the walrus's
+    key (``_scope_after``: ``(y := f(x)) and y > 0``).  A read it left the
+    running value reads the last write before the segment, which
+    ``ComprehensionSugar`` binds between segments: in ``s + (s := s + 1)``
+    both reads run before the walrus writes.  That holds where no walrus of
+    the name writes before the read (``_written_before``).
+
+    Not where the order is not decided here: a read in a lambda (it runs
+    when the lambda is called); a ``Name`` of ``name`` that is not a binding
+    target (a read substitution did not rewrite); a walrus not ordered
+    against a read (a parent whose order is not modeled, a shared node); a
+    walrus of the name in a nested comprehension or generator after another
+    walrus of it outside that comprehension (the nested comprehension reads
+    the name's value before the segment, not that write)."""
+    parents, shared, nodes = _segment_edges(segment)
+    in_lambda = {
+        id(inner) for lam in nodes if lam.kind == "Lambda" for inner in lam.walk()
+    }
+    in_deferred = {
+        id(inner)
+        for scope in nodes
+        if scope.kind in _DEFERRED_SCOPE_KINDS
+        for inner in scope.walk()
+        if inner is not scope
+    }
+    in_target = {
+        id(inner)
+        for node in nodes
+        if node.kind in ("NamedExpr", "Comprehension")
+        for field, _index, child in node.children()
+        if field == "target"
+        for inner in child.walk()
+    }
     walruses = [
         node
-        for node in segment.walk()
+        for node in nodes
         if node.kind == "NamedExpr"
         and node.target.kind == "Name"
         and node.target.id == name
         and id(node) not in in_lambda
     ]
-    targets = {
-        id(field(node, "target")) for node in segment.walk() if node.kind == "NamedExpr"
-    }
-    values = [
-        {id(inner) for inner in field(walrus, "value").walk()} for walrus in walruses
-    ]
-    for node in segment.walk():
-        if id(node) in targets:
+    reads = []
+    for node in nodes:
+        if id(node) in in_target:
             continue
-        if node.kind == "Name":
-            reads = node.id == name
-        else:
-            reads = (
-                node.kind == "EvaluationRef"
-                and node.name == name
-                and getattr(node, "recurrence", False) is True
-            )
-        if not reads:
+        if node.kind == "Name" and node.id == name:
+            return False
+        if (
+            node.kind == "EvaluationRef"
+            and node.name == name
+            and getattr(node, "recurrence", False) is True
+            and getattr(node, "member", False) is True
+            and node.evaluation == coordinate
+        ):
+            reads.append(node)
+
+    def scope_of(node):
+        # The innermost lambda or comprehension ``node`` sits in, if any.
+        for parent, _field, _index, _child in reversed(_segment_path(node, parents)):
+            if parent.kind in _DEFERRED_SCOPE_KINDS and parent.kind != "Comprehension":
+                return parent
+        return None
+
+    for walrus in walruses:
+        if id(walrus) not in in_deferred:
             continue
-        if id(node) in in_lambda:
+        for other in walruses:
+            if other is walrus or scope_of(other) is scope_of(walrus):
+                continue
+            if _written_before(other, walrus, parents, shared) is not False:
+                return False
+    for read in reads:
+        if id(read) in in_lambda:
             return False
-        if not all(id(node) in inside for inside in values):
-            return False
+        for walrus in walruses:
+            if _written_before(walrus, read, parents, shared) is not False:
+                return False
     return True
 
 
@@ -16686,6 +16840,7 @@ class ListComp(Expression):
         if de:
             changed["elt"] = new_elt
         rewritten = rewrite(self, **changed) if changed else self
+        recurrence = ListComp._ordered_recurrence(self, rewritten, recurrence)
         return ListComp._carrying_walrus_priors(
             self, rewritten, (rewritten.elt,), scope, recurrence
         )
@@ -16815,18 +16970,18 @@ class ListComp(Expression):
         value read the writes made before them.  Substitution rewrites every
         such read to a reference to the name's running coordinate
         (``_recurrence_references``), which ``ComprehensionSugar`` binds
-        before the first member and rebinds at every write it applies.
+        before the first member and rebinds after every element, key, value
+        and condition that writes it.  Within one of these, a read after a
+        walrus of the name in evaluation order reads that walrus's key
+        instead (``_scope_after``).
 
-        ``ordered`` is whether that coordinate holds the value every read
-        sees: within one element, key, value or condition the comprehension
-        applies no write before the whole of it is evaluated, so a read there
-        that is not evaluated before every walrus of the name there (inside
-        each one's value) would see a stale value.  A read in a lambda runs
-        when the lambda is called, not where it is made.  Either way the
-        name is not ``ordered``: nothing binds its coordinate and every read
-        of it in the comprehension is refused by name.  A ``deferred``
-        comprehension (a generator expression, or one inside it) runs its
-        members when it is consumed: none of its names is ``ordered``.
+        ``ordered`` here is whether nothing before substitution already
+        rules the order out: a read in a lambda runs when the lambda is
+        called, not where it is made, and a ``deferred`` comprehension (a
+        generator expression, or one inside it) runs its members when it is
+        consumed.  ``_ordered_recurrence`` decides the rest.  A name that is
+        not ``ordered`` has no running value: every read of it in the
+        comprehension is refused by name.
         """
         segments = (
             *roots,
@@ -16867,12 +17022,65 @@ class ListComp(Expression):
                 name,
                 ListComp._walrus_recurrence_coordinate(self, name),
                 not deferred
-                and all(
-                    _reads_precede_writes(segment, name, in_lambda)
+                and not any(
+                    node.kind == "Name" and node.id == name and id(node) in in_lambda
                     for segment in segments
+                    for node in segment.walk()
                 ),
             )
             for name in names
+        )
+
+    def _ordered_recurrence(self, node, recurrence: tuple) -> tuple:
+        """``recurrence`` (``_walrus_recurrence``) with each name's
+        ``ordered`` decided on ``node``, this comprehension substituted.
+
+        Python evaluates an element, a key, a value and a condition left to
+        right, and a walrus writes when it completes.  In
+        ``[y for x in xs if (y := f(x)) and y > 0]`` the condition's second
+        read of ``y`` follows the walrus: substitution made it the walrus's
+        key (``_scope_after``), and the consumer that evaluates it after the
+        walrus binds that key with this member's write
+        (``named_expression_value.written_by``).  ``ComprehensionSugar``
+        never binds the key of an ``ordered`` name between segments, so
+        where that bind did not reach the read the key is unbound and the
+        read is refused by name, never an earlier member's write.  In ``[s +
+        (s := s + 1) for x in xs]`` both reads of ``s`` run before the walrus
+        writes: they read the running value, the last write before the
+        segment.
+
+        A name is ``ordered`` when, in every segment, each read left the
+        running value runs before every walrus of the name there writes
+        (``_running_reads_ordered``).  A name that is not ``ordered`` has no
+        running value, and every read of it is refused by name."""
+        if not recurrence:
+            return recurrence
+
+        def under(parent, field):
+            # The children a walk reaches, by identity.
+            return [child for edge, _i, child in parent.children() if edge == field]
+
+        generators = under(node, "generators")
+        segments = (
+            *(
+                (*under(node, "key"), *under(node, "value"))
+                if node.kind == "DictComp"
+                else under(node, "elt")
+            ),
+            *(guard for gen in generators for guard in under(gen, "ifs")),
+            *(iterable for gen in generators[1:] for iterable in under(gen, "iter")),
+        )
+        return tuple(
+            (
+                name,
+                coordinate,
+                ordered
+                and all(
+                    _running_reads_ordered(segment, name, coordinate)
+                    for segment in segments
+                ),
+            )
+            for name, coordinate, ordered in recurrence
         )
 
     def _walrus_recurrence_coordinate(self, name: str) -> str:
@@ -17246,6 +17454,7 @@ class SetComp(Expression):
         if de:
             changed["elt"] = new_elt
         rewritten = rewrite(self, **changed) if changed else self
+        recurrence = ListComp._ordered_recurrence(self, rewritten, recurrence)
         return ListComp._carrying_walrus_priors(
             self, rewritten, (rewritten.elt,), scope, recurrence
         )
@@ -17361,6 +17570,7 @@ class DictComp(Expression):
             if d:
                 changed[fld] = new
         rewritten = rewrite(self, **changed) if changed else self
+        recurrence = ListComp._ordered_recurrence(self, rewritten, recurrence)
         return ListComp._carrying_walrus_priors(
             self, rewritten, (rewritten.key, rewritten.value), scope, recurrence
         )
