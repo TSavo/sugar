@@ -666,6 +666,93 @@ def container_mutator_result_fold(receiver, name, arguments, site):
     )
 
 
+def re_cited_fold(name, arguments, site):
+    """``re.<name>(*arguments)`` (``search``/``match``/``fullmatch``), or None.
+
+    Every operand ground (``_host_ground``): the pinned interpreter's own
+    ``re.<name>`` applied to them, through the door a builtin over ground
+    operands is decided by (``_host_applied``).  A match is the
+    ``ReMatchValue`` of its subject and spans, no match ``None``, a builtin
+    raise its one halt (``re.search('a', 5)``: ``TypeError``).  A raise that
+    is no builtin exception (``re.error`` for a pattern that does not
+    compile), or a match over ``bytes``, decides nothing.
+
+    A ground ``str`` pattern and a subject known only to be a ``str``
+    (``names_a_string``): ``re.<name>`` compiles the pattern first
+    (``Lib/re/__init__.py``: ``_compile(pattern, flags).<name>(string)``),
+    and ``_sre`` reads any ``str`` without calling its methods, so the
+    pattern's compilation on the pinned interpreter decides whether the call
+    can raise.  When it compiles, the call completes on the two faces of its
+    predicate ``py.re_<name>(pattern, subject)`` (#8115's message atom is
+    ``py.re_search``): the match (its occurrence result) where it holds,
+    ``None`` where it does not, owing nothing.  A builtin raise of the
+    compilation is the call's one halt; any other raise decides nothing.
+
+    Anything else (a subject whose type is undecided, a pattern known only
+    by its type, more operands): None, and the call is the one unanswered
+    call."""
+    import re
+
+    from .call_symbol import call_symbol
+    from .floor.call_site_value import names_a_string
+    from .floor.none_value import NoneValue
+    from .floor.re_match_value import ReMatchValue
+    from .ir import atomic, ctor, not_
+    from .occurrence import occurrence_key, occurrence_term
+    from .outcome import ExitSet
+    from .outcome.exit_set import partition
+
+    owner = f"cpython_cited_fold:re.{name}"
+    visits: dict = {}
+    operands = _ground_operands(arguments, visits)
+    if operands is not None:
+
+        def matched(result):
+            if result is None:
+                return NoneValue()
+            if type(result) is re.Match and type(result.string) is str:
+                return ReMatchValue.of_host(result)
+            return None
+
+        return _host_applied(
+            getattr(re, name),
+            operands,
+            site,
+            owner=owner,
+            callsite=None,
+            visits=visits,
+            holder=matched,
+        )
+    if len(arguments) != 2 or site is None:
+        return None
+    pattern_value, subject = arguments
+    pattern = _host_ground(pattern_value)
+    if type(pattern) is not str or not names_a_string(subject):
+        return None
+    terms = [value.to_term(owner=owner) for value in arguments]
+    call = ctor(call_symbol(f"re.{name}"), terms, symbol_kind="builtin")
+    compiled = _host_applied(
+        re.compile,
+        (pattern,),
+        site,
+        owner=owner,
+        callsite=None,
+        visits={},
+        holder=lambda _compiled: ReMatchValue.undecided(
+            ctor("python:call_result", (call, occurrence_term(site)))
+        ),
+    )
+    if compiled is None or compiled.halts():
+        return compiled
+    predicate = atomic(f"py.re_{name}", terms)
+    holds, fails = partition((owner, occurrence_key(site)))
+    return (
+        ExitSet.completed(compiled.completed_value())
+        .guarded(predicate, holds)
+        .union(ExitSet.completed(NoneValue()).guarded(not_(predicate), fails))
+    )
+
+
 def builtin_exception_cited_fold(callsite, site):
     """A bodiless call of a builtin exception class over ground actuals, decided.
 

@@ -80,6 +80,25 @@ def _term_cycle_key(term: Term) -> str:
     return _term_content_cid(term)
 
 
+def names_a_string(value) -> bool:
+    """Whether ``value`` is known to be a ``str`` (if it is a call, when it
+    completes): a ground string, a call coordinate whose mint names a string
+    (``CallSiteValue.names_a_string``), or the opaque ``str.join`` coordinate
+    (``LanguageCallee.STR_JOIN``, its binding, never its spelling)."""
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_source_tree.nodes import LanguageCallee
+
+    if type(value) is StringValue:
+        return True
+    if type(value) is CallSiteValue:
+        return value.names_a_string()
+    return (
+        type(value) is OpaqueOpCallsite
+        and value.language_callee is LanguageCallee.STR_JOIN
+    )
+
+
 @dataclass(frozen=True)
 class ExitSuppressionContract:
     """Static evidence for one context manager's exceptional exit.
@@ -1125,32 +1144,17 @@ class CallSiteValue(FloorValue):
             return False
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
-        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.return_value import ReturnValue
-        from sugar_lift_py_tests.floor.string_value import StringValue
-        from sugar_source_tree.nodes import LanguageCallee
-
-        def face_names_a_string(face) -> bool:
-            if type(face) is StringValue:
-                return True
-            if type(face) is CallSiteValue:
-                return face.names_a_string()
-            if (
-                type(face) is OpaqueOpCallsite
-                and face.language_callee is LanguageCallee.STR_JOIN
-            ):
-                return True
-            return False
 
         value = retained.value
         if not isinstance(value, BlockValue):
-            return face_names_a_string(value)
+            return names_a_string(value)
         faces = tuple(
             statement.value
             for statement in value.statements
             if isinstance(statement, (ReturnValue, GuardedReturn))
         )
-        return bool(faces) and all(face_names_a_string(face) for face in faces)
+        return bool(faces) and all(names_a_string(face) for face in faces)
 
     @staticmethod
     def named_string_concat(left, right, site):
