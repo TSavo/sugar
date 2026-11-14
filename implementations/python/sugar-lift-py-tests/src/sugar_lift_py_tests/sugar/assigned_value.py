@@ -142,31 +142,48 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=()):
                 # and no later RHS or target runs. It is handed back as-is so
                 # the enclosing block routes it.
                 return outcome
+            evaluated = _walrus_bound(active, plain)
             if key is not None and _binds_live_name(active, bind, index):
                 # A live loop body rebinds names this RHS may read: a later
                 # read of this RHS must see this evaluation, not re-reduce
                 # over the rebound temporal.
                 return step(
                     index + 1,
-                    active.with_assigned_value(key, plain),
+                    evaluated.with_assigned_value(key, plain),
                     (*completed, plain),
                 )
-            return step(index + 1, active, (*completed, plain))
+            return step(index + 1, evaluated, (*completed, plain))
         if key is None:
             # No occurrence to record: the statement still halts here, and a
             # read keeps substitution (it was never answered from a record).
             return outcome.and_then(
-                lambda value: step(index + 1, active, (*completed, value))
+                lambda value: step(
+                    index + 1, _walrus_bound(active, value), (*completed, value)
+                )
             )
         return outcome.and_then(
             lambda value: step(
                 index + 1,
-                active.with_assigned_value(key, value),
+                _walrus_bound(active, value).with_assigned_value(key, value),
                 (*completed, value),
             )
         )
 
     return step(0, ctx)
+
+
+def _walrus_bound(active, value):
+    """``active`` with the binds of every walrus the completed RHS ``value``
+    carries (``y = (x := 5)``, ``y = f((x := 5))``): the walrus completed
+    inside the RHS, at this statement, so the rest of the block reads ``x``
+    through its key.  ``active`` itself when the RHS carries none."""
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        bind_walrus_binds,
+        peel_walrus_binds,
+    )
+
+    binds, _presented = peel_walrus_binds(value)
+    return bind_walrus_binds(binds, active)
 
 
 def _binds_live_name(ctx, bind, index) -> bool:

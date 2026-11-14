@@ -156,13 +156,13 @@ def test_walrus_binding_leaks_to_the_block():
     # y = (x := 5); return x -- the walrus binds x for the rest of the block,
     # even though x is only named inside the assignment's rhs expression:
     # `return x` is a reference to the walrus's one evaluation (temporal
-    # choice 1, #7661), carrying `5` for a temporal the evaluation never
-    # reached (an assignment's rhs does not carry the walrus's bind out).
+    # choice 1, #7661), resolved through its key only: the assignment carries
+    # the walrus's bind out of its rhs, and the reference holds no copy of `5`.
     f = next(_tree("def f():\n    y = (x := 5)\n    return x\n").functions())
     ret = next(n for n in f.substitute({}).walk() if n.kind == "Return")
     assert ret.value.kind == "EvaluationRef" and ret.value.name == "x"
-    assert ret.value.unevaluated.kind == "Constant"
-    assert ret.value.unevaluated.value == 5
+    assert ret.value.walrus is True
+    assert getattr(ret.value, "unevaluated", None) is None
 
 
 if __name__ == "__main__":

@@ -3181,7 +3181,7 @@ def _holds_evaluation(statements) -> bool:
 
 
 def _evaluation_ref(
-    owner, span, evaluation: str, name: str, *, unevaluated=None, member=False
+    owner, span, evaluation: str, name: str, *, member=False, walrus: bool = False
 ) -> "Node":
     """``EvaluationRef(evaluation, name)`` at ``span``: a read of ``name``
     rewritten to a reference to the evaluation bound under ``evaluation``
@@ -3190,19 +3190,20 @@ def _evaluation_ref(
     comprehension generator's binding of one member, and the re-span of any
     of them to the read's own site (``Name.substitute``).
 
-    ``unevaluated`` (a walrus's substituted value) is a slot, not a child:
-    the read for a temporal the walrus's evaluation never reached.
     ``member`` marks a comprehension member's reference: the comprehension
     binds every member under ``evaluation`` before any read of it, so the
-    reference reads that coordinate only, never the name."""
-    from .backend import Child, Leaf, materialize
-    from .shadow import ShadowNode, _handle_of
+    reference reads that coordinate only, never the name.  ``walrus`` marks a
+    walrus's reference: it resolves through the key only
+    (``EvaluationRefSugar``), never the name and never the walrus's value
+    evaluated again."""
+    from .backend import Leaf, materialize
+    from .shadow import ShadowNode
 
     slots = (("evaluation", Leaf(evaluation)), ("name", Leaf(name)))
-    if unevaluated is not None:
-        slots = (*slots, ("unevaluated", Child(_handle_of(unevaluated))))
     if member:
         slots = (*slots, ("member", Leaf(True)))
+    if walrus:
+        slots = (*slots, ("walrus", Leaf(True)))
     return materialize(
         owner.unit,
         ShadowNode("EvaluationRef", span, slots),
@@ -13169,12 +13170,11 @@ class NamedExpr(Expression):
     def substitution_binding(self, scope):
         # `x := e` binds x to a reference to this walrus's one evaluation
         # (temporal choice 1, #7661).  Only a plain Name target binds.  The
-        # value is carried on the reference as the read for a temporal the
-        # evaluation never reached: a walrus nested in an operand that does
-        # not carry its bind out to the statement (an assignment's right-hand
-        # side, a call argument) or in a comprehension, which is refused at
-        # construction, so no element ever evaluates it.  A walrus that was
-        # never substituted carries no key: it binds x to its value.
+        # read resolves through the key only: a walrus nested in an operand
+        # carries its bind out to the enclosing statement on the value
+        # (``carry_walrus_binds``), and a comprehension's element writes it
+        # per member.  A walrus that was never substituted carries no key:
+        # it binds x to its value.
         if not isinstance(self.target, Name):
             return None
         evaluation = getattr(self, "evaluation", None)
@@ -13186,7 +13186,7 @@ class NamedExpr(Expression):
                 self.target.span,
                 evaluation,
                 self.target.id,
-                unevaluated=self.value,
+                walrus=True,
             )
         }
 
@@ -13640,10 +13640,14 @@ class ListComp(Expression):
         """True when a walrus would bind outside the comprehension coordinate.
 
         This -- not `_contains_forbidden_shape` -- is the obstruction every
-        comprehension kind consults when constructing its sugar. A walrus in
-        the element (or a dict's key/value) binds into the ENCLOSING scope,
-        a binding the scoped guarded fold does not model, so the node stays
-        loud. A nested comprehension is no obstruction at all: it is simply
+        comprehension kind consults when constructing its sugar, for the
+        positions whose bind the fold does not carry: a generator's iterable
+        and conditions, and a generator expression's element (run when it is
+        consumed).  A walrus in a list, set or dict comprehension's element
+        constructs: the element writes its key per member and the value
+        carries the last member's bind to the enclosing statement
+        (``ComprehensionSugar._finite_map``). A nested comprehension is no
+        obstruction at all: it is simply
         another sugar in that position, constructed by its own
         `_construct_sugar` when the element is lifted. All four kinds share
         this one reader; `_contains_forbidden_shape` remains the separate,
@@ -13701,8 +13705,13 @@ class ListComp(Expression):
         )
 
     def _construct_sugar(self):
+        # A walrus in the element constructs: the element writes the walrus's
+        # key per member, and the comprehension's value carries the last
+        # member's bind out to the enclosing statement
+        # (``ComprehensionSugar._finite_map``).  A walrus in an iterable or a
+        # condition stays loud (``_recurrence_generators``).
         generators = ListComp._recurrence_generators(self)
-        if generators is None or ListComp._contains_named_expression(self, (self.elt,)):
+        if generators is None:
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import (
             ComprehensionSugar,
@@ -13933,8 +13942,10 @@ class SetComp(Expression):
         )
 
     def _construct_sugar(self):
+        # A walrus in the element constructs: the element writes its key per
+        # member (``ListComp._construct_sugar``).
         generators = ListComp._recurrence_generators(self)
-        if generators is None or ListComp._contains_named_expression(self, (self.elt,)):
+        if generators is None:
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 
@@ -14043,10 +14054,10 @@ class DictComp(Expression):
         )
 
     def _construct_sugar(self):
+        # A walrus in the key or value constructs: they write its key per
+        # member (``ListComp._construct_sugar``).
         generators = ListComp._recurrence_generators(self)
-        if generators is None or ListComp._contains_named_expression(
-            self, (self.key, self.value)
-        ):
+        if generators is None:
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 
@@ -14082,6 +14093,9 @@ class GeneratorExp(Expression):
         return self if not changed else rewrite(self, **changed)
 
     def _construct_sugar(self):
+        # A generator's element runs when it is consumed, not here: a walrus
+        # in it would bind at a point this construction does not model, so
+        # it stays loud.
         generators = ListComp._recurrence_generators(self)
         if generators is None or ListComp._contains_named_expression(self, (self.elt,)):
             return super()._construct_sugar()
@@ -16158,8 +16172,8 @@ class Name(Expression):
                 # binding site (the `x += e` target, a walrus target, a
                 # comprehension target, a live loop's header), which is not
                 # where this read sits.  Re-span to the read; the evaluation
-                # key (a walrus's unevaluated value, a comprehension member's
-                # mark) is unchanged.
+                # key (a walrus's mark, a comprehension member's mark) is
+                # unchanged.
                 #
                 # An alias is not re-spanned: after ``y = x`` a read of ``y``
                 # is the reference the assignment read, at the assignment's
@@ -16174,8 +16188,8 @@ class Name(Expression):
                     self.span,
                     bound.evaluation,
                     bound.name,
-                    unevaluated=getattr(bound, "unevaluated", None),
                     member=getattr(bound, "member", False) is True,
+                    walrus=getattr(bound, "walrus", False) is True,
                 )
             return bound
         span = self.line_col_span()
@@ -16321,12 +16335,11 @@ class EvaluationRef(Expression):
     comprehension's element and conditions a read of a target name is an
     ``EvaluationRef`` to the coordinate the comprehension binds each member
     under (``ListComp._target_references``, ``ComprehensionSugar``), marked
-    ``member``: it reads that coordinate only.  A walrus's reference also
-    carries its substituted value (``unevaluated``, a slot, not a child), read
-    only where the temporal never received the evaluation.  In a live loop's
-    body a carried name reads the loop header's evaluation of it
-    (``_loop_header_evaluation_key``), which the recurrence binds per item.
-    Built by ``_evaluation_ref`` only.
+    ``member``: it reads that coordinate only.  A walrus's reference is marked
+    ``walrus``: it resolves through the key only, and is refused where the
+    key was never bound.  In a live loop's body a carried name reads the loop
+    header's evaluation of it (``_loop_header_evaluation_key``), which the
+    recurrence binds per item.  Built by ``_evaluation_ref`` only.
     """
 
     evaluation: str
@@ -16341,14 +16354,12 @@ class EvaluationRef(Expression):
             EvaluationRefSugar,
         )
 
-        unevaluated = getattr(self, "unevaluated", None)
-        unevaluated = unevaluated.sugar() if isinstance(unevaluated, Node) else None
         return EvaluationRefSugar(
             evaluation=self.evaluation,
             name=self.name,
             site=self.fragment,
-            unevaluated=unevaluated,
             member=getattr(self, "member", False) is True,
+            walrus=getattr(self, "walrus", False) is True,
         )
 
 

@@ -115,6 +115,9 @@ class MethodCallSugar(ConstructedTermSugar):
         )
 
     def _collect(self, receiver, remaining: tuple, accumulated: tuple, ctx) -> Outcome:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            carrying_walrus_binds,
+        )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
         if remaining:
@@ -123,17 +126,23 @@ class MethodCallSugar(ConstructedTermSugar):
             # `ExitSet.sequence`, so an unfactored partitioning argument
             # multiplies the accumulated tuple by its arm count, and k
             # arguments distribute into m ** k arms.
+            # A walrus in the actual binds once: the call consumes the value
+            # it presents and its result carries the bind
+            # (``carrying_walrus_binds``).
             return factored_operand(head.desugar(ctx)).and_then(
-                lambda value: self._collect(
-                    receiver,
-                    tuple(rest),
-                    accumulated
-                    + (
-                        value.project_operation_receiver(
-                            ctx, owner="MethodCallSugar positional actual"
+                lambda value: carrying_walrus_binds(
+                    value,
+                    lambda presented: self._collect(
+                        receiver,
+                        tuple(rest),
+                        accumulated
+                        + (
+                            presented.project_operation_receiver(
+                                ctx, owner="MethodCallSugar positional actual"
+                            ),
                         ),
+                        ctx,
                     ),
-                    ctx,
                 )
             )
         return self._collect_kwargs(receiver, self.keywords, (), accumulated, ctx)
@@ -141,26 +150,32 @@ class MethodCallSugar(ConstructedTermSugar):
     def _collect_kwargs(
         self, receiver, remaining: tuple, kw_values: tuple, positional: tuple, ctx
     ) -> Outcome:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            carrying_walrus_binds,
+        )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
         if remaining:
             (name, sugar), *rest = remaining
             # Same law as the positional fold (#6324).
             return factored_operand(sugar.desugar(ctx)).and_then(
-                lambda value: self._collect_kwargs(
-                    receiver,
-                    tuple(rest),
-                    kw_values
-                    + (
-                        (
-                            name,
-                            value.project_operation_receiver(
-                                ctx, owner="MethodCallSugar keyword actual"
+                lambda value: carrying_walrus_binds(
+                    value,
+                    lambda presented: self._collect_kwargs(
+                        receiver,
+                        tuple(rest),
+                        kw_values
+                        + (
+                            (
+                                name,
+                                presented.project_operation_receiver(
+                                    ctx, owner="MethodCallSugar keyword actual"
+                                ),
                             ),
                         ),
+                        positional,
+                        ctx,
                     ),
-                    positional,
-                    ctx,
                 )
             )
         return dispatch_method_call(

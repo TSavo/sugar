@@ -141,7 +141,7 @@ def _arm_evaluations(arms, incoming) -> tuple:
     the condition, so that key is carried too.  The ``if`` carries those
     values out; it carries no name.  A key that two completed faces bound to
     different values has no one value: it is left out, and its read is the
-    read it was before.
+    read it was before (a walrus's is refused, ``EvaluationRefSugar``).
     """
     from sugar_lift_py_tests.outcome import Completed
 
