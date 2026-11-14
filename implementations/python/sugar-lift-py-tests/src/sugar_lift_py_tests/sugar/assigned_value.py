@@ -36,7 +36,10 @@ an inlined read of it is reduced again.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field as dataclass_field
 import functools
+
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 _MISS = object()
 
@@ -150,8 +153,9 @@ def _bind_evaluations(active, evaluations, index, value):
     ``y`` is a reference to that key: the value ``e`` had here, never ``e``
     evaluated again after a rebind.  Bound once every RHS of the statement
     has completed, as Python assigns its targets after the whole right side
-    (``evaluate_assignment_values``), and before the store targets run, so a
-    class body's later field reads it too; no RHS of the same statement
+    (``evaluate_assignment_values``), and, where the statement has store
+    targets, where it stands among them, left to right (``AssignedNames``),
+    so a class body's later field reads it too; no RHS of the same statement
     reads it (substitution threads the binding to the statements after this
     one), and no RHS's halt carries it."""
     from sugar_lift_py_tests.floor.floor_value import FloorValue
@@ -166,8 +170,64 @@ def _bind_evaluations(active, evaluations, index, value):
     return active
 
 
+@dataclass(frozen=True)
+class AssignedNames(Sugar):
+    """The Name targets a statement assigns between two of its store
+    targets (``evaluate_assignment_values``'s ``targets``): each
+    ``(key, value index)`` in ``evaluations`` bound to its completed value
+    (``_bind_evaluations``), in the block of the statement's targets.
+
+    Python assigns the targets left to right, so a store target's halt
+    leaves every Name target to its left assigned and every one to its
+    right not: ``o.x, y = 1, 2`` where ``o.x`` raises leaves ``y``
+    unassigned. Run as a statement of the targets' block, the names are
+    bound exactly where they stand among the stores, and a store's halt
+    record (its block's context) holds only the names before it."""
+
+    evaluations: tuple  # (key, value index) per Name target, left to right
+    completed: tuple = dataclass_field(compare=False, default=())
+
+    @classmethod
+    def witnesses(cls):
+        from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="evaluation binding",
+            reason="binds a statement's Name targets among its store targets",
+        )
+
+    def desugar(self, ctx: object = None):
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+        active = ctx
+        for index, value in enumerate(self.completed):
+            active = _bind_evaluations(active, self.evaluations, index, value)
+        return ExitSet.completed(_ReducedBlock((), True, (), (), active))
+
+
+def _in_target_order(targets, completed):
+    """The statements of ``targets`` (``evaluate_assignment_values``), left
+    to right: each store target's statement, and each run of Name targets
+    between them as one ``AssignedNames``."""
+    statements = []
+    names = []
+    for target in targets:
+        if isinstance(target, tuple):
+            names.append(target)
+            continue
+        if names:
+            statements.append(AssignedNames(tuple(names), completed))
+            names = []
+        statements.append(target)
+    if names:
+        statements.append(AssignedNames(tuple(names), completed))
+    return tuple(statements)
+
+
 def evaluate_assignment_values(
-    values, ctx, tail=None, bind=(), evaluations=(), site=None
+    values, ctx, tail=None, bind=(), evaluations=(), site=None, targets=()
 ):
     """Evaluate ``values`` (RHS sugars, in evaluation order) at the statement.
 
@@ -175,9 +235,9 @@ def evaluate_assignment_values(
     (a later RHS never runs on an earlier one's halt), and one completed
     ``_ReducedBlock`` per completed path whose context records each RHS's
     completed value. ``tail(ctx, completed)``, if given, runs after the last
-    RHS (store targets) with ``completed`` the completed value of each RHS, in
-    ``values`` order, so a target consumes the one evaluation instead of a
-    second; its outcome replaces the empty completed block. ``bind`` (without
+    RHS with ``completed`` the completed value of each RHS, in ``values``
+    order, so it consumes the one evaluation instead of a second; its outcome
+    replaces the empty completed block. ``bind`` (without
     ``tail``) names the ``(name, value index)`` pairs the statement (at
     ``site``) assigns: the completed path binds each name a live loop carries
     under the statement's write of it (``_bind_carried_writes``).
@@ -185,6 +245,15 @@ def evaluate_assignment_values(
     RHS's completed value is bound under a Name target's key once every RHS
     has completed (``_bind_evaluations``), so the completed path and ``tail``
     carry it.
+
+    ``targets`` (without ``tail``): a statement with store targets, its
+    targets left to right -- each Name target's ``(key, value index)`` and
+    each store target's statement (a sugar). Python assigns them in that
+    order once the whole right side completed, so they run as one block in
+    it (``_in_target_order``): a store's halt holds every Name target to its
+    left and none to its right (``o.x, y = 1, 2``). ``evaluations`` are then
+    only the keys the stores read their values under (a chain's value, an
+    unpack's members), bound before any target.
 
     Python evaluates the whole right side first, then assigns the targets
     left to right: no target is bound while a RHS evaluates, so a later
@@ -210,6 +279,16 @@ def evaluate_assignment_values(
 
     if ctx is None:
         ctx = ReduceContext.root(owner="evaluate_assignment_values")
+    if targets:
+        # The targets, left to right, are the statement's tail: one block
+        # of the store targets' statements with the Name targets bound
+        # where they stand among them (``_in_target_order``).
+        from sugar_lift_py_tests.sugar.assign_sugar import _reduce_targets
+
+        def tail(active, completed):
+            return _reduce_targets(
+                _in_target_order(targets, completed), active, ctx
+            )
 
     def finish(active, completed, stores):
         # ``stores``: what the callees the values called did to objects this
@@ -221,9 +300,10 @@ def evaluate_assignment_values(
         # class body's fields too) and a halt after the values were computed
         # (a store target's), whose record is where it halted -- a halt of
         # the tail that offers none halted at the tail's head, in ``active``.
-        # Every RHS has completed: only now are the targets assigned, each
-        # Name target's key bound to its value (left to right, as Python
-        # assigns them), and then the store targets (``tail``) run.
+        # Every RHS has completed: only now are the targets assigned, left
+        # to right, as Python assigns them: each Name target's key bound to
+        # its value, and each store target's statement run where it stands
+        # among them (``targets``, run as the tail).
         for index, value in enumerate(completed):
             active = _bind_evaluations(active, evaluations, index, value)
         if tail is not None:

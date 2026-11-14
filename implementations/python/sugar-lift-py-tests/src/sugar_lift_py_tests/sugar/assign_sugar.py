@@ -134,7 +134,10 @@ class ChainedAssignSugar(Sugar):
     ``stores`` are the store targets' own statements' sugars
     (``Assign._store_statements``), left to right: each reads the value
     through ``evaluation`` and stores it exactly as ``o.x = v`` alone does,
-    binding what a later read of the place reads.
+    binding what a later read of the place reads.  The targets are assigned
+    left to right (``target_order``): a store's halt leaves every Name
+    target to its left assigned and every one to its right not
+    (``x = o.a = y = e`` where ``o.a`` raises: ``x`` assigned, ``y`` not).
     """
 
     bindings: tuple
@@ -143,6 +146,10 @@ class ChainedAssignSugar(Sugar):
     site: object = dataclass_field(compare=False)
     evaluations: tuple = ()  # (name, key) per Name target, as AssignSugar's
     evaluation: str | None = None  # the key the stores read the value under
+    # The targets left to right: each Name target's name (in ``bindings``
+    # order) and each store target's index in ``stores``
+    # (``nodes._target_order``); empty, every Name target before every store.
+    target_order: tuple = ()
     # A record-less halt is the RHS's, before any target is assigned; the
     # stores' halts carry the record their block gave them.
     halts_at_statement_head: ClassVar[bool] = True
@@ -162,28 +169,27 @@ class ChainedAssignSugar(Sugar):
         )
 
         bind = tuple((name, 0) for name in _chained_names(self.bindings))
-        evaluations = _evaluation_indices(self.evaluations, bind)
-        if self.evaluation is not None:
-            evaluations = (*evaluations, (self.evaluation, 0))
+        value_key = () if self.evaluation is None else ((self.evaluation, 0),)
         if not self.stores:
             return evaluate_assignment_values(
                 (self.value,),
                 ctx,
                 bind=bind,
-                evaluations=evaluations,
+                evaluations=(*_evaluation_indices(self.evaluations, bind), *value_key),
                 site=self.site,
             )
         if ctx is None:
             ctx = ReduceContext.root(owner="ChainedAssignSugar")
-
-        def stores(active, completed):
-            # The RHS was evaluated once, above, and bound under its key;
-            # each store target's statement reads it there, left to right.
-            del completed
-            return _reduce_targets(self.stores, active, ctx)
-
+        # The RHS is evaluated once and bound under its key before any
+        # target; then the targets are assigned left to right, each store
+        # target's statement reading the value there.
         return evaluate_assignment_values(
-            (self.value,), ctx, tail=stores, evaluations=evaluations
+            (self.value,),
+            ctx,
+            evaluations=value_key,
+            targets=_ordered_targets(
+                self.target_order, bind, self.evaluations, self.stores
+            ),
         )
 
 
@@ -275,11 +281,13 @@ class DynamicUnpackStoreAssignSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
+            caller_stores_of,
             peel_walrus_binds,
             written_by,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halts_at_operand_head,
+            laid_in_record,
         )
 
         self._require_typed_targets()
@@ -291,15 +299,21 @@ class DynamicUnpackStoreAssignSugar(Sugar):
             # in the context it wrote, so the targets' block carries it on,
             # and the unpack's own halt (before any target applies) carries
             # its record (``halts_at_operand_head``, the unpack running no
-            # walrus).
+            # walrus).  A callee's store the value carried was made before
+            # the unpack: it is first in the record of every arm, completed
+            # or halted (``laid_in_record``).
             binds, presented = peel_walrus_binds(value)
             if not binds:
                 return self._unpack(operation, expected_demand_cid, value, ctx)
             after = written_by(value, ctx)
-            return halts_at_operand_head(
-                self._unpack(operation, expected_demand_cid, presented, after),
-                None,
-                after,
+            _walrus, stores = caller_stores_of(binds)
+            return laid_in_record(
+                stores,
+                halts_at_operand_head(
+                    self._unpack(operation, expected_demand_cid, presented, after),
+                    None,
+                    after,
+                ),
             )
 
         return self.value.desugar(ctx).and_then(unpack)
@@ -446,10 +460,12 @@ class UnpackStoreAssignSugar(Sugar):
     - Name leaves are spent by substitute (same as MultiAssign) — binding
       before later store leaves run.
     - Each store leaf's member is bound under its member key (``members``)
-      when it completes; the store leaves' own statements
-      (``Assign._store_statements``) then run left to right, each reading
-      its member there and storing it exactly as ``o.x = v`` alone does. A
-      later halt means the statement did not complete; earlier bindings and
+      once every member completed; the leaves are then assigned left to
+      right (``target_order``): each Name leaf bound under its key, each
+      store leaf's own statement (``Assign._store_statements``) reading its
+      member there and storing it exactly as ``o.x = v`` alone does. A
+      store's halt means the statement did not complete; the Name leaves to
+      its left are assigned and the ones to its right are not, and earlier
       completed stores are not rolled back.
 
     One temporal model: names thread, stores effect — no second door.
@@ -460,6 +476,10 @@ class UnpackStoreAssignSugar(Sugar):
     site: object = dataclass_field(compare=False)
     evaluations: tuple = ()  # (name, key) per Name leaf, as AssignSugar's
     members: tuple = ()  # (member key, value_sugar) per store leaf
+    # The leaves left to right: each Name leaf's name (in ``bindings``
+    # order) and each store leaf's index in ``stores``
+    # (``nodes._target_order``); empty, every Name leaf before every store.
+    target_order: tuple = ()
     # A record-less halt is a RHS member's, before any target is assigned;
     # the stores' halts carry the record their block gave them.
     halts_at_statement_head: ClassVar[bool] = True
@@ -489,8 +509,9 @@ class UnpackStoreAssignSugar(Sugar):
             ctx = ReduceContext.root(owner="UnpackStoreAssignSugar")
         # Python evaluates the whole RHS display first, left to right, then
         # assigns each target left to right. Every RHS member is evaluated
-        # here in source order and bound under its keys; a store then reads
-        # its member there and evaluates only its own target.
+        # here in source order and each store leaf's bound under its member
+        # key; the leaves are then assigned in their order, a store reading
+        # its member there and evaluating only its own target.
         values = sorted(
             (
                 *(value for _name, value in self.bindings),
@@ -503,18 +524,20 @@ class UnpackStoreAssignSugar(Sugar):
         def index(value):
             return next(i for i, v in enumerate(values) if v is value)
 
-        def stores(active, completed):
-            del completed
-            return _reduce_targets(self.stores, active, ctx)
-
         bind = tuple((name, index(value)) for name, value in self.bindings)
+        members = tuple((key, index(value)) for key, value in self.members)
+        if not self.stores:
+            return evaluate_assignment_values(
+                values,
+                ctx,
+                evaluations=(*_evaluation_indices(self.evaluations, bind), *members),
+            )
         return evaluate_assignment_values(
             values,
             ctx,
-            tail=stores if self.stores else None,
-            evaluations=(
-                *_evaluation_indices(self.evaluations, bind),
-                *((key, index(value)) for key, value in self.members),
+            evaluations=members,
+            targets=_ordered_targets(
+                self.target_order, bind, self.evaluations, self.stores
             ),
         )
 
@@ -525,6 +548,32 @@ def _evaluation_indices(evaluations, bind):
     the value each name is bound to."""
     keys = dict(evaluations)
     return tuple((keys[name], index) for name, index in bind if name in keys)
+
+
+def _ordered_targets(order, bind, evaluations, stores):
+    """A statement's targets left to right, as ``evaluate_assignment_values``
+    assigns them (``targets``): each keyed Name target's ``(key, value
+    index)`` and each store target's statement.
+
+    ``order`` (``nodes._target_order``) holds each Name target's name, in
+    ``bind``'s order (``bind`` pairs each with the index of its value), and
+    each store target's index in ``stores``; empty (a statement built
+    without its order), every Name target precedes every store.
+    ``evaluations`` holds ``(name, key)`` (``Assign.target_evaluations``): a
+    name with no key binds nothing here, as in ``_evaluation_indices``."""
+    if not order:
+        order = (*(name for name, _index in bind), *range(len(stores)))
+    keys = dict(evaluations)
+    names = iter(bind)
+    targets = []
+    for item in order:
+        if isinstance(item, int):
+            targets.append(stores[item])
+            continue
+        name, index = next(names)
+        if name in keys:
+            targets.append((keys[name], index))
+    return tuple(targets)
 
 
 def _reduce_targets(targets, active, ctx):
@@ -540,9 +589,15 @@ def _reduce_targets(targets, active, ctx):
         reduce_body,
     )
 
-    if getattr(active, "assigned_values", ()) == getattr(
-        ctx, "assigned_values", ()
-    ) and (ctx is None or getattr(active, "temporal", None) is ctx.temporal):
+    from sugar_lift_py_tests.sugar.assigned_value import AssignedNames
+
+    if (
+        getattr(active, "assigned_values", ()) == getattr(ctx, "assigned_values", ())
+        and (ctx is None or getattr(active, "temporal", None) is ctx.temporal)
+        # A Name target bound among the stores (``AssignedNames``) is carried
+        # on by the targets' record, as one bound before them is.
+        and not any(isinstance(target, AssignedNames) for target in targets)
+    ):
         return reduce_body(targets, active)
     return reduce_block_to_exitset(targets, active)
 

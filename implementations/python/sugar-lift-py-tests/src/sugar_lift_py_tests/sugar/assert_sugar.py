@@ -64,9 +64,21 @@ class AssertSugar(Sugar):
         # recorded for the readers of this assert (item 28, #7757): they read
         # it off the owner's one reduction and never reduce the assert alone.
         from sugar_lift_py_tests import assert_reductions
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
 
+        # The assert's own step (the test stated, ``AssertionError`` where
+        # it fails) runs after its test: it consumes the test through the
+        # one operand door, so it states the value the test presents, and
+        # its failure after a walrus in the test bound (``assert (a :=
+        # f())``) carries the record of this statement's context with the
+        # bind applied (``consume_operands``), never the block's prefix,
+        # which holds none of it.
         outcome = self.test.desugar(ctx).and_then(
-            lambda value: value.stated(self.site)
+            lambda value: consume_operands(
+                lambda presented: presented.stated(self.site), value
+            )
         )
         assert_reductions.record(self.site, outcome)
         return outcome

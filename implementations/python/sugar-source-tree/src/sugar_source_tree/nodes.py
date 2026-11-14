@@ -11709,6 +11709,23 @@ def _store_leaves(targets) -> tuple:
     return tuple(leaves)
 
 
+def _target_order(leaves) -> tuple:
+    """``leaves`` (Name and Attribute/Subscript targets, left to right) as
+    the order a statement assigns them in (``ChainedAssignSugar`` /
+    ``UnpackStoreAssignSugar.target_order``): each Name leaf's name and
+    each store leaf's ordinal among the store leaves (its statement's index
+    in ``_store_statements``)."""
+    order: list = []
+    stores = 0
+    for leaf in leaves:
+        if isinstance(leaf, Name):
+            order.append(leaf.id)
+            continue
+        order.append(stores)
+        stores += 1
+    return tuple(order)
+
+
 def _store_member_key(evaluation: str, ordinal: int) -> str:
     """The key an unpack binds the member its ``ordinal``-th store leaf is
     given under (``Assign._store_target_statement``): the leaf's own
@@ -13315,6 +13332,7 @@ class Assign(Statement):
             site=self.fragment,
             evaluations=self.target_evaluations(),
             evaluation=self._store_value_evaluation(),
+            target_order=_target_order(self.targets),
         )
 
     def unpack_store_sugar(self, value_sugar):
@@ -13401,6 +13419,7 @@ class Assign(Statement):
                     site=self.fragment,
                     evaluations=self.target_evaluations(),
                     members=tuple(members),
+                    target_order=_target_order(leaf for leaf, _ in store_pairs),
                 )
             target = self.targets[0]
             if not isinstance(self.value, (Tuple_, List)) and target.elts:
