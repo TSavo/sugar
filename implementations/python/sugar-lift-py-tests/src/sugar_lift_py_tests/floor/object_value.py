@@ -887,30 +887,18 @@ class ObjectValue(FloorValue):
 
     def class_member(self, name: str) -> tuple:
         """``(decided, method, value)``: the member ``name`` read on this
-        receiver's type is -- the one class-namespace lookup
-        (``ClassDef.namespace_owner`` over the receiver's class, #7757), and
-        the one resolution every reader of the member reads (an attribute
-        read, an explicit or implicit method call, a comparison, a store).
+        receiver's type is -- the one class-namespace lookup over the
+        receiver's class (``ClassDefinitionValue.namespace_member``, #7757),
+        the one resolution every reader of a class member reads (an
+        attribute read, an explicit or implicit method call, a comparison, a
+        store; ``Cls.m``; ``super().m``).
 
-        The class of the MRO that holds ``name`` answers with the value its
-        namespace holds: the binding its body left last
-        (``ClassDef.body_binder``).  A ``def`` there is ``method``, the
-        roster's function that very statement wrote (its frame's definition
-        is that occurrence); any other binding (an assignment, a nested
-        class) is ``value``, the class-body field it bound -- never both, so
-        a ``def`` after a ``property`` of the same name, or an assignment
-        after a ``def``, is the member, and the earlier binding is gone.
-        Both None when no class binds the name or a builtin class does.
-
-        Not decided -- ``(False, None, None)``, the one unanswered form,
-        never a later class's member -- when the lookup is not (an unread
-        base, a decorator, a store, a conditional binding), when the class
-        that holds it holds a value its body did not bind
-        (``ClassDef.namespace_value_is_body``), when that class has no class
-        value here, when the ``def`` it holds is decorated by anything but a
-        builtin descriptor or an identity decorator (its value is the
-        decorator's result, ``ClassDef.method_value_is_written``), and when
-        the binding's value is not carried here.
+        A ``def`` the holding class's body left last is ``method``: this
+        receiver's roster function that very statement wrote, the holding
+        class its defining class.  Any other binding is ``value``, the
+        class-body field it bound.  Both None when no class binds the name or
+        a builtin class does.  Not decided -- ``(False, None, None)`` --
+        whenever that lookup is not.
 
         A receiver built with no class statement has only its own roster and
         class fields (and its class value's bases' fields): no other class
@@ -940,48 +928,15 @@ class ObjectValue(FloorValue):
             if method is not None and value is not None:
                 return False, None, None
             return True, method, value
-        decided, owner = definition.namespace_owner(name)
+        decided, _found, _holder, method, value = defining.namespace_member(
+            name,
+            lambda holder: (
+                method for method in self.methods if method.defining_class is holder
+            ),
+        )
         if not decided:
             return False, None, None
-        if owner is None or isinstance(owner, str):
-            return True, None, None
-        if not owner.namespace_value_is_body(name):
-            return False, None, None
-        holder = defining.class_value_of_statement(owner)
-        if holder is None:
-            return False, None, None
-        from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
-        from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
-
-        binder = owner.body_binder(name)
-        if isinstance(binder, (FunctionDef, AsyncFunctionDef)):
-            written = SourceOccurrenceIdentityV1.of(binder)
-
-            def wrote(method) -> bool:
-                statement = getattr(method.source_call_frame, "owner", None)
-                return (
-                    method.defining_class is holder
-                    and isinstance(statement, (FunctionDef, AsyncFunctionDef))
-                    and SourceOccurrenceIdentityV1.of(statement) == written
-                )
-
-            method = next(
-                (method for method in self.methods if wrote(method)), None
-            )
-            if method is None or not owner.method_value_is_written(binder):
-                return False, None, None
-            return True, method, None
-        value = next(
-            (
-                field.value
-                for field in reversed(holder.class_fields)
-                if getattr(field, "name", None) == name
-            ),
-            None,
-        )
-        if value is None:
-            return False, None, None
-        return True, None, value
+        return True, method, value
 
     def unanswered_method_call(self, name, arguments, keywords, site):
         """``self.<name>(...)`` whose member the one class-namespace lookup

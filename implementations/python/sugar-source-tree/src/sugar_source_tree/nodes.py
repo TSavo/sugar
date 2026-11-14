@@ -696,6 +696,31 @@ def _yields_a_class(node) -> bool:
     )
 
 
+def _value_may_be_a_class(node) -> bool:
+    """Whether the value the expression ``node`` yields may be a class: False
+    only for an expression whose value is never one whatever it reads -- a
+    constant, an f-string, a list, tuple, set or dict display, a
+    comprehension, a lambda.  Anything else (a call's result, an attribute, a
+    subscript, an operator, an ``await``) may be any class the module hands
+    on (``SourceUnit.class_namespace_stores``)."""
+    return not isinstance(
+        node,
+        (
+            Constant,
+            JoinedStr,
+            List,
+            Tuple_,
+            Set,
+            Dict,
+            ListComp,
+            SetComp,
+            DictComp,
+            GeneratorExp,
+            Lambda,
+        ),
+    )
+
+
 def _class_scope_binds(statement, name: str) -> bool:
     """Whether the class-body statement ``statement``, or anything under it
     in the class body's own scope (``_class_scope_nodes``), binds or
@@ -2879,14 +2904,19 @@ class SourceUnit:
         compound statements (``if``, ``try``, loops); a function's local is
         that function's bindings of it; a free name an enclosing function's.
         An alias of the class is the class: a name bound by ``K = C``, ``K:
-        T = C``, ``(K := C)``, or a tuple unpack whose sides pair up (``K, _
-        = C, 0``).
+        T = C``, ``(K := C)``, ``K = C if c else D`` (either), or a tuple
+        unpack whose sides pair up (``K, _ = C, 0``).
 
-        A parameter (other than a method's receiver, below) may be any class
-        whose object the module hands on (``_class_read_kept``: anything but
-        a call of it, an attribute of it, a base, an alias, ``isinstance``,
-        ``except``, ``raise``, ``is``), and so may a leaf of an unpack whose
-        sides do not pair up (``K, J = pair``): a store through one is a
+        Every other name whose value may be a class may be any class whose
+        object the module hands on (``_class_read_kept``: anything but a call
+        of it, an attribute of it, a base, an alias, ``isinstance``,
+        ``except``, ``raise``, ``is``): a parameter (other than a method's
+        receiver, below), a lambda's own parameter, a comprehension's own
+        variable, a ``for`` or ``with ... as`` target, an augmented
+        assignment's target, a leaf of an unpack whose sides do not pair up
+        (``K, J = pair``), and a name bound to any value that may be a class
+        (``_value_may_be_a_class``: a call's result, ``K = make()``; an
+        attribute, a subscript, an ``await``).  A store through one is a
         store on every such class -- on every class when an expression that
         yields a class from an instance (``type(o)``, ``o.__class__``,
         ``__mro__``, ``__subclasses__()``) is handed on, or the module
@@ -2899,10 +2929,8 @@ class SourceUnit:
         ``cls.name`` in a ``classmethod`` (and ``__new__``,
         ``__class_getitem__``, ``__init_subclass__`` -- the last only ever on
         a subclass), ``type(self).name`` and ``self.__class__.name`` in any
-        other method, and ``setattr``/``delattr`` on them.  A store through
-        a name bound by anything else (a call's result, a ``for`` or
-        ``with`` target, a lambda's or a comprehension's own variable) is
-        not seen here.  One walk per typed root.
+        other method, and ``setattr``/``delattr`` on them.  One walk per
+        typed root.
         """
         module = self._require_typed_module(
             "SourceUnit.class_namespace_stores", blame=self.filename
@@ -2951,6 +2979,11 @@ class SourceUnit:
         target_names: set = set()
         kept_groups: set = set()
         imported: set = set()
+        # The ``Name`` reads of a lambda's own parameters and of a
+        # comprehension's own variables: each may be any class the module
+        # hands on.  Neither scope is a ``def``, so the symtable read of the
+        # function around it (``_function_symbol_at``) does not key them.
+        own_scope: set = set()
         for node in module.walk():
             if isinstance(node, ClassDef):
                 classes.append(node)
@@ -2960,11 +2993,46 @@ class SourceUnit:
                 imported.update(
                     alias.asname or alias.name.split(".")[0] for alias in node.names
                 )
+            elif isinstance(node, Lambda):
+                own = frozenset(param.name for param in node.params)
+                own_scope.update(
+                    id(read)
+                    for read in node.body.walk()
+                    if isinstance(read, Name) and read.id in own
+                )
+            elif isinstance(node, (ListComp, SetComp, DictComp, GeneratorExp)):
+                own = frozenset(
+                    leaf.id
+                    for generator in node.generators
+                    for leaf in _target_name_leaves((generator.target,))
+                )
+                # The first iterable is read in the enclosing scope.
+                outside = (
+                    frozenset(id(read) for read in node.generators[0].iter.walk())
+                    if node.generators
+                    else frozenset()
+                )
+                own_scope.update(
+                    id(read)
+                    for read in node.walk()
+                    if isinstance(read, Name)
+                    and read.id in own
+                    and id(read) not in outside
+                )
             if isinstance(node, Assign):
                 for target in node.targets:
                     _alias_pairs(target, node.value, pairs)
             elif isinstance(node, (AnnAssign, NamedExpr)) and node.value is not None:
                 _alias_pairs(node.target, node.value, pairs)
+            elif isinstance(node, (For, AsyncFor, WithItem, AugAssign)):
+                # What the iteration, the manager's ``__enter__`` or the
+                # in-place operator yields may be any class the module hands
+                # on.
+                bound = getattr(node, type(node)._bound_target_fields[0])
+                if bound is not None:
+                    pairs.extend(
+                        (leaf, None) for leaf in _target_name_leaves((bound,))
+                    )
             for field_name in type(node)._bound_target_fields:
                 value = getattr(node, field_name)
                 target_names.update(
@@ -3047,11 +3115,16 @@ class SourceUnit:
         tables: dict = {}
 
         def classes_of(node) -> frozenset:
-            """The occurrences of the classes the expression ``node`` may
-            read by binding -- a class statement, an alias of one -- and
+            """The occurrences of the classes the name ``node`` may read by
+            binding -- a class statement, an alias of one -- and
             ``_ESCAPED_CLASS`` when it may be any class the module hands on
-            (a parameter, a leaf of an unpack whose sides do not pair up)."""
-            if not isinstance(node, Name) or node.id not in spellings:
+            (a parameter, a lambda's or a comprehension's own variable, a
+            name bound to a value that may be a class)."""
+            if not isinstance(node, Name):
+                return frozenset()
+            if id(node) in own_scope:
+                return _ESCAPED
+            if node.id not in spellings:
                 return frozenset()
             key, parameter, free = read_of(node)
             if free:
@@ -3066,6 +3139,25 @@ class SourceUnit:
             found = tables.get(key, frozenset())
             return (found | _ESCAPED) if parameter else found
 
+        def value_classes(value) -> frozenset:
+            """The classes the value an alias binds may be: what a name
+            reads (``classes_of``), either arm of ``a if c else b`` and each
+            operand of ``a or b``, nothing for a value that is never a class
+            (``_value_may_be_a_class``), and ``_ESCAPED_CLASS`` for any other
+            -- a call's result, an attribute, a subscript, a member of an
+            unpack whose sides do not pair up (None)."""
+            if value is None:
+                return _ESCAPED
+            if isinstance(value, Name):
+                return classes_of(value)
+            if isinstance(value, IfExp):
+                return value_classes(value.body) | value_classes(value.orelse)
+            if isinstance(value, BoolOp):
+                return frozenset().union(*(value_classes(item) for item in value.values))
+            if isinstance(value, NamedExpr):
+                return value_classes(value.value)
+            return _ESCAPED if _value_may_be_a_class(value) else frozenset()
+
         for klass in classes:
             target = klass.binding_target
             key = read_of(target)[0] if isinstance(target, Name) else (None, klass.name)
@@ -3075,7 +3167,7 @@ class SourceUnit:
         while changed:
             changed = False
             for target, value in pairs:
-                reached = _ESCAPED if value is None else classes_of(value)
+                reached = value_classes(value)
                 if not reached:
                     continue
                 key = read_of(target)[0]
@@ -11460,6 +11552,35 @@ class ClassDef(Statement):
             return False, None
         return True, binder
 
+    def dataclass_new_entry(self) -> "tuple[bool, FunctionDef | None]":
+        """``new_entry`` for the class call the ``dataclasses.dataclass``
+        arm constructs (``_dataclass_generated_init_fields``: its only bases
+        are ``typing.Generic[...]``).
+
+        When the one base walk reads the order (no base), it is
+        ``new_entry``.  When it does not (a ``Generic[...]`` base, a
+        subscript of an import), the arm reads that base by its own law:
+        ``typing.Generic`` holds no ``__new__``, so the ``__new__`` the call
+        runs is the one this class's namespace holds -- its body's binding
+        (``_body_binding``) or a store the module makes on it
+        (``SourceUnit.class_namespace_stores``) -- else ``object``'s.  A
+        namespace that may hold one is not decided here, whatever it is:
+        ``(False, None)``.  The arm constructs only when the answer is
+        ``(True, None)``: a ``__new__`` of the class's own runs before the
+        generated ``__init__``, which no frame here seats with it
+        (``ClassDefinitionValue.callable_application_with``,
+        ``source_visible_constructor_frame``)."""
+        if self.method_resolution_order() is not None:
+            return self.new_entry()
+        stored = self.unit.class_namespace_stores(self)
+        if (
+            "__new__" in stored
+            or "*" in stored
+            or self._body_binding("__new__") is not False
+        ):
+            return False, None
+        return True, None
+
     def method_resolution_head(self) -> tuple:
         """What every MRO Python builds for this class starts with, read when
         the whole order (``method_resolution_order``) is not: this class,
@@ -11971,6 +12092,39 @@ class ClassDef(Statement):
             if initializer is not None
             else (None if new_shape is None else new_shape[0])
         )
+        owner_cid = self.fragment.seal().cid
+        span = self.line_col_span()
+        site = SourceFragmentCoordinateV1(
+            self.unit.source_cid,
+            span.start_line,
+            span.start_col,
+            span.end_line,
+            span.end_col,
+        )
+        if initializer is None and new_shape is None:
+            dataclass_fields = self._dataclass_generated_init_fields()
+            if dataclass_fields is not None:
+                # The generated ``__init__`` runs on what the class's
+                # ``__new__`` returns: the arm constructs only over a
+                # builtin's (``dataclass_new_entry``).  A ``__new__`` of the
+                # class's own, or one not decided, is never skipped.
+                new_decided, own_new = self.dataclass_new_entry()
+                if not new_decided or own_new is not None:
+                    from sugar_source_tree.panic import SugarNotWritten
+
+                    raise SugarNotWritten(
+                        blame=self.fragment,
+                        owner="ClassDef.source_visible_constructor_frame",
+                        observed=(
+                            f"dataclass {self.name}: its call runs a __new__ "
+                            "that is not a builtin's"
+                        ),
+                        requested="the __new__ the class call runs, then its generated __init__",
+                        fix="read the dataclass call as the unanswered call",
+                    )
+                return self._dataclass_constructor_frame(
+                    dataclass_fields, site=site, owner_cid=owner_cid
+                )
         constructed_new_method = None
         # The ``__new__`` the call runs, through the one class-namespace
         # lookup (``new_entry``).  A class whose ``__new__`` is not decided,
@@ -11988,15 +12142,6 @@ class ClassDef(Statement):
                 new_definition.source_visible_call_frame(),
                 self._method_descriptor_kind(new_definition),
             )
-        owner_cid = self.fragment.seal().cid
-        span = self.line_col_span()
-        site = SourceFragmentCoordinateV1(
-            self.unit.source_cid,
-            span.start_line,
-            span.start_col,
-            span.end_line,
-            span.end_col,
-        )
         # A source class without ``__init__`` that is an exception type inherits
         # BaseException's constructor law: ``(*args)``.  Ordinary new-style
         # classes inherit ``object.__init__`` (zero formals).  Installing the
@@ -12005,12 +12150,6 @@ class ClassDef(Statement):
         # exception construction during module-wide frame resolution — and that
         # silence blocked authenticated generator managers whose helpers only
         # *mention* those raises.
-        if initializer is None and new_shape is None and new_definition is None:
-            dataclass_fields = self._dataclass_generated_init_fields()
-            if dataclass_fields is not None:
-                return self._dataclass_constructor_frame(
-                    dataclass_fields, site=site, owner_cid=owner_cid
-                )
         if initializer is None and self._inherits_default_exception_constructor():
             args_coordinate = BindingCoordinateV1.mint(
                 owner_cid, self.fragment, ("inherited-exception-args", 0)

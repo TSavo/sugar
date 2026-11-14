@@ -152,9 +152,12 @@ class ClassDefinitionValue(GuardStableValue):
         (``ClassDef.initializer_entry`` is None: a store to it, a base's
         generated one, a conditional ``def``), and a class whose ``__new__``
         it does not decide as the class's own ``def`` or a builtin's
-        (``ClassDef.new_entry``: a store to it, a base's ``def __new__``) --
-        the ``dataclass`` arm aside, which reads its ``typing.Generic`` base
-        by its own law.
+        (``ClassDef.new_entry``: a store to it, a base's ``def __new__``).
+        The ``dataclass`` arm asks the same lookup, reading its
+        ``typing.Generic`` base by its own law (``ClassDef.dataclass_new_entry``):
+        it constructs only over a builtin's ``__new__``; a ``__new__`` of the
+        class's own, or one not decided, runs before the generated
+        ``__init__`` and the call is the unanswered call.
         """
         from sugar_lift_py_tests.floor.object_value import bind_call
 
@@ -179,14 +182,18 @@ class ClassDefinitionValue(GuardStableValue):
             else ()
         )
         generated = definition._dataclass_generated_init_fields()
-        if (not definition.new_entry()[0] and generated is None) or (
-            definition._authenticated_new_constructor_shape() is None
-            and generated is None
-            and (
-                definition.construction_order() is None
-                or definition.initializer_entry() is None
+        if generated is not None:
+            new_decided, own_new = definition.dataclass_new_entry()
+            unanswered = not new_decided or own_new is not None
+        else:
+            unanswered = not definition.new_entry()[0] or (
+                definition._authenticated_new_constructor_shape() is None
+                and (
+                    definition.construction_order() is None
+                    or definition.initializer_entry() is None
+                )
             )
-        ):
+        if unanswered:
             return self._unanswered_call(
                 self.class_name, positional, keywords, operation.site
             )
@@ -304,6 +311,96 @@ class ClassDefinitionValue(GuardStableValue):
             None,
         )
 
+    def namespace_member(self, name, roster=None, *, after=None) -> tuple:
+        """``(decided, found, holder, method, value)``: what ``name`` read on
+        this class's type is -- the one class-namespace lookup (#7757), and
+        the one resolution every reader of a class member reads: an
+        instance's attribute read, call, comparison and store
+        (``ObjectValue.class_member``), ``Cls.m`` (``call_method_value``) and
+        ``super().m`` (``after``: the lookup from the class after the
+        ``__class__`` cell, ``BuiltinSuperValue``).
+
+        - ``found`` is the class of the MRO that holds ``name``
+          (``ClassDef.namespace_owner``): a ``ClassDef``, a builtin class
+          name, or None when no class of the order binds it.
+        - ``holder`` is the class value built from ``found`` (this value or
+          one of its C3 tail).
+        - The member is the binding ``found``'s body left last
+          (``ClassDef.body_binder``).  A ``def`` there is ``method``: the
+          function of ``roster(holder)`` that very statement wrote
+          (``_written_by``; ``roster`` defaults to the holder's own
+          ``methods``).  Any other binding (an assignment, a nested class)
+          is ``value``, the class-body field it bound.  Never both: a
+          ``def`` after a ``property`` of the same name, or an assignment
+          after a ``def``, is the member, and the earlier binding is gone.
+
+        Not decided -- ``(False, None, None, None, None)``, the one
+        unanswered form, never a later class's member -- when the lookup is
+        not (an unread base, a decorator, a store, a conditional binding),
+        when the class that holds it holds a value its body did not bind
+        (``ClassDef.namespace_value_is_body``), when that class has no class
+        value here, when the ``def`` it holds is decorated by anything but a
+        builtin descriptor or an identity decorator (its value is the
+        decorator's result, ``ClassDef.method_value_is_written``), when the
+        ``def``'s function is not in the roster, and when the binding's
+        value is not carried here.  A class value built with no class
+        statement has no lookup to read: not decided."""
+        from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
+
+        undecided = (False, None, None, None, None)
+        definition = self.class_definition
+        if definition is None:
+            return undecided
+        decided, found = definition.namespace_owner(name, after=after)
+        if not decided:
+            return undecided
+        if found is None or isinstance(found, str):
+            return True, found, None, None, None
+        if not found.namespace_value_is_body(name):
+            return undecided
+        holder = self.class_value_of_statement(found)
+        if holder is None:
+            return undecided
+        binder = found.body_binder(name)
+        if isinstance(binder, (FunctionDef, AsyncFunctionDef)):
+            methods = holder.methods if roster is None else roster(holder)
+            method = next(
+                (method for method in methods if _written_by(method, binder)), None
+            )
+            if method is None or not found.method_value_is_written(binder):
+                return undecided
+            return True, found, holder, method, None
+        value = next(
+            (
+                field.value
+                for field in reversed(holder.class_fields)
+                if getattr(field, "name", None) == name
+            ),
+            None,
+        )
+        if value is None:
+            return undecided
+        return True, found, holder, None, value
+
+    def object_method(self, method):
+        """The function ``method`` of this class's roster as the one method
+        door binds it (``object_value.bind_method_call``): its source frame,
+        with this class -- the class whose body wrote it -- as its lexical
+        ``__class__`` cell."""
+        from sugar_lift_py_tests.floor import ObjectMethodValue
+
+        frame = method.source_call_frame
+        return ObjectMethodValue(
+            method.name,
+            frame.parameters,
+            frame.body,
+            frame.frame_cid,
+            tuple(coordinate.cid for coordinate in frame.formal_coordinates),
+            frame,
+            method.descriptor_kind,
+            defining_class=self,
+        )
+
     def call_method_value(
         self,
         name,
@@ -315,180 +412,98 @@ class ClassDefinitionValue(GuardStableValue):
         keywords=(),
         required_frame=None,
     ):
-        """Invoke one authenticated source method on the class object.
+        """``Cls.m(...)``: the member the one class-namespace lookup selects
+        for ``m`` on this class (``namespace_member``), read off the class
+        and called.  Nothing selects it again by name.
 
-        ``Cls.m`` is the one class-namespace lookup over the class's MRO
-        (``ClassDef.namespace_owner``): the class that holds ``m`` answers
-        with the function its body wrote, which runs with that class as its
-        ``__class__`` cell.  A lookup it does not decide, or a class that
-        holds a value its body did not bind (``namespace_value_is_body``),
-        is the unanswered call; a name no source class of the order holds
-        refuses by name.  A class value built with no class statement has
-        only its own methods."""
-        holder = self
-        definition = self.class_definition
-        if definition is not None:
-            decided, found = definition.namespace_owner(name)
-            if not decided or (
-                found is not None
-                and not isinstance(found, str)
-                and not found.namespace_value_is_body(name)
-            ):
-                return self._unanswered_call(
-                    f"{self.class_name}.{name}",
-                    arguments,
-                    keywords,
-                    blame,
-                )
-            holder = (
-                None
-                if found is None or isinstance(found, str)
-                else self.class_value_of_statement(found)
+        - A ``def`` the holding class's body left last runs with that class
+          as its ``__class__`` cell, through the one method door, whose
+          implicit first actual the descriptor kind reads
+          (``object_value.implicit_arguments``): a plain function read off
+          its class is unbound and takes none, a ``classmethod`` takes the
+          class, a ``staticmethod`` none.  A frame the call form
+          authenticated must be that function's own.
+        - A function the class namespace holds as a field (``f = lambda x:
+          x``, ``m = some_def``), read off its class, is the function itself,
+          unbound: the function's own call applies the written actuals
+          (``LambdaCallable.callable_application_with``).
+        - A lookup it does not decide is the unanswered call; a name no
+          source class of the order holds, a property (the property object
+          is not callable) and any other value refuse by name."""
+        decided, found, holder, method, value = self.namespace_member(name)
+        if not decided:
+            return self._unanswered_call(
+                f"{self.class_name}.{name}",
+                arguments,
+                keywords,
+                blame,
             )
-            if holder is None:
+        if method is not None:
+            if method.descriptor_kind == "property":
+                # ``Cls.p`` is the property object itself, which is not callable.
+                raise SugarNotWritten(
+                    owner=owner,
+                    blame=blame,
+                    observed=f"{self.class_name}.{name} is a property read off its class",
+                    requested="a callable class attribute",
+                    fix="read the property off an instance, or keep the call loud",
+                )
+            if (
+                required_frame is not None
+                and method.source_call_frame.frame_cid != required_frame.frame_cid
+            ):
                 raise SugarNotWritten(
                     owner=owner,
                     blame=blame,
                     observed=(
-                        f"{self.class_name}.{name} is held by "
-                        f"{getattr(found, 'name', found)}"
+                        f"{self.class_name}.{name}: the authenticated frame is not "
+                        "the selected method's"
                     ),
-                    requested="one authenticated class-method definition",
-                    fix="preserve unique method resolution or keep the call loud",
+                    requested="the frame of the method the one lookup selected",
+                    fix="authenticate the call against the selected method's frame",
                 )
-        candidates = tuple(method for method in holder.methods if method.name == name)
-        if required_frame is not None:
-            candidates = tuple(
-                method
-                for method in candidates
-                if method.source_call_frame.frame_cid == required_frame.frame_cid
-            )
-        if len(candidates) != 1:
-            raise SugarNotWritten(
+            from sugar_lift_py_tests.floor.object_value import bind_method_call
+            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+            def refuse(*, owner, blame, observed, requested, fix):
+                del owner, blame, requested, fix
+                raise SourceCallBindingGap(observed)
+
+            return bind_method_call(
+                self,
+                holder.object_method(method),
+                arguments,
+                keywords,
+                class_name=self.class_name,
+                ctx=ctx,
                 owner=owner,
                 blame=blame,
-                observed=f"{len(candidates)} source methods for {self.class_name}.{name}",
-                requested="one authenticated class-method definition",
-                fix="preserve unique method resolution or keep the call loud",
-            )
-        method = candidates[0]
-        if method.descriptor_kind == "property":
-            # ``Cls.p`` is the property object itself, which is not callable.
-            raise SugarNotWritten(
-                owner=owner,
-                blame=blame,
-                observed=f"{self.class_name}.{name} is a property read off its class",
-                requested="a callable class attribute",
-                fix="read the property off an instance, or keep the call loud",
-            )
-        frame = required_frame or method.source_call_frame
-        from sugar_lift_py_tests.floor import ObjectMethodValue
-        from sugar_lift_py_tests.floor.object_value import bind_method_call
-        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+                refuse=refuse,
+                required_frame=required_frame,
+            ).producer_outcome(ctx)
+        from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
 
-        def refuse(*, owner, blame, observed, requested, fix):
-            del owner, blame, requested, fix
-            raise SourceCallBindingGap(observed)
+        if isinstance(value, LambdaCallable) and required_frame is None:
+            from sugar_lift_py_tests.callable_application import CallableApplication
 
-        # ``Cls.m(...)`` binds through the one method door, which reads the
-        # lookup's implicit first actual off the descriptor kind
-        # (``object_value.implicit_arguments``): a plain function read off its
-        # class is unbound and takes none, a ``classmethod`` takes the class,
-        # a ``staticmethod`` none.  The class that holds ``m`` is its lexical
-        # ``__class__`` cell.
-        return bind_method_call(
-            self,
-            ObjectMethodValue(
-                method.name,
-                frame.parameters,
-                frame.body,
-                frame.frame_cid,
-                tuple(coordinate.cid for coordinate in frame.formal_coordinates),
-                frame,
-                method.descriptor_kind,
-                defining_class=holder,
-            ),
-            arguments,
-            keywords,
-            class_name=self.class_name,
-            ctx=ctx,
+            return value.callable_application_with(
+                CallableApplication(
+                    (*arguments, *(actual for _keyword, actual in keywords)),
+                    tuple(keyword for keyword, _actual in keywords),
+                    blame,
+                ),
+                ctx,
+            )
+        raise SugarNotWritten(
             owner=owner,
             blame=blame,
-            refuse=refuse,
-            required_frame=required_frame,
-        ).producer_outcome(ctx)
-
-    def dispatch_super_method(
-        self,
-        receiver,
-        name,
-        arguments,
-        *,
-        owner,
-        blame,
-        ctx=None,
-        keywords=(),
-    ):
-        """Run THIS class's own method ``name``, bound to an explicit
-        ``receiver``.
-
-        Zero-argument ``super()`` selects the class by its one lookup
-        (``ClassDef.namespace_owner`` over ``type(receiver).__mro__`` after
-        ``__class__``, ``BuiltinSuperValue``): this class's namespace binds
-        ``name``, so the function its body wrote for it (the last ``def``,
-        Python's live binding) is the one that runs -- never one this class
-        inherits.  The original instance stays the bound ``self`` while the
-        body reduces with ``__class__`` seeded to this class (its defining
-        class), so a chained ``super`` inside it continues along the
-        receiver's MRO after this class.  It is the same bound-method call
-        as ``ObjectValue.call_method_value`` (``bind_method_call`` then
-        ``producer_outcome``).  A name the body binds by anything but a
-        ``def`` (an assignment, an import) has no method here and refuses by
-        name.
-        """
-        from sugar_lift_py_tests.floor import ObjectMethodValue
-        from sugar_lift_py_tests.floor.object_value import bind_method_call
-
-        def refuse(*, owner, blame, observed, requested, fix):
-            raise SugarNotWritten(
-                owner=owner,
-                blame=blame,
-                observed=observed,
-                requested=requested,
-                fix=fix,
-            )
-
-        written = tuple(method for method in self.methods if method.name == name)
-        if not written:
-            raise SugarNotWritten(
-                owner=owner,
-                blame=blame,
-                observed=f"{self.class_name}.{name}",
-                requested="the source method zero-argument super selected",
-                fix=f"construct a diggable body for `{self.class_name}.{name}` or keep loud",
-            )
-        method = written[-1]
-        frame = method.source_call_frame
-        return bind_method_call(
-            receiver,
-            ObjectMethodValue(
-                method.name,
-                frame.parameters,
-                frame.body,
-                frame.frame_cid,
-                tuple(coordinate.cid for coordinate in frame.formal_coordinates),
-                frame,
-                method.descriptor_kind,
-                defining_class=self,
+            observed=(
+                f"{self.class_name}.{name} is held by "
+                f"{getattr(found, 'name', found)}"
             ),
-            arguments,
-            keywords,
-            class_name=self.class_name,
-            ctx=ctx,
-            owner=owner,
-            blame=blame,
-            refuse=refuse,
-        ).producer_outcome(ctx)
+            requested="one authenticated class-method definition",
+            fix="preserve unique method resolution or keep the call loud",
+        )
 
     def to_term(self, *, owner: str):
         del owner
@@ -549,15 +564,13 @@ class ClassDefinitionValue(GuardStableValue):
         )
 
     def _object_methods(self):
-        from sugar_lift_py_tests.floor import ObjectMethodValue
-
         # The frames of every source method of the class and its C3 tail,
         # each with the class value whose body wrote it.  Which one a name
         # selects is never read off this roster's order: the one
         # class-namespace lookup names the class that holds it
-        # (``ObjectValue.class_member``), and its method here is the one
-        # that class wrote.  A base method is retained with its original
-        # authenticated source frame; nothing is reconstructed here.
+        # (``namespace_member``), and its method here is the one that class
+        # wrote.  A base method is retained with its original authenticated
+        # source frame; nothing is reconstructed here.
         inherited = tuple(
             (base, method)
             for base in reversed(self._c3_tail())
@@ -565,20 +578,7 @@ class ClassDefinitionValue(GuardStableValue):
         )
         owned = (*inherited, *((self, method) for method in self.methods))
         return tuple(
-            ObjectMethodValue(
-                method.name,
-                method.source_call_frame.parameters,
-                method.source_call_frame.body,
-                method.source_call_frame.frame_cid,
-                tuple(
-                    coordinate.cid
-                    for coordinate in method.source_call_frame.formal_coordinates
-                ),
-                method.source_call_frame,
-                method.descriptor_kind,
-                defining_class=defining_class,
-            )
-            for defining_class, method in owned
+            defining_class.object_method(method) for defining_class, method in owned
         )
 
     def _c3_tail(self) -> tuple["ClassDefinitionValue", ...]:
@@ -608,6 +608,24 @@ class ClassDefinitionValue(GuardStableValue):
             seen.add(id(base))
             pending.extend(base.base_classes)
         return False
+
+
+def _written_by(method, binder) -> bool:
+    """Whether the roster function ``method`` is the one the class-body
+    ``def`` statement ``binder`` wrote: its definition is that very source
+    occurrence (a deferred method carries its ``definition``; a built one
+    its frame's ``owner``).  Never matched by name."""
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
+    from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
+
+    statement = getattr(method, "definition", None)
+    if statement is None:
+        statement = getattr(method.source_call_frame, "owner", None)
+    return isinstance(
+        statement, (FunctionDef, AsyncFunctionDef)
+    ) and SourceOccurrenceIdentityV1.of(statement) == SourceOccurrenceIdentityV1.of(
+        binder
+    )
 
 
 def c3_tail(bases, tail_of, *, blame, owner: str) -> tuple:
