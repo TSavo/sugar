@@ -1,6 +1,6 @@
 """Import-bound dotted exception types construct without Attribute projection.
 
-Mechanism: ``imported_exception_type_identity`` joins the authenticated import
+Mechanism: ``exception_type_identity`` joins the authenticated import
 target with the static Attribute chain into one
 ``python:exception_type_identity(import, qualified)`` coordinate.  The CM
 contract authenticates the operand's *role* as an exception type; this module
@@ -171,7 +171,7 @@ def test_import_alias_arrow_invalid_identity_is_import_coordinate(tmp_path):
         encoding="utf-8",
     )
     tree = SourceFile(path_source(str(path)))
-    identity = tree.unit.imported_exception_type_identity(
+    identity = tree.unit.exception_type_identity(
         _attribute(tree, "ArrowInvalid")
     )
     assert identity == ctor(
@@ -191,7 +191,7 @@ def test_module_name_arrow_exception_identity_is_import_coordinate(tmp_path):
         encoding="utf-8",
     )
     tree = SourceFile(path_source(str(path)))
-    identity = tree.unit.imported_exception_type_identity(
+    identity = tree.unit.exception_type_identity(
         _attribute(tree, "ArrowException")
     )
     assert identity == ctor(
@@ -250,7 +250,7 @@ def test_nested_lib_export_uses_full_import_chain(tmp_path):
         encoding="utf-8",
     )
     tree = SourceFile(path_source(str(path)))
-    identity = tree.unit.imported_exception_type_identity(
+    identity = tree.unit.exception_type_identity(
         _attribute(tree, "ArrowInvalid")
     )
     assert identity == ctor(
@@ -272,7 +272,7 @@ def test_reassigned_import_head_has_no_exception_identity(tmp_path):
     )
     tree = SourceFile(path_source(str(path)))
     assert (
-        tree.unit.imported_exception_type_identity(_attribute(tree, "ArrowInvalid"))
+        tree.unit.exception_type_identity(_attribute(tree, "ArrowInvalid"))
         is None
     )
 
@@ -311,7 +311,7 @@ def test_importorskip_binding_authenticates_arrow_invalid(tmp_path):
         encoding="utf-8",
     )
     tree = SourceFile(path_source(str(path)))
-    identity = tree.unit.imported_exception_type_identity(
+    identity = tree.unit.exception_type_identity(
         _attribute(tree, "ArrowInvalid")
     )
     assert identity == ctor(
@@ -353,7 +353,7 @@ def test_try_import_optional_binding_authenticates_module_attr(tmp_path):
         encoding="utf-8",
     )
     tree = SourceFile(path_source(str(path)))
-    identity = tree.unit.imported_exception_type_identity(
+    identity = tree.unit.exception_type_identity(
         _attribute(tree, "ArrowException")
     )
     assert identity == ctor(
@@ -377,6 +377,201 @@ def test_try_import_with_except_rebind_stays_loud(tmp_path):
     )
     tree = SourceFile(path_source(str(path)))
     assert (
-        tree.unit.imported_exception_type_identity(_attribute(tree, "ArrowException"))
+        tree.unit.exception_type_identity(_attribute(tree, "ArrowException"))
         is None
+    )
+
+
+# ── One lookup for every exception class a reader names (#7757) ──
+#
+# ``raise``, ``except``, ``except*``, an expected-exception operand and a
+# warning category all identify the class through
+# ``SourceUnit.exception_type_identity``: a local class, a builtin exception
+# class, or an imported symbol by its target symbol. A star import the lifter
+# cannot read is the one undecided citation.
+
+
+def _tree(tmp_path: Path, name: str, source: str) -> SourceFile:
+    path = tmp_path / name
+    path.write_text(source, encoding="utf-8")
+    return SourceFile(path_source(str(path)))
+
+
+def _name(tree: SourceFile, identifier: str, line: int):
+    return next(
+        node
+        for node in tree.nodes()
+        if node.kind == "Name"
+        and node.id == identifier
+        and node.line_col_span().start_line == line
+    )
+
+
+def _import_identity(qualified: str):
+    return ctor(
+        "python:exception_type_identity",
+        [str_const("import"), str_const(qualified)],
+    )
+
+
+def _builtin_identity(name: str):
+    return ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const(name)],
+    )
+
+
+def test_from_imported_expected_exception_is_its_target_symbol(tmp_path):
+    """``with pytest.raises(ImportedError)`` under ``from m import
+    ImportedError``: the operand is identified by its target symbol, never
+    refused for having no local class."""
+    source = (
+        "from pyarrow import ArrowInvalid\n"
+        "def f():\n"
+        "    with expect(ArrowInvalid):\n"
+        "        raise ValueError('x')\n"
+    )
+    tree = _tree(tmp_path, "from_imported.py", source)
+    operand = _name(tree, "ArrowInvalid", 3)
+    assert tree.unit.exception_type_identity(operand) == _import_identity(
+        "pyarrow.ArrowInvalid"
+    )
+    # Its ancestry is the defining proof's to state (step 9).
+    assert tree.unit.exception_type_mro(operand) is None
+    class_value = tree.unit.exception_class_value(operand)
+    assert class_value == ExceptionClassValue("pyarrow.ArrowInvalid")
+
+    boundary = _boundary(tmp_path, source)
+    expected = boundary.manager.desugar().completed_value().arg_values[0]
+    assert isinstance(expected, AuthenticatedExceptionTypeValue)
+    assert expected.exception_type_identity() == _import_identity(
+        "pyarrow.ArrowInvalid"
+    )
+    assert expected.value == ExceptionClassValue("pyarrow.ArrowInvalid")
+
+
+def test_module_attribute_raise_and_from_imported_raise_meet_one_door(tmp_path):
+    """``import m; raise m.E`` and ``from m import E; raise E``: the same
+    lookup, the same target symbol."""
+    tree = _tree(
+        tmp_path,
+        "raises.py",
+        "import pyarrow\n"
+        "from pyarrow import ArrowInvalid\n"
+        "def f():\n"
+        "    raise pyarrow.ArrowInvalid('x')\n"
+        "def g():\n"
+        "    raise ArrowInvalid('x')\n",
+    )
+    dotted = _attribute(tree, "ArrowInvalid")
+    bare = _name(tree, "ArrowInvalid", 6)
+    assert tree.unit.exception_type_identity(dotted) == _import_identity(
+        "pyarrow.ArrowInvalid"
+    )
+    assert tree.unit.exception_type_identity(bare) == tree.unit.exception_type_identity(
+        dotted
+    )
+    assert tree.unit.exception_class_value(bare) == tree.unit.exception_class_value(
+        dotted
+    )
+
+
+def test_except_of_a_from_imported_class_constructs(tmp_path):
+    """``except ImportedError`` authenticates through the one lookup instead of
+    refusing for lacking an identity."""
+    path = tmp_path / "handler.py"
+    path.write_text(
+        "from pyarrow import ArrowInvalid\n"
+        "def f(g):\n"
+        "    try:\n"
+        "        return g()\n"
+        "    except ArrowInvalid:\n"
+        "        return None\n",
+        encoding="utf-8",
+    )
+    next(SourceFile(path_source(str(path))).functions()).sugar()
+
+
+def test_try_gated_from_builtins_import_is_the_builtin(tmp_path):
+    """``try: from builtins import ValueError / except ImportError``: the name
+    is read only where it is bound, so it is the builtin class."""
+    tree = _tree(
+        tmp_path,
+        "gated.py",
+        "try:\n"
+        "    from builtins import ValueError\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "def f():\n"
+        "    raise ValueError('x')\n",
+    )
+    operand = _name(tree, "ValueError", 6)
+    assert tree.unit.exception_type_identity(operand) == _builtin_identity(
+        "ValueError"
+    )
+    assert tree.unit.exception_type_mro(operand) is not None
+
+
+def test_star_imported_class_is_the_one_undecided_citation(tmp_path):
+    """A name a star import the lifter cannot read may bind is cited
+    undecided by name; an ancestry walk over it states nothing."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    tree = _tree(
+        tmp_path,
+        "star.py",
+        "from pyarrow import *\n"
+        "class E(ArrowInvalid):\n"
+        "    pass\n"
+        "def f():\n"
+        "    raise ArrowInvalid('x')\n",
+    )
+    operand = _name(tree, "ArrowInvalid", 5)
+    with pytest.raises(SugarNotWritten) as refusal:
+        tree.unit.exception_type_identity(operand)
+    assert "undecided" in refusal.value.observed
+    # ``E``'s only base is undecided: the module states nothing about ``E``.
+    assert tree.unit.exception_class_ancestry() == ()
+
+
+def test_local_and_builtin_classes_keep_their_identities(tmp_path):
+    """A local class is its ``source-class`` coordinate (with an imported base
+    its class value carries the imported class); a builtin is the builtin."""
+    from sugar_lift_py_tests.floor.local_exception_class_value import (
+        LocalExceptionClassValue,
+    )
+
+    tree = _tree(
+        tmp_path,
+        "local.py",
+        "from pyarrow import ArrowInvalid\n"
+        "class E(ValueError):\n"
+        "    pass\n"
+        "class F(ArrowInvalid):\n"
+        "    pass\n"
+        "def f():\n"
+        "    raise E('x')\n"
+        "def g():\n"
+        "    raise F('x')\n"
+        "def h():\n"
+        "    raise KeyError('x')\n",
+    )
+    local = _name(tree, "E", 7)
+    identity = tree.unit.exception_type_identity(local)
+    assert identity.args[0].value == "source-class"
+    assert _builtin_identity("ValueError") in tree.unit.exception_type_mro(local)
+
+    imported_base = _name(tree, "F", 9)
+    assert tree.unit.exception_type_identity(imported_base).args[0].value == (
+        "source-class"
+    )
+    # The imported base's ancestry is its own proof's: unknown here.
+    assert tree.unit.exception_type_mro(imported_base) is None
+    value = tree.unit.exception_class_value(imported_base)
+    assert isinstance(value, LocalExceptionClassValue)
+    assert value.bases == (ExceptionClassValue("pyarrow.ArrowInvalid"),)
+
+    builtin = _name(tree, "KeyError", 11)
+    assert tree.unit.exception_type_identity(builtin) == _builtin_identity(
+        "KeyError"
     )

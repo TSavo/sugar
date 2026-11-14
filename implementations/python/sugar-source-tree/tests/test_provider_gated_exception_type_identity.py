@@ -52,7 +52,7 @@ def test_importorskip_attribute_exception_identity_truthful(tmp_path):
         "    return pa.ArrowInvalid\n",
     )
     attr = _attribute_named(tree, "ArrowInvalid")
-    assert tree.root.unit.imported_exception_type_identity(attr) == _identity(
+    assert tree.root.unit.exception_type_identity(attr) == _identity(
         "pyarrow.ArrowInvalid"
     )
 
@@ -70,7 +70,7 @@ def test_try_import_attribute_exception_identity_truthful(tmp_path):
         "    return pyarrow.ArrowException\n",
     )
     attr = _attribute_named(tree, "ArrowException")
-    assert tree.root.unit.imported_exception_type_identity(attr) == _identity(
+    assert tree.root.unit.exception_type_identity(attr) == _identity(
         "pyarrow.ArrowException"
     )
 
@@ -122,7 +122,7 @@ def test_static_import_attribute_exception_identity_still_works(tmp_path):
         "import pyarrow\n" "def f():\n" "    return pyarrow.ArrowInvalid\n",
     )
     attr = _attribute_named(tree, "ArrowInvalid")
-    assert tree.root.unit.imported_exception_type_identity(attr) == _identity(
+    assert tree.root.unit.exception_type_identity(attr) == _identity(
         "pyarrow.ArrowInvalid"
     )
 
@@ -138,7 +138,7 @@ def test_reassigned_importorskip_head_stays_loud(tmp_path):
         "    return pa.ArrowInvalid\n",
     )
     attr = _attribute_named(tree, "ArrowInvalid")
-    assert tree.root.unit.imported_exception_type_identity(attr) is None
+    assert tree.root.unit.exception_type_identity(attr) is None
 
 
 def test_parameter_shadow_defeats_provider_gate(tmp_path):
@@ -151,7 +151,7 @@ def test_parameter_shadow_defeats_provider_gate(tmp_path):
         "    return pa.ArrowInvalid\n",
     )
     attr = _attribute_named(tree, "ArrowInvalid")
-    assert tree.root.unit.imported_exception_type_identity(attr) is None
+    assert tree.root.unit.exception_type_identity(attr) is None
 
 
 def test_non_importorskip_assign_stays_loud(tmp_path):
@@ -164,7 +164,7 @@ def test_non_importorskip_assign_stays_loud(tmp_path):
         "    return pa.ArrowInvalid\n",
     )
     attr = _attribute_named(tree, "ArrowInvalid")
-    assert tree.root.unit.imported_exception_type_identity(attr) is None
+    assert tree.root.unit.exception_type_identity(attr) is None
 
 
 def test_try_import_rebind_in_handler_stays_loud(tmp_path):
@@ -179,7 +179,7 @@ def test_try_import_rebind_in_handler_stays_loud(tmp_path):
         "    return pyarrow.ArrowException\n",
     )
     attr = _attribute_named(tree, "ArrowException")
-    assert tree.root.unit.imported_exception_type_identity(attr) is None
+    assert tree.root.unit.exception_type_identity(attr) is None
 
 
 def test_authenticated_exception_type_sugar_does_not_force_attribute_floor():
@@ -247,7 +247,7 @@ def test_live_pandas_arrow_external_error_operands_resolve():
             and n.attr == attr
             and n.line_col_span().start_line == line
         )
-        identity = tree.root.unit.imported_exception_type_identity(node)
+        identity = tree.root.unit.exception_type_identity(node)
         assert identity == _identity(qualified), (relative, line, identity)
         found.add((relative, line, attr, qualified))
     assert found == expected

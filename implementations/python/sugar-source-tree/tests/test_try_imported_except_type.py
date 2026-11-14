@@ -6,7 +6,7 @@ force-floors (``try: re.compile(match) / except re.error as e``) when a with
 site constructs ``pytest.raises(..., match=...)``.  Two edits make it hold:
 the except-TYPE expression is now enrolled as an import value-use (so its head
 is import-bound), and ``Try._construct_sugar`` authenticates a non-Name handler
-type through ``imported_exception_type_identity``.  A dotted head that is NOT
+type through ``exception_type_identity``.  A dotted head that is NOT
 import-bound (an instance/param attribute) still stays loud.
 """
 
@@ -52,7 +52,7 @@ def test_except_type_head_is_now_import_enrolled() -> None:
     # value-use, so its dotted identity authenticates (previously None).
     fn = _function(_TRUTHFUL)
     node = _except_type_node(fn, "error")
-    identity = fn.unit.imported_exception_type_identity(node)
+    identity = fn.unit.exception_type_identity(node)
     assert identity == ctor(
         "python:exception_type_identity",
         [str_const("import"), str_const("re.error")],
@@ -77,7 +77,7 @@ _LIAR = (
 def test_non_import_bound_dotted_except_type_stays_loud() -> None:
     fn = _function(_LIAR)
     # The param head is not import-bound: no authenticated identity ...
-    assert fn.unit.imported_exception_type_identity(
+    assert fn.unit.exception_type_identity(
         _except_type_node(fn, "Error")
     ) is None
     # ... and construction stays loud rather than fabricating one.

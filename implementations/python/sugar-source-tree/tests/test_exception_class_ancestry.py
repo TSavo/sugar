@@ -108,15 +108,15 @@ def test_the_consumer_question_is_about_the_stated_coordinates() -> None:
         node for node in function.walk() if isinstance(node, Name) and node.id == "E"
     )
     unit = function.unit
-    # Nothing at the consumer's lift testifies to E's bases ...
-    assert unit.exception_type_identity(raised) is None
-    # ... so the raise carries the import coordinate of E's target symbol,
-    identity = unit.imported_exception_type_identity(raised)
+    # The raise carries the import coordinate of E's target symbol ...
+    identity = unit.exception_type_identity(raised)
     assert identity == VENDOR_E
+    # ... and nothing at the consumer's lift testifies to E's bases,
+    assert unit.exception_type_mro(raised) is None
 
     class _RaiseE:
         exception_type_coordinate = identity
-        exception_type_mro = unit._builtin_exception_ancestry(identity)
+        exception_type_mro = unit.exception_type_mro(raised)
 
     class _ExceptValueError:
         @staticmethod
