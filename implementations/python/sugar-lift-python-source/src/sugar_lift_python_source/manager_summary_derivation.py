@@ -781,43 +781,54 @@ def _derive_factored_effect_boundary(protocol, behavior):
         boundary = _derive_boundary_for_receiver(protocol, behavior, face.value)
         if not isinstance(boundary, EffectBoundarySemanticsV1):
             return None
-        derived.append(Completed(face.guard, boundary, owed=face.owed))
+        # The boundary continues beneath its receiver face
+        # (``ExitSet.sequence``): the face's guard, partition testimony and
+        # ``owed`` ride onto it.
+        derived.append(
+            (
+                boundary,
+                ExitSet((face,)).sequence(
+                    lambda _receiver, boundary=boundary: ExitSet.completed(boundary)
+                ),
+            )
+        )
     none_faces = [
-        face
-        for face in derived
-        if isinstance(face.value.message_pattern_operand, NoMessagePatternV1)
+        boundary
+        for boundary, _arm in derived
+        if isinstance(boundary.message_pattern_operand, NoMessagePatternV1)
     ]
     pattern_faces = [
-        face
-        for face in derived
+        boundary
+        for boundary, _arm in derived
         if isinstance(
-            face.value.message_pattern_operand, OptionalFormalArgumentProjectionV1
+            boundary.message_pattern_operand, OptionalFormalArgumentProjectionV1
         )
     ]
     if not none_faces or not pattern_faces:
         return None
     if len(none_faces) + len(pattern_faces) != len(derived):
         return None
-    first = derived[0].value
+    first = derived[0][0]
     if any(
-        face.value.mode != first.mode
-        or face.value.effect_kind != first.effect_kind
-        or face.value.expected_type_operand != first.expected_type_operand
-        or face.value.binding != first.binding
-        for face in derived[1:]
+        boundary.mode != first.mode
+        or boundary.effect_kind != first.effect_kind
+        or boundary.expected_type_operand != first.expected_type_operand
+        or boundary.binding != first.binding
+        for boundary, _arm in derived[1:]
     ):
         return None
-    pattern_semantics = pattern_faces[0].value
+    pattern_semantics = pattern_faces[0]
     halts = _construction_halts(protocol)
     if halts is None:
         return None
     # Construction halts ride beside the guarded boundary faces: each leaves
-    # the With as itself before any boundary is entered.
+    # the With as itself before any boundary is entered. They are siblings of
+    # the boundary faces: one join.
     return FactoredEffectBoundarySummaryV1(
         protocol.protocol_construction_cid,
         protocol.enter_frame_cid,
         protocol.exit_frame_cid,
-        ExitSet((*derived, *halts)),
+        ExitSet(()).union(*(arm for _boundary, arm in derived), ExitSet(halts)),
         _signature_for_behavior(behavior, pattern_semantics),
     )
 
@@ -2150,7 +2161,6 @@ def _constructor_application_from_spread(call_sugar, reduce_ctx):
     """
     from sugar_lift_py_tests.callable_application import CallableApplication
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
     from sugar_source_tree.panic import SugarNotWritten
 
     outcome = _require_exit_set(
@@ -2192,22 +2202,16 @@ def _constructor_application_from_spread(call_sugar, reduce_ctx):
             continue
         else:
             positional.append(actual)
-    # The application is read off the call's one completed arm, so it owes
-    # what that arm owed.
-    return ExitSet(
-        (
-            Completed(
-                true_guard(),
-                CallableApplication(
-                    tuple(positional + keyword_values),
-                    tuple(keyword_names),
-                    call_sugar.site,
-                    call_occurrence=getattr(call_sugar, "call_occurrence", None),
-                ),
-                owed=outcome.owed_items(),
-            ),
-        )
+    application = CallableApplication(
+        tuple(positional + keyword_values),
+        tuple(keyword_names),
+        call_sugar.site,
+        call_occurrence=getattr(call_sugar, "call_occurrence", None),
     )
+    # The application is read off the call's one completed arm, so it
+    # continues beneath that arm (``ExitSet.sequence``): it owes what the arm
+    # owed and keeps the arm's partition testimony.
+    return outcome.sequence(lambda _call: ExitSet.completed(application))
 
 
 def _constructor_application_bindings(call, application, *, owner_cid: str, term_owner: str):
@@ -2285,8 +2289,6 @@ def _receiver_from_constructor_outcome(outcome):
     receiver state is the partition of every face, halts included (#7756:
     a construction halt is never dropped on the way to the manager).
     """
-    from dataclasses import replace
-
     from sugar_lift_py_tests.floor import CallSiteValue, ReceiverStatePartitionValue
 
     def receiver(value):
@@ -2306,15 +2308,11 @@ def _receiver_from_constructor_outcome(outcome):
     # stays a face of the partition, which keeps it.
     if completed is not None and not exits.owed_items():
         return receiver(completed)
+    # Each completed face continues as the receiver it retained
+    # (``ExitSet.sequence``), keeping its guard, faces and ``owed``; each
+    # constructor halt stands as a face of the partition.
     return ReceiverStatePartitionValue(
-        ExitSet(
-            tuple(
-                replace(exit_, value=receiver(exit_.value))
-                if isinstance(exit_, Completed)
-                else exit_
-                for exit_ in exits.exits
-            )
-        )
+        exits.sequence(lambda value: ExitSet.completed(receiver(value)))
     )
 
 

@@ -361,32 +361,45 @@ def _completed_receiver_exits(receiver_state: ReceiverStatePartitionValue):
 
     Constructor validation halts remain authenticated in the behavior's
     receiver partition, but they never enter ``__enter__`` or ``__exit__``.
-    Filtering to native Completed object faces preserves each face's guard,
-    partition testimony, and pending contracts without reconstructing them.
-    Nested partitions (from dual-mode factory validation) are flattened to
-    their ObjectValue leaves under the same Completed-only rule.
+    Each completed face continues as its object receivers beneath itself
+    (``ExitSet.sequence``), so every receiver keeps the guard, partition
+    testimony and pending contracts of each face on its path. Nested
+    partitions (from dual-mode factory validation) are flattened to their
+    ObjectValue leaves under the same Completed-only rule: a nested leaf
+    holds under its own face's guard conjoined with the enclosing face's,
+    exactly where Python reaches it, never under the enclosing guard alone.
     """
     from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
 
     leaves = _completed_object_receivers(receiver_state)
     if not leaves:
         return ExitSet(())
-    # Rebuild Completed faces over the flattened ObjectValue leaves so sequence
-    # still walks ordinary receivers. Outer partition guards are recovered
-    # when the leaf sits directly under a Completed face; nested leaves keep
-    # true_guard (the outer face already admitted them).
-    faces = []
-    for face in receiver_state.exits.exits:
-        if not isinstance(face, Completed):
-            continue
-        if isinstance(face.value, ObjectValue):
-            faces.append(face)
-            continue
-        if isinstance(face.value, ReceiverStatePartitionValue):
-            for leaf in _completed_object_receivers(face.value):
-                faces.append(Completed(face.guard, leaf, owed=face.owed))
-    return ExitSet(tuple(faces))
+
+    def protocol_receivers(partition, kept):
+        """``partition``'s object receivers, each beneath its face.
+
+        ``kept`` is ``None`` at the top level (every object face stands) and,
+        inside a nested partition, the maximal leaves of that nested
+        construction (``_completed_object_receivers``)."""
+
+        def receivers(value):
+            if isinstance(value, ObjectValue):
+                if kept is None or any(value is leaf for leaf in kept):
+                    return ExitSet.completed(value)
+                return ExitSet(())
+            if isinstance(value, ReceiverStatePartitionValue):
+                return protocol_receivers(
+                    value,
+                    _completed_object_receivers(value) if kept is None else kept,
+                )
+            return ExitSet(())
+
+        # A constructor halt never enters ``__enter__`` or ``__exit__``: no
+        # protocol receiver continues beneath it. It stays a face of the
+        # behavior's receiver partition, which still carries it.
+        return partition.exits.sequence(receivers, consume=lambda _halt: ExitSet(()))
+
+    return protocol_receivers(receiver_state, None)
 
 
 def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
@@ -431,8 +444,6 @@ def _apply_protocol_call(call: CallSiteValue, ctx):
     retained (``retained_source_completion_outcome``), never a second
     reduction of the body.
     """
-    from dataclasses import replace
-
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
     from sugar_lift_py_tests.outcome import ExitSet
 
@@ -451,20 +462,16 @@ def _apply_protocol_call(call: CallSiteValue, ctx):
         return outcome
 
     def body_completion(value):
+        # Each completed face continues as the body completion it retained
+        # (``ExitSet.sequence``): its guard, faces and ``owed`` ride on. Each
+        # halt of the body stands as the call's own.
         if isinstance(value, CallSiteValue) and value.term is call.term:
             retained = value.retained_source_completion_outcome()
             if retained is not None:
-                return retained.completed_value()
-        return value
+                return ExitSet.completed(retained.completed_value())
+        return ExitSet.completed(value)
 
-    return ExitSet(
-        tuple(
-            replace(face, value=body_completion(face.value))
-            if isinstance(face, Completed)
-            else face
-            for face in outcome.exits
-        )
-    )
+    return outcome.sequence(body_completion)
 
 
 def _receiver_state_after_enter(
@@ -547,71 +554,66 @@ def _receiver_state_after_enter(
 
 
 def _resource_enter_transitions(receiver: ObjectValue, enter_outcome, *, blame: object):
-    from sugar_lift_py_tests.ir import and_, not_
-    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.ir import not_
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.outcome.exit_set import partition
     from sugar_source_tree.panic import SugarNotWritten
 
-    projected = []
     # Each enter face becomes one resource transition: an enter that is a
     # deferred native-operation carrier is refused by name.
     enter_exits = _require_exit_set(
         enter_outcome, owner="ConstructedManagerProtocolV1.resource_enter_transitions"
     )
-    for face in enter_exits.exits:
-        if isinstance(face, Halted):
-            projected.append(face)
-            continue
-        if not isinstance(face.value, BlockValue):
+
+    def stored(state, statement):
+        """The receiver states after one acquisition store, beneath ``state``.
+
+        A guarded store splits the state: each side is one fresh arm
+        (``ExitSet.completed``) restricted to its face of the split, and the
+        two sides join through the one join."""
+        if isinstance(statement, GuardedReceiverFieldStoreValue):
+            then_face, else_face = partition(
+                ("resource-enter-store", statement.to_term(owner=receiver.identity))
+            )
+            return (
+                ExitSet.completed(_apply_receiver_store(state, statement, blame=blame))
+                .guarded(statement.guard, then_face)
+                .union(
+                    ExitSet.completed(state).guarded(
+                        not_(statement.guard), else_face
+                    )
+                )
+            )
+        if isinstance(statement, ReceiverFieldStoreValue):
+            return ExitSet.completed(
+                _apply_receiver_store(state, statement, blame=blame)
+            )
+        return ExitSet.completed(state)
+
+    def transitions(block):
+        if not isinstance(block, BlockValue):
             raise SugarNotWritten(
                 blame=blame,
                 owner="ConstructedManagerProtocolV1.enter_resource_outcome",
-                observed=type(face.value).__name__,
+                observed=type(block).__name__,
                 requested="completed enter block carrying exact acquisition stores",
                 fix="preserve the ordinary enter block or keep resource state loud",
             )
-        states = [(face.guard, receiver, face.faces)]
-        for statement in face.value.statements:
-            if isinstance(statement, GuardedReceiverFieldStoreValue):
-                then_face, else_face = partition(
-                    ("resource-enter-store", statement.to_term(owner=receiver.identity))
-                )
-                next_states = []
-                for guard, state, faces in states:
-                    next_states.append(
-                        (
-                            and_([guard, statement.guard]),
-                            _apply_receiver_store(state, statement, blame=blame),
-                            faces | {then_face},
-                        )
-                    )
-                    next_states.append(
-                        (
-                            and_([guard, not_(statement.guard)]),
-                            state,
-                            faces | {else_face},
-                        )
-                    )
-                states = next_states
-            elif isinstance(statement, ReceiverFieldStoreValue):
-                states = [
-                    (
-                        guard,
-                        _apply_receiver_store(state, statement, blame=blame),
-                        faces,
-                    )
-                    for guard, state, faces in states
-                ]
-        projected.extend(
-            Completed(
-                guard,
-                EnteredManagerStateValue(face.value, state),
-                faces,
-                face.owed,
+        # Each store runs beneath every state the stores before it reached
+        # (``ExitSet.sequence``), so each split's guard and face ride on.
+        states = ExitSet.completed(receiver)
+        for statement in block.statements:
+            states = states.sequence(
+                lambda state, statement=statement: stored(state, statement)
             )
-            for guard, state, faces in states
+        return states.sequence(
+            lambda state: ExitSet.completed(EnteredManagerStateValue(block, state))
         )
-    return ExitSet(tuple(projected)).normalize()
+
+    # Every transition runs beneath its enter face (``ExitSet.sequence``):
+    # the face's guard, faces and ``owed`` ride onto each one. A halted enter
+    # face leaves the With as itself.
+    return enter_exits.sequence(transitions)
 
 
 def _apply_receiver_store(
