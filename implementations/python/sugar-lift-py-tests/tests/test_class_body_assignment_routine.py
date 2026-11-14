@@ -12,10 +12,12 @@ the routine every other assignment uses.  A raise of a right-hand side is the
 class statement's halt, no later field runs under it, and no class exists on
 that face.
 
+An undefined name (``limit = nope``) is the same halt by the same routine: a
+read of a name nothing binds is a ``NameError`` halt (#7854), so the class
+statement halts with it and no class exists.
+
 Not in this change, and pinned below as what still happens:
 
-- an undefined name (``limit = nope``) completes as a free variable.  That is
-  how any read of an unbound name reduces, in a class body or out of it.
 - a field whose right-hand side has several completed values still refuses by
   name.  Carrying those faces would build one class per value: a completion
   where there is a refusal, which is its own change.
@@ -297,13 +299,74 @@ def test_a_field_with_several_completed_values_still_refuses() -> None:
         _class_statement("    limit = FLAG or int(FLAG)\n", with_context=True)
 
 
-def test_an_undefined_name_in_a_class_body_still_completes() -> None:
-    """The other half of #7799, not fixed here: a read of a name nothing binds
-    completes as a free variable (``NameSugar``), in a class body as anywhere.
-    Python raises ``NameError`` at the class statement."""
-    completed, halts = _faces(_class_statement("    limit = nope\n", with_context=True))
+# ---------------------------------------------------------------------------
+# #7799's other half: a class body that reads an undefined name.  Python
+# raises ``NameError`` at the class statement and the class is never bound.
+# The read is a ``NameError`` halt (``NameSugar``, #7854); the field goes
+# through the assignment routine, so that halt is the class statement's.
+# ---------------------------------------------------------------------------
 
-    assert (completed, halts) == (1, ())
+_READS_AN_UNDEFINED_NAME = {
+    "only-field": "    limit = nope\n",
+    "second-of-three": "    a = 1\n    limit = nope\n    b = 2\n",
+    "annotated": "    limit: int = nope\n",
+    # A later field does not run after the halt: no ``os.environ`` face.
+    "before-a-may-raise": '    limit = nope\n    a = int(os.environ["L"])\n',
+}
+
+
+def _halt_effects(outcome) -> tuple[object, ...]:
+    from sugar_lift_py_tests.outcome import ExitSet, Halted, Incomplete
+
+    if isinstance(outcome, Incomplete):
+        return (outcome.effect,)
+    if isinstance(outcome, ExitSet):
+        return tuple(face.effect for face in outcome.exits if isinstance(face, Halted))
+    return ()
+
+
+def _the_name_error(outcome):
+    from sugar_lift_py_tests.effect import NameErrorEffect
+
+    (effect,) = (
+        effect
+        for effect in _halt_effects(outcome)
+        if isinstance(effect, NameErrorEffect)
+    )
+    return effect
+
+
+@pytest.mark.parametrize("with_context", [False, True], ids=["no-ctx", "root-ctx"])
+@pytest.mark.parametrize("shape", sorted(_READS_AN_UNDEFINED_NAME))
+def test_a_class_body_that_reads_an_undefined_name_halts_with_name_error(
+    shape: str, with_context: bool
+) -> None:
+    outcome = _class_statement(
+        _READS_AN_UNDEFINED_NAME[shape], with_context=with_context
+    )
+    completed, halts = _faces(outcome)
+
+    assert completed == 0
+    effect = _the_name_error(outcome)
+    assert effect.exception_name == "NameError"
+    assert effect.name == "nope"
+    if shape == "before-a-may-raise":
+        # The field after the halt never ran: the statement has that one halt.
+        assert len(halts) == 1
+
+
+@pytest.mark.parametrize("use", sorted(_USES_OF_A_RAISING_CLASS))
+def test_a_function_that_calls_a_class_reading_an_undefined_name_halts(
+    use: str,
+) -> None:
+    outcome = _function(
+        _READS_AN_UNDEFINED_NAME["only-field"], _USES_OF_A_RAISING_CLASS[use]
+    )
+    completed, halts = _faces(outcome)
+
+    assert completed == 0
+    assert len(halts) == 1
+    assert _the_name_error(outcome).name == "nope"
 
 
 # ---------------------------------------------------------------------------
