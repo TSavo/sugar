@@ -45,7 +45,14 @@ class DictValue(GuardStableValue):
         return mutable_object_identity(self, other, site)
 
     def truth(self, site):
-        """A constructed dict is truthy exactly when it has an entry."""
+        """A constructed dict is truthy exactly when it has an entry -- among
+        its contents now (``object_identity.contents_current``); otherwise
+        the undecided truth (no halt, no debt: a builtin dict's truth runs no
+        code)."""
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            return self.undecided_truth(site, owner="DictValue.truth")
         from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
@@ -101,8 +108,16 @@ class DictValue(GuardStableValue):
         )
 
     def slice_assign_iterable_with(self, operation, ctx):
-        """Project insertion-ordered authenticated keys for slice assignment."""
-        del operation, ctx
+        """Project insertion-ordered authenticated keys for slice assignment
+        -- the dict's keys now (``object_identity.contents_current``).
+        Otherwise no members are in hand: the store is the undecided item
+        mutation (``list_value.stale_item_mutation``)."""
+        del ctx
+        from .list_value import stale_item_mutation
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            return stale_item_mutation(operation.blame, "__setitem__", operation.owner)
         from sugar_lift_py_tests.outcome import ExitSet
 
         return ExitSet.completed(tuple(key for key, _value in self.entries))
@@ -353,9 +368,18 @@ class DictValue(GuardStableValue):
         return None
 
     def delitem(self, index, site, ctx):
+        # Whether the key is held (else ``KeyError``) is read only from
+        # entries that are current (``object_identity.contents_current``),
+        # whichever caller reached this delete; otherwise it is the
+        # delete's undecided form.
         del ctx
         from sugar_lift_py_tests.outcome import ExitSet
 
+        from .list_value import stale_item_mutation
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            return stale_item_mutation(site, "__delitem__", "DictValue.delitem")
         found = _key_position(self.entries, index)
         if found is not None:
             if found >= 0:

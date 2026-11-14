@@ -107,7 +107,13 @@ class SetValue(GuardStableValue):
         )
 
     def truth(self, site):
-        # A set's truth is nonempty.
+        # A set's truth is nonempty -- of its contents now
+        # (``object_identity.contents_current``); otherwise the undecided
+        # truth (no halt, no debt: a builtin set's truth runs no code).
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            return self.undecided_truth(site, owner="SetValue.truth")
         from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,

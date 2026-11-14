@@ -455,9 +455,13 @@ def _match_entries(value, entries, site, ctx):
 
 def _mapping_rest(value, keys, rest_key, site):
     """``**rest``: a ``dict`` of the subject's items whose key is none of the
-    pattern's keys -- each decided distinct from them, or refused."""
+    pattern's keys -- each decided distinct from them, or refused.  It is a
+    new dict made at the match, current only when the subject's entries are
+    (``object_identity.made_if_current``): from entries that are not, its
+    contents are not its contents either, and no read takes them."""
     from sugar_lift_py_tests.floor import DictValue
     from sugar_lift_py_tests.floor.dict_value import _key_position
+    from sugar_lift_py_tests.floor.object_identity import made_if_current
 
     if rest_key is None:
         return _outcome(True)
@@ -469,7 +473,8 @@ def _mapping_rest(value, keys, rest_key, site):
             _undecided(site, f"whether {type(key).__name__} key is a pattern key")
         if found < 0:
             kept.append((key, item))
-    return _outcome(True, ((rest_key, DictValue(tuple(kept))),))
+    rest = DictValue(tuple(kept), allocation=made_if_current(site, value))
+    return _outcome(True, ((rest_key, rest),))
 
 
 def _match_class(spec, value, site, ctx):
