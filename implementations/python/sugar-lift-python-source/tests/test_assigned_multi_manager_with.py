@@ -132,6 +132,48 @@ def test_local_single_name_manager_projects_reaching_call(tmp_path: Path) -> Non
     assert rows == [(2, 3, 9)]
 
 
+def test_one_assigned_call_reaching_two_with_sites_is_every_site_s_provider(
+    tmp_path: Path,
+) -> None:
+    """``m = make(); with m: ...; with m: ...``: both sites read the one Call.
+
+    The projection index is keyed by use site, so the earlier ``with`` does
+    not lose its provider to the later one.
+    """
+    source = tmp_path / "twice.py"
+    source.write_text(
+        "def exercise(make):\n"
+        "    m = make()\n"
+        "    with m:\n"
+        "        pass\n"
+        "    with m:\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    tree = open_source_file_for_construction(
+        source,
+        root=tmp_path,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    sites = sorted(
+        (node for node in tree.nodes() if isinstance(node, With)),
+        key=lambda node: node.line_col_span().start_line,
+    )
+    assert [site.line_col_span().start_line for site in sites] == [3, 5]
+    assert [site.items[0].context_expr.kind for site in sites] == ["Name", "Name"]
+
+    providers = [site._provider_manager_call(site.items[0]) for site in sites]
+    assert all(call is not None for call in providers)
+    spans = [
+        (span.start_line, span.start_col, span.end_line, span.end_col)
+        for span in (call.line_col_span() for call in providers)
+    ]
+    assert spans == [(2, 8, 2, 14), (2, 8, 2, 14)]
+
+    _projected, index = tree.root.unit.projected_manager_heads()
+    assert sorted(index) == [(3, 9, 3, 10), (5, 9, 5, 10)]
+
+
 def test_pandas_303_single_assigned_manager_projects_reaching_call() -> None:
     """Same corpus file, single-item ``with opt:`` — general single-Name projection."""
     tree = _real_tree()

@@ -2987,10 +2987,9 @@ class SourceUnit:
         unit.  Population reads its manager uses from the projected
         functions (``_projected_manager_call_uses``); a bare-Name head reads
         its provider Call from the index (``With._provider_manager_call``).
-        The index holds a Call borrowed from another locus at the use site it
-        was projected to, one use site per Call: a Call projected to two use
-        sites is held at the later one, as population's call-keyed uses hold
-        it.
+        The index is keyed by use site: it holds a Call borrowed from another
+        locus at every use site it was projected to, so ``m = make(); with m:
+        ...; with m: ...`` gives both ``with`` sites the one provider Call.
         """
         module = self._require_typed_module(
             "SourceUnit.projected_manager_heads", blame=self.filename
@@ -3019,7 +3018,7 @@ class SourceUnit:
                     for node in function.walk()
                 )
             )
-            by_call: dict = {}
+            providers: dict = {}
             for root in projected:
                 for node in root.walk():
                     if not isinstance(node, (With, AsyncWith)):
@@ -3040,11 +3039,10 @@ class SourceUnit:
                             # The head is its own call: a direct-call manager,
                             # not one borrowed from another locus.
                             continue
-                        by_call[call_span] = (use_site, expr)
+                        providers[use_site] = expr
         except BaseException:
             object.__setattr__(self, "_projected_manager_heads_memo", None)
             raise
-        providers = {use_site: call for use_site, call in by_call.values()}
         object.__setattr__(
             self, "_projected_manager_heads_memo", (module, projected, providers)
         )
