@@ -1464,6 +1464,171 @@ def test_a_break_under_a_condition_keeps_its_partition_face() -> None:
     assert "test.x" in str(broke.guard)
 
 
+# -- an item's guarded return guards what follows it (#7757, found by #8126) --
+
+
+def _subformulas(formula) -> list:
+    """``formula`` and every formula a connective of it holds, at any depth."""
+    found = []
+    pending = [formula]
+    while pending:
+        current = pending.pop()
+        found.append(current)
+        if getattr(current, "kind", None) in ("and", "or", "not", "implies"):
+            pending.extend(current.operands)
+    return found
+
+
+def _returns_by_arm(outcome) -> list:
+    """``(guard, returns)`` of every completed exit of ``outcome``: its guard
+    and every ``return`` its record holds, guarded or not."""
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+    return [
+        (
+            exit_.guard,
+            [
+                entry
+                for entry in getattr(
+                    getattr(exit_.value, "record", exit_.value), "statements", ()
+                )
+                if isinstance(entry, (ReturnValue, GuardedReturn))
+            ],
+        )
+        for exit_ in outcome.exits
+        if isinstance(exit_, Completed)
+    ]
+
+
+_RETURN_FROM_AN_ITEM = (
+    "def f({params}):\n"
+    "    for x in {iterable}:\n"
+    "        if x == c:\n"
+    "            return x\n"
+    "    return 0\n"
+    "def g():\n"
+    "    return (1, 2)\n"
+)
+
+
+def test_a_concrete_items_guarded_return_guards_every_later_item() -> None:
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``for x in (1, 2): if x == c: return x`` then ``return 0``: Python
+    # takes one return.  Item 0 returns 1 under its ``x == c``; item 1 runs
+    # only where item 0 did not return, and returns 2 under its own; ``0``
+    # is returned only where neither did.  No arm holds a ``return`` beside
+    # another: the item's guarded return never stands beside a later
+    # unguarded ``return 0``.
+    outcome = function_universe_outcome(
+        _function(_RETURN_FROM_AN_ITEM.format(params="c", iterable="g()"))
+    )
+    arms = _returns_by_arm(outcome)
+    assert arms, outcome
+    for _guard, returns in arms:
+        assert len(returns) == 1, arms
+
+    def arm(value):
+        (found,) = [
+            (guard, entry) for guard, (entry,) in arms if entry.value == value
+        ]
+        return found
+
+    first_guard, first = arm(TermValue(1))
+    second_guard, second = arm(TermValue(2))
+    zero_guard, zero = arm(TermValue(0))
+    assert isinstance(first, GuardedReturn), first
+    assert isinstance(second, GuardedReturn), second
+    assert isinstance(zero, ReturnValue), zero
+    # Item 1 runs only where item 0's return was not taken.
+    for guard in first.guards:
+        assert not_(guard) in _subformulas(second_guard), (guard, second_guard)
+    # ``0`` only under the conjunction of every item's ``x != c``.
+    for guard in (*first.guards, *second.guards):
+        assert not_(guard) in _subformulas(zero_guard), (guard, zero_guard)
+    assert first_guard != zero_guard
+
+
+def test_a_symbolic_items_guarded_return_guards_the_loops_exit() -> None:
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``xs`` is symbolic: the symbolic item returns ``x`` under ``x == c``;
+    # the loop goes on to ``return 0`` only where it did not (or where no
+    # item ran), and no arm holds the item's return beside ``return 0``.
+    outcome = function_universe_outcome(
+        _function(_RETURN_FROM_AN_ITEM.format(params="c, xs", iterable="xs"))
+    )
+    arms = _returns_by_arm(outcome)
+    assert arms, outcome
+    for _guard, returns in arms:
+        assert len(returns) == 1, arms
+    items = [entry for _guard, (entry,) in arms if isinstance(entry, GuardedReturn)]
+    assert items, arms
+    zeros = [
+        guard
+        for guard, (entry,) in arms
+        if isinstance(entry, ReturnValue) and entry.value == TermValue(0)
+    ]
+    assert zeros, arms
+    for item in items:
+        for guard in item.guards:
+            assert any(not_(guard) in _subformulas(zero) for zero in zeros), (
+                guard,
+                zeros,
+            )
+
+
+def test_the_symbolic_items_guarded_return_is_not_carried_past_it() -> None:
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    # The item stored, then took ``if c: return 1`` and fell through under
+    # ``not c``: the loop leaves by that return under ``c`` with what the
+    # item did, and goes on under ``not c`` with the store alone -- never
+    # with the return the guard it goes on under excludes.
+    test = atomic("test.c", [])
+    returned = GuardedReturn((test,), TermValue(1))
+    left = _left_by_the_item(
+        ExitSet.completed(
+            _ReducedBlock(
+                (TermValue(2), returned),
+                True,
+                (not_(test),),
+                context=ReduceContext.root(owner="live-guarded-return"),
+            )
+        )
+    )
+    took = _arm_of(
+        left,
+        BlockValue((TermValue(2), returned, TermValue(0)), can_fall_through=False),
+    )
+    assert test in _subformulas(took.guard)
+    went_on = _arm_of(left, BlockValue((TermValue(2), TermValue(0))))
+    assert not_(test) in _subformulas(went_on.guard)
+    assert _arm_of(left, BlockValue((TermValue(0),))) is not None
+
+
+def test_a_block_no_path_of_which_falls_through_ends_its_enclosing_block() -> None:
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+
+    # A loop left by its item's guarded return (``can_fall_through`` false)
+    # ends the enclosing block, as an unguarded return does: the statement
+    # after the loop never runs on that arm.
+    test = atomic("test.c", [])
+    left = BlockValue(
+        (GuardedReturn((test,), TermValue(1)),), can_fall_through=False
+    )
+    assert not left.follow_rest().continues
+    assert BlockValue((GuardedReturn((test,), TermValue(1)),)).follow_rest().continues
+
+
 # -- a break/continue leaves with what the item did (#7757 item 7, #8064) ------
 
 

@@ -378,18 +378,64 @@ def _prior_return_face(state, ctx) -> "ExitSet | None":
         _is_return_entry(entry) for entry in state.entries
     ):
         return None
-    from sugar_lift_py_tests.ir import and_
     from sugar_lift_py_tests.outcome.exit_set import complement_guard
 
-    continuation = (
+    return ExitSet.completed(
+        _ReducedBlock(state.entries, False, (), state.transforms, ctx),
+        complement_guard(_fall_through_guard(state)),
+    )
+
+
+def _fall_through_guard(state):
+    """The guard under which ``state``'s block goes on past its earlier
+    guarded ``return``s: the conjunction of its fall-through guards."""
+    from sugar_lift_py_tests.ir import and_
+
+    return (
         state.fall_through[0]
         if len(state.fall_through) == 1
         else and_(list(state.fall_through))
     )
-    return ExitSet.completed(
-        _ReducedBlock(state.entries, False, (), state.transforms, ctx),
-        complement_guard(continuation),
+
+
+def past_prior_returns(state, ctx, goes_on, returned):
+    """What follows a completed record ``state`` that falls through, where
+    what follows is not a statement of the same block (a loop's next item,
+    or the loop's exit after its item): the one composition a block gives a
+    statement after a guarded ``return``.
+
+    With no earlier ``return`` taken (``_prior_return_face`` is ``None``) it
+    is ``goes_on(state)``. Otherwise ``state`` is split where the block
+    reducer splits a later statement: the earlier ``return``'s completed face
+    (``_prior_return_face``) leaves by ``returned(record)``, under the
+    complement of the fall-through guard; and what follows runs by
+    ``goes_on(record)`` under the fall-through guard
+    (``_fall_through_guard``), from the record without its ``return``
+    entries, fall-through guard and transforms -- the arm's guard already
+    says no earlier ``return`` was taken, so none of them is live on it (as
+    ``resumed`` drops them after a halt), and what follows never stands
+    beside them. One composition beneath both (``ExitSet.sequence``), which
+    hands on a continuation still waiting on its caller's actuals.
+    """
+    earlier = _prior_return_face(state, ctx)
+    if earlier is None:
+        return goes_on(state)
+    live = replace(
+        state,
+        entries=tuple(
+            entry for entry in state.entries if not _is_return_entry(entry)
+        ),
+        fall_through=(),
+        transforms=(),
     )
+    branches = ExitSet((Completed(_fall_through_guard(state), live), *earlier.exits))
+
+    def after(record):
+        if record.can_fall_through:
+            return goes_on(record)
+        return returned(record)
+
+    return branches.sequence(after)
 
 
 def reduce_block_to_exitset(
@@ -553,26 +599,12 @@ def reduce_block_to_exitset(
                 returned = _prior_return_face(state, active_ctx)
                 if returned is not None:
                     # Reached only where no earlier ``return`` fired.
-                    from sugar_lift_py_tests.ir import and_
-
-                    continuation = (
-                        state.fall_through[0]
-                        if len(state.fall_through) == 1
-                        else and_(list(state.fall_through))
-                    )
-                    return halted.guarded(continuation).union(returned)
+                    return halted.guarded(_fall_through_guard(state)).union(returned)
                 return halted
 
             returned = _prior_return_face(state, active_ctx)
             if state.fall_through:
-                from sugar_lift_py_tests.ir import and_
-
-                continuation = (
-                    state.fall_through[0]
-                    if len(state.fall_through) == 1
-                    else and_(list(state.fall_through))
-                )
-                outcome = outcome.guarded(continuation)
+                outcome = outcome.guarded(_fall_through_guard(state))
 
             # A statement that reduces to its OWN ExitSet (a nested block:
             # try/with, or an unpack assignment whose store leaves are

@@ -45,13 +45,20 @@ class BlockValue(FloorValue):
         )
 
     def follow_rest(self):
-        # Only an *unguarded* return makes the entire continuation unreachable.
-        # A GuardedReturn coexists with a live tail. A block record holds no
-        # halt (#7826): a raise is a halted arm, never an entry here.
+        # An *unguarded* return, or a block no path of which falls through
+        # (``can_fall_through`` false: every path returned, as an arm a loop
+        # leaves by its item's guarded ``return``), makes the entire
+        # continuation unreachable -- as the block reducer reads a record's
+        # own ``can_fall_through`` and ``GuardedFaces`` reads its own. A
+        # GuardedReturn in a block that can fall through coexists with a live
+        # tail. A block record holds no halt (#7826): a raise is a halted
+        # arm, never an entry here.
         from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.outcome.follow_step import FollowStep
 
-        if any(type(entry) is ReturnValue for entry in self.statements):
+        if not self.can_fall_through or any(
+            type(entry) is ReturnValue for entry in self.statements
+        ):
             return FollowStep.halt(keeps_rest=True)
         return FollowStep.continue_with()
 
