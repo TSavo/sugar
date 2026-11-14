@@ -144,11 +144,46 @@ def test_an_evaluation_bound_before_the_if_is_not_carried_again() -> None:
     assert _arm_evaluations((_arm(base), _arm(base)), base) == ()
 
 
-def test_two_values_for_one_evaluation_are_not_carried() -> None:
+def test_two_values_on_overlapping_arms_are_not_carried() -> None:
+    # Both arms hold under truth: the key is at two values on one path, so
+    # no one value is carried and its read is refused by name.
     base = ReduceContext.root(owner="evaluation-join")
     one = base.with_temporal(base.temporal.bind_value(KEY, TermValue(2)))
     two = base.with_temporal(base.temporal.bind_value(KEY, TermValue(3)))
     assert _arm_evaluations((_arm(one), _arm(two)), base) == ()
+
+
+def test_two_values_on_exclusive_arms_are_each_carried_under_their_guard() -> None:
+    # The two faces of one split bind the key to different values: the key
+    # is carried as each face's value under that face's guard, never left
+    # out and never one face's value on both.
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.ir import atomic, not_
+    from sugar_lift_py_tests.outcome.exit_set import partition
+
+    base = ReduceContext.root(owner="evaluation-join")
+    one = base.with_temporal(base.temporal.bind_value(KEY, TermValue(2)))
+    two = base.with_temporal(base.temporal.bind_value(KEY, TermValue(3)))
+    guard = atomic("c", [])
+    then_face, else_face = partition(("evaluation-join", "c"))
+    arms = _arm(one).guarded(guard, then_face).union(
+        _arm(two).guarded(not_(guard), else_face)
+    )
+    assert len(arms.exits) == 2, arms
+    ((key, value),) = _arm_evaluations((arms,), base)
+    assert key == KEY
+    assert value == GuardedValue(guard, TermValue(2), TermValue(3))
+
+
+def test_arms_that_bound_one_evaluation_differently_are_not_merged() -> None:
+    # Equal records, different values of one evaluation: two paths, never
+    # one arm reading the first path's value on both.
+    base = ReduceContext.root(owner="evaluation-join")
+    one = base.with_temporal(base.temporal.bind_value(KEY, TermValue(2)))
+    two = base.with_temporal(base.temporal.bind_value(KEY, TermValue(3)))
+    assert len(_arm(one).union(_arm(two)).exits) == 2
+    same = base.with_temporal(base.temporal.bind_value(KEY, TermValue(2)))
+    assert len(_arm(one).union(_arm(same)).exits) == 1
 
 
 def test_guarded_faces_bind_the_carried_evaluations() -> None:
