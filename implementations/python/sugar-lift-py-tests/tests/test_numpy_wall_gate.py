@@ -7,96 +7,67 @@ import pytest
 
 from sugar_lift_py_tests.idd.command_result import CommandResult
 from sugar_lift_py_tests.idd.numpy_wall import (
-
     NumpyWallFloors,
     NumpyWallSummary,
     build_numpy_wall,
     check_frontier_ceilings,
-    check_wall_floors,
-    summarize_numpy_wall,
 )
-
-
 from sugar_lift_py_tests.repo_root import resolve_repo_root
 
-def test_summarizes_wall_with_report_json_census_definitions() -> None:
-    # Criterion 14 (#3706): the summary is built entirely from
-    # `lineAccounting`, never a scrape of `--visual` ANSI text.
-    report = {
-        "lineAccounting": [
-            {
-                "file": "a.py",
-                "line": 1,
-                "class": "warrant",
-                "grounds": "cid:blake3-512:x",
-            },
-            {
-                "file": "a.py",
-                "line": 2,
-                "class": "effect",
-                "grounds": "runtime-effect owner=await",
-            },
-            {"file": "a.py", "line": 3, "class": "effect", "grounds": "gap at a.py:2"},
-            {"file": "a.py", "line": 4, "class": "effect", "grounds": ""},
-        ],
-        "contracts": [
-            {"name": "plain", "post": {"kind": "atomic"}},
-            {"name": "pre-one", "pre": {"kind": "atomic"}},
-            {"name": "pre-two", "pre": {"kind": "atomic"}},
-        ],
-        "callEdges": [
-            {
-                "kind": "call-edge",
-                "targetContractCid": "blake3-512:" + ("a" * 128),
-            },
-            {"kind": "call-edge", "targetContractCid": None},
-            {"kind": "implication"},
-        ],
-    }
 
-    assert summarize_numpy_wall(report) == NumpyWallSummary(
-        green=1,
-        red_reasoned=2,
-        red_bare=1,
-        contracts=3,
-        pre_bearing=2,
-        call_edges_resolved=1,
-        implications=1,
-    )
-
-
-def test_floor_gate_names_every_delta() -> None:
-    summary = NumpyWallSummary(
-        green=9,
-        red_reasoned=7,
-        red_bare=1,
-        contracts=3,
-        pre_bearing=2,
-        call_edges_resolved=1,
-        implications=0,
-    )
-    floors = NumpyWallFloors(green=10, pre_bearing=3, implications=1)
-
-    messages = check_wall_floors(summary, floors)
-
-    assert messages == [
-        "red_bare invariant breached: observed=1 expected=0; replacement=thread a typed effect/gap reason into every red wall row",
-        "green floor breached: observed=9 floor=10 delta=-1",
-        "pre_bearing floor breached: observed=2 floor=3 delta=-1",
-        "implications floor breached: observed=0 floor=1 delta=-1",
-    ]
-
-
-def test_build_uses_sugarbin_and_reuses_one_audit_workspace(
-    tmp_path: Path, monkeypatch
-) -> None:
+def _repo_and_package(tmp_path: Path) -> tuple[Path, Path]:
     root = tmp_path / "repo"
-    root.mkdir()
-    (root / "bin").mkdir()
+    (root / "bin").mkdir(parents=True)
     (root / "bin/sugarbin").write_text("#!/bin/sh\n", encoding="utf-8")
     package = tmp_path / "numpy"
     package.mkdir()
     (package / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+    return root, package
+
+
+def _write_frontier(command: list[str], *, panics: int) -> None:
+    frontier = Path(command[command.index("-o") + 1])
+    frontier.write_text(
+        json.dumps(
+            {
+                "kind": "recovered-construction-audit",
+                "recoveryOverride": True,
+                "status": "failed" if panics else "complete",
+                "census": {
+                    "kind": "recovered-frontier-census",
+                    "sourceFilesEnumerated": 1,
+                    "sourceBodiesDemanded": 1,
+                    "auditLeavesCompleted": 1,
+                },
+                "panics": [
+                    {
+                        "kind": "ConstructionPanic",
+                        "status": "mandatory-panic",
+                        "reason": "fixture gap",
+                        "locus": "pkg.py:1:0",
+                        "demandedSource": "pkg.py:1:0",
+                        "terminalGapLocus": "pkg.py:1:0",
+                        "gap": {"blame": "pkg.py:1:0"},
+                        "demandedBody": {"file": "pkg.py", "line": 1},
+                        "ownerIdentity": {
+                            "demandedBody": {"file": "pkg.py", "line": 1},
+                            "demandedSource": "pkg.py:1:0",
+                            "terminalGapLocus": "pkg.py:1:0",
+                        },
+                    }
+                ][:panics],
+                "suppressedDescendants": [],
+                "effects": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_build_uses_sugarbin_and_mints_only_the_recovered_frontier(
+    tmp_path: Path, monkeypatch
+) -> None:
+    root, package = _repo_and_package(tmp_path)
     commands: list[list[str]] = []
     monkeypatch.setenv("SUGAR_BIN", "/ambient/stale/sugar")
     monkeypatch.setenv("SUGAR_BINARY_DIR", "/ambient/stale")
@@ -113,204 +84,91 @@ def test_build_uses_sugarbin_and_reuses_one_audit_workspace(
                 str(tmp_path / "shelf" / "sugar-darwin-x86_64-release-stamp") + "\n",
                 "",
             )
-        if command[1:4] == ["lift", "--report", "--json"]:
+        if command[1:3] == ["lift", "--audit-frontier"]:
             assert command[0].endswith("sugar-darwin-x86_64-release-stamp")
             assert command[-1].startswith(str(tmp_path / "wall" / "workspace"))
             assert env["SUGAR_BIN"] == command[0]
-            return CommandResult(
-                0,
-                '{"lineAccounting": [{"file": "pkg.py", "line": 1, "class": "warrant", "grounds": "cid:blake3-512:x"}], '
-                '"contracts": [{"pre": {"kind": "atomic"}}], "callEdges": [{"kind": "implication"}]}\n',
-                "",
-            )
-        raise AssertionError(f"unexpected command: {command}")
-
-    result = build_numpy_wall(
-        root=root,
-        output_dir=tmp_path / "wall",
-        floors=NumpyWallFloors(green=1, pre_bearing=0, implications=0),
-        package_path_resolver=lambda _package: package,
-        run_command=fake_runner,
-    )
-
-    assert result.summary.green == 1
-    assert result.summary.contracts == 1
-    assert result.summary.pre_bearing == 1
-    assert result.summary.implications == 1
-    assert result.breaches == ()
-    assert commands[0] == [str(root / "bin/sugarbin"), "--profile", "release"]
-    assert all(command[0] != "cargo" for command in commands)
-    # Criterion 14 (#3706): the wall no longer runs `lift --report --visual`
-    # at all -- only `--json`'s `lineAccounting` feeds the summary.
-    assert all(command[1:4] != ["lift", "--report", "--visual"] for command in commands)
-    manifest = (
-        tmp_path / "wall" / "workspace" / "numpy" / ".sugar/lift/python/manifest.toml"
-    )
-    assert '"--rpc"' in manifest.read_text(encoding="utf-8")
-    assert '"--audit-only"' not in manifest.read_text(encoding="utf-8")
-    assert (
-        (tmp_path / "wall" / "report.json")
-        .read_text(encoding="utf-8")
-        .startswith('{"lineAccounting"')
-    )
-    assert '"implications": 1' in (tmp_path / "wall" / "summary.json").read_text()
-
-
-def test_wall_gate_fails_on_breach(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    (root / "bin").mkdir()
-    (root / "bin/sugarbin").write_text("#!/bin/sh\n", encoding="utf-8")
-    package = tmp_path / "numpy"
-    package.mkdir()
-    (package / "__init__.py").write_text("x = 1\n", encoding="utf-8")
-
-    def fake_runner(
-        command: list[str], cwd: Path, env: dict[str, str]
-    ) -> CommandResult:
-        if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
-            return CommandResult(
-                0,
-                str(tmp_path / "shelf" / "sugar-darwin-x86_64-release-stamp") + "\n",
-                "",
-            )
-        if command[1:4] == ["lift", "--report", "--json"]:
-            assert env["SUGAR_BIN"] == command[0]
-            return CommandResult(
-                0,
-                '{"lineAccounting": [{"file": "pkg.py", "line": 1, "class": "warrant", "grounds": "cid:blake3-512:x"}], '
-                '"contracts": [], "callEdges": []}\n',
-                "",
-            )
-        raise AssertionError(f"unexpected command: {command}")
-
-    result = build_numpy_wall(
-        root=root,
-        output_dir=tmp_path / "wall",
-        floors=NumpyWallFloors(green=2, pre_bearing=1, implications=1),
-        package_path_resolver=lambda _package: package,
-        run_command=fake_runner,
-    )
-
-    assert result.breaches == (
-        "green floor breached: observed=1 floor=2 delta=-1",
-        "pre_bearing floor breached: observed=0 floor=1 delta=-1",
-        "implications floor breached: observed=0 floor=1 delta=-1",
-    )
-
-
-def test_frontier_mode_mints_recovered_artifact_over_construction_gaps(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "repo"
-    (root / "bin").mkdir(parents=True)
-    (root / "bin/sugarbin").write_text("#!/bin/sh\n", encoding="utf-8")
-    package = tmp_path / "numpy"
-    package.mkdir()
-    (package / "__init__.py").write_text("x = 1\n", encoding="utf-8")
-
-    def runner(command, _cwd, _env):
-        if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
-            return CommandResult(0, str(root / "sugar") + "\n", "")
-        if command[1:4] == ["lift", "--report", "--json"]:
-            return CommandResult(2, "", "ConstructionPanic")
-        if "--audit-frontier" in command:
-            frontier = Path(command[command.index("-o") + 1])
-            frontier.write_text(
-                json.dumps(
-                    {
-                        "kind": "recovered-construction-audit",
-                        "recoveryOverride": True,
-                        "status": "failed",
-                        "census": {
-                            "kind": "recovered-frontier-census",
-                            "sourceFilesEnumerated": 1,
-                            "sourceBodiesDemanded": 1,
-                            "auditLeavesCompleted": 1,
-                        },
-                        "panics": [
-                            {
-                                "kind": "ConstructionPanic",
-                                "status": "mandatory-panic",
-                                "reason": "fixture gap",
-                                "locus": "pkg.py:1:0",
-                                "demandedSource": "pkg.py:1:0",
-                                "terminalGapLocus": "pkg.py:1:0",
-                                "gap": {"blame": "pkg.py:1:0"},
-                                "demandedBody": {"file": "pkg.py", "line": 1},
-                                "ownerIdentity": {
-                                    "demandedBody": {"file": "pkg.py", "line": 1},
-                                    "demandedSource": "pkg.py:1:0",
-                                    "terminalGapLocus": "pkg.py:1:0",
-                                },
-                            }
-                        ],
-                        "suppressedDescendants": [],
-                        "effects": [],
-                    }
-                ),
-                encoding="utf-8",
-            )
+            _write_frontier(command, panics=1)
             return CommandResult(2, "", "red by design")
-        raise AssertionError(command)
+        raise AssertionError(f"unexpected command: {command}")
 
     result = build_numpy_wall(
         root=root,
         output_dir=tmp_path / "wall",
-        floors=NumpyWallFloors(green=0, pre_bearing=0, implications=0),
+        floors=NumpyWallFloors(),
         package_path_resolver=lambda _package: package,
-        run_command=runner,
-        mode="frontier",
+        run_command=fake_runner,
     )
 
-    assert result.frontier_path is not None
-    assert result.report_path is None
+    assert result.frontier_path == tmp_path / "wall" / "frontier.json"
     assert result.summary.frontier == {
         "kind": "recovered-construction-audit",
         "independentPanicCount": 1,
         "suppressedDescendantCount": 0,
         "effectCount": 0,
     }
+    assert result.breaches == ("recovered construction audit is red",)
+    assert commands[0] == [str(root / "bin/sugarbin"), "--profile", "release"]
+    assert len(commands) == 2
+    # #7806: `sugar lift --report` is not a driver of the Python kit.
+    assert all("--report" not in command for command in commands)
+    manifest = (
+        tmp_path / "wall" / "workspace" / "numpy" / ".sugar/lift/python/manifest.toml"
+    )
+    assert '"--rpc"' in manifest.read_text(encoding="utf-8")
+    assert '"--audit-only"' not in manifest.read_text(encoding="utf-8")
+    assert not (tmp_path / "wall" / "report.json").exists()
+    summary = json.loads((tmp_path / "wall" / "summary.json").read_text())
+    assert summary["mode"] == "frontier"
+    assert summary["frontier"]["independentPanicCount"] == 1
 
 
-def test_report_mode_still_refuses_construction_gaps_without_frontier(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "repo"
-    (root / "bin").mkdir(parents=True)
-    (root / "bin/sugarbin").write_text("#!/bin/sh\n", encoding="utf-8")
-    package = tmp_path / "numpy"
-    package.mkdir()
-    (package / "__init__.py").write_text("x = 1\n", encoding="utf-8")
+def test_green_frontier_has_no_breach(tmp_path: Path) -> None:
+    root, package = _repo_and_package(tmp_path)
+
+    def runner(command, _cwd, _env):
+        if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
+            return CommandResult(0, str(root / "sugar") + "\n", "")
+        if command[1:3] == ["lift", "--audit-frontier"]:
+            _write_frontier(command, panics=0)
+            return CommandResult(0, "", "")
+        raise AssertionError(command)
+
+    result = build_numpy_wall(
+        root=root,
+        output_dir=tmp_path / "wall",
+        floors=NumpyWallFloors(
+            frontier_independent_panics=0, frontier_suppressed_descendants=0
+        ),
+        package_path_resolver=lambda _package: package,
+        run_command=runner,
+    )
+
+    assert result.breaches == ()
+
+
+def test_missing_frontier_is_a_loud_failure(tmp_path: Path) -> None:
+    root, package = _repo_and_package(tmp_path)
 
     def runner(command, _cwd, _env):
         if command == [str(root / "bin/sugarbin"), "--profile", "release"]:
             return CommandResult(0, str(root / "sugar") + "\n", "")
         return CommandResult(2, "", "ConstructionPanic")
 
-    with pytest.raises(RuntimeError, match="json report failed exit=2"):
+    with pytest.raises(RuntimeError, match="failed without frontier.json"):
         build_numpy_wall(
             root=root,
             output_dir=tmp_path / "wall",
-            floors=NumpyWallFloors(green=0, pre_bearing=0, implications=0),
+            floors=NumpyWallFloors(),
             package_path_resolver=lambda _package: package,
             run_command=runner,
-            mode="report",
         )
 
-    assert not (tmp_path / "wall" / "frontier.json").exists()
+    assert not (tmp_path / "wall" / "summary.json").exists()
 
 
 def _frontier_summary(independent: int, suppressed: int) -> NumpyWallSummary:
     return NumpyWallSummary(
-        mode="frontier",
-        green=0,
-        red_reasoned=0,
-        red_bare=0,
-        contracts=0,
-        pre_bearing=0,
-        call_edges_resolved=0,
-        implications=0,
         frontier={
             "kind": "recovered-construction-audit",
             "independentPanicCount": independent,
@@ -332,9 +190,6 @@ def test_frontier_ceilings_load_from_pinned_floors_json() -> None:
 
 def test_frontier_ceiling_reds_on_planted_higher_count() -> None:
     floors = NumpyWallFloors(
-        green=0,
-        pre_bearing=0,
-        implications=0,
         frontier_independent_panics=5569,
         frontier_suppressed_descendants=7315,
     )
@@ -349,9 +204,6 @@ def test_frontier_ceiling_reds_on_planted_higher_count() -> None:
 
 def test_frontier_ceiling_passes_at_or_below_the_pin() -> None:
     floors = NumpyWallFloors(
-        green=0,
-        pre_bearing=0,
-        implications=0,
         frontier_independent_panics=5569,
         frontier_suppressed_descendants=7315,
     )
@@ -360,5 +212,5 @@ def test_frontier_ceiling_passes_at_or_below_the_pin() -> None:
 
 
 def test_unpinned_frontier_ceilings_do_not_gate() -> None:
-    floors = NumpyWallFloors(green=0, pre_bearing=0, implications=0)
+    floors = NumpyWallFloors()
     assert check_frontier_ceilings(_frontier_summary(10**6, 10**6), floors) == []

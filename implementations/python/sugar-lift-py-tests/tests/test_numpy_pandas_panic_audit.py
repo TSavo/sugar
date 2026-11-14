@@ -30,8 +30,8 @@ from sugar_lift_py_tests.idd.collect_panic_audit import (
 ROOT = resolve_repo_root()
 
 
-def _is_visual_lift(command: list[str]) -> bool:
-    return command[1:4] == ["lift", "--report", "--visual"]
+def _is_audit_frontier_demand(command: list[str]) -> bool:
+    return len(command) == 4 and command[1:3] == ["lift", "--audit-frontier"]
 
 
 def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
@@ -81,7 +81,7 @@ def test_numpy_pandas_r_is_measured_from_observed_panics() -> None:
     }
     assert len(report.records) == 3
     assert all("--audit-only" not in command for command in calls)
-    assert all(_is_visual_lift(command) for command in calls)
+    assert all(_is_audit_frontier_demand(command) for command in calls)
 
     text = render_text(report)
     assert "python numpy/pandas lift panic audit" in text
@@ -144,7 +144,7 @@ def test_installed_package_audit_target_counts_against_language_axis(tmp_path) -
         "pathlib_floor_panics": 0,
         "unexpected_panics": 0,
     }
-    assert all(_is_visual_lift(command) for command in calls)
+    assert all(_is_audit_frontier_demand(command) for command in calls)
 
 
 def test_audit_workspace_manifest_passes_audit_flag_to_python_lifter(tmp_path) -> None:
@@ -236,13 +236,14 @@ def test_lift_command_uses_cached_audit_workspace(
 
     monkeypatch.setattr(panic_audit_module, "_run_subprocess", fake_subprocess)
 
-    command = ["/cache/sugar-stamp", "lift", "--report", "--visual", str(target)]
+    command = ["/cache/sugar-stamp", "lift", "--audit-frontier", str(target)]
     assert panic_audit_module._run_command(command, ROOT).returncode == 0
     assert panic_audit_module._run_command(command, ROOT).returncode == 0
 
     assert len(commands) == 2
     assert commands[0][1:3] == ["lift", "--audit-frontier"]
-    assert "--visual" not in commands[0]
+    assert "--report" not in commands[0]
+    assert commands[0][-1] != str(target)
     assert commands[0][-1] == commands[1][-1]
     cached_workspace = Path(commands[0][-1])
     assert cached_workspace.is_dir()

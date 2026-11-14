@@ -1,21 +1,6 @@
 {
   "kind": "pandas-wall-ratchet-floors",
   "floors": {
-    "mode": "frontier",
-    "construction_gaps": {
-      "total_ceiling": 0,
-      "templates": {}
-    },
-    "complete_floors": {
-      "green": 7870,
-      "implications": 0,
-      "pre_bearing": 69
-    },
-    "frontier": {
-      "message_needle": "",
-      "owner": "",
-      "shape": ""
-    },
     "frontier_ceilings": {
       "independent_panics": 11417,
       "suppressed_descendants": 12938

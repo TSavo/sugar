@@ -374,7 +374,6 @@ _EMPTY_CENSUS_LEVELS = frozenset(
         "call_sites",
         "assertions",
         "facts",
-        "implications",
         "exports",
         "contract-declarations",
         "provider-contract-members",

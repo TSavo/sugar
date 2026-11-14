@@ -31,9 +31,9 @@
 // CLAIM vs OBLIGATION (plan's "two halves meeting at the callsite"):
 // `universe`/`assertions`/`facts` are the claim side, kit-enumerated over
 // the wire (`universe` joins function-contract rows by bridgeSourceSymbol).
-// `contract`/`implication` are LINK-time (#3831) -- this pass lands them
-// as `EdgeTarget::Unbound`/`None` stubs; no RPC is made for them, since
-// binding them is a `solve()`-time concern (SEAM 5), out of scope here.
+// `contract` is LINK-time (#3831) -- this pass lands it as an
+// `EdgeTarget::Unbound` stub; no RPC is made for it, since binding it is a
+// `solve()`-time concern (SEAM 5), out of scope here.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -104,7 +104,6 @@ pub enum Level {
     Assertions,
     Facts,
     Universe,
-    Implications,
     Exports,
     ContractDeclarations,
     ProviderContractMembers,
@@ -122,7 +121,6 @@ impl Level {
             Level::Assertions => "assertions",
             Level::Facts => "facts",
             Level::Universe => "universe",
-            Level::Implications => "implications",
             Level::Exports => "exports",
             Level::ContractDeclarations => "contract-declarations",
             Level::ProviderContractMembers => "provider-contract-members",
@@ -206,7 +204,7 @@ pub enum EnumerateError {
         "sugar.enumerate seek on `{plugin}` at level `{level}` found no node for the given memento"
     )]
     SeekMiss { plugin: String, level: &'static str },
-    /// `universe()`/`implication()`-style claim data the current kit-side
+    /// `universe()`-style claim data the current kit-side
     /// factory audit does not expose as its own level (see module doc's
     /// GRANULARITY note): a real, reportable gap rather than a silent
     /// empty success.
@@ -247,60 +245,6 @@ pub enum EdgeTarget<T> {
 pub struct Contract {
     pub name: String,
 }
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Implication {
-    memento: SourceMemento,
-    surface: String,
-    audit: Value,
-    payload: Option<Value>,
-}
-
-impl Sourced for Implication {
-    fn source_memento(&self) -> &SourceMemento {
-        &self.memento
-    }
-}
-
-impl Implication {
-    pub fn audit_row(&self) -> &Value {
-        &self.audit
-    }
-
-    pub fn payload(&self) -> Option<&Value> {
-        self.payload.as_ref()
-    }
-
-    /// Report transcript row keyed by the call-site demand owner. The audit
-    /// alone is not a question identity: distinct call sites can ask the same
-    /// caller/callee implication and legitimately carry byte-identical audits.
-    pub fn report_row(&self) -> Value {
-        let mut row = self.audit.clone();
-        let object = row.as_object_mut().unwrap_or_else(|| {
-            panic!("implication audit testimony must be an object before report transport")
-        });
-        let call_site = self.memento.to_json();
-        object.insert("callSiteMemento".to_string(), call_site.clone());
-        object.insert(
-            "questionIdentity".to_string(),
-            json!({
-                "surface": self.surface,
-                "level": "implications",
-                "at": call_site,
-                "seek": true,
-            }),
-        );
-        row
-    }
-}
-
-/// `Implication::pre` is minted at link time from the resolved callee
-/// contract (#3831) -- this pass never constructs one, so it is not yet
-/// worth pulling in a full `IrFormula` dependency edge here beyond the one
-/// `Fact` already needs. A thin wrapper keeps the field real without
-/// inventing behavior.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IrFormulaPlaceholder(pub IrFormula);
 
 /// The claim side's sort-domain view of a call site: the operator /
 /// function-contract universe linked to this call via `bridgeSourceSymbol`
@@ -2139,107 +2083,6 @@ impl CallSite {
     pub fn contract(&self) -> EdgeTarget<Contract> {
         EdgeTarget::Unbound
     }
-
-    /// Demand this exact call site's implication question. The producer returns
-    /// candidate input only; this coordinator invokes the pure one-edge linker
-    /// worker, which owns join, obligation mint, and status. The supplied
-    /// `registry` + `plan` are the SAME solver seats the discharge path
-    /// consults, so the demanded answer IS the discharged verdict.
-    pub fn implication(
-        &self,
-        registry: &sugar_linker::Registry,
-        plan: &sugar_linker::solver_api::SolverPlan,
-    ) -> Result<Implication, KitError> {
-        let (nodes, gaps) = enumerate_rpc(
-            &self.conn,
-            Level::Implications,
-            Some(self.memento.to_json()),
-            true,
-        )?;
-        let node = nodes.into_iter().next().ok_or_else(|| {
-            KitError::from(if gaps.is_empty() {
-                EnumerateError::SeekMiss {
-                    plugin: self.conn.surface.clone(),
-                    level: "implications",
-                }
-            } else {
-                EnumerateError::NotModeled {
-                    plugin: self.conn.surface.clone(),
-                    level: "implications",
-                    reason: gaps
-                        .into_iter()
-                        .map(|gap| gap.reason)
-                        .collect::<Vec<_>>()
-                        .join("; "),
-                }
-            })
-        })?;
-        let question_audit = node.audit.ok_or_else(|| {
-            KitError::from(EnumerateError::Malformed {
-                plugin: self.conn.surface.clone(),
-                reason: "implication question missing audit testimony".to_string(),
-            })
-        })?;
-        let answer = match node.payload {
-            Some(payload) => {
-                let demand: sugar_linker::ImplicationDemand = serde_json::from_value(payload)
-                    .map_err(|error| {
-                        KitError::from(EnumerateError::Malformed {
-                            plugin: self.conn.surface.clone(),
-                            reason: format!("implication question payload is invalid: {error}"),
-                        })
-                    })?;
-                serde_json::to_value(sugar_linker::demand_implication(demand, registry, plan))
-                    .map_err(|error| {
-                        KitError::from(EnumerateError::Malformed {
-                            plugin: self.conn.surface.clone(),
-                            reason: format!("implication answer cannot serialize: {error}"),
-                        })
-                    })?
-            }
-            None => json!({
-                "sourceContract": question_audit.get("sourceContract").cloned().unwrap_or_else(|| Value::String("<unknown caller>".into())),
-                "targetContract": Value::Null,
-                "targetSymbol": question_audit.get("targetSymbol").cloned().unwrap_or_else(|| Value::String("unknown".into())),
-                "status": "unjoined",
-                "reason": "demanded implication question carried no linker input",
-                "obligation": Value::Null,
-            }),
-        };
-        let payload = answer
-            .get("obligation")
-            .filter(|value| !value.is_null())
-            .cloned();
-        Ok(Implication {
-            // The consumer-owned replay key is the question identity. Never let
-            // a producer substitute another callsite memento in the answer.
-            memento: self.memento.clone(),
-            surface: self.conn.surface.clone(),
-            audit: answer,
-            payload,
-        })
-    }
-}
-
-/// CLI appetite: demand every call site's implication node and retain the
-/// transcript. Enumeration remains the only work driver at every edge. The
-/// caller supplies the workspace solver `registry` + `plan` so every demanded
-/// verdict is the real discharge verdict, never a solverless shadow.
-pub fn fold_implication_tree(
-    kit: &Kit,
-    workspace_root: &Path,
-    registry: &sugar_linker::Registry,
-    plan: &sugar_linker::solver_api::SolverPlan,
-) -> Result<Vec<Value>, KitError> {
-    let mut implications = Vec::new();
-    for file in kit.source_files(workspace_root)? {
-        for function in file.functions()? {
-            for call_site in function.call_sites()? {
-                implications.push(call_site.implication(registry, plan)?.report_row());
-            }
-        }
-    }
-    Ok(implications)
 }
 
 impl Assertion {

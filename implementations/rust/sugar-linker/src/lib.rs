@@ -1358,65 +1358,6 @@ pub struct LinkerInputs {
     pub call_edges: Vec<LinkerCallEdge>,
 }
 
-/// One candidate universe exposed by the kit for one demanded call edge.
-/// Candidate discovery remains language-owned; choosing zero/one/many and
-/// binding the edge is linker-owned and happens only when this demand runs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImplicationTargetCandidate {
-    pub bridge_source_symbol: String,
-    pub contract: LinkerContract,
-}
-
-/// The complete per-callsite linker question carried by one enumeration node.
-/// It cannot represent a batch: exactly one source contract and one call edge
-/// enter this constructor, while candidate universes remain an explicit set.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImplicationDemand {
-    pub source_contract: LinkerContract,
-    pub target_candidates: Vec<ImplicationTargetCandidate>,
-    pub call_edge: LinkerCallEdge,
-}
-
-/// The demand verdict vocabulary, reconciled with the discharge path.
-///
-/// `Failed` replaced the old lossy `Unsatisfied`: a failed row always carries
-/// the exact [`LinkerErrorKind`] the discharge path produced (see
-/// [`ImplicationDemandAnswer::error_kind`]), never a collapsed "unsatisfied".
-/// `Unjoined` covers zero/ambiguous candidate discovery AND typed binding
-/// failures (`unresolved-symbol` / `signature-mismatch`), the latter with the
-/// `errorKind` preserved on the row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ImplicationDemandStatus {
-    Discharged,
-    Failed,
-    Unjoined,
-}
-
-/// Transcript row returned by the per-edge linker worker. The enumeration
-/// coordinator adds the call-site question identity; the linker owns only the
-/// join, obligation mint, and verdict for this one edge.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ImplicationDemandAnswer {
-    pub kind: String,
-    pub source_contract: String,
-    pub target_contract: Option<String>,
-    pub target_symbol: String,
-    pub status: ImplicationDemandStatus,
-    /// The exact typed [`LinkerErrorKind`] the discharge path produced, when
-    /// the edge bound but its obligation failed (`status: "failed"`) or the
-    /// authoritative binding itself refused (`status: "unjoined"` with
-    /// `unresolved-symbol` / `signature-mismatch`). Absent for discharged rows
-    /// and for zero/ambiguous candidate discovery.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error_kind: Option<LinkerErrorKind>,
-    pub reason: String,
-    pub obligation: Option<Json>,
-}
-
 /// A content-addressed link bundle — the four set-CIDs plus the canonical
 /// serialized bundle object, grouped as one typed value.
 ///
@@ -1493,145 +1434,6 @@ pub fn link(inputs: LinkerInputs) -> LinkerOutput {
         call_edges,
     } = inputs;
     derive_link_bundle_inner(contracts, call_edges, &empty_registry, &no_op_plan)
-}
-
-/// Execute the pure linker algebra for exactly one demanded callsite question,
-/// through the SAME per-edge worker the bundle derivation uses
-/// ([`derive_edge`]): one edge → one bind → one obligation mint → one
-/// discharge. The answer is the report projection of that single outcome; the
-/// bundle is the aggregate projection of the same worker over a batch.
-///
-/// Candidate *discovery* (which candidate universes answer the demanded
-/// symbol) remains language-owned via `bridge_source_symbol`; candidate
-/// *binding* goes through the authoritative [`bind`] constructor — the member
-/// re-check and `ImportSignature` check are never bypassed.
-///
-/// Classification policy (pinned by `demand_feeds_discharge_gate.rs`):
-/// - zero / ambiguous candidate discovery → `unjoined` (no `errorKind`);
-/// - `unresolved-symbol` / `signature-mismatch` from authoritative binding →
-///   `unjoined` with the typed `errorKind` preserved on the row;
-/// - every obligation failure → `failed` with the exact [`LinkerErrorKind`]
-///   (`unprovable-obligation`, `implication-unprovable`,
-///   `implication-undecidable`, `implication-solver-timeout`,
-///   `implication-refused`) — never reduced to a lossy "unsatisfied".
-pub fn demand_implication(
-    demand: ImplicationDemand,
-    registry: &Registry,
-    plan: &SolverPlan,
-) -> ImplicationDemandAnswer {
-    let ImplicationDemand {
-        source_contract,
-        target_candidates,
-        mut call_edge,
-    } = demand;
-    let source_name = source_contract.name.clone();
-    let target_symbol = call_edge.target_symbol.to_wire();
-
-    // Candidate discovery: language-owned. The kit names the demanded symbol
-    // each candidate universe answers; discovery is exact wire equality.
-    let mut matching = target_candidates
-        .into_iter()
-        .filter(|candidate| candidate.bridge_source_symbol == target_symbol)
-        .collect::<Vec<_>>();
-
-    if matching.is_empty() {
-        return ImplicationDemandAnswer {
-            kind: "implication".to_string(),
-            source_contract: source_name,
-            target_contract: None,
-            target_symbol: target_symbol.clone(),
-            status: ImplicationDemandStatus::Unjoined,
-            error_kind: None,
-            reason: format!("no target candidate answers demanded symbol {target_symbol}"),
-            obligation: None,
-        };
-    }
-    if matching.len() > 1 {
-        let names = matching
-            .iter()
-            .map(|candidate| candidate.contract.name.as_str())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return ImplicationDemandAnswer {
-            kind: "implication".to_string(),
-            source_contract: source_name,
-            target_contract: None,
-            target_symbol: target_symbol.clone(),
-            status: ImplicationDemandStatus::Unjoined,
-            error_kind: None,
-            reason: format!(
-                "ambiguous target candidates for demanded symbol {target_symbol}: {names}"
-            ),
-            obligation: None,
-        };
-    }
-
-    let target = matching
-        .pop()
-        .expect("one matching implication candidate after cardinality checks")
-        .contract;
-    let target_name = target.name.clone();
-
-    // Binding: linker-owned. The discovered candidate becomes a CID *claim* on
-    // the edge; `derive_edge` re-checks it through `bind` (member + signature)
-    // exactly as the bundle path does.
-    call_edge.target_contract_cid = Some(target.contract_cid.clone());
-
-    // Single-edge symbol table over the demanded source + discovered candidate.
-    let contracts = [source_contract, target];
-    let mut name_kit_index: BTreeMap<Symbol, String> = BTreeMap::new();
-    let mut contracts_by_cid: BTreeMap<&str, &LinkerContract> = BTreeMap::new();
-    for c in &contracts {
-        name_kit_index.insert(
-            Symbol::qualified(c.kit.clone(), c.name.clone()),
-            c.contract_cid.as_str().to_string(),
-        );
-        contracts_by_cid.insert(c.contract_cid.as_str(), c);
-    }
-    let symbol_table = SymbolTable::new(&name_kit_index, &contracts_by_cid);
-
-    let outcome = derive_edge(&call_edge, &symbol_table, &contracts_by_cid, registry, plan);
-
-    // Project the single minted obligation into the report row: the wire
-    // evidence term is lowered FROM the in-memory state the discharge checked.
-    let obligation = outcome
-        .bridge
-        .as_ref()
-        .map(|bridge| bridge.obligation.evidence_term());
-    let (status, error_kind, reason) = match &outcome.error {
-        None => (
-            ImplicationDemandStatus::Discharged,
-            None,
-            "linker discharged caller post implies callee pre".to_string(),
-        ),
-        Some(error)
-            if matches!(
-                error.kind,
-                LinkerErrorKind::UnresolvedSymbol | LinkerErrorKind::SignatureMismatch
-            ) =>
-        {
-            (
-                ImplicationDemandStatus::Unjoined,
-                Some(error.kind),
-                error.reason.clone(),
-            )
-        }
-        Some(error) => (
-            ImplicationDemandStatus::Failed,
-            Some(error.kind),
-            error.reason.clone(),
-        ),
-    };
-    ImplicationDemandAnswer {
-        kind: "implication".to_string(),
-        source_contract: source_name,
-        target_contract: Some(target_name),
-        target_symbol,
-        status,
-        error_kind,
-        reason,
-        obligation,
-    }
 }
 
 /// Derive bridges and emit a `LinkBundle`, using the supplied solver
@@ -1832,10 +1634,9 @@ fn derive_link_bundle_inner(
 
 /// The rich outcome of running the per-edge linker algebra on ONE call edge.
 ///
-/// Both public paths project this one value: [`demand_implication`] projects it
-/// into an [`ImplicationDemandAnswer`] report row; [`derive_link_bundle_inner`]
-/// folds it into bundle bridges + linker errors. There is exactly one bind, one
-/// obligation mint, and one discharge per edge — here.
+/// [`derive_link_bundle_inner`] folds it into bundle bridges + linker errors.
+/// There is exactly one bind, one obligation mint, and one discharge per edge
+/// — here.
 struct EdgeOutcome {
     /// The derived bridge (wire memento + the single minted in-memory
     /// [`ObligationState`]), when the edge bound.
