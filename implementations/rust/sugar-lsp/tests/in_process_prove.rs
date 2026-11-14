@@ -153,9 +153,6 @@ GOOD = json.loads({good_json})
 BAD = json.loads({bad_json})
 DECL = json.loads({decl_json})
 
-def inv_from_doc(doc):
-    return doc["ir"][0]["inv"]
-
 def contract_from_doc(doc):
     return doc["ir"][0]
 
@@ -189,42 +186,12 @@ def reply(msg_id, result):
 def enumerate_nodes(level, at, seek, workspace_root):
     doc = pick_doc(workspace_root)
     contract = contract_from_doc(doc)
-    inv = inv_from_doc(doc)
     warrants = contract.get("sourceWarrants") or [{{}}]
     file = warrants[0].get("file") or "src/lib.rs"
-    site = memento(file)
     if level == "source_files":
         return [{{"memento": memento(file, fn=""), "audit": None, "payload": None}}]
-    if level == "functions":
-        return [{{"memento": memento(file, fn="check"), "audit": None, "payload": None}}]
-    if level == "call_sites":
-        return [{{
-            "memento": site,
-            "audit": {{
-                "kind": "contract",
-                "name": contract["name"],
-                "bridgeSourceSymbol": "call:check",
-                "inv": inv,
-                "outBinding": "out",
-                "sourceWarrants": contract.get("sourceWarrants", []),
-            }},
-            "payload": None,
-        }}]
-    if level in ("assertions", "facts"):
-        node = {{
-            "memento": site,
-            "audit": {{
-                "kind": "contract",
-                "name": contract["name"],
-                "inv": inv,
-                "outBinding": "out",
-                "sourceWarrants": contract.get("sourceWarrants", []),
-            }},
-            "payload": inv if level == "facts" else None,
-        }}
-        return [node]
-    if level == "universe":
-        return []
+    # No driver asks for the levels below a file (#7757): the one walk is
+    # source_files -> universe.
     return []
 
 for line in sys.stdin:

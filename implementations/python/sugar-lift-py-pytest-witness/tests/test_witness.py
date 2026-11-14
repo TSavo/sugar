@@ -631,8 +631,9 @@ def test_enumerate_link_units_and_unrelated_levels_are_empty_not_errors(tmp_path
     proj = _project(tmp_path, GOOD)
     link_units = _enumerate_call(proj, {"level": "parameter-contract-link-units"})
     assert link_units["result"] == {"rows": []}, link_units
-    for level in ("functions", "call_sites", "assertions", "facts", "exports"):
-        reply = _enumerate_call(proj, {"level": level})
-        assert reply["result"] == {"nodes": [], "gaps": []}, (level, reply)
-    unknown = _enumerate_call(proj, {"level": "no-such-level"})
-    assert "error" in unknown, unknown
+    reply = _enumerate_call(proj, {"level": "exports"})
+    assert reply["result"] == {"nodes": [], "gaps": []}, reply
+    # No driver asks for the levels below a file (#7757): they are unknown.
+    for level in ("functions", "call_sites", "assertions", "facts", "no-such-level"):
+        unknown = _enumerate_call(proj, {"level": level})
+        assert "error" in unknown, (level, unknown)

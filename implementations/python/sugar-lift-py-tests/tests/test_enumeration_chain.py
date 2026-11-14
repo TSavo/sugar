@@ -1,6 +1,6 @@
-"""The dotted path over the wire: source_files -> functions -> call_sites,
-each level a projection of the collapse, each node addressed by its sealed
-memento. The assertion level below call_sites is gone (#7757 entry 5)."""
+"""The functions level over the wire (the board door's D2): each node
+addressed by its sealed memento. The levels below it (call_sites,
+assertions) are gone (#7757)."""
 
 from __future__ import annotations
 
@@ -76,18 +76,7 @@ def test_the_dotted_path_end_to_end(tmp_path) -> None:
         )["nodes"]
         names = [n["memento"].get("source_function_name") for n in functions]
         assert names == ["enc", "A"]  # no duplicate enclosing-only node
-
-        a_memento = next(
-            n["memento"]
-            for n in functions
-            if n["memento"].get("source_function_name") == "A"
-        )
-        sites = server.call(
-            "sugar.enumerate",
-            {"level": "call_sites", "workspace_root": ws, "at": a_memento},
-        )["nodes"]
-        assert len(sites) == 1
-        assert sites[0]["memento"]["span"]["start_line"] == 8  # the assert's line
-        assert sites[0]["memento"]["source_cid"].startswith("blake3-512:")
+        for node in functions:
+            assert node["memento"]["source_cid"].startswith("blake3-512:")
     finally:
         server.close()

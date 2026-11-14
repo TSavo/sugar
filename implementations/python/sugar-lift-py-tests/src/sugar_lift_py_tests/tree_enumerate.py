@@ -1,34 +1,19 @@
 """Enumeration served by the AST tree, not the factory.
 
-The wire protocol's levels below `functions` — call_sites, assertions, facts —
-were serviced by lifting the whole file through the factory and reading its IR
-rows. Here they are serviced by walking the tree the parser produces and
-asking each Assert node for its sugar and its desugared fact. The RPC drives
-AST walking directly; the factory is not consulted.
-
-For `assert <test>`: the assertion IS the Assert node; its fact is the InvValue
-its sugar desugars to (formula on the wire via formula_to_value). A bare
-assertion carries no call site — call_sites and assertions are the same locus,
-1:1, exactly as the factory's protocol Section 4 already had them.
+The `universe` level is served by walking the tree the parser produces and
+reading each function's one reduction (``owner_reduction``) into its contract
+rows. The RPC drives AST walking directly; the factory is not consulted. The
+levels that walked below a function (call_sites, assertions, facts) and the
+universe seek by a call-site cue had no driver and are deleted (#7757).
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 
 from sugar_source_tree.construction_cache import AmbientSet
 from sugar_source_tree.tree import SourceFile
-from sugar_source_tree.nodes import Assert, AsyncFunctionDef, FunctionDef
-
-
-def functions_of(sf: SourceFile):
-    return list(sf.functions())
-
-
-def asserts_of(node) -> list:
-    """Every Assert in a function body, in source order."""
-    return [n for n in node.walk() if isinstance(n, Assert)]
+from sugar_source_tree.nodes import Assert
 
 
 def halted_assertion_sites(halted_arms) -> tuple:
@@ -152,154 +137,6 @@ def halt_locus(arm, *, formals, def_memento, blame):
     )
 
 
-def find_function(sf: SourceFile, name: Optional[str], span: Optional[dict]):
-    for fn in sf.functions():
-        if name is not None and fn.name != name:
-            continue
-        if span and not _span_matches(fn, span):
-            continue
-        return fn
-    return None
-
-
-class FunctionBindingMiss(Exception):
-    """Named refusal: no unique authenticated function binding.
-
-    Absence is a decision. Returning bare ``None`` made a miss
-    indistinguishable from a soft skip; callers that need soft handling must
-    catch this named throw explicitly.
-    """
-
-    def __init__(self, *, name: str, reason: str) -> None:
-        self.name = name
-        self.reason = reason
-        super().__init__(f"FunctionBindingMiss name={name!r} reason={reason}")
-
-
-def find_function_by_name(sf: SourceFile, name: str):
-    """Resolve the unique module-direct function binding for ``name``.
-
-    Authority is ``module_direct_bindings`` (bind-time roster), never
-    first-match-by-spelling over transitive ``functions()`` (class methods and
-    nested defs share spellings). Miss or competing bindings THROW named —
-    they are not soft ``None``.
-    """
-    bindings = (sf.unit.module_direct_bindings or {}).get(name, ())
-    functions = [
-        binding
-        for binding in bindings
-        if isinstance(binding, (FunctionDef, AsyncFunctionDef))
-    ]
-    if len(functions) == 1:
-        return functions[0]
-    if not functions:
-        raise FunctionBindingMiss(name=name, reason="no module-direct function binding")
-    raise FunctionBindingMiss(
-        name=name,
-        reason=f"{len(functions)} competing module-direct function bindings",
-    )
-
-
-def resolve_function_for_call(call):
-    """Resolve the callee through binding/coordinate at an exact call site.
-
-    Uses ``SourceUnit.source_function_definition_for_call`` — lexical rows and
-    module-direct bindings, not spelling walks. THROW named on a miss.
-    """
-    from sugar_source_tree.nodes import Name
-
-    unit = call.unit
-    definition = unit.source_function_definition_for_call(call)
-    if definition is not None:
-        return definition
-    name = call.func.id if isinstance(call.func, Name) else type(call.func).__name__
-    raise FunctionBindingMiss(
-        name=name,
-        reason="no unique authenticated function binding at call site",
-    )
-
-
-def call_target_names(sf: SourceFile, span: Optional[dict]) -> list:
-    """The callee names cued by the assertion at `span`: the func-name of every
-    plain Call inside it. This is how a call-site cue resolves to the callee(s)
-    whose universe it digs -- by NAME, directly, no bridge-matching heuristics
-    (the tree kept the names the factory had to reconstruct)."""
-    from sugar_source_tree.nodes import Call, Name
-
-    _source, node = temporally_rewritten_assert(sf, span)
-    if node is None:
-        return []
-    names = []
-    for call in node.walk():
-        if isinstance(call, Call) and isinstance(call.func, Name):
-            if call.func.id not in names:
-                names.append(call.func.id)
-    return names
-
-
-def find_assert(sf: SourceFile, span: Optional[dict]):
-    for node in sf:
-        if isinstance(node, Assert) and (span is None or _span_matches(node, span)):
-            return node
-    return None
-
-
-def temporally_rewritten_assert(sf: SourceFile, span: Optional[dict]):
-    """Return ``(source_assert, rewritten_assert)`` for an exact locus.
-
-    An assertion is not a construction root.  Its meaning depends on every
-    binding before it in the enclosing function (or module), so constructing
-    its Sugar directly from the parser-backed tree is a temporal side door.
-    Find the narrowest enclosing function, rewrite that scope as a block, and
-    only then return the assertion on which callers may invoke ``sugar()``.
-
-    The source node is returned separately because its fragment/memento is the
-    durable address.  Shadow rewrites deliberately borrow that address, but
-    keeping the two roles explicit prevents a future caller from mistaking
-    source lookup for construction readiness.
-
-    Its readers look for the calls inside the rewritten assert; nothing reduces
-    it. What the assert reduces to is read off its owner's one reduction
-    (``assert_outcome``, item 28).
-    """
-    source_assert = find_assert(sf, span)
-    if source_assert is None:
-        return None, None
-
-    owner = _assert_owner(sf, source_assert)
-    rewritten_owner = (owner or sf.root).substitute({})
-
-    for node in rewritten_owner.walk():
-        if isinstance(node, Assert) and _span_matches(node, span or {}):
-            return source_assert, node
-    return source_assert, None
-
-
-def _assert_owner(sf: SourceFile, source_assert):
-    """The narrowest function holding ``source_assert``; ``None`` for the module."""
-    target = source_assert.line_col_span()
-
-    def contains(node) -> bool:
-        locus = node.line_col_span()
-        return (
-            locus.start_line <= target.start_line and locus.end_line >= target.end_line
-        )
-
-    owners = [fn for fn in sf.functions() if contains(fn)]
-    if not owners:
-        # Module assertions are temporally owned by the module block.
-        return None
-    # Nested functions are also yielded by SourceFile.functions(); temporal
-    # ownership belongs to the narrowest one, never its enclosing function.
-    return min(
-        owners,
-        key=lambda fn: (
-            fn.line_col_span().end_line - fn.line_col_span().start_line,
-            fn.line_col_span().end_col - fn.line_col_span().start_col,
-        ),
-    )
-
-
 class OwnerReduction:
     """One reduction of a function (or module) and what it recorded.
 
@@ -337,9 +174,10 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     its unit's ``constructed_module``), once per resident unit and ambient
     state (#7757, inventory items 28 and 44).
 
-    Every reader of a function's reduction reads this one: the universe rows,
-    the link-unit enrollment, and the ``facts`` row of each assert in it. An assert is therefore reduced once, in context, and
-    never alone. A refusal is not kept: it propagates to the reader, named.
+    Every reader of a function's reduction reads this one: the universe rows
+    and the link-unit enrollment. An assert is therefore reduced once, in
+    context, and never alone. A refusal is not kept: it propagates to the
+    reader, named.
     The unanswered calls the reduction left are owed by its outcome's arms,
     so a reduction read back from here carries them as the first one did.
     A module's reduction is its body's one run (``ModuleBlockSugar.run``),
@@ -487,86 +325,6 @@ def module_end_contexts(unit) -> tuple:
     _MODULE_RUN_UNITS[key] = unit
     close_row(_MODULE_RUNS, memo, computation, reporter, value=ends)
     return ends
-
-
-def assert_outcome(sf: SourceFile, span: Optional[dict]):
-    """Return ``(source_assert, outcome)``: what the assert at ``span`` reduced
-    to inside its owner's one reduction (``owner_reduction``).
-
-    ``outcome`` is ``None`` when the owner's reduction never reached the
-    assert. An assert reached more than once (a loop body, a recursive owner)
-    has no one outcome to read: that is refused by name, never answered with
-    one of its reaches.
-    """
-    from sugar_lift_py_tests.caller_parameter_contract import source_coordinate
-    from sugar_source_tree.panic import SugarNotWritten
-
-    source_assert = find_assert(sf, span)
-    if source_assert is None:
-        return None, None
-    reduction = owner_reduction(_assert_owner(sf, source_assert), sf)
-    site = source_coordinate(source_assert.fragment).wire()
-    reached = [
-        outcome
-        for coordinate, outcome in reduction.asserts
-        if coordinate.wire() == site
-    ]
-    if len(reached) > 1:
-        raise SugarNotWritten(
-            owner="assert_outcome",
-            blame=source_assert.fragment,
-            observed=f"the assert is reached {len(reached)} times in its owner's reduction",
-            requested="one outcome for the assert",
-            fix="give each reach of the assert its own row, under its path",
-        )
-    return source_assert, (reached[0] if reached else None)
-
-
-def _span_matches(node, span: dict) -> bool:
-    lc = node.line_col_span()
-    return lc.start_line == span.get("start_line") and lc.start_col == span.get(
-        "start_col"
-    )
-
-
-def assert_memento(node, file_rel: str) -> dict:
-    """The Assert's own self-locating memento: file + its span + CID."""
-    lc = node.line_col_span()
-    sealed = node.fragment.seal()
-    return {
-        "kind": "source-memento",
-        "file": file_rel,
-        "function_name": "",
-        "source_function_name": "",
-        "span": {
-            "start_line": lc.start_line,
-            "start_col": lc.start_col,
-            "end_line": lc.end_line,
-            "end_col": lc.end_col,
-        },
-        "source_cid": sealed.cid,
-    }
-
-
-def fact_of(outcome) -> Optional[Any]:
-    """The assertion's InvValue's formula is the fact, on the wire.
-
-    ``outcome`` is what the assert reduced to in its owner's one reduction
-    (``assert_outcome``); the assert is never reduced here. None when the
-    assertion emits no fact (e.g. inert support) or was not reached.
-    """
-    import json
-
-    from sugar_lift_py_tests.canonicalizer import encode_jcs
-    from sugar_lift_py_tests.ir import formula_to_value
-
-    inv = getattr(outcome, "value", None)
-    formula = getattr(inv, "formula", None)
-    if formula is None:
-        return None
-    # Same shape the factory's facts payload carried (ir.py `item["inv"]`):
-    # the formula's JCS Value tree, flattened to a plain JSON dict.
-    return json.loads(encode_jcs(formula_to_value(formula)))
 
 
 def function_def_memento(fn, file_rel: str):
@@ -966,22 +724,6 @@ def function_contract_rows(fn, file_rel: str):
         blame=fn.fragment,
         def_memento=def_memento,
     )
-
-
-def call_nodes_in_assert(sf: SourceFile, span: Optional[dict]) -> list:
-    """The plain named Call nodes inside the assertion at `span`, in walk order.
-    The cue's own AST: each carries the callee name AND the actual argument
-    nodes -- the pre this call fills."""
-    from sugar_source_tree.nodes import Call, Name
-
-    _source, node = temporally_rewritten_assert(sf, span)
-    if node is None:
-        return []
-    return [
-        call
-        for call in node.walk()
-        if isinstance(call, Call) and isinstance(call.func, Name)
-    ]
 
 
 def _roll_call_identity(entry) -> tuple:

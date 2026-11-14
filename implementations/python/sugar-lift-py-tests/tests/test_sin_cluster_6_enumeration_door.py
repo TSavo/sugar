@@ -1,14 +1,12 @@
 """SIN CLUSTER 6 — enumeration that bypasses the construction door.
 
-Coordinates under sugar-lift-py-tests:
-
-1. A call binds through SourceCallFrame.bind_node_actuals (not ad-hoc zip
-   of flat params). ``f(a, *rest)`` called ``f(1, 2)`` packs ``rest=(2,)``;
-   a lying twin asserting ``rest=2`` must fail. (The seek path's own
-   application, ``applied_contract_rows``, is deleted: a contract is applied
-   in one place, at prove; #7757 item 12.)
-2. Function resolution is binding/coordinate, not first-match-by-spelling;
-   a miss THROWS FunctionBindingMiss (named), never soft None.
+A call binds through SourceCallFrame.bind_node_actuals (not ad-hoc zip of
+flat params). ``f(a, *rest)`` called ``f(1, 2)`` packs ``rest=(2,)``; a lying
+twin asserting ``rest=2`` must fail. (The seek path's own application,
+``applied_contract_rows``, is deleted: a contract is applied in one place, at
+prove; #7757 item 12. The universe seek by a call-site cue and its callee
+resolution, ``resolve_function_for_call`` / ``find_function_by_name``, are
+deleted too: no driver; #7757.)
 """
 
 from __future__ import annotations
@@ -19,7 +17,7 @@ from sugar_lift_py_tests import tree_enumerate as te
 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.nodes import Call, Constant, FunctionDef, Name
+from sugar_source_tree.nodes import Call, FunctionDef, Name
 from sugar_source_tree.tree import SourceFile
 
 
@@ -33,7 +31,11 @@ def _tree(source: str, name: str = "cluster6.py") -> SourceFile:
 def _module_fn(source: str, name: str) -> tuple[SourceFile, FunctionDef]:
     tree = _tree(source)
     list(tree.functions())  # force bind-time rosters
-    fn = te.find_function_by_name(tree, name)
+    (fn,) = tuple(
+        binding
+        for binding in (tree.unit.module_direct_bindings or {}).get(name, ())
+        if isinstance(binding, FunctionDef)
+    )
     return tree, fn
 
 
@@ -135,103 +137,8 @@ def test_binding_gap_is_loud_on_arity_mismatch() -> None:
         frame.bind_node_actuals((), ())
 
 
-# --- 2: binding/coordinate resolution; named throw on miss -------------------
-
-
-def test_find_function_by_name_module_binding_truthful_twin() -> None:
-    source = (
-        "class C:\n"
-        "    def f(self):\n"
-        "        return 0\n"
-        "\n"
-        "def f(a, *rest):\n"
-        "    return rest\n"
-    )
-    tree = _tree(source)
-    list(tree.functions())
-    fn = te.find_function_by_name(tree, "f")
-    assert isinstance(fn, FunctionDef)
-    assert fn.name == "f"
-    # Module-level def, not the method: has *rest.
-    assert any(p.param_kind == "vararg" for p in fn.params)
-
-
-def test_find_function_by_name_miss_throws_named() -> None:
-    source = "def g():\n    return 1\n"
-    tree = _tree(source)
-    list(tree.functions())
-    with pytest.raises(te.FunctionBindingMiss) as caught:
-        te.find_function_by_name(tree, "missing")
-    assert caught.value.name == "missing"
-    assert "no module-direct" in caught.value.reason
-
-
-def test_find_function_by_name_does_not_return_none_on_miss() -> None:
-    """Lying twin of soft-None: the miss path must not be a None result."""
-    source = "def g():\n    return 1\n"
-    tree = _tree(source)
-    list(tree.functions())
-    try:
-        result = te.find_function_by_name(tree, "nope")
-    except te.FunctionBindingMiss:
-        return
-    # If we got here without throw, soft None is the SIN.
-    assert result is not None, "miss returned None — absence must THROW named"
-
-
-def test_resolve_function_for_call_by_coordinate() -> None:
-    source = (
-        "def helper(x):\n"
-        "    return x\n"
-        "\n"
-        "def test_a():\n"
-        "    assert helper(3) == 3\n"
-    )
-    tree = _tree(source)
-    list(tree.functions())
-    call = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Name)
-        and node.func.id == "helper"
-    )
-    fn = te.resolve_function_for_call(call)
-    assert fn.name == "helper"
-    assert fn is te.find_function_by_name(tree, "helper")
-
-
-def test_resolve_function_for_call_miss_throws_named() -> None:
-    source = "def test_a():\n" "    assert unknown_callee(1) == 1\n"
-    tree = _tree(source)
-    list(tree.functions())
-    call = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Name)
-        and node.func.id == "unknown_callee"
-    )
-    with pytest.raises(te.FunctionBindingMiss) as caught:
-        te.resolve_function_for_call(call)
-    assert caught.value.name == "unknown_callee"
-
-
-def test_spelling_first_match_over_methods_is_not_authority() -> None:
-    """Class method spelling must not win over the module-direct binding."""
-    source = (
-        "class Holder:\n"
-        "    def pack(self, *items):\n"
-        "        return items\n"
-        "\n"
-        "def pack(a, *rest):\n"
-        "    return (a, rest)\n"
-        "\n"
-        "def test_a():\n"
-        "    assert pack(1, 2) == (1, (2,))\n"
-    )
-    tree = _tree(source)
-    list(tree.functions())
-    fn = te.find_function_by_name(tree, "pack")
-    # Module def has formals (a, *rest); method has (self, *items).
-    assert [p.name for p in fn.params] == ["a", "rest"]
+def test_the_cue_seek_and_its_callee_resolution_are_gone() -> None:
+    """#7757: no driver read the universe seek by a call-site cue."""
+    assert not hasattr(te, "resolve_function_for_call")
+    assert not hasattr(te, "find_function_by_name")
+    assert not hasattr(te, "FunctionBindingMiss")

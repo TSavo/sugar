@@ -1672,47 +1672,6 @@ def _enumerate_file_of(at: Optional[Dict[str, Any]]) -> Optional[str]:
     return file_name if isinstance(file_name, str) and file_name else None
 
 
-def _memento_matches(candidate: Dict[str, Any], target: Dict[str, Any]) -> bool:
-    """Primary-key equality for the tree's locator (the plan's "memento is
-    the primary key"): same file + same span + same source_cid. Only span
-    fields present on BOTH sides are compared, so a degenerate (file-only)
-    target matches on file alone."""
-    if candidate.get("file") != target.get("file"):
-        return False
-    target_source_cid = target.get("source_cid") or target.get("sourceCid")
-    if target_source_cid:
-        if candidate.get("source_cid") != target_source_cid:
-            return False
-    target_span = target.get("span")
-    # The Rust client's `SourceMemento` has no optional span -- a
-    # degenerate (file-only) locator round-trips through it as an
-    # all-zero span (`SrcSpan{0,0,0,0}`), not `null` (see `tree.rs`'s
-    # `decode_memento` doc). Treat an all-zero span the SAME as "no span
-    # constraint" so a file-level seek survives that round trip.
-    if isinstance(target_span, dict) and any(
-        target_span.get(key) not in (0, None)
-        for key in ("start_line", "start_col", "end_line", "end_col")
-    ):
-        candidate_span = candidate.get("span") or {}
-        for key in ("start_line", "start_col", "end_line", "end_col"):
-            if key in target_span and candidate_span.get(key) != target_span.get(key):
-                return False
-    target_fn = (
-        target.get("function_name")
-        or target.get("sourceFunctionName")
-        or target.get("source_function_name")
-    )
-    if target_fn:
-        candidate_fn = (
-            candidate.get("function_name")
-            or candidate.get("sourceFunctionName")
-            or candidate.get("source_function_name")
-        )
-        if candidate_fn != target_fn:
-            return False
-    return True
-
-
 def _module_spelling_from_filename(filename: str) -> str:
     """Module path spelling for a source file (package parts + stem)."""
     module_parts = list(Path(filename).with_suffix("").parts)
@@ -2282,11 +2241,13 @@ def _roll_call_audit_leaf(
 
 def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     """`sugar.enumerate`: the ONE wire method behind the Rust `tree` module's
-    lazy accessors (Part 6 Phase 2,
-    `protocol/specs/2026-07-08-enumeration-protocol.md`). `level` selects the
-    granularity; `at` is the parent's (scan) or this node's own (seek)
-    memento; `seek=true` asks for exactly the ONE node matching `at` rather
-    than every child of it.
+    walk (`fold_enumerate_source_tree`: `source_files` -> per-file
+    `universe`) and the board door's levels
+    (`scripts/recensus_enumerate_consumer.py`). `level` selects the
+    granularity; `at` is the parent (the file) every level scans. The one
+    seek answered is the board door's `facts` leaf under `auditFrontier`; the
+    seeks by a node's own memento and by a call-site cue had no driver and
+    are deleted (#7757).
     """
     demand_started = time.monotonic()
     level = params.get("level")
@@ -2320,6 +2281,27 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     )
 
     try:
+        if seek and not audit_walk:
+            # Every level is a scan of its parent. The seeks that read one
+            # node back (a file, a function, a universe by its own memento or
+            # by a call-site cue) had no driver and are deleted (#7757); a seek
+            # is refused by name, never answered with the whole scan.
+            _send(
+                {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "error": {
+                        "code": -32602,
+                        "message": (
+                            f"sugar.enumerate: seek at level {level!r} is not "
+                            "answered; the one seek is level 'facts' under "
+                            "auditFrontier (the board door's D3 leaf), every "
+                            "other level is a scan"
+                        ),
+                    },
+                }
+            )
+            return
         if level == "contract-declarations":
             _send(
                 {
@@ -2382,8 +2364,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     )
                     continue
                 memento = _degenerate_file_memento(rel_path, fragment.source_cid)
-                if seek and at is not None and not _memento_matches(memento, at):
-                    continue
                 nodes.append({"memento": memento, "audit": None, "payload": None})
             _send_enumerate_result(msg_id, nodes, gaps)
             _log_enumeration_demand(
@@ -2395,7 +2375,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             "functions",
             "context-manager-resolutions",
             "relation-membership",
-            "call_sites",
             "facts",
             "universe",
         ):
@@ -2699,26 +2678,22 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         "template_cid": None,
                         "param_names": [],
                     }
-                    if seek and at is not None and not _memento_matches(memento, at):
-                        continue
                     nodes.append({"memento": memento, "audit": None, "payload": None})
                 _send_enumerate_result(msg_id, nodes, [])
                 _log_enumeration_demand(
                     str(level), at, cache="miss", started=demand_started
                 )
                 return
-            # Levels below `functions` served by the AST tree, not the factory.
             # (audit_walk already answered or refused above; this is the live
             # path.)
             if level == "universe":
-                # The callee contract, served from the tree. Each function's
-                # FunctionDef.sugar() reduces to a UniverseValue whose
-                # payload_rows project the function-contract DTO (post + invs) --
-                # the dig RESULT. Callee resolution is by NAME, directly: a
-                # call-site cue (`at` on a call site) resolves to the function
-                # whose name the call names, no bridge-matching. Three modes:
-                # file scan (seek=false), a universe's own memento, or a
-                # call-site cue.
+                # Every function's contract, served from the tree. Each
+                # function's FunctionDef.sugar() reduces to a UniverseValue
+                # whose payload_rows project the function-contract DTO (post +
+                # invs). A file scan only, the one mint packages: the seek by a
+                # universe's own memento or by a call-site cue, and the
+                # `call_sites` level that minted the cue, had no driver and are
+                # deleted (#7757).
                 from sugar_lift_py_tests import tree_enumerate as _tree
                 from sugar_lift_py_tests import unanswered_calls as _unanswered
                 from sugar_lift_py_tests.ir import TermTableBuilder
@@ -2732,47 +2707,34 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     source_workspace_root=locus_root,
                 )
                 term_table = TermTableBuilder()
-                universes = []  # (name, memento_dict, contract_dto)
                 # Every row of every function's one reduction (#7766): the
-                # function-contract AND each assertion row. `universes` keeps
-                # the function-contract per def for the seek joins below.
+                # function-contract AND each assertion row.
                 scan_rows = []  # (memento_dict, dto)
                 # One `undecided` row per unanswered call site in this file: a
                 # call inlined into several functions' reductions is one call.
                 recorded_calls: set = set()
-                gaps = []
                 # Every function's rows, refused member and undecided members
                 # come from this one scan (#7757): no function is skipped for
                 # another door to state.
                 for fn in sf.functions():
-                    calls = ()
                     try:
                         def_memento, rows = _tree.function_contract_rows(
                             fn, file_rel
                         )
-                        if not seek:
-                            # The full scan mint packages: every call the
-                            # reduction's final arms owe is written once, as
-                            # an `undecided` row (step 8; PR B on #7766). A
-                            # seek packages nothing: it reads no call.
-                            calls = _unanswered.owed_calls(
-                                _tree.owner_reduction(fn).outcome
-                            )
+                        # Every call the reduction's final arms owe is written
+                        # once, as an `undecided` row (step 8; PR B on #7766).
+                        calls = _unanswered.owed_calls(
+                            _tree.owner_reduction(fn).outcome
+                        )
                     except FreeVariableRefusal as refusal:
                         # A row of this function, or the formula its outcome
                         # carries, names a variable outside its declared scope
                         # (a module-level name, an unbound global). The
                         # function is refused by name and the rest of the file
                         # is served (#7785). What the function sees of the name
-                        # is not decided here.
-                        if seek:
-                            # A seek packages nothing, so it has no row to
-                            # write: the refusal leaves as itself, the one
-                            # typed-loud RPC error every refusal gives (#8081).
-                            raise
-                        # The full scan mint packages: one `undecided` row,
-                        # which mint writes as the function's member (step 8).
-                        # The proof never silently lacks the function's claims.
+                        # is not decided here. One `undecided` row, which mint
+                        # writes as the function's member (step 8). The proof
+                        # never silently lacks the function's claims.
                         scan_rows.append(
                             (
                                 _tree.function_def_memento(fn, file_rel).to_rpc(),
@@ -2780,9 +2742,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             )
                         )
                         continue
-                    # Any other refusal from the function, in a full scan or a
-                    # seek, is not turned into an enumeration gap: it leaves
-                    # through the typed-loud RPC membrane by name.
+                    # Any other refusal from the function is not turned into an
+                    # enumeration gap: it leaves through the typed-loud RPC
+                    # membrane by name.
                     for row in _tree.unanswered_call_rows(calls, file_rel):
                         key = json.dumps(
                             row.to_rpc_with_term_table(None), sort_keys=True
@@ -2792,185 +2754,24 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             scan_rows.append((def_memento.to_rpc(), row))
                     if rows is None:
                         continue  # an effect, not a contract
-                    universes.append((fn.name, def_memento.to_rpc(), rows[0]))
                     scan_rows.extend((def_memento.to_rpc(), row) for row in rows)
-                if not seek:
-                    # The full scan mint packages: each exception class the
-                    # module defines states its ancestry, named by its target
-                    # symbol, so a consumer's `except` against the imported
-                    # class is decided at prove through the join (#7757).
-                    scan_rows.extend(_tree.exception_ancestry_rows(sf, file_rel))
+                # Each exception class the module defines states its ancestry,
+                # named by its target symbol, so a consumer's `except` against
+                # the imported class is decided at prove through the join
+                # (#7757).
+                scan_rows.extend(_tree.exception_ancestry_rows(sf, file_rel))
 
-                def _node(memento, dto):
-                    return {
+                nodes = [
+                    {
                         "memento": memento,
                         "audit": dto.to_rpc_with_term_table(term_table),
                         "payload": None,
                     }
-
-                if not (seek and at is not None):
-                    nodes = [_node(m, d) for m, d in scan_rows]
-                    _send_enumerate_result(
-                        msg_id, nodes, gaps, term_tables=[term_table.nodes]
-                    )
-                    _log_enumeration_demand(
-                        str(level), at, cache="miss", started=demand_started
-                    )
-                    return
-
-                # seek: a universe's own memento, else a call-site cue -> callee.
-                direct = [
-                    _node(m, d) for _n, m, d in universes if _memento_matches(m, at)
+                    for memento, dto in scan_rows
                 ]
-                if direct:
-                    _send_enumerate_result(
-                        msg_id, direct, [], term_tables=[term_table.nodes]
-                    )
-                    return
-                calls = _tree.call_nodes_in_assert(
-                    sf, at.get("span") if isinstance(at, dict) else None
-                )
-                targets = []
-                # Abstract contracts keyed by authenticated def identity
-                # (source_cid), never by callee spelling. Spelling by_name[t]
-                # reopened first-match after FunctionBindingMiss (#6946 residual).
-                by_source_cid = {m["source_cid"]: (m, d) for _n, m, d in universes}
-                cued = []
-                cue_gaps: List[Dict[str, Any]] = []
-                seen = set()
-                for call in calls:
-                    t = call.func.id
-                    if t in seen:
-                        continue
-                    seen.add(t)
-                    targets.append(t)
-                    # Resolve by binding/coordinate at the call site — not
-                    # first-match-by-spelling. Miss is a named throw; the dig
-                    # records a gap and does not fall through to a spelling table.
-                    try:
-                        fn = _tree.resolve_function_for_call(call)
-                    except _tree.FunctionBindingMiss as miss:
-                        cue_gaps.append(
-                            {
-                                "memento": at,
-                                "reason": (
-                                    f"FunctionBindingMiss name={miss.name!r} "
-                                    f"reason={miss.reason}"
-                                ),
-                            }
-                        )
-                        continue
-                    # The callee's one contract, whatever the actuals are: a
-                    # contract is applied in one place, at prove (steps 6 and
-                    # 9). This door does not bind the actuals and reduce the
-                    # body a second time (#7757 item 12).
-                    def_rpc = _tree.function_def_memento(fn, file_rel).to_rpc()
-                    abstract = by_source_cid.get(def_rpc["source_cid"])
-                    if abstract is not None:
-                        cued.append(_node(*abstract))
-                    else:
-                        cue_gaps.append(
-                            {
-                                "memento": at,
-                                "reason": (
-                                    "resolved callee has no abstract universe row "
-                                    f"(name={t!r} source_cid={def_rpc['source_cid']})"
-                                ),
-                            }
-                        )
-                dig_gaps = list(cue_gaps)
-                if not cued and not dig_gaps:
-                    dig_gaps.append(
-                        {
-                            "memento": at,
-                            "reason": (
-                                "no universe for the callee(s) this call site cues: "
-                                f"{targets or 'none'}"
-                            ),
-                        }
-                    )
                 _send_enumerate_result(
-                    msg_id,
-                    cued,
-                    dig_gaps,
-                    term_tables=[term_table.nodes],
+                    msg_id, nodes, [], term_tables=[term_table.nodes]
                 )
-                _log_enumeration_demand(
-                    str(level), at, cache="miss", started=demand_started
-                )
-                return
-
-            if level == "call_sites":
-                # The cue a universe seek reads (a call site's assert locus).
-                from sugar_lift_py_tests import tree_enumerate as _tree
-                from sugar_source_tree.reporter import CollectingReporter
-
-                sf = open_source_file_for_construction(
-                    full_path,
-                    root=root,
-                    reporter=CollectingReporter(),
-                    source_workspace_root=locus_root,
-                )
-
-                if seek:
-                    source_assert = _tree.find_assert(
-                        sf,
-                        at.get("span") if isinstance(at, dict) else None,
-                    )
-                    if source_assert is not None:
-                        memento = _tree.assert_memento(source_assert, file_rel)
-                        if at is not None and _memento_matches(memento, at):
-                            _send_enumerate_result(
-                                msg_id,
-                                [
-                                    {
-                                        "memento": memento,
-                                        "audit": None,
-                                        "payload": None,
-                                    }
-                                ],
-                                [],
-                            )
-                            _log_enumeration_demand(
-                                str(level),
-                                at,
-                                cache="miss",
-                                started=demand_started,
-                            )
-                            return
-                    _send_enumerate_result(
-                        msg_id,
-                        [],
-                        [
-                            {
-                                "memento": at,
-                                "reason": "no call site for exact memento",
-                            }
-                        ],
-                    )
-                    _log_enumeration_demand(
-                        str(level), at, cache="miss", started=demand_started
-                    )
-                    return
-
-                # at is the parent function (scan) — enumerate its call sites.
-                fn = _tree.find_function(
-                    sf,
-                    (at or {}).get("function_name")
-                    or (at or {}).get("source_function_name"),
-                    (at or {}).get("span") if isinstance(at, dict) else None,
-                )
-                built = []
-                if fn is not None:
-                    for a in _tree.asserts_of(fn):
-                        built.append(
-                            {
-                                "memento": _tree.assert_memento(a, file_rel),
-                                "audit": None,
-                                "payload": None,
-                            }
-                        )
-                _send_enumerate_result(msg_id, built, [])
                 _log_enumeration_demand(
                     str(level), at, cache="miss", started=demand_started
                 )

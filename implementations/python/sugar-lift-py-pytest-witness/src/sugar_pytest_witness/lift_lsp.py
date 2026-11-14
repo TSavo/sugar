@@ -367,13 +367,11 @@ def _file_memento(ws: str, rel_path: str) -> dict:
 
 # Levels a SOURCE kit censuses that a witness PRODUCER has nothing to say about.
 # Answering an empty census (rather than an error) keeps `prove`/report walks
-# that sweep every registered surface from failing on this kit.
+# that sweep every registered surface from failing on this kit. The levels
+# below a file (functions, call_sites, assertions, facts) are not here: no
+# driver asks a kit for them; the one walk is source_files -> universe (#7757).
 _EMPTY_CENSUS_LEVELS = frozenset(
     {
-        "functions",
-        "call_sites",
-        "assertions",
-        "facts",
         "exports",
         "contract-declarations",
         "provider-contract-members",
