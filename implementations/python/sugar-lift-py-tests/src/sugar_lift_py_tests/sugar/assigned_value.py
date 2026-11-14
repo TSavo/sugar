@@ -183,9 +183,18 @@ def evaluate_assignment_values(
     RHS's completed value is bound under a Name target's key as soon as it
     completes (``_bind_evaluations``), so the completed path and ``tail``
     carry it.
+
+    A RHS's halt leaves with what the RHSs before it bound: no target, but
+    every walrus bind (``x, y = (a := 1), f()``: ``f()``'s halt carries
+    ``a``). Where the statement holds a walrus, a walrus-free RHS's halt
+    with no record of its own carries the record of those binds
+    (``halts_at_operand_head``); the statement's declaration that it binds
+    nothing before a halt holds only where it holds no walrus
+    (``function_universe_sugar._require_recorded_halts``).
     """
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.named_expression_value import written_by
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         _ReducedBlock,
@@ -207,7 +216,40 @@ def evaluate_assignment_values(
             return ExitSet.completed(BlockValue((), can_fall_through=True))
         return ExitSet.completed(_ReducedBlock((), True, (), (), active))
 
-    def step(index, active, completed=()):
+    walrus: list = []
+
+    def holds_a_walrus() -> bool:
+        # Whether any RHS holds a walrus, read once, only when a halt needs it.
+        if not walrus:
+            from sugar_lift_py_tests.sugar.named_expr_sugar import (
+                holds_a_walrus as holds,
+            )
+
+            walrus.append(any(holds(value) for value in values))
+        return walrus[0]
+
+    def recorded(outcome, sugar, bound):
+        # A RHS halts after the walrus binds the RHSs before it made (and
+        # before any target is assigned): where the statement holds a
+        # walrus, a walrus-free RHS's halt carries the record of those binds
+        # (``bound``), never the statement's prefix, which would drop them.
+        # A RHS that holds a walrus records its own halts where it can
+        # (``halts_at_operand_head``); one it cannot is refused at the
+        # statement (``_require_recorded_halts``). A statement holding no
+        # walrus halts at its head: the block's prefix is the record.
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            _offers_no_record,
+            halts_at_operand_head,
+        )
+
+        if not _offers_no_record(outcome) or not holds_a_walrus():
+            return outcome
+        return halts_at_operand_head(outcome, sugar, bound)
+
+    def step(index, active, completed=(), bound=ctx):
+        # ``bound``: ``ctx`` with only the walrus binds the RHSs before this
+        # one made -- what a halt here leaves bound (no target is assigned
+        # yet, so no target's evaluation).
         if index == len(values):
             return finish(active, completed)
         sugar = values[index]
@@ -215,7 +257,7 @@ def evaluate_assignment_values(
         # The statement's own evaluation is never answered from the record:
         # a loop re-reducing this statement evaluates its RHS again.
         own_ctx = active if key is None else active.without_assigned_value(key)
-        outcome = sugar.desugar(own_ctx)
+        outcome = recorded(sugar.desugar(own_ctx), sugar, bound)
         if isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits:
             # Every arm halts: no later RHS or target runs.
             return outcome
@@ -227,6 +269,7 @@ def evaluate_assignment_values(
                 # and no later RHS or target runs. It is handed back as-is so
                 # the enclosing block routes it.
                 return outcome
+            after = written_by(plain, bound)
             evaluated, plain = _walrus_bound(active, plain)
             evaluated = _bind_evaluations(evaluated, evaluations, index, plain)
             if key is not None and _binds_live_name(active, bind, index):
@@ -237,14 +280,16 @@ def evaluate_assignment_values(
                     index + 1,
                     evaluated.with_assigned_value(key, plain),
                     (*completed, plain),
+                    after,
                 )
-            return step(index + 1, evaluated, (*completed, plain))
+            return step(index + 1, evaluated, (*completed, plain), after)
         def completed_face(value):
+            after = written_by(value, bound)
             evaluated, value = _walrus_bound(active, value)
             evaluated = _bind_evaluations(evaluated, evaluations, index, value)
             if key is not None:
                 evaluated = evaluated.with_assigned_value(key, value)
-            return step(index + 1, evaluated, (*completed, value))
+            return step(index + 1, evaluated, (*completed, value), after)
 
         # With no occurrence to record (``key is None``) the statement still
         # halts here, and a read keeps substitution (it was never answered

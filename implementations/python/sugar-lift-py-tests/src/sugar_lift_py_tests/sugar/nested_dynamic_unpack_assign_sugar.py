@@ -149,7 +149,9 @@ def project_nested_pattern(
     level's beneath the outer one's completed face (``ExitSet.and_then``).
     The statement's sugar (``NestedDynamicUnpackAssignSugar``) unpacks its
     right-hand side through it; a yield assignment's resume unpacks the
-    resumed value through it (``YieldAssignUnpackV1.project``).
+    resumed value through it (``YieldAssignUnpackV1.project``). Each gives
+    ``record``: the statement's the context with the leaves bound, the
+    resume's its generator frame with them bound.
 
     A starred leaf (``(a, *b, (c, d))``) takes the list of the members
     between its fixed neighbours.

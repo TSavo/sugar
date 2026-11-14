@@ -89,9 +89,10 @@ def _plain_halt(outcome: ExitSet):
 
     Plain: one halted arm under truth, no partition faces, owing nothing, and
     no temporal state of its own -- a halt at the head of a statement that
-    declares it halts there (``halts_at_statement_head``; any other
-    statement's record-less halt is refused first, ``_require_recorded_halts``),
-    whose pre-halt state is the enclosing block's prefix.
+    declares it halts there and holds no walrus (``halts_at_statement_head``;
+    any other statement's record-less halt is refused first,
+    ``_require_recorded_halts``), whose pre-halt state is the enclosing
+    block's prefix.
     """
     if len(outcome.exits) != 1:
         return None
@@ -168,29 +169,49 @@ def _require_recorded_halts(outcome, statement) -> None:
     the prefix (which would drop what the statement bound before it) and
     never let through record-less (a suite resuming after it would have
     nothing to resume from).
+
+    The declaration is checked, not trusted: it holds only for a statement
+    that holds no walrus (``holds_a_walrus``). A walrus binds as its operand
+    completes, before a later operand or the statement's own step halts
+    (``x, y = (a := 1), f()``, ``raise E((m := msg))``): such a halt's
+    record is built where it halted, from the binds already made
+    (``halts_at_operand_head``: ``evaluate_assignment_values``,
+    ``reduce_operands``, ``NamedExprSugar``). One that still offers no record
+    from a statement holding a walrus is refused here like any other: the
+    prefix would drop the bind.
     """
-    if getattr(statement, "halts_at_statement_head", False):
-        return
     if not any(
         isinstance(exit_, Halted) and exit_.state is None for exit_ in outcome.exits
     ):
         return
+    name = type(statement).__name__
+    declared = getattr(statement, "halts_at_statement_head", False)
+    if declared:
+        from sugar_lift_py_tests.sugar.named_expr_sugar import holds_a_walrus
+
+        if not holds_a_walrus(statement):
+            return
     from sugar_source_tree.panic import SugarNotWritten
 
-    name = type(statement).__name__
     site = getattr(statement, "site", None)
     raise SugarNotWritten(
         owner="reduce_block_to_exitset.statement",
         blame=site if site is not None else name,
-        observed=f"a {name} statement handing the block a halt with no record",
+        observed=(
+            f"a {name} statement holding a walrus handing the block a halt "
+            "with no record: the walrus may have bound before it halted"
+            if declared
+            else f"a {name} statement handing the block a halt with no record"
+        ),
         requested=(
             "every halt that leaves a statement carries its record: the "
             "entries and the context it halted in"
         ),
         fix=(
-            "record the halt at the statement (halt_record, halts_recorded); "
-            "a statement that binds nothing before any halt declares "
-            "halts_at_statement_head"
+            "record the halt at the statement (halt_record, halts_recorded) "
+            "or where it halted, from the walrus binds already made "
+            "(halts_at_operand_head); a statement that binds nothing before "
+            "any halt and holds no walrus declares halts_at_statement_head"
         ),
     )
 
@@ -322,6 +343,44 @@ def halts_recorded(outcome, record: _ReducedBlock):
             for exit_ in outcome.exits
         )
     )
+
+
+def _offers_no_record(outcome) -> bool:
+    """Whether ``outcome`` (an ``ExitSet``) has a halted arm with no record."""
+    return isinstance(outcome, ExitSet) and any(
+        isinstance(exit_, Halted) and exit_.state is None for exit_ in outcome.exits
+    )
+
+
+def halts_at_operand_head(outcome, operand, ctx):
+    """``outcome`` -- ``operand`` evaluated in ``ctx`` -- with every halted
+    arm that offers no record carrying ``halt_record(ctx)``, where
+    ``operand`` holds no walrus; ``outcome`` as it is otherwise.
+
+    An operand that holds no walrus (``holds_a_walrus``) binds nothing while
+    it evaluates, so its record-less halt halted at its own head: what was
+    bound before it is all of its record, and ``ctx`` -- the context it was
+    evaluated in, every walrus bind of the operands before it applied
+    (``written_by``) -- holds exactly that. ``x, y = (a := 1), f()``: ``f()``
+    halts in a context where ``a`` is bound, and its halt carries it.
+
+    An operand that holds a walrus may have bound it before a later part of
+    it halted: its record-less halt is left as it is, never given a record
+    that would drop the bind, and the statement that runs it records it or
+    is refused by name (``_require_recorded_halts``). A context that holds
+    no temporal (none at all) records nothing.
+    """
+    if (
+        ctx is None
+        or not hasattr(ctx, "temporal")
+        or not _offers_no_record(outcome)
+    ):
+        return outcome
+    from sugar_lift_py_tests.sugar.named_expr_sugar import holds_a_walrus
+
+    if holds_a_walrus(operand):
+        return outcome
+    return halts_recorded(outcome, halt_record(ctx))
 
 
 def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
@@ -641,10 +700,10 @@ def reduce_block_to_exitset(
                 # The halt leaves from the prefix spliced onto its own state;
                 # ``sequence`` keeps its guard, faces and ``owed``. A
                 # record-less arm reaches here only from a statement that
-                # binds nothing before its own halt (``halts_at_statement_head``,
-                # checked above: an expression halt, a store's halted face): it
-                # halted at the head, where the prefix is the whole record --
-                # the same state the plain halt above gives.
+                # binds nothing before its own halt (``halts_at_statement_head``
+                # and no walrus, checked above: an expression halt, a store's
+                # halted face): it halted at the head, where the prefix is the
+                # whole record -- the same state the plain halt above gives.
                 return ExitSet.halted(
                     halt.effect,
                     state=(

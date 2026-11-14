@@ -104,15 +104,24 @@ class YieldAssignUnpackV1:
     suffix_names: tuple[str, ...] = ()
     pattern: tuple | None = None
 
-    def project(self, value: object, ctx: object, *, owner: str, blame: object):
+    def project(
+        self, value: object, ctx: object, *, owner: str, blame: object, record=None
+    ):
         """The unpack of ``value``: an ExitSet whose completed face is the
-        ``ScopeRebinds`` of every leaf, or the unpack's halt."""
+        ``ScopeRebinds`` of every leaf, or the unpack's halt.
+
+        ``record`` (``bindings -> record``): the record a nested level's halt
+        carries after leaves were bound (``project_nested_pattern``), as the
+        statement's sugar gives it (``NestedDynamicUnpackAssignSugar``); a
+        flat unpack binds nothing before its halt."""
         if self.pattern is not None:
             from sugar_lift_py_tests.sugar.nested_dynamic_unpack_assign_sugar import (
                 project_nested_pattern,
             )
 
-            return project_nested_pattern(value, self.pattern, ctx, site=blame)
+            return project_nested_pattern(
+                value, self.pattern, ctx, site=blame, record=record
+            )
         from sugar_lift_py_tests.operations import SequenceProjectionOperation
 
         if self.star_name is None:
@@ -2180,7 +2189,9 @@ class GeneratorConstructionV1:
         an unpacking target asks the value what it unpacks to, as an ordinary
         ``a, b = e`` asks its one evaluation (``YieldAssignUnpackV1``; level by
         level for a nested tree): a halted unpack (too few members, runtime
-        cardinality) halts here and binds nothing.  Each bound Name is keyed
+        cardinality) halts here, binding nothing of its own level; a nested
+        level's halt leaves the frame with the leaves bound before it (the
+        earlier targets of every enclosing level).  Each bound Name is keyed
         like any assignment of it (``GeneratorAssignBindingV1.evaluation``).
 
         A store target (``o.x = yield v``, ``d[k] = yield v``) binds the value
@@ -2256,11 +2267,19 @@ class GeneratorConstructionV1:
                 replace(self, cursor=self.cursor + 1),
                 tuple((name, sent) for name, _evaluation in step.targets),
             )._transition(requested)
+        from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
+
         unpacked = step.unpack.project(
             sent,
             self._guard_evaluation_context(),
             owner="GeneratorConstructionV1.YieldAssignStepV1.unpack",
             blame=step.occurrence,
+            # A nested level that halts after leaves were bound leaves this
+            # frame with them bound (CPython stores each target of a level
+            # before it unpacks the next nested one): its record carries this
+            # machine, still on the statement, with those leaves bound as the
+            # completed face binds them.
+            record=lambda bindings: halt_record(None, frame=bind(self, bindings)),
         )
         if not isinstance(unpacked, ExitSet):
             return self._gap(
@@ -2278,10 +2297,35 @@ class GeneratorConstructionV1:
             return bind(machine, rebinds.bindings)
 
         if unpacked.completed_value() is None or unpacked.owed_items():
-            # A halt (too few members, runtime cardinality) halts here and
-            # binds nothing; a runtime unpack's completed face resumes past
-            # the statement with its leaves bound.
-            return self._transition_term_exitset(step, unpacked, requested, keep=keep)
+            # A halt (too few members, runtime cardinality) halts here; a
+            # runtime unpack's completed face resumes past the statement with
+            # its leaves bound. A halt before any leaf was bound leaves this
+            # machine; a nested level's halt after leaves were bound leaves
+            # the machine its record carries (those leaves bound), so a
+            # handler around the generator's statement reads them.
+            from sugar_lift_py_tests.outcome.exit_set import Halted
+
+            def left_from(exit_):
+                if not isinstance(exit_, Halted):
+                    return self
+                frame = getattr(exit_.state, "frame", None)
+                return frame if isinstance(frame, type(self)) else self
+
+            here = tuple(exit_ for exit_ in unpacked.exits if left_from(exit_) is self)
+            result = (
+                self._transition_term_exitset(step, ExitSet(here), requested, keep=keep)
+                if here
+                else ExitSet(())
+            )
+            for exit_ in unpacked.exits:
+                frame = left_from(exit_)
+                if frame is not self:
+                    result = result.union(
+                        frame._transition_term_exitset(
+                            step, ExitSet((exit_,)), requested, keep=keep
+                        )
+                    )
+            return result
         kept = keep(replace(self, cursor=self.cursor + 1), unpacked.completed_value())
         if isinstance(kept, GeneratorTransitionGapV1):
             return kept

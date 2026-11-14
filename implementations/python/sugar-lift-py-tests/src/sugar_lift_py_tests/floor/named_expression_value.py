@@ -311,9 +311,33 @@ def reduce_operands(operands, ctx, *, factored: bool = False):
     leaves the later ones unevaluated, as Python does.  ``factored``: each
     operand presents at most one completed arm (``factored_operand``, #6324),
     for a fold whose accumulator would otherwise multiply by every
-    partitioning operand."""
+    partitioning operand.
+
+    An operand that halts leaves with the walrus binds the ones before it
+    made: where the fold holds a walrus, a walrus-free operand's halt with no
+    record of its own carries the record of where it was evaluated
+    (``halts_at_operand_head``): ``[(a := 1), d[k]]``'s ``KeyError`` carries
+    ``a``."""
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.outcome.exit_set import factored_operand
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _offers_no_record,
+        halts_at_operand_head,
+    )
+
+    operands = tuple(operands)
+    walrus: list = []
+
+    def holds_a_walrus() -> bool:
+        # Whether any operand holds a walrus, read once, only when a halt
+        # needs it.
+        if not walrus:
+            from sugar_lift_py_tests.sugar.named_expr_sugar import (
+                holds_a_walrus as holds,
+            )
+
+            walrus.append(any(holds(operand) for operand in operands))
+        return walrus[0]
 
     def reduce_next(collected, operand):
         if operand is None:
@@ -322,6 +346,8 @@ def reduce_operands(operands, ctx, *, factored: bool = False):
         for earlier in collected:
             operand_ctx = written_by(earlier, operand_ctx)
         outcome = operand.desugar(operand_ctx)
+        if _offers_no_record(outcome) and holds_a_walrus():
+            outcome = halts_at_operand_head(outcome, operand, operand_ctx)
         if factored:
             outcome = factored_operand(outcome)
         return outcome.and_then(
@@ -348,8 +374,11 @@ def consume_operands(step, *operands):
     enclosing statement.  The bind rides only the arms the step completed
     under after the operand ran: a short-circuit's later operand is consumed
     inside its continuing face, so its bind never reaches the stopping face.
-    A halted arm leaves the statement and carries nothing.  With no bind
-    among the operands this is ``step(*operands)`` exactly.
+    A halted arm of the step leaves the statement as it is: it carries none
+    of the binds, and where it offers no record the statement holding the
+    walrus is refused by name (``_require_recorded_halts``), never given a
+    record without them.  With no bind among the operands this is
+    ``step(*operands)`` exactly.
 
     The operands were reduced left to right, each under the state after the
     ones before it (``written_by``, ``reduce_operands``): a later

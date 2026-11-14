@@ -34,7 +34,9 @@ class AssignSugar(Sugar):
     # ``(name, key)``: the name's value is bound under ``key``
     # (``Assign.target_evaluations``); every later read of the name reads it.
     evaluations: tuple = ()
-    # Evaluating the RHS is the statement's only work before it binds.
+    # Evaluating the RHS is the statement's only work before it binds; a
+    # walrus in it binds first, and then the claim is refused unless the
+    # halt carries its record (``_require_recorded_halts``).
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -85,6 +87,8 @@ class MultiAssignSugar(Sugar):
     bindings: tuple  # tuple of (name, value_sugar) pairs, in target order
     site: object = dataclass_field(compare=False)
     evaluations: tuple = ()  # (name, key) per Name target, as AssignSugar's
+    # No name is bound before a halt; a walrus in a RHS member is, and a
+    # later member's halt carries it (``evaluate_assignment_values``).
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod

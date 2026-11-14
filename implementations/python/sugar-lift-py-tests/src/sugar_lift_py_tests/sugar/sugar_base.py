@@ -59,7 +59,11 @@ class Sugar(ABC):
     # own record instead (``function_universe_sugar.halt_record``: the empty
     # one where it halted, for a halt at the statement's head). A statement
     # that does not set this and hands the block reducer a halt with no
-    # record is refused by name (``_require_recorded_halts``).
+    # record is refused by name (``_require_recorded_halts``). The claim is
+    # checked there, not trusted: it holds only for a statement that holds
+    # no walrus (``named_expr_sugar.holds_a_walrus``) -- a walrus binds as
+    # its operand completes, before a later operand halts, and that halt's
+    # record is built from the binds already made (``halts_at_operand_head``).
     halts_at_statement_head: ClassVar[bool] = False
 
     def __init_subclass__(cls, **kwargs):

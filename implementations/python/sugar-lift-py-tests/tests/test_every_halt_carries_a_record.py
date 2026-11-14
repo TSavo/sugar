@@ -33,6 +33,7 @@ from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.ir import atomic, not_
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.assert_sugar import AssertSugar
+from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar, MultiAssignSugar
 from sugar_lift_py_tests.sugar.function_universe_sugar import (
     _ReducedBlock,
     face_record,
@@ -42,7 +43,9 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import (
     resumed,
 )
 from sugar_lift_py_tests.sugar.if_sugar import IfSugar
-from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar, holds_a_walrus
+from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
+from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
@@ -438,3 +441,118 @@ def test_a_nested_unpack_whose_inner_arity_fails_keeps_the_outer_binding(
         return _returned_value(function_universe_outcome(_function(source)))
 
     assert returned("(3, 4, 5)") == returned("(3, 4)")
+
+
+# -- a walrus binds before a later operand halts ---------------------------------
+
+_WALRUS_KEY = EVALUATION_PREFIX + "every-halt-record.walrus.a"
+
+
+@dataclass(frozen=True)
+class _One(ConstructedTermSugar):
+    """The constant ``1``."""
+
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        return ExitSet.completed(TermValue(1))
+
+    def to_term(self, *, owner: str):
+        raise NotImplementedError(owner)
+
+
+def _walrus() -> NamedExprSugar:
+    """``(a := 1)``, bound under ``_WALRUS_KEY``."""
+    return NamedExprSugar("a", _One(), None, evaluation=_WALRUS_KEY)
+
+
+@dataclass(frozen=True)
+class _HaltsAfterItsWalrus(Sugar):
+    """An operand that runs a walrus and then halts, offering no record."""
+
+    inner: Sugar
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        return ExitSet.halted(_effect())
+
+
+def test_a_walrus_free_sugar_holds_no_walrus_and_one_that_runs_it_does() -> None:
+    assert not holds_a_walrus(_Leaks())
+    assert holds_a_walrus(_walrus())
+    assert holds_a_walrus(_HaltsAfterItsWalrus(_walrus()))
+    assert holds_a_walrus(MultiAssignSugar((("x", _walrus()), ("y", _Leaks())), None))
+
+
+def test_a_later_members_halt_carries_the_walrus_an_earlier_member_bound() -> None:
+    # ``x, y = (a := 1), <halts>``: ``a`` is bound when the second member
+    # halts (no target is yet). The halt's record holds the bind, after the
+    # block's prefix; it used to offer none, and the prefix (from before
+    # ``a`` was bound) stood in for it.
+    ctx = ReduceContext.root(owner="every-halt-record.walrus")
+    before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
+    statement = MultiAssignSugar((("x", _walrus()), ("y", _Leaks())), None)
+    exits = reduce_block_to_exitset((statement,), ctx, after=before)
+    halts = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
+    assert halts
+    for halt in halts:
+        assert isinstance(halt.state, _ReducedBlock)
+        assert halt.state.entries == (TermValue(7),)
+        assert halt.state.context.temporal.value_if_bound(_WALRUS_KEY) == TermValue(1)
+
+
+def test_a_statement_holding_a_walrus_is_refused_a_halt_with_no_record() -> None:
+    # The declaration that the statement binds nothing before a halt is
+    # checked, not trusted: a walrus it holds may have bound first, so its
+    # record-less halt is refused by name, never given the prefix.
+    ctx = ReduceContext.root(owner="every-halt-record.walrus-refused")
+    before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
+    statement = AssignSugar("x", _HaltsAfterItsWalrus(_walrus()), None)
+    assert AssignSugar.halts_at_statement_head
+    with pytest.raises(SugarNotWritten) as refused:
+        reduce_block_to_exitset((statement,), ctx, after=before)
+    assert refused.value.owner == "reduce_block_to_exitset.statement"
+
+
+def test_a_statement_holding_no_walrus_halts_at_its_head() -> None:
+    # The same statement with no walrus: the block's prefix is the record.
+    ctx = ReduceContext.root(owner="every-halt-record.walrus-free")
+    before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
+    exits = reduce_block_to_exitset(
+        (AssignSugar("x", _Leaks(), None),), ctx, after=before
+    )
+    (halt,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
+    assert isinstance(halt.state, _ReducedBlock)
+    assert halt.state.entries == (TermValue(7),)
+
+
+def _walrus_then(second: str) -> str:
+    """``f``: ``x, y = (a := 1), <second>`` inside a ``try`` whose handler
+    (and the completed path) returns ``a``."""
+    return (
+        _RAISES
+        + "def f():\n"
+        + "    try:\n"
+        + f"        x, y = (a := 1), {second}\n"
+        + "    except ValueError:\n"
+        + "        return a\n"
+        + "    return a\n"
+    )
+
+
+def test_a_handler_sees_the_walrus_bound_before_a_later_member_raised() -> None:
+    # ``a`` is bound before ``g()`` raises: the handler returns it as the
+    # completed twin does.
+    def returned(second: str):
+        source = _walrus_then(second)
+        return _returned_value(function_universe_outcome(_function(source)))
+
+    assert returned("g()") == returned("2")
