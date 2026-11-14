@@ -96,10 +96,12 @@ def test_valid_foreign_listcomp_constructor_and_site_are_retained_exactly() -> N
 
 
 def test_exitset_listcomp_length_preserves_halt_guard() -> None:
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
     halted = Halted(
         atomic("test:halted", ()),
         RaiseEffect.for_builtin("ValueError", occurrence="source.py:1:0"),
-        TermValue(41),
+        _ReducedBlock((TermValue(41),), True, ()),
     )
     completed = Completed(
         atomic("test:completed", ()),

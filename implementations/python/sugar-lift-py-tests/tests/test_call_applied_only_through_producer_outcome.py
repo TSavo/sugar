@@ -67,10 +67,12 @@ def _unapplied_call(outcome: ExitSet):
 
 
 def _halt() -> Halted:
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
     return Halted(
         true_guard(),
         RaiseEffect.for_builtin("ValueError", occurrence="source.py:2:4"),
-        TermValue(0),
+        _ReducedBlock((TermValue(0),), True, ()),
     )
 
 

@@ -13,7 +13,8 @@ distinct successor machine with its own cursor.
 WHY THERE IS NO `faces` FIELD ON THE MACHINE. The partition lives in the
 `ExitSet`; the machine that partitions does not advance, it is replaced by two
 successors. That is the shape the machine already used -- `YieldEffect` carries
-a successor machine, `ExitSet.halted(effect, state=self)` carries state.
+a successor machine, and a halt carries the record the frame left with the
+machine inside it (`ExitSet.halted(effect, state=self._left_here())`).
 
 THE KEY IS COMPOSITE, and this is the load-bearing part. A source-only key
 makes two live generators over one source branch look like two sides of ONE
@@ -218,7 +219,14 @@ def test_a_partitioned_guard_preserves_halts_and_transitions_completed_faces(
     halted_guard = atomic("test.guard.halted", [])
     completed_guard = atomic("test.guard.completed", [])
     effect = RaiseEffect.for_builtin("GuardError", occurrence="guard:site")
-    halted = Halted(halted_guard, effect, state="guard-state")
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    halted = Halted(
+        halted_guard,
+        effect,
+        state=_ReducedBlock((TermValue("guard-state"),), True, ()),
+    )
     guard_outcome = ExitSet(
         (
             halted,

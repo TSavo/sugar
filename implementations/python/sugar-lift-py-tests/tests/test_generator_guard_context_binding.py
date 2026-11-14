@@ -440,10 +440,14 @@ def test_guard_halt_retains_exact_pre_halt_formal_floors() -> None:
         RaiseEffect.for_builtin("HaltProbe", occurrence="guard:halt")
     )
     assert isinstance(halted, ExitSet)
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
     for exit_ in halted.exits:
         if not isinstance(exit_, Halted):
             continue
-        state = exit_.state
+        # The halt carries a record; the frame it left lives inside it.
+        assert isinstance(exit_.state, _ReducedBlock)
+        state = exit_.state.frame
         assert isinstance(state, GeneratorConstructionV1)
         assert state.formal_floor_bindings[0].floor_value is floor
         assert state.cursor == machine.cursor

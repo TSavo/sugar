@@ -702,10 +702,19 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
     from sugar_lift_py_tests.ir import or_
     from sugar_lift_py_tests.outcome import Completed
     from sugar_lift_py_tests.outcome.exit_set import true_guard
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        halt_record,
+        halts_recorded,
+    )
 
     if not alternatives:
         return true_guard(), ExitSet(()), _debt()
 
+    # An alternative's or an equality's halt is before any case body ran:
+    # nothing of the match bound before it, so it carries the record where
+    # it halted (``halt_record``), onto which the block composition splices
+    # what ran before the ``match``.
+    record = halt_record(ctx)
     alts = []
     side = ExitSet(())
     path = _debt()
@@ -715,6 +724,7 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
             raise NotImplementedError(
                 f"match alternative outcome not lifted: {type(alt_out).__name__}"
             )
+        alt_out = halts_recorded(alt_out, record)
         # What the alternatives tried before this one incurred.
         before = path
         # Exceptional/control faces only — not Completed outcomes.
@@ -729,7 +739,7 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
             eq_prefix = _and_parts(not_prev, face.guard)
             eq_out = subject.equals(face.value, site, ctx)
             eq_side, formula, eq_path = _equality_outcome_under(
-                eq_out, eq_prefix, site
+                eq_out, eq_prefix, site, record
             )
             # The equality ran after this alternative's face completed.
             reached_eq = _then(before, _debt(face.owed))
@@ -745,7 +755,7 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
     return match_formula, side, path
 
 
-def _equality_outcome_under(eq_out, not_prev, site):
+def _equality_outcome_under(eq_out, not_prev, site, record):
     """Process subject.equals under not_prev; return (side, formula|None, path).
 
     ExitSet Completed faces contribute ``face.guard ∧ truth(face.value)`` to
@@ -754,16 +764,20 @@ def _equality_outcome_under(eq_out, not_prev, site):
     such arm after it. The completed faces are siblings of one comparison,
     so ``path`` is their join (``ExitSet.union`` of one ``_debt`` arm each):
     one arm owing every face's debt. Non-completed faces propagate
-    separately (state and owed preserved). Never wholesale-unions Completed
-    equality faces into side.
+    separately (owed preserved), each carrying ``record``, the record where
+    the equality halted, when it offers none of its own
+    (``halts_recorded``). Never wholesale-unions Completed equality faces
+    into side.
     """
     from sugar_lift_py_tests.ir import or_
     from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.sugar.function_universe_sugar import halts_recorded
 
     if not isinstance(eq_out, ExitSet):
         raise NotImplementedError(
             f"match equality outcome not lifted: {type(eq_out).__name__}"
         )
+    eq_out = halts_recorded(eq_out, record)
     side = ExitSet(())
     formulas = []
     path = _debt()
@@ -804,6 +818,8 @@ def _guard_faces_under(
     """
     from sugar_lift_py_tests.outcome import Completed, Halted
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        halt_record,
+        halts_recorded,
         reduce_block_to_exitset,
     )
 
@@ -815,6 +831,10 @@ def _guard_faces_under(
         raise NotImplementedError(
             f"match guard outcome not lifted: {type(guard_out).__name__}"
         )
+    # The guard runs where the case's captures are bound (``body_ctx`` binds
+    # what the guard's context bound): a guard halt carries the record of
+    # that context, before the case body ran (``halt_record``).
+    guard_out = halts_recorded(guard_out, halt_record(body_ctx))
     for face in guard_out.exits:
         if isinstance(face, Halted):
             parts.append(_after(None, path, _halted_face(face, reached)))
@@ -1019,13 +1039,19 @@ class MatchSugar(Sugar):
         from sugar_lift_py_tests.ir import or_
         from sugar_lift_py_tests.outcome import Completed, Halted
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
             reduce_block_to_exitset,
         )
 
         # The case reads the pattern's faces one by one: a pattern still
         # waiting on its caller's actual (a projection's carrier) is refused
-        # here by name, never read as no face.
-        tested = _projected(match_pattern(case.pattern, subject, self.site, ctx))
+        # here by name, never read as no face. A projection's halt is before
+        # any case body ran: it carries the record where it halted.
+        tested = halts_recorded(
+            _projected(match_pattern(case.pattern, subject, self.site, ctx)),
+            halt_record(ctx),
+        )
         parts = ExitSet(())
         selections: list = []
         pattern_path = _debt()

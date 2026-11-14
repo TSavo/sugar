@@ -20,6 +20,7 @@ from sugar_lift_py_tests.ir import atomic, ctor
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_source_tree.nodes import LanguageCallee
@@ -91,13 +92,13 @@ def _source_call_partition(result_coordinate: str = "py.listcomp"):
             Halted(
                 left_guard,
                 RaiseEffect.for_builtin("TypeError", occurrence="source.py:3:8"),
-                TermValue(11),
+                _ReducedBlock((TermValue(11),), True, ()),
                 frozenset({left_face}),
             ),
             Halted(
                 right_guard,
                 RaiseEffect.for_builtin("ValueError", occurrence="source.py:5:8"),
-                TermValue(22),
+                _ReducedBlock((TermValue(22),), True, ()),
                 frozenset({right_face}),
             ),
             Completed(

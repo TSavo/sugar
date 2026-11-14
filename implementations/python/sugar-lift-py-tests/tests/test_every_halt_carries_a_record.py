@@ -10,7 +10,10 @@ anything of the statement ran, so it carries the empty record where it halted
 what ran before the statement onto it. Such a halt used to carry ``None`` (or
 a bare context), and ``resumed`` / ``LoopRecurrenceSugar._left_with`` made up
 an empty record in the try's context in its place, dropping what ran before
-the halt. They now refuse a state that is no record by name.
+the halt. They now refuse a state that is no record by name, and so does
+``Halted`` itself as an arm is built: a halt's state is a record (or ``None``,
+an expression's halt that its statement records), and whatever else it must
+carry -- a generator frame -- lives inside that record.
 """
 
 from __future__ import annotations
@@ -85,6 +88,44 @@ def test_a_suite_never_resumes_from_a_state_that_is_no_record(state) -> None:
     with pytest.raises(SugarNotWritten) as refused:
         resumed(state, None, owner="test.resumed", blame="test")
     assert refused.value.owner == "test.resumed"
+
+
+@pytest.mark.parametrize(
+    "state",
+    [ReduceContext.root(owner="every-halt-record.built"), "payload", TermValue(3)],
+    ids=["bare-context", "payload", "value"],
+)
+def test_a_halt_whose_state_is_no_record_is_refused_as_it_is_built(state) -> None:
+    # The check lives in ``Halted`` itself: no producer can build an arm whose
+    # state is a bare context, a generator's machine or any other payload.
+    with pytest.raises(SugarNotWritten) as refused:
+        Halted(atomic("test.built", []), _effect(), state)
+    assert refused.value.owner == "Halted"
+    with pytest.raises(SugarNotWritten):
+        ExitSet.halted(_effect(), state=state)
+
+
+def test_a_halt_is_built_from_a_record_or_from_none() -> None:
+    # A record, and ``None`` (an expression's halt, which the statement that
+    # runs it records), are the two states an arm is built with.
+    ctx = ReduceContext.root(owner="every-halt-record.admitted")
+    record = halt_record(ctx)
+    assert Halted(atomic("test.record", []), _effect(), record).state is record
+    assert Halted(atomic("test.none", []), _effect(), None).state is None
+
+
+def test_a_generator_frame_lives_inside_its_halts_record() -> None:
+    # Whatever else a halt must carry (a generator frame) lives inside its
+    # record, never in its place; it is a lookup aid, out of equality.
+    ctx = ReduceContext.root(owner="every-halt-record.frame")
+    frame = object()
+    record = halt_record(ctx, frame=frame)
+    assert isinstance(record, _ReducedBlock)
+    assert record.frame is frame
+    assert record.context is ctx
+    assert record == halt_record(ctx)
+    (halt,) = ExitSet.halted(_effect(), state=record).exits
+    assert halt.state.frame is frame
 
 
 def test_a_face_without_a_record_is_refused_by_name() -> None:

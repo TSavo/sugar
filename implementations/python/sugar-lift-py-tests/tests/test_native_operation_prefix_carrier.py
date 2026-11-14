@@ -70,7 +70,7 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
     first_guard = atomic("test:prefix-first", [])
     second_guard = atomic("test:prefix-second", [])
     first_face, second_face = partition("test:prefix-arms")
-    stopped_state = object()
+    stopped_state = _ReducedBlock((TermValue("stopped"),), True, ())
     stopped_effect = UndeterminedRaiseEffect(
         blame="prefix-halt", occurrence="prefix-halt"
     )

@@ -672,8 +672,10 @@ def test_loop_exhaustion_carrier_composes_beneath_the_stop_iteration(monkeypatch
 def _finish_with_else(monkeypatch, otherwise):
     """Finish a loop whose ``else`` suite reduced to ``otherwise``; each
     publication answers ``("published", entries)``, and a halt of the suite
-    leaves by itself from ``("published", entries, its own state)``."""
+    leaves by itself from a record holding ``"published"`` then ``entries``
+    then its own record's entries."""
     from sugar_lift_py_tests.sugar import function_universe_sugar
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
     from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 
     monkeypatch.setattr(
@@ -695,8 +697,10 @@ def _finish_with_else(monkeypatch, otherwise):
         halt=None,
     ):
         if halt is not None:
+            own = () if halt.state is None else halt.state.entries
             return ExitSet.halted(
-                halt.effect, state=("published", entries, halt.state)
+                halt.effect,
+                state=_ReducedBlock(("published", *entries, *own), True, ()),
             )
         return ExitSet.completed(("published", entries))
 
@@ -758,7 +762,7 @@ def test_loop_else_with_several_faces_publishes_beneath_each(monkeypatch):
         exit_ for exit_ in finished.exits if isinstance(exit_, Halted)
     ]
     assert left_by_raise.effect == raised.effect
-    assert left_by_raise.state == ("published", ("before",), None)
+    assert left_by_raise.state == _ReducedBlock(("published", "before"), True, ())
     assert "test.else.raised" in str(left_by_raise.guard)
 
 

@@ -87,10 +87,18 @@ def _random_exits(rng: random.Random, count: int, distinct: int) -> tuple:
                 Halted(
                     guard,
                     _effect(f"eff{rng.randrange(distinct)}"),
-                    f"state{rng.randrange(distinct)}",
+                    _state(f"state{rng.randrange(distinct)}"),
                 )
             )
     return tuple(exits)
+
+
+def _state(tag: str):
+    """A halt's record (the one shape its state takes), equal by its tag."""
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    return _ReducedBlock((TermValue(tag),), True, ())
 
 
 @pytest.mark.parametrize("seed", range(40))

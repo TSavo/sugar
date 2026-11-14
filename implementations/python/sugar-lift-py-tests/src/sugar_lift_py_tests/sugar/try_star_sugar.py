@@ -134,6 +134,7 @@ class TryStarSugar(Sugar):
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
+            face_record,
             reduce_block_to_exitset,
             resumed,
         )
@@ -370,22 +371,19 @@ class TryStarSugar(Sugar):
                     else:
                         # Non-raise halt leaves the residual walk as an exit.
                         retained.append(ExitSet((arm,)))
-                    next_state = (
-                        arm.state
-                        if isinstance(arm.state, _ReducedBlock)
-                        else face.state
-                    )
                 else:
                     # Handler fall-through is NOT a try* completed edge while
                     # an unmatched residual remains — Python has no completed
                     # edge there. Only advance temporal state on the
                     # residual/exceptional frontier.
                     exceptional = face.exceptional
-                    next_state = (
-                        arm.value
-                        if isinstance(arm.value, _ReducedBlock)
-                        else face.state
-                    )
+                # The frontier walks on from the record the handler arm left
+                # (its completed block, or the record its halt carries): the
+                # handler's stores are never dropped for an earlier record.
+                # An arm with no record is stopped by name (``face_record``).
+                next_state = face_record(
+                    arm, owner="TryStarSugar.handler", blame=self.site
+                )
 
                 # The next face's path is this arm continuing as its temporal
                 # state (``sequence``; ``consume=`` for a halted arm): the

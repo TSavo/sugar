@@ -502,7 +502,15 @@ class Completed(Generic[T]):
 
 @dataclass(frozen=True)
 class Halted:
-    """Control left with this effect, under this guard, from this state."""
+    """Control left with this effect, under this guard, from this state.
+
+    ``state`` is the record the halt halted with (everything the block
+    reached before it: its entries and the context it halted in), or
+    ``None`` for an expression's halt, which the statement that runs it
+    records. Anything else is stopped by name as the arm is built
+    (``function_universe_sugar.require_halt_record``): a halt's state has
+    one shape, and whatever else it must carry lives inside its record.
+    """
 
     guard: Formula
     effect: Effect
@@ -516,6 +524,12 @@ class Halted:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect", require_effect(self.effect))
+        if self.state is not None:
+            from sugar_lift_py_tests.sugar.function_universe_sugar import (
+                require_halt_record,
+            )
+
+            require_halt_record(self.state, owner="Halted")
 
 
 Exit = Completed[T] | Halted

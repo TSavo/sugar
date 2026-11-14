@@ -99,11 +99,15 @@ def _step(guard) -> IfStepV1:
 
 
 def _halt(name: str):
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
     left, _ = partition(("if-guard-halt", name))
     return Halted(
         atomic(f"guard:halted:{name}", []),
         RaiseEffect.for_builtin(f"{name}Error", occurrence=f"guard:{name}"),
-        state=object(),
+        # A record of its own (the one shape a halt's state takes), so the
+        # halt is seen to pass through by identity.
+        state=_ReducedBlock((TermValue(name),), True, ()),
         faces=frozenset({left}),
     )
 
