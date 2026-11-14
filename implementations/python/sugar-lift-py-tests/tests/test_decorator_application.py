@@ -628,3 +628,243 @@ def test_inner():
 """
     )
     assert _raises(outcome, "ValueError") != []
+
+
+# ---------------------------------------------------------------------------
+# A ``def`` statement evaluates its defaults once; a call reads their keys.
+# ---------------------------------------------------------------------------
+
+
+def _function_named(tree, name: str):
+    return next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == name
+    )
+
+
+def test_a_default_is_evaluated_at_its_def_statement() -> None:
+    """Python evaluates ``1 // 0`` when the ``def`` statement runs, whether or
+    not ``f`` is ever called.  Before, the statement was inert and the default
+    evaluated only at a call, so this function completed."""
+    raising = _test_function_outcome(
+        """\
+def test_default():
+    def f(a=1 // 0):
+        return a
+
+    assert 1 == 1
+"""
+    )
+    assert _raises(raising, "ZeroDivisionError") != []
+    plain = _test_function_outcome(
+        """\
+def test_default():
+    def f(a=1):
+        return a
+
+    assert 1 == 1
+"""
+    )
+    assert _raises(plain, "ZeroDivisionError") == []
+
+
+def test_a_default_is_the_binding_at_its_def_statement() -> None:
+    """``x = 1; def f(a=x); x = 2; f()`` is 1: the call binds the value the
+    statement evaluated, never the default expression read again at the
+    call."""
+    source = """\
+def test_default():
+    x = 1
+
+    def f(a=x):
+        return a
+
+    x = 2
+    assert f() == {expected}
+"""
+    truthful = _test_function_outcome(source.format(expected=1))
+    assert _raises(truthful, "AssertionError") == []
+    assert truthful.completed_value() is not None, truthful
+    lying = _test_function_outcome(source.format(expected=2))
+    assert _raises(lying, "AssertionError") != []
+
+
+def test_the_statement_and_the_frame_name_one_default_key() -> None:
+    """The ``def`` statement binds each default under the key every frame
+    of the definition reads."""
+    from sugar_lift_py_tests.sugar.default_value_sugar import (
+        DefaultValueSugar,
+        DefinitionDefaultsSugar,
+    )
+
+    tree = _tree(
+        """\
+def test_default():
+    def f(a, b=2, *, c=3):
+        return a
+
+    return f(1)
+"""
+    )
+    function = _function_named(tree, "test_default")
+    statement = function.substitute({}).body[0]
+    sugar = function._sugar_body_statement(statement)
+    assert isinstance(sugar, DefinitionDefaultsSugar)
+    frame = _function_named(tree, "f").source_visible_call_frame()
+    assert frame.default_sugars[0] is None
+    read = tuple(
+        default.evaluation
+        for default in frame.default_sugars
+        if isinstance(default, DefaultValueSugar)
+    )
+    assert read == tuple(key for key, _index in sugar.evaluations)
+    assert len(set(read)) == 2
+
+
+def test_a_default_read_is_the_one_bound_value_for_every_call() -> None:
+    """With the statement's key bound, every call binds the same object (a
+    mutable default is shared, as in Python) and the default expression is
+    never evaluated again; unbound, the expression is evaluated."""
+    from dataclasses import dataclass
+
+    import pytest
+
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+    from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+    from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+    @dataclass(frozen=True)
+    class _EvaluatedAtTheCall(Sugar):
+        @classmethod
+        def witnesses(cls):
+            return ()
+
+        def desugar(self, ctx=None):
+            raise AssertionError("default evaluated at the call")
+
+    key = EVALUATION_PREFIX + "blake3-512:definition-default/f/a"
+    read = DefaultValueSugar(
+        evaluation=key, value=_EvaluatedAtTheCall(), site="site"
+    )
+    ctx = ReduceContext.root(owner="test")
+    value = TermValue(7)
+    bound = ScopeRebind(key, value).extend_scope(ctx)
+    assert read.desugar(bound).completed_value() is value
+    assert read.desugar(bound).completed_value() is value
+    with pytest.raises(AssertionError):
+        read.desugar(ctx)
+
+
+# ---------------------------------------------------------------------------
+# ``Class.m(...)`` of a classmethod binds through the one method door.
+# ---------------------------------------------------------------------------
+
+
+_CLASSMETHOD = """\
+class Box:
+    @classmethod
+    def make(cls, n):
+        {body}
+
+
+def test_make():
+    Box.make(3)
+"""
+
+
+def test_a_classmethod_lookup_call_is_the_method_doors() -> None:
+    from sugar_source_tree.nodes import Attribute, _class_method_lookup_call
+
+    assert not hasattr(FunctionDef, "bound_classmethod_call_frame")
+    tree = _tree(_CLASSMETHOD.format(body="return n"))
+    frame = _function_named(tree, "make").source_visible_call_frame()
+    assert frame.parameters == ("cls", "n")
+    assert not hasattr(frame, "bound_receiver_class")
+    call = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, Call)
+        and isinstance(node.func, Attribute)
+        and node.func.attr == "make"
+    )
+    assert _class_method_lookup_call(call, frame)
+    plain = _tree("def make(n):\n    return n\n\n\ndef test_make():\n    make(3)\n")
+    assert not _class_method_lookup_call(
+        _call_of(plain, "make"),
+        _function_named(plain, "make").source_visible_call_frame(),
+    )
+
+
+def test_a_classmethod_called_off_its_class_runs_its_body() -> None:
+    outcome = _test_function_outcome(
+        _CLASSMETHOD.format(body="raise ValueError('ran')")
+    )
+    assert _raises(outcome, "ValueError") != []
+
+
+# ---------------------------------------------------------------------------
+# A function body's nested ``def`` stays in its frame and binds its name.
+# ---------------------------------------------------------------------------
+
+
+_OUTER = """\
+def outer():
+    def inner():
+        raise ValueError('called')
+
+    return inner()
+
+
+def test_outer():
+    outer()
+"""
+
+
+def test_a_frame_keeps_a_nested_def_it_calls() -> None:
+    """Before, the frame dropped a nested ``def`` its body calls by name; the
+    statement is now in the frame, inert, as in the function's own body."""
+    from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+    tree = _tree(_OUTER)
+    frame = _function_named(tree, "outer").source_visible_call_frame()
+    statements = frame.body.statements
+    assert len(statements) == 2
+    assert isinstance(statements[0], InertSugar)
+
+
+def test_a_call_into_a_frame_reaches_its_nested_def_through_the_call() -> None:
+    outcome = _test_function_outcome(_OUTER)
+    assert _raises(outcome, "ValueError") != []
+
+
+# ---------------------------------------------------------------------------
+# A staticmethod or classmethod read off an instance is a callable value.
+# ---------------------------------------------------------------------------
+
+
+def test_a_descriptor_read_off_an_instance_is_a_callable_value() -> None:
+    """``m = obj.sm; m(3)``: the read is the value the descriptor binds, and
+    its call binds by the descriptor kind (nothing for a ``staticmethod``,
+    the class for a ``classmethod``).  Before, the read was refused."""
+    from sugar_lift_py_tests.callable_application import CallableApplication
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.floor.bound_method_value import BoundMethodValue
+
+    for decorator, formals in (("staticmethod", "n"), ("classmethod", "cls, n")):
+        box, ctx = _class_value(
+            "class Box:\n"
+            f"    @{decorator}\n"
+            f"    def pick({formals}):\n"
+            "        raise ValueError('ran')\n"
+        )
+        receiver = box.construct_receiver_state_from_block(None, "receiver-cid")
+        read = receiver.attribute("pick", "pick-site", ctx).completed_value()
+        assert isinstance(read, BoundMethodValue), decorator
+        outcome = read.callable_application_with(
+            CallableApplication((TermValue(3),), (), "pick-site", owner="test"), ctx
+        )
+        assert _halt_names(outcome) == ["ValueError"], decorator

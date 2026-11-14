@@ -7309,46 +7309,21 @@ class FunctionDef(Statement):
         close_row(cache.call_frames, memo, computation, self.reporter, value=frame)
         return frame
 
-    def bound_classmethod_call_frame(self, class_def: "ClassDef"):
-        """This ``@classmethod`` as ``Class.method``: ``cls`` already bound.
-
-        ``classmethod.__get__(None, Class)`` (Objects/funcobject.c
-        ``cm_descr_get``) returns a method whose ``__self__`` is ``Class``;
-        calling it supplies ``Class`` as the first formal.  The frame drops
-        that formal and the body reads ``Class`` by its module-level name
-        wherever it read ``cls``; the caller binds the remaining formals,
-        so a caller that also spells ``cls=`` is an unconsumed keyword, as
-        CPython's "multiple values" TypeError.  The caller has checked that
-        the module binds ``Class`` once, by this class statement.
-        """
-        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
-        if (
-            self.unit.lexical_class_owner_for(self) is not class_def
-            or class_def._method_descriptor_kind(self) != "classmethod"
-            or not self.params
-            or self.params[0].param_kind
-            not in {"positional_only", "positional_or_keyword"}
-            or self.params[0].default is not None
-        ):
-            raise SourceCallBindingGap("bound classmethod frame needs its class owner")
-        definition_cid = self.fragment.seal().cid
-        if _frame_is_under_construction(definition_cid):
-            raise SourceCallFrameCycle(self)
-        _FRAMES_UNDER_CONSTRUCTION.add(definition_cid)
-        try:
-            return FunctionDef._source_visible_call_frame_unguarded(
-                self, bound_receiver=class_def
-            )
-        finally:
-            _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
-
-    def _source_visible_call_frame_unguarded(self, bound_receiver=None):
+    def _source_visible_call_frame_unguarded(self):
         """Construct this callable body through the ordinary node/Sugar door.
 
         Parameterized frames require the shared BindingCoordinateV1 owner.  The
         coordinate-free zero-parameter arm can already carry its exact body;
         it is built from the same substituted statement nodes as `_construct_sugar`.
+
+        Every formal is a parameter: a ``classmethod``'s ``cls`` is bound by
+        the one method door (``object_value.implicit_arguments``), never
+        dropped from the frame.  The body is the definition's whole body: a
+        nested ``def`` statement in it is inert and binds its name
+        (``_sugar_body_statement``), so a call of the nested function reaches
+        its body through the one call routine.  Each default reads the value
+        the ``def`` statement bound under its evaluation key
+        (``_default_evaluation_key``, ``DefaultValueSugar``).
         """
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
@@ -7364,14 +7339,11 @@ class FunctionDef(Statement):
             span.end_line,
             span.end_col,
         )
-        params = self.params if bound_receiver is None else self.params[1:]
-        offset = len(self.params) - len(params)
+        params = self.params
         parameters = tuple(param.name for param in params)
         owner_cid = self.fragment.seal().cid
         coordinates = tuple(
-            BindingCoordinateV1.mint(
-                owner_cid, param.fragment, ("formal", index + offset)
-            )
+            BindingCoordinateV1.mint(owner_cid, param.fragment, ("formal", index))
             for index, param in enumerate(params)
         )
         captured_names, captured_coordinates = self._captured_bindings()
@@ -7382,24 +7354,11 @@ class FunctionDef(Statement):
                 for param, coordinate in zip(params, coordinates, strict=True)
             },
         }
-        if bound_receiver is not None:
-            formal_scope[self.params[0].name] = For._make_name(
-                self, bound_receiver.name
-            )
         from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
             SourceVisibleFunctionBodySugar,
         )
 
-        lexical_rows = self.unit.constructed_module.lexical_call_rows
-        # A decorated definition stays: its statement applies the decorators
-        # and binds the name every call of it reads (#7757).
-        filtered_body = tuple(
-            statement
-            for statement in self.body
-            if not call_applies_own_frame(statement)
-            or all(statement is not row.definition_occurrence for row in lexical_rows)
-        )
-        substituted_body, _ = self._substitute_body(filtered_body, formal_scope)
+        substituted_body, _ = self._substitute_body(self.body, formal_scope)
         generator_steps = self._source_visible_generator_steps_from(substituted_body)
         body = SourceVisibleFunctionBodySugar(
             (
@@ -7422,12 +7381,12 @@ class FunctionDef(Statement):
                 param.fragment.seal().to_dict() for param in params
             ),
             formal_projection_paths=tuple(
-                ("formal", index + offset) for index, _ in enumerate(params)
+                ("formal", index) for index, _ in enumerate(params)
             ),
             parameter_kinds=tuple(param.param_kind for param in params),
             default_sugars=tuple(
-                param.default.sugar() if param.default is not None else None
-                for param in params
+                _default_value_sugar(self, index)
+                for index, _param in enumerate(params)
             ),
             default_nodes=tuple(param.default for param in params),
             default_fragments=tuple(
@@ -7440,7 +7399,6 @@ class FunctionDef(Statement):
             ),
             body=body,
             owner=self,
-            bound_receiver_class=bound_receiver,
             generator_steps=generator_steps,
             generator_step_fragment_cids=(
                 ()
@@ -7902,6 +7860,18 @@ class FunctionDef(Statement):
                 # the WRONG blocker. It is stepped, not performed.
                 return _GeneratorNamedStepV1(InertStepV1(statement.kind))
             if isinstance(statement, Pass) and not FunctionDef._owns_yield((statement,)):
+                return _GeneratorNamedStepV1(InertStepV1(statement.kind))
+            if (
+                isinstance(statement, (FunctionDef, AsyncFunctionDef))
+                and not statement.decorators
+                and all(param.default is None for param in statement.params)
+            ):
+                # A ``def`` statement binds its name (substitution bound every
+                # later read of it to the definition) and runs nothing: its
+                # body runs at a call, as ``_sugar_body_statement`` reduces it.
+                # One with defaults evaluates them here and is not a step this
+                # vocabulary performs: it stays absent, never advanced.
+                statement.discharge_by_substitution()
                 return _GeneratorNamedStepV1(InertStepV1(statement.kind))
             if (
                 isinstance(statement, Expr)
@@ -8632,11 +8602,10 @@ class FunctionDef(Statement):
                 # definition, ``_local_definition_binding``); its body runs
                 # only when the function is called, in the call's frame.  So
                 # the statement reduces nothing of the body: no face of the
-                # body is the enclosing function's (#7757).
-                from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
-
+                # body is the enclosing function's (#7757).  It evaluates its
+                # defaults, once, here (``_definition_defaults_sugar``).
                 stmt.discharge_by_substitution()
-                return InertSugar(site=stmt.fragment)
+                return _definition_defaults_sugar(stmt)
             return stmt.sugar()
 
     def _construct_sugar(self):
@@ -19404,6 +19373,14 @@ class Call(Expression):
                         f"call-graph-cycle:{cycle.definition.name}"
                         f"@{cycle.definition.line_col_span().start_line}"
                     )
+        if source_call_frame is not None and _class_method_lookup_call(
+            self, source_call_frame
+        ):
+            # ``Class.m(...)`` of a ``classmethod``: the lookup binds the
+            # class as ``cls``.  The one method door binds it
+            # (``object_value.implicit_arguments``, through the method call
+            # below), never this seated frame with the class spliced in.
+            source_call_frame = None
         if source_call_frame is not None:
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
             from sugar_lift_py_tests.sugar.call_site_sugar import (
@@ -19417,22 +19394,6 @@ class Call(Expression):
                     "spread keyword requires typed variadic projection"
                 )
             bind_args = self.args
-            frame_owner = getattr(source_call_frame, "owner", None)
-            class_owner = (
-                frame_owner.unit.lexical_class_owner_for(frame_owner)
-                if isinstance(frame_owner, FunctionDef)
-                else None
-            )
-            if (
-                isinstance(self.func, Attribute)
-                and class_owner is not None
-                and class_owner._method_descriptor_kind(frame_owner)
-                == "classmethod"
-                and getattr(source_call_frame, "bound_receiver_class", None)
-                is None
-            ):
-                # ExceptionInfo.for_later() supplies the class as cls.
-                bind_args = (self.func.value,) + tuple(self.args)
             bound_frame = source_call_frame.bind_node_actuals(
                 bind_args,
                 tuple(
@@ -21578,6 +21539,93 @@ def _definition_evaluation_key(definition, scope) -> str:
     from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
     return projection_key(definition._evaluation_key(scope), definition.name)
+
+
+def _class_method_lookup_call(call, frame) -> bool:
+    """Whether ``call`` is ``<receiver>.m(...)`` and ``frame`` is the frame of
+    a ``classmethod`` ``m`` of a source class: its implicit first actual is the
+    lookup's, bound by the one method door (``MethodCallSugar``,
+    ``object_value.bind_method_call``)."""
+    if not isinstance(call.func, Attribute):
+        return False
+    owner = getattr(frame, "owner", None)
+    if not isinstance(owner, (FunctionDef, AsyncFunctionDef)):
+        return False
+    class_owner = owner.unit.lexical_class_owner_for(owner)
+    return (
+        class_owner is not None
+        and class_owner._method_descriptor_kind(owner) == "classmethod"
+    )
+
+
+def _default_evaluation_key(definition, index: int) -> str:
+    """The key the ``def`` statement ``definition`` binds the value of its
+    ``index``-th formal's default under.
+
+    Python evaluates a function's defaults once, where the ``def`` statement
+    runs, and every call that omits the formal binds that one object (the
+    language reference, "Function definitions": "the same 'pre-computed'
+    value is used for each call").  The key names the formal of the
+    definition's source occurrence, so the statement and every frame built
+    from the definition (its substituted copy included) name the same key;
+    a statement in a live loop item binds it qualified by the item
+    (``evaluation_here``), and a frame reads it there
+    (``evaluation_read_here``)."""
+    from sugar_lift_python_source.canonical import cid_of_json
+    from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+    return EVALUATION_PREFIX + cid_of_json(
+        {
+            "kind": "python-definition-default-evaluation-v1",
+            "definitionFragmentCid": definition.fragment.seal().cid,
+            "formal": index,
+        }
+    )
+
+
+def _default_value_sugar(definition, index: int):
+    """What a call that omits ``definition``'s ``index``-th formal binds to
+    it: the value its ``def`` statement bound under the default's key
+    (``DefaultValueSugar``), or None for a formal with no default."""
+    default = definition.params[index].default
+    if default is None:
+        return None
+    from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
+
+    return DefaultValueSugar(
+        evaluation=_default_evaluation_key(definition, index),
+        value=default.sugar(),
+        site=default.fragment,
+    )
+
+
+def _definition_defaults_sugar(statement):
+    """An undecorated ``def`` statement in a body: it evaluates each default,
+    left to right, where it stands, and binds each completed value under the
+    default's key (``_default_evaluation_key``), as an assignment binds its
+    value (``AssignSugar``).  Every face of a default is the statement's.
+    The defaults are the statement's own, substituted in the scope the
+    statement runs in, so ``x = 1; def f(a=x): ...; x = 2`` binds 1.  A
+    statement with no default reduces nothing (``InertSugar``)."""
+    defaults = tuple(
+        (index, param.default)
+        for index, param in enumerate(statement.params)
+        if param.default is not None
+    )
+    if not defaults:
+        from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+        return InertSugar(site=statement.fragment)
+    from sugar_lift_py_tests.sugar.default_value_sugar import DefinitionDefaultsSugar
+
+    return DefinitionDefaultsSugar(
+        values=tuple(default.sugar() for _index, default in defaults),
+        evaluations=tuple(
+            (_default_evaluation_key(statement, index), position)
+            for position, (index, _default) in enumerate(defaults)
+        ),
+        site=statement.fragment,
+    )
 
 
 def _decorated_definition_ref(definition, span, scope=None, *, evaluation=None):

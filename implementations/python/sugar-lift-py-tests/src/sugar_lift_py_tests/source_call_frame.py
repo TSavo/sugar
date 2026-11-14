@@ -419,18 +419,11 @@ def frame_at_current_module_execution_site(frame):
 def frame_read_at_module_execution_site(frame, site):
     """The frame of ``frame``'s definition, read again at the module
     execution ``site``: its body reads a module global as the module binds
-    it there.  A ``@classmethod`` frame stays bound to its class."""
+    it there."""
     from sugar_source_tree.nodes import construct_at_module_execution_site
 
-    owner = frame.owner
-    bound_class = getattr(frame, "bound_receiver_class", None)
     return construct_at_module_execution_site(
-        site,
-        (
-            owner.source_visible_call_frame
-            if bound_class is None
-            else lambda: owner.bound_classmethod_call_frame(bound_class)
-        ),
+        site, frame.owner.source_visible_call_frame
     )
 
 
@@ -470,9 +463,6 @@ class SourceVisibleCallFrameV1:
     #: of the first such constant in source order, reduced once per module.
     module_halt: object | None = field(default=None, compare=False)
     constructed_new_method: object | None = field(default=None, compare=False)
-    #: The class a ``@classmethod`` frame is already bound to (``Class.m``
-    #: looked up before the call): its ``cls`` formal is not a parameter.
-    bound_receiver_class: object | None = field(default=None, compare=False)
     declaration_frame_cid: str | None = field(default=None, compare=False)
     #: Where the call this frame was constructed for runs while its module
     #: body runs (``sugar_source_tree.nodes.ModuleExecutionSiteV1``), or None:
@@ -692,6 +682,8 @@ class SourceVisibleCallFrameV1:
             if not present and default is not None:
                 from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
 
+                # The value the ``def`` statement bound under the default's
+                # key, the same object for every call (``DefaultValueSugar``).
                 outcome = default.desugar(ctx)
                 exits = (
                     None

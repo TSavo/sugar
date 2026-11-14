@@ -10,7 +10,11 @@ class BoundMethodValue(FloorValue):
     """``receiver.name`` read as a value: a method bound to one receiver.
 
     Python's attribute read of a function defined on the receiver's class
-    yields a bound method; calling it is ``receiver.name(*args, **kwargs)``.
+    yields what its descriptor binds (a bound method; for a ``staticmethod``
+    the bare function, for a ``classmethod`` a method bound to the class);
+    calling it is ``receiver.name(*args, **kwargs)``, whose implicit first
+    actual the one method door reads off the descriptor kind
+    (``object_value.implicit_arguments``).
     This Floor carries exactly that pair and nothing else, so every call of
     it dispatches through the receiver's own ``call_method_value`` (the same
     selection ``MethodCallSugar`` uses), and any other use of the value
