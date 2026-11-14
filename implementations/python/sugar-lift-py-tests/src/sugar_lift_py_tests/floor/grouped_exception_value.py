@@ -136,10 +136,14 @@ def _split(effect, condition, site) -> tuple:
     The condition is checked against the group itself first, then each
     nested group and leaf, each asked of the one matcher ``except`` asks
     (``match_options`` over ``matches_raise_effect``).  A decided verdict is
-    one face; a retained one (an undetermined leaf, an import-path class)
-    is the two-way split it owns, matched under the obligation and residual
-    under its complement, so a tree splits into every combination of its
-    retained tests.  Nothing is refused, decided by guess or dropped."""
+    one face; a retained one (an undetermined leaf, an import-path class, a
+    group whose class its construction left undecided, tested over the
+    group instance itself) is the two-way split it owns, matched under the
+    obligation and residual under its complement, so a tree splits into
+    every combination of its retained tests.  What an undecided group's
+    construction owes rides on the path that built it
+    (``ExitSet.two_faced``), beneath every split.  Nothing is refused,
+    decided by guess or dropped."""
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
     from sugar_lift_py_tests.effect.grouped_raise_effect import match_options
 

@@ -156,7 +156,22 @@ def _raised_subject(effect):
     occurrence threw -- ``UndeterminedRaiseEffect.exception_value``, an opaque
     value keyed on the effect's occurrence. That value is the raised object
     itself, not the raise site standing in for it: see the refusal below.
+
+    A raised group's subject is the group instance its construction made
+    (``GroupedExceptionValue``, the value ``with`` hands to ``__exit__``):
+    the test is reached only when the group's class is undecided (a member
+    nothing decides), the one undecided form, so the match is retained over
+    the group itself -- never refused for want of a term, never decided by
+    guess.
     """
+    from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
+
+    if isinstance(effect, GroupedRaiseEffect):
+        from sugar_lift_py_tests.floor.grouped_exception_value import (
+            GroupedExceptionValue,
+        )
+
+        return GroupedExceptionValue(effect)
     raised = getattr(effect, "raised_value", None)
     if raised is not None:
         return raised

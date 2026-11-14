@@ -263,3 +263,106 @@ def test_group_split_of_an_undetermined_leaf_is_two_faces_never_a_refusal():
     assert repr(obligation) in repr(caught.guard)
     assert repr(not_(obligation)) in repr(missed.guard)
     assert caught.faces and missed.faces and caught.faces != missed.faces
+
+
+def _undecided_group(group_identity, children):
+    """A group whose construction left its class undecided (a member nothing
+    decides): no class coordinate, no ancestry."""
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+
+    return GroupedRaiseEffect(group_identity, group_identity, tuple(children))
+
+
+def test_the_match_against_a_group_of_undecided_class_is_retained_over_the_group():
+    """A group of undecided class is the one undecided form: the one matcher
+    retains its type test, stated over the group instance its construction
+    made (``GroupedExceptionValue``), never refused for want of a term."""
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchRetained,
+        matches_raise_effect,
+    )
+    from sugar_lift_py_tests.floor.grouped_exception_value import (
+        GroupedExceptionValue,
+    )
+
+    other = _identity("truthful", "Other")
+    nested = _undecided_group("group:nested", (_leaf(other, "leaf:inner"),))
+    handler = _typed_value(_identity("truthful", "Base"))
+
+    verdict = matches_raise_effect(nested, handler)
+
+    assert isinstance(verdict, MatchRetained)
+    subject = GroupedExceptionValue(nested).to_term(owner="test")
+    assert repr(subject) in repr(verdict.obligation)
+
+
+def test_group_split_of_a_nested_group_of_undecided_class_is_two_faces():
+    """``split`` checks a nested group itself before its members; a nested
+    group whose class is undecided is retained by the one matcher, so the
+    split is two-way: the nested group matched whole under the retained
+    type test, and under its complement its members split in turn -- each
+    an arm of its own, never a refusal and never a guess."""
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        matches_raise_effect,
+    )
+    from sugar_lift_py_tests.floor.grouped_exception_value import (
+        GroupedExceptionValue,
+    )
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.ir import not_
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    other = _identity("truthful", "Other")
+    nested = _undecided_group("group:nested", (_leaf(other, "leaf:inner"),))
+    decided = _leaf(other, "leaf:other")
+    group = _builtin_group((nested, decided))
+    handler = _typed_value(_identity("truthful", "Base"))
+    obligation = matches_raise_effect(nested, handler).obligation
+
+    exits = GroupedExceptionValue(group, "site").split((handler,), (), "site")
+
+    assert all(isinstance(arm, Completed) for arm in exits.exits)
+    assert len(exits.exits) == 2, exits.exits
+    by_match = {type(arm.value.elements[0]): arm for arm in exits.exits}
+    caught = by_match[GroupedExceptionValue]
+    missed = by_match[NoneValue]
+    caught_matched, caught_residual = caught.value.elements
+    assert caught_matched.effect.children == (nested,)
+    assert caught_residual.effect.children == (decided,)
+    assert missed.value.elements[1].effect.children == (nested, decided)
+    assert repr(obligation) in repr(caught.guard)
+    assert repr(not_(obligation)) in repr(missed.guard)
+    assert caught.faces and missed.faces and caught.faces != missed.faces
+
+
+def test_group_split_of_a_group_of_undecided_class_checks_the_group_first():
+    """The group itself is checked first: a group of undecided class is
+    matched whole under the retained type test (no residual), and under its
+    complement its members are split."""
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        matches_raise_effect,
+    )
+    from sugar_lift_py_tests.floor.grouped_exception_value import (
+        GroupedExceptionValue,
+    )
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+    from sugar_lift_py_tests.ir import not_
+
+    other = _identity("truthful", "Other")
+    leaf = _leaf(other, "leaf:other")
+    group = _undecided_group("group:root", (leaf,))
+    handler = _typed_value(_identity("truthful", "Base"))
+    obligation = matches_raise_effect(group, handler).obligation
+
+    exits = GroupedExceptionValue(group, "site").split((handler,), (), "site")
+
+    assert len(exits.exits) == 2, exits.exits
+    by_match = {type(arm.value.elements[0]): arm for arm in exits.exits}
+    caught = by_match[GroupedExceptionValue]
+    missed = by_match[NoneValue]
+    whole, nothing = caught.value.elements
+    assert whole.effect is group
+    assert isinstance(nothing, NoneValue)
+    assert missed.value.elements[1].effect.children == (leaf,)
+    assert repr(obligation) in repr(caught.guard)
+    assert repr(not_(obligation)) in repr(missed.guard)

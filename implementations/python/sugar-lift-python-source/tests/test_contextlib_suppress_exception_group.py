@@ -69,14 +69,23 @@ def test_a_handler_matching_the_group_class_consumes_the_whole_group(tmp_path):
     assert _halts(exits) == []
 
 
-def test_base_exception_group_body_stays_loud(tmp_path):
-    import pytest
+def test_a_base_exception_group_of_exceptions_splits_as_an_exception_group(tmp_path):
+    """``BaseExceptionGroup`` whose members are all ``Exception`` constructs an
+    ``ExceptionGroup`` (CPython ``BaseExceptionGroup.__new__``; decided by the
+    group's construction since #8101), so suppress splits it like one: the
+    unmatched leaf is re-raised in the residual group, of class
+    ``ExceptionGroup``."""
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-
-    with pytest.raises(ConstructionPanic, match="builtins.ExceptionGroup"):
-        _suppress(
-            tmp_path,
-            "ValueError",
-            "raise BaseExceptionGroup('g', [TypeError('b')])",
-        )
+    exits = _suppress(
+        tmp_path,
+        "ValueError",
+        "raise BaseExceptionGroup('g', [TypeError('b')])",
+    )
+    (halt,) = _halts(exits)
+    assert isinstance(halt.effect, GroupedRaiseEffect)
+    identity, _mro = _builtin_exception_identity("ExceptionGroup")
+    assert halt.effect.exception_type_coordinate == identity
+    (leaf,) = halt.effect.children
+    assert isinstance(leaf, RaiseEffect)
+    assert leaf.exception_name == "TypeError"
