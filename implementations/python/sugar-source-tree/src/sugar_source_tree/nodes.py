@@ -10586,26 +10586,38 @@ class Delete(Statement):
                 {key: value for key, value in scope.items() if key not in bound}
             )
 
-        if (
-            len(self.targets) == 1
-            and isinstance(self.targets[0], Subscript)
-            and isinstance(self.targets[0].value, Name)
-        ):
-            from .container_mutation import name_mutation_statement
+        if len(self.targets) == 1 and isinstance(self.targets[0], Subscript):
+            from .container_mutation import (
+                name_mutation_statement,
+                path_item_statement,
+            )
 
             target = self.targets[0]
             # ``del r[k]`` and ``del r[lo:hi:st]`` alike: the slice is the
-            # key ``__delitem__`` receives.  The one door: the value ``r``
-            # holds at reduce decides it.
-            mutation = name_mutation_statement(
-                self,
-                scope,
-                site=target,
-                name=target.value.id,
-                receiver=target.value.substitute(scope),
-                method="__delitem__",
-                args=(target.slice_.substitute(scope),),
-            )
+            # key ``__delitem__`` receives.  The one door, on a name or
+            # through a path (``del a.b[k]``, ``del a[i][j]``): the value the
+            # receiver holds at reduce decides it.
+            receiver = target.value.substitute(scope)
+            args = (target.slice_.substitute(scope),)
+            if isinstance(target.value, Name):
+                mutation = name_mutation_statement(
+                    self,
+                    scope,
+                    site=target,
+                    name=target.value.id,
+                    receiver=receiver,
+                    method="__delitem__",
+                    args=args,
+                )
+            else:
+                mutation = path_item_statement(
+                    self,
+                    scope,
+                    site=target,
+                    receiver=receiver,
+                    method="__delitem__",
+                    args=args,
+                )
             if mutation is not None:
                 return mutation
 
@@ -11128,21 +11140,6 @@ def _occurrence_testimony(node):
     )
 
 
-def _has_authenticated_source_method(receiver, name: str) -> bool:
-    """Whether this exact constructed receiver may carry a source override:
-    its class statement defines ``name``.  A class with bases may inherit
-    one, and is answered yes (the special path is not taken)."""
-    if not isinstance(receiver, ObjectPlaceStateV1):
-        return False
-    definition = receiver.unit.source_allocation_definition_for_call(receiver.base)
-    if not isinstance(definition, ClassDef) or definition.bases:
-        return True
-    return any(
-        isinstance(member, (FunctionDef, AsyncFunctionDef)) and member.name == name
-        for member in definition.body
-    )
-
-
 def _keyed_target_binding(statement, binding, keys: dict, targets) -> dict:
     """``binding`` (each target name to the value node substitution gave it)
     with every name in ``keys`` bound instead to a reference to its key, at
@@ -11634,19 +11631,36 @@ class Assign(Statement):
 
     def _container_mutation(self, scope):
         """``r[k] = v`` on a name (the one door,
-        ``container_mutation.name_mutation_statement``) or ``x =
-        <path>.<mutator>(...)`` (``path_mutation_statement``)."""
+        ``container_mutation.name_mutation_statement``), ``a.b[k] = v`` /
+        ``a[i][j] = v`` through a path (``path_item_statement``) or ``x =
+        <path>.<mutator>(...)`` (``path_mutation_statement``).  A chain's or
+        an unpack's store target is this same single-target store
+        (``_store_target_statement``)."""
         if len(self.targets) != 1:
             return None
         target = self.targets[0]
         if isinstance(target, Subscript):
-            if not isinstance(target.value, Name):
-                return None
-            from .container_mutation import name_mutation_statement
+            from .container_mutation import (
+                name_mutation_statement,
+                path_item_statement,
+            )
 
             # ``r[k] = v`` and ``r[lo:hi:st] = it`` alike: the slice is the key
-            # ``__setitem__`` receives.  The value ``r`` holds at reduce
-            # decides it, whatever ``r`` was given.
+            # ``__setitem__`` receives.  The value the receiver holds at
+            # reduce decides it, whatever it was given.
+            args = (target.slice_.substitute(scope), self.value.substitute(scope))
+            if not isinstance(target.value, Name):
+                # ``a.b[k] = v``, ``a[i][j] = v``: the store on the object
+                # the path reaches; a receiver that is no path from a name
+                # is an ordinary store.
+                return path_item_statement(
+                    self,
+                    scope,
+                    site=target,
+                    receiver=target.value.substitute(scope),
+                    method="__setitem__",
+                    args=args,
+                )
             return name_mutation_statement(
                 self,
                 scope,
@@ -11654,7 +11668,7 @@ class Assign(Statement):
                 name=target.value.id,
                 receiver=target.value.substitute(scope),
                 method="__setitem__",
-                args=(target.slice_.substitute(scope), self.value.substitute(scope)),
+                args=args,
                 value_first=True,
             )
         call = self.value
@@ -16663,7 +16677,9 @@ class Expr(Statement):
     _child_fields = ("value",)
 
     def substitute(self, scope):
-        """Rewrite children and thread authenticated mutating-call post-state."""
+        """Rewrite children; a mutating call on a name, through a path, or
+        on ``d.setdefault(k, v)`` takes the one door
+        (``container_mutation``)."""
         rewritten = self._substitute_children(scope)
         mutation = self._name_mutation(scope, rewritten.value)
         if mutation is not None:
@@ -16673,27 +16689,8 @@ class Expr(Statement):
         mutation = path_mutation_statement(self, scope, call=rewritten.value)
         if mutation is not None:
             return mutation
-        state = self._dict_setdefault_append_state(scope)
-        if state is None:
-            return rewritten
-
-        name, post_state = state
-        from .backend import Child, Leaf, materialize
-        from .shadow import ShadowNode, _handle_of
-
-        return materialize(
-            self.unit,
-            ShadowNode(
-                "DictSetDefaultAppendStatement",
-                rewritten.span,
-                (
-                    ("value", Child(_handle_of(rewritten.value))),
-                    ("receiver_name", Leaf(name)),
-                    ("post_state", Child(_handle_of(post_state))),
-                ),
-            ),
-            self.reporter,
-        )
+        mutation = self._setdefault_mutation(scope, rewritten.value)
+        return rewritten if mutation is None else mutation
 
     def _name_mutation(self, scope, call):
         """``r.<mutator>(*args)`` on a name ``r``: the one door
@@ -16722,59 +16719,26 @@ class Expr(Statement):
             fallback=call,
         )
 
-    def _dict_setdefault_append_state(self, scope):
-        """Recognize ``d.setdefault(k, v).append(x)`` by source structure.
-
-        The method spellings select a Python built-in operation only after the
-        receiver resolves through the ordinary binding map.  The shadow node
-        carries that receiver and every evaluated operand; its Sugar/Floor door
-        later decides whether the receiver is actually a constructed dict.
-        """
-        outer = self.value
+    def _setdefault_mutation(self, scope, call):
+        """``d.setdefault(k, v).<mutator>(*args)`` on a name ``d``: the one
+        door's two operations (``container_mutation.
+        setdefault_mutation_statement``); the values ``d`` and ``d[k]`` hold
+        at reduce decide them.  ``call`` is the statement's call, already
+        substituted against ``scope``."""
+        source = self.value
         if (
-            not isinstance(outer, Call)
-            or outer.keywords
-            or len(outer.args) != 1
-            or not isinstance(outer.func, Attribute)
-            or outer.func.attr != "append"
+            not isinstance(source, Call)
+            or not isinstance(source.func, Attribute)
+            or not isinstance(source.func.value, Call)
+            or not isinstance(source.func.value.func, Attribute)
+            or not isinstance(source.func.value.func.value, Name)
         ):
             return None
-        inner = outer.func.value
-        if (
-            not isinstance(inner, Call)
-            or inner.keywords
-            or len(inner.args) != 2
-            or not isinstance(inner.func, Attribute)
-            or inner.func.attr != "setdefault"
-            or not isinstance(inner.func.value, Name)
-        ):
-            return None
-        receiver_name = inner.func.value.id
-        receiver = inner.func.value.substitute(scope)
-        if _has_authenticated_source_method(receiver, "setdefault"):
-            return None
-        key = inner.args[0].substitute(scope)
-        default = inner.args[1].substitute(scope)
-        appended = outer.args[0].substitute(scope)
+        from .container_mutation import setdefault_mutation_statement
 
-        from .backend import Child, materialize
-        from .shadow import ShadowNode, _handle_of
-
-        post_state = materialize(
-            self.unit,
-            ShadowNode(
-                "DictSetDefaultAppendState",
-                self.span,
-                (
-                    ("receiver", Child(_handle_of(receiver))),
-                    ("key", Child(_handle_of(key))),
-                    ("default", Child(_handle_of(default))),
-                    ("appended", Child(_handle_of(appended))),
-                ),
-            ),
-            self.reporter,
+        return setdefault_mutation_statement(
+            self, scope, name=source.func.value.func.value.id, call=call
         )
-        return receiver_name, post_state
 
     def _construct_sugar(self):
         """`<expr>` as a statement constructs ExprStatementSugar WITH the
@@ -16784,40 +16748,6 @@ class Expr(Statement):
         )
 
         return ExprStatementSugar(value=self.value.sugar(), site=self.fragment)
-
-
-class DictSetDefaultAppendStatement(Statement):
-    """Shadow statement for ``d.setdefault(k, v).append(x)``.
-
-    This is the rewritten AST statement itself.  Its expression preserves the
-    source occurrence; its post-state is the value bound to ``d`` for the
-    remainder of the block through the ordinary statement-binding protocol.
-    """
-
-    value: Expression
-    receiver_name: str
-    post_state: Expression
-    _child_fields = ("value", "post_state")
-
-    def substitute(self, scope):
-        del scope
-        return self
-
-    def substitution_binding(self, scope):
-        del scope
-        return {self.receiver_name: self.post_state}
-
-    def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.expr_statement_sugar import (
-            ExprStatementSugar,
-        )
-
-        # The shadow statement IS the mutation.  Re-running ``self.value``
-        # here would execute the original method-call spelling in parallel
-        # with the authenticated post-state and demand a second setdefault
-        # authority.  Its post-state sugar evaluates receiver/key/default/
-        # appended exactly once and owns the resulting receiver mutation.
-        return ExprStatementSugar(self.post_state.sugar(), self.fragment)
 
 
 class Pass(Statement):
@@ -21329,33 +21259,6 @@ class Starred(Expression):
         )
 
 
-class DictSetDefaultAppendState(Expression):
-    """Shadow post-state of one authenticated ``setdefault(...).append(...)``."""
-
-    receiver: Expression
-    key: Expression
-    default: Expression
-    appended: Expression
-    _child_fields = ("receiver", "key", "default", "appended")
-
-    def substitute(self, scope):
-        del scope
-        return self
-
-    def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.dict_setdefault_append_state_sugar import (
-            DictSetDefaultAppendStateSugar,
-        )
-
-        return DictSetDefaultAppendStateSugar(
-            receiver=self.receiver.sugar(),
-            key=self.key.sugar(),
-            default=self.default.sugar(),
-            appended=self.appended.sugar(),
-            site=self.fragment,
-        )
-
-
 class ReceiverFieldStoreState(Expression):
     receiver: Expression
     value: Expression
@@ -21590,6 +21493,8 @@ class SourceCallActualAfter(Expression):
 class ContainerMutationStatement(Statement):
     """A statement whose mutating call rebinds every alias of its receiver.
 
+    ``pair_evaluations`` (``d.setdefault(k, v).append(x)``) are ``(key,
+    index)``: a later call's pair ``evaluated[index]``, bound under ``key``.
     ``rebinds`` (``r += x``) is the name the statement writes to the
     in-place result ``evaluated[rebinds_index]``, under the statement's own
     key ``evaluation`` (the pair under ``pair_evaluation``): the write every
@@ -21641,11 +21546,19 @@ class ContainerMutationStatement(Statement):
             # pair its own key.
             result_evaluation = (evaluation, index) if isinstance(evaluation, str) else None
             evaluation = getattr(self, "pair_evaluation", None)
+        # ``d.setdefault(k, v).append(x)``: the later operation's pair, bound
+        # under its own key after the first's.
+        pairs = getattr(self, "pair_evaluations", None)
         return ContainerMutationStatementSugar(
             evaluated=evaluated,
             site=self.fragment,
             evaluation=evaluation if isinstance(evaluation, str) else None,
             result_evaluation=result_evaluation,
+            pair_evaluations=(
+                tuple((key, index) for key, index in pairs)
+                if isinstance(pairs, (tuple, list))
+                else ()
+            ),
         )
 
 

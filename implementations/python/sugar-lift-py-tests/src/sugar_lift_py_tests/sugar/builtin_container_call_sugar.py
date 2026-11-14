@@ -124,8 +124,13 @@ def _may_change(value, method, pure, sharer) -> bool:
     ``method`` names the receiver's method when the value is the receiver
     (empty for an operand); ``pure``: the call is a cited pure builtin;
     ``sharer``: the value is one the receiver holds or shares, which only an
-    ordinary call (a receiver the container law does not cite) can reach."""
+    ordinary call (a receiver the container law does not cite) can reach.
+
+    An object of a source class (``ObjectValue``) is changed by whatever
+    code reaches it -- a method of its own, or an opaque call it is handed --
+    as a parameter's or a display's object is: it may have changed."""
     from sugar_lift_py_tests.floor import builtin_container_method as law
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.source_call_resolution import builtin_typed_value
 
     if _immutable(value):
@@ -133,6 +138,8 @@ def _may_change(value, method, pure, sharer) -> bool:
     kind = law.container_kind(value)
     if sharer:
         return kind is None
+    if isinstance(value, ObjectValue):
+        return True
     if kind is None:
         # A value no floor decides is a builtin container: a method called on
         # it may change it, whatever the method is spelled -- a source
@@ -265,6 +272,9 @@ class ContainerMutationStatementSugar(Sugar):
     # ``r += x``: ``(key, index)``, the in-place result ``evaluated[index]``
     # bound under ``key``, the one every later read of ``r`` reads.
     result_evaluation: tuple | None = None
+    # ``d.setdefault(k, v).append(x)``: ``(key, index)`` for each later
+    # call's pair ``evaluated[index]``, bound under ``key`` as it completes.
+    pair_evaluations: tuple = ()
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -301,6 +311,7 @@ class ContainerMutationStatementSugar(Sugar):
         evaluations = ((self.evaluation, 0),) if self.evaluation else ()
         if self.result_evaluation is not None:
             evaluations = (*evaluations, self.result_evaluation)
+        evaluations = (*evaluations, *self.pair_evaluations)
         return evaluate_assignment_values(
             self.evaluated,
             ctx,
