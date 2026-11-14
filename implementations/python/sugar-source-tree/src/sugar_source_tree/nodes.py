@@ -361,11 +361,15 @@ _CLOSURE_CELLS = object()
 # it is made (``NamedExpr.substitute`` marks it ``deferred``).
 _DEFERRED_WALRUS = object()
 
-# The source positions of the lambdas in the value of each walrus enclosing a
-# substitution (``NamedExpr.substitute``): such a lambda escapes every
-# comprehension around the walrus through the walrus's name, and reads each
-# comprehension cell at its call (``Lambda._cells_read_at_the_call``).
-_WALRUS_ESCAPES = object()
+# The source positions of the lambdas that escape a comprehension and may be
+# called while it runs or after it: each lambda in the value of a walrus
+# enclosing a substitution (``NamedExpr.substitute``), which escapes through
+# the walrus's name, and each lambda a generator expression yields
+# (``GeneratorExp.substitute``: the element is a lambda, holds one in a
+# display, or an inner comprehension there stores one), which escapes through
+# the generator.  Such a lambda reads each comprehension cell at its call
+# (``Lambda._cells_read_at_the_call``), however it escapes.
+_ESCAPES_READ_AT_THE_CALL = object()
 
 
 class TargetPatternConstructionGapV1(TypeError):
@@ -4507,11 +4511,24 @@ def lambda_evaluation_coordinate(member_coordinate: str) -> str:
 
 def _walrus_lambdas(value) -> frozenset:
     """The source positions of the lambdas in a walrus's value
-    (``_WALRUS_ESCAPES``): each may be bound to the walrus's name, or held
-    in what is."""
+    (``_ESCAPES_READ_AT_THE_CALL``): each may be bound to the walrus's name,
+    or held in what is."""
     return frozenset(
         _source_position(node) for node in value.walk() if isinstance(node, Lambda)
     )
+
+
+def _escaping_at_the_call(scope, positions) -> "BindingMap":
+    """``scope`` with the lambdas at ``positions`` marked as escaping
+    (``_ESCAPES_READ_AT_THE_CALL``): the one way a lambda that escapes a
+    comprehension -- through a walrus's name or yielded by a generator
+    expression -- is told to read each comprehension cell at its call
+    (``Lambda._cells_read_at_the_call``).  ``scope`` unchanged when there
+    are none."""
+    if not positions:
+        return scope
+    escapes = scope.get(_ESCAPES_READ_AT_THE_CALL, frozenset()) | positions
+    return {**scope, _ESCAPES_READ_AT_THE_CALL: escapes}
 
 
 def _source_position(node: "Node") -> tuple:
@@ -4522,21 +4539,25 @@ def _source_position(node: "Node") -> tuple:
 
 
 def _stored_closures(roots) -> frozenset:
-    """The lambdas an eager comprehension stores unevaluated in what it
-    produces: an element (a dict comprehension's key or value) that is a
-    lambda, a lambda inside a list, tuple, set or dict display there, or a
-    lambda an eager comprehension there stores in its own result
-    (``[[lambda: x for _ in ys] for x in xs]``): that result is stored in
-    this one, so the lambda escapes both.
+    """The lambdas a comprehension puts unevaluated in what it produces: an
+    element (a dict comprehension's key or value) that is a lambda, a lambda
+    inside a list, tuple, set or dict display there, or a lambda an eager
+    comprehension there stores in its own result (``[[lambda: x for _ in
+    ys] for x in xs]``): that result is stored in this one, so the lambda
+    escapes both.
 
-    Nothing calls such a lambda before the comprehension is done, so it reads
-    the comprehension's final member.  A lambda anywhere else (called in
-    place, handed to a call, read by a condition, produced by a lazy
-    generator expression) may be called while the comprehension runs, when
-    the cell holds the current member, and is not one of these.  Nor is a
-    lambda in a walrus's value (``[(g := lambda: x) for x in xs]``): it
-    escapes through the walrus's name and may be called while the
-    comprehension runs or after it, so it reads the cell at each call
+    Nothing calls such a lambda before an eager comprehension is done, so it
+    reads the comprehension's final member (``_closure_cell_scope``).  A
+    generator expression yields such a lambda while it runs, and its
+    consumer may call it before the next member, so it reads the cell at
+    each call (``GeneratorExp.substitute``, ``_ESCAPES_READ_AT_THE_CALL``).
+    A lambda anywhere else (called in place, handed to a call, read by a
+    condition, yielded by a generator expression in the element, which marks
+    it itself) may be called while the comprehension runs, when the cell
+    holds the current member, and is not one of these.  Nor is a lambda in a
+    walrus's value (``[(g := lambda: x) for x in xs]``): it escapes through
+    the walrus's name and may be called while the comprehension runs or
+    after it, so it reads the cell at each call
     (``Lambda._cells_read_at_the_call``)."""
     found = set()
     pending = list(roots)
@@ -16188,8 +16209,8 @@ class NamedExpr(Expression):
 
         A lambda in the value of a Name-target walrus escapes every
         comprehension around the walrus through its name, so the value is
-        substituted with that lambda marked (``_WALRUS_ESCAPES``): it reads
-        each comprehension cell at its call
+        substituted with that lambda marked (``_escaping_at_the_call``): it
+        reads each comprehension cell at its call
         (``Lambda._cells_read_at_the_call``).  In a generator expression's
         element or conditions (``_DEFERRED_WALRUS``) too: the generator's
         body runs when it is consumed, so the member at a call depends on
@@ -16209,10 +16230,7 @@ class NamedExpr(Expression):
 
         value_scope = scope
         if isinstance(self.target, Name):
-            escaping = _walrus_lambdas(self.value)
-            if escaping:
-                escapes = scope.get(_WALRUS_ESCAPES, frozenset()) | escaping
-                value_scope = {**scope, _WALRUS_ESCAPES: escapes}
+            value_scope = _escaping_at_the_call(scope, _walrus_lambdas(self.value))
         new_value, d = self._substitute_field(self.value, value_scope)
         rewritten = self if not d else rewrite(self, value=new_value)
         if not isinstance(rewritten.target, Name):
@@ -16560,18 +16578,17 @@ class Lambda(Expression):
         formals' defaults are evaluated when the lambda is built and read the
         current member.
 
-        A lambda in a walrus's value (``_WALRUS_ESCAPES``: ``[(g := lambda:
-        x) for x in xs if g()]; g()``) escapes through the walrus's name and
-        may be called while the comprehension runs or after it.  Its body
-        reads each comprehension cell at the call
-        (``_cells_read_at_the_call``): the member current at a call inside
-        the evaluation that made it, the final member at a call after the
+        A lambda that escapes a comprehension and may be called while it runs
+        or after it (``_ESCAPES_READ_AT_THE_CALL``) -- in a walrus's value
+        (``[(g := lambda: x) for x in xs if g()]; g()``), or yielded by a
+        generator expression (``list(lambda: x for x in xs)``, ``([lambda: x
+        for _ in ys] for x in xs)``) -- reads each comprehension cell at the
+        call (``_cells_read_at_the_call``): the member current at a call
+        inside the run that made it, the final member at a call after the
         comprehension, refused by name where the call is placed in neither.
-        A generator expression's walrus lambda (``((g := lambda: x) for x in
-        xs)``) reads its cell the same way; the final member is placed only
-        where the generator is consumed whole in place
-        (``GeneratorExp._consumed_whole_in_place``).  Never the member
-        current where the lambda was made.
+        A generator's final member is placed only where the generator is
+        consumed whole in place (``GeneratorExp._consumed_whole_in_place``).
+        Never the member current where the lambda was made.
 
         Every other enclosing function's local the body reads is read the
         same way a nested ``def`` reads one: through a captured coordinate
@@ -16607,7 +16624,7 @@ class Lambda(Expression):
         )
         position = _source_position(self)
         held: set = set()
-        if position in scope.get(_WALRUS_ESCAPES, ()):
+        if position in scope.get(_ESCAPES_READ_AT_THE_CALL, ()):
             cell_reads = self._cells_read_at_the_call(bs, bound)
             held.update(cell_reads)
             bs = {**bs, **cell_reads}
@@ -16669,9 +16686,10 @@ class Lambda(Expression):
         each call reads the cell as it is then (``EvaluationRefSugar``).
 
         Every comprehension whose member ``scope`` holds encloses the walrus
-        the lambda escapes through, so every one of them is a cell the lambda
-        outlives.  A running value of a walrus name (``recurrence``) and a
-        cell already read at the call are left as they are."""
+        or the generator the lambda escapes through, so every one of them is
+        a cell the lambda may outlive.  A running value of a walrus name
+        (``recurrence``) and a cell already read at the call are left as they
+        are."""
         names = {node.id for node in self.body.walk() if isinstance(node, Name)}
         cells = {}
         for name in sorted(names - set(bound)):
@@ -18100,7 +18118,20 @@ class GeneratorExp(Expression):
         walrus writes reads the running value of the members consumed before
         it, which depends on when they are consumed: it is a recurrence
         reference (``ListComp._walrus_recurrence``) that nothing binds, so it
-        is refused by name."""
+        is refused by name.
+
+        A lambda the generator yields (``_stored_closures``: the element is a
+        lambda, holds one in a display, or an inner comprehension there
+        stores one -- ``list(lambda: x for x in xs)``, ``([lambda: x for _ in
+        ys] for x in xs)``) escapes it, and its consumer may call it before
+        the next member or after the last: it is marked
+        (``_escaping_at_the_call``) and reads each comprehension cell at the
+        call, as a lambda a walrus lets escape does
+        (``Lambda._cells_read_at_the_call``) -- the member current at a call
+        inside the run, the final member at a call after it only where the
+        generator is consumed whole in place
+        (``_consumed_whole_in_place``), refused by name everywhere else.
+        Never the member current where the lambda was made."""
         from .shadow import rewrite
 
         if ListComp._contains_named_expression(
@@ -18113,9 +18144,9 @@ class GeneratorExp(Expression):
             scope,
             ListComp._recurrence_references(self, recurrence),
         )
-        template_scope = inner
+        template_scope = _escaping_at_the_call(inner, _stored_closures((self.elt,)))
         if ListComp._contains_forbidden_shape(self, (self.elt,)):
-            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
+            template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:
@@ -18148,8 +18179,9 @@ class GeneratorExp(Expression):
         the one argument, with no keyword, of a call of a builtin that
         drains it before returning and runs no code of the caller's between
         its members (``_WHOLE_CONSUMER_BUILTINS``: ``list(...)``,
-        ``tuple(...)``, ``sorted(...)``).  Then a lambda its walrus lets
-        escape, called after that call, reads the generator's final member
+        ``tuple(...)``, ``sorted(...)``).  Then a lambda that escapes it (in
+        a walrus's value, or yielded: ``list(lambda: x for x in xs)``),
+        called after that call, reads the generator's final member
         (``ComprehensionSugar.final_member``).
 
         Anywhere else -- stored and consumed later or in part (``next``),
