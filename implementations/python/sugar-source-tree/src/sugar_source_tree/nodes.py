@@ -8599,14 +8599,18 @@ class FunctionDef(Statement):
         site = f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}"
         with reduction_span(sugar=f"Body.{stmt.kind}", role="construction", site=site):
             if not _call_applies_own_frame(stmt):
-                # A decorated ``def``/``class`` statement runs its decorators
-                # and binds the name to their result: it reduces as that one
-                # application (``DecoratedDefinitionRef``), with every face of
-                # it the statement's (#7757).
-                value = getattr(stmt, "decorated_value", None)
-                if not isinstance(value, DecoratedDefinitionRef):
-                    value = _decorated_definition_ref(stmt, stmt.span)
-                return value.sugar()
+                return _decorated_statement_sugar(stmt)
+            if isinstance(stmt, (FunctionDef, AsyncFunctionDef)):
+                # A ``def`` statement builds the function and binds its name
+                # (substitution bound every later read of the name to the
+                # definition, ``_local_definition_binding``); its body runs
+                # only when the function is called, in the call's frame.  So
+                # the statement reduces nothing of the body: no face of the
+                # body is the enclosing function's (#7757).
+                from sugar_lift_py_tests.sugar.inert_sugar import InertSugar
+
+                stmt.discharge_by_substitution()
+                return InertSugar(site=stmt.fragment)
             return stmt.sugar()
 
     def _construct_sugar(self):
@@ -9108,7 +9112,9 @@ class ClassDef(Statement):
                 if not _call_applies_own_frame(bindings[0]):
                     # A decorated base is the decorators' result (#7757).
                     return _decorated_definition_ref(
-                        bindings[0], base.span
+                        bindings[0],
+                        base.span,
+                        evaluation=_definition_evaluation_key(bindings[0], {}),
                     ).sugar()
                 return bindings[0].sugar()
         return base.sugar()
@@ -19179,6 +19185,32 @@ class Call(Expression):
                 if reference is not None and reference.startswith("python:")
                 else self._spread_callee_name(self.func)
             )
+            # A decorated definition's name is bound to its decorators'
+            # result: ``g(*a, **k)`` calls that value, through the one call
+            # routine (``SpreadCallSugar._finish``), as ``g(...)`` does
+            # (``_decorated_definition_call``).  A decorated module name, and
+            # a local one substitution bound to its ``DecoratedDefinitionRef``,
+            # seat no frame: the plain definition's is never this call's.
+            decorated = self.unit.decorated_definition_for_call(self)
+            if decorated is not None or isinstance(
+                self.func, DecoratedDefinitionRef
+            ):
+                callee = (
+                    self.func.sugar()
+                    if decorated is None
+                    else _decorated_definition_ref(
+                        decorated,
+                        self.func.span,
+                        evaluation=_definition_evaluation_key(decorated, {}),
+                    ).sugar()
+                )
+                return SpreadCallSugar(
+                    callee_name=callee_name,
+                    callee=callee,
+                    arguments=arguments,
+                    site=self.fragment,
+                    source_call_frame=None,
+                )
             # Enroll an authenticated source-visible frame when the call is a
             # local constructor/function use-site. Typed ``**`` actuals then
             # project onto formals at desugar (SpreadCallSugar) so the manager
@@ -19610,7 +19642,11 @@ class Call(Expression):
         # The callee's spelling is absorbed into the reference to the value.
         self.func.discharge_by_substitution()
         return ComputedCallSugar(
-            callee=_decorated_definition_ref(definition, self.func.span).sugar(),
+            callee=_decorated_definition_ref(
+                definition,
+                self.func.span,
+                evaluation=_definition_evaluation_key(definition, {}),
+            ).sugar(),
             args=tuple(a.sugar() for a in self.args),
             site=self.fragment,
             keywords=tuple((kw.arg, kw.value.sugar()) for kw in self.keywords),
@@ -21365,6 +21401,16 @@ class DecoratedDefinitionRef(Expression):
     ``definition`` is the statement (a leaf); ``decorator_bindings`` holds,
     for each decorator, the ``def``/``class`` a bare-name decorator is bound
     to where the statement runs (the substitution scope), else None.
+
+    ``evaluation`` is the key of the statement's one evaluation of the name
+    (``_definition_evaluation_key``).  Python applies the decorators once,
+    where the ``def``/``class`` statement runs: the statement binds the
+    application's result under this key (``FunctionDef._sugar_body_statement``,
+    as an assignment binds its value, ``AssignSugar``), and every read and
+    call of the name reads that key (``DecoratorApplicationSugar``), never
+    applies the decorators again.  Where no reduction running the statement
+    bound the key (a module function's read after import), the read is the
+    application itself.
     """
 
     definition_name: str
@@ -21378,6 +21424,7 @@ class DecoratedDefinitionRef(Expression):
             getattr(self, "definition"),
             getattr(self, "decorator_bindings", ()) or (),
             self.fragment,
+            evaluation=getattr(self, "evaluation", None),
         )
 
 
@@ -21406,10 +21453,22 @@ def _call_applies_own_frame(definition) -> bool:
     )
 
 
-def _decorated_definition_ref(definition, span, scope=None):
+def _definition_evaluation_key(definition, scope) -> str:
+    """The key the decorated ``def``/``class`` statement ``definition`` binds
+    its name's value under: the name's projection of the statement's one
+    evaluation (``Statement._evaluation_key``, ``projection_key``), as an
+    assignment's target is (``Assign.target_evaluations``)."""
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+    return projection_key(definition._evaluation_key(scope), definition.name)
+
+
+def _decorated_definition_ref(definition, span, scope=None, *, evaluation=None):
     """The ``DecoratedDefinitionRef`` for the decorated ``definition`` at
     ``span``, with each bare-name decorator's ``def``/``class`` binding in
-    ``scope`` (the scope the statement runs in), when there is one."""
+    ``scope`` (the scope the statement runs in), when there is one, reading
+    the statement's evaluation key ``evaluation``
+    (``_definition_evaluation_key``)."""
     from .backend import Leaf, materialize
     from .shadow import ShadowNode
 
@@ -21432,6 +21491,7 @@ def _decorated_definition_ref(definition, span, scope=None):
                 ("definition_name", Leaf(definition.name)),
                 ("definition", Leaf(definition)),
                 ("decorator_bindings", Leaf(tuple(bindings))),
+                ("evaluation", Leaf(evaluation)),
             ),
         ),
         definition.reporter,
@@ -21456,9 +21516,47 @@ def _decorated_statement_binding(statement, binding):
     return rewrite_with_leaves(statement, {"decorated_value": bound})
 
 
-def _decorator_application_sugar(definition, bindings, site):
+def _decorated_statement_sugar(statement):
+    """A decorated ``def``/``class`` ``statement`` in a body: it runs its
+    decorators once and binds the name to their result.
+
+    The statement reduces the one application (``DecoratedDefinitionRef``),
+    with every face of it the statement's (#7757), and binds the completed
+    value under the statement's evaluation key, as an assignment binds its
+    value (``AssignSugar``, ``Assign.target_evaluations``).  Every later read
+    and call of the name substitution bound to the reference reads that key
+    (``DecoratorApplicationSugar``): the decorators are never applied again
+    where the name is used.  The statement's own application never reads the
+    key.  A statement substitution bound no reference for reduces as the
+    application alone."""
+    value = getattr(statement, "decorated_value", None)
+    if not isinstance(value, DecoratedDefinitionRef):
+        value = _decorated_definition_ref(statement, statement.span)
+    application = value.sugar()
+    evaluation = getattr(value, "evaluation", None)
+    if not isinstance(evaluation, str):
+        return application
+    import copy
+
+    from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+
+    # The statement's own application: a shallow copy (stamps kept, as
+    # ``_as_evaluation_of`` keeps them) that never reads the key it binds.
+    own = copy.copy(application)
+    object.__setattr__(own, "evaluation", None)
+    return AssignSugar(
+        name=statement.name,
+        value=own,
+        site=statement.fragment,
+        evaluations=((statement.name, evaluation),),
+    )
+
+
+def _decorator_application_sugar(definition, bindings, site, *, evaluation=None):
     """The one decorator application: ``definition``'s value with each of its
-    decorators applied, innermost first (``DecoratorApplicationSugar``).
+    decorators applied, innermost first (``DecoratorApplicationSugar``),
+    read through the statement's evaluation key ``evaluation`` wherever the
+    statement bound it.
 
     Each decorator is decided from its binding where the statement runs:
 
@@ -21508,6 +21606,7 @@ def _decorator_application_sugar(definition, bindings, site):
                 "its own result"
             ),
             site=site,
+            evaluation=evaluation,
         )
     module_site = (
         unit.module_execution_site(definition) if unit.module_threaded_names() else None
@@ -21549,6 +21648,7 @@ def _decorator_application_sugar(definition, bindings, site):
         definition_class=class_sugar,
         refusal=refusal,
         site=site,
+        evaluation=evaluation,
     )
 
 
@@ -21663,7 +21763,11 @@ def _definition_decorator_step(target, site, spelling):
         return DecoratorStepV1.apply(
             site,
             spelling,
-            callee=_decorated_definition_ref(target, target.span).sugar(),
+            callee=_decorated_definition_ref(
+                target,
+                target.span,
+                evaluation=_definition_evaluation_key(target, {}),
+            ).sugar(),
         )
     if isinstance(target, ClassDef):
         return DecoratorStepV1.apply(site, spelling, callee=target.sugar())
@@ -21718,7 +21822,8 @@ def _local_definition_binding(definition, scope):
     of them reads (``_module_threads``); an undecorated definition binds
     itself, a decorated one the decorators' result
     (``DecoratedDefinitionRef``), its decorators read where the statement
-    runs (``scope``).
+    runs (``scope``), and the result read through the statement's evaluation
+    key (``_definition_evaluation_key``), which the statement binds it under.
     """
     lexical = scope.get(_LEXICALLY_BOUND_NAMES)
     local = isinstance(lexical, frozenset) and definition.name in lexical
@@ -21728,7 +21833,10 @@ def _local_definition_binding(definition, scope):
         return {definition.name: definition}
     return {
         definition.name: _decorated_definition_ref(
-            definition, definition.span, scope
+            definition,
+            definition.span,
+            scope,
+            evaluation=_definition_evaluation_key(definition, scope),
         )
     }
 

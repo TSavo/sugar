@@ -716,18 +716,25 @@ def bind_method_call(
     refuse,
     required_frame=None,
 ):
-    """``receiver.m(*arguments, **keywords)`` is the call ``m(receiver, ...)``.
-
-    A bound method call is nothing but a call of the selected function with
-    the receiver bound as its first actual (``bind_call``), for
-    ``CallSiteValue.producer_outcome`` to apply.  Every method dispatch
-    (``obj.m()``, ``self.m()``, a ``BoundMethodValue`` called with or without
-    ``**``, zero-argument ``super().m()``) binds here.
+    """``receiver.m(*arguments, **keywords)``: the call of the selected
+    function with the implicit first actual its lookup binds
+    (``implicit_arguments``), for ``CallSiteValue.producer_outcome`` to
+    apply.  Every method dispatch (``obj.m()``, ``self.m()``, a
+    ``BoundMethodValue`` called with or without ``**``, zero-argument
+    ``super().m()``, ``Cls.m()`` read off the class) binds here.
 
     ``refuse`` is the caller's own panic for a method it cannot bind.
     """
     target_name = f"{class_name}.{method.name}"
-    if not method.parameters:
+    implicit = implicit_arguments(
+        receiver,
+        method,
+        target_name=target_name,
+        owner=owner,
+        blame=blame,
+        refuse=refuse,
+    )
+    if implicit and not method.parameters:
         refuse(
             owner=owner,
             blame=blame,
@@ -756,7 +763,7 @@ def bind_method_call(
                 coordinate.cid for coordinate in at_site.formal_coordinates
             )
     if selected_frame is None and (
-        keywords or len(arguments) != len(method.parameters) - 1
+        keywords or len(implicit) + len(arguments) != len(method.parameters)
     ):
         refuse(
             owner=owner,
@@ -767,7 +774,7 @@ def bind_method_call(
         )
     return bind_call(
         target_name,
-        (receiver, *arguments),
+        (*implicit, *arguments),
         keywords,
         frame=selected_frame,
         parameters=method.parameters,
@@ -780,6 +787,48 @@ def bind_method_call(
         blame=blame,
         refuse=refuse,
     )
+
+
+def implicit_arguments(receiver, method, *, target_name, owner, blame, refuse):
+    """The actuals a lookup of ``method`` on ``receiver`` binds before the
+    written ones (the descriptor protocol, ``object.__getattribute__`` /
+    ``type.__getattribute__``):
+
+    - a plain function read off an instance is a bound method: the instance;
+    - a plain function read off its class is the function itself, unbound:
+      nothing (``C.f(obj, x)`` passes ``obj`` as written);
+    - a ``classmethod`` binds the class: the class it is read off, or the
+      instance's class;
+    - a ``staticmethod`` binds nothing.
+
+    The descriptor kind is the builtin decorator's, read through the one
+    builtin door (``ClassDef._method_descriptor_kind``).  A receiver is a
+    class when it is a source class value (``ClassDefinitionValue``),
+    including one ``super()`` was given as its second argument.
+    """
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+
+    kind = method.descriptor_kind
+    if kind == "staticmethod":
+        return ()
+    on_class = isinstance(receiver, ClassDefinitionValue)
+    if kind == "classmethod":
+        cls = receiver if on_class else getattr(receiver, "defining_class", None)
+        if cls is None:
+            refuse(
+                owner=owner,
+                blame=blame,
+                observed=f"{target_name} is a classmethod read off a receiver "
+                "whose class is not carried",
+                requested="the receiver's class, the classmethod's first actual",
+                fix="carry the receiver's defining class or keep the call loud",
+            )
+        return (cls,)
+    if on_class:
+        return ()
+    return (receiver,)
 
 
 def bind_call(

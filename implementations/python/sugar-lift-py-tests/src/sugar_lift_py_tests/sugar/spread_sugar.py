@@ -331,30 +331,52 @@ class SpreadCallSugar(ConstructedTermSugar):
         return self.callee.desugar(ctx).and_then(after_callee)
 
     def _finish(self, callee_value, values, ctx=None) -> ExitSet:
-        from sugar_lift_py_tests.floor import BoundMethodValue
+        from sugar_lift_py_tests.floor import (
+            BoundMethodValue,
+            ClassDefinitionValue,
+            LambdaCallable,
+        )
 
-        # A bound method (a source method read off its receiver, or one
-        # selected through zero-arg ``super``) is called as every value
-        # callee is: its own application, which binds the receiver first
-        # through the one binder and applies the body (#7756).
-        if isinstance(callee_value, BoundMethodValue):
-            if any(role == "star" for role, _, _ in self.arguments):
-                from sugar_source_tree.panic import SugarNotWritten
-
-                raise SugarNotWritten(
-                    owner="SpreadCallSugar._finish",
-                    blame=self.site,
-                    observed="starred positional actual to a bound method",
-                    requested="an exact positional roster",
-                    fix="project the starred operand exactly or keep the call loud",
-                )
+        # A callee value the computed call applies (``ComputedCallSugar``) is
+        # applied here the same way: a bound method (a source method read off
+        # its receiver, or one selected through zero-arg ``super``), a source
+        # class, or a function value -- the value a decorated definition's
+        # name is bound to among them (``DecoratorApplicationSugar``), never
+        # the plain definition's frame.  Its own application binds through
+        # the one binder and applies the body (#7756, #7757).
+        if isinstance(
+            callee_value, (BoundMethodValue, ClassDefinitionValue, LambdaCallable)
+        ):
             from sugar_lift_py_tests.callable_application import CallableApplication
+            from sugar_lift_py_tests.floor import TupleValue
 
-            positional = tuple(
-                value
-                for (role, _name, _), value in zip(self.arguments, values)
-                if role == "positional"
-            )
+            roster: list = []
+            for (role, _name, _), value in zip(self.arguments, values):
+                if role == "positional":
+                    roster.append(value)
+                elif role == "star":
+                    # ``*t`` over a decided tuple is its elements, in order, at
+                    # this position of the positional roster (as
+                    # ``_framed_call`` projects it); any other operand has no
+                    # exact roster.
+                    if type(value) is not TupleValue:
+                        from sugar_source_tree.panic import SugarNotWritten
+
+                        raise SugarNotWritten(
+                            owner="SpreadCallSugar._finish",
+                            blame=self.site,
+                            observed=(
+                                "starred positional actual that is not a decided "
+                                f"tuple, to a {type(callee_value).__name__}"
+                            ),
+                            requested="an exact positional roster",
+                            fix=(
+                                "project the starred operand exactly or keep "
+                                "the call loud"
+                            ),
+                        )
+                    roster.extend(value.elements)
+            positional = tuple(roster)
             keywords = tuple(
                 (("**" if role == "double-star" else name), value)
                 for (role, name, _), value in zip(self.arguments, values)

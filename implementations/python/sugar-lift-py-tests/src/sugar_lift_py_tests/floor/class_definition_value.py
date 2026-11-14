@@ -184,35 +184,40 @@ class ClassDefinitionValue(GuardStableValue):
                 fix="read the property off an instance, or keep the call loud",
             )
         frame = required_frame or method.source_call_frame
-        from sugar_lift_py_tests.floor.object_value import bind_call
+        from sugar_lift_py_tests.floor import ObjectMethodValue
+        from sugar_lift_py_tests.floor.object_value import bind_method_call
         from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
         def refuse(*, owner, blame, observed, requested, fix):
             del owner, blame, requested, fix
             raise SourceCallBindingGap(observed)
 
-        # ``cls.m(...)`` is the call ``m(cls, ...)``: the one binder, applied by
-        # the one routine.  The class is ``m``'s lexical ``__class__`` cell.
-        # ``staticmethod.__get__`` returns the bare function (the builtin
-        # descriptor door, ``ClassDef._method_descriptor_kind``): its call
-        # takes no implicit first argument.
-        implicit = () if method.descriptor_kind == "staticmethod" else (self,)
-        return bind_call(
-            f"{self.class_name}.{name}",
-            (*implicit, *arguments),
-            keywords,
-            frame=frame,
-            parameters=frame.parameters,
-            body=frame.body,
-            frame_cid=frame.frame_cid,
-            formal_coordinate_cids=tuple(
-                coordinate.cid for coordinate in frame.formal_coordinates
+        # ``Cls.m(...)`` binds through the one method door, which reads the
+        # lookup's implicit first actual off the descriptor kind
+        # (``object_value.implicit_arguments``): a plain function read off its
+        # class is unbound and takes none, a ``classmethod`` takes the class,
+        # a ``staticmethod`` none.  The class is ``m``'s lexical
+        # ``__class__`` cell.
+        return bind_method_call(
+            self,
+            ObjectMethodValue(
+                method.name,
+                frame.parameters,
+                frame.body,
+                frame.frame_cid,
+                tuple(coordinate.cid for coordinate in frame.formal_coordinates),
+                frame,
+                method.descriptor_kind,
+                defining_class=self,
             ),
-            lexical_defining_class=self,
+            arguments,
+            keywords,
+            class_name=self.class_name,
             ctx=ctx,
             owner=owner,
             blame=blame,
             refuse=refuse,
+            required_frame=required_frame,
         ).producer_outcome(ctx)
 
     def dispatch_super_method(

@@ -4,8 +4,9 @@ Python evaluates a statement's decorator expressions in source order, builds
 the function or class, then calls each decorator on it innermost first and
 binds the name to the last result (the language reference, "Function
 definitions" and "Class definitions").  ``DecoratorApplicationSugar`` is that
-application, and the only one (#7757): the statement reduces it, a read of the
-name is it, and a call of the name calls its value
+application, and the only one (#7757): the statement reduces it once and binds
+its result under the statement's evaluation key, a read of the name reads that
+key, and a call of the name calls the value it holds
 (``sugar_source_tree.nodes.DecoratedDefinitionRef``).
 
 Each decorator was decided at construction from its binding where the
@@ -115,6 +116,13 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
     definition_class: object = field(compare=False)
     refusal: str | None
     site: object = field(compare=False)
+    # The key the ``def``/``class`` statement binds the application's result
+    # under (``nodes._definition_evaluation_key``).  Python applies the
+    # decorators once, where the statement runs: a read or call of the name
+    # reads this key wherever the statement's reduction bound it, and never
+    # applies the decorators again.  The statement's own application carries
+    # None (``nodes._decorated_statement_sugar``).
+    evaluation: str | None = None
 
     @classmethod
     def witnesses(cls):
@@ -146,7 +154,27 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> ExitSet:
         if self.refusal is not None:
             _refuse(self.site, self.refusal)
+        bound = self._bound_by_statement(ctx)
+        if bound is not None:
+            return ExitSet.completed(bound)
         return self._evaluate(self.decorators, (), ctx)
+
+    def _bound_by_statement(self, ctx):
+        """The value the statement bound the name to under its evaluation
+        key (``AssignSugar`` over the statement's own application), or None
+        where no reduction running the statement bound it here (a module
+        function read after import): the read is then the application."""
+        if self.evaluation is None:
+            return None
+        temporal = getattr(ctx, "temporal", None) if ctx is not None else None
+        if temporal is None:
+            return None
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
+            evaluation_read_here,
+        )
+
+        key = evaluation_read_here(temporal, self.evaluation)
+        return temporal.value_if_bound(key)
 
     def _evaluate(self, remaining: tuple, evaluated: tuple, ctx) -> ExitSet:
         # The decorator expressions, top to bottom, before the definition.
