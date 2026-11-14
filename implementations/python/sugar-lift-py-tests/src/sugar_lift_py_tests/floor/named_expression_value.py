@@ -23,6 +23,13 @@ class NamedExpressionValue(FloorValue):
     # name: every later read substitution rewrote is an ``EvaluationRef`` to it
     # (temporal choice 1, #7661).
     evaluation: str | None = None
+    # The walrus did not run on this arm of a conditional expression
+    # (``a if c else (x := 5)`` where ``c`` held): under its key the name
+    # holds the value it had at that point.  ``peel_walrus_binds`` gives a
+    # held bind the value of the latest earlier bind of the same name in the
+    # same evaluation; with none, it keeps the read of the name from before
+    # the expression (``IfExpSugar._holding``).
+    held: bool = False
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "presented_value", self.assigned_value)
@@ -34,13 +41,15 @@ class NamedExpressionValue(FloorValue):
         assigned_value: FloorValue,
         presented_value: FloorValue,
         evaluation: str | None = None,
+        held: bool = False,
     ) -> "NamedExpressionValue":
-        carried = cls(name, assigned_value, evaluation=evaluation)
+        carried = cls(name, assigned_value, evaluation=evaluation, held=held)
         object.__setattr__(carried, "presented_value", presented_value)
         return carried
 
     def extend_scope(self, ctx):
-        return self.presented_value.extend_scope(self.bind(ctx))
+        binds, presented = peel_walrus_binds(self)
+        return presented.extend_scope(bind_walrus_binds(binds, ctx))
 
     def bind(self, ctx):
         """``ctx`` with this walrus's bind: the assigned value under the name
@@ -188,10 +197,29 @@ class NamedExpressionValue(FloorValue):
 def peel_walrus_binds(value) -> tuple[tuple["NamedExpressionValue", ...], object]:
     """The walrus binds ``value`` carries, in evaluation order, and the value
     it presents beneath them.  An ordinary value carries none and presents
-    itself."""
+    itself.
+
+    A held bind (a walrus that did not run on this arm) takes the value of
+    the latest earlier bind of its name: in ``f((x := 1), 2 if c else (x :=
+    3))`` the arm where ``c`` held leaves ``x`` at 1, not at what it was
+    before the statement.  Peeling a longer chain sees every earlier bind, so
+    the statement, which peels the whole chain, applies the resolved value."""
     binds = []
     while isinstance(value, NamedExpressionValue):
-        binds.append(value)
+        bind = value
+        if value.held:
+            earlier = next(
+                (prior for prior in reversed(binds) if prior.name == value.name),
+                None,
+            )
+            if earlier is not None:
+                bind = NamedExpressionValue(
+                    value.name,
+                    earlier.assigned_value,
+                    evaluation=value.evaluation,
+                    held=True,
+                )
+        binds.append(bind)
         value = value.presented_value
     return tuple(binds), value
 
@@ -200,7 +228,7 @@ def carry_walrus_binds(binds, presented):
     """``presented`` carrying ``binds`` (``peel_walrus_binds`` order)."""
     for bind in reversed(binds):
         presented = NamedExpressionValue.carrying(
-            bind.name, bind.assigned_value, presented, bind.evaluation
+            bind.name, bind.assigned_value, presented, bind.evaluation, bind.held
         )
     return presented
 

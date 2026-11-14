@@ -31,19 +31,30 @@ from sugar_lift_py_tests.floor.branch_result_coordinate import BranchResultSlot
 from sugar_lift_py_tests.floor.named_expression_value import (
     NamedExpressionValue,
     bind_walrus_binds,
+    carry_walrus_binds,
     consume_operands,
     peel_walrus_binds,
 )
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.generator_construction import (
+    GeneratorConstructionV1,
+    GeneratorTerminationV1,
+    GeneratorWalrusBindingV1,
+    ReturnStepV1,
+    YieldEffect,
+    YieldStepV1,
+)
 from sugar_lift_py_tests.outcome import Completed, ExitSet, outcome_to_exitset
 from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
+from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
 from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
+from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
 from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -497,3 +508,170 @@ def test_a_write_of_the_name_after_the_walrus_is_read() -> None:
     ctx = ctx.with_temporal(ctx.temporal.bind_value(KEY, TermValue(9)))
     ctx = ctx.with_temporal(ctx.temporal.bind_value("x", TermValue(3)))
     assert _value(read.desugar(ctx)) == TermValue(3)
+
+
+# ---------------------------------------------------------------------------
+# ``yield (x := v)``: the generator frame records the bind
+# ---------------------------------------------------------------------------
+
+
+def test_a_yielded_walrus_binds_the_generator_frame() -> None:
+    # `yield (x := 5)` then `return x`: the yield hands out 5 and the
+    # suspended frame records the walrus, so the step after the resume reads
+    # `x` through the walrus's key.
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:walrus_generator:1",
+        frame_coordinate="frame:walrus_generator",
+        binding_state=(),
+        steps=(
+            YieldStepV1(_walrus_sugar("x", 5)),
+            ReturnStepV1(
+                EvaluationRefSugar(evaluation=KEY, name="x", site=None, walrus=True)
+            ),
+        ),
+    )
+    yielded = machine.resume()
+    assert isinstance(yielded, YieldEffect)
+    assert yielded.value == TermValue(5)
+    assert not isinstance(yielded.value, NamedExpressionValue)
+    recorded = [
+        item
+        for item in yielded.machine.binding_state
+        if isinstance(item, GeneratorWalrusBindingV1)
+    ]
+    assert [(item.name, item.evaluation) for item in recorded] == [("x", KEY)]
+    terminated = yielded.machine.send(None)
+    assert isinstance(terminated, GeneratorTerminationV1)
+    assert terminated.return_value == TermValue(5)
+
+
+def test_a_yield_without_a_walrus_records_nothing() -> None:
+    machine = GeneratorConstructionV1.allocate(
+        allocation_coordinate="call:plain_generator:1",
+        frame_coordinate="frame:plain_generator",
+        binding_state=(),
+        steps=(YieldStepV1(IntLiteralSugar(5, site=SITE)),),
+    )
+    yielded = machine.resume()
+    assert isinstance(yielded, YieldEffect)
+    assert yielded.value == TermValue(5)
+    assert yielded.machine.binding_state == ()
+
+
+# ---------------------------------------------------------------------------
+# A walrus in a conditional expression's arm binds on its own arm
+# ---------------------------------------------------------------------------
+
+
+def test_a_conditional_arm_walrus_binds_only_its_own_arm() -> None:
+    # `1 if c else (x := 5)` with `x` 3 before it: one arm per branch.  Where
+    # the walrus ran, `x` reads 5; on the other arm the walrus's key holds 3.
+    outcome = IfExpSugar(
+        test=NameSugar(name="c", site=SITE),
+        body=IntLiteralSugar(1, site=SITE),
+        orelse=_walrus_sugar("x", 5),
+        site=SITE,
+        walrus_priors=((KEY, "x", IntLiteralSugar(3, site=SITE)),),
+    ).desugar(_root("walrus-ifexp"))
+    arms = [
+        exit_.value
+        for exit_ in outcome_to_exitset(outcome).exits
+        if isinstance(exit_, Completed)
+    ]
+    assert len(arms) == 2
+    read = EvaluationRefSugar(evaluation=KEY, name="x", site=None, walrus=True)
+    seen = []
+    for value in arms:
+        binds, presented = peel_walrus_binds(value)
+        after = bind_walrus_binds(binds, _root("walrus-ifexp-after"))
+        seen.append((presented, _value(read.desugar(after))))
+    assert (TermValue(1), TermValue(3)) in seen
+    assert (TermValue(5), TermValue(5)) in seen
+
+
+def test_an_arm_walrus_with_no_prior_is_refused_on_the_other_arm() -> None:
+    # `x` was not bound before: the arm the walrus did not run on holds
+    # nothing, and the read there is refused by name.
+    outcome = IfExpSugar(
+        test=NameSugar(name="c", site=SITE),
+        body=IntLiteralSugar(1, site=SITE),
+        orelse=_walrus_sugar("x", 5),
+        site=SITE,
+    ).desugar(_root("walrus-ifexp-unbound"))
+    arms = [
+        exit_.value
+        for exit_ in outcome_to_exitset(outcome).exits
+        if isinstance(exit_, Completed)
+    ]
+    assert len(arms) == 2
+    bound = [peel_walrus_binds(value) for value in arms]
+    assert sorted(len(binds) for binds, _presented in bound) == [0, 1]
+    read = EvaluationRefSugar(evaluation=KEY, name="x", site=None, walrus=True)
+    for binds, presented in bound:
+        after = bind_walrus_binds(binds, _root("walrus-ifexp-unbound-after"))
+        if binds:
+            assert presented == TermValue(5)
+            assert _value(read.desugar(after)) == TermValue(5)
+        else:
+            assert presented == TermValue(1)
+            with pytest.raises(ConstructionPanic):
+                read.desugar(after)
+
+
+def test_a_held_bind_takes_the_latest_earlier_write_of_its_name() -> None:
+    # `f((x := 1), 2 if c else (x := 3))` on the arm where `c` held: `x` is
+    # 1 there, not what it was before the statement.
+    earlier = NamedExpressionValue("x", TermValue(1), evaluation=KEY + ":first")
+    held = NamedExpressionValue("x", TermValue(0), evaluation=KEY, held=True)
+    binds, presented = peel_walrus_binds(
+        carry_walrus_binds((earlier, held), TermValue(2))
+    )
+    assert presented == TermValue(2)
+    assert [(bind.evaluation, bind.assigned_value) for bind in binds] == [
+        (KEY + ":first", TermValue(1)),
+        (KEY, TermValue(1)),
+    ]
+    after = bind_walrus_binds(binds, _root("walrus-held"))
+    read = EvaluationRefSugar(evaluation=KEY, name="x", site=None, walrus=True)
+    assert _value(read.desugar(after)) == TermValue(1)
+
+
+def test_an_arm_walrus_carries_the_prior_read_of_its_name() -> None:
+    rewritten = _function(
+        "def f(c):\n    x = 3\n    y = 1 if c else (x := 5)\n    return x\n"
+    ).substitute({})
+    (walrus,) = _walruses(rewritten)
+    conditional = next(node for node in rewritten.walk() if node.kind == "IfExp")
+    assert conditional.walrus_prior_keys == ((walrus.evaluation, "x"),)
+    sugar = conditional.sugar()
+    assert isinstance(sugar, IfExpSugar)
+    assert [(key, name) for key, name, _prior in sugar.walrus_priors] == [
+        (walrus.evaluation, "x")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        # The arm taken ran the walrus.
+        ("(x := 5) if True else 1", 5),
+        ("1 if False else (x := 5)", 5),
+        # The arm taken did not: `x` is what it was before.
+        ("1 if True else (x := 5)", 3),
+        ("(x := 5) if False else 1", 3),
+    ],
+)
+def test_a_ground_conditional_reads_the_arm_it_took(
+    expression: str, expected: int
+) -> None:
+    returned = _returned_value(
+        _call_outcome(
+            "def f():\n"
+            "    x = 3\n"
+            "    y = " + expression + "\n"
+            "    return x\n"
+            "\n"
+            "f()\n"
+        )
+    )
+    assert returned == TermValue(expected)
