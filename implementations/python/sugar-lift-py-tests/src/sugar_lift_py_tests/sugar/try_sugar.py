@@ -114,7 +114,19 @@ def _try_outcome(exits):
     reducer sequences the tail under each completed face.  Flattening merged
     every completed route into one record whose entries were merely guarded,
     and put a halt inside a completed record (#7826).
+
+    Faces still waiting on the caller's actuals (a deferred native-operation
+    carrier: a body, an arm or a ``finally`` that reads a parameter) are
+    normalized once they discharge (``after_discharge``), as the block
+    reducer hands any such outcome on; no arm is read off an undischarged
+    carrier.
     """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    if isinstance(exits, NativeOperationExitCarrierV1):
+        return exits.after_discharge(_try_outcome)
     return exits.normalize()
 
 
@@ -247,8 +259,13 @@ def _and_finally_with_raise_context(
     the ``finally`` left (Python rolls back neither the body's stores nor the
     cleanup's): the completion (``_completion_after``: a ``return`` the body
     took is still pending, so it follows the ``finally``'s entries), or the
-    halt. A ``finally`` that exits itself supersedes, and a pending
-    ``return`` is discarded with the exit it belonged to.
+    halt (the ``return`` entries its record holds follow them too,
+    ``_returns_after``). Every arm's ``return`` entries are held aside the
+    one way (``_pending_returns``), a completed face's and a halt's record
+    alike. A ``finally`` that exits itself supersedes, and a pending
+    ``return`` is discarded with the exit it belonged to. A ``finally``
+    whose arms still wait on the caller's actuals is composed once they
+    discharge (``_finally_beneath``).
     """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.in_flight_effect import bind_in_flight_effect
@@ -307,15 +324,23 @@ def _and_finally_with_raise_context(
                 blame=site,
             )
 
+        # The halt's record holds the ``return`` entries the body reached
+        # before it halted (each under the guard the arm's own guard
+        # excludes): they are held aside like a completed face's, so the
+        # ``finally`` never runs beside them and its own exit never stands
+        # beside them.
+        pending, before = _pending_returns(halt.state)
         cleanup_es = cleanup(
             finalbody if finalbody_halted is None else finalbody_halted,
-            halt.state,
+            before,
             in_context,
         )
         return _finally_beneath(
             cleanup_es,
             halt.effect,
-            lambda cleaned: ExitSet.halted(halt.effect, state=cleaned),
+            lambda cleaned: ExitSet.halted(
+                halt.effect, state=_returns_after(cleaned, pending)
+            ),
         )
 
     return pre_finally.sequence(after_completion, consume=after_halt)
@@ -324,15 +349,24 @@ def _and_finally_with_raise_context(
 def _pending_returns(value):
     """``value``'s ``return`` entries, and ``value`` without them.
 
-    A ``return`` the body took (under a guard or not) has not left the
-    function when the ``finally`` runs: its value is evaluated, the exit is
-    pending. The ``finally`` runs from the record without it, and the return
-    is re-emitted after the ``finally``'s entries (``_completion_after``), or
-    discarded with the exit when the ``finally`` exits itself (Python: a
-    ``return`` or raise in ``finally`` replaces the pending return). A
-    ``return`` nested inside another entry's own record stays where it is.
-    A value that is not a block record is handed on whole: ``resumed``
-    refuses it by name."""
+    ``value`` is the record an arm reaches the ``finally`` with: a completed
+    face's value or a halt's state. A ``return`` the body took (under a
+    guard or not) has not left the function when the ``finally`` runs: its
+    value is evaluated, the exit is pending. The ``finally`` runs from the
+    record without it, and the return is re-emitted after the ``finally``'s
+    entries (``_returns_after``), or discarded with the exit when the
+    ``finally`` exits itself (Python: a ``return`` or raise in ``finally``
+    replaces the pending return).
+
+    A record holds every ``return`` it reached as one of its own entries
+    (``_is_return_entry``, the one reading the block reducer makes of a
+    return): a suite nested in an ``if``, a ``with``, a loop or another
+    ``try`` splices its entries into the enclosing record (its value's
+    ``contribution``), and its ``return`` rides there under the guards of
+    the arms around it (``GuardedReturn``). So a ``return`` taken inside an
+    inner arm is a ``GuardedReturn`` entry of the record, held here with
+    the rest. A value that is not a block record is handed on whole:
+    ``resumed`` refuses it by name."""
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         _ReducedBlock,
         _is_return_entry,
@@ -362,24 +396,36 @@ def _completion_after(cleaned, value, pending):
     its fall-through guards and transforms (the tail after the ``try`` rides
     under every ``return`` the body took), with the ``finally``'s own
     after them."""
-    returns = pending
-    for transform in reversed(cleaned.transforms):
-        returns = transform(returns)
-    entries = (*cleaned.entries, *returns)
+    held = _returns_after(cleaned, pending)
     if not value.can_fall_through:
         return replace(
-            cleaned,
-            entries=entries,
+            held,
             can_fall_through=False,
             fall_through=(),
             transforms=(),
         )
     return replace(
-        cleaned,
-        entries=entries,
+        held,
         fall_through=(*value.fall_through, *cleaned.fall_through),
         transforms=(*value.transforms, *cleaned.transforms),
     )
+
+
+def _returns_after(cleaned, pending):
+    """The record a ``finally`` that fell through left (``cleaned``), with
+    the ``pending`` returns held aside before it (``_pending_returns``)
+    after its entries.
+
+    Each return goes on under every guard the ``finally`` put on what
+    follows it (its transforms): a ``return`` inside it under a guard
+    supersedes the pending ones there. With nothing pending the record is
+    ``cleaned`` itself."""
+    if not pending:
+        return cleaned
+    returns = pending
+    for transform in reversed(cleaned.transforms):
+        returns = transform(returns)
+    return replace(cleaned, entries=(*cleaned.entries, *returns))
 
 
 def _finally_beneath(cleanup_es, in_flight, restore):
@@ -393,9 +439,20 @@ def _finally_beneath(cleanup_es, in_flight, restore):
     leaving from that record), a terminal completion (return in finally)
     supersedes with its own value, and a cleanup halt supersedes
     (``consume=``, with the in-flight body raise as its implicit context).
+
+    A ``finally`` whose arms still wait on the caller's actuals (a deferred
+    native-operation carrier: a ``finally`` that reads a parameter) has no
+    arms to compose yet: the composition is enrolled on the carrier
+    (``after_discharge``) and runs on the arms it discharges to, as the
+    block reducer composes any statement whose result waits on actuals.
+    The outer ``ExitSet.sequence`` composes the carrier beneath the
+    incoming arm.
     """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, _require_exit_set
 
     def after_cleanup(value):
         if _finally_restores(value):
@@ -416,7 +473,13 @@ def _finally_beneath(cleanup_es, in_flight, restore):
             )
         return None
 
-    return cleanup_es.sequence(after_cleanup, consume=supersede)
+    def beneath(cleaned_exits):
+        exits = _require_exit_set(cleaned_exits, owner="TrySugar.finally")
+        return exits.sequence(after_cleanup, consume=supersede)
+
+    if isinstance(cleanup_es, NativeOperationExitCarrierV1):
+        return cleanup_es.after_discharge(beneath)
+    return beneath(cleanup_es)
 
 
 def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
