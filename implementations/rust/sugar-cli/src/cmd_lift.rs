@@ -387,16 +387,6 @@ pub fn run(args: LiftArgs) -> u8 {
                 report.project_root = Some(project_root.clone());
                 report.kit_source = kit_source;
                 report.source_oracle_routes = source_oracle_routes.clone();
-                if let Err(error) =
-                    attach_report_implications(&mut report, &project_root, [surface.clone()])
-                {
-                    // #5152 / #5104: FactoryPanic (or any hole) during implication
-                    // enumeration is a real construction gap — EXIT_USER_ERROR,
-                    // never soft-continue with an empty call book that paints
-                    // false prove-side missing/undecidable/refused showcase verdicts.
-                    eprintln!("{}: {error}", "error".red().bold());
-                    return EXIT_USER_ERROR;
-                }
                 trace_lift_source_report("after_source_report_from_lift_response", &report);
                 let hard_failure = source_report_has_hard_failures(&report);
                 trace_lift_source_report("before_render_report", &report);
@@ -509,75 +499,6 @@ fn recovered_audit_tree(
     .map_err(|error| format!("lift.rendezvous: {error}"))?;
     sugar_compiler::tree::fold_recovered_audit(&kit, project_root, allowed_broken_components)
         .map_err(|error| format!("lift.path: {error}"))
-}
-
-/// Build the workspace solver plan + registry the demanded implications are
-/// discharged with — the SAME precedence `sugar verify` uses: a kit-declared
-/// `[solvers]` config wins verbatim; otherwise a default single-Z3 registry.
-/// Demand never runs solverless: the demanded answer is the discharge verdict.
-fn lift_solver_plan_and_registry(
-    project_root: &Path,
-) -> (sugar_linker::solver_api::SolverPlan, sugar_linker::Registry) {
-    use sugar_linker::solver_api::{registry, SolverPlan, SolversConfig};
-    if let Ok(Some(sc)) = SolversConfig::load(project_root) {
-        let reg = registry::build(&sc);
-        let plan = SolverPlan::from_config(&sc);
-        return (plan, reg);
-    }
-    (
-        SolverPlan::Single(sugar_linker::solver_api::SolverSeat::Z3),
-        registry::build_default_z3("z3"),
-    )
-}
-
-fn report_implication_tree(
-    project_root: &Path,
-    surface: &str,
-    registry: &sugar_linker::Registry,
-    plan: &sugar_linker::solver_api::SolverPlan,
-) -> Result<Vec<Value>, String> {
-    let manifest = lift_plugin::find_manifest_for_surface(project_root, surface)
-        .map_err(|error| format!("lift-plugin.manifest: {error}"))?;
-    let kit = Kit::rendezvous(LiftManifest::resolved(
-        surface.to_string(),
-        manifest.name.clone(),
-        lift_plugin::dialect_for_surface(surface),
-        manifest.command.clone(),
-        lift_plugin::absolute_working_dir_for_manifest(project_root, &manifest),
-        manifest.method.clone(),
-    ))
-    .map_err(|error| format!("lift.rendezvous: {error}"))?;
-    if !kit.supports_rpc_method("sugar.enumerate") {
-        eprintln!(
-            "{}: lift kit {} does not advertise sugar.enumerate; using composed lift implications",
-            "warning".yellow().bold(),
-            kit.declaration().kit.id
-        );
-        return Ok(Vec::new());
-    }
-    sugar_compiler::tree::fold_implication_tree(&kit, project_root, registry, plan)
-        .map_err(|error| format!("lift.implications: {error}"))
-}
-
-fn attach_report_implications(
-    report: &mut LiftSourceReport,
-    project_root: &Path,
-    surfaces: impl IntoIterator<Item = String>,
-) -> Result<(), String> {
-    let mut seen = BTreeSet::new();
-    let (plan, registry) = lift_solver_plan_and_registry(project_root);
-    for surface in surfaces {
-        for implication in report_implication_tree(project_root, &surface, &registry, &plan)? {
-            let key = serde_json::to_string(&implication).map_err(|error| {
-                format!("lift.implications: serialize demanded question: {error}")
-            })?;
-            if seen.insert(key) {
-                report.demanded_questions.push(implication);
-            }
-        }
-    }
-    report.implication_walk_ran = true;
-    Ok(())
 }
 
 fn lift_report_graph_plugins(
@@ -782,15 +703,6 @@ fn run_configured_lift_report_graph(
         report.project_root = Some(project_root.to_path_buf());
         report.source_oracle_routes =
             source_oracle_routes_from_plan_mementos(&report.plan_mementos);
-        if let Err(error) = attach_report_implications(
-            &mut report,
-            project_root,
-            plugins.iter().map(|plugin| plugin.surface.clone()),
-        ) {
-            // #5152: implication-enumeration FactoryPanic stays loud.
-            eprintln!("{}: {error}", "error".red().bold());
-            return EXIT_USER_ERROR;
-        }
         // Rebase file paths in source mementos and contract sourceWarrants
         // using workspace_override from plan mementos.  In the proof path
         // (dispatch_multi) the lifter output is minted as-is; the
@@ -891,15 +803,6 @@ fn run_configured_lift_report_graph(
     };
     report.project_root = Some(project_root.to_path_buf());
     report.source_oracle_routes = source_oracle_routes_for_plugins(plugins);
-    if let Err(error) = attach_report_implications(
-        &mut report,
-        project_root,
-        plugins.iter().map(|plugin| plugin.surface.clone()),
-    ) {
-        // #5152: implication-enumeration FactoryPanic stays loud.
-        eprintln!("{}: {error}", "error".red().bold());
-        return EXIT_USER_ERROR;
-    }
     trace_lift_source_report("after_source_report_from_lift_response", &report);
 
     let hard_failure = source_report_has_hard_failures(&report);
@@ -1006,15 +909,6 @@ fn run_configured_lift_report_response(
     };
     report.project_root = Some(project_root.to_path_buf());
     report.source_oracle_routes = source_oracle_routes_for_plugins(plugins);
-    if let Err(error) = attach_report_implications(
-        &mut report,
-        project_root,
-        plugins.iter().map(|plugin| plugin.surface.clone()),
-    ) {
-        // #5152: implication-enumeration FactoryPanic stays loud.
-        eprintln!("{}: {error}", "error".red().bold());
-        return EXIT_USER_ERROR;
-    }
     trace_lift_source_report("after_source_report_from_lift_response", &report);
 
     let hard_failure = source_report_has_hard_failures(&report);
@@ -1169,9 +1063,8 @@ struct LiftSourceReport {
     term_table: Option<Arc<LiftTermTable>>,
     /// Locus-bearing syntactic edges: one row per observed source occurrence.
     call_edges: Vec<Value>,
-    /// Implication edges: one row per call-site demand question.
+    /// Implication edges read from a minted proof's implication members.
     demanded_questions: Vec<Value>,
-    implication_walk_ran: bool,
     vendor_conjoins: Vec<VendorConjoinReport>,
     project_root: Option<PathBuf>,
     source_oracle_routes: Vec<SourceOracleRoute>,
@@ -1770,10 +1663,10 @@ fn source_report_from_lift_response(
     let contracts = matching_report_contracts(response, contract_filter, &filtered_audits);
     trace_lift_collection_checkpoint("source_report.contracts", contracts.len());
     let call_edges = matching_report_call_edges(response, contract_filter, &filtered_audits);
-    // Demand transcripts are populated only by `attach_report_implications`,
-    // whose compiler tree walk asks the per-callsite linker worker. Batch
-    // `response.implications` rows are producer testimony, not demanded
-    // question identities, and must never enter this ledger.
+    // Implication edges come only from a minted proof's implication members
+    // (`source_report_from_proof_files`). Batch `response.implications` rows
+    // are producer testimony, not question identities, and must never enter
+    // this ledger.
     let demanded_questions = Vec::new();
     trace_lift_collection_checkpoint("source_report.call_edges", call_edges.len());
     trace_lift_collection_checkpoint("source_report.demanded_questions", demanded_questions.len());
@@ -1842,7 +1735,6 @@ fn source_report_from_lift_response(
         term_table,
         call_edges,
         demanded_questions,
-        implication_walk_ran: false,
         vendor_conjoins,
         project_root: None,
         source_oracle_routes: Vec::new(),
@@ -2038,7 +1930,6 @@ fn source_report_from_proof_pool(
         term_table: None,
         call_edges,
         demanded_questions,
-        implication_walk_ran: false,
         vendor_conjoins: Vec::new(),
         project_root: None,
         source_oracle_routes: Vec::new(),
@@ -3796,7 +3687,7 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
             .demanded_questions
             .len()
             .saturating_sub(demanded_resolved);
-        if report.implication_walk_ran || !report.demanded_questions.is_empty() {
+        if !report.demanded_questions.is_empty() {
             let span = tracing::info_span!("report_section", section = "demanded_questions");
             span.in_scope(|| {
                 tracing::info!(section = "demanded_questions", "report section started");
@@ -3819,9 +3710,6 @@ fn render_visual_source_report(report: &LiftSourceReport) -> String {
                     out.push_str(&format!("  - {}\n", format_demanded_question(question)));
                 }
                 out.push_str("implication ledger (demanded questions):\n");
-                if report.demanded_questions.is_empty() {
-                    out.push_str("  <no call sites demanded>\n");
-                }
                 let mut ledger_heartbeat = RenderHeartbeat::new("demanded_questions.ledger");
                 for (index, implication) in report.demanded_questions.iter().enumerate() {
                     ledger_heartbeat.tick(index);
@@ -7232,7 +7120,7 @@ fn render_report_prologue_with(report: &LiftSourceReport, invocation: &ReportInv
         invocation.version, invocation.binary_cid
     ));
     out.push_str(&format!(
-        "execution directory: {}\ncommand line: {}\nworkspace root: {}\nsubstrate commit: {}\nkit source: {}{}\nmint timestamp: {}\nLINK ran: {}\n",
+        "execution directory: {}\ncommand line: {}\nworkspace root: {}\nsubstrate commit: {}\nkit source: {}{}\nmint timestamp: {}\n",
         invocation.execution_directory.display(),
         invocation.command_line.join(" "),
         invocation.workspace_root.display(),
@@ -7240,7 +7128,6 @@ fn render_report_prologue_with(report: &LiftSourceReport, invocation: &ReportInv
         invocation.kit_source.as_ref().map(|source| source.identity.as_str()).unwrap_or("unavailable"),
         if invocation.kit_source.as_ref().is_some_and(|source| source.dirty) { " (dirty)" } else { "" },
         invocation.mint_timestamp,
-        if report.implication_walk_ran { "yes" } else { "no" },
     ));
     out.push_str("lifted sources:\n");
     let mut sources = BTreeMap::<&str, &str>::new();
@@ -7946,7 +7833,7 @@ fn render_source_report_human(report: &LiftSourceReport) -> String {
             out.push_str(&format!("  - {}\n", format_call_edge(edge)));
         }
     }
-    if report.implication_walk_ran || !report.demanded_questions.is_empty() {
+    if !report.demanded_questions.is_empty() {
         let resolved = report
             .demanded_questions
             .iter()
@@ -10800,7 +10687,6 @@ mod tests {
             term_table: None,
             call_edges: vec![],
             demanded_questions: vec![],
-            implication_walk_ran: false,
             vendor_conjoins: vec![],
             project_root: None,
             source_oracle_routes: Vec::new(),
@@ -15670,7 +15556,6 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         // #4424 pin: rendered header carries workspace, each lifted source+CID,
         // substrate commit, mint timestamp, and same-binary dual-seat testimony.
         let mut report = minimal_source_report();
-        report.implication_walk_ran = true;
         report.source_mementos = vec![serde_json::json!({
             "file": "datetime.py", "sourceCid": "blake3-512:source"
         })];
@@ -15719,7 +15604,6 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "substrate commit: abc123",
             "kit source: abc123",
             "mint timestamp: 2026-07-13T12:00:00.000Z",
-            "LINK ran: yes",
             "same binary as python-lift",
         ] {
             assert!(
@@ -15803,7 +15687,6 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     #[test]
     fn visual_report_separates_observed_occurrences_from_demanded_questions() {
         let mut report = minimal_source_report();
-        report.implication_walk_ran = true;
         report.plan_mementos = vec![serde_json::json!({
             "kind": "component-plan", "planning": {"source": "fixture"}, "planAtoms": []
         })];
@@ -15898,7 +15781,6 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         // one header that counted only the demanded population would say
         // total=21 while rendering 116 rows.
         let mut report = minimal_source_report();
-        report.implication_walk_ran = true;
         report.source_mementos = vec![serde_json::json!({
             "file": "datetime.py", "sourceCid": "blake3-512:datetime"
         })];
@@ -15975,9 +15857,8 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     }
 
     #[test]
-    fn visual_report_does_not_print_false_zero_when_implication_walk_did_not_run() {
+    fn visual_report_does_not_print_false_zero_without_demanded_questions() {
         let report = minimal_source_report();
-        assert!(!report.implication_walk_ran);
         let visual = render_visual_source_report(&report);
         assert!(!visual.contains("demanded questions (total=0"), "{visual}");
         assert!(!visual.contains("demanded questions total=0"), "{visual}");
@@ -15986,7 +15867,6 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
     #[test]
     fn demanded_questions_render_stable_callsite_discriminators_without_row_loss() {
         let mut report = minimal_source_report();
-        report.implication_walk_ran = true;
         report.demanded_questions = vec![
             serde_json::json!({"kind":"implication", "sourceContract":"caller", "targetContract":"callee", "status":"discharged", "reason":"proved", "obligation":{"kind":"true"}, "callSiteMemento":{"file":"control.py", "span":{"start_line":3, "start_col":4}}}),
             serde_json::json!({"kind":"implication", "sourceContract":"caller", "targetContract":"callee", "status":"discharged", "reason":"proved", "obligation":{"kind":"true"}, "callSiteMemento":{"file":"control.py", "span":{"start_line":8, "start_col":4}}}),
@@ -16155,7 +16035,6 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "targetContractCid": "blake3-512_deadbeefcafe",
             "callSiteLocus": {"file": "sample.py", "line": 3}
         })];
-        report.implication_walk_ran = true;
         report.demanded_questions = vec![serde_json::json!({
             "kind": "implication",
             "sourceContract": "sample.owner",
@@ -16353,7 +16232,6 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             term_table: None,
             call_edges: vec![],
             demanded_questions: vec![],
-            implication_walk_ran: false,
             vendor_conjoins: vec![VendorConjoinReport {
                 call: "call:enc(\"def\")".to_string(),
                 local_contract: "src/lib.rs::tests::fresh_vendor_fol_good::enc#euf#c:callresult_enc_a1(s:\"def\")::assertion".to_string(),
@@ -17311,10 +17189,10 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
 
     /// #5152: #5104 demoted implication-enumeration FactoryPanic into soft-
     /// continue ("continuing report without call book"). That string must never
-    /// reappear — every `attach_report_implications` Err path returns
-    /// EXIT_USER_ERROR instead.
+    /// reappear. #7806: the report door no longer walks the `implications`
+    /// enumerate level at all; implication edges come only from a minted proof.
     #[test]
-    fn implication_enumeration_panic_is_not_swallowed_by_report_door() {
+    fn report_door_has_no_implication_walk() {
         let source = include_str!("cmd_lift.rs");
         let production = source
             .split("#[cfg(test)]\nmod tests")
@@ -17324,38 +17202,12 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             !production.contains("continuing report without call book"),
             "#5104 soft-continue phrase must stay deleted from production cmd_lift.rs"
         );
-        // Each Err arm near attach_report_implications must return EXIT_USER_ERROR.
-        let mut remaining = production;
-        let mut call_sites = 0usize;
-        let mut hard_returns = 0usize;
-        while let Some(idx) = remaining.find("attach_report_implications") {
-            let line_start = remaining[..idx].rfind('\n').map(|i| i + 1).unwrap_or(0);
-            let line = remaining[line_start..].lines().next().unwrap_or("");
-            // Skip the function definition and comments.
-            if line.trim_start().starts_with("fn ")
-                || line.trim_start().starts_with("//")
-                || line.trim_start().starts_with("///")
-                || line.trim_start().starts_with('*')
-            {
-                remaining = &remaining[idx + "attach_report_implications".len()..];
-                continue;
-            }
-            call_sites += 1;
-            let after = &remaining[idx..];
-            let window = &after[..after.len().min(800)];
-            if window.contains("return EXIT_USER_ERROR") {
-                hard_returns += 1;
-            }
-            remaining = &remaining[idx + "attach_report_implications".len()..];
+        for deleted in ["attach_report_implications", "fold_implication_tree"] {
+            assert!(
+                !production.contains(deleted),
+                "#7806: `{deleted}` is the deleted Python-side implication walk"
+            );
         }
-        assert_eq!(
-            call_sites, 4,
-            "expected four report-door attach_report_implications call sites; got {call_sites}"
-        );
-        assert_eq!(
-            hard_returns, 4,
-            "each attach_report_implications Err arm must return EXIT_USER_ERROR (got {hard_returns})"
-        );
     }
 
     #[test]

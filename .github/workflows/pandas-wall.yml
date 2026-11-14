@@ -188,8 +188,8 @@ jobs:
           HAS_FRONTIER: ${{ steps.wall.outputs.has_frontier }}
         run: |
           # Acceptance = recovered frontier.json minted + floor ratchet green.
-          # Visual may still be fail-fast red; the recovered-audit lane is the
-          # wall receipt (progress.json always records partials).
+          # The recovered-audit lane is the wall receipt (progress.json always
+          # records partials).
           if [ "${HAS_FRONTIER:-0}" != "1" ]; then
             echo "::error::pandas wall incomplete: no frontier.json (wall_exit=${WALL_EXIT:-missing}); inspect progress.json artifact"
             exit 1

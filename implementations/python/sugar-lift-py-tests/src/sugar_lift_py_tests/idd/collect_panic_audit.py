@@ -105,7 +105,7 @@ def collect_panic_audit(
                 )
             )
             continue
-        command = [os.fspath(sugar), "lift", "--report", "--visual", str(target.path)]
+        command = [os.fspath(sugar), "lift", "--audit-frontier", str(target.path)]
         result = runner(command, root)
         target_records = extract_panic_records(target, result.stdout, result.stderr)
         records.extend(target_records)
@@ -179,7 +179,7 @@ def _resolve_installed_package_path(package: str) -> Path:
 
 
 def _run_command(command: List[str], cwd: Path) -> CommandResult:
-    if _is_visual_lift_command(command):
+    if _is_audit_frontier_target_command(command):
         target = Path(command[-1])
         audit_workspace = _cached_audit_workspace(target, cwd).workspace
         frontier_path = audit_workspace / ".sugar/panic-audit-frontier.json"
@@ -214,8 +214,13 @@ def _run_command(command: List[str], cwd: Path) -> CommandResult:
     return _run_subprocess(command, cwd)
 
 
-def _is_visual_lift_command(command: List[str]) -> bool:
-    return len(command) >= 5 and command[1:4] == ["lift", "--report", "--visual"]
+def _is_audit_frontier_target_command(command: List[str]) -> bool:
+    """The audit's own per-target demand: `sugar lift --audit-frontier <target>`.
+
+    The runner stages the target into its cached audit workspace and runs the
+    recovered-construction-audit lane there.
+    """
+    return len(command) == 4 and command[1:3] == ["lift", "--audit-frontier"]
 
 
 def _resolve_audit_sugar_bin(sugar_bin: Optional[Path]) -> Path:
