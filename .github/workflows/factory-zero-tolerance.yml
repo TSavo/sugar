@@ -11,10 +11,16 @@ on:
         default: "4"
         type: string
 
+# A newer push cancels the superseded run (owner ruling 2026-11-14, overrules
+# #7118); intermediate commits on main get no run of their own.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
-# NO concurrency group. NO machine-wide lease (#7008).
+# NO machine-wide lease (#7008).
 # Process axes run as a matrix of jobs — wall clock is max(axis), not sum.
 # Completeness is enrollment roll call, not a merged residual hub.
 #

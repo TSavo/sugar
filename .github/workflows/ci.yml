@@ -54,13 +54,11 @@ on:
     paths-ignore:
       - "docs/**"
 
-# NO `concurrency:` BLOCK. `cancel-in-progress: false` is not enough: GitHub
-# keeps only ONE pending run per group and replaces a queued run with a newer
-# one regardless of that flag. On a merge train into main that silently
-# discarded the CI vector of four merged commits (329576c3d, ef19b8175,
-# c11767c5e, df408100e). Every commit must retain its own run. Runner
-# scheduling provides queuing; GitHub concurrency must not discard evidence.
-# Do not "fix" backlog by concurrency-dropping pending main runs.
+# A newer push cancels the superseded run (owner ruling 2026-11-14, overrules
+# #7118); intermediate commits on main get no run of their own.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read

@@ -1,4 +1,4 @@
-"""GitHub retains every run; there is no machine-wide measurement lease.
+"""A newer push cancels the superseded run; there is no machine-wide measurement lease.
 
 Jobs run in parallel. A global mutex is not a resource model. Attendance is
 keyed off identity-bound measurement bodies, not lease grabs.
@@ -51,11 +51,8 @@ def _attendance_module():
 
 
 @pytest.mark.parametrize("workflow", sorted(HEAVY_WORKFLOWS))
-def test_heavy_workflows_declare_no_concurrency_group(workflow):
+def test_heavy_workflows_use_no_retired_group(workflow):
     text = _text(workflow)
-    assert not re.search(r"^concurrency:", text, re.MULTILINE), (
-        f"{workflow} declares a GitHub concurrency group"
-    )
     for group in RETIRED_GROUPS:
         assert group not in text
 
@@ -77,19 +74,17 @@ def test_lease_tools_are_deleted():
     assert not (ROOT / "tools/heavy_measurement_lease_record.py").exists()
 
 
-def test_no_heavy_workflow_cancels_a_superseded_run():
+def test_a_newer_push_cancels_the_superseded_run():
+    """Owner ruling 2026-11-14, overrules #7118."""
+    block = (
+        "concurrency:\n"
+        "  group: ${{ github.workflow }}-${{ github.ref }}\n"
+        "  cancel-in-progress: true\n"
+    )
     for path in sorted(WORKFLOWS.glob("*.yml")):
-        text = path.read_text()
-        assert "cancel-in-progress: true" not in text, path.name
-
-
-def test_no_workflow_shares_a_concurrency_group_across_commits():
-    for path in sorted(WORKFLOWS.glob("*.yml")):
-        text = path.read_text()
-        match = re.search(r"^concurrency:\n(?:[ \t]+.*\n?)+", text, re.MULTILINE)
-        if match is None:
+        if path.name == "issue-claim-labels.yml":
             continue
-        assert "github.sha" in match.group(0), path.name
+        assert block in path.read_text(), path.name
 
 
 def test_attendance_roster_matches_the_heavy_workflows():
