@@ -10,7 +10,6 @@ from .branch_result_coordinate import (
 )
 from .mutable_global_value import MutableGlobalValue
 from .named_expression_value import NamedExpressionValue
-from .native_callable_value import NativeCallableValue
 from .re_match_value import ReMatchValue
 from .builder_state import BuilderState
 from .bv32_value import Bv32Value
@@ -99,7 +98,6 @@ REGISTERED_FLOOR_TYPES: tuple[type[FloorDispatchSurface], ...] = (
     BranchResultCoordinate,
     MutableGlobalValue,
     NamedExpressionValue,
-    NativeCallableValue,
     BuilderState,
     Bv32Value,
     BuiltinExceptionClassValue,
@@ -176,7 +174,6 @@ __all__ = [
     "BASE_CONSTRUCTION_GAP_METHOD_NAMES",
     "BlockValue",
     "NamedExpressionValue",
-    "NativeCallableValue",
     "ReMatchValue",
     "BuilderState",
     "Bv32Value",
