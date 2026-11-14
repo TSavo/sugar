@@ -14,7 +14,7 @@ from collections import Counter
 from types import SimpleNamespace
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import ExitSet, Halted, true_guard
 from sugar_lift_py_tests.sugar.call_site_sugar import _frame_module_halt
 from sugar_lift_python_source import manager_construction
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -78,15 +78,15 @@ def test_each_constant_is_reduced_once_for_every_frame(tmp_path, monkeypatch):
 
 def test_a_raising_constant_halt_reaches_the_frame_result(tmp_path, monkeypatch):
     session = SourceResolutionSession(enrolled_distributions=frozenset())
-    bindings, halts = manager_construction._session_module_constants(
+    bindings, halt = manager_construction._session_module_constants(
         session, *_materialized(tmp_path, monkeypatch)
     )
     assert {binding.name for binding in bindings} == {"A", "C"}
-    assert [halt.name for halt in halts] == ["B"]
-    halt = halts[0].halt
-    assert isinstance(halt, Incomplete)
+    # The halt is the one Halted arm, never a second spelling of a halt.
+    assert isinstance(halt, Halted)
+    assert halt.guard == true_guard()
     assert halt.effect.exception_name == "ZeroDivisionError"
     # A call into any frame of that module is the halt, never a free name.
-    frame = SimpleNamespace(immutable_global_halts=halts)
-    assert _frame_module_halt(frame) is halt
-    assert _frame_module_halt(SimpleNamespace(immutable_global_halts=())) is None
+    frame = SimpleNamespace(module_halt=halt)
+    assert _frame_module_halt(frame) == ExitSet((halt,))
+    assert _frame_module_halt(SimpleNamespace(module_halt=None)) is None

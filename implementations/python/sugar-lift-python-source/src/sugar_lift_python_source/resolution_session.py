@@ -386,7 +386,7 @@ class SourceResolutionSession:
         # megamodules (pandas/_config/config.py ×18 in one _json.py open). The
         # value is live context-bound, so it lives here — never process-global.
         self.module_materializations: dict[tuple, Any] = {}
-        # source_cid -> (immutable global bindings, immutable global halts).
+        # source_cid -> (immutable global bindings, the module's Halted arm).
         # A module constant is reduced from its own source text alone, so it
         # is reduced once per module; every dependency frame reads this.
         self.module_constants: dict[str, Any] = {}
