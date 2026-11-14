@@ -334,7 +334,9 @@ def _ground_floor(raw, site, depth=0, visits=None):
         members = tuple(_ground_floor(e, site, depth + 1, visits) for e in raw)
         if any(member is None for member in members):
             return None
-        return ListValue(members) if kind is list else TupleValue(members)
+        if kind is tuple:
+            return TupleValue(members)
+        return ListValue(members, allocation=_made_here(raw, site, visits))
     if kind is dict:
         pairs = tuple(
             (
@@ -345,7 +347,7 @@ def _ground_floor(raw, site, depth=0, visits=None):
         )
         if any(k is None or v is None for k, v in pairs):
             return None
-        return DictValue(pairs)
+        return DictValue(pairs, allocation=_made_here(raw, site, visits))
     if kind is set and visits is not None:
         if any(_unvisited(member, visits) for member in raw):
             return None
@@ -353,7 +355,7 @@ def _ground_floor(raw, site, depth=0, visits=None):
         members = tuple(_ground_floor(m, site, depth + 1, visits) for m in ordered)
         if any(member is None for member in members):
             return None
-        return SetValue(members)
+        return SetValue(members, allocation=_made_here(raw, site, visits))
     if kind is enumerate:
         members = tuple(_ground_floor(pair, site, depth + 1, visits) for pair in raw)
         if any(member is None for member in members):
@@ -368,6 +370,22 @@ def _ground_floor(raw, site, depth=0, visits=None):
             return None
         return TupleValue(members)
     return None
+
+
+def _made_here(raw, site, visits):
+    """The ``allocation`` of a container the call at ``site`` returned.
+
+    A container no operand handed over is one the builtin made at this call
+    (``'a b'.split()``, ``list(t)``, ``d.copy()``): its object is new here
+    (``object_identity.made_at``).  One an operand handed over
+    (``max(xs, ys)`` returns ``xs``) is that operand's object, which this
+    call did not make: None.  So is any result when the operands were not
+    walked (``visits`` is None)."""
+    if visits is None or not _unvisited(raw, visits):
+        return None
+    from .floor.object_identity import made_at
+
+    return made_at(site)
 
 
 def _unvisited(member, visits) -> bool:
@@ -560,22 +578,26 @@ _CITED_CONTAINER_MUTATOR_RESULTS = {
 }
 
 
-def cited_container_method(receiver, name, *, testified) -> bool:
+def cited_container_method(receiver, name) -> bool:
     """Whether ``container_method_cited_fold`` answers ``receiver.<name>(...)``.
 
     ``receiver`` is a ground ``list``/``tuple``/``dict`` (``_host_ground``) and
     ``name`` one of its documented methods that do not change it.  Its
-    contents must be the contents at this call: ``testified`` (the tree
-    decided the receiver's container and its state at the call:
-    ``decided_container_kind``), or an immutable value all the way down (a
-    hashable tuple), whose contents nothing can change.  A list or dict that
-    reached the call by binding (a formal's actual, an attribute) is not
-    testified at the call (#7618: ``redirect_stdout.__exit__``'s ``pop``): no
+    contents must be the object's contents at this call, which the value
+    says: a construction in this frame made it, or it is the one door's
+    post-state of such an object (``object_identity.contents_current``:
+    ``xs = 'a b'.split()`` as well as a display) -- or it is an immutable
+    value all the way down (a hashable tuple), whose contents nothing can
+    change.  A list or dict that reached the frame by binding (a
+    parameter's actual, an attribute, a global: ``object_identity.arrived``)
+    is not current (#7618: ``redirect_stdout.__exit__``'s ``pop``): no
     contents read is decided on it here."""
+    from .floor.object_identity import contents_current
+
     raw = _host_ground(receiver)
     if raw is _NOT_GROUND or name not in _CITED_CONTAINER_METHODS.get(type(raw), ()):
         return False
-    if testified:
+    if contents_current(receiver):
         return True
     if type(raw) is not tuple:
         return False

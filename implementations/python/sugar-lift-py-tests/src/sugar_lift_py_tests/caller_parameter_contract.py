@@ -600,7 +600,10 @@ def _project_method_call(receiver, name, keyword_names, *operands_site_and_ctx):
     actual selects the method exactly as MethodCallSugar does (a floor's
     method body, the container law, or the #7616 two faces); an actual that
     is still a formal defers again to its own caller.  The selected method
-    applies under the caller's context."""
+    applies under the caller's context.  The receiver reached the callee by
+    binding (``object_identity.arrived``): what the caller made is not
+    current in the callee's frame."""
+    from sugar_lift_py_tests.floor.object_identity import arrived
     from sugar_lift_py_tests.sugar.method_call_sugar import dispatch_method_call
 
     *operands, site, ctx = operands_site_and_ctx
@@ -608,7 +611,9 @@ def _project_method_call(receiver, name, keyword_names, *operands_site_and_ctx):
     split = len(operands) - len(names)
     positional = tuple(operands[:split])
     kw_values = tuple(zip(names, operands[split:]))
-    return dispatch_method_call(name.value, receiver, positional, kw_values, site, ctx)
+    return dispatch_method_call(
+        name.value, arrived(receiver), positional, kw_values, site, ctx
+    )
 
 
 _NATIVE_OPERATION_PROJECTORS = {

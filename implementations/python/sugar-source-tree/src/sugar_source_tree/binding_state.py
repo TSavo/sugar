@@ -1771,12 +1771,17 @@ def _cv2_entries(value: object) -> tuple[str, list[tuple[Any, object]]]:
             # unauthorized construction). Walking it would refuse on
             # unclassified ``builtins.object`` without naming any semantic
             # content -- TupleCoordinateValue._producer_owner is the first.
+            # A field declared ``metadata={"testimony": "provenance"}`` says
+            # where the reading frame got the object (a container's
+            # ``allocation``), never what it holds: equal contents are one
+            # content coordinate.
             return (
                 _cv2_type_tag(value),
                 [
                     (field.name, getattr(value, field.name))
                     for field in fields(value)
-                    if field.metadata.get("testimony") not in ("lookup", "authority")
+                    if field.metadata.get("testimony")
+                    not in ("lookup", "authority", "provenance")
                 ],
             )
         raise ConstructedValueCategoryGap(

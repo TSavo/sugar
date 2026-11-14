@@ -41,7 +41,10 @@ class FormalRefSugar(ConstructedTermSugar):
         if temporal is not None:
             bound = temporal.value_if_bound(self.coordinate.coordinate_cid)
             if bound is not None:
-                return ExitSet.completed(bound)
+                from sugar_lift_py_tests.floor.object_identity import arrived
+
+                # The caller's actual reached this frame by binding.
+                return ExitSet.completed(arrived(bound))
         return ExitSet.completed(
             SymbolicValue(
                 make_var(self.coordinate.declared_name),

@@ -145,11 +145,34 @@ def _body_halt_effects(body_es) -> tuple:
     )
 
 
+def _edge_hits(edge_keys, key):
+    """The ``try-edge`` slots whose body statement raised the halt keyed
+    ``key`` (``occurrence.occurrence_key``: the site, then ``@`` and the
+    occurrence path).
+
+    A halt raised in a frame a body statement called carries that call in its
+    path after the try's own path (``occurrence.call_frame_path``): the first
+    such call names the statement, and the halt's site (in the callee) names
+    none.  Any other halt is named by its site."""
+    from sugar_lift_py_tests.call_symbol import call_target
+    from sugar_lift_py_tests.occurrence import current_path
+
+    site, _, rest = key.partition("@")
+    path = tuple(rest.split("/")) if rest else ()
+    own = current_path()
+    if path[: len(own)] == own:
+        for segment in path[len(own) :]:
+            target = call_target(segment)
+            if target is not None:
+                return [slot for slot, keys in edge_keys if target in keys]
+    return [slot for slot, keys in edge_keys if site in keys]
+
+
 def _ground_edges(ctx, edge_keys, effect):
     """A context in which the ``try-edge`` slots say which body statement raised
     ``effect`` (``None``: the halt did not come from the body -- every edge
-    false).  A body halt whose occurrence no edge statement holds (it was raised
-    inside a callee) leaves them undecided."""
+    false).  A body halt whose occurrence names no one edge statement
+    (``_edge_hits``) leaves them undecided."""
     if not edge_keys or ctx is None:
         return ctx
     table = getattr(ctx, "ground_branch_results", None)
@@ -170,11 +193,7 @@ def _ground_edges(ctx, edge_keys, effect):
         hit = None
     else:
         key = _occurrence_key(effect)
-        if key is not None and "@" in key:
-            # An occurrence path (an unrolled iteration, a callee frame)
-            # qualifies the site; the site is what a body statement holds.
-            key = key.split("@", 1)[0]
-        hits = [slot for slot, keys in edge_keys if key is not None and key in keys]
+        hits = [] if key is None else _edge_hits(edge_keys, key)
         if len(hits) != 1:
             return ctx
         (hit,) = hits

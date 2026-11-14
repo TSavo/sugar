@@ -25,9 +25,11 @@ class BindingCoordinateRefSugar(ConstructedTermSugar):
         if ctx is not None and hasattr(ctx, "temporal"):
             value = ctx.temporal.value_if_bound(self.coordinate.cid)
             if value is not None:
+                from sugar_lift_py_tests.floor.object_identity import arrived
                 from sugar_lift_py_tests.outcome import ExitSet
 
-                return ExitSet.completed(value)
+                # The caller's actual reached this frame by binding.
+                return ExitSet.completed(arrived(value))
         from sugar_source_tree.panic import SugarNotWritten
 
         raise SugarNotWritten(

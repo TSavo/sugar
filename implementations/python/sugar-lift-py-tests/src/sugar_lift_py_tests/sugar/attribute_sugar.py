@@ -217,7 +217,11 @@ class AttributeSugar(ConstructedTermSugar):
         unknown = _unknown_receiver_attribute(receiver, name, site)
         if unknown is not None:
             return unknown
-        return receiver.attribute(name, site, ctx)
+        from sugar_lift_py_tests.floor.object_identity import arrived_outcome
+
+        # What an attribute holds was stored by code this frame may not see:
+        # the value reaches the read by binding.
+        return arrived_outcome(receiver.attribute(name, site, ctx))
 
     def desugar(self, ctx: object = None) -> ExitSet:
         return self.receiver.desugar(ctx).and_then(

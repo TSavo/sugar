@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from .guard_stable_value import GuardStableValue
 
@@ -15,6 +15,12 @@ class DictValue(GuardStableValue):
     """
 
     entries: tuple
+    # The construction that made this object in the frame reading it, kept
+    # by the one door's post-state; None for a value that arrived by binding
+    # (``object_identity``: ``made_at``, ``arrived``, ``contents_current``).
+    allocation: str | None = dataclass_field(
+        default=None, compare=False, metadata={"testimony": "provenance"}
+    )
 
     def mapping_entries(self) -> tuple:
         return self.entries
@@ -156,13 +162,15 @@ class DictValue(GuardStableValue):
     ):
         """Execute closed dict methods whose result is fixed by this value.
 
-        A ground dict whose contents the tree testified at the call never
-        reaches here: the cited fold answers its ``items()``
+        A ground dict whose contents are current at the call never reaches
+        here: the cited fold answers its ``items()``
         (``container_method_cited_fold``, #7757).  This is ``items()`` of a
-        dict with a member known only by its type, or one reached by binding."""
+        current dict with a member known only by its type.  A dict that
+        arrived by binding never reaches here (``supports_closed_method``):
+        its contents are not the object's contents now."""
         del owner, ctx
         if (
-            name == "items"
+            self.supports_closed_method(name)
             and not arguments
             and not keywords
             and required_frame is None
@@ -186,7 +194,9 @@ class DictValue(GuardStableValue):
         )
 
     def supports_closed_method(self, name: str) -> bool:
-        return name == "items"
+        from .object_identity import contents_current
+
+        return name == "items" and contents_current(self)
 
     def setattr(self, name, value, site, ctx):
         """Dicts have no instance ``__dict__``; store is AttributeError."""

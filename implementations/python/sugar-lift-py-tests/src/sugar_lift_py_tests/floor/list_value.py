@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.effect import runtime_effect_evidence
 
 from .guard_stable_value import GuardStableValue
@@ -17,6 +17,12 @@ class ListValue(GuardStableValue):
     """
 
     elements: tuple
+    # The construction that made this object in the frame reading it, kept
+    # by the one door's post-state; None for a value that arrived by binding
+    # (``object_identity``: ``made_at``, ``arrived``, ``contents_current``).
+    allocation: str | None = dataclass_field(
+        default=None, compare=False, metadata={"testimony": "provenance"}
+    )
 
     def denotes_value(self) -> bool:
         """This floor value denotes a ``list``."""

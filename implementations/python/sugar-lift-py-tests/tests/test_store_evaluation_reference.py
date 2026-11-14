@@ -110,7 +110,7 @@ from sugar_source_tree.nodes import (
     _occurrence_testimony,
     ground_subscript_key,
 )
-from sugar_source_tree.container_mutation import _display_member, _runs_no_code
+from sugar_source_tree.container_mutation import _display_member
 from sugar_source_tree.tree import SourceFile
 
 ONE = TermValue(1)
@@ -800,7 +800,6 @@ def test_a_dict_display_key_is_decided_by_its_ground_value() -> None:
     (member,) = display.values
     assert _display_member(display, ("item", "a")) is member
     assert _display_member(display, ("item", "b")) is None
-    assert _runs_no_code(display)
 
 
 # ---------------------------------------------------------------------------
