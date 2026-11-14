@@ -418,7 +418,6 @@ SHOWCASE_RUNS = \
 	examples/numpy-attribute-safety-showcase/run.sh \
 	examples/numpy-vendor/run.sh \
 	examples/std-core-string-predicates/run.sh \
-	examples/python-bodyguard-precondition/run.sh \
 	examples/python-guard-shapes/run.sh \
 	examples/python-urlsafe-seam/run.sh \
 	examples/python-literal-base64/run.sh \

@@ -2,7 +2,16 @@ name = "python-lift"
 version = "0.1.0-draft"
 protocol_version = "pep/1.7.0"
 kind = "lift"
-command = ["sugar-lift-python-verify", "--rpc"]
+# The one Python kit: `sugar.enumerate` over the node tree. PYTHONPATH points
+# at the checkout so the example stays runnable from the repository.
+command = [
+    "/usr/bin/env",
+    "PYTHONPATH=../../implementations/python/sugar-lift-py-tests/src:../../implementations/python/sugar-lift-python-source/src",
+    "python3",
+    "-m",
+    "sugar_lift_py_tests.lift_rpc",
+    "--rpc",
+]
 working_dir = "."
 
 [capabilities]
