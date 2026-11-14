@@ -409,6 +409,13 @@ class ComprehensionSugar(ConstructedTermSugar):
 
         Returns the unpack's own outcome when the member does not destructure
         into the target's leaves.
+
+        A read of a target name in the element or a condition is an
+        ``EvaluationRef`` to the coordinate bound here (temporal choice 1,
+        #7661): the generator's coordinate for a name target, each leaf's
+        coordinate for a destructuring one. The source name is still bound,
+        for a read substitution did not rewrite; it is bound first and the
+        coordinate last, so the reference reads the coordinate.
         """
         from dataclasses import replace
 
@@ -418,7 +425,10 @@ class ComprehensionSugar(ConstructedTermSugar):
         member = member.project_operation_receiver(
             ctx, owner="ComprehensionSugar finite iterable member"
         )
-        temporal = ctx.temporal.bind_value(generator.binding_coordinate_cid, member)
+        temporal = ctx.temporal
+        if target.source_name is not None:
+            temporal = temporal.bind_value(target.source_name, member)
+        temporal = temporal.bind_value(generator.binding_coordinate_cid, member)
         if target.coordinates is not None:
             from sugar_lift_py_tests.operations.positional_unpack_operation import (
                 PositionalUnpackOperation,
@@ -443,10 +453,8 @@ class ComprehensionSugar(ConstructedTermSugar):
                 unpacked.value.members,
                 strict=True,
             ):
-                temporal = temporal.bind_value(coordinate.cid, value)
                 temporal = temporal.bind_value(leaf.source_name, value)
-        elif target.source_name is not None:
-            temporal = temporal.bind_value(target.source_name, member)
+                temporal = temporal.bind_value(coordinate.cid, value)
         return replace(ctx, temporal=temporal)
 
     def _kept_members(self, generator, members, ctx):
