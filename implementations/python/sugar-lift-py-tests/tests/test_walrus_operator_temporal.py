@@ -283,7 +283,7 @@ def test_condition_halt_has_no_branch_returns() -> None:
 def test_left_hand_comparison_presented_owns_and_carry_binds() -> None:
     """``(n := 5) > 0`` — greater_than on presented; carry keeps n → 5."""
     nev = NamedExpressionValue("n", TermValue(5))
-    cmp_out = nev.greater_than(TermValue(0), SITE)
+    cmp_out = nev.greater_than(TermValue(0), SITE, None)
     assert isinstance(cmp_out, Complete)
     assert isinstance(cmp_out.value, NamedExpressionValue)
     assert cmp_out.value.name == "n"
@@ -304,12 +304,12 @@ def test_right_hand_zero_lt_walrus_reaches_typed_method() -> None:
     left = TermValue(0)
     right = NamedExpressionValue("n", TermValue(5))
     # General double-dispatch: left.less_than → other.less_than_from_left.
-    out = left.less_than(right, SITE)
+    out = left.less_than(right, SITE, None)
     assert isinstance(out, Complete)
     assert isinstance(out.value, NamedExpressionValue)
     assert out.value.name == "n"
     assert out.value.assigned_value == TermValue(5)
-    direct = right.less_than_from_left(left, SITE)
+    direct = right.less_than_from_left(left, SITE, None)
     assert isinstance(direct, Complete)
     assert isinstance(direct.value, NamedExpressionValue)
     assert direct.value.assigned_value == TermValue(5)
@@ -321,13 +321,13 @@ def test_ordinary_rhs_term_uses_default_less_than_from_left() -> None:
     """Non-walrus Floor twin: ordinary RHS uses protocol less_than_from_left, not NEV."""
     left = TermValue(0)
     right = TermValue(5)
-    out = left.less_than(right, SITE)
+    out = left.less_than(right, SITE, None)
     assert isinstance(out, Complete)
     # Not walrus-kind membrane: ordinary RHS never yields NamedExpressionValue.
     assert not isinstance(out.value, NamedExpressionValue)
     # Protocol default door is present on FloorValue (not a NEV-only arm).
     assert hasattr(type(right), "less_than_from_left")
-    direct = right.less_than_from_left(left, SITE)
+    direct = right.less_than_from_left(left, SITE, None)
     assert isinstance(direct, Complete)
     assert not isinstance(direct.value, NamedExpressionValue)
     # Ground 0 < 5 is decided true-ish, not false.

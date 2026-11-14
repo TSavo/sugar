@@ -44,7 +44,7 @@ def test_repetition_at_the_budget_materializes_every_element(sequence_type) -> N
     element = TermValue(7)
 
     outcome = sequence_type((element,)).multiply(
-        TermValue(EAGER_MATERIALIZATION_BUDGET), SITE
+        TermValue(EAGER_MATERIALIZATION_BUDGET), SITE, None
     )
 
     assert isinstance(outcome, Complete)
@@ -64,7 +64,7 @@ def test_one_element_past_the_budget_folds_instead_of_panicking(
     sequence = sequence_type((TermValue(7),))
     count = TermValue(EAGER_MATERIALIZATION_BUDGET + 1)
 
-    outcome = sequence.multiply(count, SITE)
+    outcome = sequence.multiply(count, SITE, None)
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, GroundSequenceRepetitionValue)
@@ -81,7 +81,7 @@ def test_a_cardinality_no_machine_could_materialize_still_constructs(
     sequence = sequence_type((TermValue(7),))
     count = TermValue(10**12)
 
-    outcome = sequence.multiply(count, SITE)
+    outcome = sequence.multiply(count, SITE, None)
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, GroundSequenceRepetitionValue)
@@ -97,7 +97,7 @@ def test_no_cardinality_makes_repetition_panic(sequence_type) -> None:
     sequence = sequence_type((TermValue(1), TermValue(2)))
 
     for count in (0, 1, 63, 64, 65, 128, 129, 10**6, 10**15):
-        outcome = sequence.multiply(TermValue(count), SITE)
+        outcome = sequence.multiply(TermValue(count), SITE, None)
         assert isinstance(outcome, Complete), count
 
 
@@ -112,8 +112,8 @@ def test_folded_concrete_count_is_the_same_construction_as_an_opaque_count(
     sequence = sequence_type((TermValue(7),))
     opaque = SymbolicValue(TermValue(3).to_term(owner=SITE))
 
-    folded = sequence.multiply(TermValue(10**9), SITE).value.to_term(owner=SITE)
-    opaque_folded = sequence.multiply(opaque, SITE).value.term
+    folded = sequence.multiply(TermValue(10**9), SITE, None).value.to_term(owner=SITE)
+    opaque_folded = sequence.multiply(opaque, SITE, None).value.term
 
     assert isinstance(folded, _Ctor) and isinstance(opaque_folded, _Ctor)
     assert folded.name == opaque_folded.name == "python:sequence_repeat"
@@ -151,7 +151,7 @@ def test_a_known_invalid_count_does_not_reach_either_repetition_arm(
         ).functions()
     ).fragment
 
-    outcome = sequence_type((TermValue(1),)).multiply(TermValue(1.5), fragment)
+    outcome = sequence_type((TermValue(1),)).multiply(TermValue(1.5), fragment, None)
 
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, RaiseEffect)
@@ -165,8 +165,8 @@ def test_each_sequence_category_rebuilds_its_own_shape() -> None:
     """One shared law, but a list never materializes as a tuple."""
     element = TermValue(7)
 
-    from_list = ListValue((element,)).multiply(TermValue(3), SITE).value
-    from_tuple = TupleValue((element,)).multiply(TermValue(3), SITE).value
+    from_list = ListValue((element,)).multiply(TermValue(3), SITE, None).value
+    from_tuple = TupleValue((element,)).multiply(TermValue(3), SITE, None).value
 
     assert type(from_list) is ListValue
     assert type(from_tuple) is TupleValue
@@ -180,7 +180,7 @@ def test_each_sequence_category_rebuilds_its_own_shape() -> None:
 @pytest.mark.parametrize("sequence_type", SEQUENCES)
 def test_an_empty_sequence_repeats_to_empty_at_any_count(sequence_type) -> None:
     """len 0 * huge n is 0, materializable -- never folded, never a panic."""
-    outcome = sequence_type(()).multiply(TermValue(10**12), SITE)
+    outcome = sequence_type(()).multiply(TermValue(10**12), SITE, None)
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, sequence_type)
@@ -189,7 +189,7 @@ def test_an_empty_sequence_repeats_to_empty_at_any_count(sequence_type) -> None:
 
 @pytest.mark.parametrize("sequence_type", SEQUENCES)
 def test_a_negative_count_repeats_to_empty(sequence_type) -> None:
-    outcome = sequence_type((TermValue(7),)).multiply(TermValue(-4), SITE)
+    outcome = sequence_type((TermValue(7),)).multiply(TermValue(-4), SITE, None)
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, sequence_type)
@@ -207,7 +207,7 @@ def test_a_value_off_the_sequence_floor_still_panics_and_names_its_pair() -> Non
         pass
 
     with pytest.raises(ConstructionPanic) as raised:
-        OffFloor().multiply(TermValue(3), SITE)
+        OffFloor().multiply(TermValue(3), SITE, None)
 
     info = raised.value.info
     assert info.owner == "multiply"

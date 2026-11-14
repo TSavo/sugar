@@ -293,13 +293,13 @@ class ImportMemberValue(FloorValue):
             replacement="ImportMemberIterEffect",
         )
 
-    def equals(self, other, site):
+    def equals(self, other, site, ctx):
         """Comparison constructs on the authenticated term, not runtime type.
 
         Equality uses content-addressed import-member terms already carried by
         ``to_term`` — no runtime-type decision required.
         """
-        return super().equals(other, site)
+        return super().equals(other, site, ctx)
 
 
 def _import_member_runtime_effect(

@@ -24,7 +24,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 
-def _concatenate_joined_parts(left, right, site):
+def _concatenate_joined_parts(left, right, site, ctx):
     """Name an unground join as an f-string coordinate, without inventing the string.
 
     Ground string parts still concatenate through ``add``. A mix of a ground
@@ -39,7 +39,7 @@ def _concatenate_joined_parts(left, right, site):
     from sugar_lift_py_tests.ir import ctor
 
     if type(left) is StringValue and type(right) is StringValue:
-        return left.add(right, site)
+        return left.add(right, site, ctx)
     return Complete(
         CallSiteValue(
             target_name="__add__",
@@ -215,7 +215,7 @@ class JoinedStrSugar(ConstructedTermSugar):
         for part in self.parts[1:]:
             outcome = outcome.and_then(
                 lambda left, part=part: factored_operand(part.desugar(ctx)).and_then(
-                    lambda right: _concatenate_joined_parts(left, right, self.site)
+                    lambda right: _concatenate_joined_parts(left, right, self.site, ctx)
                 )
             )
         return outcome

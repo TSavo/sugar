@@ -1200,11 +1200,12 @@ class CallSiteValue(FloorValue):
             )
         )
 
-    def add(self, other, site):
+    def add(self, other, site, ctx):
         """Addition floor via interface dispatch: dig, redispatch, or refuse.
 
-        AddOpSugar calls left.add(right) — not binary_operator_with. Without this
-        totalizer, dig of `want_bytes(x) + self.sep` construction_panics mid-body.
+        BinOpSugar calls left.add(right, site, ctx) — not binary_operator_with.
+        Without this totalizer, dig of `want_bytes(x) + self.sep`
+        construction_panics mid-body.
         A named string coordinate plus a ground string
         (``type(exc).__name__ + "()"``) is concatenation: emit ``call:__add__``
         without inventing the string or falling through ``_undecided_binary_law``.
@@ -1213,65 +1214,80 @@ class CallSiteValue(FloorValue):
 
         if type(other) is StringValue and self.names_a_string():
             return self.named_string_concat(self, other, site)
-        return self._dig_or_refuse_binop(other, site, op="+", floor_method="add")
-
-    def subtract(self, other, site):
-        return self._dig_or_refuse_binop(other, site, op="-", floor_method="subtract")
-
-    def multiply(self, other, site):
-        return self._dig_or_refuse_binop(other, site, op="*", floor_method="multiply")
-
-    def power(self, other, site):
-        return self._dig_or_refuse_binop(other, site, op="**", floor_method="power")
-
-    def divide(self, other, site):
-        return self._dig_or_refuse_binop(other, site, op="/", floor_method="divide")
-
-    def modulo(self, other, site):
-        return self._dig_or_refuse_binop(other, site, op="%", floor_method="modulo")
-
-    def floor_divide(self, other, site):
-        return self._dig_or_refuse_binop(
-            other, site, op="//", floor_method="floor_divide"
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="+", floor_method="add"
         )
 
-    def left_shift(self, other, site):
-        return self._dig_or_refuse_binop(
-            other, site, op="<<", floor_method="left_shift"
+    def subtract(self, other, site, ctx):
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="-", floor_method="subtract"
         )
 
-    def right_shift(self, other, site):
+    def multiply(self, other, site, ctx):
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="*", floor_method="multiply"
+        )
+
+    def power(self, other, site, ctx):
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="**", floor_method="power"
+        )
+
+    def divide(self, other, site, ctx):
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="/", floor_method="divide"
+        )
+
+    def modulo(self, other, site, ctx):
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="%", floor_method="modulo"
+        )
+
+    def floor_divide(self, other, site, ctx):
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="//", floor_method="floor_divide"
+        )
+
+    def left_shift(self, other, site, ctx):
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="<<", floor_method="left_shift"
+        )
+
+    def right_shift(self, other, site, ctx):
         # Base64 / alphabet index math: `ord(c) >> 2` on call results.
         # Without this, FloorValue.right_shift panics (A2 mint-failed on
         # python-literal-base64 / base64-federation).
-        return self._dig_or_refuse_binop(
-            other, site, op=">>", floor_method="right_shift"
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op=">>", floor_method="right_shift"
         )
 
-    def bitwise_and(self, other, site):
+    def bitwise_and(self, other, site, ctx):
         # Same family as left_shift / bitwise_or: dig then redispatch, else
         # retain the named undecided-dispatch refusal.
-        return self._dig_or_refuse_binop(
-            other, site, op="&", floor_method="bitwise_and"
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="&", floor_method="bitwise_and"
         )
 
-    def bitwise_xor(self, other, site):
-        return self._dig_or_refuse_binop(
-            other, site, op="^", floor_method="bitwise_xor"
+    def bitwise_xor(self, other, site, ctx):
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="^", floor_method="bitwise_xor"
         )
 
-    def bitwise_or(self, other, site):
-        return self._dig_or_refuse_binop(other, site, op="|", floor_method="bitwise_or")
-
-    def matrix_multiply(self, other, site):
-        return self._dig_or_refuse_binop(
-            other, site, op="@", floor_method="matrix_multiply"
+    def bitwise_or(self, other, site, ctx):
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="|", floor_method="bitwise_or"
         )
 
-    def _dig_or_refuse_binop(self, other, site, *, op: str, floor_method: str):
+    def matrix_multiply(self, other, site, ctx):
+        return self._dig_or_undecided_binop(
+            other, site, ctx, op="@", floor_method="matrix_multiply"
+        )
+
+    def _dig_or_undecided_binop(self, other, site, ctx, *, op: str, floor_method: str):
         """Dig source body when present; otherwise retain undecided dispatch.
 
-        No invent of concrete sums. Ctx is None-tolerant (add(site) has no ctx).
+        No invent of concrete sums. The dig and the redispatch run under the
+        caller's context (#7757): a body is never applied context-free.
         Mid-dig ConstructionPanic propagates (process-terminal; never dig opacity).
 
         Keep an opaque named leaf (``preserve_opaque_leaf``). ``_exception_type_name``
@@ -1282,22 +1298,22 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 
         if isinstance(other, GuardedValue):
-            return other.map_from_left(floor_method, self, site)
+            return other.map_from_left(floor_method, self, site, ctx)
 
         dug = self._dig_floor_or_none(
-            None,
+            ctx,
             owner=f"CallSiteValue.{floor_method}",
             preserve_opaque_leaf=True,
         )
         if dug is not None and dug is not self:
             method = getattr(dug, floor_method, None)
             if callable(method):
-                return method(other, site)
+                return method(other, site, ctx)
 
         refused = self._undecided_binary_law(other, site, op)
         if refused is not None:
             return refused
-        return getattr(super(), floor_method)(other, site)
+        return getattr(super(), floor_method)(other, site, ctx)
 
     def edge_contribution(self, source_contract):
         # Project one call-edge row: the coordinates this value already carries.

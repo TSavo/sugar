@@ -197,7 +197,7 @@ def test_exception_type_is_derived_never_named() -> None:
     with pytest.raises(ConstructionPanic):
         exc_type.is_identical(builtin("ValueError"), None)
     with pytest.raises(ConstructionPanic):
-        exc_type.equals(builtin("ValueError"), None)
+        exc_type.equals(builtin("ValueError"), None, None)
 
 
 def test_exit_face_binding_names_the_exception_and_its_type() -> None:

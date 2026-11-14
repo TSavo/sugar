@@ -324,57 +324,57 @@ class SymbolicValue(FloorValue):
             )
         )
 
-    def multiply(self, other, site):
+    def multiply(self, other, site, ctx):
         # Symbolic numeric multiplication keeps the native coordinate. A symbolic
         # value used as a sequence repetition count has not proved Python's
         # __index__ contract, so it must remain a named construction gap.
         from sugar_lift_py_tests.floor.list_value import ListValue
 
         if type(other) is ListValue:
-            return other.multiply(self, site)
+            return other.multiply(self, site, ctx)
 
-        return self._runtime_binary_dispatch(other, site, "*")
+        return self._runtime_binary_dispatch(other, site, ctx, "*")
 
-    def power(self, other, site):
-        return self._runtime_binary_dispatch(other, site, "**")
+    def power(self, other, site, ctx):
+        return self._runtime_binary_dispatch(other, site, ctx, "**")
 
-    def add(self, other, site):
-        return self._runtime_binary_dispatch(other, site, "+")
+    def add(self, other, site, ctx):
+        return self._runtime_binary_dispatch(other, site, ctx, "+")
 
-    def subtract(self, other, site):
-        return self._runtime_binary_dispatch(other, site, "-")
+    def subtract(self, other, site, ctx):
+        return self._runtime_binary_dispatch(other, site, ctx, "-")
 
-    def divide(self, other, site):
-        return self._arithmetic_dispatch(other, site, "/")
+    def divide(self, other, site, ctx):
+        return self._arithmetic_dispatch(other, site, ctx, "/")
 
-    def floor_divide(self, other, site):
-        return self._arithmetic_dispatch(other, site, "//")
+    def floor_divide(self, other, site, ctx):
+        return self._arithmetic_dispatch(other, site, ctx, "//")
 
-    def modulo(self, other, site):
-        return self._arithmetic_dispatch(other, site, "%")
+    def modulo(self, other, site, ctx):
+        return self._arithmetic_dispatch(other, site, ctx, "%")
 
-    def _arithmetic_dispatch(self, other, site, operator):
-        return self._runtime_binary_dispatch(other, site, operator)
+    def _arithmetic_dispatch(self, other, site, ctx, operator):
+        return self._runtime_binary_dispatch(other, site, ctx, operator)
 
-    def right_shift(self, other, site):
-        return self._runtime_binary_dispatch(other, site, ">>")
+    def right_shift(self, other, site, ctx):
+        return self._runtime_binary_dispatch(other, site, ctx, ">>")
 
-    def bitwise_and(self, other, site):
-        return self._runtime_bitwise_dispatch(other, site, "&")
+    def bitwise_and(self, other, site, ctx):
+        return self._runtime_bitwise_dispatch(other, site, ctx, "&")
 
-    def bitwise_xor(self, other, site):
-        return self._runtime_bitwise_dispatch(other, site, "^")
+    def bitwise_xor(self, other, site, ctx):
+        return self._runtime_bitwise_dispatch(other, site, ctx, "^")
 
-    def bitwise_or(self, other, site):
-        return self._runtime_bitwise_dispatch(other, site, "|")
+    def bitwise_or(self, other, site, ctx):
+        return self._runtime_bitwise_dispatch(other, site, ctx, "|")
 
-    def left_shift(self, other, site):
-        return self._runtime_bitwise_dispatch(other, site, "<<")
+    def left_shift(self, other, site, ctx):
+        return self._runtime_bitwise_dispatch(other, site, ctx, "<<")
 
-    def _runtime_bitwise_dispatch(self, other, site, operator):
-        return self._runtime_binary_dispatch(other, site, operator)
+    def _runtime_bitwise_dispatch(self, other, site, ctx, operator):
+        return self._runtime_binary_dispatch(other, site, ctx, operator)
 
-    def _runtime_binary_dispatch(self, other, site, operator):
+    def _runtime_binary_dispatch(self, other, site, ctx, operator):
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.string_value import StringValue
 
@@ -417,7 +417,7 @@ class SymbolicValue(FloorValue):
                 coordinates=(left_coordinate, right_coordinate),
             )
         if isinstance(other, GuardedValue):
-            return other.map_from_left(owner, self, site)
+            return other.map_from_left(owner, self, site, ctx)
         # Undecided native dispatch: the shared law's two faces (completes
         # under python:binary_op.completes, else an UndeterminedRaiseEffect).
         # Never a sole ExitSet.completed(SymbolicValue): that claims it cannot raise.
@@ -431,8 +431,8 @@ class SymbolicValue(FloorValue):
             f"runtime binary operator {operator}",
         )
 
-    def matrix_multiply(self, other, site):
-        return self._runtime_bitwise_dispatch(other, site, "@")
+    def matrix_multiply(self, other, site, ctx):
+        return self._runtime_bitwise_dispatch(other, site, ctx, "@")
 
     def unary_plus(self, site):
         # Formal operands: authenticated discharge.  Open symbols stay refused

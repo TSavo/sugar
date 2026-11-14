@@ -243,7 +243,7 @@ class RaisedExitTypeValue(FloorValue):
             )
         )
 
-    def equals(self, other, site):
+    def equals(self, other, site, ctx):
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
         construction_panic_gap(

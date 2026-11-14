@@ -69,7 +69,7 @@ class BinaryOperator(Operator):
             discharge_inplace,
         )
 
-        return discharge_inplace(left, right, site, surface=self.symbol)
+        return discharge_inplace(left, right, site, None, surface=self.symbol)
 
 
 class UnaryOperator(Operator):

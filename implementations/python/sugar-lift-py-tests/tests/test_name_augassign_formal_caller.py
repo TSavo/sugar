@@ -180,8 +180,8 @@ def test_rebind_uses_iadd_result_when_iadd_and_add_diverge() -> None:
             del operation, ctx
             return ExitSet.completed(TermValue(99))
 
-        def add(self, other, site):
-            del other, site
+        def add(self, other, site, ctx):
+            del other, site, ctx
             return ExitSet.completed(TermValue(1))
 
     out = _production_name_aug(_Divergent(), TermValue(0)).desugar(None)
@@ -203,12 +203,12 @@ def test_discrimination_add_alone_is_not_the_name_rebind() -> None:
             del operation, ctx
             return ExitSet.completed(TermValue(99))
 
-        def add(self, other, site):
-            del other, site
+        def add(self, other, site, ctx):
+            del other, site, ctx
             return ExitSet.completed(TermValue(1))
 
     # Ordinary add (the old substitute binding) would yield 1.
-    add_out = _Divergent().add(TermValue(0), "site")
+    add_out = _Divergent().add(TermValue(0), "site", None)
     assert add_out.completed_value() == TermValue(1)
     # Name AugAssign must not match that.
     rebind = (
@@ -291,8 +291,8 @@ def test_iadd_halt_does_not_emit_scope_rebind() -> None:
             del operation, ctx
             return face
 
-        def add(self, other, site):
-            del other, site
+        def add(self, other, site, ctx):
+            del other, site, ctx
             return ExitSet.completed(TermValue(0))
 
     out = _production_name_aug(_Halt(), TermValue(1)).desugar(None)
@@ -311,8 +311,8 @@ def test_raise_value_halt_blocks_rebind() -> None:
             del operation, ctx
             return face
 
-        def add(self, other, site):
-            del other, site
+        def add(self, other, site, ctx):
+            del other, site, ctx
             return ExitSet.completed(TermValue(0))
 
     out = _production_name_aug(_Raise(), TermValue(1)).desugar(None)
@@ -331,7 +331,7 @@ def test_halt_blocks_tail_read_of_partial_update() -> None:
             del operation, ctx
             return face
 
-        def add(self, other, site):
+        def add(self, other, site, ctx):
             return ExitSet.completed(TermValue(0))
 
     @dataclass(frozen=True)

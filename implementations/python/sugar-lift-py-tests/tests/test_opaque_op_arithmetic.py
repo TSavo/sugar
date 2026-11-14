@@ -22,7 +22,7 @@ from sugar_source_tree.panic import SugarNotWritten
 )
 def test_opaque_operator_arithmetic_cites_coordinates(method, operator) -> None:
     value = OpaqueOpCallsite("len", TermValue(9), computed=None)
-    outcome = getattr(value, method)(TermValue(2), "t.py:1")
+    outcome = getattr(value, method)(TermValue(2), "t.py:1", None)
     assert outcome.value.to_term(owner="test") == ctor(
         operator, [ctor("call:len", [num(9)]), num(2)]
     )

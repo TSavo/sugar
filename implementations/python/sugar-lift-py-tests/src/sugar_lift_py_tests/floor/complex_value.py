@@ -45,7 +45,7 @@ class ComplexValue(FloorValue):
             else FalseBoolLiteralSugar(site=site)
         )
 
-    def equals(self, other, site):
+    def equals(self, other, site, ctx):
         if type(other) is ComplexValue:
             from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -61,7 +61,7 @@ class ComplexValue(FloorValue):
                 if matches
                 else FalseBoolLiteralSugar(site=site)
             )
-        return super().equals(other, site)
+        return super().equals(other, site, ctx)
 
     # Python's numeric tower is CLOSED over int/float/bool/complex under these
     # three operations, so a complex literal stands on each of their floors for
@@ -100,7 +100,7 @@ class ComplexValue(FloorValue):
 
         return ground_type_error(site=site, owner=owner)
 
-    def add(self, other, site):
+    def add(self, other, site, ctx):
         from sugar_lift_py_tests.floor.complex_arithmetic import complex_add
 
         folded = complex_add(self, other, site)
@@ -111,9 +111,9 @@ class ComplexValue(FloorValue):
         )
         if constructed is not None:
             return constructed
-        return super().add(other, site)
+        return super().add(other, site, ctx)
 
-    def subtract(self, other, site):
+    def subtract(self, other, site, ctx):
         from sugar_lift_py_tests.floor.complex_arithmetic import complex_subtract
 
         folded = complex_subtract(self, other, site)
@@ -124,9 +124,9 @@ class ComplexValue(FloorValue):
         )
         if constructed is not None:
             return constructed
-        return super().subtract(other, site)
+        return super().subtract(other, site, ctx)
 
-    def multiply(self, other, site):
+    def multiply(self, other, site, ctx):
         from sugar_lift_py_tests.floor.complex_arithmetic import complex_multiply
 
         folded = complex_multiply(self, other, site)
@@ -137,7 +137,7 @@ class ComplexValue(FloorValue):
         )
         if constructed is not None:
             return constructed
-        return super().multiply(other, site)
+        return super().multiply(other, site, ctx)
 
     def setattr(self, name, value, site):
         del name, value

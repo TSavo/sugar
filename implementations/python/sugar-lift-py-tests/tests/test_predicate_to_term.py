@@ -51,7 +51,7 @@ def test_different_predicates_project_to_different_terms() -> None:
 
 def test_predicate_can_ride_as_an_operation_operand() -> None:
     predicate = PredicateValue(py_eq(make_var("value"), num(1)))
-    outcome = SymbolicValue(make_var("left")).add(predicate, site="t.py:1:0")
+    outcome = SymbolicValue(make_var("left")).add(predicate, site="t.py:1:0", ctx=None)
     result = complete_value(outcome, owner="test")
     assert result.to_term(owner="test") == ctor(
         "+", [make_var("left"), ctor("py.eq", [make_var("value"), num(1)])]

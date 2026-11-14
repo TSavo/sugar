@@ -92,7 +92,7 @@ class ObjectValue(FloorValue):
             ctx=ctx,
         )
 
-    def equals(self, other, site):
+    def equals(self, other, site, ctx):
         """Invoke an authenticated source ``__eq__`` when method order is known.
 
         Different source classes require reflected/subclass dispatch testimony;
@@ -100,44 +100,44 @@ class ObjectValue(FloorValue):
         Never substitute object identity for a user-defined equality body.
         """
         if not self.has_method("__eq__"):
-            return super().equals(other, site)
+            return super().equals(other, site, ctx)
         return self._source_rich_comparison(
-            "__eq__", other, site, owner="ObjectValue.equals"
+            "__eq__", other, site, ctx, owner="ObjectValue.equals"
         )
 
-    def less_than(self, other, site):
+    def less_than(self, other, site, ctx):
         """``self < other`` invokes the class's authenticated ``__lt__``."""
         if not self.has_method("__lt__"):
-            return super().less_than(other, site)
+            return super().less_than(other, site, ctx)
         return self._source_rich_comparison(
-            "__lt__", other, site, owner="ObjectValue.less_than"
+            "__lt__", other, site, ctx, owner="ObjectValue.less_than"
         )
 
-    def less_equal(self, other, site):
+    def less_equal(self, other, site, ctx):
         """``self <= other`` invokes the class's authenticated ``__le__``."""
         if not self.has_method("__le__"):
-            return super().less_equal(other, site)
+            return super().less_equal(other, site, ctx)
         return self._source_rich_comparison(
-            "__le__", other, site, owner="ObjectValue.less_equal"
+            "__le__", other, site, ctx, owner="ObjectValue.less_equal"
         )
 
-    def greater_than(self, other, site):
+    def greater_than(self, other, site, ctx):
         """``self > other`` invokes the class's authenticated ``__gt__``."""
         if not self.has_method("__gt__"):
-            return super().greater_than(other, site)
+            return super().greater_than(other, site, ctx)
         return self._source_rich_comparison(
-            "__gt__", other, site, owner="ObjectValue.greater_than"
+            "__gt__", other, site, ctx, owner="ObjectValue.greater_than"
         )
 
-    def greater_equal(self, other, site):
+    def greater_equal(self, other, site, ctx):
         """``self >= other`` invokes the class's authenticated ``__ge__``."""
         if not self.has_method("__ge__"):
-            return super().greater_equal(other, site)
+            return super().greater_equal(other, site, ctx)
         return self._source_rich_comparison(
-            "__ge__", other, site, owner="ObjectValue.greater_equal"
+            "__ge__", other, site, ctx, owner="ObjectValue.greater_equal"
         )
 
-    def _source_rich_comparison(self, dunder: str, other, site, *, owner: str):
+    def _source_rich_comparison(self, dunder: str, other, site, ctx, *, owner: str):
         """The ONE rich-comparison dispatch onto a source class's own method.
 
         Python evaluates ``a <op> b`` as ``type(a).<dunder>(a, b)``, falling
@@ -223,15 +223,16 @@ class ObjectValue(FloorValue):
             return returned(block.statements[0].value)
 
         return self.call_method_value(
-            dunder, (other,), owner=owner, blame=site
+            dunder, (other,), owner=owner, blame=site, ctx=ctx
         ).and_then(
             lambda call: call.retained_source_completion_outcome().and_then(completed)
         )
 
-    def matrix_multiply(self, other, site):
-        """``@`` on an object is the ``__matmul__`` data-model method.
+    def matrix_multiply(self, other, site, ctx):
+        """``@`` on an object is the ``__matmul__`` data-model method,
+        applied under the caller's context like any call (#7757).
 
-        MatrixMultiplyOpSugar calls ``left.matrix_multiply(right, site)``
+        BinOpSugar calls ``left.matrix_multiply(right, site, ctx)``
         directly (same totalizer shape as ``multiply`` / ``add``). Without
         this arm, ObjectValue falls through FloorValue's construction panic
         even when the class ships a diggable ``__matmul__`` body — the
@@ -242,6 +243,7 @@ class ObjectValue(FloorValue):
             (other,),
             owner="MatrixMultiplyOpSugar",
             blame=str(site),
+            ctx=ctx,
         )
 
     def to_term(self, *, owner: str):

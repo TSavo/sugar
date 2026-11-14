@@ -30,7 +30,7 @@ def _site(tmp_path):
 
 
 def _symbolic_result(sequence, multiplier):
-    outcome = sequence.multiply(multiplier, "multiply-site")
+    outcome = sequence.multiply(multiplier, "multiply-site", None)
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, SymbolicValue)
     term = outcome.value.term
@@ -45,7 +45,7 @@ def test_exact_constructed_integer_is_the_only_finite_repetition_path(
 ) -> None:
     element = TermValue(7)
 
-    outcome = sequence_type((element,)).multiply(TermValue(64), "multiply-site")
+    outcome = sequence_type((element,)).multiply(TermValue(64), "multiply-site", None)
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, sequence_type)
@@ -56,14 +56,14 @@ def test_exact_constructed_integer_is_the_only_finite_repetition_path(
 def test_exact_constructed_bool_is_a_valid_repetition_count(sequence_type) -> None:
     element = TermValue(7)
 
-    outcome = sequence_type((element,)).multiply(TermValue(True), "multiply-site")
+    outcome = sequence_type((element,)).multiply(TermValue(True), "multiply-site", None)
 
     assert isinstance(outcome, Complete)
     assert outcome.value.elements == (element,)
 
 
 def test_list_times_known_ground_float_is_authenticated_type_error(tmp_path) -> None:
-    outcome = ListValue((TermValue(1),)).multiply(TermValue(1.5), _site(tmp_path))
+    outcome = ListValue((TermValue(1),)).multiply(TermValue(1.5), _site(tmp_path), None)
 
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, RaiseEffect)
@@ -74,6 +74,7 @@ def test_tuple_times_known_ground_string_is_authenticated_type_error(tmp_path) -
     outcome = TupleValue((TermValue(1),)).multiply(
         TermValue("x"),  # type: ignore[arg-type] - planted invalid ground payload
         _site(tmp_path),
+        None,
     )
 
     assert isinstance(outcome, Incomplete)

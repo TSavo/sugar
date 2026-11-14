@@ -77,7 +77,7 @@ def _two_faced(left, right, method: str, operator: str):
         outcome_to_exitset,
     )
 
-    exits = outcome_to_exitset(getattr(left, method)(right, SITE)).exits
+    exits = outcome_to_exitset(getattr(left, method)(right, SITE, None)).exits
     (done,) = [face for face in exits if isinstance(face, Completed)]
     (halt,) = [face for face in exits if isinstance(face, Halted)]
     assert "python:binary_op.completes" in repr(done.guard)
@@ -143,7 +143,7 @@ def test_ground_total_addition_never_acquires_an_exceptional_edge() -> None:
     """Lying twin: source-decided integer addition remains one completion."""
     from sugar_lift_py_tests.outcome import Complete
 
-    outcome = TermValue(1).add(TermValue(2), SITE)
+    outcome = TermValue(1).add(TermValue(2), SITE, None)
     assert isinstance(outcome, Complete)
     assert outcome.value == TermValue(3)
 
@@ -303,10 +303,10 @@ def _assert_ground_type_error(outcome) -> None:
 )
 def test_two_decided_operands_do_not_invent_coordinates(left, right, method) -> None:
     if type(left) is ListValue and method == "add":
-        _assert_ground_type_error(getattr(left, method)(right, _FragmentSite()))
+        _assert_ground_type_error(getattr(left, method)(right, _FragmentSite(), None))
         return
     with pytest.raises(ConstructionPanic) as raised:
-        getattr(left, method)(right, SITE)
+        getattr(left, method)(right, SITE, None)
 
     info = raised.value.info
     assert info.owner == method
@@ -326,7 +326,7 @@ def test_a_value_that_has_not_testified_stays_loud() -> None:
     assert _Unspoken().denotes_value() is False
 
     with pytest.raises(ConstructionPanic) as raised:
-        _Unspoken().add(_symbolic(), SITE)
+        _Unspoken().add(_symbolic(), SITE, None)
 
     assert raised.value.info.observed == "_Unspoken"
 
@@ -359,13 +359,13 @@ def test_a_term_bearing_callable_never_enters_the_law() -> None:
 
         # Refused from the left...
         with pytest.raises(ConstructionPanic) as from_left:
-            callable_value.add(_symbolic(), SITE)
+            callable_value.add(_symbolic(), SITE, None)
         assert from_left.value.info.observed == type(callable_value).__name__
 
         # ...and from the right, where an undecided left operand would
         # otherwise have carried the pair into the law.
         with pytest.raises(ConstructionPanic) as from_right:
-            BytesValue(b"x").add(callable_value, SITE)
+            BytesValue(b"x").add(callable_value, SITE, None)
         assert type(callable_value).__name__ in from_right.value.info.fix
 
 
@@ -383,7 +383,7 @@ def test_a_non_denoting_operand_stays_loud() -> None:
     assert _NotAValue().denotes_value() is False
 
     with pytest.raises(ConstructionPanic) as raised:
-        BytesValue(b"x").add(_NotAValue(), SITE)
+        BytesValue(b"x").add(_NotAValue(), SITE, None)
 
     assert raised.value.info.observed == "BytesValue"
     assert "_NotAValue" in raised.value.info.fix
@@ -404,11 +404,11 @@ def test_a_ground_type_error_is_an_authenticated_raise(left, right) -> None:
     happens; a RuntimeEffect would invent runtime dependence that is not there.
     """
     if type(left) is ComplexValue:
-        _assert_ground_type_error(left.add(right, _FragmentSite()))
+        _assert_ground_type_error(left.add(right, _FragmentSite(), None))
         return
     # String + complex: StringValue.add routes undecided/symbolic peers; a
     # decided ComplexValue right is TypeError on the string addition floor.
-    _assert_ground_type_error(left.add(right, _FragmentSite()))
+    _assert_ground_type_error(left.add(right, _FragmentSite(), None))
 
 
 def test_the_field_law_is_consulted_before_the_base_law() -> None:
@@ -436,10 +436,10 @@ def test_the_field_law_is_consulted_before_the_base_law() -> None:
     complex_arithmetic.complex_add = _traced
     try:
         # A pair the field law owns and folds.
-        ComplexValue(1.0, 0.0).add(ComplexValue(2.0, 0.0), SITE)
+        ComplexValue(1.0, 0.0).add(ComplexValue(2.0, 0.0), SITE, None)
         # A pair the field law REFUSES -- it decides, then falls through.
         with pytest.raises(ConstructionPanic):
-            TermValue(10**400).add(ComplexValue(0.0, 1.0), SITE)
+            TermValue(10**400).add(ComplexValue(0.0, 1.0), SITE, None)
         # The pair this law answers -- the field law still got asked first.
         _two_faced(ComplexValue(0.0, 1.0), _symbolic(), "add", "+")
     finally:
@@ -455,9 +455,9 @@ def test_the_field_law_is_consulted_before_the_base_law() -> None:
 def test_the_law_never_converts_a_panic_into_two_faces() -> None:
     """A non-denoting right still panics; a decided list+peer is a TypeError halt."""
     with pytest.raises(ConstructionPanic):
-        BytesValue(b"x").add(_predicate(), SITE)
+        BytesValue(b"x").add(_predicate(), SITE, None)
     _assert_ground_type_error(
-        ListValue((TermValue(1),)).add(_predicate(), _FragmentSite())
+        ListValue((TermValue(1),)).add(_predicate(), _FragmentSite(), None)
     )
 
 

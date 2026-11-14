@@ -206,7 +206,7 @@ class TupleValue(GuardStableValue):
             fix="construct member equality on the Python floor or keep it loud",
         )
 
-    def add(self, other, site):
+    def add(self, other, site, ctx):
         if type(other) is TupleValue:
             from sugar_lift_py_tests.outcome import ExitSet
 
@@ -215,12 +215,12 @@ class TupleValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if type(other) in (CallSiteValue, SymbolicValue):
-            return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).add(other, site, ctx)
         if other.denotes_value() and other.runtime_type_is_decided():
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="TupleValue.add")
-        return super().add(other, site)
+        return super().add(other, site, ctx)
 
     def test_python_type(self, value, site):
         return self._collect_type_tests(value, site, 0, ())
@@ -346,7 +346,7 @@ class TupleValue(GuardStableValue):
             fix="implement the element's native python:type tester result",
         )
 
-    def multiply(self, other, site):
+    def multiply(self, other, site, ctx):
         # Python tuple repetition, through the one sequence-repetition law.
         from sugar_lift_py_tests.floor.sequence_repetition import repeat_sequence
 

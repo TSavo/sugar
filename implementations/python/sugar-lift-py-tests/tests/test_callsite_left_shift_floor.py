@@ -12,7 +12,7 @@ def test_callsite_left_shift_cites_the_opaque_operator_coordinate() -> None:
         term=ctor("call:decode", []),
         body=None,
     )
-    outcome = receiver.left_shift(TermValue(8), "state.py:1")
+    outcome = receiver.left_shift(TermValue(8), "state.py:1", None)
 
     assert outcome.value.to_term(owner="test") == ctor(
         "<<", [ctor("call:decode", []), num(8)]

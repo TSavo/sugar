@@ -185,7 +185,7 @@ def test_name_attribute_plus_string_is_a_concat_coordinate_not_an_invented_strin
     name = _name_attribute_callsite()
     suffix = StringValue("()")
     site = "name-plus-string"
-    outcome = name.add(suffix, site)
+    outcome = name.add(suffix, site, None)
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, CallSiteValue)
@@ -210,7 +210,7 @@ def test_string_plus_name_attribute_is_a_concat_coordinate_not_an_invented_strin
     name = _name_attribute_callsite()
     prefix = StringValue("`")
     site = "string-plus-name"
-    outcome = prefix.add(name, site)
+    outcome = prefix.add(name, site, None)
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, CallSiteValue)
@@ -234,13 +234,13 @@ def test_backquote_joins_a_named_concat_without_inventing_the_string() -> None:
     from sugar_lift_py_tests.outcome import Complete
 
     name = _name_attribute_callsite()
-    inner = name.add(StringValue("()"), "inner")
+    inner = name.add(StringValue("()"), "inner", None)
     assert isinstance(inner, Complete)
-    prefixed = StringValue("`").add(inner.value, "prefix")
+    prefixed = StringValue("`").add(inner.value, "prefix", None)
     assert isinstance(prefixed, Complete)
     assert isinstance(prefixed.value, CallSiteValue)
     assert not isinstance(prefixed.value, StringValue)
-    wrapped = prefixed.value.add(StringValue("`"), "suffix")
+    wrapped = prefixed.value.add(StringValue("`"), "suffix", None)
     assert isinstance(wrapped, Complete)
     assert isinstance(wrapped.value, CallSiteValue)
     assert not isinstance(wrapped.value, StringValue)
@@ -272,7 +272,7 @@ def test_string_plus_join_callsite_is_a_concat_coordinate_not_an_invented_string
     )
     prefix = StringValue("(")
     site = "string-plus-join"
-    outcome = prefix.add(join, site)
+    outcome = prefix.add(join, site, None)
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, CallSiteValue)
@@ -287,7 +287,7 @@ def test_string_plus_join_callsite_is_a_concat_coordinate_not_an_invented_string
         symbol_kind="coordinate",
     )
 
-    wrapped = outcome.value.add(StringValue(")"), "join-plus-suffix")
+    wrapped = outcome.value.add(StringValue(")"), "join-plus-suffix", None)
     assert isinstance(wrapped, Complete)
     assert isinstance(wrapped.value, CallSiteValue)
     assert not isinstance(wrapped.value, StringValue)
@@ -317,7 +317,7 @@ def _dual_arm_helper_callsite(*, name_faces: bool):
 
     if name_faces:
         left = _name_attribute_callsite()
-        right_outcome = left.add(StringValue("()"), "dual-arm-concat")
+        right_outcome = left.add(StringValue("()"), "dual-arm-concat", None)
         assert isinstance(right_outcome, Complete)
         right = right_outcome.value
     else:
@@ -395,7 +395,7 @@ def test_string_plus_multi_exit_string_helper_is_a_concat_coordinate_not_an_inve
     helper = _dual_arm_helper_callsite(name_faces=True)
     prefix = StringValue("`")
     site = "string-plus-dual-arm-helper"
-    outcome = prefix.add(helper, site)
+    outcome = prefix.add(helper, site, None)
 
     assert helper.names_a_string()
     assert isinstance(outcome, Complete)
@@ -411,7 +411,7 @@ def test_string_plus_multi_exit_string_helper_is_a_concat_coordinate_not_an_inve
         symbol_kind="coordinate",
     )
 
-    wrapped = outcome.value.add(StringValue("`"), "dual-arm-plus-suffix")
+    wrapped = outcome.value.add(StringValue("`"), "dual-arm-plus-suffix", None)
     assert isinstance(wrapped, Complete)
     assert isinstance(wrapped.value, CallSiteValue)
     assert not isinstance(wrapped.value, StringValue)

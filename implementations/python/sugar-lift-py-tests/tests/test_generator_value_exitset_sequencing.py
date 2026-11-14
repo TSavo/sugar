@@ -86,8 +86,8 @@ class _RefusingValue(ConstructedTermSugar):
 class _CarrierReceiver(FloorValue):
     outcome: ExitSet
 
-    def equals(self, other, site):
-        del other, site
+    def equals(self, other, site, ctx):
+        del other, site, ctx
         return self.outcome
 
     def to_term(self, *, owner: str):

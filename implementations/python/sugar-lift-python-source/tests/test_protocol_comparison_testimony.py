@@ -100,7 +100,7 @@ def test_comparison_sugar_preserves_native_raise_without_negating_or_retyping(op
     )
 
     class NativeOperand(SymbolicValue):
-        def equals(self, other, site):
+        def equals(self, other, site, ctx):
             return native
 
         def contains(self, other, site):

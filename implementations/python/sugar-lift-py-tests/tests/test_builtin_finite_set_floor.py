@@ -24,9 +24,9 @@ def test_finite_set_membership_is_decided_from_constructed_members():
 
 
 def test_finite_set_union_intersection_and_difference_are_closed():
-    assert _values(_numbers(1, 2).bitwise_or(_numbers(2, 3), "site")) == (1, 2, 3)
-    assert _values(_numbers(1, 2).bitwise_and(_numbers(2, 3), "site")) == (2,)
-    assert _values(_numbers(1, 2).subtract(_numbers(2, 3), "site")) == (1,)
+    assert _values(_numbers(1, 2).bitwise_or(_numbers(2, 3), "site", None)) == (1, 2, 3)
+    assert _values(_numbers(1, 2).bitwise_and(_numbers(2, 3), "site", None)) == (2,)
+    assert _values(_numbers(1, 2).subtract(_numbers(2, 3), "site", None)) == (1,)
 
 
 def test_symbolic_finite_membership_emits_typed_obligation():

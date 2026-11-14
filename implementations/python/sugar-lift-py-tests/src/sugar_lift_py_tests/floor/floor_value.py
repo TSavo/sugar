@@ -814,7 +814,7 @@ class FloorValue:
         )
         construction_panic(info)
 
-    def equals(self, other, site):
+    def equals(self, other, site, ctx):
         from sugar_lift_py_tests.floor.none_value import (
             NoneValue,
             decided_builtin_other_than_none,
@@ -873,12 +873,12 @@ class FloorValue:
             )
         )
 
-    def less_than(self, other, site):
+    def less_than(self, other, site, ctx):
         # Operator-owned double dispatch: the RHS answers ``less_than_from_left``.
         # LAW_OF_ONE: ordering meaning is Sugar (or a ground arm that constructs
         # Sugar / an authenticated ground exit). The default door never mints
         # ExitSet.completed(PredicateValue) — that is a second mechanism.
-        return other.less_than_from_left(self, site)
+        return other.less_than_from_left(self, site, ctx)
 
     def _refuse_ordering_meaning(
         self, other, site, *, owner: str, operator: str
@@ -957,7 +957,7 @@ class FloorValue:
             other, site, owner=owner, operator=operator
         )
 
-    def less_than_from_left(self, left, site):
+    def less_than_from_left(self, left, site, ctx):
         """Default RHS law for ``left < self`` — never invents FOL meaning.
 
         Overrides (TermValue, StringValue, GuardedValue, NamedExpressionValue, …)
@@ -967,17 +967,17 @@ class FloorValue:
             self, site, owner="FloorValue.less_than_from_left", operator="<"
         )
 
-    def less_equal(self, other, site):
+    def less_equal(self, other, site, ctx):
         return self._refuse_ordering_meaning(
             other, site, owner="FloorValue.less_equal", operator="<="
         )
 
-    def greater_than(self, other, site):
+    def greater_than(self, other, site, ctx):
         return self._refuse_ordering_meaning(
             other, site, owner="FloorValue.greater_than", operator=">"
         )
 
-    def greater_equal(self, other, site):
+    def greater_equal(self, other, site, ctx):
         return self._refuse_ordering_meaning(
             other, site, owner="FloorValue.greater_equal", operator=">="
         )
@@ -1072,58 +1072,58 @@ class FloorValue:
             fix=f"write more Floor: implement {observed}.{owner} for {operand}",
         )
 
-    def add(self, other, site):
+    def add(self, other, site, ctx):
         # Default: this value does not stand on the addition floor -- it cannot answer
         # what it is to add another value. The None arm: a value that CAN implements
         # add and gives back the sum (or concat); absence here is the honest "no".
         return self._binary_floor_gap(other, site, "add", "addition")
 
-    def subtract(self, other, site):
+    def subtract(self, other, site, ctx):
         # Default: this value does not stand on the subtraction floor -- it cannot
         # answer what it is minus another value. The None arm: a value that CAN
         # implements subtract and gives back a term; absence here is the honest "no".
         return self._binary_floor_gap(other, site, "subtract", "subtraction")
 
-    def multiply(self, other, site):
+    def multiply(self, other, site, ctx):
         # Default: this value does not stand on the multiplication floor -- it cannot
         # answer what it multiplies by another value to. The None arm: a value that CAN
         # implements multiply and gives back a product; absence here is the honest "no".
         return self._binary_floor_gap(other, site, "multiply", "multiplication")
 
-    def power(self, other, site):
+    def power(self, other, site, ctx):
         return self._binary_floor_gap(other, site, "power", "power")
 
-    def divide(self, other, site):
+    def divide(self, other, site, ctx):
         # Default: this value does not stand on the division floor -- it cannot answer
         # what it divides by another value to. The None arm: a value that CAN
         # implements divide and gives back a quotient; absence here is the honest "no".
         return self._binary_floor_gap(other, site, "divide", "division")
 
-    def modulo(self, other, site):
+    def modulo(self, other, site, ctx):
         # Default: this value does not stand on the modulo floor -- it cannot answer
         # what remainder it leaves by another value. The None arm: a value that CAN
         # implements modulo and gives back a remainder; absence here is the honest "no".
         return self._binary_floor_gap(other, site, "modulo", "modulo")
 
-    def floor_divide(self, other, site):
+    def floor_divide(self, other, site, ctx):
         return self._binary_floor_gap(other, site, "floor_divide", "floor-division")
 
-    def right_shift(self, other, site):
+    def right_shift(self, other, site, ctx):
         return self._binary_floor_gap(other, site, "right_shift", "right-shift")
 
-    def bitwise_and(self, other, site):
+    def bitwise_and(self, other, site, ctx):
         return self._runtime_bitwise_gap(other, site, "bitwise_and", "and")
 
-    def bitwise_xor(self, other, site):
+    def bitwise_xor(self, other, site, ctx):
         return self._runtime_bitwise_gap(other, site, "bitwise_xor", "xor")
 
-    def bitwise_or(self, other, site):
+    def bitwise_or(self, other, site, ctx):
         return self._runtime_bitwise_gap(other, site, "bitwise_or", "or")
 
-    def left_shift(self, other, site):
+    def left_shift(self, other, site, ctx):
         return self._runtime_bitwise_gap(other, site, "left_shift", "left-shift")
 
-    def matrix_multiply(self, other, site):
+    def matrix_multiply(self, other, site, ctx):
         return self._binary_floor_gap(
             other, site, "matrix_multiply", "matrix-multiplication"
         )

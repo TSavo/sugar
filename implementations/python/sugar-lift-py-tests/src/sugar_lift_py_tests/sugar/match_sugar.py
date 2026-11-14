@@ -188,7 +188,7 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
                     continue
                 # Matching under not_prev ∧ alt-face polarity.
                 eq_prefix = _and_parts(not_prev, face.guard)
-                eq_out = subject.equals(face.value, site)
+                eq_out = subject.equals(face.value, site, ctx)
                 side, formula = _equality_outcome_under(eq_out, eq_prefix, site, side)
                 if formula is not None:
                     # Alt polarity is already in formula when equality is Complete;
@@ -199,7 +199,7 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
             raise NotImplementedError(
                 f"match alternative outcome not lifted: {type(alt_out).__name__}"
             )
-        eq_out = subject.equals(alt_out.value, site)
+        eq_out = subject.equals(alt_out.value, site, ctx)
         side, formula = _equality_outcome_under(eq_out, not_prev, site, side)
         if formula is not None:
             alts.append(formula)

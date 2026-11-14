@@ -61,17 +61,17 @@ class FalseBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
 
         return Complete(TrueBoolLiteralSugar(site=self.site))
 
-    def add(self, other, site):
+    def add(self, other, site, ctx):
         # Python bool is a closed integer subtype: False contributes exactly
         # zero, then the ordinary numeric floor decides the peer.
         from sugar_lift_py_tests.floor.term_value import TermValue
 
-        return TermValue(0).add(other, site)
+        return TermValue(0).add(other, site, ctx)
 
-    def subtract(self, other, site):
+    def subtract(self, other, site, ctx):
         from sugar_lift_py_tests.floor.term_value import TermValue
 
-        return TermValue(0).subtract(other, site)
+        return TermValue(0).subtract(other, site, ctx)
 
     def unary_minus(self, site):
         del site
@@ -79,7 +79,7 @@ class FalseBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
 
         return Complete(TermValue(0))
 
-    def bitwise_and(self, other, site):
+    def bitwise_and(self, other, site, ctx):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
             TrueBoolLiteralSugar,
@@ -91,7 +91,7 @@ class FalseBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
             FalseBoolLiteralSugar,
         ):
             return Complete(FalseBoolLiteralSugar(site=site))
-        return super().bitwise_and(other, site)
+        return super().bitwise_and(other, site, ctx)
 
     def bitwise_invert(self, site):
         del site
@@ -99,7 +99,7 @@ class FalseBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
 
         return Complete(TermValue(-1))
 
-    def bitwise_xor(self, other, site):
+    def bitwise_xor(self, other, site, ctx):
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
             TrueBoolLiteralSugar,
         )
@@ -108,7 +108,7 @@ class FalseBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
             return Complete(FalseBoolLiteralSugar(site=site))
         if type(other) is TrueBoolLiteralSugar:
             return Complete(TrueBoolLiteralSugar(site=site))
-        return super().bitwise_xor(other, site)
+        return super().bitwise_xor(other, site, ctx)
 
     def is_identical(self, other, site):
         # False is a singleton: False is False folds True; False is True folds

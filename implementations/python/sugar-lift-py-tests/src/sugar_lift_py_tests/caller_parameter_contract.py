@@ -431,7 +431,7 @@ def project_iadd(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="+")
+    return discharge_inplace(left, right, site, None, surface="+")
 
 
 def project_isub(left, right, site):
@@ -439,7 +439,7 @@ def project_isub(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="-")
+    return discharge_inplace(left, right, site, None, surface="-")
 
 
 def project_imul(left, right, site):
@@ -447,7 +447,7 @@ def project_imul(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="*")
+    return discharge_inplace(left, right, site, None, surface="*")
 
 
 def project_itruediv(left, right, site):
@@ -455,7 +455,7 @@ def project_itruediv(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="/")
+    return discharge_inplace(left, right, site, None, surface="/")
 
 
 def project_ifloordiv(left, right, site):
@@ -463,7 +463,7 @@ def project_ifloordiv(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="//")
+    return discharge_inplace(left, right, site, None, surface="//")
 
 
 def project_imod(left, right, site):
@@ -471,7 +471,7 @@ def project_imod(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="%")
+    return discharge_inplace(left, right, site, None, surface="%")
 
 
 def project_ipow(left, right, site):
@@ -479,7 +479,7 @@ def project_ipow(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="**")
+    return discharge_inplace(left, right, site, None, surface="**")
 
 
 def project_iand(left, right, site):
@@ -487,7 +487,7 @@ def project_iand(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="&")
+    return discharge_inplace(left, right, site, None, surface="&")
 
 
 def project_ior(left, right, site):
@@ -495,7 +495,7 @@ def project_ior(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="|")
+    return discharge_inplace(left, right, site, None, surface="|")
 
 
 def project_ixor(left, right, site):
@@ -503,7 +503,7 @@ def project_ixor(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="^")
+    return discharge_inplace(left, right, site, None, surface="^")
 
 
 def project_ilshift(left, right, site):
@@ -511,7 +511,7 @@ def project_ilshift(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="<<")
+    return discharge_inplace(left, right, site, None, surface="<<")
 
 
 def project_irshift(left, right, site):
@@ -519,7 +519,7 @@ def project_irshift(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface=">>")
+    return discharge_inplace(left, right, site, None, surface=">>")
 
 
 def project_imatmul(left, right, site):
@@ -527,7 +527,7 @@ def project_imatmul(left, right, site):
         discharge_inplace,
     )
 
-    return discharge_inplace(left, right, site, surface="@")
+    return discharge_inplace(left, right, site, None, surface="@")
 
 
 def project_iter(receiver, site):
@@ -652,27 +652,31 @@ _NATIVE_OPERATION_PROJECTORS = {
     # Formal subscript load (#6611): receiver[index] — binary, not the store.
     "subscript": lambda receiver, index, site: receiver.subscript(index, site),
     # Binary arithmetic / bitwise (_BINARY_OPERATOR_COORDINATE keys).
-    "add": lambda left, right, site: left.add(right, site),
-    "subtract": lambda left, right, site: left.subtract(right, site),
-    "multiply": lambda left, right, site: left.multiply(right, site),
-    "divide": lambda left, right, site: left.divide(right, site),
-    "floor_divide": lambda left, right, site: left.floor_divide(right, site),
-    "modulo": lambda left, right, site: left.modulo(right, site),
-    "power": lambda left, right, site: left.power(right, site),
-    "matrix_multiply": lambda left, right, site: left.matrix_multiply(right, site),
-    "bitwise_and": lambda left, right, site: left.bitwise_and(right, site),
-    "bitwise_or": lambda left, right, site: left.bitwise_or(right, site),
-    "bitwise_xor": lambda left, right, site: left.bitwise_xor(right, site),
-    "left_shift": lambda left, right, site: left.left_shift(right, site),
-    "right_shift": lambda left, right, site: left.right_shift(right, site),
+    # Carrier discharge carries no reduction context yet (#7757): a binary
+    # floor reached from here applies under None, named at this one door.
+    "add": lambda left, right, site: left.add(right, site, None),
+    "subtract": lambda left, right, site: left.subtract(right, site, None),
+    "multiply": lambda left, right, site: left.multiply(right, site, None),
+    "divide": lambda left, right, site: left.divide(right, site, None),
+    "floor_divide": lambda left, right, site: left.floor_divide(right, site, None),
+    "modulo": lambda left, right, site: left.modulo(right, site, None),
+    "power": lambda left, right, site: left.power(right, site, None),
+    "matrix_multiply": lambda left, right, site: left.matrix_multiply(
+        right, site, None
+    ),
+    "bitwise_and": lambda left, right, site: left.bitwise_and(right, site, None),
+    "bitwise_or": lambda left, right, site: left.bitwise_or(right, site, None),
+    "bitwise_xor": lambda left, right, site: left.bitwise_xor(right, site, None),
+    "left_shift": lambda left, right, site: left.left_shift(right, site, None),
+    "right_shift": lambda left, right, site: left.right_shift(right, site, None),
     # Authenticated in-place (AugAssign); binary fallback is inside each projector.
     **_INPLACE_NATIVE_OPERATION_PROJECTORS,
     # Equality, ordering, membership (compare / equality sugars).
-    "equals": lambda left, right, site: left.equals(right, site),
-    "less_than": lambda left, right, site: left.less_than(right, site),
-    "less_equal": lambda left, right, site: left.less_equal(right, site),
-    "greater_than": lambda left, right, site: left.greater_than(right, site),
-    "greater_equal": lambda left, right, site: left.greater_equal(right, site),
+    "equals": lambda left, right, site: left.equals(right, site, None),
+    "less_than": lambda left, right, site: left.less_than(right, site, None),
+    "less_equal": lambda left, right, site: left.less_equal(right, site, None),
+    "greater_than": lambda left, right, site: left.greater_than(right, site, None),
+    "greater_equal": lambda left, right, site: left.greater_equal(right, site, None),
     "contains": lambda container, item, site: container.contains(item, site),
     # Ternary store protocol (receiver, index|name, value + site).
     # Discharge order: receiver, index, value — never RHS-first.

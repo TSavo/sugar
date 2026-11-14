@@ -161,7 +161,7 @@ def _equals_with_derived_residue(left, right, site, ctx):
     if deferred is not None:
         return deferred
 
-    outcome = left.equals(right, site)
+    outcome = left.equals(right, site, ctx)
 
     from sugar_lift_py_tests.floor import CallSiteValue, PredicateValue
     from sugar_lift_py_tests.outcome import Complete

@@ -217,8 +217,10 @@ class FunctionCallable(FloorValue):
             explicit = DictValue(
                 tuple((StringValue(key), value) for key, value in keyword_map.items())
             )
+            # A constructed dict merge applies no body; ``callsite`` carries no
+            # reduction context to give it.
             keyword_expansion = complete_value(
-                keyword_expansion.map_from_left("bitwise_or", explicit, site),
+                keyword_expansion.map_from_left("bitwise_or", explicit, site, None),
                 owner="FunctionCallable guarded **kwargs substitution",
             )
             keyword_map.clear()

@@ -43,7 +43,7 @@ class BytesValue(GuardStableValue):
             else FalseBoolLiteralSugar(site=site)
         )
 
-    def equals(self, other, site):
+    def equals(self, other, site, ctx):
         if type(other) is BytesValue:
             from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -58,7 +58,7 @@ class BytesValue(GuardStableValue):
                 if self.value == other.value
                 else FalseBoolLiteralSugar(site=site)
             )
-        return super().equals(other, site)
+        return super().equals(other, site, ctx)
 
     def slice_assign_iterable_with(self, operation, ctx):
         """Project the bytes object's authenticated integer members."""

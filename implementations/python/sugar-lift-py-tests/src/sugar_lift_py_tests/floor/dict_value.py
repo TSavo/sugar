@@ -117,15 +117,15 @@ class DictValue(GuardStableValue):
             fix="construct key equality on the Python floor or keep it loud",
         )
 
-    def bitwise_or(self, other, site):
+    def bitwise_or(self, other, site, ctx):
         if type(other) is not DictValue:
-            return super().bitwise_or(other, site)
+            return super().bitwise_or(other, site, ctx)
         entries = list(self.entries)
         for right_key, right_value in other.entries:
             found = _key_position(tuple(entries), right_key)
             if found is None:
                 # Whether this key is already present is undecided.
-                return super().bitwise_or(other, site)
+                return super().bitwise_or(other, site, ctx)
             if found >= 0:
                 entries[found] = (entries[found][0], right_value)
             else:

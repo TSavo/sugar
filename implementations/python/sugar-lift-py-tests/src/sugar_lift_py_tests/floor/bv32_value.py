@@ -47,19 +47,19 @@ class Bv32Value(FloorValue):
         del owner
         return self.term
 
-    def bitwise_and(self, other, site):
+    def bitwise_and(self, other, site, ctx):
         return self._binary_bitwise(other, site, "bv32.and")
 
-    def bitwise_xor(self, other, site):
+    def bitwise_xor(self, other, site, ctx):
         return self._binary_bitwise(other, site, "bv32.xor")
 
-    def bitwise_or(self, other, site):
+    def bitwise_or(self, other, site, ctx):
         return self._binary_bitwise(other, site, "bv32.or")
 
-    def left_shift(self, other, site):
+    def left_shift(self, other, site, ctx):
         return self._binary_bitwise(other, site, "bv32.shl")
 
-    def right_shift(self, other, site):
+    def right_shift(self, other, site, ctx):
         return self._binary_bitwise(other, site, "bv32.lshr")
 
     def _binary_bitwise(self, other, site, operator):

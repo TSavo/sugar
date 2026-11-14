@@ -506,7 +506,7 @@ def test_production_projector_raw_notimplemented_falls_through_to_binary() -> No
             calls.append("inplace")
             return NotImplemented
 
-        def add(self, other, site):
+        def add(self, other, site, ctx):
             calls.append("add")
             return Complete(TermValue(7))
 
@@ -530,7 +530,7 @@ def test_production_projector_completed_notimplemented_falls_through_to_binary()
             calls.append("inplace")
             return Complete(NotImplemented)  # type: ignore[arg-type]
 
-        def add(self, other, site):
+        def add(self, other, site, ctx):
             calls.append("add")
             return Complete(TermValue(9))
 
@@ -554,8 +554,8 @@ def test_production_projector_incomplete_does_not_fall_through_to_binary() -> No
             del operation, ctx
             return incomplete_face
 
-        def add(self, other, site):
-            del other, site
+        def add(self, other, site, ctx):
+            del other, site, ctx
             return Complete(TermValue(0))
 
     out = project_iadd(_IncompleteInplace(), TermValue(1), "op")

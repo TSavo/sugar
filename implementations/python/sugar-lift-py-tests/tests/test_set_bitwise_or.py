@@ -11,11 +11,11 @@ def test_set_bitwise_or_constructs_exact_union() -> None:
     left = SetValue((TermValue(1), TermValue(2)))
     right = SetValue((TermValue(2), TermValue(3)))
 
-    assert left.bitwise_or(right, "t.py:1") == Complete(
+    assert left.bitwise_or(right, "t.py:1", None) == Complete(
         SetValue((TermValue(1), TermValue(2), TermValue(3)))
     )
 
 
 def test_set_bitwise_or_unsupported_concrete_twin_stays_loud() -> None:
     with pytest.raises(ConstructionPanic, match="owner=bitwise_or"):
-        SetValue((TermValue(1),)).bitwise_or(TermValue(2), "t.py:1")
+        SetValue((TermValue(1),)).bitwise_or(TermValue(2), "t.py:1", None)

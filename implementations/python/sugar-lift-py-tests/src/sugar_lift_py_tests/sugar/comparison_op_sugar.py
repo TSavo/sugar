@@ -422,7 +422,9 @@ class ComparisonOpSugar(ConstructedTermSugar):
         ).and_then(
             lambda left_receiver: _operation_receiver_outcome(
                 right, ctx, owner="ComparisonOpSugar right operation receiver"
-            ).and_then(lambda right_receiver: self._apply(left_receiver, right_receiver))
+            ).and_then(
+                lambda right_receiver: self._apply(left_receiver, right_receiver, ctx)
+            )
         )
 
     def _membership(self, container, item):
@@ -437,7 +439,7 @@ class ComparisonOpSugar(ConstructedTermSugar):
             item, container, self.site, self.op_kind, outcome
         )
 
-    def _ordering(self, left, right):
+    def _ordering(self, left, right, ctx):
         """Ordering law: left owns the rich method; undecided dispatch dual-edges."""
         method = COMPARE_METHODS[self.op_kind]
         deferred = defer_formal_native_operation(
@@ -450,10 +452,10 @@ class ComparisonOpSugar(ConstructedTermSugar):
             right,
             self.site,
             self.op_kind,
-            getattr(left, method)(right, self.site),
+            getattr(left, method)(right, self.site, ctx),
         )
 
-    def _apply(self, left, right):
+    def _apply(self, left, right, ctx):
         if self.op_kind == "NotEq":
             from sugar_lift_py_tests.floor.object_value import ObjectValue
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
@@ -480,7 +482,7 @@ class ComparisonOpSugar(ConstructedTermSugar):
                 right,
                 self.site,
                 self.op_kind,
-                left.equals(right, self.site),
+                left.equals(right, self.site, ctx),
             ).and_then(lambda predicate: predicate.negate())
         if self.op_kind == "Is":
             return construct_identity_comparison(left, right, self.site, negated=False)
@@ -494,4 +496,4 @@ class ComparisonOpSugar(ConstructedTermSugar):
             return self._membership(right, left).and_then(
                 lambda predicate: predicate.negate()
             )
-        return self._ordering(left, right)
+        return self._ordering(left, right, ctx)

@@ -160,7 +160,7 @@ class ListValue(GuardStableValue):
 
         return ExitSet.completed(ListValue((*self.elements, value)))
 
-    def add(self, other, site):
+    def add(self, other, site, ctx):
         """Python list concatenation, or a cited coordinate for an opaque peer."""
         if type(other) is ListValue:
             from sugar_lift_py_tests.outcome import ExitSet
@@ -193,16 +193,16 @@ class ListValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if type(other) in (CallSiteValue, SymbolicValue):
-            return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).add(other, site, ctx)
         if other.denotes_value() and other.runtime_type_is_decided():
             # ``list + <decided non-list>`` is Python's TypeError.  Undecided
             # rights stay on the shared third-value law via super().
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="ListValue.add")
-        return super().add(other, site)
+        return super().add(other, site, ctx)
 
-    def multiply(self, other, site):
+    def multiply(self, other, site, ctx):
         # Python list repetition, through the one sequence-repetition law.
         from sugar_lift_py_tests.floor.sequence_repetition import repeat_sequence
 
@@ -210,29 +210,29 @@ class ListValue(GuardStableValue):
             self, other, site, elements=self.elements, rebuild=ListValue
         )
 
-    def subtract(self, other, site):
+    def subtract(self, other, site, ctx):
         """Lists never subtract: decided peers are TypeError."""
         if other.denotes_value() and other.runtime_type_is_decided():
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="ListValue.subtract")
-        return super().subtract(other, site)
+        return super().subtract(other, site, ctx)
 
-    def floor_divide(self, other, site):
+    def floor_divide(self, other, site, ctx):
         if other.denotes_value() and other.runtime_type_is_decided():
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="ListValue.floor_divide")
-        return super().floor_divide(other, site)
+        return super().floor_divide(other, site, ctx)
 
-    def matrix_multiply(self, other, site):
+    def matrix_multiply(self, other, site, ctx):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
         if type(other) is CallSiteValue and other.body is None:
             from sugar_lift_py_tests.effect import runtime_matrix_multiply
 
             return runtime_matrix_multiply(self, other, site)
-        return super().matrix_multiply(other, site)
+        return super().matrix_multiply(other, site, ctx)
 
     def subscript(self, index, site):
         # Concrete list + integer index is fully decided. A known non-integer
