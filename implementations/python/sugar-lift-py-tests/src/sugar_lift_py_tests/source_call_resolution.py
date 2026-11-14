@@ -134,7 +134,9 @@ class UnprojectedSourceCallV1:
         from .occurrence import occurrence_key
         from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
 
-        noun = "source_construction" if self.definition_kind == "class" else "source_call"
+        noun = (
+            "source_construction" if self.definition_kind == "class" else "source_call"
+        )
         key = occurrence_key(site)
         call = ctor(
             f"python:{noun}",
@@ -401,7 +403,12 @@ class UnknownCalleeCallV1:
         from .ir import atomic, ctor, str_const
         from .occurrence import occurrence_key, occurrence_term
         from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
+        from .unanswered_calls import record
 
+        # Nothing here answers this call: it is recorded once, as the
+        # proof's `undecided` member (step 8), with the import door's target
+        # symbol when it is an enrolled imported call, else none (Q5).
+        record(getattr(callsite, "authenticated_target_symbol", None), site)
         key = occurrence_key(site)
         # The call term names its occurrence by coordinate (#7808); `key`
         # stays the raise effect's own occurrence (listed on #7808).

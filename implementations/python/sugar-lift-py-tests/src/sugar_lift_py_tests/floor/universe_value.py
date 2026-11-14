@@ -174,7 +174,6 @@ class UniverseValue(FloorValue):
             source_memento=def_memento,
             parameter_owned_contract=owned,
             candidates=(),
-            call_edges=(),
         )
 
 

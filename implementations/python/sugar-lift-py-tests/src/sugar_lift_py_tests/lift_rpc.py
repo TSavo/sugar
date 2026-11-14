@@ -605,7 +605,7 @@ def _parameter_contract_resume_rows(
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-    universe, def_memento_dto, def_memento, unit = retained
+    universe, def_memento_dto, def_memento, unit, unanswered = retained
     try:
         resolution_set = ParameterContractResolutionSetV1.from_value(raw_set)
         resume_apply_resolutions(unit, resolution_set)
@@ -631,6 +631,10 @@ def _parameter_contract_resume_rows(
     rows = reduction_rows(
         Complete(resolved), owner=resolved, blame=None, def_memento=def_memento_dto
     )
+    # A resumed function is skipped by the universe scan, so the calls its
+    # one reduction (phase 1) left unanswered ride here: one `undecided` row
+    # each, as the scan writes them (step 8).
+    rows = [*rows, *unanswered]
     nodes = [
         {
             "memento": def_memento,
@@ -658,6 +662,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     simply enroll no link unit (no owned demand).
     """
     from sugar_lift_py_tests import tree_enumerate as _tree
+    from sugar_lift_py_tests import unanswered_calls as _unanswered
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
     from sugar_lift_py_tests.outcome import Complete
     from sugar_source_tree.panic import SugarNotWritten
@@ -678,7 +683,10 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
         sf = _open_enumerated_file(source_path, root=root, locus_root=None)
         for fn in sf.functions():
             try:
-                outcome = _tree.function_universe_outcome(fn)
+                # The one reduction a resumed function gets: its unanswered
+                # calls are retained with the unit (see the resume rows).
+                with _unanswered.collecting() as calls:
+                    outcome = _tree.function_universe_outcome(fn)
             except SugarNotWritten:
                 # Typed tree frontier: no link unit to enroll. Gap remains
                 # visible on the universe/audit scan; never catch
@@ -701,6 +709,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
                 def_memento_dto,
                 def_memento,
                 unit,
+                _tree.unanswered_call_rows(calls, file_rel),
             )
             _RETAINED_BY_MEMENTO[_memento_continuation_key(def_memento)] = (
                 unit.link_unit_cid
@@ -2894,6 +2903,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # file scan (seek=false), a universe's own memento, or a
                 # call-site cue.
                 from sugar_lift_py_tests import tree_enumerate as _tree
+                from sugar_lift_py_tests import unanswered_calls as _unanswered
                 from sugar_lift_py_tests.ir import TermTableBuilder
                 from sugar_lift_py_tests.proofir._errors import FreeVariableRefusal
                 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
@@ -2906,6 +2916,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # function-contract AND each assertion row. `universes` keeps
                 # the function-contract per def for the seek joins below.
                 scan_rows = []  # (memento_dict, dto)
+                # One `undecided` row per unanswered call site in this file: a
+                # call inlined into several functions' reductions is one call.
+                recorded_calls: set = set()
                 gaps = []
                 # Phase-3: functions whose parameter-contract demands the caller
                 # already discharged (fold -> resume) are served from the resume
@@ -2924,8 +2937,21 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         in resolved_mementos
                     ):
                         continue
+                    calls = []
                     try:
-                        def_memento, rows = _tree.function_contract_rows(fn, file_rel)
+                        if seek:
+                            # A seek packages nothing: it records no call.
+                            def_memento, rows = _tree.function_contract_rows(
+                                fn, file_rel
+                            )
+                        else:
+                            # The full scan mint packages: every call this
+                            # reduction leaves unanswered is recorded once, as
+                            # an `undecided` row (step 8; PR B on #7766).
+                            with _unanswered.collecting() as calls:
+                                def_memento, rows = _tree.function_contract_rows(
+                                    fn, file_rel
+                                )
                     except FreeVariableRefusal as refusal:
                         # A row of this function, or the formula its outcome
                         # carries, names a variable outside its declared scope
@@ -2978,6 +3004,13 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             }
                         )
                         continue
+                    for row in _tree.unanswered_call_rows(calls, file_rel):
+                        key = json.dumps(
+                            row.to_rpc_with_term_table(None), sort_keys=True
+                        )
+                        if key not in recorded_calls:
+                            recorded_calls.add(key)
+                            scan_rows.append((def_memento.to_rpc(), row))
                     if rows is None:
                         continue  # an effect, not a contract
                     universes.append((fn.name, def_memento.to_rpc(), rows[0]))

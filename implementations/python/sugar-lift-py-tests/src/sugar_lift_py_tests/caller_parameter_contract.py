@@ -1201,174 +1201,6 @@ class NativeOperationExitCarrierV1:
         return exits
 
 
-@dataclass(frozen=True)
-class ValueOccurrenceCoordinateV1:
-    source: SourceFragmentCoordinateV1
-    occurrence_cid: str
-
-    @classmethod
-    def mint(cls, source):
-        return cls(source, _cid({"kind": "value-occurrence", "source": source.wire()}))
-
-    def to_value(self):
-        return {"source": self.source.wire(), "occurrenceCid": self.occurrence_cid}
-
-    @classmethod
-    def from_value(cls, value):
-        if not isinstance(value, dict) or set(value) != {"source", "occurrenceCid"}:
-            raise ValueError("value occurrence requires an exact key set")
-        result = cls(
-            SourceFragmentCoordinateV1.decode(value["source"]),
-            value["occurrenceCid"],
-        )
-        if result != cls.mint(result.source):
-            raise ValueError("value occurrence CID is stale")
-        return result
-
-
-@dataclass(frozen=True)
-class FormalActualBindingV1:
-    formal_coordinate_cid: str
-    actual_occurrence: ValueOccurrenceCoordinateV1
-    actual_term: Term
-    actual_contract_ref_cid: str | None = None
-
-    def to_value(self):
-        return {
-            "formalCoordinateCid": self.formal_coordinate_cid,
-            "actualOccurrence": self.actual_occurrence.to_value(),
-            "actualTerm": _json(term_to_value(self.actual_term)),
-            "actualContractRefCid": self.actual_contract_ref_cid,
-        }
-
-    @classmethod
-    def from_value(cls, value):
-        expected = {
-            "formalCoordinateCid",
-            "actualOccurrence",
-            "actualTerm",
-            "actualContractRefCid",
-        }
-        if not isinstance(value, dict) or set(value) != expected:
-            raise ValueError("formal actual binding requires an exact key set")
-        return cls(
-            value["formalCoordinateCid"],
-            ValueOccurrenceCoordinateV1.from_value(value["actualOccurrence"]),
-            _term_from_value(value["actualTerm"]),
-            value["actualContractRefCid"],
-        )
-
-
-@dataclass(frozen=True)
-class CallEdgeV2:
-    source_contract_cid: str
-    target_contract_cid: str
-    call_site: SourceFragmentCoordinateV1
-    formal_actual_bindings: tuple[FormalActualBindingV1, ...]
-    edge_cid: str
-
-    @classmethod
-    def mint(
-        cls,
-        *,
-        source_contract_cid,
-        target_contract_cid,
-        call_site,
-        formal_actual_bindings,
-    ):
-        bindings = tuple(formal_actual_bindings)
-        coordinates = tuple(item.formal_coordinate_cid for item in bindings)
-        if len(coordinates) != len(set(coordinates)):
-            raise ValueError("CallEdgeV2 has a duplicate formal coordinate")
-        preimage = {
-            "kind": "call-edge",
-            "schemaVersion": "2",
-            "sourceContractCid": source_contract_cid,
-            "targetContractCid": target_contract_cid,
-            "callSite": call_site.wire(),
-            "formalActualBindings": [item.to_value() for item in bindings],
-        }
-        return cls(
-            source_contract_cid,
-            target_contract_cid,
-            call_site,
-            bindings,
-            _cid(preimage),
-        )
-
-    def to_value(self):
-        return {
-            "kind": "call-edge",
-            "schemaVersion": "2",
-            "sourceContractCid": self.source_contract_cid,
-            "targetContractCid": self.target_contract_cid,
-            "callSite": self.call_site.wire(),
-            "formalActualBindings": [
-                item.to_value() for item in self.formal_actual_bindings
-            ],
-            "edgeCid": self.edge_cid,
-        }
-
-    @classmethod
-    def from_value(cls, value):
-        expected = {
-            "kind",
-            "schemaVersion",
-            "sourceContractCid",
-            "targetContractCid",
-            "callSite",
-            "formalActualBindings",
-            "edgeCid",
-        }
-        if not isinstance(value, dict) or set(value) != expected:
-            raise ValueError("CallEdgeV2 requires an exact key set")
-        result = cls.mint(
-            source_contract_cid=value["sourceContractCid"],
-            target_contract_cid=value["targetContractCid"],
-            call_site=SourceFragmentCoordinateV1.decode(value["callSite"]),
-            formal_actual_bindings=tuple(
-                FormalActualBindingV1.from_value(item)
-                for item in value["formalActualBindings"]
-            ),
-        )
-        if (
-            value["kind"] != "call-edge"
-            or value["schemaVersion"] != "2"
-            or result.edge_cid != value["edgeCid"]
-        ):
-            raise ValueError("CallEdgeV2 CID is stale")
-        return result
-
-
-def _term_from_value(value):
-    from sugar_lift_py_tests.ir import (
-        bool_const,
-        ctor,
-        make_var,
-        num,
-        real_lit,
-        str_const,
-    )
-
-    if not isinstance(value, dict):
-        raise ValueError("actual term must be a ProofIR term")
-    if value.get("kind") == "var" and set(value) == {"kind", "name"}:
-        return make_var(value["name"])
-    if value.get("kind") == "ctor" and set(value) == {"kind", "name", "args"}:
-        return ctor(value["name"], [_term_from_value(item) for item in value["args"]])
-    if value.get("kind") == "const" and set(value) == {"kind", "value", "sort"}:
-        sort = value["sort"].get("name") if isinstance(value["sort"], dict) else None
-        if sort == "Int" and type(value["value"]) is int:
-            return num(value["value"])
-        if sort == "Bool" and type(value["value"]) is bool:
-            return bool_const(value["value"])
-        if sort == "String" and isinstance(value["value"], str):
-            return str_const(value["value"])
-        if sort == "Real" and isinstance(value["value"], str):
-            return real_lit(value["value"])
-    raise ValueError("actual term shape is unsupported")
-
-
 # --- Phase 1/2/3 continuation schema (mirrors sugar-linker/src/caller_parameter.rs) ---
 
 
@@ -1445,30 +1277,28 @@ class ParameterOwnedContractV1:
 class ParameterContractLinkUnitV1:
     """One function's closed enrollment row: its owned contract, its candidates
     (none: nothing in the lift owes a parameter contract, inventory item 43),
-    the already-constructed call edges, and the retained continuation key
-    `link_unit_cid`."""
+    and the retained continuation key `link_unit_cid`.
+
+    It records no call. A Python call's only record is its `undecided` member
+    (step 8; PR B on #7766); the link unit's edge list, always empty for
+    Python, is gone."""
 
     source_memento: Any
     parameter_owned_contract: ParameterOwnedContractV1
     candidates: tuple
-    call_edges: tuple
     link_unit_cid: str
 
     @classmethod
-    def mint(cls, *, source_memento, parameter_owned_contract, candidates, call_edges):
+    def mint(cls, *, source_memento, parameter_owned_contract, candidates):
         cands = tuple(candidates)
-        edges = tuple(call_edges)
         preimage = {
             "kind": "parameter-contract-link-unit",
             "schemaVersion": "1",
             "sourceMemento": source_memento,
             "parameterOwnedContract": parameter_owned_contract.to_value(),
             "candidates": [candidate.to_value() for candidate in cands],
-            "callEdges": [edge.to_value() for edge in edges],
         }
-        return cls(
-            source_memento, parameter_owned_contract, cands, edges, _cid(preimage)
-        )
+        return cls(source_memento, parameter_owned_contract, cands, _cid(preimage))
 
     def to_value(self) -> dict[str, Any]:
         return {
@@ -1477,7 +1307,6 @@ class ParameterContractLinkUnitV1:
             "sourceMemento": self.source_memento,
             "parameterOwnedContract": self.parameter_owned_contract.to_value(),
             "candidates": [candidate.to_value() for candidate in self.candidates],
-            "callEdges": [edge.to_value() for edge in self.call_edges],
             "linkUnitCid": self.link_unit_cid,
         }
 

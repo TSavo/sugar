@@ -43,7 +43,6 @@ def _link_unit():
         source_memento={"file": "vendor/b64vendor.py"},
         parameter_owned_contract=owned,
         candidates=(),
-        call_edges=(),
     )
     return unit, owned
 
