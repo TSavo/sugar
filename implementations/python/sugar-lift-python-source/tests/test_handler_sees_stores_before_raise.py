@@ -7,9 +7,12 @@ name the edges disagreed on fell back to the PRE-TRY state -- a state no edge
 carries.  Now a disagreeing name is joined over ``try-edge`` slots, one per body
 statement, and the routed halt grounds them from its own occurrence: the handler
 reads the state of the statement that actually raised.  A halt raised inside a
-callee leaves the slots undecided; a statement that may change an object and
-then raise (a helper, an opaque call, a loop) carries that object as unknown at
-its halt, never as the state it began with.
+callee names the call it left through (``call_site_value.call_owned``).  A
+source helper whose state for an actual holds at every halt inside it carries
+that state at its halt, as on its completed path; any other statement that may
+change an object and then raise (an opaque call, a loop, a helper that may halt
+before its store) carries that object as unknown at its halt, never as the
+state it began with.
 """
 
 from __future__ import annotations
@@ -140,7 +143,9 @@ def test_each_halt_site_hands_the_handler_its_own_binding(tmp_path):
     assert NoneValue() in returns
 
 
-def test_a_helper_that_stores_then_raises_leaves_the_actual_unknown(tmp_path):
+def test_a_helper_that_stores_then_raises_hands_the_handler_its_store(tmp_path):
+    # The append ran before the raise, on the caller's own list: the halt
+    # leaving ``add`` carries the state the completed path would (#7757).
     source = (
         "def add(l):\n"
         "    l.append(1)\n"
@@ -153,8 +158,32 @@ def test_a_helper_that_stores_then_raises_leaves_the_actual_unknown(tmp_path):
         "        return r\n"
         "    return None\n"
     )
+    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+
+
+def test_a_helper_that_may_raise_before_its_store_leaves_the_actual_unknown(
+    tmp_path,
+):
+    # ``check()`` may raise before the append: a halt from ``add`` may carry
+    # ``[]`` or ``[1]``, so the handler reads an unknown, never either.
+    source = (
+        "def check():\n"
+        "    return 0\n"
+        "def add(l):\n"
+        "    check()\n"
+        "    l.append(1)\n"
+        "    raise ValueError()\n"
+        "def f():\n"
+        "    r = []\n"
+        "    try:\n"
+        "        add(r)\n"
+        "    except ValueError:\n"
+        "        return r\n"
+        "    return None\n"
+    )
     value = _only_return(tmp_path, source)
     assert value != ListValue(())
+    assert value != ListValue(_ints(1))
     assert type(value) is SymbolicValue
     assert value.term.name == "python:receiver_after_call"
 

@@ -17,7 +17,10 @@ let through is re-emitted after it (a pending ``return`` follows the
 ``finally``'s entries, and is discarded when the ``finally`` returns itself).
 A halt raised inside a called function reaches the caller in the caller's
 record at the call (``call_site_value.at_the_call``): a name the callee binds
-never shadows the caller's.
+never shadows the caller's, and what the callee did to an object the caller
+can see before it raised reaches the caller as it does on completion. The halt
+names the call it left through, so the caller's ``try`` reads which statement
+raised it.
 """
 
 from __future__ import annotations
@@ -264,6 +267,117 @@ def test_a_handler_reads_the_callers_name_not_the_callees() -> None:
         )
     )
     assert _returned_value(outcome) == TermValue(1)
+
+
+def test_a_handler_reads_what_the_callee_did_to_the_callers_list() -> None:
+    # ``g`` appends to the caller's own list and raises: the append is not
+    # rolled back, so the halt reaches ``f`` with ``acc`` as the completed
+    # path would leave it (``[1]``), never the ``[]`` it held at the call.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    acc = []\n"
+            "    try:\n"
+            "        g(acc)\n"
+            "    except ValueError:\n"
+            "        return acc\n"
+            "def g(a):\n"
+            "    a.append(1)\n"
+            "    raise ValueError()\n"
+        )
+    )
+    assert _returned_value(outcome) == _ONE
+
+
+def test_a_callee_local_is_not_carried_beside_the_callers_list() -> None:
+    # ``g`` binds a list of its own before it appends to the caller's: the
+    # handler reads the caller's ``acc`` after the append, and ``g``'s ``acc``
+    # stays in ``g``'s frame.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    acc = []\n"
+            "    try:\n"
+            "        g(acc)\n"
+            "    except ValueError:\n"
+            "        return acc\n"
+            "def g(a):\n"
+            "    acc = [9]\n"
+            "    a.append(1)\n"
+            "    raise ValueError()\n"
+        )
+    )
+    assert _returned_value(outcome) == _ONE
+
+
+def test_a_handler_reads_the_state_of_the_call_that_raised() -> None:
+    # Two body statements may halt with different ``x``: ``h()`` before
+    # ``x = 2`` and ``g()`` after it.  The raise inside ``g`` leaves it
+    # stamped with the call it left through (``call_site_value.call_owned``),
+    # so the handler's ``try`` grounds its edge to ``g()`` and reads 2.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    x = 1\n"
+            "    try:\n"
+            "        h()\n"
+            "        x = 2\n"
+            "        g()\n"
+            "    except ValueError:\n"
+            "        return x\n"
+            "def g():\n"
+            "    raise ValueError()\n"
+            "def h():\n"
+            "    return 0\n"
+        )
+    )
+    assert _returned_value(outcome) == TermValue(2)
+
+
+def _read_after(source: str):
+    """What ``f`` returns, or the refusal that names the read."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    try:
+        return _returned_value(function_universe_outcome(_function(source)))
+    except SugarNotWritten as refusal:
+        return refusal
+
+
+def test_a_global_the_callee_stored_before_its_raise_is_read_as_on_completion() -> (
+    None
+):
+    # ``g`` stores the module global ``G`` and raises.  The handler's read of
+    # ``G`` is what a read after ``g`` completing is -- the module binding a
+    # nested scope writes is cited undecided where ``f`` reads it -- never
+    # the ``0`` the module bound before the call.
+    from sugar_source_tree.panic import SugarNotWritten
+
+    halted = _read_after(
+        "def f():\n"
+        "    try:\n"
+        "        g()\n"
+        "    except ValueError:\n"
+        "        return G\n"
+        "G = 0\n"
+        "def g():\n"
+        "    global G\n"
+        "    G = 1\n"
+        "    raise ValueError()\n"
+    )
+    completed = _read_after(
+        "def f():\n"
+        "    g()\n"
+        "    return G\n"
+        "G = 0\n"
+        "def g():\n"
+        "    global G\n"
+        "    G = 1\n"
+    )
+    assert halted != TermValue(0)
+    assert isinstance(halted, SugarNotWritten) == isinstance(
+        completed, SugarNotWritten
+    ), (halted, completed)
 
 
 def test_a_call_halt_keeps_what_the_caller_did_before_the_call() -> None:
