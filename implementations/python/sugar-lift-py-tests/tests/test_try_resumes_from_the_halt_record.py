@@ -513,6 +513,66 @@ def test_an_operator_on_a_source_object_then_a_module_list_is_not_stale() -> Non
     assert returned != ListValue(())
 
 
+def _substituted_return_read(source: str):
+    """The node the object the first function's last ``return`` reads is,
+    after its body's substitution (the temporal rewrite)."""
+    from sugar_source_tree.container_mutation import _identity
+    from sugar_source_tree.nodes import Return
+
+    substituted = _function(source).substitute({})
+    returned = next(
+        statement
+        for statement in reversed(substituted.body)
+        if isinstance(statement, Return)
+    )
+    return _identity(returned.value)
+
+
+def test_a_generator_holding_a_module_list_reads_it_unknown_after_a_yield() -> None:
+    # At ``yield 1`` the consumer runs code of its own before the frame
+    # resumes (``L.append(...)``, say): the module list the generator frame
+    # holds is exposed at the yield as a caller's is at an unfollowed call
+    # (``_ambient_targets``), so the read after it is the list's value after
+    # the yield, never the ``[]`` the module bound.
+    read = _substituted_return_read(
+        "L = []\n"
+        "def g():\n"
+        "    yield 1\n"
+        "    return L\n"
+    )
+    assert read.kind == "ReceiverAfterCall"
+
+
+def test_a_list_a_generator_yielded_is_read_unknown_after_the_yield() -> None:
+    # The yielded list is handed to the consumer as an operand is to a call
+    # (``_call_targets``): the frame's read of it after the resume is its
+    # value after the yield, never the ``[1]`` it yielded.
+    read = _substituted_return_read(
+        "def g():\n"
+        "    xs = [1]\n"
+        "    yield xs\n"
+        "    return xs\n"
+    )
+    assert read.kind == "ReceiverAfterCall"
+
+
+def test_exec_of_a_constant_string_runs_code_then_a_module_list_is_not_stale() -> (
+    None
+):
+    # ``exec`` runs the source it is handed, a constant string as much as any:
+    # the law cites no builtin outside ``_cited().pure`` as running only its
+    # operands' dunders, so no operand decides it (``_code_subjects`` is
+    # None, never ``[]``) and it reaches every module object the caller
+    # reads.  ``L`` is never the ``[]`` the module bound.
+    from sugar_source_tree.container_mutation import _code_subjects
+    from sugar_source_tree.nodes import Call
+
+    source = "def f():\n    exec('L.append(1)')\n    return L\nL = []\n"
+    (call,) = [node for node in _function(source).walk() if isinstance(node, Call)]
+    assert _code_subjects(call, {}) is None
+    assert _read_after(source) != ListValue(())
+
+
 def test_a_callable_handed_out_reaches_the_cell() -> None:
     # ``inner`` is handed to code the caller does not follow (a builtin that
     # calls it): the cell it appends to is exposed to that call, never read

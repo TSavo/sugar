@@ -745,7 +745,8 @@ _ABSENT = object()
 def _calls(statement, bound_refs, *, include_container_calls, threaded=()):
     """The operations ``statement`` runs now that may run code (``_sites_at``:
     every call, f-string field, operator, comparison, truth test, item or
-    attribute access, iteration and ``await``): not inside a nested def, and
+    attribute access, iteration, ``await`` and ``yield``): not inside a
+    nested def, and
     not inside a value a name was already bound to (that value's operations
     ran earlier), nor in ``threaded`` (the header the statement threads
     first, ``threaded_header``)."""
@@ -940,7 +941,8 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
         # An operation this statement does not follow -- a call of a source
         # function, a method, a callable value, an import, a builtin; an
         # operator, a truth test, an item or attribute access, an
-        # iteration, an ``await`` -- may change what the caller holds beyond
+        # iteration, an ``await``, a ``yield`` (the consumer's code, before
+        # the frame resumes) -- may change what the caller holds beyond
         # its operands: the module objects and the closure cells its code
         # can reach (``_ambient_targets``).
         targets.extend(ambient(call))
@@ -966,7 +968,9 @@ def _call_targets(call, scope, bound_refs):
     An f-string's replacement field (``f'{v}'``) runs ``format(v, spec)``:
     the cited pure builtin's rule over what ``v`` reaches.  An ``await``
     runs the awaitable's code, which may change whatever the awaitable
-    holds: it is handed to that code as an operand is.  Any other operation
+    holds: it is handed to that code as an operand is.  So is the value a
+    ``yield`` hands its consumer, and the iterable a ``yield from``
+    delegates to (``_SUSPENSION_KINDS``).  Any other operation
     (``_sites_at``) changes nothing here beyond what it reaches
     (``_ambient_targets``)."""
     from .nodes import Attribute, Call, Name
@@ -977,7 +981,10 @@ def _call_targets(call, scope, bound_refs):
             return []
         pure = (("", True, False),)
         return [(node, pure, None) for node in _exposed(call.value, bound_refs)]
-    if call.kind == "Await":
+    if call.kind == "Await" or call.kind in _SUSPENSION_KINDS:
+        if call.value is None:
+            # A bare ``yield`` hands the consumer ``None``.
+            return []
         return [
             (node, _OPERAND_RULES, None) for node in _exposed(call.value, bound_refs)
         ]
@@ -2613,7 +2620,7 @@ def _closure(definition):
     - ``closed``: every other operation any of them runs (``_sites_at``) --
       a method, a callable value, an import, a class, a builtin, an
       f-string's ``format``, an operator, a truth test, an item or
-      attribute access, an iteration, an ``await`` -- runs no code
+      attribute access, an iteration, an ``await``, a ``yield`` -- runs no code
       (``_runs_no_code``), so they reach nothing their bodies do not name.
 
     Read off the source alone (CPython's symtable, the unit's lexical call
@@ -2664,7 +2671,7 @@ def _free_names(definition):
 def _body_calls(definition):
     """The operations ``definition``'s body runs that may run code
     (``_sites_at``: its calls, f-string fields, operators, truth tests, item
-    and attribute accesses, iterations, awaits), not inside a nested
+    and attribute accesses, iterations, awaits, yields), not inside a nested
     ``def``, ``class`` or ``lambda`` (which run when called)."""
     from .nodes import AsyncFunctionDef, ClassDef, FunctionDef, Lambda, Node
 
@@ -2733,7 +2740,8 @@ def _ambient_targets(statement, call, scope, ambient=None):
       bound function, a lambda, a class), an import, a builtin, an
       f-string's ``format``, the one door's operation, an operator, a
       comparison, a truth test, an item or attribute access, an iteration,
-      an ``await`` -- reaches every one, when it runs code at all: whether
+      an ``await``, a ``yield`` (its consumer's code) -- reaches every one,
+      when it runs code at all: whether
       it does is decided at reduce by the values of the reads it runs on
       (``_code_subjects``: a builtin value runs none; a source object or an
       undecided value may); where no read decides it, each is exposed as an
@@ -2802,7 +2810,7 @@ class _Operated(NamedTuple):
 # (``__bool__``), ``a == b``/``x in y`` (``__eq__``, ``__contains__``),
 # ``a[k]`` (``__getitem__``/``__setitem__``/``__delitem__``), ``o.x`` (a
 # property, a descriptor, ``__getattr__``, ``__setattr__``), ``await a``
-# (the awaitable's code).
+# (the awaitable's code), and a suspension (``_SUSPENSION_KINDS``).
 _OPERATION_KINDS = frozenset(
     {
         "BinOp",
@@ -2813,8 +2821,18 @@ _OPERATION_KINDS = frozenset(
         "Subscript",
         "Attribute",
         "Await",
+        "Yield",
+        "YieldFrom",
     }
 )
+# ``yield v`` / ``yield from it``: the frame suspends and its consumer runs
+# code of its own -- any code, holding the yielded value -- before the frame
+# resumes.  No operand's value decides what that code is (``_code_subjects``
+# answers None), and the yielded value is handed to it as an operand is
+# (``_call_targets``): the generator's frame, at the yield, is exposed as a
+# caller is at an unfollowed call.  The frame's own writes are released at
+# the same yield by the machine (``generator_construction.YieldEffect``).
+_SUSPENSION_KINDS = frozenset({"Yield", "YieldFrom"})
 # Comparisons that run no dunder; and those whose value is a ``bool`` whatever
 # a dunder returns.
 _IDENTITY_OPS = frozenset({"Is", "IsNot"})
@@ -2824,7 +2842,9 @@ _BOOL_OPS = frozenset({"Is", "IsNot", "In", "NotIn"})
 def _sites_at(node, headers=()):
     """The operations ``node``'s own evaluation runs that may run code: a
     call, an f-string field (it runs ``format``), an operation
-    (``_OPERATION_KINDS``) but an attribute read of an import's member (a
+    (``_OPERATION_KINDS``, a ``yield``/``yield from`` included: the
+    consumer runs before the frame resumes) but an attribute read of an
+    import's member (a
     module binding, read by its receipt: ``Attribute._construct_sugar``),
     and each value a statement or a comprehension clause operates on
     (``_Operated``).  ``headers``: the handles of a header its statement
@@ -2903,8 +2923,8 @@ def _site_operands(site):
         return _compared(site, _IDENTITY_OPS)
     if kind == "Subscript":
         return (site.value, site.slice_)
-    if kind in ("Attribute", "Await"):
-        return (site.value,)
+    if kind in ("Attribute", "Await", *_SUSPENSION_KINDS):
+        return () if site.value is None else (site.value,)
     return ()
 
 
@@ -2996,10 +3016,16 @@ def _code_subjects(call, scope):
     ``[]``: it runs no code (a cited pure builtin over builtin operands,
     ``_is_pure_call``; an operation over builtin values).  None: no read
     decides it -- a callee or an operand that is not a read (an import, a
-    class, a source function by its name, a path, a call's result) -- so it
-    may run any."""
+    class, a source function by its name, a path, a call's result), a
+    builtin the law does not cite as running only its operands' dunders
+    (``_cited().pure``: ``exec``/``eval`` run the source they are handed,
+    a constant string as much as any; ``import_module`` runs a module's
+    body), or a suspension (``_SUSPENSION_KINDS``: the consumer's code) --
+    so it may run any."""
     from .nodes import Attribute, Call, Name, PathContainerCall
 
+    if call.kind in _SUSPENSION_KINDS:
+        return None
     if call.kind == "FormattedValue":
         operands = (call.value,)
     elif isinstance(call, PathContainerCall):
@@ -3012,7 +3038,9 @@ def _code_subjects(call, scope):
         if isinstance(func, Attribute):
             heads = (func.value,)
         elif isinstance(func, Name):
-            if _builtin_callee(call) is None:
+            if _builtin_callee(call) not in _cited().pure:
+                # No builtin, or one whose own code the law does not cite:
+                # its operands' values do not decide what it runs.
                 return None
             heads = ()
         elif getattr(func, "kind", None) in _READ_KINDS:
