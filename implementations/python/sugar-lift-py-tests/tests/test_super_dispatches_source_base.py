@@ -40,7 +40,7 @@ _TRUTHFUL = (
 
 def test_super_dispatches_into_source_defined_base_init() -> None:
     context, (base, derived) = _constructed(_TRUTHFUL)
-    receiver = derived.construct_receiver_state_from_block(None, "receiver")
+    receiver = derived.fresh_receiver("receiver")
     zuper = BuiltinSuperValue(current_class=derived, receiver=receiver)
 
     projected = zuper.call_method_value(
@@ -78,7 +78,7 @@ def test_super_naming_an_absent_method_is_the_attribute_error() -> None:
     # Derived's MRO is read whole (Derived, Base, object) and no class after
     # Derived binds ``greet``: CPython's AttributeError, never a base method.
     context, (_base, derived) = _constructed(_LIAR)
-    receiver = derived.construct_receiver_state_from_block(None, "receiver")
+    receiver = derived.fresh_receiver("receiver")
     zuper = BuiltinSuperValue(current_class=derived, receiver=receiver)
 
     outcome = zuper.call_method_value(
@@ -112,7 +112,7 @@ _OWN_METHOD_ONLY = (
 
 def test_super_runs_the_first_class_after_the_cell_that_binds_the_name() -> None:
     context, (base, _middle, derived) = _constructed(_OWN_METHOD_ONLY)
-    receiver = derived.construct_receiver_state_from_block(None, "receiver")
+    receiver = derived.fresh_receiver("receiver")
 
     call = (
         BuiltinSuperValue(current_class=derived, receiver=receiver)
@@ -157,10 +157,13 @@ def test_super_init_statement_applies_annotated_field_stores() -> None:
     from sugar_lift_py_tests.floor.block_value import BlockValue
     from sugar_lift_py_tests.floor.none_value import NoneValue
     from sugar_lift_py_tests.floor.object_value import ObjectValue
+    from sugar_lift_py_tests.floor.receiver_field_store_value import (
+        ReceiverFieldStoreValue,
+    )
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     context, (_base, derived) = _constructed(_ANNOTATED)
-    receiver = derived.construct_receiver_state_from_block(None, "receiver")
+    receiver = derived.fresh_receiver("receiver")
     projected = receiver.call_method_value(
         "__init__",
         (),
@@ -182,9 +185,15 @@ def test_super_init_statement_applies_annotated_field_stores() -> None:
     block = completed[-1]
     if not isinstance(block, BlockValue):
         block = BlockValue((block,), can_fall_through=True)
-    built = derived.construct_receiver_state_from_block(block, "receiver")
-    assert isinstance(built, ObjectValue)
-    field_names = {field.name for field in built.fields}
+    # The record carries every store on the receiver: the base's, spliced
+    # into the ``super().__init__`` statement's record, and the derived
+    # store's post-state.
+    field_names = set()
+    for entry in block.statements:
+        if isinstance(entry, ReceiverFieldStoreValue):
+            field_names.add(entry.attr)
+        elif isinstance(entry, ObjectValue):
+            field_names |= {field.name for field in entry.fields}
     assert "match" in field_names
     assert "_fail_reason" in field_names
     assert "_nested" in field_names

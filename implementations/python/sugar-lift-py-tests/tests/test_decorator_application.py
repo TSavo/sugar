@@ -468,7 +468,7 @@ def test_an_instance_lookup_binds_by_descriptor_kind() -> None:
             f"    def pick({formals}):\n"
             "        raise ValueError('ran')\n"
         )
-        receiver = box.construct_receiver_state_from_block(None, "receiver-cid")
+        receiver = box.fresh_receiver("receiver-cid")
         outcome = receiver.call_method_value(
             "pick", (TermValue(3),), owner="test", blame="pick-site", ctx=ctx
         )
@@ -481,7 +481,7 @@ def test_the_implicit_arguments_of_each_lookup() -> None:
     from sugar_lift_py_tests.floor.object_value import implicit_arguments
 
     box, _ctx = _class_value("class Box:\n    def pick(self):\n        return 1\n")
-    receiver = box.construct_receiver_state_from_block(None, "receiver-cid")
+    receiver = box.fresh_receiver("receiver-cid")
 
     def refuse(**_kw):
         raise AssertionError("refused")
@@ -1156,7 +1156,7 @@ def test_a_descriptor_read_off_an_instance_is_a_callable_value() -> None:
             f"    def pick({formals}):\n"
             "        raise ValueError('ran')\n"
         )
-        receiver = box.construct_receiver_state_from_block(None, "receiver-cid")
+        receiver = box.fresh_receiver("receiver-cid")
         read = receiver.attribute("pick", "pick-site", ctx).completed_value()
         assert isinstance(read, BoundMethodValue), decorator
         outcome = read.callable_application_with(

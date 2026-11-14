@@ -170,8 +170,8 @@ def _receivers():
             continue
         value = node.sugar().desugar(context).completed_value()
         context.temporal = context.temporal.bind_value(value.class_name, value)
-        receivers[value.class_name] = value.construct_receiver_state_from_block(
-            None, f"receiver-{value.class_name}"
+        receivers[value.class_name] = value.fresh_receiver(
+            f"receiver-{value.class_name}"
         )
     return context, receivers
 

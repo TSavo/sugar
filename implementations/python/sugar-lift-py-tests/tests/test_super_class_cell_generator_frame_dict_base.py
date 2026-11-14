@@ -83,7 +83,7 @@ _INHERITED_METHOD = (
 
 def test_an_inherited_method_runs_with_its_defining_class_cell() -> None:
     context, classes = _classes(_INHERITED_METHOD, "inherited_method.py")
-    receiver = classes["B"].construct_receiver_state_from_block(None, "receiver")
+    receiver = classes["B"].fresh_receiver("receiver")
 
     call = receiver.call_method_value(
         "m", (), owner="test", blame="b-m", ctx=context
@@ -107,7 +107,7 @@ _INHERITED_SETITEM = (
 
 def test_a_source_store_runs_an_inherited_override_with_its_defining_class() -> None:
     context, classes = _classes(_INHERITED_SETITEM, "inherited_setitem.py")
-    receiver = classes["B"].construct_receiver_state_from_block(None, "receiver")
+    receiver = classes["B"].fresh_receiver("receiver")
 
     stored = receiver.setitem(StringValue("k"), TermValue(7), "caller", context)
 
@@ -256,9 +256,9 @@ _DICT_OVERRIDES = (
 def _override():
     context, classes = _classes(_DICT_OVERRIDES, "dict_overrides.py")
     definition = classes["Override"]
-    receiver = definition.construct_receiver_state_from_block(
-        None, "receiver"
-    ).mapping_with_entries(((StringValue("k"), TermValue(7)),))
+    receiver = definition.fresh_receiver("receiver").mapping_with_entries(
+        ((StringValue("k"), TermValue(7)),)
+    )
     return context, definition, receiver
 
 

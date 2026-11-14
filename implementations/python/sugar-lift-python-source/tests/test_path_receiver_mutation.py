@@ -969,3 +969,96 @@ def test_self_handed_to_an_opaque_call_in_init_is_rebound_by_the_one_rule():
     assert after.kind == "ReceiverAfterCall"
     # Its value before the call is the receiver with ``x`` stored.
     assert after.prior.kind == "ReceiverFieldStoreState"
+
+
+# The object a class call returns is ``self`` as ``__init__`` left it: the
+# value a read of ``self`` after the initializer's last statement gives, in
+# the context its end record left.  It was rebuilt from the initializer's
+# field stores, so after ``g(self)`` the call returned the fields stored
+# before the call -- a wrong answer.
+
+
+_RESET_IN_INIT = (
+    "class C:\n"
+    "    def __init__(self, reset):\n"
+    "        self.x = 1\n"
+    "        reset(self)\n"
+)
+
+
+def test_the_class_call_reads_self_where_its_initializer_ends():
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+        ReceiverAfterCallSugar,
+    )
+    from sugar_source_tree.nodes import ClassDef
+    from sugar_source_tree.tree import SourceFile
+
+    tree = SourceFile(
+        (
+            _RESET_IN_INIT,
+            "init_end_fixture.py",
+            blake3_512_of(_RESET_IN_INIT.encode()),
+        ),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    cls = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, ClassDef) and node.name == "C"
+    )
+    body = cls.source_visible_constructor_frame().body
+    # ``self`` after ``reset(self)``: its value after the call the one
+    # exposure rule rebinds it to, never the stored fields.
+    assert type(body.receiver_at_end) is ReceiverAfterCallSugar
+    assert not body.returns_early
+
+
+def test_self_exposed_in_init_is_the_object_the_class_call_returns(tmp_path):
+    source = _RESET_IN_INIT + "def f(g):\n    return C(g)\n"
+    returns, _halts = _returns(tmp_path, source)
+    assert returns
+    assert all(_unknown_after_call(value) for value in returns)
+
+
+def test_a_field_of_self_exposed_in_init_is_undecided_not_the_stored_one(tmp_path):
+    source = _RESET_IN_INIT + "def f(g):\n    return C(g).x\n"
+    returns, _halts = _returns(tmp_path, source)
+    assert returns
+    assert TermValue(1) not in returns
+
+
+def test_the_class_call_returns_every_store_of_its_initializer(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "        self.y = 2\n"
+        "def f():\n"
+        "    c = C()\n"
+        "    return (c.x, c.y)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(_ints(1, 2))
+
+
+def test_the_class_call_returns_self_after_a_method_call_on_it(tmp_path):
+    # ``self.helper()`` takes the one door: the receiver is the door's value
+    # after the call (a source object a method of its own reaches may have
+    # changed), so the instance is that value -- what a read of ``self``
+    # after the call gives -- never ``x`` alone as stored before it.
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "        self.helper()\n"
+        "    def helper(self):\n"
+        "        self.z = 3\n"
+        "def f():\n"
+        "    return C()\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert returns
+    assert all(_unknown_after_call(value) for value in returns)

@@ -434,191 +434,22 @@ class ClassDefinitionValue(GuardStableValue):
             owner="ClassDefinitionValue.delitem",
         )
 
-    def construct_receiver_state_from_block(self, block, receiver_coordinate_cid):
-        from sugar_lift_py_tests.floor import (
-            GuardedReceiverFieldStoreValue,
-            GuardedReceiverStateValue,
-            MappingObjectValue,
-            ObjectField,
-            ObjectMethodValue,
-            ObjectValue,
-            ReceiverFieldStoreValue,
-            ReceiverStatePartitionValue,
-        )
-        from sugar_lift_py_tests.ir import (
-            _term_content_cid,
-            ctor,
-            str_const,
-        )
-        from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.outcome.exit_set import partition
+    def fresh_receiver(self, receiver_coordinate_cid):
+        """The object a class call makes for its initializer to run on: no
+        instance fields yet, identified by the call's receiver coordinate.
+        What the call returns is that object as the initializer left it
+        (``ClassConstructorBodySugar._receiver_where_it_ends``)."""
+        from sugar_lift_py_tests.floor import MappingObjectValue, ObjectValue
 
         receiver_type = (
             MappingObjectValue if self._has_authenticated_dict_base() else ObjectValue
         )
-        receiver = receiver_type(
+        return receiver_type(
             self.class_name,
             (),
             methods=self._object_methods(),
             class_fields=self.class_fields,
             identity=receiver_coordinate_cid or self.class_definition_cid,
-            defining_class=self,
-        )
-        if block is None:
-            return receiver
-        # A builtin's transition of this receiver (``super().__init__(...)``
-        # into BaseException's ``__init__``,
-        # ``BuiltinExceptionClassValue.initialize_instance``) is the receiver
-        # it left: a snapshot of this receiver's state, never dropped.
-        block = _receiver_transitions_applied(block, receiver.identity)
-        # The initializer may reduce directly to the CONSTRUCTED receiver -- an
-        # ObjectValue that already carries __init__'s field stores -- rather
-        # than to pending ReceiverFieldStoreValue statements. The same-module
-        # path leaves stores pending; the import/frame door completes them into
-        # the receiver (its ObjectValue.identity is exactly this receiver
-        # coordinate). A block that is exactly this receiver IS the receiver;
-        # rebuilding an empty one here dropped every __init__ field on the
-        # frame door (enter-may-halt ObjectValue.attribute, plan Cut 6).
-        if (
-            len(block.statements) == 1
-            and isinstance(block.statements[0], (ObjectValue, MappingObjectValue))
-            and getattr(
-                block.statements[0].defining_class, "class_definition_cid", None
-            )
-            == self.class_definition_cid
-            and block.statements[0].identity == receiver.identity
-        ):
-            return block.statements[0]
-        guarded_updates = tuple(
-            statement
-            for statement in block.statements
-            if isinstance(
-                statement, (GuardedReceiverFieldStoreValue, GuardedReceiverStateValue)
-            )
-        )
-        if guarded_updates:
-            # Completed snapshots retain the allocation's initial state on the
-            # unwritten face as well; no face gets another face's field table.
-            initial = (
-                (receiver,)
-                if any(
-                    isinstance(update, GuardedReceiverStateValue)
-                    for update in guarded_updates
-                )
-                else ()
-            )
-            # Each arm's value is the stores written on its path. A plain
-            # statement continues every arm; a guarded store splits every arm
-            # into its two faces, each a continuation beneath that arm.
-            states = ExitSet.completed(initial)
-            for statement in block.statements:
-                if isinstance(statement, ObjectValue) or (
-                    isinstance(statement, ReceiverFieldStoreValue)
-                    and not isinstance(statement, GuardedReceiverFieldStoreValue)
-                ):
-                    states = states.sequence(
-                        lambda stores, written=statement: ExitSet.completed(
-                            (*stores, written)
-                        )
-                    )
-                    continue
-                if not isinstance(
-                    statement, (GuardedReceiverFieldStoreValue, GuardedReceiverStateValue)
-                ):
-                    continue
-                store = statement
-                then_face, else_face = partition(
-                    (
-                        "receiver-field-store",
-                        store.to_term(owner=self.class_definition_cid),
-                    )
-                )
-                written = (
-                    store.receiver
-                    if isinstance(store, GuardedReceiverStateValue)
-                    else ReceiverFieldStoreValue(store.receiver, store.attr, store.value)
-                )
-                states = states.sequence(
-                    _store_split(store.guard, written, then_face, else_face)
-                )
-            return ReceiverStatePartitionValue(
-                states.sequence(
-                    lambda stores: ExitSet.completed(
-                        self.construct_receiver_state_from_block(
-                            type(block)(stores), receiver_coordinate_cid
-                        )
-                    )
-                )
-            )
-        fields: dict[str, object] = {}
-        snapshot = None
-        for statement in block.statements:
-            if isinstance(statement, ObjectValue):
-                if (
-                    statement.identity != receiver.identity
-                    or getattr(statement.defining_class, "class_definition_cid", None)
-                    != self.class_definition_cid
-                ):
-                    from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-                    construction_panic_gap(
-                        owner="ClassDefinitionValue.construct_receiver_state",
-                        blame=receiver_coordinate_cid,
-                        observed="foreign constructed receiver snapshot",
-                        requested="the exact source-defined receiver being constructed",
-                        fix="retain the receiver coordinate and defining class across guarded state projection",
-                    )
-                # A snapshot replaces fields it actually recorded. Earlier
-                # extras this snapshot omits stay; they are this face's
-                # already-applied writes, not a sibling branch. Unioning a
-                # field the snapshot names would leak a sibling value.
-                snapshot = statement
-                incoming = {field.name: field.value for field in statement.fields}
-                for name, value in fields.items():
-                    if name not in incoming:
-                        incoming[name] = value
-                fields = incoming
-                continue
-            if not isinstance(statement, ReceiverFieldStoreValue):
-                continue
-            if statement.receiver.identity != receiver.identity:
-                raise SugarNotWritten(
-                    blame=receiver_coordinate_cid,
-                    owner="ClassDefinitionValue.construct_receiver_state",
-                    observed="receiver coordinate mismatch",
-                    requested="stores projected from this exact constructed receiver",
-                    fix="preserve BindingCoordinateV1 through initializer reduction",
-                )
-            fields[statement.attr] = statement.value
-        ordered = tuple(
-            ObjectField(name, value) for name, value in sorted(fields.items())
-        )
-        if snapshot is not None:
-            from dataclasses import replace
-
-            return replace(snapshot, fields=ordered)
-        identity_term = ctor(
-            "python:constructed-object-state",
-            [
-                str_const(self.class_definition_cid),
-                *(
-                    ctor(
-                        "python:field",
-                        [
-                            str_const(field.name),
-                            field.value.to_term(owner=self.class_definition_cid),
-                        ],
-                    )
-                    for field in ordered
-                ),
-            ],
-        )
-        return receiver_type(
-            self.class_name,
-            ordered,
-            methods=self._object_methods(),
-            class_fields=self.class_fields,
-            identity=_term_content_cid(identity_term),
             defining_class=self,
         )
 
@@ -678,48 +509,6 @@ class ClassDefinitionValue(GuardStableValue):
             seen.add(id(base))
             pending.extend(base.base_classes)
         return False
-
-
-def _receiver_transitions_applied(block, identity):
-    """``block`` with each ``ReceiverOwnedMutationResult`` of the receiver
-    ``identity`` read as the receiver it left (``receiver_after``)."""
-    from dataclasses import replace
-
-    from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
-        ReceiverOwnedMutationResult,
-    )
-
-    statements = tuple(
-        (
-            statement.receiver_after
-            if isinstance(statement, ReceiverOwnedMutationResult)
-            and getattr(statement.receiver_before, "identity", None) == identity
-            else statement
-        )
-        for statement in block.statements
-    )
-    if all(new is old for new, old in zip(statements, block.statements)):
-        return block
-    return replace(block, statements=statements)
-
-
-def _store_split(guard, written, then_face, else_face):
-    """One guarded store's two faces beneath an arm whose value is the stores
-    written on its path: ``written`` appended under ``guard``, nothing under
-    its complement, each stamped with its face of the store's split."""
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.outcome.exit_set import complement_guard
-
-    def split(stores):
-        return (
-            ExitSet.completed((*stores, written))
-            .guarded(guard, then_face)
-            .union(
-                ExitSet.completed(stores).guarded(complement_guard(guard), else_face)
-            )
-        )
-
-    return split
 
 
 def c3_tail(bases, tail_of, *, blame, owner: str) -> tuple:

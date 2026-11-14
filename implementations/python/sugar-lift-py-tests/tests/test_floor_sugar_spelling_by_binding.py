@@ -153,7 +153,7 @@ def test_super_init_dispatches_with_a_receiver_not_spelled_self() -> None:
         context.temporal = context.temporal.bind_value(value.class_name, value)
         values.append(value)
     _base, derived = values
-    receiver = derived.construct_receiver_state_from_block(None, "receiver")
+    receiver = derived.fresh_receiver("receiver")
 
     call = receiver.call_method_value(
         "__init__",

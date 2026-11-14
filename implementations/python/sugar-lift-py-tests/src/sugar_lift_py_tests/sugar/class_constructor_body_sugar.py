@@ -73,6 +73,17 @@ class ClassConstructorBodySugar(Sugar):
     # class; the class itself for its own ``__new__``.  None when the body is
     # no source function's (a dataclass's generated stores have no cell).
     cell_class_definition: object | None = field(default=None, compare=False)
+    # The object the class call returns: a read of the receiver after the
+    # initializer's last statement (``nodes._read_where_the_body_ends``),
+    # reduced in the context the initializer's end record left
+    # (``_receiver_where_it_ends``) -- after every store on it, after every
+    # call the one exposure rule lets reach it.  None when no initializer
+    # binds the receiver by name (a source ``__new__`` returns its own).
+    receiver_at_end: Sugar | None = field(default=None, compare=False)
+    # A ``return`` leaves the initializer before its last statement: on the
+    # face it leaves by, the read after the last statement is not the
+    # receiver it left with.
+    returns_early: bool = field(default=False, compare=False)
 
     def __post_init__(self) -> None:
         if self.constructed_new_method is None:
@@ -113,8 +124,9 @@ class ClassConstructorBodySugar(Sugar):
             the substituted method body.  Re-scanning that body for the old
             ReceiverFieldStoreValue statement shape discards the constructed
             return and recreates the pre-store receiver.  Only the authenticated
-            source ``__new__`` arm may return this value; ``__init__`` keeps its
-            ordinary receiver-construction path below.
+            source ``__new__`` arm may return this value; an ``__init__``
+            call returns its receiver as the initializer left it
+            (``_receiver_where_it_ends``).
             """
             if (
                 self.constructed_new_method is None
@@ -157,6 +169,11 @@ class ClassConstructorBodySugar(Sugar):
             )
             from sugar_lift_py_tests.floor import BlockValue
             from sugar_lift_py_tests.floor import EllipsisValue
+            from sugar_lift_py_tests.sugar.function_universe_sugar import (
+                _ReducedBlock,
+                block_values,
+                reduce_block_to_exitset,
+            )
             from sugar_source_tree.panic import SugarNotWritten
 
             # The outer CallSiteValue.force_floor already curried constructor
@@ -166,17 +183,35 @@ class ClassConstructorBodySugar(Sugar):
             # wrapper; after store ExitSet composition, that path left
             # BindingCoordinateRef formals unbound and raised bare
             # SugarNotWritten during source-derived manager construction.
-            outcome = self.initializer_body.desugar(initializer_ctx)
-            if isinstance(outcome, NativeOperationExitCarrierV1):
-                return outcome
+            # Each completed face is the initializer's end record (its
+            # entries and the context it ended in), from which the receiver
+            # is read where it ends.
+            records = reduce_block_to_exitset(
+                self.initializer_body.statements, initializer_ctx
+            )
+            if isinstance(records, NativeOperationExitCarrierV1):
+                return block_values(records)
             # One unconditional completed face is the whole initializer; only
             # then does an ellipsis-only body mean a stub constructor.
-            sole = outcome.completed_value() is not None
+            sole = records.completed_value() is not None
 
-            def receiver_of(block):
-                if not isinstance(block, BlockValue):
-                    # Single-entry reduction (rare): wrap as a block of stores.
-                    block = BlockValue((block,), can_fall_through=True)
+            def receiver_of(record):
+                if not isinstance(record, _ReducedBlock):
+                    raise SugarNotWritten(
+                        blame=self.site,
+                        owner="ClassConstructorBodySugar.desugar",
+                        observed=(
+                            f"an initializer face whose record is a "
+                            f"{type(record).__name__}"
+                        ),
+                        requested="the initializer's end record",
+                        fix="complete every initializer face with its block record",
+                    )
+                block = BlockValue(
+                    record.entries,
+                    fall_through=record.fall_through,
+                    can_fall_through=record.can_fall_through,
+                )
                 if (
                     sole
                     and block.statements
@@ -196,20 +231,54 @@ class ClassConstructorBodySugar(Sugar):
                     )
                 returned = project_new_return(value, block)
                 if returned is not None:
-                    return returned
-                return value.construct_receiver_state_from_block(
-                    block, self.receiver_coordinate_cid
-                )
+                    return ExitSet.completed(returned)
+                return self._receiver_where_it_ends(record, initializer_ctx)
 
             # ``Cls(x)`` is a call: the initializer's halted faces are the
             # call's halted faces, each completed face its own receiver, under
             # its own guard, carrying what it owes. Packing them inside one
             # completed value hid the halts from the caller (#7756).
-            return outcome.sequence(
-                lambda block: ExitSet.completed(receiver_of(block))
-            )
+            return records.sequence(receiver_of)
 
         return self.enter_initializer(ctx, initialize)
+
+    def _receiver_where_it_ends(self, record, ctx) -> ExitSet:
+        """The object the class call returns on one completed face of its
+        initializer: the receiver as a read of it after the initializer's
+        last statement gives it (``receiver_at_end``), reduced in the
+        context that face's end record left (``record.context``).
+
+        ``type.__call__`` returns the object ``__init__`` ran on, in the
+        state ``__init__`` left it: after the one exposure rule's rebinding
+        (``g(self)``, ``self.helper()``) the receiver is its value after
+        that call, and after a later store that value with the store.  It
+        is never rebuilt from the initializer's stores collected again.
+
+        A face that left by a ``return`` before the initializer's last
+        statement (``returns_early``) left with the receiver as it stood at
+        that ``return``, which the read after the last statement is not:
+        refused by name, as is an initializer whose end binds no receiver."""
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if self.receiver_at_end is None or (
+            self.returns_early and not record.can_fall_through
+        ):
+            raise SugarNotWritten(
+                blame=self.site,
+                owner="ClassConstructorBodySugar.receiver",
+                observed=(
+                    "an initializer face that left by a return before its "
+                    "last statement"
+                    if self.receiver_at_end is not None
+                    else "an initializer whose end binds no receiver"
+                ),
+                requested="the receiver as the initializer left it on this face",
+                fix=(
+                    "read the receiver where each return leaves the initializer"
+                ),
+            )
+        context = record.context if record.context is not None else ctx
+        return self.receiver_at_end.desugar(context)
 
     def enter(self, ctx, step, *, at_call=False, call_site=None) -> ExitSet:
         """The class statement's one outcome, read once per class call
@@ -320,9 +389,7 @@ class ClassConstructorBodySugar(Sugar):
                 site=self.site,
                 owner="ClassConstructorBodySugar.__new__",
             )
-            receiver = value.construct_receiver_state_from_block(
-                None, self.receiver_coordinate_cid
-            )
+            receiver = value.fresh_receiver(self.receiver_coordinate_cid)
             if self.initializer_body is None:
                 if self.exception_args_coordinate_cid is not None:
                     receiver = self._carrying_exception_args(receiver, ctx)

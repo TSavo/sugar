@@ -232,7 +232,7 @@ def test_a_class_pattern_tests_the_instance_and_its_attribute() -> None:
         (),
         (("x", ValuePatternSpec(_CompleteValueSugar(TermValue(0), SITE))),),
     )
-    receiver = point.construct_receiver_state_from_block(None, "point-receiver")
+    receiver = point.fresh_receiver("point-receiver")
     at_zero = replace(receiver, fields=(ObjectField("x", TermValue(0)),))
     at_one = replace(receiver, fields=(ObjectField("x", TermValue(1)),))
     assert _matched(match_pattern(pattern, at_zero, SITE, None)).matched

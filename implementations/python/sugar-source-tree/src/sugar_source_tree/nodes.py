@@ -578,6 +578,45 @@ def _explicit_state(name: str, state):
     return _MISSING
 
 
+def _read_where_the_body_ends(owner: "Node", name: str, scope: BindingMap):
+    """The sugar of a read of ``name`` placed after a body's last statement:
+    ``name`` substituted in ``scope``, the scope the body's threading left
+    there (``FunctionDef._substitute_body_to_end``) -- the very node any
+    read of ``name`` at that point is, a store's post-state, a call's
+    exposure (``container_mutation.havoc_after``), an ``if``'s phi.  None
+    when nothing is bound to ``name`` there."""
+    read = For._make_name(owner, name).substitute(scope)
+    if isinstance(read, Name):
+        return None
+    return read.sugar()
+
+
+def _returns_before_the_end(body) -> bool:
+    """Whether a ``return`` of this body -- not one of a function, lambda or
+    class nested in it -- stands anywhere but as the body's last statement.
+    Where one does, the scope after the last statement is not the scope that
+    ``return`` left with."""
+    last = body[-1] if body else None
+    seen: set[int] = set()
+    stack: list = list(body)
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, Node):
+            continue
+        if isinstance(node, Return):
+            if node is not last:
+                return True
+            continue
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+            continue
+        nid = id(node)
+        if nid in seen:
+            continue
+        seen.add(nid)
+        stack.extend(child for _name, _index, child in node._child_edges())
+    return False
+
+
 _NESTED_COMPREHENSION_TEMPLATE = object()
 
 # Set in the scope a generator expression substitutes its conditions and
@@ -7963,21 +8002,33 @@ class FunctionDef(Statement):
             for symbol in table.get_symbols()
         )
 
-    def _source_visible_body(self, scope):
+    def _source_visible_body_and_read(self, scope, name):
+        """The body's sugar, substituted in ``scope``, and the read of
+        ``name`` where the body ends (``_read_where_the_body_ends``).
+
+        A class call's initializer is read so (``ClassDef._source_visible_body``):
+        the object the call returns is its receiver as a read of the receiver
+        formal after the body's last statement gives it -- after every store
+        on it and every call the one exposure rule lets reach it -- never its
+        stores collected again.  A generator body runs nothing at the call
+        and reads nothing."""
         from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
             SourceVisibleFunctionBodySugar,
         )
 
         scope = {**self._captured_scope(), **scope}
-        substituted_body, _ = self._substitute_body(self.body, scope)
+        substituted_body, _changed, final = FunctionDef._substitute_body_to_end(
+            self, self.body, scope
+        )
         if self._source_visible_generator_steps_from(substituted_body) is not None:
-            return SourceVisibleFunctionBodySugar((), self.fragment)
-        return SourceVisibleFunctionBodySugar(
+            return SourceVisibleFunctionBodySugar((), self.fragment), None
+        body = SourceVisibleFunctionBodySugar(
             tuple(
                 self._sugar_body_statement(statement) for statement in substituted_body
             ),
             self.fragment,
         )
+        return body, _read_where_the_body_ends(self, name, final)
 
     def _source_visible_generator_steps(self, scope):
         substituted_body, _ = self._substitute_body(self.body, scope)
@@ -8920,10 +8971,21 @@ class FunctionDef(Statement):
         substitutes it here, so each one reads a module global the same way:
         as the module binds it where the function is called
         (``_module_global_references``), not as the name."""
+        new_items, changed, _final = FunctionDef._substitute_body_to_end(
+            self, statements, scope
+        )
+        return new_items, changed
+
+    def _substitute_body_to_end(self, statements: tuple, scope: BindingMap):
+        """``_substitute_body``, and the scope standing after the body's last
+        statement: ``(new_statements, changed, final_scope)``.  The one
+        threading (``_substitute_body_tracked``); the final scope is the
+        scope it began from with every binding the threading left changed."""
         references = self._module_global_references()
         if references:
             scope = {**scope, **references}
-        return Node._substitute_body(self, statements, scope)
+        new_items, changed, net = self._substitute_body_tracked(statements, scope)
+        return new_items, changed, {**scope, **net}
 
     def _module_global_references(self) -> dict:
         """The module's binding of each global this body reads, where the
@@ -10690,6 +10752,11 @@ class ClassDef(Statement):
         # its ``__class__`` cell (PEP 3135).  A dataclass's generated
         # ``__init__`` is no source function and has none.
         cell_class_definition = None
+        # The object the class call returns: a read of the receiver where
+        # the initializer ends (``_read_where_the_body_ends``), and whether
+        # a ``return`` leaves the initializer before its end.
+        receiver_at_end = None
+        returns_early = False
         if dataclass_fields is not None:
             # ``_init_fn``: one ``__dataclass_self__.f = f`` per field, in
             # field order (the receiver name CPython uses, which no field
@@ -10715,10 +10782,15 @@ class ClassDef(Statement):
                 receiver_name: BindingEntryV1(coordinate, receiver, None),
                 **scope,
             }
-            substituted_body, _ = self._substitute_body(stores, constructor_scope)
+            substituted_body, _changed, net = self._substitute_body_tracked(
+                stores, constructor_scope
+            )
             initializer_body = SourceVisibleFunctionBodySugar(
                 tuple(statement.sugar() for statement in substituted_body),
                 self.fragment,
+            )
+            receiver_at_end = _read_where_the_body_ends(
+                self, receiver_name, {**constructor_scope, **net}
             )
         elif initializer is not None:
             receiver_param = initializer.params[0]
@@ -10742,7 +10814,12 @@ class ClassDef(Statement):
                 ),
                 **scope,
             }
-            initializer_body = initializer._source_visible_body(initializer_scope)
+            initializer_body, receiver_at_end = (
+                initializer._source_visible_body_and_read(
+                    initializer_scope, receiver_param.name
+                )
+            )
+            returns_early = _returns_before_the_end(initializer.body)
             # The class that wrote the ``__init__`` the call runs: the first
             # ``__init__`` of the MRO (``initializer_entry``), a base's when
             # it is inherited.
@@ -10784,6 +10861,8 @@ class ClassDef(Statement):
             exception_args_coordinate_cid=exception_args_coordinate_cid,
             receiver_formal=receiver_formal,
             cell_class_definition=cell_class_definition,
+            receiver_at_end=receiver_at_end,
+            returns_early=returns_early,
         )
 
     def _make_constructed_receiver_ref(self, receiver_coordinate_cid):

@@ -26,7 +26,7 @@ def _definition_and_receiver():
     definition = next(node for node in tree.root.body if isinstance(node, ClassDef))
     outcome = definition.sugar().desugar(ReduceContext.root(owner="test"))
     value = outcome.completed_value()
-    return value, value.construct_receiver_state_from_block(None, "receiver")
+    return value, value.fresh_receiver("receiver")
 
 
 def test_builtin_super_setitem_carries_receiver_transition_and_none_separately():
