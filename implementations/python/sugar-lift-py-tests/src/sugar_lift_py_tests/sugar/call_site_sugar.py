@@ -1245,42 +1245,84 @@ def with_module_final_globals(ctx, readers, *, site):
     ``_module_references_where_called``, with no site).  No
     statement of the module body runs in its frame, so nothing else binds
     that key there.  Each reference's key is bound here, at the frame
-    entry, to the value the write completed with where the write assigned a
-    ground immutable literal (``_bind_ground_evaluation``).  Any other final
-    binding (``x += e``, a call's result, a mutable display) is not bound:
-    its read is refused by name, naming the key (``EvaluationRefSugar.
-    _unbound``).  A global the module body does not decide was refused by
-    name when the body was constructed.  The name is never bound.
+    entry, to the value the module body's own run bound it to: the one
+    source of module-final values (``tree_enumerate.module_end_contexts``,
+    the context each completed arm of THE module reduction ended with).
+    The run evaluated each write once, whatever it wrote (a literal,
+    ``x += e``, a call's result, a list), so its value is the module's,
+    never a second evaluation of the write here.  A key the completed arms
+    bound to different values has no one value, and is not bound.  Where
+    the run completes on no arm or refuses, or no completed arm bound the
+    key, it is not bound: its read is refused by name, naming the key
+    (``EvaluationRefSugar._unbound``).  A global the module body does not
+    decide was refused by name when the body was constructed.  The name is
+    never bound.
 
     Called while the reader's own module body runs, the body reads the
     binding standing at ``site``, whose key that run bound: nothing is
-    bound here.  ``ctx`` comes back unchanged when nothing is bound.
+    bound here, and the module run is not asked for.  ``ctx`` comes back
+    unchanged when nothing is bound.
     """
     from sugar_source_tree.nodes import module_final_global_references
 
-    references = []
+    keys = []
     for reader in readers:
-        references.extend(
-            state
-            for _name, state in sorted(
-                module_final_global_references(reader, site).items()
-            )
-        )
-    evaluations = []
-    for state in references:
-        _collect_final_evaluations(state, evaluations)
-    if not evaluations:
+        evaluations = []
+        for _name, state in sorted(
+            module_final_global_references(reader, site).items()
+        ):
+            _collect_final_evaluations(state, evaluations)
+        if not evaluations:
+            continue
+        from sugar_lift_py_tests.tree_enumerate import module_end_contexts
+
+        ends = module_end_contexts(reader.unit)
+        keys.extend((reference.evaluation, ends) for reference in evaluations)
+    if not keys:
         return ctx
+    from dataclasses import replace
+
     from sugar_lift_py_tests.context import ReduceContext
 
     entered = (
         ReduceContext.root(owner="with_module_final_globals") if ctx is None else ctx
     )
     bound_any = False
-    for reference in evaluations:
-        entered, bound = _bind_ground_evaluation(entered, reference)
-        bound_any = bound_any or bound
+    for key, ends in keys:
+        if entered.temporal.value_if_bound(key) is not None:
+            continue
+        value = _module_end_value(ends, key)
+        if value is None:
+            continue
+        entered = replace(
+            entered,
+            temporal=entered.temporal.bind_value(
+                key, value, blame="with_module_final_globals"
+            ),
+        )
+        bound_any = True
     return entered if bound_any else ctx
+
+
+def _module_end_value(ends, key):
+    """The value the module run bound ``key`` to, read off ``ends`` (the
+    context each completed arm of the run ended with): the one value every
+    completed arm that bound it agrees on, else None.  An arm that never
+    reached the write (a route the write's ``if``/``try`` arm did not take)
+    binds nothing under the key, and a read of the key stands only on the
+    route that wrote it (the phi over that route, ``IfExp`` on a
+    ``BranchResultRef``)."""
+    values = [
+        value
+        for value in (end.temporal.value_if_bound(key) for end in ends)
+        if value is not None
+    ]
+    if not values:
+        return None
+    first = values[0]
+    if any(value is not first and value != first for value in values[1:]):
+        return None
+    return first
 
 
 def _collect_final_evaluations(state, evaluations: list) -> None:
@@ -1302,49 +1344,3 @@ def _collect_final_evaluations(state, evaluations: list) -> None:
     elif isinstance(state, GuardedBinding):
         _collect_final_evaluations(state.when_true, evaluations)
         _collect_final_evaluations(state.when_false, evaluations)
-
-
-def _bind_ground_evaluation(ctx, reference):
-    """``(ctx, bound)``: ``ctx`` with ``reference``'s key bound to the value
-    its write completed with, when that write assigned a ground immutable
-    literal (``EvaluationRef.ground_value``: a constant, signed or int
-    arithmetic over ground ints, a tuple of such).  A literal has no effect
-    and denotes one value wherever it is reduced, so its value here is the
-    value the module body's write bound.  A ground value that reads another
-    key (``N = 3; X = N + 1``) binds that key first, the same way; when one
-    cannot be bound, neither is this one.  A display holding a list is not
-    bound: each evaluation of it is a new object, not the module's.  A key
-    already bound is left as it is."""
-    from dataclasses import replace
-
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        plain_completed_value,
-    )
-    from sugar_source_tree.nodes import EvaluationRef
-
-    key = reference.evaluation
-    if ctx.temporal.value_if_bound(key) is not None:
-        return ctx, True
-    if any(
-        getattr(reference, flag, False) is True
-        for flag in ("member", "place", "deferred")
-    ):
-        # A comprehension member, a store's place, or a generator's walrus
-        # (written only if the generator is consumed): not a write the
-        # module body completed.
-        return ctx, False
-    ground = reference.ground_value()
-    if ground is None:
-        return ctx, False
-    for node in ground.walk():
-        if node.kind == "List":
-            return ctx, False
-        if isinstance(node, EvaluationRef):
-            ctx, bound = _bind_ground_evaluation(ctx, node)
-            if not bound:
-                return ctx, False
-    value = plain_completed_value(ground.sugar().desugar(ctx))
-    if value is None:
-        return ctx, False
-    temporal = ctx.temporal.bind_value(key, value, blame="with_module_final_globals")
-    return replace(ctx, temporal=temporal), True
