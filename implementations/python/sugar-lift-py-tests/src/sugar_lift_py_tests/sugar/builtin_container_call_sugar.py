@@ -252,6 +252,10 @@ class ContainerMutationStatementSugar(Sugar):
 
     evaluated: tuple
     site: object = dataclass_field(compare=False)
+    # The statement's key: the call's pair (``evaluated[0]``) is bound under
+    # it, and the receiver's post-state and the call's value read it there
+    # (``BuiltinContainerProjection``), never the call evaluated again.
+    evaluation: str | None = None
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -279,7 +283,12 @@ class ContainerMutationStatementSugar(Sugar):
                 entries = (pair.elements[0],)
             return ExitSet.completed(_ReducedBlock(entries, True, (), (), active))
 
-        return evaluate_assignment_values(self.evaluated, ctx, tail=record)
+        return evaluate_assignment_values(
+            self.evaluated,
+            ctx,
+            tail=record,
+            evaluations=((self.evaluation, 0),) if self.evaluation else (),
+        )
 
 
 def _unknown_after(site, label):
