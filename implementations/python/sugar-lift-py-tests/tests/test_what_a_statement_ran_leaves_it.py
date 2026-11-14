@@ -16,7 +16,11 @@ what its record carries (#7757, leftovers of #8147).
   statement reads -- and the stores in every record it makes.
 - A class statement lays its body's callee stores once in its record and
   publishes them to its block (``ClassDefinitionSugar.as_statement``); the
-  class value holds none of them, so a read of it applies nothing.
+  class value holds none of them, so a read of it applies nothing.  A
+  decorated class statement lays them the same way, before what its
+  decorators stored (``DecoratorApplicationSugar.runs_statement``); and a
+  class statement run more than once (each item of a loop) lays them at
+  each run, never answered from a recorded read (``statement_run_token``).
 - A ``for`` the unroll dissolves evaluates its iterable's calls before the
   first item (``For._evaluated_before_the_first_item``), whatever the item's
   shape: an earlier item's ``break`` never drops a later item's call, and a
@@ -336,9 +340,10 @@ class _Tally:
         return ctx.with_temporal(tallied)
 
 
-def _class_statement(store):
+def _class_statement(store, site=None):
     """``class C: x = f(acc)`` where ``f`` made ``store``: the class
-    statement's sugar, its one field's value carrying the store."""
+    statement's sugar, its one field's value carrying the store, at
+    ``site``."""
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceFragmentCoordinateV1,
     )
@@ -365,7 +370,7 @@ def _class_statement(store):
         binding_target_occurrence=occurrence,
         base_sugars=(),
         base_fragment_cids=(),
-        site=None,
+        site=site,
     )
 
 
@@ -422,6 +427,144 @@ def test_a_read_of_the_class_value_carries_no_body_store() -> None:
     binds, ran = peel_walrus_binds(run)
     assert caller_stores_of(binds)[1] == (store,)
     assert ran == read
+
+
+def _decorated(statement, *, runs_statement):
+    """``@d class C: ...`` over ``statement``, ``d`` returning its argument:
+    the statement's own application (``runs_statement``), or a read of the
+    name."""
+    from sugar_lift_py_tests.sugar.decorator_application_sugar import (
+        DecoratorApplicationSugar,
+        DecoratorStepV1,
+    )
+
+    return DecoratorApplicationSugar(
+        definition_name="C",
+        decorators=(DecoratorStepV1.identity(None, "d"),),
+        definition_frame=None,
+        definition_class=statement,
+        refusal=None,
+        site=statement.site,
+        runs_statement=runs_statement,
+    )
+
+
+def test_a_decorated_class_statement_lays_its_body_store_once() -> None:
+    """``@d class C: x = f(acc)`` where substitution bound no key: the class
+    body runs once, at the statement, before ``d`` applies, and the
+    statement lays the store in its record exactly as the undecorated one
+    does (``DecoratorApplicationSugar.as_statement``) -- never dropped
+    because ``d`` received the class value."""
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+
+    store = _Tally()
+    statement = _decorated(_class_statement(store), runs_statement=True)
+    ctx = ReduceContext.root(owner="statement-leaves")
+    record = reduce_block_to_exitset((statement,), ctx).completed_value()
+    assert record.context.temporal.value_if_bound("tally") == TermValue(1)
+    assert record.entries.count(store) == 1
+
+
+def test_a_decorated_class_statement_binding_its_key_lays_its_body_store_once():
+    """``@d class C: x = f(acc)`` bound under its evaluation key: the
+    statement is the assignment of the decorators' result
+    (``nodes._decorated_statement_sugar``), which lays the body's store the
+    application carried in its record, once."""
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+
+    store = _Tally()
+    application = _decorated(_class_statement(store), runs_statement=True)
+    statement = AssignSugar(name="C", value=application, site=None)
+    ctx = ReduceContext.root(owner="statement-leaves")
+    record = reduce_block_to_exitset((statement,), ctx).completed_value()
+    assert record.context.temporal.value_if_bound("tally") == TermValue(1)
+    assert record.entries.count(store) == 1
+
+
+def test_a_read_of_a_decorated_class_carries_no_body_store() -> None:
+    """A read of the decorated name that applies the decorators (none bound
+    its key) receives the class value: it runs no body store."""
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+    from sugar_lift_py_tests.context import ReduceContext
+
+    store = _Tally()
+    read = _decorated(_class_statement(store), runs_statement=False)
+    ctx = ReduceContext.root(owner="statement-leaves")
+    assert isinstance(read.desugar(ctx).completed_value(), ClassDefinitionValue)
+
+
+def _class_in_a_loop_site():
+    """The ``class C`` statement's fragment in ``for i in (1, 2): class C:
+    x = f(acc)``."""
+    from sugar_source_tree.nodes import ClassDef
+
+    function = _function(
+        "def g(acc):\n"
+        "    for i in (1, 2):\n"
+        "        class C:\n"
+        "            x = f(acc)\n"
+    )
+    return next(node for node in function.walk() if isinstance(node, ClassDef)).fragment
+
+
+def test_a_class_statement_run_twice_applies_its_body_store_twice() -> None:
+    """``for i in (1, 2): class C: x = f(acc)``: each item runs the class
+    statement, and each run is its own evaluation (``statement_run_token``),
+    so ``f``'s store is applied once per item -- twice -- even where an
+    earlier item recorded a read of ``C`` (``y = C``) under the class
+    sugar's type and site: no run is answered from it."""
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.sugar.assigned_value import assigned_key
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+
+    store = _Tally()
+    statement = _class_statement(store, site=_class_in_a_loop_site())
+    root = ReduceContext.root(owner="statement-leaves")
+    read = statement.desugar(root).completed_value()
+    ctx = root.with_assigned_value(assigned_key(statement), read)
+    assert assigned_key(statement.statement_run()) != assigned_key(statement)
+    record = reduce_block_to_exitset((statement, statement), ctx).completed_value()
+    assert record.context.temporal.value_if_bound("tally") == TermValue(2)
+    assert record.entries.count(store) == 2
+
+
+def test_a_decorated_class_statement_run_twice_applies_its_body_store_twice():
+    """``for i in (1, 2): @d class C: x = f(acc)``: the statement's own
+    application runs the body at each item, never answered from a recorded
+    read of the decorated name."""
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.sugar.assigned_value import assigned_key
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        reduce_block_to_exitset,
+    )
+
+    store = _Tally()
+    definition = _class_statement(store, site=_class_in_a_loop_site())
+    statement = _decorated(definition, runs_statement=True)
+    read = _decorated(definition, runs_statement=False)
+    root = ReduceContext.root(owner="statement-leaves")
+    ctx = root.with_assigned_value(
+        assigned_key(read), read.desugar(root).completed_value()
+    )
+    assert assigned_key(statement) != assigned_key(read)
+    record = reduce_block_to_exitset((statement, statement), ctx).completed_value()
+    assert record.context.temporal.value_if_bound("tally") == TermValue(2)
+    assert record.entries.count(store) == 2
 
 
 # ---------------------------------------------------------------------------
