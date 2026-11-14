@@ -632,7 +632,6 @@ class PathContainerCallSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
             reduce_operands,
-            written_by,
         )
 
         def on_receiver(receiver):
@@ -661,9 +660,10 @@ class PathContainerCallSugar(ConstructedTermSugar):
             if kind is not None and self.method in law.MUTATING_METHODS[kind]:
                 # The arguments are operands: a walrus in one binds once,
                 # through the one operand door.  They reduce left to right
-                # after the receiver (``reduce_operands``).
+                # after the receiver (``reduce_operands``'s ``earlier``):
+                # they read its writes, and their halts carry them.
                 return reduce_operands(
-                    self.args, written_by(receiver, ctx)
+                    self.args, ctx, earlier=(receiver,)
                 ).and_then(
                     lambda operands: consume_operands(
                         lambda *held: law.apply(
@@ -678,7 +678,7 @@ class PathContainerCallSugar(ConstructedTermSugar):
                 # subclass that does not define ``pop``: the inherited
                 # ``dict.pop`` over its constructed entries.
                 return reduce_operands(
-                    self.args, written_by(receiver, ctx)
+                    self.args, ctx, earlier=(receiver,)
                 ).and_then(
                     lambda operands: consume_operands(
                         lambda pop_key, default: _mapping_pop_pair(

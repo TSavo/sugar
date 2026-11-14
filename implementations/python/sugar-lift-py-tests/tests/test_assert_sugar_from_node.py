@@ -3,8 +3,9 @@
 Source string, parsed, the Assert node asked for its sugar: an AssertSugar
 whose `test` is the EqualityOpSugar the Compare node produced — the whole
 recursion, Assert → Compare → two Constants, all node.sugar() calling
-node.sugar(). No factory in the chain. The message operand is source
-provenance only: AssertSugar carries its pinned fragment but never reduces it.
+node.sugar(). No factory in the chain. The message operand is a child built
+with the test (its spelling rides ``assertMessage`` provenance); it is
+evaluated only where the assert fails.
 """
 
 from __future__ import annotations
@@ -60,7 +61,7 @@ def test_assert_with_message_builds_and_carries_message_provenance():
     outcome = sugar.desugar()
 
     assert isinstance(sugar, AssertSugar)
-    assert sugar.message.text == "'boom'"
+    assert sugar.message == node.msg.sugar()
     assert outcome.value.site.memento().extra["assertMessage"] == "'boom'"
     assert outcome.value.site.memento().to_rpc()["assertMessage"] == "'boom'"
 
@@ -77,12 +78,17 @@ def test_assert_support_retains_its_own_occurrence_not_a_foreign_site():
     assert left_support.site != right_support.site
 
 
-def test_assert_message_is_not_reduced_on_the_success_path():
+def test_an_unbuilt_message_refuses_the_assert_at_construction():
+    # The message is a child built with the statement: one with no sugar
+    # refuses the assert by name, even where the assert cannot fail.
+    from sugar_source_tree.panic import SugarNotWritten
+
     node = _assert_node("assert 1 == 1, (yield 2)\n")
-
-    sugar = node.sugar()
-
-    assert sugar.message.text == "yield 2"
+    try:
+        node.sugar()
+        assert False, "the Yield message gap must refuse the assert"
+    except SugarNotWritten as panic:
+        assert panic.owner == "Yield.sugar"
 
 
 def test_unbuilt_condition_child_preserves_its_own_gap():

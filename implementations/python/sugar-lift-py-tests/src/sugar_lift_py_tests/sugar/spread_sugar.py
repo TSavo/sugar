@@ -13,7 +13,7 @@ from sugar_lift_py_tests.sugar.sugar_base import (
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 
-def _collect(sugars: tuple, ctx, done: tuple, finish):
+def _collect(sugars: tuple, ctx, done: tuple, finish, *, earlier: tuple = ()):
     """Sequence spread operands by COMPOSING factors, never distributing them.
 
     #6309. The previous body chained ``and_then`` once per operand, and
@@ -42,6 +42,13 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
     chain re-``desugar``ed each tail operand once per prefix arm; the fold walks
     the operands in the same source order, once each.
 
+    Each operand is evaluated after the ones before it (``evaluated_after``):
+    in the context their writes left (``written_by`` of ``earlier`` -- what
+    the expression evaluated before its first operand, a spread call's
+    callee -- and of every value collected), so ``[*(a := xs), *a]`` reads
+    ``a``, and its halts carry those writes, the callee stores first in
+    their records' entries.
+
     Every operand, and ``finish``, runs beneath the PREFIX -- the one completed
     arm the operands so far left through -- by ``ExitSet.sequence``: what it
     produces takes the prefix's guard, faces and ``owed``. Its halts leave the
@@ -53,6 +60,10 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
 
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        evaluated_after,
+        written_by,
     )
 
     # Truth before the first operand; afterwards the operands' completed path.
@@ -74,13 +85,19 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
         # The operands before it already ran: once the carrier discharges, its
         # exits leave beneath their prefix beside every halt they collected. A
         # halt is never dropped.
-        desugared = sugar.desugar(ctx)
+        before = (*earlier, *values)
+        operand_ctx = ctx
+        for value in before:
+            operand_ctx = written_by(value, operand_ctx)
+        desugared = evaluated_after(before, sugar, operand_ctx)
         if isinstance(desugared, NativeOperationExitCarrierV1):
             already = tuple(values)
             remaining = sugars[index + 1 :]
             collected = tuple(halted)
             return desugared.and_then(
-                lambda value: _collect(remaining, ctx, already + (value,), finish)
+                lambda value: _collect(
+                    remaining, ctx, already + (value,), finish, earlier=earlier
+                )
             ).after_discharge(
                 lambda projected, *, prefix=prefix: leave(
                     projected, prefix=prefix, halted=collected
@@ -319,12 +336,15 @@ class SpreadCallSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> ExitSet:
         def after_callee(callee_value):
+            # The callee is evaluated before the arguments: they read its
+            # writes and their halts carry them (``_collect``'s ``earlier``).
             sugars = tuple(sugar for _, _, sugar in self.arguments)
             return _collect(
                 sugars,
                 ctx,
                 (),
                 lambda values: self._finish(callee_value, values, ctx),
+                earlier=() if callee_value is None else (callee_value,),
             )
 
         if self.callee is None:

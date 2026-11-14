@@ -843,29 +843,34 @@ def test_an_unpack_that_fails_after_its_walrus_carries_it() -> None:
 
 
 def test_an_asserts_message_walrus_is_held() -> None:
-    # The message is held out of equality and built only where the assert
-    # fails; a walrus in it still runs before ``AssertionError``, so the
-    # statement holds it, and a record-less failure is refused, never given
-    # the prefix that drops the bind.
-    assert holds_a_walrus(AssertSugar(_One(), None, message_holds_a_walrus=True))
+    # The message is a compared child built with the statement; a walrus in
+    # it runs before ``AssertionError``, so the statement holds it, and a
+    # record-less failure is refused, never given the prefix that drops the
+    # bind.
+    assert holds_a_walrus(AssertSugar(_One(), None, message=_walrus()))
+    assert not holds_a_walrus(AssertSugar(_One(), None, message=_One()))
     assert not holds_a_walrus(AssertSugar(_One(), None))
 
 
-def test_an_assert_built_from_source_says_its_message_holds_a_walrus() -> None:
+def _built_assert(source: str) -> AssertSugar:
     from sugar_source_tree.nodes import Assert
 
-    def built(source: str) -> AssertSugar:
-        context = TreeConstructionContextV1.for_source_call_construction()
-        tree = SourceFile(
-            (source, "every_halt_record.py", blake3_512_of(source.encode())),
-            construction_context=context,
-        )
-        node = next(node for node in tree.nodes() if isinstance(node, Assert))
-        return node._construct_sugar()
+    context = TreeConstructionContextV1.for_source_call_construction()
+    tree = SourceFile(
+        (source, "every_halt_record.py", blake3_512_of(source.encode())),
+        construction_context=context,
+    )
+    node = next(node for node in tree.nodes() if isinstance(node, Assert))
+    return node.sugar()
 
-    assert built("def f():\n    assert True, (m := 'x')\n").message_holds_a_walrus
-    assert not built("def f():\n    assert True, 'x'\n").message_holds_a_walrus
-    assert not built("def f():\n    assert True\n").message_holds_a_walrus
+
+def test_an_assert_built_from_source_holds_its_messages_walrus() -> None:
+    # The message's sugar is built at construction, with the test's.
+    built = _built_assert("def f():\n    assert True, (m := 'x')\n")
+    assert isinstance(built.message, NamedExprSugar)
+    assert holds_a_walrus(built)
+    assert not holds_a_walrus(_built_assert("def f():\n    assert True, 'x'\n"))
+    assert _built_assert("def f():\n    assert True\n").message is None
 
 
 # -- the targets are assigned left to right, stores among them -------------------
@@ -1243,6 +1248,78 @@ def test_an_operand_inside_an_earlier_door_is_recorded_without_its_store() -> No
     assert halt.state.entries == (_STORE,)
 
 
+def _never_finished(_values):
+    raise AssertionError("every path halted before the fold finished")
+
+
+def test_a_spread_operands_halt_lays_an_earlier_operands_callee_store() -> None:
+    # ``[*f(o), *d[k]]``: ``f``'s store was made before ``d[k]`` raised. The
+    # spread fold used to evaluate every operand in the same context, so
+    # the halt offered no record and the statement's prefix stood in.
+    from sugar_lift_py_tests.sugar.spread_sugar import _collect
+
+    ctx = ReduceContext.root(owner="every-halt-record.spread-store")
+    exits = _collect(
+        (_carries_a_store(), _LeaksAsOperand()), ctx, (), _never_finished
+    )
+    (halt,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
+    assert isinstance(halt.state, _ReducedBlock)
+    assert halt.state.entries == (_STORE,)
+
+
+def test_a_later_spread_operand_reads_an_earlier_operands_walrus() -> None:
+    # ``[*(a := xs), *a]``: the second operand is evaluated where the
+    # walrus left the context.
+    from sugar_lift_py_tests.sugar.spread_sugar import _collect
+
+    ctx = ReduceContext.root(owner="every-halt-record.spread-walrus")
+    ran: list = []
+    _collect(
+        (_walrus(), _Counted(ran)),
+        ctx,
+        (),
+        lambda values: ExitSet.completed(len(values)),
+    )
+    (operand_ctx,) = ran
+    assert operand_ctx.temporal.value_if_bound(_WALRUS_KEY) == TermValue(1)
+
+
+def test_a_spread_calls_argument_halt_lays_the_callees_store() -> None:
+    # ``g(o)(*d[k])``: the callee expression ran (storing on ``o``) before
+    # the starred argument raised.
+    from sugar_lift_py_tests.sugar.spread_sugar import SpreadCallSugar
+
+    ctx = ReduceContext.root(owner="every-halt-record.spread-call")
+    call = SpreadCallSugar(
+        callee_name=None,
+        callee=_carries_a_store(),
+        arguments=(("star", None, _LeaksAsOperand()),),
+        site=None,
+    )
+    (halt,) = [exit_ for exit_ in call.desugar(ctx).exits if isinstance(exit_, Halted)]
+    assert halt.state.entries == (_STORE,)
+
+
+def test_operands_reduced_after_a_receiver_carry_its_writes() -> None:
+    # A container call's arguments are reduced after its receiver
+    # (``PathContainerCallSugar._call``: ``reduce_operands``'s ``earlier``):
+    # an argument's halt lays the receiver's callee store, and an argument
+    # reads the receiver's walrus.
+    from sugar_lift_py_tests.floor.named_expression_value import reduce_operands
+
+    ctx = ReduceContext.root(owner="every-halt-record.receiver-store")
+    receiver = carry_caller_stores((_STORE,), TermValue(1))
+    exits = reduce_operands((_LeaksAsOperand(),), ctx, earlier=(receiver,))
+    (halt,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
+    assert halt.state.entries == (_STORE,)
+
+    ran: list = []
+    walrus = _walrus().desugar(ctx).completed_value()
+    reduce_operands((_Counted(ran),), ctx, earlier=(walrus,))
+    (operand_ctx,) = ran
+    assert operand_ctx.temporal.value_if_bound(_WALRUS_KEY) == TermValue(1)
+
+
 # -- a Name-only unpack lays its right-hand side's callee stores -----------------
 
 _UNPACK_KEY = EVALUATION_PREFIX + "every-halt-record.unpack"
@@ -1317,19 +1394,45 @@ def test_a_failing_asserts_message_walrus_is_bound_when_it_raises() -> None:
     ) == _returned_after("        (a := 1)\n        assert 1 == 2\n", "AssertionError")
 
 
-def test_a_passing_asserts_message_is_never_built() -> None:
-    # The success path never runs the message: ``(yield 2)`` there has no
-    # sugar, and the assert still reduces.
-    from sugar_source_tree.nodes import Assert
+def test_an_assert_whose_message_has_no_sugar_refuses_at_construction() -> None:
+    # The message is built with the statement, never during reduction:
+    # ``(yield 2)`` there has no sugar, so the assert refuses by name at
+    # construction, even though it cannot fail.
+    with pytest.raises(SugarNotWritten) as refused:
+        _built_assert("assert 1 == 1, (yield 2)\n")
+    assert refused.value.owner == "Yield.sugar"
 
-    source = "assert 1 == 1, (yield 2)\n"
-    tree = SourceFile(
-        (source, "every_halt_record.py", blake3_512_of(source.encode())),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+
+@dataclass(frozen=True)
+class _Counted(Sugar):
+    """An operand that records each evaluation in ``ran``."""
+
+    ran: list = field(compare=False)
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        self.ran.append(ctx)
+        return ExitSet.completed(TermValue(1))
+
+
+def test_a_passing_asserts_message_is_never_evaluated() -> None:
+    # The message is built with the statement, but evaluated only beneath
+    # the assert's own failure (CPython semantics).
+    from dataclasses import replace
+
+    ctx = ReduceContext.root(owner="every-halt-record.assert-message")
+    ran: list = []
+    passing = replace(
+        _built_assert("def f():\n    assert True, 'x'\n"), message=_Counted(ran)
     )
-    node = next(node for node in tree.nodes() if isinstance(node, Assert))
-    sugar = node.sugar()
-    assert sugar.message_sugar is not None
-    assert not any(
-        isinstance(exit_, Halted) for exit_ in sugar.desugar(None).exits
+    assert not any(isinstance(e, Halted) for e in passing.desugar(ctx).exits)
+    assert ran == []
+    failing = replace(
+        _built_assert("def f():\n    assert False, 'x'\n"), message=_Counted(ran)
     )
+    assert any(isinstance(e, Halted) for e in failing.desugar(ctx).exits)
+    assert len(ran) == 1
