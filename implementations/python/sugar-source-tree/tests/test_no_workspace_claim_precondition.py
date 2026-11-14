@@ -79,7 +79,10 @@ import pathlib
 CLAIM = "for_test_without_workspace()"
 ROOTED = "workspace_path_source("
 # The one opener's first stage takes ``root`` as a REQUIRED keyword, so a call
-# to it always holds a root, exactly as ``workspace_path_source`` does.
+# to it names its root, exactly as ``workspace_path_source`` does. It may name
+# ``root=None`` when it hands over an identity already read (``seated=``); the
+# scan flags every first-stage call that makes the claim either way, which is
+# the conservative side.
 ROOTED_OPENERS = ("_open_at_seat(",)
 OPENERS = ("SourceFile(", *ROOTED_OPENERS)
 

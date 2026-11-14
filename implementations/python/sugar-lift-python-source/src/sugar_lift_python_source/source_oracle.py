@@ -40,15 +40,17 @@ from .canonical import blake3_512_of, template_cid_of_json
 from .source_tables import source_segment, source_splitlines
 
 
-def _source_file_cls():
-    """Lazy SourceFile import — tree imports this module for path_source."""
+def _parse_door():
+    """Lazy import of the one entry a file is parsed through (the opener's
+    first stage, ``lift_rpc._open_at_seat``) — tree imports this module for
+    path_source."""
     _tree_src = Path(__file__).resolve().parents[3] / "sugar-source-tree" / "src"
     if _tree_src.is_dir() and str(_tree_src) not in sys.path:
         sys.path.insert(0, str(_tree_src))
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
     from sugar_source_tree.backend import BackendCouldNotParse
-    from sugar_source_tree.tree import SourceFile
 
-    return SourceFile, BackendCouldNotParse
+    return _open_at_seat, BackendCouldNotParse
 
 
 class SourceUnavailable(Exception):
@@ -120,12 +122,14 @@ def installed_module_source(
         return cached
 
     # Parse before publishing a successful oracle answer. Syntax failures are
-    # not cached as completed source. SourceFile is the sole parse door —
-    # adapters own foreign grammar; this layer only admits successfully typed
-    # modules into the oracle cache.
-    SourceFile, BackendCouldNotParse = _source_file_cls()
+    # not cached as completed source. The opener's first stage is the sole
+    # parse door — adapters own foreign grammar; this layer only admits
+    # successfully typed modules into the oracle cache. An installed module is
+    # not one of the session's workspace files: it is parsed at its origin,
+    # through the same entry, with the identity read here.
+    open_at_seat, BackendCouldNotParse = _parse_door()
     try:
-        SourceFile((source, origin, source_cid))
+        open_at_seat(None, root=None, seated=(source, origin, source_cid))
     except (SyntaxError, BackendCouldNotParse, UnicodeError, ValueError):
         return None
 
@@ -407,11 +411,16 @@ def resolve_source_memento(
         raise SourceUnavailable(f"cannot read source `{path}`: {exc}") from exc
 
     source_cid = blake3_512_of(source.encode("utf-8"))
+    rel = file.replace(os.sep, "/")
     # SourceFile / typed Nodes are the sole recompute path: locate, body text,
-    # and template projection all speak typed currency.
-    SourceFile, BackendCouldNotParse = _source_file_cls()
+    # and template projection all speak typed currency. The re-read is of the
+    # workspace file on disk now (checked against the pinned CIDs below), not
+    # of a sealed historical blob, so it is a file the session may also open:
+    # it is parsed through the one entry at the seat the memento names, and so
+    # shares the session's unit for these bytes.
+    open_at_seat, BackendCouldNotParse = _parse_door()
     try:
-        source_file = SourceFile((source, str(path), source_cid))
+        source_file = open_at_seat(None, root=None, seated=(source, rel, source_cid))
     except (SyntaxError, BackendCouldNotParse, UnicodeError, ValueError) as exc:
         raise SourceUnavailable(f"cannot parse source `{path}`: {exc}") from exc
 
@@ -422,7 +431,6 @@ def resolve_source_memento(
             f"{span.get('start_line')}"
         )
 
-    rel = file.replace(os.sep, "/")
     if memento.get("source_kind") in {"python.ast-stmt", "python.ast-expr"}:
         recomputed = _node_source_locator(
             node,

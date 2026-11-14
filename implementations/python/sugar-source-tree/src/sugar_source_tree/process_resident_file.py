@@ -24,14 +24,15 @@ seat-bound and authority-bound: it is keyed by the workspace root and the
 table/session it was opened under as well as the CID and seat, so it is shared
 only by opens that would have produced the same unit.
 
-ONE PARSE PER FILE (#7757 item 5). The opener's first stage opened with no
-construction context (``AWAITING_CONSTRUCTION_CONTEXT``: the step-3 readers)
-parses the file once. Its unit waits for the opener: the opener's open under a
-context attaches that context to the waiting unit
-(``SourceUnit.attach_construction_context``) instead of parsing the file a
-second time. The slot is still written once: a unit that already carries a
-context is never given another one, and an open under a different context
-prepares its own unit (#7772).
+ONE ENTRY, ONE PARSE PER FILE (#7757 item 5). Residency is entered from one
+place: the opener's first stage, ``lift_rpc._open_at_seat`` (``SourceFile(...)``
+forwards to it). A unit parsed with no construction context (the step-3
+readers, or any other contextless open, all through that entry) waits for the
+opener: the opener's open under a context attaches that context to the
+resident unit (``SourceUnit.attach_construction_context``) instead of parsing
+the file a second time. The slot is still written once: a unit that already
+carries a context is never given another one, and an open under a different
+context prepares its own unit (#7772).
 
 Identity is not the key. ``h = h(p)``: the whole-file content CID *is* the key.
 """
@@ -65,22 +66,6 @@ class ProcessResidentFileContext:
     filename: str
     source_file: Any  # SourceFile — structural shell after prepare
     prepare_count: int
-    # Parsed by the opener's first stage with no context, for the step-3
-    # readers; the opener attaches its context to this unit instead of
-    # parsing the file again. Cleared once the context is attached, or once
-    # the unit is handed to a contextless caller that is not the first stage.
-    awaits_context: bool = False
-
-
-class _AwaitingConstructionContext:
-    """The first stage's open with no construction context, for the step-3
-    readers: the unit is parsed now and the opener attaches its context."""
-
-    def __repr__(self) -> str:  # pragma: no cover
-        return "AWAITING_CONSTRUCTION_CONTEXT"
-
-
-AWAITING_CONSTRUCTION_CONTEXT = _AwaitingConstructionContext()
 
 
 # (content CID, source seat) -> resident context (LRU by access)
@@ -237,7 +222,7 @@ def get_resident(source_cid: str, source_seat: str) -> ProcessResidentFileContex
     return hit
 
 
-def source_file_from_identity(
+def _source_file_from_identity(
     identity: Tuple[str, str, str],
     *,
     backend: Any = None,
@@ -246,19 +231,18 @@ def source_file_from_identity(
 ) -> Any:
     """Return SourceFile for identity, preparing at most once per CID and seat.
 
-    Implements §4 at the construction door every demand already walks.
+    Implements §4 at the construction door every demand already walks. Private
+    to the opener's first stage (``lift_rpc._open_at_seat``), the one entry:
+    nothing else reaches residency, so every contextless open is a first-stage
+    open and every unit without a context is one the opener may attach to.
 
-    ``construction_context=AWAITING_CONSTRUCTION_CONTEXT`` is the opener's
-    first stage with no context (the step-3 readers): the unit is parsed with
-    no context and waits for the opener, whose open under its context attaches
-    that context to the same unit, so the file is parsed once.
+    A contextless open parses the file with no context; the opener's open under
+    its context attaches that context to the same unit, so the file is parsed
+    once (#7757 item 5).
     """
     from .reporter import NULL_REPORTER
     from .tree import SourceFile, _default_backend
 
-    awaits_context = construction_context is AWAITING_CONSTRUCTION_CONTEXT
-    if awaits_context:
-        construction_context = None
     source, filename, source_cid = identity
     if not source_cid:
         # No content address → no residency (cannot key). Pay full prepare.
@@ -272,20 +256,16 @@ def source_file_from_identity(
     hit = get_resident(source_cid, filename)
     if hit is not None:
         unit = hit.source_file.unit
-        if construction_context is None:
-            if not awaits_context:
-                # Handed to a contextless caller that is not the first stage:
-                # what it does with the unit is not a step-3 read, so the
-                # opener prepares its own unit rather than attach to this one.
-                hit.awaits_context = False
-        elif unit.construction_context is construction_context:
+        if (
+            construction_context is None
+            or unit.construction_context is construction_context
+        ):
             pass
-        elif unit.construction_context is None and hit.awaits_context:
-            # The first stage parsed this file for the step-3 readers; the
-            # opener attaches its context instead of parsing it again. The one
-            # write of the slot (#7757 item 5).
+        elif unit.construction_context is None:
+            # The first stage parsed this file with no context; the opener
+            # attaches its context instead of parsing it again. The one write
+            # of the slot (#7757 item 5).
             unit.attach_construction_context(construction_context)
-            hit.awaits_context = False
         else:
             # A unit keeps the construction context it was prepared under;
             # nothing writes that slot again. An open that carries a different
@@ -318,7 +298,6 @@ def source_file_from_identity(
             filename=filename,
             source_file=sf,
             prepare_count=_PREPARE_COUNTS[count_key],
-            awaits_context=awaits_context,
         ),
     )
     return sf

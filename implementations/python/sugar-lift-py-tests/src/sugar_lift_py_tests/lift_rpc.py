@@ -434,9 +434,9 @@ def _read_at_seat(
 
 
 def _open_at_seat(
-    path: Path,
+    path: Path | None,
     *,
-    root: Path,
+    root: Path | None,
     source_workspace_root: Path | None = None,
     backend=None,
     reporter=None,
@@ -454,21 +454,32 @@ def _open_at_seat(
     same bytes and the same resident unit the opener does. The files are step
     2's file list; no dependency module is opened anywhere.
 
-    One parse per file: opened with no context, the unit is parsed once and
-    waits for the opener (``AWAITING_CONSTRUCTION_CONTEXT``); the opener's open
-    under its context attaches that context to the same unit
-    (``SourceUnit.attach_construction_context``) rather than parsing the file
-    again. Opened after the opener, the readers get the opener's unit.
+    The one entry: this is the only caller of
+    ``process_resident_file._source_file_from_identity``, and every other
+    construction of a ``SourceFile`` comes through here (``SourceFile(identity)``
+    forwards here with ``seated=identity``; the source oracle, the memento
+    resolvers, the typed parse and the contract-expression reader pass the
+    identity they read as ``seated``). So no caller can pick a resident unit up
+    some other way.
+
+    One parse per file: opened with no context, the unit is parsed once with no
+    context; the opener's open under its context attaches that context to the
+    same unit (``SourceUnit.attach_construction_context``) rather than parsing
+    the file again. Opened after the opener, a contextless open gets the
+    opener's unit.
 
     ``seated`` is the identity the caller already read at this seat (the opener
-    reads once to consult its memo); otherwise it is read here.
+    reads once to consult its memo; the oracle reads before it parses);
+    otherwise it is read here from ``path`` and ``root``.
     ``reporter=None`` leaves a resident file's reporter as it is.
     """
-    from sugar_source_tree.process_resident_file import (
-        AWAITING_CONSTRUCTION_CONTEXT,
-    )
-    from sugar_source_tree.tree import SourceFile
+    from sugar_source_tree.process_resident_file import _source_file_from_identity
 
+    if seated is None and (path is None or root is None):
+        raise TypeError(
+            "_open_at_seat reads a file at its seat: it takes a path and its "
+            "root, or an identity already read (seated=)"
+        )
     identity = (
         seated
         if seated is not None
@@ -476,15 +487,11 @@ def _open_at_seat(
             path, root=root, source_workspace_root=source_workspace_root
         )
     )
-    return SourceFile(
+    return _source_file_from_identity(
         identity,
         backend=backend,
         reporter=reporter,
-        construction_context=(
-            AWAITING_CONSTRUCTION_CONTEXT
-            if construction_context is None
-            else construction_context
-        ),
+        construction_context=construction_context,
     )
 
 
