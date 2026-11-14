@@ -172,23 +172,12 @@ def test_type_call_result_is_a_type_object() -> None:
 
 
 def _name_attribute_callsite():
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.ir import ctor
-
+    """``exc_type.__name__`` as the attribute read mints it (its marker,
+    ``type_name_attribute``), never a hand-spelled ``attr:__name__`` term."""
     receiver = SymbolicValue(make_var("exc_type"))
-    site = "name-attr"
-    return CallSiteValue(
-        target_name="__name__",
-        arg_values=(receiver,),
-        parameters=(),
-        term=ctor(
-            "attr:__name__",
-            [receiver.to_term(owner=str(site))],
-            symbol_kind="method-coordinate",
-        ),
-        body=None,
-        site=site,
-    )
+    name = receiver.attribute("__name__", "name-attr", None).completed_value()
+    assert name.type_name_attribute
+    return name
 
 
 def test_name_attribute_plus_string_is_a_concat_coordinate_not_an_invented_string() -> None:

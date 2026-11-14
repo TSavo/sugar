@@ -55,6 +55,7 @@ def _concatenate_joined_parts(left, right, site, ctx):
             ),
             body=None,
             site=site,
+            string_concatenation=True,
         )
     )
 

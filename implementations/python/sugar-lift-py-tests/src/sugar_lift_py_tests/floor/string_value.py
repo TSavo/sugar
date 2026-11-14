@@ -678,13 +678,20 @@ def _fold_string_method(receiver: StringValue, operation):
     ExitSet when this method is owned, else None so the caller keeps the call
     loud for unrelated names.
     """
-    from sugar_lift_py_tests.floor.array_literal import ArrayLiteral
+    from sugar_lift_py_tests.floor.list_value import ListValue
     from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
     from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.outcome import ExitSet
 
     name = operation.name
     args = operation.arguments
+
+    def new_list(parts) -> ExitSet:
+        # ``str.split`` / ``str.splitlines`` return a new ``list``: the
+        # lifter's one floor for a ``builtins.list`` (``ListValue``), so a
+        # later ``.append`` and every other list method answer through the
+        # same door a list display's do (#7757).
+        return ExitSet.completed(ListValue(tuple(StringValue(part) for part in parts)))
 
     def opaque_coordinate(language_callee=None) -> ExitSet:
         return ExitSet.completed(
@@ -756,51 +763,22 @@ def _fold_string_method(receiver: StringValue, operation):
         from sugar_source_tree.nodes import LanguageCallee
 
         if len(args) == 0:
-            return ExitSet.completed(
-                ArrayLiteral(
-                    tuple(StringValue(part) for part in receiver.value.split())
-                )
-            )
+            return new_list(receiver.value.split())
         if len(args) == 1:
             sep = args[0]
             if isinstance(sep, StringValue):
-                return ExitSet.completed(
-                    ArrayLiteral(
-                        tuple(
-                            StringValue(part)
-                            for part in receiver.value.split(sep.value)
-                        )
-                    )
-                )
+                return new_list(receiver.value.split(sep.value))
             if _is_none_floor(sep):
-                return ExitSet.completed(
-                    ArrayLiteral(
-                        tuple(StringValue(part) for part in receiver.value.split(None))
-                    )
-                )
+                return new_list(receiver.value.split(None))
             return opaque_coordinate(LanguageCallee.STR_SPLIT)
         if len(args) == 2:
             sep, maxsplit = args
             if isinstance(maxsplit, TermValue) and type(maxsplit.value) is int:
                 max_n = int(maxsplit.value)
                 if isinstance(sep, StringValue):
-                    return ExitSet.completed(
-                        ArrayLiteral(
-                            tuple(
-                                StringValue(part)
-                                for part in receiver.value.split(sep.value, max_n)
-                            )
-                        )
-                    )
+                    return new_list(receiver.value.split(sep.value, max_n))
                 if _is_none_floor(sep):
-                    return ExitSet.completed(
-                        ArrayLiteral(
-                            tuple(
-                                StringValue(part)
-                                for part in receiver.value.split(None, max_n)
-                            )
-                        )
-                    )
+                    return new_list(receiver.value.split(None, max_n))
             return opaque_coordinate(LanguageCallee.STR_SPLIT)
         return None
 
@@ -808,31 +786,13 @@ def _fold_string_method(receiver: StringValue, operation):
         # str.splitlines([keepends]) — fold when keepends is static bool/0/1;
         # opaque keepends → coordinate only (never invent line breaks).
         if len(args) == 0:
-            return ExitSet.completed(
-                ArrayLiteral(
-                    tuple(StringValue(part) for part in receiver.value.splitlines())
-                )
-            )
+            return new_list(receiver.value.splitlines())
         if len(args) == 1:
             keep = args[0]
             if isinstance(keep):
-                return ExitSet.completed(
-                    ArrayLiteral(
-                        tuple(
-                            StringValue(part)
-                            for part in receiver.value.splitlines(keep.value)
-                        )
-                    )
-                )
+                return new_list(receiver.value.splitlines(keep.value))
             if isinstance(keep, TermValue) and type(keep.value) is int:
-                return ExitSet.completed(
-                    ArrayLiteral(
-                        tuple(
-                            StringValue(part)
-                            for part in receiver.value.splitlines(bool(keep.value))
-                        )
-                    )
-                )
+                return new_list(receiver.value.splitlines(bool(keep.value)))
             return opaque_coordinate()
         return None
 
@@ -842,12 +802,13 @@ def _fold_string_method(receiver: StringValue, operation):
 def _static_str_parts(iterable) -> list[str] | None:
     """Extract a fully-static list of strings from a join iterable, or None."""
     from sugar_lift_py_tests.floor.array_literal import ArrayLiteral
+    from sugar_lift_py_tests.floor.list_value import ListValue
     from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 
     if isinstance(iterable, StringValue):
         # str.join over a string iterates characters.
         return list(iterable.value)
-    if isinstance(iterable, (ArrayLiteral, TupleLiteralValue)):
+    if isinstance(iterable, (ArrayLiteral, ListValue, TupleLiteralValue)):
         parts: list[str] = []
         for item in iterable.items:
             if not isinstance(item, StringValue):

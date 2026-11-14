@@ -237,6 +237,14 @@ class CallSiteValue(FloorValue):
     type_name_attribute: bool = dataclass_field(
         default=False, compare=False, repr=False
     )
+    # True only on the string-concatenation coordinate the lifter mints over a
+    # named string (``CallSiteValue.named_string_concat``'s ``call:__add__``,
+    # ``JoinedStrSugar``'s ``python:fstring``): ``names_a_string`` asks this
+    # marker, never the term's name, so a user function named ``__add__``
+    # never names a string (#7757).
+    string_concatenation: bool = dataclass_field(
+        default=False, compare=False, repr=False
+    )
     # The closure of the lambda this call applies (``LambdaCallable.closure``):
     # each final-member coordinate its body reads through an enclosing
     # comprehension's cell, with what the cell holds.  Bound before the body
@@ -1049,8 +1057,9 @@ class CallSiteValue(FloorValue):
         """Whether this callsite is known to produce a ``str`` if it completes.
 
         ``type(x).__name__`` / ``__qualname__`` always return ``str``. A named
-        string concat (``call:__add__`` or ``python:fstring``) does too, so
-        ``backquote`` can join ``"`" + name + "`"`` without inventing text.
+        string concat (the ``call:__add__`` or ``python:fstring`` coordinate
+        the lifter mints) does too, so ``backquote`` can join
+        ``"`" + name + "`"`` without inventing text.
 
         A retained source body whose every return face already names a string
         does too: ``_exception_type_name`` of an unfloored tuple still has both
@@ -1059,17 +1068,12 @@ class CallSiteValue(FloorValue):
 
         The ``__name__`` / ``__qualname__`` read is known by the marker its
         attribute read mints (``type_name_attribute``), never by the spelling
-        of ``target_name``: a user function named ``__name__`` is not one.
+        of ``target_name``.  The concatenation is known by the marker its mint
+        sets (``string_concatenation``), never by the term's name: a user
+        function named ``__add__`` is spelled ``call:__add__`` too, and is not
+        one.
         """
-        if self.type_name_attribute:
-            return True
-        from sugar_lift_py_tests.ir import _Ctor
-
-        term = self.term
-        if type(term) is _Ctor and term.name in {
-            call_symbol("__add__"),
-            "python:fstring",
-        }:
+        if self.type_name_attribute or self.string_concatenation:
             return True
         return self._retained_completion_names_a_string()
 
@@ -1127,6 +1131,7 @@ class CallSiteValue(FloorValue):
                 ),
                 body=None,
                 site=site,
+                string_concatenation=True,
             )
         )
 
