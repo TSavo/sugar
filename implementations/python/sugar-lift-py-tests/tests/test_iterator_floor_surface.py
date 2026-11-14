@@ -408,12 +408,13 @@ def test_cross_wired_iter_and_next_methods_are_distinct() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Production projector equality stays exact (no silent iter/next enrollment)
+# A formal's iter / next: the carrier, decided by the caller's actual (#7757)
 # ---------------------------------------------------------------------------
 
 
 def test_production_native_operator_projector_equality_stays_exact() -> None:
-    """Named project_iter/project_next must not break the closed enrollment tooth."""
+    """``iter`` and ``next`` are minted (a formal's ``iter_with`` /
+    ``next_with``) and enrolled through the named projectors, both ways."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         _NATIVE_OPERATION_PROJECTORS,
         production_native_operation_operators,
@@ -422,11 +423,101 @@ def test_production_native_operator_projector_equality_stays_exact() -> None:
     production = production_native_operation_operators()
     projectors = frozenset(_NATIVE_OPERATION_PROJECTORS)
     assert production == projectors
-    assert "iter" not in projectors
-    assert "next" not in projectors
-    assert callable(project_iter)
-    assert callable(project_next)
-    assert "project_iter" not in projectors
-    assert "project_next" not in projectors
-    with pytest.raises(AssertionError):
-        assert "iter" in production
+    assert {"iter", "next"} <= production
+    assert _NATIVE_OPERATION_PROJECTORS["iter"] is project_iter
+    assert _NATIVE_OPERATION_PROJECTORS["next"] is project_next
+
+
+def _formal(name: str = "xs", ordinal: int = 0):
+    """A parameter's symbolic stand-in, its coordinate minted at ``_site()``."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
+    from sugar_lift_py_tests.ir import PrimitiveSort, make_var
+
+    site = _site()
+    span = site.line_col_span
+    owner = SourceFragmentCoordinateV1(
+        site.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
+    coordinate = FormalParameterCoordinateV1.mint(
+        owner_source_identity_cid=site.source_cid,
+        owner_definition_locus=owner,
+        declaration_locus=owner,
+        ordinal=ordinal,
+        parameter_kind="positional-or-keyword",
+        declared_name=name,
+        sort=PrimitiveSort("Value"),
+    )
+    return SymbolicValue(make_var(name), coordinate), coordinate, site
+
+
+def test_iter_on_a_formal_defers_to_the_caller() -> None:
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    formal, coordinate, site = _formal()
+    pending = _iter_op(owner="project_iter", site=site).submit(formal, None)
+
+    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
+    assert pending.demand.operator == "iter"
+    assert pending.demand.operand_coordinate_cids == (coordinate.coordinate_cid,)
+
+
+def test_iter_on_a_formal_resolves_with_a_list_actual() -> None:
+    formal, coordinate, site = _formal()
+    members = (TermValue(1), TermValue(2))
+    pending = _iter_op(owner="project_iter", site=site).submit(formal, None)
+
+    exits = pending.discharge(None, {coordinate.coordinate_cid: ListValue(members)})
+
+    assert len(exits.exits) == 1, exits
+    assert exits.completed_value() == ListIteratorValue(members, index=0)
+
+
+def test_next_on_a_formal_defers_to_the_caller() -> None:
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    formal, coordinate, site = _formal("it")
+    pending = _next_op(owner="project_next", site=site).submit(formal, None)
+
+    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
+    assert pending.demand.operator == "next"
+    assert pending.demand.operand_coordinate_cids == (coordinate.coordinate_cid,)
+
+
+def test_next_on_a_formal_resolves_with_an_iterator_actual() -> None:
+    formal, coordinate, site = _formal("it")
+    members = (TermValue(7), TermValue(8))
+    pending = _next_op(owner="project_next", site=site).submit(formal, None)
+
+    exits = pending.discharge(
+        None, {coordinate.coordinate_cid: ListIteratorValue(members, index=0)}
+    )
+
+    assert len(exits.exits) == 1, exits
+    step = exits.completed_value()
+    assert isinstance(step, NextResult)
+    assert step.value == TermValue(7)
+    assert step.advanced == ListIteratorValue(members, index=1)
+
+
+def test_next_on_a_formal_names_stop_iteration_with_an_exhausted_actual() -> None:
+    formal, coordinate, site = _formal("it")
+    pending = _next_op(owner="project_next", site=site).submit(formal, None)
+
+    exits = pending.discharge(
+        None, {coordinate.coordinate_cid: ListIteratorValue((), index=0)}
+    )
+
+    effect = _only_halt(exits).effect
+    assert effect.exception_type_coordinate == _stopiteration_type_identity()

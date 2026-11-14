@@ -166,9 +166,23 @@ class SubscriptAugAssignSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        # The read is the one subscript door a source ``receiver[index]``
+        # takes (``discharge_subscript``): a formal operand defers to the
+        # caller, and an actual that owns only ``subscript_with``
+        # (``ObjectValue``, ``DictLiteralValue``, ...) answers through it.
+        from sugar_lift_py_tests.operations.subscript_operation import (
+            discharge_subscript,
+        )
+
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.index.desugar(ctx).and_then(
-                lambda index: receiver.subscript(index, self.get_site).and_then(
+                lambda index: discharge_subscript(
+                    receiver,
+                    index,
+                    self.get_site,
+                    ctx,
+                    owner=type(self).__name__,
+                ).and_then(
                     lambda current: self.rhs.desugar(ctx).and_then(
                         lambda right: project_augmented(
                             current,

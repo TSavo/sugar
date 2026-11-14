@@ -89,14 +89,44 @@ class SubscriptOperation:
         )
 
 
+def defer_formal_subscript(receiver, index, site):
+    """``receiver[index]`` with a function parameter in either operand: the
+    ``subscript`` carrier, decided by the caller's actual.
+
+    The one mint of the ``subscript`` demand.  A formal receiver (``p[0]``)
+    and a formal index on any receiver (``[1, 2][i]``) defer alike, one
+    coordinate slot per ordered operand; ``None`` when neither operand is a
+    formal, and the receiver answers the read itself.
+    """
+    coordinates = (
+        getattr(receiver, "formal_coordinate", None),
+        getattr(index, "formal_coordinate", None),
+    )
+    if all(coordinate is None for coordinate in coordinates):
+        return None
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    return NativeOperationExitCarrierV1.mint(
+        site=site,
+        operator="subscript",
+        operands=(receiver, index),
+        coordinates=coordinates,
+    )
+
+
 def discharge_subscript(
     receiver, index, site, ctx, *, owner: str, use_occurrence=None
 ) -> ExitSet:
     """The one door for ``receiver[index]``, under ``ctx``.
 
-    ``SubscriptSugar`` (a source subscript) and the ``subscript`` carrier's
-    projector (a formal's subscript, at the caller's actuals) both answer
-    here, so an actual is asked exactly what the source subscript asks.  A
+    ``SubscriptSugar`` (a source subscript), ``SubscriptAugAssignSugar``'s
+    read (``obj[k] += v``) and the ``subscript`` carrier's projector (a
+    formal's subscript, at the caller's actuals) all answer here, so an
+    actual is asked exactly what the source subscript asks.  A parameter in
+    either operand defers to the caller (:func:`defer_formal_subscript`); an
+    actual that is still its own caller's formal defers again.  Otherwise a
     receiver that overrides ``subscript_with`` owns the operation edge; any
     other answers through ``subscript_with_occurrence`` / ``subscript``.
     """
@@ -104,6 +134,9 @@ def discharge_subscript(
 
     receiver = receiver.project_operation_receiver(ctx, owner=f"{owner} receiver")
     index = index.project_operation_receiver(ctx, owner=f"{owner} index")
+    deferred = defer_formal_subscript(receiver, index, site)
+    if deferred is not None:
+        return deferred
     operation = SubscriptOperation(
         index=index,
         owner=owner,

@@ -502,10 +502,10 @@ def project_iter(receiver, site, ctx):
     """``iter(receiver)`` — established ``iter_with`` floor edge, under the
     caller's context.
 
-    Not yet enrolled in ``_NATIVE_OPERATION_PROJECTORS``: production has no
-    carrier mint for ``iter`` until loop/comprehension demand lands. Callers
-    and acceptance tests use this named projector; enrollment joins the
-    production set when the first sugar mints the operator.
+    Enrolled as ``iter`` in ``_NATIVE_OPERATION_PROJECTORS``: a formal's
+    ``iter`` (``SymbolicValue.iter_with``) mints the ``iter`` carrier, and
+    the caller's actual answers here; an actual that is still its own
+    caller's formal defers again.
     """
     from sugar_lift_py_tests.operations.iterator_operation import discharge_iter
 
@@ -516,8 +516,8 @@ def project_next(receiver, site, ctx):
     """``next(receiver)`` — established ``next_with`` floor edge, under the
     caller's context.
 
-    Same enrollment deferral as :func:`project_iter`: surface is live; the
-    native-operation table stays closed until a production mint exists.
+    Enrolled as ``next``: a formal's ``next`` (``SymbolicValue.next_with``)
+    mints the ``next`` carrier, and the caller's actual answers here.
     """
     from sugar_lift_py_tests.operations.next_operation import discharge_next
 
@@ -643,6 +643,10 @@ _NATIVE_OPERATION_PROJECTORS = {
     # The actual answers through the one subscript door a source subscript
     # takes (``discharge_subscript``), under the caller's context.
     "subscript": _project_subscript,
+    # A formal's ``iter(p)`` / ``next(p)``: the actual answers through its
+    # own ``iter_with`` / ``next_with`` edge, under the caller's context.
+    "iter": project_iter,
+    "next": project_next,
     # Binary arithmetic / bitwise (_BINARY_OPERATOR_COORDINATE keys), applied
     # under the caller's context.
     "add": lambda left, right, site, ctx: left.add(right, site, ctx),
