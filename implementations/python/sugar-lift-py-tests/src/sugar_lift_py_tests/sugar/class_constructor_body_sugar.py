@@ -12,11 +12,16 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 class ReceiverAtReturnValue(FloorValue):
     """What a ``return`` of a class call's initializer leaves with, as the
     class call reads it: the receiver as it stood at that ``return``
-    (``InitializerReturnSugar``).  The call returns that object on the face
-    that leaves by the ``return`` (``ClassConstructorBodySugar``), never the
-    value the ``return`` names."""
+    (``InitializerReturnSugar``), and the value the ``return`` names
+    (``returned``: ``None`` for a bare ``return``), from the ``return`` at
+    ``site``.  The call returns that object on the face that leaves by the
+    ``return`` (``ClassConstructorBodySugar``) when ``returned`` is
+    ``None``, and raises CPython's ``TypeError: __init__() should return
+    None`` when it is not; never the value itself."""
 
     receiver: FloorValue
+    returned: object = None
+    site: object = field(default=None, compare=False)
 
     def to_term(self, *, owner: str):
         return self.receiver.to_term(owner=owner)
@@ -50,20 +55,63 @@ class InitializerReturnSugar(Sugar):
             peel_walrus_binds,
             written_by,
         )
+        from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.floor.return_value import ReturnValue
 
-        def leaving(at):
+        def leaving(at, returned):
             return self.receiver.desugar(at).and_then(
                 lambda receiver: ExitSet.completed(
-                    ReturnValue(ReceiverAtReturnValue(peel_walrus_binds(receiver)[1]))
+                    ReturnValue(
+                        ReceiverAtReturnValue(
+                            peel_walrus_binds(receiver)[1], returned, self.site
+                        )
+                    )
                 )
             )
 
         if self.value is None:
-            return leaving(ctx)
+            return leaving(ctx, NoneValue())
         return self.value.desugar(ctx).and_then(
-            lambda value: leaving(written_by(value, ctx))
+            lambda value: leaving(written_by(value, ctx), peel_walrus_binds(value)[1])
         )
+
+
+def _returns_none(value, site) -> "bool | None":
+    """Whether the value an initializer ``return`` names is ``None``, as
+    ``value is None`` decides it (``object_identity.object_identity``, the
+    one place ``is`` is asked of objects): True or False where decided,
+    None where not.  A ``return`` that names nothing (``returned`` unset)
+    returns ``None``.  A call's value is read as an operation reads it
+    (``CallSiteValue.project_operation_receiver``: its body's one
+    authenticated return), else it stays undecided."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+
+    if isinstance(value, CallSiteValue):
+        value = value.project_operation_receiver(
+            None, owner="ClassConstructorBodySugar.init_return"
+        )
+    if value is None or type(value) is NoneValue:
+        return True
+    from sugar_lift_py_tests.floor.object_identity import object_identity
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    if type(value) is TrueBoolLiteralSugar or type(value) is FalseBoolLiteralSugar:
+        return False
+    if not callable(getattr(value, "callsites", None)):
+        # No reduced value the identity question can name: undecided.
+        return None
+    answer = object_identity(value, NoneValue(), site).completed_value()
+    if type(answer) is TrueBoolLiteralSugar:
+        return True
+    if type(answer) is FalseBoolLiteralSugar:
+        return False
+    return None
 
 
 def refuse_unrun_source_new(definition, *, new_method, runs_new, site, owner):
@@ -361,9 +409,10 @@ class ClassConstructorBodySugar(Sugar):
         """The object the class call returns on a face of its initializer
         that left by a ``return``: the receiver each ``return`` of the record
         carries (``ReceiverAtReturnValue``), under that ``return``'s own
-        guard.  A ``return`` that carries none (one inside a ``try``, a
-        ``with`` or a loop, ``nodes._returns_read_where_they_stand``) is
-        refused by name, as is a face that left by no ``return``."""
+        guard, where the value it returned is ``None``; a ``TypeError``
+        where it is not (``_leaving_by``).  A ``return`` that carries none
+        (no name held the receiver where it stood) is refused by name, as is
+        a face that left by no ``return``."""
         from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
         from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.ir import and_
@@ -395,15 +444,62 @@ class ClassConstructorBodySugar(Sugar):
             if not isinstance(entry.value, ReceiverAtReturnValue):
                 refuse(
                     "an initializer face that left by a return that carries "
-                    "no receiver (inside a try, a with or a loop)"
+                    "no receiver (no name held it where the return stood)"
                 )
         if unguarded:
-            return ExitSet.completed(unguarded[0].value.receiver)
-        arms = [
-            ExitSet.completed(entry.value.receiver, guard_of(entry))
-            for entry in guarded
-        ]
+            return self._leaving_by(unguarded[0].value)
+        arms = [self._leaving_by(entry.value, guard_of(entry)) for entry in guarded]
         return ExitSet(()).union(*arms)
+
+    def _leaving_by(self, left: ReceiverAtReturnValue, guard=None) -> ExitSet:
+        """The class call leaving by one ``return`` of its initializer (under
+        ``guard``): ``type.__call__`` checks what ``__init__`` returned
+        after the frame is left -- past every ``finally`` and ``__exit__``,
+        out of reach of the initializer's own handlers -- and returns the
+        object only when it is ``None``.
+
+        The returned value's ``None``-ness is asked as ``is`` asks it
+        (``object_identity.object_identity``): ``None`` completes with the
+        receiver the ``return`` carries; a value decided not ``None`` is
+        CPython's ``TypeError: __init__() should return None, not '<type>'``
+        raised at the call (``ground_exceptional_exit``); a value whose
+        ``None``-ness is undecided is two-faced owing (``ExitSet.two_faced``):
+        the receiver under the site-keyed ``...completes`` atom, that
+        ``TypeError`` on the other face."""
+        site = left.site if left.site is not None else self.site
+        verdict = _returns_none(left.returned, site)
+        if verdict is True:
+            return ExitSet.completed(left.receiver, guard)
+        from sugar_lift_py_tests.floor import ExceptionValue
+        from sugar_lift_py_tests.floor.ground_exit import (
+            ground_exceptional_exit,
+            ground_raise_effect,
+        )
+
+        owner = "ClassConstructorBodySugar.init_return"
+        if verdict is False:
+            raised = ground_exceptional_exit(
+                exception_name="TypeError", site=site, owner=owner
+            )
+        else:
+            from sugar_lift_py_tests.ir import atomic, ctor
+            from sugar_lift_py_tests.occurrence import occurrence_term
+
+            raised = ExitSet.two_faced(
+                left.receiver,
+                ground_raise_effect(
+                    exception_name="TypeError",
+                    site=site,
+                    owner=owner,
+                    raised_value=ExceptionValue("TypeError", (), site),
+                ),
+                guard=atomic(
+                    "python:init_return_none.completes",
+                    [ctor("python:init_return_none", (occurrence_term(site),))],
+                ),
+                site=site,
+            )
+        return raised if guard is None else raised.guarded(guard)
 
     def _made(self) -> dict:
         """The ``allocation`` and ``arrival`` of the instance this class call

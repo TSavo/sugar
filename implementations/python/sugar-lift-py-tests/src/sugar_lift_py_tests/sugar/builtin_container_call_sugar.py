@@ -405,9 +405,9 @@ class PathContainerCallSugar(ConstructedTermSugar):
     # ``r OP= x``: the operator (``project_inplace``) and its source token.
     operator: object = dataclass_field(default=None, compare=False)
     operator_site: object = dataclass_field(default=None, compare=False)
-    # ``super().__init__(...)``: the frame's receiver formal, whose object the
+    # ``super().m(...)``: the frame's receiver formal, whose object the
     # call runs on -- ``receiver`` is its read here, and the call's
-    # zero-argument ``super()`` reads the formal (``Expr._super_mutation``).
+    # zero-argument ``super()`` reads the formal (``nodes._super_door``).
     frame_receiver: str | None = dataclass_field(default=None, compare=False)
 
     @classmethod
@@ -601,7 +601,7 @@ class PathContainerCallSugar(ConstructedTermSugar):
         key = assigned_key(self.receiver)
         unknown = _unknown_after(self.site, self.label)
 
-        def ordinary(call_ctx, post=unknown, receiver=None):
+        def ordinary(call_ctx, post=unknown, receiver=None, presented=None):
             # The receiver after an ordinary call the value says may change
             # it: unknown, unless the call states what it did to it -- a
             # followed source body whose effects on it are the field stores
@@ -614,8 +614,13 @@ class PathContainerCallSugar(ConstructedTermSugar):
                 stated = receiver_after_its_call(receiver, result)
                 return post if stated is None else stated
 
+            def value(result):
+                return result if presented is None else presented(result)
+
             return self.fallback.desugar(call_ctx).and_then(
-                lambda result: ExitSet.completed(TupleValue((after(result), result)))
+                lambda result: ExitSet.completed(
+                    TupleValue((after(result), value(result)))
+                )
             )
 
         outcome = self.receiver.desugar(ctx)
@@ -632,11 +637,15 @@ class PathContainerCallSugar(ConstructedTermSugar):
 
         def on_receiver(receiver):
             if self.frame_receiver is not None:
-                # ``super().__init__(...)``: a call on the frame's receiver
-                # whatever its value, never a container's own method.  Its
+                # ``super().m(...)``: a call on the frame's receiver whatever
+                # its value, never a container's own method.  Its
                 # zero-argument ``super()`` binds the frame's receiver
                 # formal, which holds the object as this statement read it
-                # (``receiver``), never as the frame first bound it.
+                # (``receiver``), never as the frame first bound it.  The
+                # call's value is its Python value: a builtin base's own
+                # transition of the receiver presents its result
+                # (``_super_call_value``), which ``x = super().m()`` and a
+                # ``return`` of it read.
                 base = ctx if ctx is not None else ReduceContext.root(
                     owner="PathContainerCallSugar"
                 )
@@ -645,7 +654,9 @@ class PathContainerCallSugar(ConstructedTermSugar):
                 )
                 if key is not None:
                     call_ctx = call_ctx.with_assigned_value(key, receiver)
-                return ordinary(call_ctx, self._after(receiver), receiver)
+                return ordinary(
+                    call_ctx, self._after(receiver), receiver, _super_call_value
+                )
             kind = law.container_kind(receiver)
             if kind is not None and self.method in law.MUTATING_METHODS[kind]:
                 # The arguments are operands: a walrus in one binds once,
@@ -693,6 +704,23 @@ class PathContainerCallSugar(ConstructedTermSugar):
             return ordinary(base.with_assigned_value(key, receiver), post, receiver)
 
         return outcome.and_then(on_receiver)
+
+
+def _super_call_value(result):
+    """The Python value of ``super().m(...)`` completed as ``result``: a
+    builtin base's own transition of the receiver
+    (``ReceiverOwnedMutationResult``: ``object.__init__()``) evaluates to
+    its result (``None``); any other value is itself.  The receiver after
+    the call is read off ``result`` itself (``receiver_after_its_call``)."""
+    from sugar_lift_py_tests.floor.named_expression_value import peel_walrus_binds
+    from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+        ReceiverOwnedMutationResult,
+    )
+
+    binds, call = peel_walrus_binds(result)
+    if binds or not isinstance(call, ReceiverOwnedMutationResult):
+        return result
+    return call.result
 
 
 def _inherited_mapping_pop(receiver, method, arity) -> bool:
