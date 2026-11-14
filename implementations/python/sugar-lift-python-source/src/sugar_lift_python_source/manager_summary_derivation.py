@@ -4035,7 +4035,7 @@ def _populate_runtime_selected_head_uses(
     from sugar_source_tree.formal_manager_head import runtime_selected_manager_head
     from sugar_source_tree.nodes import With
 
-    source = source_file.root.unit.source
+    unit = source_file.root.unit
     for node in source_file.root.walk():
         if not isinstance(node, With):
             continue
@@ -4050,7 +4050,7 @@ def _populate_runtime_selected_head_uses(
             if selected_coordinates is not None and coordinate not in selected_coordinates:
                 continue
             start_line, start_col, _end_line, _end_col = item._manager_use_site_span()
-            if runtime_selected_manager_head(source, start_line, start_col) is None:
+            if runtime_selected_manager_head(unit, start_line, start_col) is None:
                 continue
             owner_cid = _hash_json(
                 {

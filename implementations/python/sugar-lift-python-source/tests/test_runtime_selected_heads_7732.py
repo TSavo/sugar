@@ -37,6 +37,7 @@ from sugar_source_tree.formal_manager_head import runtime_selected_manager_head
 from sugar_source_tree.nodes import With
 from sugar_source_tree.panic import SourceTreePanic
 
+from test_cited_unreadable_manager import _unit
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
 from test_contextmanager_generator_protocol import _function_rows
 
@@ -111,7 +112,7 @@ def test_enter_result_of_a_readable_source_manager_is_not_cited(tmp_path):
 
 def test_only_a_formal_enter_result_binding_qualifies():
     def head(source, line=3, col=13):
-        return runtime_selected_manager_head(source, line, col)
+        return runtime_selected_manager_head(_unit(source), line, col)
 
     picked = (
         "def f(c):\n"

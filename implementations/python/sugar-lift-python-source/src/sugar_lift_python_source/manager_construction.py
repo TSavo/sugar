@@ -2789,7 +2789,11 @@ def _used_class_methods(top: dict, target) -> dict[str, frozenset[str]]:
 
     Read off the class statement's own syntax: the entry methods, then every
     attribute a reached method reads on its first parameter (``self.open()``,
-    ``self.close``) or through ``super()``, until nothing new is reached.  The
+    ``self.close``) or on any call's result (``super().open()``), until
+    nothing new is reached.  No callee is recognised by its spelling: a call
+    result whose attribute names one of these methods keeps that method, so
+    the projection can only keep more methods than the path runs, never
+    fewer.  The
     class's same-module bases named as plain names (``top``) share the walk,
     since a method an instance runs may be defined on either.
     """
@@ -2828,8 +2832,6 @@ def _used_class_methods(top: dict, target) -> dict[str, frozenset[str]]:
                 value = node.value
                 if (isinstance(value, ast.Name) and value.id == self_name) or (
                     isinstance(value, ast.Call)
-                    and isinstance(value.func, ast.Name)
-                    and value.func.id == "super"
                 ):
                     todo.append(node.attr)
     names = frozenset(used)

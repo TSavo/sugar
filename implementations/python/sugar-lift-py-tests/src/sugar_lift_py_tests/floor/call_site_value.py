@@ -795,9 +795,9 @@ class CallSiteValue(FloorValue):
         ``s.split(".")[:3]``) has no element history to fold, but the append
         statement still rebinds the name: carry the prior list coordinate and
         appended value on ``py.list_append`` so later statements keep a
-        FloorValue. A finite value behind ``typing.cast`` keeps its exact
-        history; a diggable cast operand (method body returning a list) digs
-        through. ``list.copy()`` of a finite list folds exactly; ``copy`` of a
+        FloorValue. (A ``typing.cast`` never arrives as a receiver: the Call
+        node constructs its second operand.) ``list.copy()`` of a finite list
+        folds exactly; ``copy`` of a
         proven list-shaped callsite rebinds through ``py.list_append``.
         ``py.subscript`` of a diggable tuple/list projects the element when the
         index is a ground int (unpack residual: ``handles`` from a returned
@@ -807,7 +807,7 @@ class CallSiteValue(FloorValue):
         append-rebind is still list-shaped: further appends rebind through
         ``py.list_append`` without re-digging the loop body. Chained
         ``list.append`` / ``py.list_append`` coordinates do the same.
-        Opaque cast/subscript/iter faces stay loud; a call result is not proof
+        Opaque subscript/iter faces stay loud; a call result is not proof
         that the receiver is a mutable list. Never mint RuntimeEffect over a
         ground list proof.
         """
@@ -929,11 +929,6 @@ class CallSiteValue(FloorValue):
             return resolve_receiver(operand)
 
         def resolve_receiver(receiver: CallSiteValue):
-            # typing.cast is runtime identity: dig/prove the second operand only.
-            # Annotation alone never blesses an opaque operand.
-            if receiver.target_name == "typing.cast" and len(receiver.arg_values) == 2:
-                return project_list_operand(receiver.arg_values[1])
-
             # Shallow copy of a finite list is the same element history.
             if receiver.target_name == "copy" and receiver.arg_values:
                 base = receiver.arg_values[0]

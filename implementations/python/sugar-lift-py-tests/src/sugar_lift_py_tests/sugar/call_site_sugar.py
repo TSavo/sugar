@@ -244,6 +244,11 @@ class CallSiteSugar(ConstructedTermSugar):
     call_occurrence: SourceFragmentCoordinateV1 | None = dataclass_field(
         default=None, compare=False
     )
+    # The language-fixed callee the Call node bound this call to
+    # (``sugar_source_tree.nodes.LanguageCallee``), read from the callee's
+    # binding, never its spelling; ``None`` for every other callee. What the
+    # language decides for that callee is dispatched on this member.
+    language_callee: Any = dataclass_field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         for argument in self.args:
@@ -901,6 +906,7 @@ class CallSiteSugar(ConstructedTermSugar):
                     callsite.arg_values,
                     getattr(callsite, "keyword_names", ()) or (),
                     site=self.site,
+                    language_callee=self.language_callee,
                 )
                 if folded is not None:
                     return folded

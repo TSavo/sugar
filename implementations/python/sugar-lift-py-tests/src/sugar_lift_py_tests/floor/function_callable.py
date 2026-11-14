@@ -561,15 +561,10 @@ class FunctionCallable(FloorValue):
                 result_outcome,
                 owner="FunctionCallable decorator result",
             )
+            # A ``typing.cast`` in the decorator body never reaches here as a
+            # call: the Call node binds it to ``LanguageCallee.TYPING_CAST`` and
+            # constructs its second operand (nodes.py ``Call._construct_sugar``).
             if (
-                isinstance(result, CallSiteValue)
-                and result.target_name in {"cast", "typing.cast"}
-                and len(result.arg_values) == 2
-            ):
-                # typing.cast is runtime identity. Its second operand is the
-                # exact callable produced by the decorator body.
-                current = result.arg_values[1]
-            elif (
                 isinstance(result, CallSiteValue)
                 and _array_function_dispatcher_ctor(result.target_name)
                 and len(result.arg_values) == 2

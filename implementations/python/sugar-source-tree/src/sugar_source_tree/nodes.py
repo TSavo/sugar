@@ -31,6 +31,7 @@ carries the rewritten shape, then memoized like any other ref.
 
 from __future__ import annotations
 
+import enum as _enum
 import symtable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, ClassVar, Iterator, Optional, Tuple
@@ -112,6 +113,42 @@ PROJECTED_CLASS_METHODS: AmbientVar = AmbientVar(
     "projected_class_methods", default=None
 )
 _MISSING = object()
+
+
+class LanguageCallee(_enum.Enum):
+    """A callee whose behaviour the Python language fixes, named by identity.
+
+    A call reaches a member only through its callee's BINDING: the one import
+    reference table (``from typing import cast`` -> ``python:typing.cast``,
+    ``importlib.import_module`` under ``import importlib``) or the builtin
+    namespace a bare name falls through to (no parameter, local, enclosing or
+    module binding; ``SourceUnit.builtin_reference_at``).  The spelling at the
+    call is never read: a module that binds its own ``cast``, ``getattr`` or
+    ``super`` reaches no member, and ``from typing import cast as c`` does.
+
+    The node owns the dispatch (``Call.language_callee``); consumers ask the
+    node, never the name.
+    """
+
+    # ``typing.cast(typ, val)`` returns ``val`` unchanged
+    # (https://docs.python.org/3/library/typing.html#typing.cast).
+    TYPING_CAST = "python:typing.cast"
+    # ``getattr(obj, name)``: the attribute a run-time string names.
+    BUILTIN_GETATTR = "python:builtins.getattr"
+    # ``super(...)``: the language's MRO proxy constructor.
+    BUILTIN_SUPER = "python:builtins.super"
+    # ``importlib.import_module(name)``: ``sys.modules[name]`` once imported.
+    IMPORTLIB_IMPORT_MODULE = "python:importlib.import_module"
+
+    @classmethod
+    def of(cls, target_symbol: Optional[str]) -> Optional["LanguageCallee"]:
+        """The member a binding's target symbol names, else ``None``."""
+        if target_symbol is None:
+            return None
+        try:
+            return cls(target_symbol)
+        except ValueError:
+            return None
 
 
 @dataclass(frozen=True)
@@ -1154,6 +1191,60 @@ class SourceUnit:
             target.removeprefix("python:").split(".", 1)[0]
             for target in runner.reference_targets.values()
         )
+
+    def builtin_reference_at(self, name: str, span) -> Optional[str]:
+        """``python:builtins.<name>`` when the name read at ``span`` falls
+        through to the builtin namespace, else ``None``.
+
+        Python's own resolution, read off this unit's CPython ``symtable``: the
+        innermost function around the read neither takes ``name`` as a
+        parameter nor binds it (locally, ``nonlocal`` or from an enclosing
+        function), the module binds no ``name`` of its own, and the language's
+        builtin floor holds it.  The answer is the binding, not the spelling:
+        ``getattr = g`` at module level, ``def f(getattr)`` or ``getattr = 1``
+        in the function each leave the read with no builtin reference.  A unit
+        with no typed root has no function index to consult and answers
+        ``None``.
+        """
+        if self.typed_module is None:
+            return None
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            builtin_name_temporal,
+        )
+
+        if builtin_name_temporal().value_if_bound(name) is None:
+            return None
+        if name in self.module_bound_names:
+            return None
+        owner = self.innermost_function_containing(span)
+        if owner is not None:
+            table = self.function_symtable(owner.name, owner.line_col_span().start_line)
+            try:
+                symbol = table.lookup(name)
+            except KeyError:
+                symbol = None
+            if symbol is not None and (
+                symbol.is_parameter()
+                or symbol.is_local()
+                or symbol.is_free()
+                or symbol.is_nonlocal()
+            ):
+                return None
+        return f"python:builtins.{name}"
+
+    def language_callee_at(self, name: str, span) -> Optional["LanguageCallee"]:
+        """The language-fixed callee a bare name read at ``span`` is bound to.
+
+        The import reference table first (``from typing import cast``), then
+        the builtin namespace (``getattr`` nothing rebinds).  ``None`` for any
+        other binding, whatever the name is spelled.
+        """
+        target = self.import_reference_target(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        if target is None:
+            target = self.builtin_reference_at(name, span)
+        return LanguageCallee.of(target)
 
     def import_value_use_receipt(
         self, span: Tuple[int, int, int, int]
@@ -5836,8 +5927,9 @@ class ClassDef(Statement):
         super_call = allocation.value.func.value
         class_param = constructor.params[0]
         if (
-            not isinstance(super_call.func, Name)
-            or super_call.func.id != "super"
+            # The builtin ``super`` by its binding: a module or function that
+            # binds its own ``super`` reaches no language callee.
+            super_call.language_callee() is not LanguageCallee.BUILTIN_SUPER
             or super_call.keywords
             or len(super_call.args) != 2
             or not isinstance(super_call.args[0], Name)
@@ -5858,8 +5950,6 @@ class ClassDef(Statement):
         if SourceOccurrenceIdentityV1.of(bindings[0]) != (
             SourceOccurrenceIdentityV1.of(self)
         ):
-            return None
-        if (self.unit.module_direct_bindings or {}).get("super"):
             return None
         field_body = constructor.body[1:-1]
         receiver_name = allocation.targets[0].id
@@ -13612,40 +13702,28 @@ class Call(Expression):
         # seated. See ``Node.source_occurrence``.
         coordinate = self.source_occurrence()
 
+        # The callee's identity, read once from its binding (never its
+        # spelling); the behaviour the language fixes for it lives here.
+        language_callee = self.language_callee()
+        if (
+            language_callee is LanguageCallee.TYPING_CAST
+            and len(self.args) == 2
+            and not self.keywords
+            and not any(isinstance(arg, Starred) for arg in self.args)
+        ):
+            # typing.cast(typ, val) returns val unchanged
+            # (https://docs.python.org/3/library/typing.html#typing.cast), so
+            # the call constructs as its second operand: no call-site value
+            # ever carries a cast for a later reader to recognise by name.
+            self._discharge_callee_spelling()
+            return self.args[1].sugar()
+
         if isinstance(context, TreeConstructionContextV1):
             # The roster states the ONE classification every authenticated
             # owner gave this call; owners that disagreed panicked at install,
             # so there is nothing here to choose between.
             obligation = context.opaque_source_call_obligations.get(coordinate)
             if obligation is not None:
-                if (
-                    # No body is projected either way: the export door found
-                    # no source, or found stdlib source off the enrolled
-                    # population (``from typing import cast`` followed into
-                    # the stdlib artifact).  The citation below is keyed by
-                    # the authenticated import target, not by which decline.
-                    obligation.resolution_kind
-                    in ("call-target-source-absent", "call-target-off-population")
-                    and isinstance(self.func, Name)
-                    and len(self.args) == 2
-                    and not self.keywords
-                ):
-                    span = self.func.line_col_span()
-                    # typing.cast(typ, val) returns val unchanged
-                    # (https://docs.python.org/3/library/typing.html#typing.cast).
-                    # Keyed by the authenticated import target, not the
-                    # spelling ``cast``: a missing ``from foo import cast``
-                    # stays source-absent.
-                    if self.unit.import_reference_target(
-                        (
-                            span.start_line,
-                            span.start_col,
-                            span.end_line,
-                            span.end_col,
-                        )
-                    ) == "python:typing.cast":
-                        self.func.discharge_by_substitution()
-                        return self.args[1].sugar()
                 return self._not_bridged_call_site(
                     args=tuple(a.sugar() for a in self.args),
                     keywords=tuple(
@@ -13656,6 +13734,7 @@ class Call(Expression):
                         for kw in self.keywords
                     ),
                     gap=f"{obligation.resolution_kind}:{obligation.target_name}",
+                    language_callee=language_callee,
                 )
 
         # Either spread form selects the reference call coordinate. In
@@ -13777,6 +13856,7 @@ class Call(Expression):
                     args=tuple(a.sugar() for a in self.args),
                     keywords=keyword_sugars,
                     gap=f"{source_call_resolution.kind}:{source_call_resolution.detail}",
+                    language_callee=language_callee,
                 )
             if not isinstance(source_call_resolution, SourceCallPreconstructionRefV1):
                 from sugar_source_tree.panic import BackendDefect
@@ -13884,6 +13964,7 @@ class Call(Expression):
                     )
                 ),
                 expected_definition_ref=projected_definition,
+                language_callee=language_callee,
             )
         if isinstance(self.func, Name):
             from sugar_lift_py_tests.sugar.call_site_sugar import (
@@ -14052,6 +14133,7 @@ class Call(Expression):
                 formal_coordinate_cids=formal_coordinate_cids,
                 expected_definition_ref=expected_definition,
                 native_operation_formal_coordinates=tuple(formal_coordinates),
+                language_callee=language_callee,
             )
         if isinstance(self.func, Attribute):
             # Lexical import binding is the ONLY door to a closed callee
@@ -14094,6 +14176,7 @@ class Call(Expression):
                     contract_resolution_gap=contract_resolution_gap,
                     import_target_symbol=import_target_symbol,
                     reference_symbol=closed_symbol,
+                    language_callee=language_callee,
                 )
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
@@ -14198,6 +14281,31 @@ class Call(Expression):
                 )
         return import_target_symbol, contract_resolution_gap
 
+    def language_callee(self) -> Optional[LanguageCallee]:
+        """The language-fixed callee this call applies, read from its binding.
+
+        A bare name asks the unit how it is bound at its own coordinate (an
+        import reference, or the builtin namespace nothing rebinds); a dotted
+        callee asks the one import reference table for the whole chain
+        (``typing.cast`` under ``import typing``).  Any other callee, and any
+        binding that is not one of ``LanguageCallee``'s, answers ``None``.
+        """
+        if isinstance(self.func, Name):
+            return self.unit.language_callee_at(
+                self.func.id, self.func.line_col_span()
+            )
+        if isinstance(self.func, Attribute):
+            return LanguageCallee.of(self.unit.import_reference_of(self.func))
+        return None
+
+    def _discharge_callee_spelling(self) -> None:
+        """Answer the roll call for every node of a callee the call absorbed."""
+        chain = self.func
+        while isinstance(chain, Attribute):
+            chain.discharge_by_substitution()
+            chain = chain.value
+        chain.discharge_by_substitution()
+
     def _import_reference_callee(self) -> Optional[str]:
         """The target symbol of an import-bound callee, read from the one
         import reference table (#7837), or ``None``.
@@ -14231,13 +14339,16 @@ class Call(Expression):
             return None
         return target[len("python:") :] if target.startswith("python:") else target
 
-    def _not_bridged_call_site(self, *, args, keywords, gap: str):
+    def _not_bridged_call_site(
+        self, *, args, keywords, gap: str, language_callee=None
+    ):
         """A call nothing bridges stays its own edge.
 
         The callee keeps the spelling it was written with, and its edge the
         target symbol the import reference table holds for it, exactly as a
         bridged call. Only the gap says it is not bridged: the call is never
-        renamed to a shared stand-in.
+        renamed to a shared stand-in. ``language_callee`` is the member the
+        node bound the callee to, carried for the language's own dispatch.
         """
         from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
@@ -14248,6 +14359,7 @@ class Call(Expression):
             keywords=keywords,
             contract_resolution_gap=gap,
             reference_symbol=self._import_reference_symbol(),
+            language_callee=language_callee,
         )
 
     def _authenticate_warning_category(self, args_sugar, keyword_sugars):
