@@ -107,10 +107,20 @@ class ClassDefinitionValue(GuardStableValue):
         where the class call reads the class statement
         (``ClassConstructorBodySugar.bind_class_call``), with the constructor
         defaults the class value carries (``constructor_defaults``).
+
+        A class whose constructor its own statement does not decide (no
+        source ``__new__`` shape, no ``dataclass``-written ``__init__``) and
+        whose MRO does not construct by the laws the lifter reads
+        (``ClassDef.construction_order`` is None: a base the lifter cannot
+        read, or ``OSError``/``SyntaxError``/... anywhere in it) is the one
+        unanswered call (``UnknownCalleeCallV1``), exactly as the same class
+        called by name is: never the zero-formal ``object`` frame or the
+        ``(*args)`` frame applied to a constructor nothing here read.
         """
         from sugar_lift_py_tests.floor.object_value import bind_call
 
-        if self.class_definition is None:
+        definition = self.class_definition
+        if definition is None:
             raise SugarNotWritten(
                 owner="ClassDefinitionValue.callable_application_with",
                 blame=operation.site,
@@ -118,7 +128,6 @@ class ClassDefinitionValue(GuardStableValue):
                 requested="the class statement whose constructor frame the call applies",
                 fix="build the class value from its ClassDef so its frame is applied",
             )
-        frame = self.class_definition.source_visible_constructor_frame()
         keyword_count = len(operation.keyword_names)
         positional = (
             operation.arguments[:-keyword_count]
@@ -130,6 +139,13 @@ class ClassDefinitionValue(GuardStableValue):
             if keyword_count
             else ()
         )
+        if (
+            definition._authenticated_new_constructor_shape() is None
+            and definition._dataclass_generated_init_fields() is None
+            and definition.construction_order() is None
+        ):
+            return self._unanswered_call(positional, keywords, operation.site)
+        frame = definition.source_visible_constructor_frame()
 
         def refuse(*, owner, blame, observed, requested, fix):
             raise SugarNotWritten(
@@ -161,6 +177,35 @@ class ClassDefinitionValue(GuardStableValue):
             ).producer_outcome(ctx),
             site=operation.site,
         )
+
+    def _unanswered_call(self, positional, keywords, site):
+        """``Cls(...)`` whose constructor nothing here read: the one
+        unanswered call (``UnknownCalleeCallV1``), two-faced and owed, its
+        completion the call's own result coordinate."""
+        from sugar_lift_py_tests.call_symbol import call_symbol
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+        owner = str(site)
+        callsite = CallSiteValue(
+            target_name=self.class_name,
+            arg_values=(*positional, *(value for _name, value in keywords)),
+            parameters=(),
+            term=ctor(
+                call_symbol(self.class_name),
+                [value.to_term(owner=owner) for value in positional]
+                + [
+                    ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
+                    for name, value in keywords
+                ],
+                symbol_kind="coordinate",
+            ),
+            body=None,
+            keyword_names=tuple(name for name, _value in keywords),
+            site=site,
+        )
+        return UnknownCalleeCallV1(self.class_name).faces(callsite, site)
 
     def constructor_defaults(self) -> tuple:
         """``(key, value)``: the method defaults a call of the class binds

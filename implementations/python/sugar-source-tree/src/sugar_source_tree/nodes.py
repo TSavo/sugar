@@ -3209,12 +3209,11 @@ class SourceUnit:
         """Methods and simple class-body fields only, over the class's one
         base walk.
 
-        The classes are the class's MRO read by binding
-        (``ClassDef.method_resolution_order``, #7757): every source class of
-        it has a plain body, ``object`` is the base every class has, and a
-        builtin exception class is admitted when its constructor is
-        BaseException's ``(*args)`` law
-        (``builtin_exception_constructor_is_args_total``).  The class call
+        The classes are the class's MRO read by binding, when it constructs
+        by the laws the lifter reads (``ClassDef.construction_order``, #7757:
+        ``object`` and builtin exception classes whose constructor is
+        BaseException's ``(*args)`` law): every source class of it has a
+        plain body.  The class call
         then runs the first ``__init__`` of that order
         (``ClassDef.initializer_entry``): a source ``def __init__`` is its
         frame, whose ``super().__init__(...)`` reaches the builtin
@@ -3226,18 +3225,15 @@ class SourceUnit:
         assignment, and an assigned ``__init__`` is refused (the frame reads
         only a ``def``).  Constructor hooks, decorators, keywords, type
         parameters, and a walk that cannot be read -- a base the lifter
-        cannot read -- stay outside this door: that call is the unanswered
+        cannot read, or a builtin exception constructing by its own law
+        (``OSError``) -- stay outside this door: that call is the unanswered
         call.
         """
-        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
-            builtin_exception_constructor_is_args_total,
-        )
-
         if not isinstance(definition, ClassDef):
             return False
         if definition._authenticated_new_constructor_shape() is not None:
             return True
-        order = definition.method_resolution_order()
+        order = definition.construction_order()
         if order is None:
             return False
         forbidden_methods = {
@@ -3284,15 +3280,7 @@ class SourceUnit:
                 return False
             return True
 
-        for entry in order:
-            if isinstance(entry, ClassDef):
-                if not plain(entry):
-                    return False
-            elif entry != "object" and not builtin_exception_constructor_is_args_total(
-                entry
-            ):
-                return False
-        return True
+        return all(plain(entry) for entry in order if isinstance(entry, ClassDef))
 
     @staticmethod
     def source_class_admits_source_constructor_frame(
@@ -9957,6 +9945,46 @@ class ClassDef(Statement):
         name = canonical_builtin_exception_name(target[len(builtins_prefix) :])
         return name if name in BUILTIN_EXCEPTION_NAMES else None
 
+    def construction_order(self) -> "tuple | None":
+        """This class's MRO (``method_resolution_order``) when a call of the
+        class constructs by the laws the lifter reads: every builtin class of
+        it is ``object`` or a builtin exception class whose constructor is
+        BaseException's ``(*args)`` law
+        (``builtin_exception_constructor_is_args_total``), so the ``__new__``
+        and ``__init__`` each builtin entry brings store exactly the
+        positional actuals as ``args``.
+
+        None when the order is not read, or when a builtin exception class of
+        it constructs by its own law: ``OSError_new`` / ``oserror_init`` drop
+        the filename actuals from ``args`` (``OSError(2, 'x', 'f').args ==
+        (2, 'x')``) and select a subclass by errno, ``SyntaxError_init``
+        parses its second actual, and the ``Unicode*Error`` and group
+        constructors parse a fixed signature.  Wherever that class stands in
+        the order its ``__new__`` runs, so what the call stores is not given
+        by the one rule: the call is the one unanswered call.
+
+        The constructor-frame admission
+        (``SourceUnit.source_class_has_plain_source_body``), the
+        inherited-exception frame (``_inherits_default_exception_constructor``)
+        and a call of the class reached as a value
+        (``ClassDefinitionValue.callable_application_with``) read this.
+        """
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            builtin_exception_constructor_is_args_total,
+        )
+
+        order = self.method_resolution_order()
+        if order is None:
+            return None
+        if all(
+            isinstance(entry, ClassDef)
+            or entry == "object"
+            or builtin_exception_constructor_is_args_total(entry)
+            for entry in order
+        ):
+            return order
+        return None
+
     def _written_initializer(self) -> "FunctionDef | None":
         """The ``def __init__`` this class body writes: the last one, Python's
         live binding (overload stubs precede the implementation)."""
@@ -10318,41 +10346,24 @@ class ClassDef(Statement):
         )
 
     def _inherits_default_exception_constructor(self) -> bool:
-        """Whether this class inherits BaseException's ``(*args)`` constructor.
+        """Whether a call of this class runs BaseException's ``(*args)``
+        constructor: the first ``__init__`` of its MRO
+        (``initializer_entry``, the one base walk) is a builtin exception
+        class's, and the order constructs by that law
+        (``construction_order``: every builtin class of it is ``object`` or
+        args-total).  Then the instance's ``args`` are exactly the positional
+        actuals.
 
-        Identity is the authenticated base graph, never the class spelling:
-        each base resolves through ``SourceUnit.exception_type_identity`` (its
-        binding -- the builtin namespace nothing rebinds, ``from builtins
-        import``, or the one module class statement binding it), and a source
-        class is walked through its own bases in turn.  A non-exception class
-        without ``__init__`` still takes zero arguments (object construction);
-        only exception ancestry opens ``*args``.
+        False when that ``__init__`` is a source class's or ``object``'s, and
+        when the order is not read or holds a builtin exception whose
+        constructor is its own (``OSError``, ``SyntaxError``, ...): what such
+        a call stores as ``args`` is not this law's, and the call is the one
+        unanswered call (``construction_order`` is None).
         """
-        unit = self.unit
-        visiting: set[int] = set()
-
-        def base_is_exception(base) -> bool:
-            if not isinstance(base, Name):
-                return False
-            identity = unit.exception_type_identity(base)
-            if identity is None:
-                return False
-            if unit._builtin_exception_ancestry(identity) is not None:
-                return True
-            # The class statement the base's read reaches, never a module
-            # binding of its spelling.
-            definition = unit.module_definition_at(base.id, base.line_col_span())
-            if not isinstance(definition, ClassDef):
-                return False
-            if id(definition) in visiting:
-                return False
-            visiting.add(id(definition))
-            try:
-                return any(base_is_exception(item) for item in definition.bases)
-            finally:
-                visiting.remove(id(definition))
-
-        return any(base_is_exception(base) for base in self.bases)
+        if self.construction_order() is None:
+            return False
+        entry = self.initializer_entry()
+        return isinstance(entry, str) and entry != "object"
 
     def _make_constructor_coordinate_ref(self, param: "Param", coordinate) -> "Node":
         from .backend import Leaf, materialize

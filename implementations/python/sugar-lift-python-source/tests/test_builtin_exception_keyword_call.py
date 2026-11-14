@@ -76,3 +76,67 @@ def test_a_constructor_that_may_read_keywords_is_the_unanswered_call(
     halts = [face.effect for face in exits.exits if isinstance(face, Halted)]
     assert len(owed_calls(exits)) == 1
     assert _owners(halts) == [f"UnknownCallee:{callee.split('(')[0]}"]
+
+
+# -- the bodiless ``.args`` read: BaseException's law, or no answer ---------
+
+
+def _bodiless_exception_call(class_name, *, keyword_names=()):
+    """A bodiless call of the builtin exception class ``class_name``, as the
+    call site applies it: its binding's class, its raised type's coordinate,
+    three positional actuals (the last ones keywords when ``keyword_names``)."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.floor import StringValue
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        builtin_name_temporal,
+    )
+
+    actuals = (StringValue("a"), StringValue("b"), StringValue("c"))
+    return CallSiteValue(
+        target_name=class_name,
+        arg_values=actuals,
+        parameters=(),
+        term=ctor(
+            call_symbol(class_name),
+            [value.to_term(owner="test") for value in actuals],
+        ),
+        body=None,
+        keyword_names=keyword_names,
+        exception_type_coordinate=ctor(
+            "python:exception_type_identity",
+            [str_const("builtin"), str_const(class_name)],
+        ),
+        builtin_exception_class=builtin_name_temporal().value_if_bound(class_name),
+    )
+
+
+def test_a_base_exception_law_call_reads_its_positional_actuals_as_args() -> None:
+    from sugar_lift_py_tests.floor import StringValue, TupleValue
+
+    (face,) = _bodiless_exception_call("ValueError").attribute("args", None, None).exits
+    assert isinstance(face, Completed)
+    assert face.value == TupleValue(
+        (StringValue("a"), StringValue("b"), StringValue("c"))
+    )
+
+
+@pytest.mark.parametrize(
+    "class_name", ["OSError", "FileNotFoundError", "SyntaxError", "IndentationError"]
+)
+def test_a_constructor_of_its_own_never_reads_the_actuals_as_args(class_name) -> None:
+    # ``OSError('a', 'b', 'c').args == ('a', 'b')``: not BaseException's law,
+    # so ``.args`` is not the actuals; it is refused by name.
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(SugarNotWritten):
+        _bodiless_exception_call(class_name).attribute("args", None, None)
+
+
+def test_a_call_with_a_keyword_never_reads_the_actuals_as_args() -> None:
+    from sugar_source_tree.panic import SugarNotWritten
+
+    call = _bodiless_exception_call("ImportError", keyword_names=("name",))
+    with pytest.raises(SugarNotWritten):
+        call.attribute("args", None, None)

@@ -298,3 +298,82 @@ def test_super_init_with_a_keyword_is_the_type_error(tmp_path):
     assert [
         halt.exception_name for halt in halts if isinstance(halt, RaiseEffect)
     ] == ["TypeError"]
+
+
+# -- the inherited-exception frame reads the one base walk ------------------
+
+
+def test_the_inherited_exception_frame_is_the_first_initializer_of_the_mro(tmp_path):
+    # C's MRO is C, B, A, Exception, BaseException, object: B's source
+    # ``__init__`` runs, though a base is an exception class.
+    source_first = (
+        "class A(Exception):\n"
+        "    pass\n"
+        "class B:\n"
+        "    def __init__(self, x):\n"
+        "        pass\n"
+        "class C(B, A):\n"
+        "    pass\n"
+    )
+    c = _definition(_seat(tmp_path, "source-first"), source_first, "C")
+    assert c.initializer_entry().name == "B"
+    assert c._inherits_default_exception_constructor() is False
+    # C's MRO is C, A, Exception, BaseException, B, object: Exception's.
+    exception_first = (
+        "class A(Exception):\n"
+        "    pass\n"
+        "class B:\n"
+        "    def __init__(self, x):\n"
+        "        pass\n"
+        "class C(A, B):\n"
+        "    pass\n"
+    )
+    c = _definition(_seat(tmp_path, "exception-first"), exception_first, "C")
+    assert c._inherits_default_exception_constructor() is True
+
+
+def test_an_unread_order_inherits_no_exception_frame(tmp_path):
+    source = "from m import Mixin\nclass E(Exception, Mixin):\n    pass\n"
+    e = _definition(tmp_path, source, "E")
+    assert e.method_resolution_order() is None
+    assert e.construction_order() is None
+    assert e._inherits_default_exception_constructor() is False
+
+
+def test_an_os_error_subclass_inherits_no_exception_frame(tmp_path):
+    # ``OSError(2, 'x', 'f').args == (2, 'x')``: the ``(*args)`` frame would
+    # store every positional actual.
+    for seat, base in (("os", "FileNotFoundError"), ("syntax", "SyntaxError")):
+        source = f"class E({base}):\n    pass\n"
+        e = _definition(_seat(tmp_path, seat), source, "E")
+        assert _names(e.method_resolution_order())[:2] == ["E", base]
+        assert e.construction_order() is None
+        assert e._inherits_default_exception_constructor() is False
+
+
+# -- a class called as a value with an unread constructor -------------------
+
+
+def test_a_class_value_call_with_an_unread_base_is_the_unanswered_call(tmp_path):
+    # ``E()`` with no actuals is applied through the class value
+    # (``ClassDefinitionValue.callable_application_with``): never the empty
+    # ``object`` frame for a class whose bases are not read.
+    source = (
+        "from m import Base\n"
+        "class E(Base):\n"
+        "    pass\n"
+        "def f():\n"
+        "    return E()\n"
+    )
+    exits, returns, halts = _faces(tmp_path, source)
+    assert len(returns) == 1
+    assert len(owed_calls(exits)) == 1
+    assert _owners(halts) == ["UnknownCallee:E"]
+
+
+def test_a_class_value_call_of_an_os_error_subclass_is_the_unanswered_call(tmp_path):
+    source = "class E(FileNotFoundError):\n    pass\ndef f():\n    return E()\n"
+    exits, returns, halts = _faces(tmp_path, source)
+    assert len(returns) == 1
+    assert len(owed_calls(exits)) == 1
+    assert _owners(halts) == ["UnknownCallee:E"]
