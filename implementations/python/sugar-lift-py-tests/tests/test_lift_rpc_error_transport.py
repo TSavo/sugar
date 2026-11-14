@@ -1,16 +1,49 @@
 from __future__ import annotations
 
 import threading
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from sugar_lift_py_tests.gap.panic import construction_panic_gap
 from sugar_lift_py_tests import lift_rpc
+from sugar_source_tree.panic import SugarNotWritten
 
 
-def test_rpc_dispatch_returns_construction_panic_as_json_rpc_error(monkeypatch) -> None:
-    """ConstructionPanic: error frame then process death — never soft success."""
+def _raise_construction_panic() -> None:
+    construction_panic_gap(
+        owner="rpc-fixture",
+        blame="fixture.py:1:0",
+        observed="missing",
+        requested="value",
+        fix="return a JSON-RPC error frame",
+    )
+
+
+def _raise_sugar_not_written() -> None:
+    raise SugarNotWritten(
+        blame=SimpleNamespace(filename="fixture.py", line=1, col=0),
+        owner="rpc-fixture",
+        observed="missing",
+        requested="value",
+        fix="return a JSON-RPC error frame",
+    )
+
+
+@pytest.mark.parametrize(
+    ("refuse", "exception_type"),
+    [
+        pytest.param(_raise_construction_panic, "ConstructionPanic", id="construction"),
+        pytest.param(_raise_sugar_not_written, "SugarNotWritten", id="tree"),
+    ],
+)
+def test_rpc_answers_every_refusal_with_one_typed_error_and_keeps_serving(
+    monkeypatch, refuse, exception_type: str
+) -> None:
+    """One refusal, one answer (#7757): either family is the request's typed
+    error reply naming the refusal (class, message, locus); never a result,
+    never process death. The next request is served."""
     messages: list[dict[str, Any]] = [
         {"jsonrpc": "2.0", "id": 2, "method": "lift", "params": {}},
         {"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": {}},
@@ -24,32 +57,39 @@ def test_rpc_dispatch_returns_construction_panic_as_json_rpc_error(monkeypatch) 
     monkeypatch.setattr(lift_rpc, "_recv", _recv)
     monkeypatch.setattr(lift_rpc, "_send", sent.append)
 
-    def panic_dispatch(msg: dict[str, Any]) -> bool:
+    def refusing_dispatch(msg: dict[str, Any]) -> bool:
         if msg.get("method") == "shutdown":
+            lift_rpc._send(
+                {"jsonrpc": "2.0", "id": msg.get("id"), "result": {"ok": True}}
+            )
             return False
-        construction_panic_gap(
-            owner="rpc-fixture",
-            blame="fixture.py:1:0",
-            observed="missing",
-            requested="value",
-            fix="return a JSON-RPC error frame",
-        )
+        refuse()
         return True
 
-    monkeypatch.setattr(lift_rpc, "_dispatch_request", panic_dispatch)
+    monkeypatch.setattr(lift_rpc, "_dispatch_request", refusing_dispatch)
 
-    with pytest.raises(SystemExit) as halted:
-        lift_rpc.main(["--rpc"])
+    lift_rpc.main(["--rpc"])
 
-    assert halted.value.code == 1
-    # Shutdown never runs — process dies on ConstructionPanic.
-    assert messages == [{"jsonrpc": "2.0", "id": 3, "method": "shutdown", "params": {}}]
-    assert len(sent) == 1
-    assert sent[0]["id"] == 2
-    assert sent[0]["error"]["code"] == -32603
-    assert sent[0]["error"]["data"]["exception_type"] == "ConstructionPanic"
-    assert sent[0]["error"]["data"]["diagnostic"]["owner"] == "rpc-fixture"
-    assert "result" not in sent[0]
+    assert messages == []
+    assert len(sent) == 2, sent
+    reply = sent[0]
+    assert reply["id"] == 2
+    assert "result" not in reply
+    assert reply["error"]["code"] == -32001
+    assert reply["error"]["data"] == {
+        "kind": "typed-loud",
+        "exception_type": exception_type,
+        "stage": "dispatch",
+        "diagnostic": {
+            "owner": "rpc-fixture",
+            "blame": "fixture.py:1:0",
+            "observed": "missing",
+            "requested": "value",
+            "fix": "return a JSON-RPC error frame",
+        },
+    }
+    assert "missing" in reply["error"]["message"]
+    assert sent[1] == {"jsonrpc": "2.0", "id": 3, "result": {"ok": True}}
 
 
 def test_rpc_dispatch_returns_recursion_error_as_json_rpc_error(monkeypatch) -> None:

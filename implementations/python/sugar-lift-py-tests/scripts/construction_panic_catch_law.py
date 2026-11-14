@@ -172,29 +172,24 @@ except SugarNotWritten as refusal:
     )
 """)}
     ),
-    # REVIEWED (#7757). The resident RPC (category 2). A tree refusal leaves
-    # the process as a typed-loud JSON-RPC error carrying its owner, observed,
-    # requested and fix; the resident keeps serving the next request. A
-    # ConstructionPanic one arm above is fatal to the resident.
+    # REVIEWED (#7757). The resident RPC (category 2), the one answer to the
+    # one refusal: a refusal of one request (either family, any subclass) is
+    # that request's typed-loud JSON-RPC error naming its class, message and
+    # locus; the resident keeps serving the next request.
     ("lift_rpc.py", "_serve"): frozenset({_canonical_handler("""
-except SourceTreePanic as panic:
+except LifterRefusal as refusal:
     _send(
         {
             "jsonrpc": "2.0",
             "id": msg.get("id"),
             "error": {
                 "code": -32001,
-                "message": str(panic),
+                "message": str(refusal),
                 "data": {
                     "kind": "typed-loud",
-                    "exception_type": type(panic).__name__,
+                    "exception_type": type(refusal).__name__,
                     "stage": "dispatch",
-                    "diagnostic": {
-                        "owner": panic.owner,
-                        "observed": panic.observed,
-                        "requested": panic.requested,
-                        "fix": panic.fix,
-                    },
+                    "diagnostic": refusal.diagnostic(),
                 },
             },
         }
@@ -202,20 +197,15 @@ except SourceTreePanic as panic:
     _log_resident_profile(request_count, msg.get("method"))
     continue
 """)}),
-    # REVIEWED (#7785), FLAGGED for the owner on #7757. A function whose row
-    # names a variable outside its declared scope is refused by name: the full
-    # scan writes the refused-function row (step 8) and a seek reports the
-    # refusal's owner and observed. Never a fabricated completion.
+    # REVIEWED (#7785; the owner's one undecided member kind, 2026-11-12, in
+    # docs/path-forward.md). A function whose row names a variable outside its
+    # declared scope is refused by name: the full scan writes the
+    # refused-function `undecided` row (step 8) and serves the rest of the file.
+    # A seek packages nothing, so the refusal re-raises by name (#8081).
     ("lift_rpc.py", "_handle_enumerate"): frozenset({_canonical_handler("""
 except FreeVariableRefusal as refusal:
     if seek:
-        gaps.append(
-            {
-                "memento": _tree.function_def_memento(fn, file_rel).to_rpc(),
-                "reason": (f"{refusal.info.owner}: " f"{refusal.info.observed}"),
-            }
-        )
-        continue
+        raise
     scan_rows.append(
         (
             _tree.function_def_memento(fn, file_rel).to_rpc(),

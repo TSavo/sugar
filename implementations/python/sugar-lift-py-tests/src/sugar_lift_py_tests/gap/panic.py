@@ -26,6 +26,15 @@ class ConstructionPanic(LifterRefusal):
             f"{info.message}"
         )
 
+    def diagnostic(self) -> dict[str, str]:
+        return {
+            "owner": self.info.owner,
+            "blame": self.info.blame,
+            "observed": self.info.observed,
+            "requested": self.info.requested,
+            "fix": self.info.fix,
+        }
+
 
 def construction_panic(info: ConstructionGap) -> NoReturn:
     """Raise the construction None arm. No soft halted arm; no audit row."""
