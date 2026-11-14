@@ -393,19 +393,28 @@ def _measure_clean(module, path: Path, workspace: Path) -> dict[str, Any]:
 
 
 def _measure_panic(module, path: Path, workspace: Path) -> dict[str, Any]:
-    """Known panic through the production enumerate consumer."""
+    """Known panic through the production enumerate consumer.
+
+    The panic is planted at the residency door behind the one entry
+    (``lift_rpc._open_at_seat`` -> ``process_resident_file.
+    _source_file_from_identity``): every open of a file, resident or not,
+    passes it, so the roster demand's open of the planted host raises here.
+    ``SourceFile.__init__`` is not on that path since #8102 (the entry calls
+    the door directly), so a plant there never fires and the tooth goes red
+    with cpanic=0 although nothing swallowed a panic.
+    """
     import shutil
     import tempfile
 
     from sugar_lift_py_tests.gap.info import ConstructionGap
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from recensus_enumerate_consumer import measure_file_via_enumerate
-    import sugar_source_tree.tree as tree_mod
+    import sugar_source_tree.process_resident_file as residency
 
     iso = Path(tempfile.mkdtemp(prefix="recensus-path-smoke-panic-"))
-    original = tree_mod.SourceFile.__init__
+    original = residency._source_file_from_identity
 
-    def boom(self, *a, **k):
+    def boom(*a, **k):
         raise ConstructionPanic(
             ConstructionGap(
                 owner="recensus-path-smoke-planted-panic",
@@ -419,14 +428,14 @@ def _measure_panic(module, path: Path, workspace: Path) -> dict[str, Any]:
     try:
         plant = iso / path.name
         shutil.copy2(path, plant)
-        tree_mod.SourceFile.__init__ = boom  # type: ignore[method-assign]
+        residency._source_file_from_identity = boom
         row = measure_file_via_enumerate(
             file_rel=path.name,
             workspace_root=iso,
             source_workspace_root=iso,
         )
     finally:
-        tree_mod.SourceFile.__init__ = original  # type: ignore[method-assign]
+        residency._source_file_from_identity = original
         shutil.rmtree(iso, ignore_errors=True)
     row = dict(row)
     row["sites"] = dict(module._ast_site_prevalence(path))
