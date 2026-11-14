@@ -61,38 +61,24 @@ class SliceSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> ExitSet:
         # Bounds are ordinary operands evaluated **left-to-right**: lower, then
         # upper, then step.  A lower-bound halt must not evaluate upper/step
-        # (Python source order).  Collection ``_reduce_into`` eagerly maps
-        # ``desugar`` over every element before folding — that is wrong for
-        # slice bounds.  Sequence each present bound through ``and_then`` so a
-        # halted arm short-circuits later desugars while completed arms and
-        # pending carriers still thread.
+        # (Python source order), each under the state after the ones before it.
+        # The one left-to-right operand fold (``reduce_operands``) sequences
+        # each present bound through ``and_then`` so a halted arm
+        # short-circuits later desugars while completed arms and pending
+        # carriers still thread; an omitted position is ``None``, never
+        # desugared.
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            reduce_operands,
+        )
         from sugar_lift_py_tests.floor.slice_value import SliceValue
-        from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
-        positions = (self.lower, self.upper, self.step)
-        # Seed: no bounds reduced yet.  Each present bound desugars only after
-        # the prior outcome continues (its completed arms).
-        outcome: ExitSet = ExitSet.completed(())
-        for bound in positions:
-            if bound is None:
-                # Omitted position: Python fills None; do not desugar.
-                outcome = outcome.and_then(
-                    lambda collected: ExitSet.completed((*collected, None))
-                )
-                continue
-
-            def _step(collected, bound_sugar=bound):
-                factored = factored_operand(bound_sugar.desugar(ctx))
-                return factored.and_then(
-                    lambda value: ExitSet.completed((*collected, value))
-                )
-
-            outcome = outcome.and_then(_step)
+        outcome = reduce_operands(
+            (self.lower, self.upper, self.step), ctx, factored=True
+        )
 
         # The bounds are operands: a walrus in one binds once, through the one
         # operand door (an omitted bound is ``None`` and carries nothing).
-        from sugar_lift_py_tests.floor.named_expression_value import consume_operands
-
         return outcome.and_then(
             lambda values: consume_operands(
                 lambda lower, upper, step: ExitSet.completed(

@@ -70,17 +70,6 @@ def _opaque_pair(kind, method, site):
     )
 
 
-def _operands(pending, done, ctx):
-    """Evaluate ``pending`` operand sugars in order, after ``done``."""
-    if not pending:
-        return ExitSet.completed(done)
-    return (
-        pending[0]
-        .desugar(ctx)
-        .and_then(lambda value: _operands(pending[1:], (*done, value), ctx))
-    )
-
-
 @dataclass(frozen=True)
 class BuiltinContainerCallSugar(ConstructedTermSugar):
     """``receiver.<method>(*args)`` on a decided list/dict/set: ``(post, result)``."""
@@ -120,39 +109,31 @@ class BuiltinContainerCallSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            reduce_operands,
         )
 
         # The receiver and the arguments are the call's operands: a walrus in
         # one (``xs.append((x := 5))``) binds once, through the one operand
-        # door, and the law holds the values they present.
+        # door, and the law holds the values they present.  They reduce left
+        # to right, each under the state after the ones before it
+        # (``reduce_operands``).
         def apply(receiver, *operands):
             return self._apply(receiver, operands, ctx)
 
         if self.value_first:
             *keys, value = self.args
-            return value.desugar(ctx).and_then(
-                lambda stored: self.receiver.desugar(ctx).and_then(
-                    lambda receiver: self._operands(tuple(keys), (), ctx).and_then(
-                        # In evaluation order: the stored value first.
-                        lambda operands: consume_operands(
-                            lambda stored, receiver, *operands: self._apply(
-                                receiver, (*operands, stored), ctx
-                            ),
-                            stored,
-                            receiver,
-                            *operands,
-                        )
-                    )
+            # In evaluation order: the stored value first.
+            return reduce_operands((value, self.receiver, *keys), ctx).and_then(
+                lambda operands: consume_operands(
+                    lambda stored, receiver, *operands: self._apply(
+                        receiver, (*operands, stored), ctx
+                    ),
+                    *operands,
                 )
             )
-        return self.receiver.desugar(ctx).and_then(
-            lambda receiver: self._operands(self.args, (), ctx).and_then(
-                lambda operands: consume_operands(apply, receiver, *operands)
-            )
+        return reduce_operands((self.receiver, *self.args), ctx).and_then(
+            lambda operands: consume_operands(apply, *operands)
         )
-
-    def _operands(self, pending, done, ctx):
-        return _operands(pending, done, ctx)
 
     def _apply(self, receiver, operands, ctx):
         from sugar_lift_py_tests.floor import builtin_container_method as law
@@ -367,14 +348,19 @@ class PathContainerCallSugar(ConstructedTermSugar):
 
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            reduce_operands,
+            written_by,
         )
 
         def on_receiver(receiver):
             kind = law.container_kind(receiver)
             if kind is not None and self.method in law.MUTATING_METHODS[kind]:
                 # The arguments are operands: a walrus in one binds once,
-                # through the one operand door.
-                return _operands(self.args, (), ctx).and_then(
+                # through the one operand door.  They reduce left to right
+                # after the receiver (``reduce_operands``).
+                return reduce_operands(
+                    self.args, written_by(receiver, ctx)
+                ).and_then(
                     lambda operands: consume_operands(
                         lambda *held: law.apply(
                             kind, self.method, receiver, held, self.site, ctx

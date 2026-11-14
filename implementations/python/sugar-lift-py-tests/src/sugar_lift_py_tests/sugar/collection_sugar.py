@@ -35,10 +35,13 @@ def _reduce_into(element_sugars, ctx, build):
     store partitions, a comparison chain that raises on one face. That assumption
     was the `'ExitSet' object has no attribute 'value'` defect.
     """
-    from sugar_lift_py_tests.outcome.exit_set import factored_operand
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        consume_operands,
+        reduce_operands,
+    )
 
-    reduced = tuple(element.desugar(ctx) for element in element_sugars)
-
+    # Each element is reduced after the ones before it, under the state after
+    # them (``reduce_operands``): ``[(b := 2), b]`` reads ``b`` as 2.
     # An element that PARTITIONS enters the fold with at most one completed arm
     # (#6324). `and_then` is `ExitSet.sequence`, which distributes the tail
     # under every completed arm of the prefix, so an unfactored element makes
@@ -48,17 +51,10 @@ def _reduce_into(element_sugars, ctx, build):
     # holds like any other floor value) and leaves its halted arms at the exit
     # level. The accumulator itself cannot be factored -- its completed value is
     # the growing tuple this fold is building.
-    outcome = ExitSet.completed(())
-    for element_outcome in reduced:
-        outcome = outcome.and_then(
-            lambda collected, got=factored_operand(element_outcome): got.and_then(
-                lambda value: ExitSet.completed((*collected, value))
-            )
-        )
+    outcome = reduce_operands(element_sugars, ctx, factored=True)
     # The elements are operands of the display: a walrus in one (``[(x :=
     # 5)]``) binds once, through the one operand door, and the display holds
     # the values the elements present.
-    from sugar_lift_py_tests.floor.named_expression_value import consume_operands
 
     if getattr(build, "returns_outcome", False):
         built = outcome.and_then(

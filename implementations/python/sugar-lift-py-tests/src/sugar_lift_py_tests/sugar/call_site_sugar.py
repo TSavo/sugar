@@ -591,20 +591,26 @@ class CallSiteSugar(ConstructedTermSugar):
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            written_by,
         )
 
         if remaining:
             head, *rest = remaining
             actual_ctx = _actual_reduce_context(ctx)
             # The actual is an operand: a walrus in it (``f((x := 5))``) binds
-            # once, through the one operand door.
+            # once, through the one operand door.  The later actuals, the
+            # keywords and the call itself (the closure cells it reads among
+            # them) are evaluated after it, with its writes applied
+            # (``written_by``: ``f((a := 1), a)``).
             return head.desugar(actual_ctx).and_then(
                 lambda value: consume_operands(
                     lambda presented: presented.project_operation_receiver_outcome(
                         actual_ctx, owner="CallSiteSugar positional actual"
                     ).and_then(
                         lambda actual: self._collect(
-                            tuple(rest), accumulated + (actual,), ctx
+                            tuple(rest),
+                            accumulated + (actual,),
+                            written_by(value, ctx),
                         )
                     ),
                     value,
@@ -618,10 +624,12 @@ class CallSiteSugar(ConstructedTermSugar):
         if remaining:
             from sugar_lift_py_tests.floor.named_expression_value import (
                 consume_operands,
+                written_by,
             )
 
             (name, sugar), *rest = remaining
             actual_ctx = _actual_reduce_context(ctx)
+            # Same order as the positional actuals (``_collect``).
             return sugar.desugar(actual_ctx).and_then(
                 lambda value: consume_operands(
                     lambda presented: presented.project_operation_receiver_outcome(
@@ -631,7 +639,7 @@ class CallSiteSugar(ConstructedTermSugar):
                             tuple(rest),
                             kw_values + ((name, actual),),
                             positional,
-                            ctx,
+                            written_by(value, ctx),
                         )
                     ),
                     value,

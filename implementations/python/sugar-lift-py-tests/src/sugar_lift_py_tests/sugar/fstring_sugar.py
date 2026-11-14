@@ -150,20 +150,27 @@ class FormattedValueSugar(ConstructedTermSugar):
         # door -- so a halt propagates and a partition keeps every arm. Reading `.value` off the outcome assumed one
         # unconditional arm and was the `'ExitSet' has no attribute 'value'`
         # defect here.
-        def with_spec(value):
+        def with_spec(value, spec_ctx):
             if self.format_spec is None:
                 return build(value, ctor("None", []))
-            return self.format_spec.reference_term(ctx).and_then(
+            return self.format_spec.reference_term(spec_ctx).and_then(
                 lambda spec_term: build(value, spec_term)
             )
 
         # The formatted expression is an operand: a walrus in it
         # (``f"{(x := 5)}"``) binds once, through the one operand door, and
-        # the value it presents is what is formatted.
-        from sugar_lift_py_tests.floor.named_expression_value import consume_operands
+        # the value it presents is what is formatted.  The spec is evaluated
+        # after it, with its writes applied (``written_by``).
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            written_by,
+        )
 
         return self.value.desugar(ctx).and_then(
-            lambda value: consume_operands(with_spec, value)
+            lambda value: consume_operands(
+                lambda presented: with_spec(presented, written_by(value, ctx)),
+                value,
+            )
         )
 
 
@@ -218,8 +225,13 @@ class JoinedStrSugar(ConstructedTermSugar):
         # multiplies the accumulator at every remaining part.
         # The parts are operands of the concatenation: a walrus in one binds
         # once, through the one operand door; the joined value so far carries
-        # the binds of the parts before it, so they ride to the end in order.
-        from sugar_lift_py_tests.floor.named_expression_value import consume_operands
+        # the binds of the parts before it, so they ride to the end in order,
+        # and each part is evaluated with their writes applied
+        # (``written_by``: ``f"{(n := 1)}{n}"``).
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            written_by,
+        )
 
         def concatenate(left, right):
             return _concatenate_joined_parts(left, right, self.site, ctx)
@@ -227,9 +239,9 @@ class JoinedStrSugar(ConstructedTermSugar):
         outcome = factored_operand(self.parts[0].desugar(ctx))
         for part in self.parts[1:]:
             outcome = outcome.and_then(
-                lambda left, part=part: factored_operand(part.desugar(ctx)).and_then(
-                    lambda right: consume_operands(concatenate, left, right)
-                )
+                lambda left, part=part: factored_operand(
+                    part.desugar(written_by(left, ctx))
+                ).and_then(lambda right: consume_operands(concatenate, left, right))
             )
         return outcome
 
