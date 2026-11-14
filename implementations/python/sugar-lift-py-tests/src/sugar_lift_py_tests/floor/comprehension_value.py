@@ -322,9 +322,9 @@ def _undecided_slice_rhs(operation, value):
         SubscriptStoreRuntimeEffect,
         runtime_effect_evidence,
     )
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
 
-    return Incomplete(
+    return store_faces(
         SubscriptStoreRuntimeEffect(
             "list slice assignment RHS members are undecided at lift; "
             f"owner={operation.owner} site={operation.blame}",

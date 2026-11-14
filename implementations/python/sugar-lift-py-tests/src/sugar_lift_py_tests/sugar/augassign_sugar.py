@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field as dataclass_field
+from typing import ClassVar
 
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
@@ -131,6 +132,9 @@ class SubscriptAugAssignSugar(Sugar):
     op_site: object = dataclass_field(compare=False)
     set_site: object = dataclass_field(compare=False)
     site: object = dataclass_field(compare=False)
+    # The store's halted face reached nothing inside this statement: the
+    # reducer gives it the prefix (``store_faces``).
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):
@@ -212,6 +216,9 @@ class AttributeAugAssignSugar(Sugar):
     op_site: object = dataclass_field(compare=False)
     set_site: object = dataclass_field(compare=False)
     site: object = dataclass_field(compare=False)
+    # The store's halted face reached nothing inside this statement: the
+    # reducer gives it the prefix (``store_faces``).
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):

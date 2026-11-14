@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Incomplete, Outcome
+from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
@@ -96,6 +96,7 @@ class AttributeStoreEffectSugar(Sugar):
             AttributeStoreRuntimeEffect,
             runtime_effect_evidence_from_terms,
         )
+        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
         from sugar_lift_py_tests.ir import ctor, str_const
 
         operation = ctor(
@@ -106,7 +107,7 @@ class AttributeStoreEffectSugar(Sugar):
                 value.to_term(owner="AttributeStoreEffectSugar.value"),
             ],
         )
-        return Incomplete(
+        return store_faces(
             AttributeStoreRuntimeEffect(
                 "attribute assignment runtime boundary: attribute store "
                 f"target `.{attr}` -- receiver identity belongs to "

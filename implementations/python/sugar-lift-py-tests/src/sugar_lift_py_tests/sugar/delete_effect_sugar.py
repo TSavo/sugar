@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import ClassVar
 
-from sugar_lift_py_tests.outcome import Incomplete, Outcome
+from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -31,6 +32,9 @@ class AttributeDeleteEffectSugar(Sugar):
     receiver: Sugar
     attr: str
     site: object = dataclass_field(compare=False)
+    # The delete's halted face reached nothing inside this statement: the
+    # reducer gives it the prefix (``store_faces``).
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):
@@ -58,13 +62,14 @@ class AttributeDeleteEffectSugar(Sugar):
             AttributeDeleteRuntimeEffect,
             runtime_effect_evidence,
         )
+        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
         from sugar_lift_py_tests.ir import ctor, str_const
 
         operand = ctor(
             "python:attribute_delete_target",
             [receiver.to_term(owner="attribute delete"), str_const(self.attr)],
         )
-        return Incomplete(
+        return store_faces(
             AttributeDeleteRuntimeEffect(
                 "attribute deletion runtime boundary: Python dispatches "
                 f"__delattr__/descriptor deletion for .{self.attr}",
@@ -128,6 +133,9 @@ class SubscriptDeleteEffectSugar(Sugar):
     receiver: Sugar
     index: Sugar
     site: object = dataclass_field(compare=False)
+    # The delete's halted face reached nothing inside this statement: the
+    # reducer gives it the prefix (``store_faces``).
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):

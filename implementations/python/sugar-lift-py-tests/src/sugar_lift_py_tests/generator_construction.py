@@ -1539,6 +1539,11 @@ class GeneratorConstructionV1:
                 return self._fold_pending_cited_opaque_exits(
                     ExitSet.halted(outcome.effect, state=self)
                 )
+            if isinstance(outcome, ExitSet):
+                # An undecided receiver's store answers its two faces
+                # (``store_faces``): the halted face leaves the machine here,
+                # the completed face resumes past the store (#7827 item 4).
+                return self._transition_term_exitset(step, outcome, requested)
             if not isinstance(outcome, Complete):
                 return self._gap(
                     requested, f"attribute store returned {type(outcome).__name__}"

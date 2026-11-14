@@ -283,8 +283,7 @@ def reduce_block_to_exitset(
                 # the prefix is spliced on here, at the one seam that owns
                 # sequencing. Without this, a halt inside a nested statement
                 # would report an empty temporal state and every earlier store
-                # would read as rolled back, which is exactly the law the store
-                # partition above exists to state.
+                # would read as rolled back (Python never rolls back a store).
                 head_halt = getattr(statement, "halts_at_statement_head", False)
                 outcome = ExitSet(
                     tuple(
@@ -293,9 +292,10 @@ def reduce_block_to_exitset(
                                 exit_.guard,
                                 exit_.effect,
                                 # A simple statement binds nothing before its
-                                # own halt: a stateless arm halted at its head,
-                                # where the prefix is the whole record -- the
-                                # same state the Incomplete path below gives.
+                                # own halt (an expression halt, a store's
+                                # halted face): a stateless arm halted at its
+                                # head, where the prefix is the whole record --
+                                # the same state the Incomplete path below gives.
                                 state
                                 if head_halt and exit_.state is None
                                 else _halt_state(state, exit_),
@@ -322,44 +322,9 @@ def reduce_block_to_exitset(
             entries = (*state.entries, *contribution)
             next_context = _extend_receiver_store_scope(outcome, active_ctx)
 
+            # A store is not split here: its producer answers its two faces
+            # (``store_faces``), and they arrive through the ExitSet seam above.
             follow = outcome.follow()
-            if follow.continues and follow.halt_guard is not None:
-                # A store: runtime-selected success/halt over ONE authenticated
-                # occurrence coordinate.
-                #
-                # Halted arm carries `state` -- the PREFIX. Every earlier
-                # binding and every earlier store survives on it (Python never
-                # rolls back an assignment that already happened), and this
-                # store's own completion testimony is absent from it, because
-                # this store did not complete.
-                #
-                # Completed arm carries the prefix PLUS this store's red
-                # testimony, which is not a halt (#7826). Only this arm is fed
-                # to the tail by `ExitSet.sequence`, so no later target can
-                # execute after an earlier store halt.
-                from sugar_lift_py_tests.floor.runtime_effect_testimony import (
-                    RuntimeEffectTestimony,
-                )
-                from sugar_lift_py_tests.outcome.exit_set import complement_guard
-
-                testimony = (RuntimeEffectTestimony(outcome.effect),)
-                for transform in reversed(state.transforms):
-                    testimony = transform(testimony)
-                return ExitSet(
-                    (
-                        Halted(follow.halt_guard, outcome.effect, state),
-                        Completed(
-                            complement_guard(follow.halt_guard),
-                            _ReducedBlock(
-                                (*state.entries, *testimony),
-                                True,
-                                state.fall_through,
-                                state.transforms,
-                                next_context,
-                            ),
-                        ),
-                    )
-                ).normalize()
             if not follow.continues:
                 if isinstance(outcome, Incomplete):
                     if outcome.branch_conditions:

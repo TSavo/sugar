@@ -286,7 +286,7 @@ class DictValue(GuardStableValue):
         guarded = self._guarded_setitem(index, value, site)
         if guarded is not None:
             return guarded
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
 
         found = _key_position(self.entries, index)
         if found is not None:
@@ -301,8 +301,9 @@ class DictValue(GuardStableValue):
             SubscriptStoreRuntimeEffect,
             runtime_effect_evidence,
         )
+        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
 
-        return Incomplete(
+        return store_faces(
             SubscriptStoreRuntimeEffect(
                 "dict subscript store requires a concrete key; "
                 f"owner=DictValue.setitem site={site}",
@@ -342,7 +343,7 @@ class DictValue(GuardStableValue):
         return None
 
     def delitem(self, index, site):
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import Complete
 
         found = _key_position(self.entries, index)
         if found is not None:
@@ -363,8 +364,9 @@ class DictValue(GuardStableValue):
             SubscriptStoreRuntimeEffect,
             runtime_effect_evidence,
         )
+        from sugar_lift_py_tests.floor.store_outcome_coordinate import store_faces
 
-        return Incomplete(
+        return store_faces(
             SubscriptStoreRuntimeEffect(
                 "dict subscript delete requires a concrete key; "
                 f"owner=DictValue.delitem site={site}",

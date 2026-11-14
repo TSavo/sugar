@@ -40,27 +40,37 @@ from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.floor.floor_value import FloorValue
 
-#: The store family.  Every one of these effects mutates a place through
-#: runtime dispatch that can halt: attribute/subscript stores, the store half of
-#: an augmented attribute assignment, and attribute/subscript deletes.  They
-#: share ONE law, so they share ONE list -- there is no per-syntax special case.
-STORE_FAMILY_EFFECT_NAMES = (
-    "AttributeStoreRuntimeEffect",
-    "SubscriptStoreRuntimeEffect",
-    "AttributeAugAssignRuntimeEffect",
-    "AttributeDeleteRuntimeEffect",
-    "SubscriptDeleteRuntimeEffect",
-)
+def store_faces(effect):
+    """The two faces of one store occurrence, built where the store is.
 
+    Every store-family producer (attribute and subscript stores, attribute
+    and subscript deletes) answers exactly this: ``Halted(not g)`` with the
+    store's own effect, and ``Completed(g)`` whose value is the red testimony
+    that the runtime answered the store (``RuntimeEffectTestimony``).  It is
+    the ONE spelling of the store law: no linear outcome carries a second
+    meaning that "continues under g and halts under not g" (#7825, H2).
 
-def store_family_effects() -> tuple[type, ...]:
-    from sugar_lift_py_tests import effect as effect_module
+    The halted arm has no state of its own: nothing is reached inside an
+    expression before its store halts, so the block reducer gives it the
+    prefix it already established.
+    """
+    from sugar_lift_py_tests.floor.runtime_effect_testimony import (
+        RuntimeEffectTestimony,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        ExitSet,
+        Halted,
+        complement_guard,
+    )
 
-    return tuple(getattr(effect_module, name) for name in STORE_FAMILY_EFFECT_NAMES)
-
-
-def is_store_family_effect(effect) -> bool:
-    return isinstance(effect, store_family_effects())
+    halted = store_halted_guard(effect)
+    return ExitSet(
+        (
+            Halted(halted, effect, None),
+            Completed(complement_guard(halted), RuntimeEffectTestimony(effect)),
+        )
+    ).normalize()
 
 
 def store_occurrence_address(effect) -> str:
