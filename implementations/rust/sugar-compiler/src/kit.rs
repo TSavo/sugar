@@ -491,8 +491,6 @@ impl Kit {
             command: self.manifest.command.clone(),
             working_dir: self.manifest.working_dir.clone(),
             workspace_root: workspace_root.to_path_buf(),
-            audit_frontier: false,
-            allowed_broken_components: Vec::new(),
             transport: self.connection.clone().with_method("sugar.enumerate"),
         }
     }

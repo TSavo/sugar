@@ -224,7 +224,6 @@ mod dual_number_encoder_3901_tests {
     /// Mint/feed critical path: claim-envelope mint, feed fold, libsugar CID.
     const CRITICAL_PATH: &[&str] = &[
         "sugar-claim-envelope/src/lib.rs",
-        "sugar-compiler/src/feed_from_tree.rs",
         "libsugar/src/canonical.rs",
     ];
 

@@ -1,6 +1,6 @@
-"""The dotted path over the wire: source_files -> functions -> call_sites ->
-assertions, each level a projection of the collapse, each node addressed by
-its sealed memento. Kit::sourceFiles[0].functions()[0].assertions[0], literal."""
+"""The dotted path over the wire: source_files -> functions -> call_sites,
+each level a projection of the collapse, each node addressed by its sealed
+memento. The assertion level below call_sites is gone (#7757 entry 5)."""
 
 from __future__ import annotations
 
@@ -88,17 +88,6 @@ def test_the_dotted_path_end_to_end(tmp_path) -> None:
         )["nodes"]
         assert len(sites) == 1
         assert sites[0]["memento"]["span"]["start_line"] == 8  # the assert's line
-
-        assertion = server.call(
-            "sugar.enumerate",
-            {
-                "level": "assertions",
-                "workspace_root": ws,
-                "at": sites[0]["memento"],
-                "seek": True,
-            },
-        )["nodes"]
-        assert len(assertion) == 1
-        assert assertion[0]["memento"]["source_cid"].startswith("blake3-512:")
+        assert sites[0]["memento"]["source_cid"].startswith("blake3-512:")
     finally:
         server.close()

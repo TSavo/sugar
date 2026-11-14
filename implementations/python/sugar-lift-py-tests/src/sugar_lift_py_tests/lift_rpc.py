@@ -2474,7 +2474,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             "context-manager-resolutions",
             "relation-membership",
             "call_sites",
-            "assertions",
             "facts",
             "universe",
         ):
@@ -2543,8 +2542,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # sugar() reaches the base throw self-reports; that count IS R.
                 # status is `failed` when the file has any unwritten sugar,
                 # `clean` when fully sugared -- no false green. No other level
-                # answers under auditFrontier: `sugar lift --audit-frontier` is
-                # not a driver of the Python kit (#7806).
+                # answers under auditFrontier (#7806).
                 if level != "facts":
                     _send(
                         {
@@ -2555,9 +2553,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                                 "message": (
                                     "sugar.enumerate: auditFrontier is answered "
                                     f"at level 'facts' only, not {level!r}; "
-                                    "`sugar lift --audit-frontier` does not drive "
-                                    "the Python kit -- the construction frontier "
-                                    "is the board door "
+                                    "the construction frontier is the board door "
                                     "(scripts/control_effect_recensus.py, #7806)"
                                 ),
                             },
@@ -2585,6 +2581,28 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 _log_enumeration_demand(
                     str(level), at, cache="miss", started=demand_started
+                )
+                return
+
+            if level == "facts":
+                # `facts` is the board door's audit leaf only. The assertion ->
+                # fact descent that read one assert's reduction was driven by
+                # `sugar lift`'s second door and the Rust typed descent, both
+                # deleted: the whole-tree walk is mint's (source_files ->
+                # universe), #7757 entry 5 / item 25.
+                _send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": msg_id,
+                        "error": {
+                            "code": -32602,
+                            "message": (
+                                "sugar.enumerate: level 'facts' is answered under "
+                                "auditFrontier only (the board door's D3 leaf); "
+                                "the whole-tree walk is source_files -> universe"
+                            ),
+                        },
+                    }
                 )
                 return
 
@@ -2768,10 +2786,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
             # Levels below `functions` served by the AST tree, not the factory.
-            # Invoking the RPC is invoking the source tree enumeration: walk the
-            # function's Assert nodes and ask each for its sugar and its fact.
-            # For a bare `assert`, call_site and assertion are the same locus
-            # (1:1, protocol Section 4); the fact is the desugared InvValue.
             # (audit_walk already answered or refused above; this is the live
             # path.)
             if level == "universe":
@@ -2977,7 +2991,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 )
                 return
 
-            if level in ("call_sites", "assertions", "facts"):
+            if level == "call_sites":
+                # The cue a universe seek reads (a call site's assert locus).
                 from sugar_lift_py_tests import tree_enumerate as _tree
                 from sugar_source_tree.reporter import CollectingReporter
 
@@ -2988,108 +3003,65 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     source_workspace_root=locus_root,
                 )
 
-                if level in ("call_sites", "assertions"):
-                    if seek:
-                        source_assert = _tree.find_assert(
-                            sf,
-                            at.get("span") if isinstance(at, dict) else None,
-                        )
-                        if source_assert is not None:
-                            memento = _tree.assert_memento(source_assert, file_rel)
-                            if at is not None and _memento_matches(memento, at):
-                                _send_enumerate_result(
-                                    msg_id,
-                                    [
-                                        {
-                                            "memento": memento,
-                                            "audit": None,
-                                            "payload": None,
-                                        }
-                                    ],
-                                    [],
-                                )
-                                _log_enumeration_demand(
-                                    str(level),
-                                    at,
-                                    cache="miss",
-                                    started=demand_started,
-                                )
-                                return
-                        _send_enumerate_result(
-                            msg_id,
-                            [],
-                            [
-                                {
-                                    "memento": at,
-                                    "reason": "no call site for exact memento",
-                                }
-                            ],
-                        )
-                        _log_enumeration_demand(
-                            str(level), at, cache="miss", started=demand_started
-                        )
-                        return
-
-                    # at is the parent function (scan) — enumerate its assertions.
-                    fn = _tree.find_function(
+                if seek:
+                    source_assert = _tree.find_assert(
                         sf,
-                        (at or {}).get("function_name")
-                        or (at or {}).get("source_function_name"),
-                        (at or {}).get("span") if isinstance(at, dict) else None,
+                        at.get("span") if isinstance(at, dict) else None,
                     )
-                    built = []
-                    if fn is not None:
-                        for a in _tree.asserts_of(fn):
-                            memento = _tree.assert_memento(a, file_rel)
-                            if (
-                                seek
-                                and at is not None
-                                and not _memento_matches(memento, at)
-                            ):
-                                continue
-                            built.append(
-                                {"memento": memento, "audit": None, "payload": None}
+                    if source_assert is not None:
+                        memento = _tree.assert_memento(source_assert, file_rel)
+                        if at is not None and _memento_matches(memento, at):
+                            _send_enumerate_result(
+                                msg_id,
+                                [
+                                    {
+                                        "memento": memento,
+                                        "audit": None,
+                                        "payload": None,
+                                    }
+                                ],
+                                [],
                             )
-                    _send_enumerate_result(msg_id, built, [])
-                    _log_enumeration_demand(
-                        str(level), at, cache="miss", started=demand_started
-                    )
-                    return
-
-                # facts: at is an assertion memento — read what THAT assert
-                # reduced to in its owner's one reduction (item 28, #7757).
-                source_node, outcome = _tree.assert_outcome(
-                    sf, at.get("span") if isinstance(at, dict) else None
-                )
-                if source_node is None:
-                    _send_enumerate_result(
-                        msg_id, [], [{"memento": at, "reason": "no assertion here"}]
-                    )
-                    return
-                formula = _tree.fact_of(outcome)
-                if formula is None:
+                            _log_enumeration_demand(
+                                str(level),
+                                at,
+                                cache="miss",
+                                started=demand_started,
+                            )
+                            return
                     _send_enumerate_result(
                         msg_id,
                         [],
                         [
                             {
-                                "memento": _tree.assert_memento(source_node, file_rel),
-                                "reason": "assertion emits no fact",
+                                "memento": at,
+                                "reason": "no call site for exact memento",
                             }
                         ],
                     )
+                    _log_enumeration_demand(
+                        str(level), at, cache="miss", started=demand_started
+                    )
                     return
-                _send_enumerate_result(
-                    msg_id,
-                    [
-                        {
-                            "memento": _tree.assert_memento(source_node, file_rel),
-                            "audit": None,
-                            "payload": formula,
-                        }
-                    ],
-                    [],
+
+                # at is the parent function (scan) — enumerate its call sites.
+                fn = _tree.find_function(
+                    sf,
+                    (at or {}).get("function_name")
+                    or (at or {}).get("source_function_name"),
+                    (at or {}).get("span") if isinstance(at, dict) else None,
                 )
+                built = []
+                if fn is not None:
+                    for a in _tree.asserts_of(fn):
+                        built.append(
+                            {
+                                "memento": _tree.assert_memento(a, file_rel),
+                                "audit": None,
+                                "payload": None,
+                            }
+                        )
+                _send_enumerate_result(msg_id, built, [])
                 _log_enumeration_demand(
                     str(level), at, cache="miss", started=demand_started
                 )
