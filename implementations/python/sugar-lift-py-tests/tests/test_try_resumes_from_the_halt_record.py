@@ -312,7 +312,7 @@ def test_a_handler_reads_the_callers_list_wherever_the_call_sits() -> None:
 
 def test_a_callee_appending_to_a_module_list_is_seen_after_it_completes() -> None:
     # ``g`` appends to the module's list, which ``f`` reads too: the caller
-    # holds the object the callee reaches (``_module_objects_reached``), so
+    # holds the object the callee reaches (``_callee_reach``), so
     # ``f`` reads it as ``g`` left it, never the ``[]`` the module bound.
     outcome = function_universe_outcome(
         _function(
@@ -358,6 +358,133 @@ def test_a_module_list_a_callee_may_change_unfollowed_is_not_its_old_value() -> 
         "def g():\n"
         "    for _ in (1,):\n"
         "        L.append(1)\n"
+    )
+    assert returned != ListValue(())
+
+
+def test_a_method_call_then_a_read_of_a_module_list_is_not_stale() -> None:
+    # ``O.m()`` runs a source method the caller does not follow, which
+    # appends to the module's list: a method on a receiver whose value runs
+    # code reaches every module object the caller reads
+    # (``_ambient_targets``), so ``L`` is never the ``[]`` the module bound.
+    returned = _read_after(
+        "def f():\n"
+        "    O.m()\n"
+        "    return L\n"
+        "L = []\n"
+        "class C:\n"
+        "    def m(self):\n"
+        "        L.append(1)\n"
+        "O = C()\n"
+    )
+    assert returned != ListValue(())
+
+
+def test_an_imported_call_then_a_read_of_a_module_list_is_not_stale() -> None:
+    # An imported callee is never followed: it may reach the module's list
+    # (through an import of this module, a callback, ...), so ``L`` after it
+    # is never the ``[]`` the module bound.
+    returned = _read_after(
+        "import os\n"
+        "def f():\n"
+        "    os.getcwd()\n"
+        "    return L\n"
+        "L = []\n"
+    )
+    assert returned != ListValue(())
+
+
+def test_a_lambda_call_then_a_read_of_a_module_list_is_not_stale() -> None:
+    # A callable value (a lambda bound to a name) is called: its value runs
+    # code, so every module object the caller reads is exposed to it.
+    returned = _read_after(
+        "def f():\n"
+        "    h = lambda: L.append(1)\n"
+        "    h()\n"
+        "    return L\n"
+        "L = []\n"
+    )
+    assert returned != ListValue(())
+
+
+def test_a_nested_append_to_a_cell_is_seen_by_the_enclosing_function() -> None:
+    # ``inner`` appends to the enclosing ``acc`` it reads as a closure cell:
+    # the call is followed as a source helper, the cell as the caller's
+    # object (``_callee_reach``), so ``f`` reads ``[1]``.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    acc = []\n"
+            "    def inner():\n"
+            "        acc.append(1)\n"
+            "    inner()\n"
+            "    return acc\n"
+        )
+    )
+    assert _returned_value(outcome) == _ONE
+
+
+def test_a_nested_append_to_a_cell_then_a_raise_is_seen_at_the_handler() -> None:
+    # The same append, then a raise: the halt leaving ``inner`` carries the
+    # cell as the completed arm does.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    acc = []\n"
+            "    def inner():\n"
+            "        acc.append(1)\n"
+            "        raise ValueError()\n"
+            "    try:\n"
+            "        inner()\n"
+            "    except ValueError:\n"
+            "        return acc\n"
+        )
+    )
+    assert _returned_value(outcome) == _ONE
+
+
+def test_a_nested_nonlocal_append_is_never_the_old_list() -> None:
+    # ``inner`` declares ``acc`` ``nonlocal`` and appends to it: the
+    # enclosing function's read after the call is the list as ``inner`` left
+    # it (or refused by name), never the ``[]`` it bound.
+    returned = _read_after(
+        "def f():\n"
+        "    acc = []\n"
+        "    def inner():\n"
+        "        nonlocal acc\n"
+        "        acc.append(1)\n"
+        "    inner()\n"
+        "    return acc\n"
+    )
+    assert returned != ListValue(())
+
+
+def test_a_nested_nonlocal_rebind_is_never_the_old_value() -> None:
+    # ``bump`` rebinds the enclosing ``n``: its write is the caller's
+    # binding, so the read after the call is never the ``0`` bound before.
+    returned = _read_after(
+        "def f():\n"
+        "    n = 0\n"
+        "    def bump():\n"
+        "        nonlocal n\n"
+        "        n += 1\n"
+        "    bump()\n"
+        "    return n\n"
+    )
+    assert returned != TermValue(0)
+
+
+def test_a_callable_handed_out_reaches_the_cell() -> None:
+    # ``inner`` is handed to code the caller does not follow (a builtin that
+    # calls it): the cell it appends to is exposed to that call, never read
+    # as the ``[]`` bound before.
+    returned = _read_after(
+        "def f():\n"
+        "    acc = []\n"
+        "    def inner(_x):\n"
+        "        acc.append(1)\n"
+        "    list(map(inner, (1,)))\n"
+        "    return acc\n"
     )
     assert returned != ListValue(())
 
