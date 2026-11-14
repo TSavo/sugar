@@ -99,9 +99,12 @@ Sanity check before minting a new kit: from the project dir,
 - `sugar mint --project <dir> --out <outdir>` writes `<outdir>/<filename_cid>.proof`.
   `--out` DEFAULTS TO THE CURRENT DIRECTORY. Always pass `--out` explicitly to a
   scratch dir so you can find the result.
-- `sugar prove <project>` scans `<project>` for `.proof` files; `--with <dir>`
-  adds more. `sugar verify` and `prove` load the dependency pool via
-  `load_all_proofs`, which reads `<project>/.sugar/imports/*.proof`.
+- `sugar prove <project>` reads the `.proof` files at `<project>`'s root (mint's
+  output) and `<project>/.sugar/imports/*.proof` (dependencies staged at mint),
+  and nothing else (step 9). There is no `--with`: mint the project with
+  `--out <project>` and stage each dependency with
+  `sugar mint --project <dep> --out <project>/.sugar/imports`, as
+  `scripts/self-apply.sh` does.
 - **Two dependency-proof mechanisms coexist and are NOT reconciled (caveat #4):**
   (a) MINT-time harvest reads `.sugar/imports/*.proof` to forward dependency
   contract NAMES so the implication lifter can build bridges. (b) VERIFY-time

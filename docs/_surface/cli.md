@@ -28,8 +28,9 @@ The main entry point routing user requests into the Sugar proof ecosystem.
 - `--artifact <file>` — Artifact bytes to verify
 - `--policy <file>` — Consumer policy proof/receipt
 - `--require-empirically-witnessed <string>` — Require promotion tier
-- `--with <dirs...>` — Additional project directories
 - `--json`, `--quiet` — Output formatting flags
+
+Prove reads the project's minted `.proof` (at the project root) and the imported `.proof` files mint staged in `.sugar/imports`, and nothing else. There is no `--with`, and prove does not read `[verify].callees`: to prove against a sibling project, stage its proof at mint (`sugar mint --project <sibling> --out <project>/.sugar/imports`).
 
 **Exit codes:**
 - 0 = success
@@ -135,10 +136,9 @@ The main entry point routing user requests into the Sugar proof ecosystem.
 - `--report` — Print lifter's source-audit countdown
 - `--report-summary` — With --report, print only source/factory summary
 - `--visual` — Print source walk as ANSI green/red lines
-- `--prove` — Append verifier discharge report
-- `--z3 <path>` — Z3 for --report --prove
-- `--with <dirs...>` — Additional project directories for --report --prove
 - `--contract <string>` — Restrict --report to contracts matching this string
+
+Lift never proves: there is no `--prove`, `--z3` or `--with`. To lift and prove, run `sugar mint`, then `sugar prove`.
 
 **Documentation:** `docs/contributing/writing-a-lift-adapter/03-emit-canonical-IR.md`; `implementations/rust/sugar-lift/README.md`
 
@@ -267,7 +267,6 @@ cargo sugar-lift
 - `-o, --output` — Output file
 - `--identify-only` — Identity scan only
 - `--report`, `--report-summary`, `--visual` — Reporting modes
-- `--prove` — Append discharge report
 
 **Documentation:** `implementations/rust/sugar-lift/README.md`; lift adapter tutorials in `docs/contributing/writing-a-lift-adapter/`
 
@@ -671,7 +670,6 @@ See `implementations/java/` for JUnit lifting, JSR-380 annotation support.
 
 7. **Python kit invocation:** Is the Python kit invoked via `python -m` (e.g., `python -m sugar_lift_python_source`) or via explicit entry-point scripts?
 
-8. **Cross-repo projects:** When `sugar prove --with <dir>` loads multiple projects, how are conflicting CIDs resolved? De-duplication or union?
 
 ---
 

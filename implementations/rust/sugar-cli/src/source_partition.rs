@@ -572,31 +572,9 @@ impl PartitionError {
     }
 }
 
-/// Build the `lineAccounting` array and the `lineAccountingPartition` array for
-/// a lift+prove report, rendering BOTH from per-file `SourcePartition`s. For a
-/// file whose source is readable, the partition tiles every physical line and
-/// either projects its totals (`conserved: true`) or names its residue loudly
-/// (`conserved: false`). A file whose source cannot be read keeps its
-/// row-derived claims and is reported as `sourceUnavailable` (the wire lacks
-/// the extent needed to tile -- named, never faked).
-pub fn build_line_accounting(
-    prove_report: &sugar_verifier::Report,
-    project_root: &Path,
-) -> (Vec<Json>, Vec<Json>) {
-    let row_claims = row_line_accounting(&prove_report.rows);
-    let files: Vec<String> = prove_report
-        .rows
-        .iter()
-        .filter_map(|row| row.callsite.file.clone())
-        .collect();
-    build_line_accounting_from_claims(&files, row_claims, project_root)
-}
-
-/// The claim-driven core of `build_line_accounting`: tile per-file
-/// `SourcePartition`s from ANY set of warrant/effect claims, layering the
-/// inert-support minter over each readable file. The prove path feeds it
-/// verifier-row claims; the directory (whole-package) lift path (#3764) feeds
-/// it lift-side claims (contract `sourceWarrants` spans and factory-walk
+/// Tile per-file `SourcePartition`s from ANY set of warrant/effect claims,
+/// layering the inert-support minter over each readable file. The directory
+/// (whole-package) lift path (#3764) feeds it lift-side claims (contract `sourceWarrants` spans and factory-walk
 /// effect boundaries), so both report shapes render `lineAccounting` /
 /// `lineAccountingPartition` from the SAME partition type -- one classifier
 /// owner, no parallel logic. `files` is the ordered (possibly repeated) file

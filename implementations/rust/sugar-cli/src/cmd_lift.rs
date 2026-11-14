@@ -22,11 +22,10 @@ use sugar_compiler::kit_path::{LiftTermKind, LiftTermNode, LiftTermTable};
 use sugar_proof_envelope::Member;
 use sugar_verifier::MemberKind;
 
+use crate::cmd_mint;
 use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanIntent};
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
 use crate::project_config::{read_project_config, read_user_config, PluginEntry, ProjectConfig};
-use crate::report_fmt;
-use crate::{cmd_mint, cmd_prove};
 use crate::{LiftArgs, EXIT_OK, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -399,62 +398,10 @@ pub fn run(args: LiftArgs) -> u8 {
                     return EXIT_USER_ERROR;
                 }
                 trace_lift_source_report("after_source_report_from_lift_response", &report);
-                let prove_with = if args.prove {
-                    trace_lift_report_checkpoint("before_prepare_lift_report_prove_inputs");
-                    match prepare_lift_report_prove_inputs(
-                        &project_root,
-                        &project_cfg,
-                        &user_cfg,
-                        &resolved_surface,
-                        args.library_bindings,
-                        &args.with,
-                        component_plan_options,
-                    ) {
-                        Ok(with) => with,
-                        Err(error) => {
-                            eprintln!("{}: prepare prove report: {error}", "error".red().bold());
-                            return EXIT_USER_ERROR;
-                        }
-                    }
-                } else {
-                    Vec::new()
-                };
-                if args.prove {
-                    tracing::info!(
-                        stage = "after_prepare_lift_report_prove_inputs",
-                        rss_kib = current_rss_kib().unwrap_or_default(),
-                        rss_available = current_rss_kib().is_some(),
-                        prove_inputs = prove_with.len(),
-                        "lift-report memory checkpoint"
-                    );
-                }
-                let prove_report = if args.prove {
-                    trace_lift_report_checkpoint("before_build_prove_report");
-                    match cmd_prove::build_prove_report_with_options(
-                        &project_root,
-                        &args.z3,
-                        &prove_with,
-                        component_plan_options,
-                    ) {
-                        Ok(prove_report) => {
-                            trace_lift_report_checkpoint("after_build_prove_report");
-                            Some(prove_report)
-                        }
-                        Err(error) => {
-                            eprintln!("{}: prove report: {error}", "error".red().bold());
-                            return EXIT_USER_ERROR;
-                        }
-                    }
-                } else {
-                    None
-                };
-                let mut hard_failure = source_report_has_hard_failures(&report);
-                if let Some(prove_report) = &prove_report {
-                    hard_failure |= report_fmt::report_exit_code(prove_report) != EXIT_OK;
-                }
+                let hard_failure = source_report_has_hard_failures(&report);
                 trace_lift_source_report("before_render_report", &report);
                 let rendered = if args.out.json {
-                    match render_report_json(&report, prove_report.as_ref()) {
+                    match render_report_json(&report) {
                         Ok(rendered) => rendered,
                         Err(error) => {
                             eprintln!("{}: render lift report: {error}", "error".red().bold());
@@ -462,9 +409,9 @@ pub fn run(args: LiftArgs) -> u8 {
                         }
                     }
                 } else if args.visual {
-                    render_report_visual(&report, prove_report.as_ref())
+                    render_report_visual(&report)
                 } else {
-                    render_report_human(&report, prove_report.as_ref())
+                    render_report_human(&report)
                 };
                 trace_lift_render_checkpoint("after_render_report", rendered.len());
                 if let Err(error) = write_output(None, rendered.as_bytes()) {
@@ -797,57 +744,6 @@ fn configured_or_planned_lift_surface(
     )
 }
 
-fn prepare_lift_report_prove_inputs(
-    project_root: &Path,
-    project_cfg: &ProjectConfig,
-    user_cfg: &ProjectConfig,
-    resolved_surface: &ResolvedLiftSurface,
-    library_bindings: bool,
-    configured_with: &[String],
-    component_plan_options: ComponentPlanOptions,
-) -> Result<Vec<String>, String> {
-    let mut with = configured_with.to_vec();
-    if !needs_lift_report_auto_mint(project_root, true) {
-        tracing::info!(
-            project = %project_root.display(),
-            "lift-report-prove: existing .proof input found; skipping auto-mint"
-        );
-        return Ok(with);
-    }
-
-    let plugins = lift_report_mint_plugins(
-        project_root,
-        project_cfg,
-        user_cfg,
-        resolved_surface,
-        component_plan_options,
-    )?;
-    if plugins.is_empty() {
-        return Err(
-            "no lift plugin available to mint a proof for `lift --report --prove`".to_string(),
-        );
-    }
-
-    let out_dir = lift_report_auto_mint_dir(project_root);
-    tracing::info!(
-        project = %project_root.display(),
-        out_dir = %out_dir.display(),
-        plugins = plugins.len(),
-        surfaces = ?plugins.iter().map(|plugin| plugin.surface.as_str()).collect::<Vec<_>>(),
-        "lift-report-prove: auto-minting run-scoped proof input"
-    );
-    let proof_file =
-        cmd_mint::mint_lift_plugins_for_report(project_root, &plugins, &out_dir, library_bindings)?;
-    tracing::info!(
-        project = %project_root.display(),
-        out_dir = %out_dir.display(),
-        proof_file = proof_file.as_ref().map(|path| path.display().to_string()).unwrap_or_else(|| "(none)".to_string()),
-        "lift-report-prove: auto-mint complete"
-    );
-    with.push(absolute_path(&out_dir).display().to_string());
-    Ok(with)
-}
-
 fn run_configured_lift_report_graph(
     args: &LiftArgs,
     project_root: &Path,
@@ -905,42 +801,10 @@ fn run_configured_lift_report_graph(
         enrich_report_source_mementos_from_oracles(&mut report);
         trace_lift_source_report("after_source_report_from_proof", &report);
 
-        let prove_with = if args.prove {
-            let mut with = args.with.clone();
-            with.push(absolute_path(&out_dir).display().to_string());
-            with
-        } else {
-            Vec::new()
-        };
-        let prove_report = if args.prove {
-            trace_lift_report_checkpoint("before_build_prove_report");
-            match cmd_prove::build_prove_report_with_options(
-                project_root,
-                &args.z3,
-                &prove_with,
-                ComponentPlanOptions {
-                    allow_failed_components: args.allow_failed_components,
-                },
-            ) {
-                Ok(prove_report) => {
-                    trace_lift_report_checkpoint("after_build_prove_report");
-                    Some(prove_report)
-                }
-                Err(error) => {
-                    eprintln!("{}: prove report: {error}", "error".red().bold());
-                    return EXIT_USER_ERROR;
-                }
-            }
-        } else {
-            None
-        };
-        let mut hard_failure = source_report_has_hard_failures(&report);
-        if let Some(prove_report) = &prove_report {
-            hard_failure |= report_fmt::report_exit_code(prove_report) != EXIT_OK;
-        }
+        let hard_failure = source_report_has_hard_failures(&report);
         trace_lift_source_report("before_render_report", &report);
         let rendered = if args.out.json {
-            match render_report_json(&report, prove_report.as_ref()) {
+            match render_report_json(&report) {
                 Ok(rendered) => rendered,
                 Err(error) => {
                     eprintln!("{}: render lift report: {error}", "error".red().bold());
@@ -948,9 +812,9 @@ fn run_configured_lift_report_graph(
                 }
             }
         } else if args.visual {
-            render_report_visual(&report, prove_report.as_ref())
+            render_report_visual(&report)
         } else {
-            render_report_human(&report, prove_report.as_ref())
+            render_report_human(&report)
         };
         trace_lift_render_checkpoint("after_render_report", rendered.len());
         if let Err(error) = write_output(None, rendered.as_bytes()) {
@@ -1038,51 +902,10 @@ fn run_configured_lift_report_graph(
     }
     trace_lift_source_report("after_source_report_from_lift_response", &report);
 
-    let prove_with = if args.prove {
-        match prepare_lift_report_prove_inputs_for_plugins(
-            project_root,
-            plugins,
-            args.library_bindings,
-            &args.with,
-        ) {
-            Ok(with) => with,
-            Err(error) => {
-                eprintln!("{}: prepare prove report: {error}", "error".red().bold());
-                return EXIT_USER_ERROR;
-            }
-        }
-    } else {
-        Vec::new()
-    };
-    let prove_report = if args.prove {
-        trace_lift_report_checkpoint("before_build_prove_report");
-        match cmd_prove::build_prove_report_with_options(
-            project_root,
-            &args.z3,
-            &prove_with,
-            ComponentPlanOptions {
-                allow_failed_components: args.allow_failed_components,
-            },
-        ) {
-            Ok(prove_report) => {
-                trace_lift_report_checkpoint("after_build_prove_report");
-                Some(prove_report)
-            }
-            Err(error) => {
-                eprintln!("{}: prove report: {error}", "error".red().bold());
-                return EXIT_USER_ERROR;
-            }
-        }
-    } else {
-        None
-    };
-    let mut hard_failure = source_report_has_hard_failures(&report);
-    if let Some(prove_report) = &prove_report {
-        hard_failure |= report_fmt::report_exit_code(prove_report) != EXIT_OK;
-    }
+    let hard_failure = source_report_has_hard_failures(&report);
     trace_lift_source_report("before_render_report", &report);
     let rendered = if args.out.json {
-        match render_report_json(&report, prove_report.as_ref()) {
+        match render_report_json(&report) {
             Ok(rendered) => rendered,
             Err(error) => {
                 eprintln!("{}: render lift report: {error}", "error".red().bold());
@@ -1090,9 +913,9 @@ fn run_configured_lift_report_graph(
             }
         }
     } else if args.visual {
-        render_report_visual(&report, prove_report.as_ref())
+        render_report_visual(&report)
     } else {
-        render_report_human(&report, prove_report.as_ref())
+        render_report_human(&report)
     };
     trace_lift_render_checkpoint("after_render_report", rendered.len());
     if let Err(error) = write_output(None, rendered.as_bytes()) {
@@ -1194,51 +1017,10 @@ fn run_configured_lift_report_response(
     }
     trace_lift_source_report("after_source_report_from_lift_response", &report);
 
-    let prove_with = if args.prove {
-        match prepare_lift_report_prove_inputs_for_plugins(
-            project_root,
-            plugins,
-            args.library_bindings,
-            &args.with,
-        ) {
-            Ok(with) => with,
-            Err(error) => {
-                eprintln!("{}: prepare prove report: {error}", "error".red().bold());
-                return EXIT_USER_ERROR;
-            }
-        }
-    } else {
-        Vec::new()
-    };
-    let prove_report = if args.prove {
-        trace_lift_report_checkpoint("before_build_prove_report");
-        match cmd_prove::build_prove_report_with_options(
-            project_root,
-            &args.z3,
-            &prove_with,
-            ComponentPlanOptions {
-                allow_failed_components: args.allow_failed_components,
-            },
-        ) {
-            Ok(prove_report) => {
-                trace_lift_report_checkpoint("after_build_prove_report");
-                Some(prove_report)
-            }
-            Err(error) => {
-                eprintln!("{}: prove report: {error}", "error".red().bold());
-                return EXIT_USER_ERROR;
-            }
-        }
-    } else {
-        None
-    };
-    let mut hard_failure = source_report_has_hard_failures(&report);
-    if let Some(prove_report) = &prove_report {
-        hard_failure |= report_fmt::report_exit_code(prove_report) != EXIT_OK;
-    }
+    let hard_failure = source_report_has_hard_failures(&report);
     trace_lift_source_report("before_render_report", &report);
     let rendered = if args.out.json {
-        match render_report_json(&report, prove_report.as_ref()) {
+        match render_report_json(&report) {
             Ok(rendered) => rendered,
             Err(error) => {
                 eprintln!("{}: render lift report: {error}", "error".red().bold());
@@ -1246,9 +1028,9 @@ fn run_configured_lift_report_response(
             }
         }
     } else if args.visual {
-        render_report_visual(&report, prove_report.as_ref())
+        render_report_visual(&report)
     } else {
-        render_report_human(&report, prove_report.as_ref())
+        render_report_human(&report)
     };
     trace_lift_render_checkpoint("after_render_report", rendered.len());
     if let Err(error) = write_output(None, rendered.as_bytes()) {
@@ -1263,110 +1045,6 @@ fn run_configured_lift_report_response(
     }
 }
 
-fn prepare_lift_report_prove_inputs_for_plugins(
-    project_root: &Path,
-    plugins: &[PluginEntry],
-    library_bindings: bool,
-    configured_with: &[String],
-) -> Result<Vec<String>, String> {
-    let mut with = configured_with.to_vec();
-    if !needs_lift_report_auto_mint(project_root, true) {
-        tracing::info!(
-            project = %project_root.display(),
-            "lift-report-prove: existing .proof input found; skipping auto-mint"
-        );
-        return Ok(with);
-    }
-
-    let out_dir = lift_report_auto_mint_dir(project_root);
-    tracing::info!(
-        project = %project_root.display(),
-        out_dir = %out_dir.display(),
-        plugins = plugins.len(),
-        surfaces = ?plugins.iter().map(|plugin| plugin.surface.as_str()).collect::<Vec<_>>(),
-        "lift-report-prove: auto-minting configured graph proof input"
-    );
-    let proof_file =
-        cmd_mint::mint_lift_plugins_for_report(project_root, plugins, &out_dir, library_bindings)?;
-    tracing::info!(
-        project = %project_root.display(),
-        out_dir = %out_dir.display(),
-        proof_file = proof_file.as_ref().map(|path| path.display().to_string()).unwrap_or_else(|| "(none)".to_string()),
-        "lift-report-prove: auto-mint complete"
-    );
-    with.push(absolute_path(&out_dir).display().to_string());
-    Ok(with)
-}
-
-fn lift_report_mint_plugins(
-    project_root: &Path,
-    project_cfg: &ProjectConfig,
-    user_cfg: &ProjectConfig,
-    resolved_surface: &ResolvedLiftSurface,
-    options: ComponentPlanOptions,
-) -> Result<Vec<PluginEntry>, String> {
-    let project_plugins = project_cfg
-        .plugins
-        .iter()
-        .filter(|plugin| plugin.is_lift_plugin())
-        .cloned()
-        .collect::<Vec<_>>();
-    if !project_plugins.is_empty() {
-        return Ok(project_plugins);
-    }
-
-    if project_cfg
-        .surface_for("lift")
-        .or_else(|| user_cfg.surface_for("lift"))
-        .is_none()
-    {
-        let component_plan =
-            component_plan::plan_workspace_with_options(project_root, PlanIntent::Lift, options);
-        check_component_plan_errors(&component_plan)?;
-        if options.allow_failed_components {
-            emit_component_plan_warnings(&component_plan);
-        }
-        let component_plugins = component_plan
-            .plugins
-            .iter()
-            .filter(|plugin| plugin.is_lift_plugin())
-            .cloned()
-            .collect::<Vec<_>>();
-        if !component_plugins.is_empty() {
-            return Ok(component_plugins);
-        }
-    }
-
-    if let Some(plugin) = &resolved_surface.plugin {
-        return Ok(vec![plugin.clone()]);
-    }
-
-    Ok(vec![PluginEntry {
-        kind: Some("lift".to_string()),
-        surface: resolved_surface.surface.clone(),
-        ..PluginEntry::default()
-    }])
-}
-
-fn needs_lift_report_auto_mint(project_root: &Path, prove: bool) -> bool {
-    prove && !project_has_proof_files(project_root)
-}
-
-fn project_has_proof_files(project_root: &Path) -> bool {
-    if !project_root.exists() {
-        return false;
-    }
-    std::fs::read_dir(project_root)
-        .ok()
-        .into_iter()
-        .flatten()
-        .filter_map(Result::ok)
-        .any(|entry| {
-            entry.file_type().is_ok_and(|ty| ty.is_file())
-                && entry.path().extension().is_some_and(|ext| ext == "proof")
-        })
-}
-
 fn lift_report_auto_mint_dir(project_root: &Path) -> PathBuf {
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1377,15 +1055,6 @@ fn lift_report_auto_mint_dir(project_root: &Path) -> PathBuf {
         .join("runs")
         .join(format!("lift-report-prove-{}-{nanos}", std::process::id()))
         .join("proofs")
-}
-
-fn absolute_path(path: &Path) -> PathBuf {
-    if path.is_absolute() {
-        return path.to_path_buf();
-    }
-    std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join(path)
 }
 
 fn lift_options_for_configured_surface(
@@ -3700,51 +3369,11 @@ fn lift_line_accounting_claims(
     (files, claims)
 }
 
-fn render_report_json(
-    report: &LiftSourceReport,
-    prove_report: Option<&sugar_verifier::Report>,
-) -> Result<String, serde_json::Error> {
-    let value = if let Some(prove_report) = prove_report {
-        let mut prove_json = report_fmt::report_to_json(prove_report);
-        render_source_partition(
-            &mut prove_json,
-            prove_report,
-            report.project_root.as_deref(),
-        );
-        serde_json::json!({
-            "kind": "lift-prove-report",
-            "lift": source_report_json_value(report),
-            "prove": prove_json,
-        })
-    } else {
-        source_report_json_value(report)
-    };
-    serde_json::to_string_pretty(&value).map(|mut rendered| {
+fn render_report_json(report: &LiftSourceReport) -> Result<String, serde_json::Error> {
+    serde_json::to_string_pretty(&source_report_json_value(report)).map(|mut rendered| {
         rendered.push('\n');
         rendered
     })
-}
-
-/// Render `lineAccounting` and `lineAccountingPartition` from per-file
-/// `SourcePartition`s (see `source_partition` module docs). The partition is
-/// the single source of truth: `lineAccounting` entries and the partition
-/// totals both project from it, and a file whose tiling is not total surfaces
-/// its residue as a LOUD, named construction failure -- never a silent skip.
-/// `report_fmt` cannot do this itself: it has no source-file access, so it
-/// emits only the row-derived warrant/effect claims, which this overwrites
-/// with the tiled result once source is in hand.
-fn render_source_partition(
-    prove_json: &mut Value,
-    prove_report: &sugar_verifier::Report,
-    project_root: Option<&Path>,
-) {
-    let Some(project_root) = project_root else {
-        return;
-    };
-    let (entries, partitions) =
-        crate::source_partition::build_line_accounting(prove_report, project_root);
-    prove_json["lineAccounting"] = Value::Array(entries);
-    prove_json["lineAccountingPartition"] = Value::Array(partitions);
 }
 
 fn render_report_summary_json(summary: &LiftReportSummary) -> Result<String, serde_json::Error> {
@@ -4047,20 +3676,8 @@ enum UniverseVisualMode {
     BodyIncomplete,
 }
 
-fn render_report_visual(
-    report: &LiftSourceReport,
-    prove_report: Option<&sugar_verifier::Report>,
-) -> String {
-    let mut out = render_visual_source_report(report);
-    if let Some(prove_report) = prove_report {
-        if !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push('\n');
-        out.push_str("prove report (solver witness):\n");
-        out.push_str(&report_fmt::format_report_pretty(prove_report, false));
-    }
-    out
+fn render_report_visual(report: &LiftSourceReport) -> String {
+    render_visual_source_report(report)
 }
 
 fn render_visual_source_report(report: &LiftSourceReport) -> String {
@@ -9109,20 +8726,8 @@ fn format_call_edge_locus(locus: &Value) -> String {
     format!("{file}:{line} {slot}")
 }
 
-fn render_report_human(
-    report: &LiftSourceReport,
-    prove_report: Option<&sugar_verifier::Report>,
-) -> String {
-    let mut out = render_source_report_human(report);
-    if let Some(prove_report) = prove_report {
-        if !out.ends_with('\n') {
-            out.push('\n');
-        }
-        out.push('\n');
-        out.push_str("prove report (solver witness):\n");
-        out.push_str(&report_fmt::format_report_pretty(prove_report, false));
-    }
-    out
+fn render_report_human(report: &LiftSourceReport) -> String {
+    render_source_report_human(report)
 }
 
 fn source_report_has_hard_failures(report: &LiftSourceReport) -> bool {
@@ -10914,7 +10519,7 @@ mod tests {
     use crate::OutputFlags;
     use std::io::{self, Write};
     use std::sync::{Arc, Mutex};
-    use sugar_verifier::{CallSite, MementoCid, ObligationVerdict, Report, ReportRow};
+    use sugar_verifier::MementoCid;
     use syn::spanned::Spanned;
     use tracing_subscriber::fmt::MakeWriter;
 
@@ -11311,42 +10916,6 @@ mod tests {
         ))
     }
 
-    fn prove_report_with_sat_witness() -> Report {
-        let mut report = Report {
-            total_callsites: 1,
-            discharged: 1,
-            ..Report::default()
-        };
-        report.rows.push(ReportRow {
-            callsite: CallSite {
-                bridge_ir_name: "method:is_match".to_string(),
-                bridge_source_layer: "rust-test".to_string(),
-                bridge_target_layer: "proofir".to_string(),
-                property_name: "consistency:method:is_match".to_string(),
-                ..CallSite::default()
-            },
-            status: ObligationVerdict::Discharged,
-            reason: "solver witness accepted".to_string(),
-            discharge_method: Some("solver-substantive".to_string()),
-            body_discharge_tier: None,
-            verification: Some(serde_json::json!({
-                "kind": "consistency",
-                "checkedFormula": {"kind": "atomic", "name": "str.in-regex"},
-                "solverInvocations": [{
-                    "solver": "z3",
-                    "compiler": "smt-lib-v2.6",
-                    "verdict": "sat",
-                    "authoritative": true,
-                    "solverInvocationCid": "blake3-512:invoke",
-                    "solverArtifactCid": "blake3-512:artifact",
-                    "solverVendorMementoCid": "blake3-512:vendor"
-                }]
-            })),
-            verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
-        });
-        report
-    }
-
     fn lift_response_with_source_axis() -> serde_json::Value {
         serde_json::json!({
             "kind": "ir-document",
@@ -11483,51 +11052,6 @@ mod tests {
         })
     }
 
-    #[test]
-    fn human_report_can_append_prove_sat_witness() {
-        let lift = minimal_source_report();
-        let prove = prove_report_with_sat_witness();
-        let human = render_report_human(&lift, Some(&prove));
-
-        assert!(
-            human.contains("source audit: loci=1 warranted=1"),
-            "{human}"
-        );
-        assert!(human.contains("prove report (solver witness):"), "{human}");
-        assert!(human.contains("Sugar verifier report"), "{human}");
-        assert!(human.contains("discharged"), "{human}");
-        assert!(human.contains("method:is_match"), "{human}");
-        assert!(human.contains("z3 via smt-lib-v2.6: sat"), "{human}");
-        assert!(human.contains("invocation: blake3-512:invoke"), "{human}");
-        assert!(human.contains("artifact: blake3-512:artifact"), "{human}");
-        assert!(
-            human.contains("vendor memento: blake3-512:vendor"),
-            "{human}"
-        );
-    }
-
-    #[test]
-    fn json_report_can_append_prove_sat_witness() {
-        let lift = minimal_source_report();
-        let prove = prove_report_with_sat_witness();
-        let rendered = render_report_json(&lift, Some(&prove)).expect("render");
-        let parsed: Value = serde_json::from_str(&rendered).expect("json");
-
-        assert_eq!(parsed["kind"], "lift-prove-report");
-        assert_eq!(parsed["lift"]["kind"], "lift-source-report");
-        assert_eq!(parsed["prove"]["discharged"], 1);
-        assert_eq!(parsed["prove"]["rows"][0]["status"], "discharged");
-        assert_eq!(
-            parsed["prove"]["rows"][0]["verification"]["solverInvocations"][0]["verdict"],
-            "sat"
-        );
-        assert_eq!(
-            parsed["prove"]["rows"][0]["verification"]["solverInvocations"][0]
-                ["solverInvocationCid"],
-            "blake3-512:invoke"
-        );
-    }
-
     // -- #3764: directory-lift (whole-package) JSON emits lineAccounting ----
 
     fn line_accounting_lift_report(root: &std::path::Path) -> LiftSourceReport {
@@ -11575,7 +11099,7 @@ mod tests {
     fn directory_lift_json_emits_line_accounting_per_file() {
         let root = tempfile::tempdir().expect("tempdir");
         let report = line_accounting_lift_report(root.path());
-        let rendered = render_report_json(&report, None).expect("json report");
+        let rendered = render_report_json(&report).expect("json report");
         let parsed: Value = serde_json::from_str(&rendered).expect("valid json");
 
         assert_eq!(parsed["kind"], "lift-source-report");
@@ -11636,7 +11160,7 @@ mod tests {
         )
         .expect("rewrite beta.py");
         report.project_root = Some(root.path().to_path_buf());
-        let rendered = render_report_json(&report, None).expect("json report");
+        let rendered = render_report_json(&report).expect("json report");
         let parsed: Value = serde_json::from_str(&rendered).expect("valid json");
         let beta = parsed["lineAccountingPartition"]
             .as_array()
@@ -11655,48 +11179,10 @@ mod tests {
         // No project root means no source to tile: the fields are omitted,
         // never faked from claims alone.
         let report = minimal_source_report();
-        let rendered = render_report_json(&report, None).expect("json report");
+        let rendered = render_report_json(&report).expect("json report");
         let parsed: Value = serde_json::from_str(&rendered).expect("valid json");
         assert!(parsed.get("lineAccounting").is_none());
         assert!(parsed.get("lineAccountingPartition").is_none());
-    }
-
-    #[test]
-    fn lift_prove_json_expresses_per_line_support_and_effect() {
-        // #3706: the prove side of a lift+prove report carries per-line
-        // support (inert witness) alongside row-derived warrant/effect once
-        // source is in hand.
-        let root = tempfile::tempdir().expect("tempdir");
-        std::fs::write(
-            root.path().join("gamma.py"),
-            "# vendor test\n\ndef test_match():\n    assert is_match(\"a\")\n",
-        )
-        .expect("write gamma.py");
-        let mut lift = minimal_source_report();
-        lift.project_root = Some(root.path().to_path_buf());
-        let mut prove = prove_report_with_sat_witness();
-        if let Some(row) = prove.rows.get_mut(0) {
-            row.callsite.file = Some("gamma.py".to_string());
-            row.callsite.line = Some(4);
-        }
-        let rendered = render_report_json(&lift, Some(&prove)).expect("render");
-        let parsed: Value = serde_json::from_str(&rendered).expect("json");
-        let entries = parsed["prove"]["lineAccounting"]
-            .as_array()
-            .expect("prove lineAccounting");
-        let classes: Vec<(u64, String)> = entries
-            .iter()
-            .filter(|e| e["file"] == "gamma.py")
-            .map(|e| {
-                (
-                    e["line"].as_u64().unwrap_or(0),
-                    e["class"].as_str().unwrap_or("").to_string(),
-                )
-            })
-            .collect();
-        assert!(classes.contains(&(1, "support".to_string())), "{classes:?}");
-        assert!(classes.contains(&(2, "support".to_string())), "{classes:?}");
-        assert!(classes.contains(&(3, "support".to_string())), "{classes:?}");
     }
 
     #[test]
@@ -11729,9 +11215,6 @@ mod tests {
             report: false,
             report_summary: false,
             visual: false,
-            prove: false,
-            z3: "z3".to_string(),
-            with: vec![],
             contract: None,
             allow_failed_components: false,
             audit_frontier: false,
@@ -11740,26 +11223,6 @@ mod tests {
             out: OutputFlags::default(),
         };
         assert_eq!(run(args), crate::EXIT_USER_ERROR);
-    }
-
-    #[test]
-    fn report_prove_auto_mint_is_needed_only_when_project_has_no_proofs() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        assert!(needs_lift_report_auto_mint(dir.path(), true));
-        assert!(!needs_lift_report_auto_mint(dir.path(), false));
-
-        std::fs::write(dir.path().join("blake3-512:existing.proof"), b"proof").unwrap();
-        assert!(!needs_lift_report_auto_mint(dir.path(), true));
-    }
-
-    #[test]
-    fn report_prove_auto_mint_ignores_nested_proof_files() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let nested = dir.path().join(".sugar").join("runs");
-        std::fs::create_dir_all(&nested).unwrap();
-        std::fs::write(nested.join("blake3-512:nested.proof"), b"proof").unwrap();
-
-        assert!(needs_lift_report_auto_mint(dir.path(), true));
     }
 
     #[test]
@@ -12639,7 +12102,7 @@ mod tests {
         let report =
             source_report_from_lift_response(&lift_response_with_source_axis(), Some("Crc32"))
                 .expect("filtered source report");
-        let rendered = render_report_json(&report, None).expect("json report");
+        let rendered = render_report_json(&report).expect("json report");
         let parsed: serde_json::Value = serde_json::from_str(&rendered).expect("valid json");
 
         assert_eq!(parsed["kind"], "lift-source-report");
@@ -12775,7 +12238,7 @@ mod tests {
         assert!(human.contains("bin blake3-512:"), "{human}");
         assert!(human.contains("report sections: unit test facts=1, body universes=1, factory report=2, observed occurrences total=1, demanded questions total=0, demanded questions resolved=0, demanded questions none_found=0, vendor conjoins=0, source mementos=1"), "{human}");
 
-        let rendered_json = render_report_json(&report, None).expect("json report");
+        let rendered_json = render_report_json(&report).expect("json report");
         let parsed: serde_json::Value = serde_json::from_str(&rendered_json).expect("valid json");
         assert_eq!(parsed["assemblyPlan"]["source"], "component-discovery");
         assert_eq!(parsed["assemblyPlan"]["reportSections"]["bodyUniverses"], 1);
@@ -12792,7 +12255,7 @@ mod tests {
             "vendor/base64-0.22.1"
         );
 
-        let visual = render_report_visual(&report, None);
+        let visual = render_report_visual(&report);
         assert!(
             visual.starts_with("sugar v"),
             "visual report must open with tool identity prologue, not plan roll call:\n{visual}"
@@ -13432,7 +12895,7 @@ mod tests {
             "{human}"
         );
 
-        let visual = render_report_visual(&report, None);
+        let visual = render_report_visual(&report);
         assert!(
             visual.contains(
                 "    walk warranted by observed facts:\n      - src/lib.rs::tests::test_encoded_len_unpadded_2_exact_row::encoded_len#panic_callsite#euf#c:callresult_encoded_len_panic_callsite_a2(i:2,b:false)::assertion :: ¬panic(encoded_len#panic_callsite(2, false))"
@@ -13643,7 +13106,7 @@ mod tests {
             }
         })];
 
-        let visual = render_report_visual(&report, None);
+        let visual = render_report_visual(&report);
         let plain = without_ansi(&visual);
 
         assert!(visual.contains("universe visual:"), "{visual}");
@@ -13757,7 +13220,7 @@ printf '%s\n' '{{"jsonrpc":"2.0","id":1,"result":{{"status":"resolved","sourceLi
             }]
         })];
 
-        let visual = render_report_visual(&report, None);
+        let visual = render_report_visual(&report);
 
         assert!(
             !marker.exists(),
@@ -15815,7 +15278,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         });
         let report = source_report_from_lift_response(&response, None).expect("source report");
         let human = render_source_report_human(&report);
-        let rendered_json = render_report_json(&report, None).expect("json report");
+        let rendered_json = render_report_json(&report).expect("json report");
         let parsed: Value = serde_json::from_str(&rendered_json).expect("valid json");
 
         assert!(
@@ -17065,7 +16528,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let mut report = minimal_source_report();
         report.project_root = Some(dir.path().to_path_buf());
         report.lift_coverage = Some(coverage);
-        let full = render_report_visual(&report, None);
+        let full = render_report_visual(&report);
         assert!(
             full.contains("Minority Report") && full.contains("def orphan():"),
             "render_report_visual must surface actual Minority source; got:\n{full}"
@@ -17096,7 +16559,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             "requested_role": "Term", "ast_kind": "expr", "selected": "const",
             "output": "value", "term": "1"
         })];
-        let rendered = render_report_visual(&report, None);
+        let rendered = render_report_visual(&report);
         let accounting = rendered
             .find("onDisk=1 accounted=0 delta=1")
             .unwrap_or_else(|| panic!("accounting line missing:\n{rendered}"));
@@ -18299,7 +17762,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         });
         report.contracts = vec![callable, contract];
 
-        let visual = render_report_visual(&report, None);
+        let visual = render_report_visual(&report);
 
         assert!(visual.contains("py.subscript -> coordinate"), "{visual}");
         assert!(visual.contains("py.and -> coordinate"), "{visual}");
@@ -18393,7 +17856,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             ),
         ]);
 
-        let visual = render_report_visual(&report, None);
+        let visual = render_report_visual(&report);
 
         assert!(
             visual.contains("vendor_open_name -> method-coordinate"),
@@ -18477,7 +17940,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         let mut report = minimal_source_report();
         report.contracts = vec![contract];
 
-        let panic = std::panic::catch_unwind(|| render_report_visual(&report, None));
+        let panic = std::panic::catch_unwind(|| render_report_visual(&report));
         assert!(panic.is_err(), "unknown constructor must announce itself");
     }
 
@@ -18542,7 +18005,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
         });
 
         let report = source_report_from_lift_response(&response, None).expect("real DTO envelope");
-        let visual = render_report_visual(&report, None);
+        let visual = render_report_visual(&report);
         let plain = without_ansi(&visual);
         assert!(plain.contains("∀ δ:? @ <missing provenance>"), "{visual}");
         assert!(
@@ -18568,7 +18031,7 @@ fn encoded_len(bytes_len: usize, padding: bool) -> Option<usize> {
             ]}
         })];
 
-        let visual = render_report_visual(&report, None);
+        let visual = render_report_visual(&report);
         assert!(
             visual.contains("<missing termTable>"),
             "term-ref without termTable must render a named gap, not panic:\n{visual}"

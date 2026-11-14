@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Canonical sugar-cli self-application runner.
 #
-# Mints libsugar's dependency proof, places it in the cli's verify pool, mints
-# sugar-cli (all four surfaces) with the Tier 2b rust-analyzer oracle and the
-# loud pipeline logging, then proves it. Prints the three gates and the discharge
+# Mints libsugar's dependency proof straight into sugar-cli's .sugar/imports
+# (mint's staging path), mints sugar-cli (all four surfaces) at its own root
+# with the Tier 2b rust-analyzer oracle and the loud pipeline logging, then
+# proves it. Prove reads only the root's minted .proof and .sugar/imports
+# (step 9); it takes no --with. Prints the three gates and the discharge
 # scoreboard. Read docs/self-application/KIT-SETUP-AND-SELF-APPLICATION.md.
 #
 # NOTE: the rust-std shim is DEAD (removed in #1935 -- "shims die": a hand-built
@@ -42,17 +44,16 @@ for lifter in sugar-walk-rpc sugar-lift; do
     echo "build first: $BUILD_HINT"; exit 1
   }
 done
-rm -rf "$SCRATCH"; mkdir -p "$SCRATCH" "$IMPORTS"; rm -f "$IMPORTS"/*.proof; : > "$LOG"
+rm -rf "$SCRATCH"; mkdir -p "$SCRATCH" "$IMPORTS"; rm -f "$IMPORTS"/*.proof "$CLI"/*.proof; : > "$LOG"
 
-mint_dep () {  # <project-dir> <short-name>
-  local dir="$1" name="$2" out="$SCRATCH/dep-$2"
-  rm -rf "$out"; mkdir -p "$out"
+mint_dep () {  # <project-dir> <short-name>: stage the dependency's proof in sugar-cli's imports at mint
+  local dir="$1" name="$2"
   echo "==== mint dep: $name ====" | tee -a "$LOG"
-  RUST_LOG=info "$BIN" mint --project "$dir" --out "$out" 2>>"$LOG" | tee -a "$LOG" >/dev/null
-  local p; p=$(ls -t "$out"/*.proof 2>/dev/null | head -1)
-  [ -n "$p" ] && [ -f "$p" ] || { echo "!! no .proof for $name in $out (check the manifest command paths, see the runbook)"; exit 1; }
-  cp "$p" "$IMPORTS/$(basename "$p")"
-  echo ">> placed $(basename "$p") ($(wc -c <"$p") bytes) into imports" | tee -a "$LOG"
+  local before; before=$(ls "$IMPORTS"/*.proof 2>/dev/null | wc -l)
+  RUST_LOG=info "$BIN" mint --project "$dir" --out "$IMPORTS" 2>>"$LOG" | tee -a "$LOG" >/dev/null
+  local after; after=$(ls "$IMPORTS"/*.proof 2>/dev/null | wc -l)
+  [ "$after" -gt "$before" ] || { echo "!! no .proof for $name staged in $IMPORTS (check the manifest command paths, see the runbook)"; exit 1; }
+  echo ">> staged $name into imports ($after proof(s) there)" | tee -a "$LOG"
 }
 
 mint_dep implementations/rust/libsugar          libsugar
@@ -61,8 +62,8 @@ mint_dep implementations/rust/libsugar          libsugar
 
 echo "==== mint sugar-cli (oracle: ${ORACLE_ENV:+on}${ORACLE_ENV:-off}) ====" | tee -a "$LOG"
 env "${ORACLE_ENV[@]}" RUST_LOG=info,sugar_walk_rpc=info \
-  "$BIN" mint --project "$CLI" --out "$SCRATCH/cli" 2>"$SCRATCH/mint.err" | tee -a "$LOG" >/dev/null
-CLIPROOF=$(ls -t "$SCRATCH/cli"/*.proof 2>/dev/null | head -1)
+  "$BIN" mint --project "$CLI" --out "$CLI" 2>"$SCRATCH/mint.err" | tee -a "$LOG" >/dev/null
+CLIPROOF=$(ls "$CLI"/*.proof 2>/dev/null)
 
 echo; echo "==== GATE 1: dependency contracts forwarded (>0) ===="
 grep -iE "dependency contract.*forwarded|dep_forwarded" "$SCRATCH/mint.err" | tail -1
@@ -72,7 +73,7 @@ echo "==== eligibility + drops (want: high eligible, 0 body-discharge-ineligible
 sed 's/\x1b\[[0-9;]*m//g' "$SCRATCH/mint.err" | grep -E "function_contract_lift:|lift_implications: complete|call sites had a MATCHING" | tail -3
 
 echo; echo "==== prove (scoreboard) ===="
-"$BIN" prove "$CLI" --with "$SCRATCH/cli" --json > "$SCRATCH/prove.json" 2>"$SCRATCH/prove.err"
+"$BIN" prove "$CLI" --json > "$SCRATCH/prove.json" 2>"$SCRATCH/prove.err"
 echo "totals:"; grep -E '"totalCallsites"|"discharged"|"violations"' "$SCRATCH/prove.json"
 echo "discharge methods:"; grep -oE '"method": "[a-z-]+"' "$SCRATCH/prove.json" | sort | uniq -c
 echo "reasons:"; grep -oE '"reason": "[a-z -]+' "$SCRATCH/prove.json" | sed 's/.*: "//' | sort | uniq -c | sort -rn | head

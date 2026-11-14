@@ -35,7 +35,9 @@ STEP 2 (fix, soundness-adjacent, ONE of):
       pre's predicate family (is_ok) over a structural `=`.
 
 STEP 3 (verify, NOW POSSIBLE — file/line surfaces in rows):
-  `sugar prove examples/stage3-serde-totality-fixture --with <out> --json`
+  `sugar mint --project examples/stage3-serde-totality-fixture --out examples/stage3-serde-totality-fixture`,
+  then `sugar prove examples/stage3-serde-totality-fixture --json`
+  (prove reads the fixture's root `.proof` and `.sugar/imports`; there is no `--with`)
   REQUIRE: row `file=src/lib.rs line=25` (f) -> status discharged/panicSafe;
            row `file=src/lib.rs line=38` (g, MyStruct) -> undecidable;
            global falsePass=0, silentlyDropped=0.
