@@ -519,12 +519,13 @@ def test_an_evaluated_walrus_is_read_from_its_key() -> None:
     assert _value(read.desugar(ctx)) == TermValue(9)
 
 
-def test_a_write_of_the_name_after_the_walrus_is_read() -> None:
+def test_a_write_of_the_name_after_the_walrus_is_not_read() -> None:
+    # The reference reads its key only; the name is never read in its place.
     read = EvaluationRefSugar(evaluation=KEY, name="x", site=None, walrus=True)
     ctx = _root()
     ctx = ctx.with_temporal(ctx.temporal.bind_value(KEY, TermValue(9)))
     ctx = ctx.with_temporal(ctx.temporal.bind_value("x", TermValue(3)))
-    assert _value(read.desugar(ctx)) == TermValue(3)
+    assert _value(read.desugar(ctx)) == TermValue(9)
 
 
 # ---------------------------------------------------------------------------

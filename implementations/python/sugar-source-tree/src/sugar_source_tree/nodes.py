@@ -4796,7 +4796,9 @@ def _loop_header_bindings(loop, names, scope) -> dict:
     its read before the body binds it stays the name read.  Each binding keeps
     the pre-loop binding's coordinate: it is the same variable, read at the
     header.  Where nothing binds the header key at reduce (a loop reduced as
-    its recurrence, not per item), the reference reads the name, as before.
+    its recurrence, not per item: an outward face's statement), the read is
+    refused by name, naming the key (``EvaluationRefSugar``); it never reads
+    the name.
     """
     headers = {}
     for name in sorted(names):
@@ -5079,7 +5081,11 @@ def _module_live_loop_publication(loop, carried, scope) -> dict:
     frame) -- is published through the loop's post-loop key of it: the
     target's key (``_loop_target_evaluation_key``, #7974) or the header's
     (``_loop_header_evaluation_key``, #7954), each bound outside every item
-    to what the last item handed on.  Whether an item wrote it is the loop's
+    to the latest write of it on the path the loop left by
+    (``LoopRecurrenceSugar._post_loop_writes``).  The keys come from
+    ``live_loop_construction.loop_post_writes``, which also hands them to
+    the loop's recurrence, so the reader and the reduction name the same
+    key.  Whether an item wrote it is the loop's
     write slot (``loop_write_slot``), so the name after the loop is the
     phi ``<post-loop key> if <an item wrote it> else <the binding before
     the loop>``: a name first bound inside the loop is unbound on the arm no
@@ -5094,26 +5100,14 @@ def _module_live_loop_publication(loop, carried, scope) -> dict:
     names it writes stay undecided after it (``_module_uncarried_names``)."""
     import functools
 
-    from .live_loop_construction import _carried_writes
+    from .live_loop_construction import loop_post_writes
 
-    if not isinstance(loop, For):
-        return {}
-    target_names = frozenset(
-        loop.unit.require_target_pattern(loop, loop.target).names
-    )
-    statements = (*loop.body, *loop.orelse)
-    candidates = sorted(
-        name
-        for name in For._stmts_bound_names(statements)
-        if _module_threads(scope, name)
-    )
-    writes = _carried_writes(statements, candidates)
-    written = {name for name, keys in writes.items() if keys} | {
-        name for name in target_names if _module_threads(scope, name)
-    }
+    post_writes = loop_post_writes(loop, carried, scope)
     make_ifexp = functools.partial(If._make_ifexp, loop)
     published = {}
-    for name in sorted(written - frozenset(carried)):
+    for name, (post_key, _writes, _else_writes) in sorted(post_writes.items()):
+        if not _module_threads(scope, name):
+            continue
         prior = scope.get(name, _MISSING)
         if prior is UNDECIDED_MODULE_BINDING:
             continue
@@ -5121,11 +5115,6 @@ def _module_live_loop_publication(loop, carried, scope) -> dict:
             if hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
                 continue
             prior = UnboundBinding(name=name, cause=loop.fragment)
-        post_key = (
-            _loop_target_evaluation_key(loop, name, scope)
-            if name in target_names
-            else _loop_header_evaluation_key(loop, name, scope)
-        )
         published[name] = join_binding_state(
             slot=loop_write_slot(post_key),
             when_true=_evaluation_ref(loop, loop.span, post_key, name),
@@ -21161,6 +21150,9 @@ class EvaluationRef(Expression):
     ``recurrence``.  A read of what a store put in a place (``o.x`` after
     ``o.x = v``, ``d`` after ``d[k] = v``) is marked ``place``: the store
     binds the value under the key and the read resolves through it only.
+    Every reference resolves through its key only: where the key is unbound
+    at reduce the read is refused by name, naming the key, and the name is
+    never read in its place (``EvaluationRefSugar._unbound``).
     Built by ``_evaluation_ref`` only.
     """
 

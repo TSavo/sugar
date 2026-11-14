@@ -85,10 +85,17 @@ target's key, bound per item to the item's projection. A read inside the
 items of a live loop nested in the item of the write reads the write's own
 item (``evaluation_read_here``).
 
-For a statement's reference, a write of the name that substitution does not
-see (an unsubstituted unpack) still binds the name. The read is then
-whichever of the two was bound last: the evaluation, or a later write of the
-name.
+A module-level live ``for`` publishes each name its items write that it does
+not carry through its post-loop key (``nodes._module_live_loop_publication``)
+and binds that key, outside every item, to the latest write of the name on
+the path the loop left by (``LoopRecurrenceSugar._post_loop_writes``), as a
+function-level live loop binds its target's and header's keys after its last
+item: a read after the loop reads it through the key.
+
+Every reference resolves through its key only.  A key the temporal never
+received is refused by name (``_unbound``, ``construction_panic_gap`` naming
+the key): the name is never read in its place, whatever the name holds (a
+write substitution did not see, a formal of the same spelling, nothing).
 
 A read of what a store put in a place (``place``: ``o.x`` after ``o.x = v``,
 ``d`` after ``d[k] = v``) resolves through the store's key only: the store
@@ -107,9 +114,7 @@ comprehension's element writes it per member, so a temporal that never
 received the key is one where the walrus never completed, or where its bind
 was not carried: the read is refused there by name. The name is never read in
 its place (it may hold a write older than the walrus) and the walrus's value
-is never evaluated again. Otherwise (a lambda's body called outside the scope
-that built it, a reduction of the expression alone, a live loop reduced as
-its recurrence and not per item) the read is the name read it always was.
+is never evaluated again.
 """
 
 from __future__ import annotations
@@ -222,25 +227,53 @@ class EvaluationRefSugar(ConstructedTermSugar):
         )
 
     def _read(self, ctx) -> ExitSet:
+        """The value bound under the key, read where the reduction runs
+        (``evaluation_read_here``).  The key only: a write of the name is
+        never read in its place, and a key this temporal never received is
+        refused by name (``_unbound``)."""
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
         if self.member:
             return self._member(temporal)
         if self.place:
             return self._place(temporal)
-        if temporal is not None:
-            key = evaluation_read_here(temporal, self.evaluation)
-            latest = temporal.latest(key, self.name)
-            if latest is not None and latest.name == key:
-                from sugar_lift_py_tests.outcome import ExitSet
+        key = (
+            self.evaluation
+            if temporal is None
+            else evaluation_read_here(temporal, self.evaluation)
+        )
+        bound = temporal.value_if_bound(key) if temporal is not None else None
+        if bound is not None:
+            from sugar_lift_py_tests.outcome import ExitSet
 
-                return ExitSet.completed(latest.value)
-            if self.walrus and temporal.value_if_bound(key) is None:
-                return self._unreached_walrus()
-        elif self.walrus:
+            return ExitSet.completed(bound)
+        if self.walrus:
             return self._unreached_walrus()
-        from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+        self._unbound(key)
 
-        return NameSugar(name=self.name, site=self.site).desugar(ctx)
+    def _unbound(self, key: str):
+        """A statement's reference whose key this temporal never received:
+        the statement never completed here, or the read was reduced where
+        nothing bound its key (a frame reduced apart from the block that ran
+        the statement; a live loop reduced as its recurrence, not per item).
+        Refused by name, naming the key: the name is never read in its place
+        (it may hold nothing, or a write older than the statement), and the
+        statement is never evaluated again."""
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="EvaluationRefSugar",
+            blame=self.site,
+            observed=(
+                f"read of `{self.name}` with its evaluation {key} unbound "
+                f"(construct-time key {self.evaluation})"
+            ),
+            requested="the statement's completed value bound under its key",
+            fix=(
+                "reduce the read after the statement in the block that ran it, "
+                "or bind the key where the read is reduced; never read the "
+                "name in its place"
+            ),
+        )
 
     def _unreached_walrus(self) -> ExitSet:
         """A walrus's reference whose key this temporal never received: the

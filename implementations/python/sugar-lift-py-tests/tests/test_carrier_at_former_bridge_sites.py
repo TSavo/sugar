@@ -696,7 +696,15 @@ def _finish_with_else(monkeypatch, otherwise):
     )
 
     def publish(
-        runtime, ctx, *, entries, carried, fall_through=(), can_fall_through=True
+        runtime,
+        ctx,
+        *,
+        entries,
+        carried,
+        fall_through=(),
+        can_fall_through=True,
+        items=0,
+        else_ran=False,
     ):
         return ExitSet.completed(("published", entries))
 

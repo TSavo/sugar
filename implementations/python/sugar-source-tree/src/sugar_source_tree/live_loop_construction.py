@@ -85,6 +85,60 @@ class LiveForRuntimeV1:
     # (``nodes._loop_target_evaluation_key``).  The body and the ``else``
     # read the target through it; the name is never written.
     target_evaluations: tuple[str, ...] = ()
+    # Per name the items write that the loop does not carry, in name order:
+    # ``(post_key, writes, else_writes)`` (``loop_post_writes``).  The
+    # recurrence binds ``post_key`` outside every item, as the loop leaves,
+    # to the latest of ``writes`` over the items that ran and, after the
+    # ``else`` suite, of ``else_writes`` (``_post_loop_writes``): what a read
+    # after the loop reads the name through
+    # (``nodes._module_live_loop_publication``).  Nothing is bound when no
+    # item wrote the name.
+    published_evaluations: tuple[
+        tuple[str, tuple[str, ...], tuple[str, ...]], ...
+    ] = ()
+
+
+def loop_post_writes(loop, carried_names, scope) -> dict:
+    """Each name a live ``for``'s items write that the loop does not carry
+    (``carried_names``), to ``(post_key, writes, else_writes)``: the key a
+    read after the loop reads the name through, and the keys the writes of
+    it in the body and in the ``else`` suite bind (``_carried_writes``).
+
+    The post-loop key is the target's per-item key
+    (``nodes._loop_target_evaluation_key``, #7974) for a target leaf, whose
+    writes are that key (bound per item to the item's projection,
+    ``LoopRecurrenceSugar._enter_target``) and every body write of it; the
+    loop header's key (``nodes._loop_header_evaluation_key``, #7954) for
+    any other name a write in the body or the ``else`` binds a key for.  A
+    nested definition's body is another frame (``_carried_writes``).  The
+    construction (``LiveForRuntimeV1.published_evaluations``) and a module
+    reader's publication (``nodes._module_live_loop_publication``) name the
+    same keys from here.  A ``while`` has no target and no items the
+    recurrence runs: it publishes nothing."""
+    from .nodes import (
+        For,
+        _loop_header_evaluation_key,
+        _loop_target_evaluation_key,
+    )
+
+    if not isinstance(loop, For):
+        return {}
+    target_names = frozenset(loop.unit.require_target_pattern(loop, loop.target).names)
+    carried = frozenset(carried_names)
+    candidates = sorted(
+        (For._stmts_bound_names((*loop.body, *loop.orelse)) | target_names) - carried
+    )
+    writes = _carried_writes(loop.body, candidates)
+    else_writes = _carried_writes(loop.orelse, candidates)
+    published = {}
+    for name in candidates:
+        if name in target_names:
+            post_key = _loop_target_evaluation_key(loop, name, scope)
+            published[name] = (post_key, (post_key, *writes[name]), else_writes[name])
+        elif writes[name] or else_writes[name]:
+            post_key = _loop_header_evaluation_key(loop, name, scope)
+            published[name] = (post_key, writes[name], else_writes[name])
+    return published
 
 
 def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
@@ -950,6 +1004,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         carried_evaluations = tuple(
             (header(name), writes[name], else_writes[name]) for name in carried_names
         )
+        post_writes = loop_post_writes(loop, carried_names, scope)
         construction = replace(
             construction,
             iterable_sugar=loop.iter.sugar(),
@@ -967,6 +1022,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                     _loop_target_evaluation_key(loop, name, scope)
                     for name in pattern.names
                 ),
+                tuple(post_writes[name] for name in sorted(post_writes)),
             ),
         )
 
