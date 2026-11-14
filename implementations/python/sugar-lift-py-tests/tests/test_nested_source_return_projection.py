@@ -29,7 +29,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import BinOp, Call, FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
@@ -98,12 +98,12 @@ def test_inner_alone_projects_return_floor() -> None:
     call = _calls_named(tree, "inner")[0]
     frame = context.source_call_frames[_coordinate(call)]
     outcome = call.sugar().desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.body is not None
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert outcome.completed_value().body is not None
     # Authenticated source call: coordinate is frame CID, not bare spelling.
-    assert outcome.value.source_call_frame_cid == frame.frame_cid
-    floor = outcome.value.force_floor(None, owner="inner-alone", project_callsite=False)
+    assert outcome.completed_value().source_call_frame_cid == frame.frame_cid
+    floor = outcome.completed_value().force_floor(None, owner="inner-alone", project_callsite=False)
     assert isinstance(floor.statements[0], ReturnValue)
     assert floor.statements[0].value == TermValue(3)
     del functions
@@ -114,17 +114,17 @@ def test_outer_alone_carries_inner_call_in_body() -> None:
     call = _calls_named(tree, "outer")[0]
     frame = context.source_call_frames[_coordinate(call)]
     outcome = call.sugar().desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.source_call_frame_cid == frame.frame_cid
-    assert outcome.value.body is not None
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert outcome.completed_value().source_call_frame_cid == frame.frame_cid
+    assert outcome.completed_value().body is not None
     # Outer body reduces; dig may surface CallSiteValue(inner) or BlockValue.
-    dug = outcome.value._dig_floor_or_none(None, owner="outer-alone")
+    dug = outcome.completed_value()._dig_floor_or_none(None, owner="outer-alone")
     assert dug is not None
     # Occurrence of outer is this call site's enrolled frame, not inner's.
-    assert outcome.value.site is not None
+    assert outcome.completed_value().site is not None
     assert (
-        outcome.value.source_call_frame_cid
+        outcome.completed_value().source_call_frame_cid
         != context.source_call_frames[
             _coordinate(_calls_named(tree, "inner")[0])
         ].frame_cid
@@ -199,18 +199,19 @@ def test_swapped_inner_outer_frame_testimony_is_not_truthful() -> None:
 
     swapped = outer_call.sugar().desugar(None)
     truthful = truth_outer.sugar().desugar(None)
-    assert isinstance(swapped, Complete) and isinstance(truthful, Complete)
+    assert swapped.completed_value() is not None
+    assert truthful.completed_value() is not None
     # Bodies differ: swapped outer carries inner's frame body (return 3)
     # without the inner() call hop — not isomorphic to truthful outer.
-    assert swapped.value.body != truthful.value.body or (
-        swapped.value.parameters != truthful.value.parameters
-        or swapped.value.source_call_frame_cid != truthful.value.source_call_frame_cid
+    assert swapped.completed_value().body != truthful.completed_value().body or (
+        swapped.completed_value().parameters != truthful.completed_value().parameters
+        or swapped.completed_value().source_call_frame_cid != truthful.completed_value().source_call_frame_cid
     )
     # Frame CIDs on the CallSiteValue must not match the truthful outer frame
     # when testimony was swapped.
     assert (
-        swapped.value.source_call_frame_cid != truthful.value.source_call_frame_cid
-        or swapped.value.body != truthful.value.body
+        swapped.completed_value().source_call_frame_cid != truthful.completed_value().source_call_frame_cid
+        or swapped.completed_value().body != truthful.completed_value().body
     )
 
 
@@ -281,12 +282,12 @@ def test_two_hop_return_feeds_binop_through_both_frames() -> None:
         pytest.fail(f"{CODEX3_OWNER} two-hop binop: {exc}")
 
     assert isinstance(
-        helper, (Complete, ExitSet)
+        helper, ExitSet
     ), f"{CODEX3_OWNER} outcome={type(helper).__name__}"
 
     def _val(outcome):
-        if isinstance(outcome, Complete):
-            return outcome.value
+        if outcome.completed_value() is not None:
+            return outcome.completed_value()
         completed = [e for e in outcome.exits if isinstance(e, Completed)]
         assert completed, outcome.exits
         return completed[0].value

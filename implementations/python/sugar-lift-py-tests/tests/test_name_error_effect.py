@@ -8,7 +8,7 @@ from sugar_lift_py_tests.effect import (
     effect_reason,
     effect_status,
 )
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 
@@ -24,9 +24,11 @@ def test_name_error_effect_is_a_deterministic_incomplete_halt() -> None:
     site = _site()
     effect = NameErrorEffect(name="name", site=site)
 
-    outcome = Incomplete(effect)
+    outcome = ExitSet.halted(effect)
 
-    assert outcome.effect is effect
+    (halt,) = outcome.halts()
+    assert outcome.exits == (halt,)
+    assert halt.effect is effect
     assert effect_status(effect) == "raise-effect"
     assert effect_kind(effect) == "RaiseEffect"
     assert "unbound name 'name'" in effect_reason(effect)

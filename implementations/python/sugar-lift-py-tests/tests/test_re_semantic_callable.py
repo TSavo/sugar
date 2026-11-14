@@ -16,7 +16,6 @@ from sugar_lift_py_tests.floor.re_match_value import ReMatchValue
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Complete
 
 
 class _Op:
@@ -38,12 +37,12 @@ def _apply(op_name, pattern, subject):
 def test_search_truthful_and_lying() -> None:
     msg = "A value is being set on a copy of a DataFrame"
     hit = _apply("python.re.search", "A value is being set", msg)
-    assert isinstance(hit, Complete) and isinstance(hit.value, ReMatchValue)
+    assert isinstance(hit.completed_value(), ReMatchValue)
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
-    truth = hit.value.truth(site="s")
-    assert isinstance(truth, Complete) and isinstance(truth.value, TrueBoolLiteralSugar)
+    truth = hit.completed_value().truth(site="s")
+    assert isinstance(truth.completed_value(), TrueBoolLiteralSugar)
     miss = _apply("python.re.search", "NOT the message", msg)
-    assert isinstance(miss, Complete) and isinstance(miss.value, NoneValue)
+    assert isinstance(miss.completed_value(), NoneValue)
 
 
 def test_match_is_anchored_at_start() -> None:

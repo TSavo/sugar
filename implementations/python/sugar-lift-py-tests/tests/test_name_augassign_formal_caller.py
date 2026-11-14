@@ -24,7 +24,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect import CoverageGapEffect
 from sugar_lift_py_tests.floor import ScopeRebind, TermValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.augassign_sugar import (
     AttributeAugAssignSugar,
     AugAssignSugar,
@@ -104,7 +104,7 @@ class _FloorSugar(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     @classmethod
     def witnesses(cls):
@@ -178,20 +178,21 @@ def test_rebind_uses_iadd_result_when_iadd_and_add_diverge() -> None:
     class _Divergent(FloorValue):
         def inplace_binary_operator_with(self, operation, ctx):
             del operation, ctx
-            return Complete(TermValue(99))
+            return ExitSet.completed(TermValue(99))
 
         def add(self, other, site):
             del other, site
-            return Complete(TermValue(1))
+            return ExitSet.completed(TermValue(1))
 
     out = _production_name_aug(_Divergent(), TermValue(0)).desugar(None)
-    assert isinstance(out, Complete), out
-    assert isinstance(out.value, ScopeRebind), type(out.value)
-    assert out.value.name == "x"
-    assert out.value.value == TermValue(99)
+    rebind = out.completed_value()
+    assert rebind is not None, out
+    assert isinstance(rebind, ScopeRebind), type(rebind)
+    assert rebind.name == "x"
+    assert rebind.value == TermValue(99)
     # Discrimination: must not have rebound to ordinary add's answer.
     with pytest.raises(AssertionError):
-        assert out.value.value == TermValue(1)
+        assert rebind.value == TermValue(1)
 
 
 def test_discrimination_add_alone_is_not_the_name_rebind() -> None:
@@ -200,17 +201,19 @@ def test_discrimination_add_alone_is_not_the_name_rebind() -> None:
     class _Divergent(FloorValue):
         def inplace_binary_operator_with(self, operation, ctx):
             del operation, ctx
-            return Complete(TermValue(99))
+            return ExitSet.completed(TermValue(99))
 
         def add(self, other, site):
             del other, site
-            return Complete(TermValue(1))
+            return ExitSet.completed(TermValue(1))
 
     # Ordinary add (the old substitute binding) would yield 1.
     add_out = _Divergent().add(TermValue(0), "site")
-    assert add_out.value == TermValue(1)
+    assert add_out.completed_value() == TermValue(1)
     # Name AugAssign must not match that.
-    rebind = _production_name_aug(_Divergent(), TermValue(0)).desugar(None).value
+    rebind = (
+        _production_name_aug(_Divergent(), TermValue(0)).desugar(None).completed_value()
+    )
     assert rebind.value != TermValue(1)
     assert rebind.value == TermValue(99)
 
@@ -228,7 +231,7 @@ def test_rhs_evaluated_once() -> None:
         def desugar(self, ctx=None):
             del ctx
             box["n"] += 1
-            return Complete(TermValue(2))
+            return ExitSet.completed(TermValue(2))
 
         @classmethod
         def witnesses(cls):
@@ -245,9 +248,9 @@ def test_rhs_evaluated_once() -> None:
         site=site,
     )
     out = sugar.desugar(None)
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, ScopeRebind)
-    assert out.value.value == TermValue(5)
+    rebind = out.completed_value()
+    assert isinstance(rebind, ScopeRebind)
+    assert rebind.value == TermValue(5)
     assert box["n"] == 1
 
 
@@ -259,7 +262,7 @@ def test_discrimination_double_rhs_eval_is_detected() -> None:
         def desugar(self, ctx=None):
             del ctx
             box["n"] += 1
-            return Complete(TermValue(1))
+            return ExitSet.completed(TermValue(1))
 
         @classmethod
         def witnesses(cls):
@@ -279,7 +282,7 @@ def test_discrimination_double_rhs_eval_is_detected() -> None:
 
 
 def test_iadd_halt_does_not_emit_scope_rebind() -> None:
-    face = Incomplete(
+    face = ExitSet.halted(
         CoverageGapEffect(boundary="iadd", reason="authenticated inplace halt")
     )
 
@@ -290,18 +293,16 @@ def test_iadd_halt_does_not_emit_scope_rebind() -> None:
 
         def add(self, other, site):
             del other, site
-            return Complete(TermValue(0))
+            return ExitSet.completed(TermValue(0))
 
     out = _production_name_aug(_Halt(), TermValue(1)).desugar(None)
     assert out is face
-    assert not isinstance(out, Complete) or not isinstance(
-        getattr(out, "value", None), ScopeRebind
-    )
+    assert not isinstance(out.completed_value(), ScopeRebind)
 
 
 def test_raise_value_halt_blocks_rebind() -> None:
-    """Incomplete/halt face from inplace must not continue into ScopeRebind."""
-    face = Incomplete(
+    """A halted face from inplace must not continue into ScopeRebind."""
+    face = ExitSet.halted(
         CoverageGapEffect(boundary="iadd", reason="type error before rebind")
     )
 
@@ -312,18 +313,18 @@ def test_raise_value_halt_blocks_rebind() -> None:
 
         def add(self, other, site):
             del other, site
-            return Complete(TermValue(0))
+            return ExitSet.completed(TermValue(0))
 
     out = _production_name_aug(_Raise(), TermValue(1)).desugar(None)
     assert out is face
-    assert not isinstance(getattr(out, "value", None), ScopeRebind)
+    assert not isinstance(out.completed_value(), ScopeRebind)
 
 
 def test_halt_blocks_tail_read_of_partial_update() -> None:
     """Through reduce_block: iadd halt leaves temporal unbound for the name."""
     from sugar_lift_py_tests.context import ReduceContext
 
-    face = Incomplete(CoverageGapEffect(boundary="iadd", reason="halt before rebind"))
+    face = ExitSet.halted(CoverageGapEffect(boundary="iadd", reason="halt before rebind"))
 
     class _Halt(FloorValue):
         def inplace_binary_operator_with(self, operation, ctx):
@@ -331,7 +332,7 @@ def test_halt_blocks_tail_read_of_partial_update() -> None:
             return face
 
         def add(self, other, site):
-            return Complete(TermValue(0))
+            return ExitSet.completed(TermValue(0))
 
     @dataclass(frozen=True)
     class _ReadName(Sugar):
@@ -340,8 +341,8 @@ def test_halt_blocks_tail_read_of_partial_update() -> None:
             if temporal is not None:
                 bound = temporal.value_if_bound("x")
                 if bound is not None:
-                    return Complete(bound)
-            return Complete(TermValue(-1))  # sentinel: no rebind happened
+                    return ExitSet.completed(bound)
+            return ExitSet.completed(TermValue(-1))  # sentinel: no rebind happened
 
         @classmethod
         def witnesses(cls):
@@ -382,7 +383,7 @@ def test_successful_rebind_threads_into_tail_read() -> None:
             if temporal is not None:
                 bound = temporal.value_if_bound("x")
                 if bound is not None:
-                    return Complete(bound)
+                    return ExitSet.completed(bound)
             raise AssertionError("expected temporal rebind of x after Name AugAssign")
 
         @classmethod

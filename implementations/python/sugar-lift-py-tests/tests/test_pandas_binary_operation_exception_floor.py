@@ -12,7 +12,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.nodes import BinOp
 from sugar_source_tree.tree import SourceFile
@@ -31,7 +31,7 @@ class _ValueSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner: str):
         return self.value.to_term(owner=owner)
@@ -218,7 +218,6 @@ def test_source_decided_int_float_bitand_emits_type_error() -> None:
     )
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.nodes import BinOp
     from sugar_source_tree.tree import SourceFile
@@ -243,9 +242,10 @@ def test_source_decided_int_float_bitand_emits_type_error() -> None:
         node.fragment,
     )
     outcome = operation.desugar(None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_source_decided_int_plus_str_emits_type_error() -> None:
@@ -259,7 +259,6 @@ def test_source_decided_int_plus_str_emits_type_error() -> None:
     )
     from sugar_lift_py_tests.floor import StringValue, TermValue
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.nodes import BinOp
     from sugar_source_tree.tree import SourceFile
@@ -278,9 +277,10 @@ def test_source_decided_int_plus_str_emits_type_error() -> None:
         node.fragment,
     )
     outcome = operation.desugar(None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_source_decided_int_mod_list_emits_type_error() -> None:
@@ -293,7 +293,6 @@ def test_source_decided_int_mod_list_emits_type_error() -> None:
     )
     from sugar_lift_py_tests.floor import ListValue, TermValue
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.nodes import BinOp
     from sugar_source_tree.tree import SourceFile
@@ -312,9 +311,10 @@ def test_source_decided_int_mod_list_emits_type_error() -> None:
         node.fragment,
     )
     outcome = operation.desugar(None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_source_decided_list_plus_int_emits_type_error() -> None:
@@ -326,7 +326,6 @@ def test_source_decided_list_plus_int_emits_type_error() -> None:
     """
     from sugar_lift_py_tests.floor import ListValue, TermValue
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.tree import SourceFile
     from sugar_lift_py_tests.context_manager_resolution import (
@@ -348,6 +347,7 @@ def test_source_decided_list_plus_int_emits_type_error() -> None:
         node.fragment,
     )
     outcome = operation.desugar(None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"

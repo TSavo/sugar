@@ -8,7 +8,7 @@ import runpy
 
 import pytest
 
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.effect.runtime_effect import RuntimeEffect
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_python_source.source_oracle import path_source
@@ -55,16 +55,19 @@ def _outcome_or_panic(path: Path, function_name: str):
 
 
 def _is_typed_loud(result) -> bool:
-    if isinstance(result, (ConstructionPanic, Incomplete, SourceTreePanic)):
+    if isinstance(result, (ConstructionPanic, SourceTreePanic)):
         return True
-    value = getattr(result, "value", None)
+    if isinstance(result, ExitSet) and result.exits and result.halts() == result.exits:
+        return True
+    value = result.completed_value() if isinstance(result, ExitSet) else None
     record = getattr(value, "record", None)
     statements = getattr(record, "statements", ())
     return any(
         isinstance(statement, RuntimeEffect)
         or (
-            isinstance(statement, Incomplete)
-            and isinstance(statement.effect, RuntimeEffect)
+            isinstance(statement, ExitSet)
+            and statement.halts() == statement.exits
+            and any(isinstance(halt.effect, RuntimeEffect) for halt in statement.halts())
         )
         for statement in statements
     )

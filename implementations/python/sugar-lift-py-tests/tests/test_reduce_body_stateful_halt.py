@@ -1,7 +1,7 @@
 """Reducer boundary law for state-bearing exceptional exits."""
 
 from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.outcome import ExitSet, Incomplete, true_guard
+from sugar_lift_py_tests.outcome import ExitSet, true_guard
 from sugar_lift_py_tests.outcome.exit_set import Halted
 from sugar_lift_py_tests.sugar import function_universe_sugar
 
@@ -25,7 +25,7 @@ def test_reduce_body_retains_one_unconditional_stateful_halt(monkeypatch):
     assert reduced.exits[0].state is pre_effect_state
 
 
-def test_reduce_body_still_collapses_one_unconditional_stateless_halt(monkeypatch):
+def test_reduce_body_answers_one_unconditional_stateless_halt(monkeypatch):
     effect = RaiseEffect.for_builtin(
         "AttributeError",
         occurrence="implementations/python/sugar-lift-py-tests/tests/test_reduce_body_stateful_halt.py:10:0",
@@ -39,4 +39,4 @@ def test_reduce_body_still_collapses_one_unconditional_stateless_halt(monkeypatc
 
     reduced = function_universe_sugar.reduce_body(())
 
-    assert reduced == Incomplete(effect)
+    assert reduced == ExitSet.halted(effect)

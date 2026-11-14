@@ -37,7 +37,6 @@ from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, atomic, ctor, make_var, str_const
 from sugar_lift_py_tests.outcome import (
-    Complete,
     Completed,
     ExitSet,
     Halted,
@@ -222,7 +221,7 @@ def test_short_circuit_exception_keeps_actual_map_and_exact_temporal_state():
     state = _ReducedBlock((TermValue(17),), True, ())
     testimony = ReducerPreEffectStateV1._from_reducer(state)
     carrier = carrier.and_then(
-        lambda value: Complete(value), pre_effect_state=testimony
+        lambda value: ExitSet.completed(value), pre_effect_state=testimony
     )
     continuing_guard = atomic("test:first-leg-truth", [])
     continuing_face, stopped_face = partition("test:short-circuit-state")
@@ -316,7 +315,7 @@ def test_continuation_carrier_preserves_newer_reducer_pre_effect_state():
         ),
         coordinates=(second_left, second_right),
     ).and_then(
-        lambda value: Complete(value),
+        lambda value: ExitSet.completed(value),
         pre_effect_state=ReducerPreEffectStateV1._from_reducer(newer_state),
     )
     chained = first.and_then(
@@ -342,7 +341,7 @@ def test_direct_conflicting_pre_effect_state_reenrollment_stays_loud():
     first_state = _ReducedBlock((TermValue(71),), True, ())
     conflicting_state = _ReducedBlock((TermValue(72),), True, ())
     enrolled = carrier.and_then(
-        lambda value: Complete(value),
+        lambda value: ExitSet.completed(value),
         pre_effect_state=ReducerPreEffectStateV1._from_reducer(first_state),
     )
 
@@ -351,7 +350,7 @@ def test_direct_conflicting_pre_effect_state_reenrollment_stays_loud():
         match="a second conflicting reducer pre-effect state",
     ):
         enrolled.and_then(
-            lambda value: Complete(value),
+            lambda value: ExitSet.completed(value),
             pre_effect_state=ReducerPreEffectStateV1._from_reducer(conflicting_state),
         )
 
@@ -836,7 +835,7 @@ class _AttrStoreReceiver(FloorValue):
     def setattr(self, name, value, site):
         del site
         remaining = tuple(field for field in self.fields if field[0] != name)
-        return Complete(_AttrStoreReceiver((*remaining, (name, value))))
+        return ExitSet.completed(_AttrStoreReceiver((*remaining, (name, value))))
 
     def to_term(self, *, owner: str):
         del owner
@@ -940,7 +939,7 @@ def test_source_evaluation_order_rhs_receiver_index_is_independent_of_discharge(
         def desugar(self, ctx=None):
             del ctx
             order.append(self.label)
-            return Complete(self.payload)
+            return ExitSet.completed(self.payload)
 
         @classmethod
         def witnesses(cls):
@@ -958,8 +957,7 @@ def test_source_evaluation_order_rhs_receiver_index_is_independent_of_discharge(
         )
     )
     assert order == ["value", "receiver", "index"]
-    assert isinstance(source_outcome, Complete)
-    assert source_outcome.value == ListValue((TermValue(9),))
+    assert source_outcome.completed_value() == ListValue((TermValue(9),))
 
     # Discharge order is independently receiver, index, value on the table.
     import inspect

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 from sugar_lift_py_tests.floor import NoneValue, TermValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.delete_effect_sugar import SubscriptDeleteEffectSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -30,7 +30,7 @@ class _Value(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
 
 def _outcomes(tmp_path):
@@ -49,12 +49,13 @@ def _outcomes(tmp_path):
 
 def test_none_subscript_mutations_have_exact_owner_occurrences(tmp_path):
     for outcome, owner, site in _outcomes(tmp_path):
-        assert isinstance(outcome, Incomplete)
-        assert outcome.effect.exception_name == "TypeError"
-        assert outcome.effect.producer_node_owner == owner
-        assert outcome.effect.occurrence_id == str(site)
+        assert outcome.halts() == outcome.exits
+        (halt,) = outcome.halts()
+        assert halt.effect.exception_name == "TypeError"
+        assert halt.effect.producer_node_owner == owner
+        assert halt.effect.occurrence_id == str(site)
 
 
 def test_none_subscript_mutations_cannot_fabricate_completion(tmp_path):
     for outcome, _, _ in _outcomes(tmp_path):
-        assert not isinstance(outcome, Complete)
+        assert outcome.completed_value() is None

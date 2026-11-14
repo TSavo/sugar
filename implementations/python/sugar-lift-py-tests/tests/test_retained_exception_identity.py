@@ -37,7 +37,7 @@ tester atom does not appear at all.
 from __future__ import annotations
 
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
+from sugar_lift_py_tests.outcome import ExitSet, outcome_to_exitset
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
@@ -67,8 +67,12 @@ def _residual_raises(source: str) -> tuple[str, ...]:
         if key in seen:
             return
         seen.add(key)
-        if isinstance(value, Incomplete) and isinstance(value.effect, RaiseEffect):
-            names.append(value.effect.exception_name)
+        if isinstance(value, ExitSet) and value.halts() == value.exits:
+            names.extend(
+                halt.effect.exception_name
+                for halt in value.halts()
+                if isinstance(halt.effect, RaiseEffect)
+            )
         effect = getattr(value, "effect", None)
         if isinstance(effect, RaiseEffect):
             names.append(effect.exception_name)

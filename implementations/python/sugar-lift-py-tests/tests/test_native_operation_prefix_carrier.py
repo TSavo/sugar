@@ -17,7 +17,7 @@ from sugar_lift_py_tests.floor import NoneValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, and_, atomic, make_var
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -65,7 +65,7 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
     carrier, left, right = _carrier()
     pre_effect_state = _ReducedBlock((TermValue(7),), True, ())
     carrier = carrier.and_then(
-        lambda value: Complete(value),
+        lambda value: ExitSet.completed(value),
         pre_effect_state=ReducerPreEffectStateV1._from_reducer(pre_effect_state),
     )
     tail_guard = atomic("test:carrier-tail", [])
@@ -150,7 +150,7 @@ def test_prefix_composition_retains_later_carrier_continuations() -> None:
     prefix = ExitSet((Completed(guard, TermValue(1)),))
     composed = NativeOperationExitCarrierV1.compose_prefix(
         prefix, lambda _value: carrier
-    ).and_then(lambda _predicate: Complete(TermValue(99)))
+    ).and_then(lambda _predicate: ExitSet.completed(TermValue(99)))
 
     exits = composed.discharge(
         {
