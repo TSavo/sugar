@@ -418,7 +418,7 @@ def test_loop_next_carrier_is_refused_by_name(monkeypatch):
     _next_answering(monkeypatch, carrier)
     with pytest.raises(ConstructionPanic) as excinfo:
         LoopRecurrenceSugar._advance_iterator(
-            SimpleNamespace(site=None), None, None, None, entries=()
+            SimpleNamespace(site=None), None, None, None, entries=(), carried=()
         )
     _refused(excinfo, "LoopRecurrenceSugar.next")
 
@@ -471,7 +471,9 @@ def _iterate_over(monkeypatch, body, carrier):
         _after_iteration_face=lambda *_args, **_kwargs: carrier,
     )
     runtime = SimpleNamespace(target_pattern=None, body_sugars=())
-    return LoopRecurrenceSugar._advance_iterator(loop, None, runtime, None, entries=())
+    return LoopRecurrenceSugar._advance_iterator(
+        loop, None, runtime, None, entries=(), carried=()
+    )
 
 
 def test_loop_iteration_continuation_carrier_composes_beneath_its_face(monkeypatch):
@@ -537,6 +539,108 @@ def test_loop_single_face_continuation_carrier_keeps_its_face(monkeypatch):
     # The face's debt rides onto what follows it; it is never dropped.
     assert exits.exits
     assert all("owed.only" in exit_.owed for exit_ in exits.exits)
+
+
+def test_loop_body_carrier_continues_the_loop_once_it_discharges(monkeypatch):
+    # The item's body itself waits on its caller's actuals. Once it
+    # discharges, the loop continues from this item (``following`` runs
+    # beneath the body's face), and the face's debt rides onto it.
+    carrier, left, right = _carrier()
+    body_guard = atomic("test.body", [])
+    body = carrier.and_then(
+        lambda value: ExitSet((Completed(body_guard, value, owed=("owed.body",)),))
+    )
+    following = ExitSet.completed(TermValue(99))
+
+    composed = _iterate_over(monkeypatch, body, following)
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    actuals = _actuals(left, right)
+    exits = composed.discharge(None, actuals)
+    discharged = body.discharge(None, actuals)
+    eager = discharged.sequence(lambda _state: following)
+    assert isinstance(exits, ExitSet)
+    assert exits == eager
+    assert _testimony(exits) == _testimony(eager)
+    # The loop did not stop at the body: what follows the item is the answer.
+    assert [exit_.value for exit_ in exits.exits] == [TermValue(99)]
+    assert all("owed.body" in exit_.owed for exit_ in exits.exits)
+
+
+def test_loop_body_carrier_with_several_faces_continues_each(monkeypatch):
+    carrier, left, right = _carrier()
+    first_guard = atomic("test.first", [])
+    second_guard = atomic("test.second", [])
+    body = carrier.and_then(
+        lambda value: ExitSet(
+            (
+                Completed(first_guard, value, owed=("owed.first",)),
+                Completed(second_guard, TermValue(5), owed=("owed.second",)),
+            )
+        )
+    )
+    following = ExitSet.completed(TermValue(99))
+
+    composed = _iterate_over(monkeypatch, body, following)
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    actuals = _actuals(left, right)
+    exits = composed.discharge(None, actuals)
+    eager = body.discharge(None, actuals).sequence(lambda _state: following)
+    assert isinstance(exits, ExitSet)
+    assert exits == eager
+    assert _testimony(exits) == _testimony(eager)
+    owed = [debt for exit_ in exits.exits for debt in exit_.owed]
+    assert "owed.first" in owed
+    assert "owed.second" in owed
+
+
+def _stop_iteration_halt(owed):
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+    stop_identity, _ = _builtin_exception_identity("StopIteration")
+    effect = RaiseEffect(
+        exception_name="StopIteration",
+        occurrence=AuthenticatedRaiseLocus.of("loop-exhaustion"),
+        exception_type_coordinate=stop_identity,
+        exception_type_mro=(stop_identity,),
+    )
+    return Halted(atomic("test.exhausted", []), effect, None, owed=owed)
+
+
+def test_loop_exhaustion_carrier_composes_beneath_the_stop_iteration(monkeypatch):
+    # The loop's finish (its ``else`` suite) waits on its caller's actuals.
+    # It is composed beneath the StopIteration arm the loop consumes: the
+    # arm's guard and debt survive into what the loop leaves with.
+    from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
+
+    carrier, left, right = _carrier()
+    stop = _stop_iteration_halt(("owed.next",))
+    _next_answering(monkeypatch, ExitSet((stop,)))
+    loop = SimpleNamespace(
+        site=None,
+        _finish_iterator=lambda *_args, **_kwargs: carrier,
+    )
+
+    composed = LoopRecurrenceSugar._advance_iterator(
+        loop, None, SimpleNamespace(), None, entries=(), carried=()
+    )
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    actuals = _actuals(left, right)
+    exits = composed.discharge(None, actuals)
+    discharged = carrier.discharge(None, actuals)
+    eager = ExitSet((stop,)).sequence(
+        ExitSet.completed, consume=lambda _halt: discharged
+    )
+    assert isinstance(exits, ExitSet)
+    assert exits == eager
+    assert _testimony(exits) == _testimony(eager)
+    (arm,) = exits.exits
+    assert isinstance(arm, Completed)
+    assert arm.value == TermValue(3)
+    assert "owed.next" in arm.owed
+    assert "test.exhausted" in str(arm.guard)
 
 
 def test_loop_outward_face_carrier_is_refused_by_name():
@@ -629,6 +733,84 @@ def test_try_star_handler_carrier_is_refused_by_name():
     with pytest.raises(ConstructionPanic) as excinfo:
         sugar.desugar(ReduceContext.root(owner="handler_carrier"))
     _refused(excinfo, "TryStarSugar.handler")
+
+
+def test_try_star_body_carrier_routes_its_halt_once_it_discharges(monkeypatch):
+    # The try* body itself waits on its caller's actuals. Once it discharges,
+    # its group halt reaches the handler exactly as a body reduced here does:
+    # the try* completes under the body halt's guard and owes what the body
+    # halt owed and what the handler owed.
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.sugar import function_universe_sugar
+    from test_try_compositions_carry_owed_7825 import (
+        _Fixed,
+        _one_leaf_try_star,
+        _owing_completion,
+    )
+
+    carrier, left, right = _carrier()
+    sugar, _leaf = _one_leaf_try_star(
+        "body_carrier",
+        lambda _leaf: (_Fixed(lambda c: _owing_completion(c, "debt:handler")),),
+    )
+    (halt,) = sugar.body[0].desugar(None).exits
+    owing = ExitSet((Halted(halt.guard, halt.effect, halt.state, owed=("debt:body",)),))
+    deferred = carrier.and_then(lambda _value: owing)
+
+    real = function_universe_sugar.reduce_block_to_exitset
+
+    def reduce(sugars, ctx):
+        return deferred if sugars is sugar.body else real(sugars, ctx)
+
+    monkeypatch.setattr(function_universe_sugar, "reduce_block_to_exitset", reduce)
+
+    composed = sugar.desugar(ReduceContext.root(owner="body_carrier"))
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    exits = composed.discharge(None, _actuals(left, right))
+    assert isinstance(exits, ExitSet)
+    assert [type(arm) for arm in exits.exits] == [Completed], exits.exits
+    (completed,) = exits.exits
+    assert "body.guard" in str(completed.guard), completed.guard
+    assert completed.owed == ("debt:body", "debt:handler")
+
+
+def test_try_star_body_carrier_completion_runs_the_else(monkeypatch):
+    # A body that completes once it discharges runs the ``else`` suite beneath
+    # its arm, which owes what the body owed.
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.sugar import function_universe_sugar
+    from sugar_lift_py_tests.sugar.try_star_sugar import TryStarSugar
+
+    carrier, left, right = _carrier()
+    sugar = TryStarSugar(body=("deferred-body",), handlers=(), orelse=("else",))
+    body_guard = atomic("test.body", [])
+    deferred = carrier.and_then(
+        lambda value: ExitSet((Completed(body_guard, value, owed=("owed.body",)),))
+    )
+
+    real = function_universe_sugar.reduce_block_to_exitset
+
+    def reduce(sugars, ctx):
+        if sugars is sugar.body:
+            return deferred
+        if sugars is sugar.orelse:
+            return ExitSet.completed(TermValue(42))
+        return real(sugars, ctx)
+
+    monkeypatch.setattr(function_universe_sugar, "reduce_block_to_exitset", reduce)
+
+    composed = sugar.desugar(ReduceContext.root(owner="body_carrier_else"))
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    exits = composed.discharge(None, _actuals(left, right))
+    assert isinstance(exits, ExitSet)
+    (arm,) = exits.exits
+    assert isinstance(arm, Completed)
+    # The try* continued past the body into its ``else``.
+    assert arm.value == TermValue(42)
+    assert "test.body" in str(arm.guard)
+    assert "owed.body" in arm.owed
 
 
 # --- function_universe_sugar ------------------------------------------------
