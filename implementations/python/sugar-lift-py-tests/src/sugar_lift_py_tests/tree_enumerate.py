@@ -57,6 +57,67 @@ def halted_assertion_sites(halted_arms) -> tuple:
     return tuple(sites)
 
 
+def _stated_fragment(holder):
+    """The source fragment ``holder`` states, or ``None`` when it states none:
+    the fragment itself, or one an operation still carries as ``site`` or
+    ``blame`` (the admission ``resolve_runtime_effect_site`` makes)."""
+    from sugar_lift_py_tests.effect.runtime_effect import RuntimeEffectSite
+
+    for candidate in (
+        holder,
+        getattr(holder, "site", None),
+        getattr(holder, "blame", None),
+    ):
+        if isinstance(candidate, RuntimeEffectSite):
+            return candidate
+    return None
+
+
+def halt_locus(arm):
+    """One halted arm of a reduction, as its panic-locus row (#7766, ruling 3).
+
+    Read off the arm's own halt record, never off the source. The site is the
+    fragment the effect states: the exception value a raise threw carries the
+    fragment it was raised at, a runtime effect's witness carries the fragment
+    of its boundary, an unmet expectation carries its site. The term is the
+    raised type's coordinate for a raise (``None`` when the raise's type is
+    undetermined) and the failing operation for a runtime effect. A halt whose
+    record states neither still gets its row, with only the leaf: every halted
+    arm reaches the proof, and the verifier states it ``undecidable``.
+    """
+    from sugar_lift_py_tests.effect import (
+        ExpectationNotMetEffect,
+        GroupedRaiseEffect,
+        RaiseEffect,
+        RuntimeEffect,
+        UndeterminedRaiseEffect,
+    )
+    from sugar_lift_py_tests.floor import ExceptionValue
+    from sugar_lift_py_tests.ir import Term
+    from sugar_lift_py_tests.kit_rpc import PanicLocusDto
+
+    effect = arm.effect
+    fragment = None
+    term = None
+    if isinstance(effect, RuntimeEffect):
+        fragment = effect.witness.site
+        term = effect.witness.operation
+    elif isinstance(effect, (RaiseEffect, UndeterminedRaiseEffect)):
+        if isinstance(effect.raised_value, ExceptionValue):
+            fragment = _stated_fragment(effect.raised_value.site)
+        term = effect.exception_type_coordinate
+    elif isinstance(effect, GroupedRaiseEffect):
+        if isinstance(effect.exception_type_coordinate, Term):
+            term = effect.exception_type_coordinate
+    elif isinstance(effect, ExpectationNotMetEffect):
+        fragment = _stated_fragment(effect.site)
+    return PanicLocusDto(
+        file=None if fragment is None else fragment.filename,
+        line=None if fragment is None else fragment.line,
+        arg_term=term,
+    )
+
+
 def find_function(sf: SourceFile, name: Optional[str], span: Optional[dict]):
     for fn in sf.functions():
         if name is not None and fn.name != name:
@@ -787,9 +848,9 @@ def reduction_rows(outcome, *, owner, blame, def_memento):
             for exit_ in outcome.exits
             if isinstance(exit_, Completed)
         )
-        halted_sites = halted_assertion_sites(
-            exit_ for exit_ in outcome.exits if isinstance(exit_, Halted)
-        )
+        halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
+        halted_sites = halted_assertion_sites(halted)
+        halt_loci = tuple(halt_locus(arm) for arm in halted)
         unread = [
             type(exit_).__name__
             for exit_ in outcome.exits
@@ -826,6 +887,7 @@ def reduction_rows(outcome, *, owner, blame, def_memento):
         formal_coordinates=tuple(stated.formal_coordinates),
         arms=arms,
         halted_assertion_sites=halted_sites,
+        halt_loci=halt_loci,
         def_memento=def_memento,
     )
 
@@ -835,9 +897,9 @@ def function_contract_rows(fn, file_rel: str):
 
     `fn.sugar()` constructs the FunctionUniverseSugar; desugar reduces the body
     to an ``ExitSet`` of completed and halted arms. ``exit_arms_payload_rows``
-    projects all of them: the post over every completed arm, and one row per
-    assertion site (see there). One completed arm under guard true is the
-    one-arm case.
+    projects all of them: the post over every completed arm, one panic locus
+    per halted arm (``halt_locus``), and one row per assertion site (see
+    there). One completed arm under guard true is the one-arm case.
 
     An outcome that is not a set of arms (a deferred native operation,
     ``NativeOperationExitCarrierV1``, whose arms exist only once a caller

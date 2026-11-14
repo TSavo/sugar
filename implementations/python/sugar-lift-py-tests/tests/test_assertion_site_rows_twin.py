@@ -107,8 +107,8 @@ def test_sibling_claims_about_unbound_calls_stay_open(
     assert result.verdict == "open"
 
 
-def _assertion_rows(tmp_path: Path, source: str) -> list[tuple[int, dict]]:
-    """(line, inv) of every assertion row the one function of ``source`` emits."""
+def _wire_rows(tmp_path: Path, source: str) -> list[dict]:
+    """Every row the one function of ``source`` emits, on the wire."""
     from sugar_lift_py_tests import lift_rpc
     from sugar_lift_py_tests.ir import TermTableBuilder
     from sugar_lift_py_tests.tree_enumerate import function_contract_rows
@@ -124,9 +124,42 @@ def _assertion_rows(tmp_path: Path, source: str) -> list[tuple[int, dict]]:
     table = TermTableBuilder()
     wire = [row.to_rpc_with_term_table(table) for row in rows]
     assert wire[0]["kind"] == "function-contract"
+    return wire
+
+
+def _assertion_rows(tmp_path: Path, source: str) -> list[tuple[int, dict]]:
+    """(line, inv) of every assertion row the one function of ``source`` emits."""
     return [
-        (row["sourceWarrants"][0]["span"]["start_line"], row["inv"]) for row in wire[1:]
+        (row["sourceWarrants"][0]["span"]["start_line"], row["inv"])
+        for row in _wire_rows(tmp_path, source)[1:]
     ]
+
+
+def test_every_halted_arm_states_a_panic_locus(tmp_path: Path) -> None:
+    """A halt is never dropped (#7766, ruling 3). Twin: one literal apart.
+    The held ``assert`` leaves no halted arm and the contract states no
+    locus; the halted one states one locus in the existing panic-locus shape,
+    at the assertion, with exactly the fields the verifier reads."""
+    from sugar_lift_py_tests.kit_rpc.body_universe_dto import RUNTIME_FAILURE_SITE
+
+    (held, *_rows) = _wire_rows(tmp_path, "def f():\n    y = 1\n    assert 2 == 2\n")
+    (halted, *_rows) = _wire_rows(tmp_path, "def f():\n    y = 1\n    assert 2 == 3\n")
+    assert "panicLoci" not in held
+    (locus,) = halted["panicLoci"]
+    assert set(locus) == {"callee", "file", "line", "argTerm"}
+    assert locus["callee"] == RUNTIME_FAILURE_SITE
+    assert (locus["file"], locus["line"]) == ("m.py", 3)
+    assert locus["argTerm"]["kind"] == "term-ref"
+
+
+def test_a_function_that_only_halts_claims_nothing(tmp_path: Path) -> None:
+    """The post is the conjunction over completed arms only. With no completed
+    arm it is the empty conjunction, which says nothing about any result; the
+    halt is stated as its panic locus, not folded into the post."""
+    (row, *_rows) = _wire_rows(tmp_path, "def f():\n    assert 2 == 3\n")
+    assert row["post"] == _TRUE
+    (locus,) = row["panicLoci"]
+    assert (locus["file"], locus["line"]) == ("m.py", 2)
 
 
 def test_an_assert_the_reduction_halted_at_states_false(tmp_path: Path) -> None:

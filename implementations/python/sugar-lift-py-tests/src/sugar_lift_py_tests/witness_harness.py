@@ -518,8 +518,9 @@ def prove_verdict(prove_doc: dict) -> Verdict:
     Each assertion site has one row whose claim is "an execution reaches this
     assertion and it holds"; the consistency pass puts it to the solver
     portfolio. Panic-site rows are separate obligations: they are not read
-    here, and today each ``assert`` also has one that stays ``undecidable``
-    (it comes from the second lifter, #7767). ``open``: the claim was not
+    here. Each halted arm of the reduction has one (the function contract's
+    ``panicLoci``, #7766), and it stays ``undecidable`` while nothing links a
+    Python halt. ``open``: the claim was not
     decided. A lone claim about a call coordinate nothing binds is refused as
     vacuous, so an unbound edge is open and never ``sat`` (#3896).
     """
