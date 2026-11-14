@@ -426,7 +426,7 @@ def test_a_lambda_called_in_place_reads_the_member_current_at_the_call(
     (lam,) = _lambdas([comp.elt])
     (read,) = [node for node in lam.body.walk() if isinstance(node, EvaluationRef)]
     evaluation = _evaluation(sugar, generator, TermValue(3))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.sugar().desugar(made).completed_value()
     called = _called(callable_, made)
     assert read.sugar().desugar(called) == ExitSet.completed(TermValue(1))
@@ -454,6 +454,13 @@ def _evaluation(sugar, generator, final):
     return sugar._final_member_ctx(generator, final, ctx)
 
 
+def _member_entered(sugar, generator, member, ctx):
+    """``ctx`` with one finite name-target ``member`` bound: the completed
+    arm of its unpack (``ComprehensionSugar._member_unpack``), entered."""
+    unpacked, enter = sugar._member_unpack(generator, member, ctx)
+    return enter(unpacked.completed_value())
+
+
 def _called(callable_, ctx):
     """``ctx`` as the lambda's call binds it: the closure the value carries."""
     return _ctx_with_curried_args(ctx, (), (), (), callable_.closure)
@@ -478,7 +485,7 @@ def test_the_lambda_carries_the_final_member_and_its_evaluation() -> None:
     made_in = evaluation.temporal.value_if_bound(
         comprehension_evaluation_coordinate(member)
     )
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.desugar(made).completed_value()
     assert callable_.closure[0] == (final_member_coordinate(member), TermValue(3))
     carried, value = callable_.closure[1]
@@ -489,14 +496,14 @@ def test_the_lambda_carries_the_final_member_and_its_evaluation() -> None:
 def test_a_call_inside_reads_the_member_current_at_the_call() -> None:
     sugar, generator, lam = _escaping()
     evaluation = _evaluation(sugar, generator, TermValue(3))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.desugar(made).completed_value()
     # Called by the member that made it: that member.
     read = lam.body.desugar(_called(callable_, made))
     assert read == ExitSet.completed(TermValue(1))
     # Called by a later member of the same evaluation (``if g()``): the
     # member current at the call, never the one it was made under.
-    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    later = _member_entered(sugar, generator, TermValue(2), evaluation)
     read = lam.body.desugar(_called(callable_, later))
     assert read == ExitSet.completed(TermValue(2))
 
@@ -504,7 +511,7 @@ def test_a_call_inside_reads_the_member_current_at_the_call() -> None:
 def test_a_call_after_the_comprehension_reads_the_final_member() -> None:
     sugar, generator, lam = _escaping()
     evaluation = _evaluation(sugar, generator, TermValue(3))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.desugar(made).completed_value()
     after = ReduceContext.root(owner="after-the-comprehension")
     read = lam.body.desugar(_called(callable_, after))
@@ -514,13 +521,13 @@ def test_a_call_after_the_comprehension_reads_the_final_member() -> None:
 def test_a_call_inside_another_evaluation_is_refused_by_name() -> None:
     sugar, generator, lam = _escaping()
     first = _evaluation(sugar, generator, TermValue(3))
-    made = sugar._member_ctx(generator, TermValue(1), first)
+    made = _member_entered(sugar, generator, TermValue(1), first)
     callable_ = lam.desugar(made).completed_value()
     # The comprehension runs again (a loop, a second call of ``f``) and the
     # first evaluation's lambda is called inside it: neither that
     # evaluation's current member nor this one's.
-    second = sugar._member_ctx(
-        generator, TermValue(5), _evaluation(sugar, generator, TermValue(6))
+    second = _member_entered(
+        sugar, generator, TermValue(5), _evaluation(sugar, generator, TermValue(6))
     )
     with pytest.raises(SugarNotWritten, match="not made in"):
         lam.body.desugar(_called(callable_, second))
@@ -533,8 +540,8 @@ def test_an_unplaced_read_of_the_cell_is_refused_by_name() -> None:
         lam.body.desugar(ReduceContext.root(owner="unplaced"))
     # An evaluation runs, and the body is read with no lambda value around
     # it: no evaluation it was made in.
-    inside = sugar._member_ctx(
-        generator, TermValue(1), _evaluation(sugar, generator, TermValue(3))
+    inside = _member_entered(
+        sugar, generator, TermValue(1), _evaluation(sugar, generator, TermValue(3))
     )
     with pytest.raises(SugarNotWritten, match="carries none"):
         lam.body.desugar(inside)
@@ -543,9 +550,9 @@ def test_an_unplaced_read_of_the_cell_is_refused_by_name() -> None:
 def test_a_condition_walrus_lambda_is_placed_by_its_call() -> None:
     sugar, generator, lam = _escaping(ESCAPES_FROM_A_CONDITION)
     evaluation = _evaluation(sugar, generator, TermValue(3))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.desugar(made).completed_value()
-    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    later = _member_entered(sugar, generator, TermValue(2), evaluation)
     read = lam.body.desugar(_called(callable_, later))
     assert read == ExitSet.completed(TermValue(2))
     after = ReduceContext.root(owner="after-the-comprehension")
@@ -635,12 +642,12 @@ def test_a_generator_consumed_in_place_reads_the_member_at_each_call() -> None:
     sugar, generator, lam = _escaping_generator(CONSUMED_IN_PLACE)
     member = generator.binding_coordinate_cid
     evaluation = _evaluation(sugar, generator, TermValue(3))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.desugar(made).completed_value()
     assert (final_member_coordinate(member), TermValue(3)) in callable_.closure
     # Called inside the run, by a later member: the member current at the
     # call, never the one it was made under.
-    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    later = _member_entered(sugar, generator, TermValue(2), evaluation)
     read = lam.body.desugar(_called(callable_, later))
     assert read == ExitSet.completed(TermValue(2))
     # Called after ``list(...)`` drained it: the final member.
@@ -653,7 +660,7 @@ def test_a_stored_generators_lambda_called_later_is_refused_by_name() -> None:
     sugar, generator, lam = _escaping_generator(STORED)
     member = generator.binding_coordinate_cid
     evaluation = _evaluation(sugar, generator, TermValue(3))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.desugar(made).completed_value()
     # No final member is placed, so none is carried.
     assert all(
@@ -661,7 +668,7 @@ def test_a_stored_generators_lambda_called_later_is_refused_by_name() -> None:
         for carried, _value in callable_.closure
     )
     # Inside a run of the generator: still the member current at the call.
-    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    later = _member_entered(sugar, generator, TermValue(2), evaluation)
     read = lam.body.desugar(_called(callable_, later))
     assert read == ExitSet.completed(TermValue(2))
     # After it (``h = next(gen); h()``): how far it was consumed is not
@@ -717,7 +724,7 @@ def test_a_lambda_list_drains_from_a_generator_reads_the_final_member() -> None:
     sugar, generator, lam = _escaping_generator(YIELDED_CONSUMED_IN_PLACE)
     member = generator.binding_coordinate_cid
     evaluation = _evaluation(sugar, generator, TermValue(2))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.desugar(made).completed_value()
     assert (final_member_coordinate(member), TermValue(2)) in callable_.closure
     after = ReduceContext.root(owner="after-the-generator")
@@ -727,7 +734,7 @@ def test_a_lambda_list_drains_from_a_generator_reads_the_final_member() -> None:
     # member current at the call.
     read = lam.body.desugar(_called(callable_, made))
     assert read == ExitSet.completed(TermValue(1))
-    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    later = _member_entered(sugar, generator, TermValue(2), evaluation)
     read = lam.body.desugar(_called(callable_, later))
     assert read == ExitSet.completed(TermValue(2))
 
@@ -740,7 +747,7 @@ def test_a_stored_generators_yielded_lambda_called_later_is_refused(
     sugar, generator, lam = _escaping_generator(source)
     member = generator.binding_coordinate_cid
     evaluation = _evaluation(sugar, generator, TermValue(3))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.desugar(made).completed_value()
     # No final member is placed, so none is carried.
     assert all(
@@ -748,7 +755,7 @@ def test_a_stored_generators_yielded_lambda_called_later_is_refused(
         for carried, _value in callable_.closure
     )
     # Inside a run of the generator: the member current at the call.
-    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    later = _member_entered(sugar, generator, TermValue(2), evaluation)
     read = lam.body.desugar(_called(callable_, later))
     assert read == ExitSet.completed(TermValue(2))
     # After it (``h = next(gen); h()``): refused by name, never the member
@@ -827,9 +834,9 @@ def test_a_returned_lambda_of_a_stored_generator_called_later_is_refused() -> No
     assert _generator(RETURNED_BY_A_CALL).sugar().final_member is False
     sugar, generator, lam = _escaping_generator(RETURNED_BY_A_CALL)
     evaluation = _evaluation(sugar, generator, TermValue(3))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.desugar(made).completed_value()
-    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    later = _member_entered(sugar, generator, TermValue(2), evaluation)
     read = lam.body.desugar(_called(callable_, later))
     assert read == ExitSet.completed(TermValue(2))
     after = ReduceContext.root(owner="after-the-generator")
@@ -841,7 +848,7 @@ def test_a_returned_lambda_list_drains_reads_the_final_member() -> None:
     assert _generator(RETURNED_BY_A_CALL_CONSUMED_IN_PLACE).sugar().final_member
     sugar, generator, lam = _escaping_generator(RETURNED_BY_A_CALL_CONSUMED_IN_PLACE)
     evaluation = _evaluation(sugar, generator, TermValue(2))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.desugar(made).completed_value()
     after = ReduceContext.root(owner="after-the-generator")
     read = lam.body.desugar(_called(callable_, after))
@@ -858,9 +865,9 @@ def test_a_lambda_an_inner_generator_holds_called_later_is_refused() -> None:
     lam_sugar = lam.sugar()
     assert isinstance(lam_sugar, LambdaSugar)
     evaluation = _evaluation(sugar, generator, TermValue(3))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam_sugar.desugar(made).completed_value()
-    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    later = _member_entered(sugar, generator, TermValue(2), evaluation)
     read = lam_sugar.body.desugar(_called(callable_, later))
     assert read == ExitSet.completed(TermValue(2))
     after = ReduceContext.root(owner="after-the-generator")
@@ -873,9 +880,9 @@ def test_a_lambda_a_call_stores_reads_the_final_member_after_the_run() -> None:
     # reads the final member; a call inside it, the member current then.
     sugar, generator, lam = _escaping(STORED_BY_A_CALL)
     evaluation = _evaluation(sugar, generator, TermValue(3))
-    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    made = _member_entered(sugar, generator, TermValue(1), evaluation)
     callable_ = lam.desugar(made).completed_value()
-    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    later = _member_entered(sugar, generator, TermValue(2), evaluation)
     read = lam.body.desugar(_called(callable_, later))
     assert read == ExitSet.completed(TermValue(2))
     after = ReduceContext.root(owner="after-the-comprehension")

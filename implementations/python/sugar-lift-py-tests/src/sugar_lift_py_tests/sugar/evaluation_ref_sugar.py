@@ -20,7 +20,8 @@ reference read in the callee's frame.
 A comprehension's element and conditions read a target name the same way
 (``member``): the comprehension binds every member, finite or symbolic, under
 the generator's (or the target leaf's) coordinate before any read of it
-(``ComprehensionSugar._member_ctx``, ``ComprehensionSugar._symbolic_member_ctx``).
+(``ComprehensionSugar._member_unpack``,
+``ComprehensionSugar._symbolic_member_ctx``).
 A member reference reads that coordinate only. It never reads the name, so a
 binding of the same spelling by an enclosing statement cannot leak in, and a
 member reference whose coordinate is unbound is a construction panic, not a

@@ -67,7 +67,7 @@ class NestedDynamicUnpackAssignSugar(Sugar):
                 "    return v\n"
             ),
             effect_class="SequenceUnpackRuntimeEffect",
-            reason_needle="nested sequence unpack",
+            reason_needle="sequence unpack",
             blame_needle="arity=2",
             wrong_reason_needle="exactly 4 members",
         )
@@ -99,60 +99,21 @@ def project_nested_pattern(
 ) -> ExitSet:
     """The one nested Name-only unpack of an already-evaluated ``value``.
 
-    Its completed face is the ``ScopeRebinds`` of every leaf, outer arity
-    first, then each nested member's; its halted face is the unpack's halt
-    (an arity mismatch, or no authenticated cardinality).  The statement's
-    sugar (``NestedDynamicUnpackAssignSugar``) unpacks its right-hand side
-    through it; a yield assignment's resume unpacks the resumed value through
-    it (``YieldAssignUnpackV1.project``).
+    Each level is the sequence-projection unpack (``SequenceProjectionOperation``,
+    the one a flat ``a, b = e`` / ``a, *b = e`` submits), each nested member
+    standing in its slot as ``@<index>`` (``@`` is never in an identifier),
+    then each such member unpacked by its own sub-pattern, leaves in source
+    order.  Its completed faces are the ``ScopeRebinds`` of every leaf; its
+    halted faces are each level's halt (an arity mismatch, or the runtime
+    cardinality halt beside a value's completed projections), an inner
+    level's beneath the outer one's completed face (``ExitSet.and_then``).
+    The statement's sugar (``NestedDynamicUnpackAssignSugar``) unpacks its
+    right-hand side through it; a yield assignment's resume unpacks the
+    resumed value through it (``YieldAssignUnpackV1.project``).
 
-    A level with a starred leaf (``(a, *b, (c, d))``) is the starred
-    sequence-projection unpack (``SequenceProjectionOperation``, the one a
-    flat ``a, *b = e`` submits): the star takes the list of the members
-    between its fixed neighbours, and each nested neighbour's member is
-    unpacked by its own sub-pattern after.
+    A starred leaf (``(a, *b, (c, d))``) takes the list of the members
+    between its fixed neighbours.
     """
-    from sugar_lift_py_tests.operations.sequence_projection_operation import (
-        SequenceProjectionOperation,
-    )
-
-    stars = [index for index, part in enumerate(pattern) if is_star_leaf(part)]
-    if stars:
-        return _project_starred_level(value, pattern, stars[0], ctx, site)
-    if all(isinstance(part, str) for part in pattern):
-        return SequenceProjectionOperation(
-            target_names=tuple(pattern),  # type: ignore[arg-type]
-            owner=_OWNER,
-            blame=site,
-        ).submit(value, ctx)
-
-    members = _authenticated_finite_members(value)
-    if members is None:
-        return _runtime_nested(value, pattern, site)
-
-    if len(members) != len(pattern):
-        return SequenceProjectionOperation(
-            target_names=tuple(
-                p if isinstance(p, str) else f"@{i}" for i, p in enumerate(pattern)
-            ),
-            owner=_OWNER,
-            blame=site,
-        )._arity_mismatch_exit(value, len(members), "nested-unpack")
-
-    return _bind_nested_authenticated(members, pattern, ctx, site)
-
-
-def _project_starred_level(
-    value: Any,
-    pattern: tuple[NameUnpackPattern, ...],
-    star: int,
-    ctx: object,
-    site,
-) -> ExitSet:
-    """One level holding the starred leaf at ``star``: the starred
-    sequence-projection unpack of ``value``, each nested neighbour standing
-    in its slot as ``@<index>`` (``@`` is never in an identifier), then each
-    such member unpacked by its sub-pattern, leaves in source order."""
     from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
     from sugar_lift_py_tests.operations.sequence_projection_operation import (
         SequenceProjectionOperation,
@@ -163,25 +124,34 @@ def _project_starred_level(
         part if isinstance(part, str) else f"@{index}"
         for index, part in enumerate(pattern)
     )
-    prefix = slots[:star]
-    suffix = slots[star + 1 :]
-    operation = SequenceProjectionOperation(
-        target_names=(*prefix, *suffix),
-        owner=_OWNER,
-        blame=site,
-        star_name=flatten_pattern_names(pattern[star])[0],
-        prefix_names=prefix,
-        suffix_names=suffix,
-    )
+    stars = [index for index, part in enumerate(pattern) if is_star_leaf(part)]
+    if stars:
+        star = stars[0]
+        prefix = slots[:star]
+        suffix = slots[star + 1 :]
+        operation = SequenceProjectionOperation(
+            target_names=(*prefix, *suffix),
+            owner=_OWNER,
+            blame=site,
+            star_name=flatten_pattern_names(pattern[star])[0],
+            prefix_names=prefix,
+            suffix_names=suffix,
+        )
+    else:
+        operation = SequenceProjectionOperation(
+            target_names=slots,  # type: ignore[arg-type]
+            owner=_OWNER,
+            blame=site,
+        )
 
     def rebinds_of(projected):
         if not isinstance(projected, ScopeRebinds):
             raise SugarNotWritten(
                 blame=site,
                 owner=_OWNER,
-                observed=f"starred nested unpack produced {type(projected).__name__}",
+                observed=f"nested unpack level produced {type(projected).__name__}",
                 requested="ScopeRebinds of leaf names",
-                fix="a starred level must rebind its members through ScopeRebinds",
+                fix="a nested level must rebind its members through ScopeRebinds",
             )
         return projected.bindings
 
@@ -202,85 +172,3 @@ def _project_starred_level(
     return operation.submit(value, ctx).and_then(
         lambda level: splice(rebinds_of(level), 0, ())
     )
-
-
-def _bind_nested_authenticated(
-    members: tuple[Any, ...],
-    pattern: tuple[NameUnpackPattern, ...],
-    ctx: object,
-    site,
-) -> ExitSet:
-    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        plain_completed_value,
-    )
-
-    collected: list[tuple[str, Any]] = []
-
-    def step(index: int) -> ExitSet:
-        if index == len(pattern):
-            return ExitSet.completed(ScopeRebinds(tuple(collected)))
-        part = pattern[index]
-        member = members[index]
-        if isinstance(part, str):
-            collected.append((part, member))
-            return step(index + 1)
-        sub = project_nested_pattern(member, part, ctx, site=site)
-        sub_value = plain_completed_value(sub)
-        if sub_value is None:
-            return sub
-        if isinstance(sub_value, ScopeRebinds):
-            collected.extend(sub_value.bindings)
-        else:
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                blame=site,
-                owner=_OWNER,
-                observed=f"nested unpack sub-project produced {type(sub_value).__name__}",
-                requested="ScopeRebinds of leaf names",
-                fix="nested Name-only unpack must rebind leaves through ScopeRebinds",
-            )
-        return step(index + 1)
-
-    return step(0)
-
-
-def _runtime_nested(
-    value: Any, pattern: tuple[NameUnpackPattern, ...], site
-) -> ExitSet:
-    from sugar_lift_py_tests.effect import (
-        SequenceUnpackRuntimeEffect,
-        runtime_effect_evidence_from_terms,
-    )
-    from sugar_lift_py_tests.ir import ctor, num
-
-    term = value.to_term(owner=f"{_OWNER}.value")
-    arity = len(pattern)
-    operation = ctor(
-        "python:unpack.destructure",
-        [term, num(arity)],
-        symbol_kind="coordinate",
-    )
-    desc = pattern_desc(pattern)
-    leaves = ", ".join(flatten_pattern_names(pattern))
-    return ExitSet.halted(
-        SequenceUnpackRuntimeEffect(
-            "nested sequence unpack runtime boundary: unpack demands "
-            f"nested pattern {desc} (outer arity={arity}, leaves=({leaves})) "
-            "but the right-hand side carries no authenticated cardinality -- "
-            "iteration count belongs to Python's runtime __iter__; "
-            f"arity={arity} nested=True site={site}",
-            **runtime_effect_evidence_from_terms(operation, operation, site),
-        )
-    )
-
-
-def _authenticated_finite_members(value: Any) -> tuple[Any, ...] | None:
-    items = getattr(value, "items", None)
-    if isinstance(items, tuple):
-        return items
-    finite = getattr(value, "finite_elements", None)
-    if isinstance(finite, tuple):
-        return finite
-    return None

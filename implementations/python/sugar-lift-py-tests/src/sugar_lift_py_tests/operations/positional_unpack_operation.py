@@ -64,14 +64,12 @@ class PositionalUnpackOperation:
     ``fixed_prefix`` / ``fixed_suffix`` count fixed leaves around an optional
     star.  ``has_star`` selects UNPACK_EX vs UNPACK_SEQUENCE cardinality.
 
-    ``guarded_symbolic``: a value with no authenticated cardinality (a
-    symbolic term, an object) answers both faces of its runtime unpack
-    (``_runtime_faces``) rather than the halt alone: the roster of each
-    position's projection (``python:unpack.project(term, index, arity)``)
-    under the unpack's completes atom, and the same runtime-cardinality halt
-    under its complement.  A live loop's symbolic item asks for it
-    (``LoopRecurrenceSugar._enter_symbolic_item``): the recurrence carries
-    the halt as its own arm and reads the leaves from the completed one.
+    A value with no authenticated cardinality (a symbolic term, an object)
+    answers both faces of its runtime unpack (``runtime_unpack_faces``): the
+    roster of each position's projection under the unpack's completes atom,
+    and the runtime-cardinality halt under its complement.  It is the one
+    answer every caller composes (``ExitSet.sequence``): the halt is an arm
+    as it is, and the leaves are read from the completed arm.
     """
 
     method_name: ClassVar[str] = "project_sequence_with"
@@ -81,18 +79,12 @@ class PositionalUnpackOperation:
     has_star: bool
     owner: str
     blame: object
-    guarded_symbolic: bool = False
 
     def __post_init__(self) -> None:
         if self.fixed_prefix < 0 or self.fixed_suffix < 0:
             raise ValueError("fixed_prefix/fixed_suffix must be non-negative")
         if not self.has_star and self.fixed_suffix:
             raise ValueError("fixed_suffix requires has_star")
-        if self.guarded_symbolic and self.has_star:
-            raise ValueError(
-                "guarded_symbolic has no member to project for a star: a "
-                "starred runtime unpack answers its halt alone"
-            )
 
     @property
     def arity(self) -> int:
@@ -203,58 +195,6 @@ class PositionalUnpackOperation:
     def _runtime_cardinality(self, value: Any) -> Any:
         from sugar_lift_py_tests.outcome import ExitSet
 
-        if self.guarded_symbolic:
-            return self._runtime_faces(value)
-        _term, _operation, effect = self._runtime_halt(value)
-        return ExitSet.halted(effect)
-
-    def _runtime_faces(self, value: Any) -> Any:
-        """Both faces of a runtime-cardinality unpack (``guarded_symbolic``).
-
-        It completes, under ``python:unpack.completes`` of the demand's
-        ``python:unpack.destructure(term, arity)`` coordinate, with the roster
-        of each position's projection (``python:unpack.project(term, index,
-        arity)``, the coordinate a comprehension's symbolic destructure reads:
-        ``comprehension_sugar._projection``); and halts with the runtime
-        cardinality effect (``_runtime_halt``: too few, too many, not
-        iterable) under the complement.  No member is assumed: each is its
-        position's projection, readable only on the completed face."""
-        from sugar_lift_py_tests.floor import SymbolicValue
-        from sugar_lift_py_tests.ir import atomic, ctor, num
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        term, operation, effect = self._runtime_halt(value)
-        members = tuple(
-            SymbolicValue(
-                ctor(
-                    "python:unpack.project",
-                    [term, num(index), num(self.arity)],
-                    symbol_kind="coordinate",
-                )
-            )
-            for index in range(self.arity)
-        )
-        return ExitSet.two_faced(
-            self.mint_roster(members),
-            effect,
-            guard=atomic("python:unpack.completes", [operation]),
-        )
-
-    def _runtime_halt(self, value: Any) -> tuple:
-        """``(term, demand coordinate, effect)``: the runtime-cardinality halt
-        of unpacking ``value``, which carries no authenticated cardinality."""
-        from sugar_lift_py_tests.effect import (
-            SequenceUnpackRuntimeEffect,
-            runtime_effect_evidence_from_terms,
-        )
-        from sugar_lift_py_tests.ir import ctor, num
-
-        term = value.to_term(owner=f"{self.owner}.value")
-        operation = ctor(
-            "python:unpack.destructure",
-            [term, num(self.arity)],
-            symbol_kind="coordinate",
-        )
         if not self.has_star:
             demand = f"exactly {self.arity} members for positional targets"
         else:
@@ -262,16 +202,16 @@ class PositionalUnpackOperation:
                 f"at least {self.arity} members for starred positional targets "
                 f"(prefix={self.fixed_prefix}, suffix={self.fixed_suffix})"
             )
-        effect = SequenceUnpackRuntimeEffect(
-            "sequence unpack runtime boundary: unpack demands "
-            f"{demand} but the right-hand side "
-            "carries no authenticated cardinality -- iteration count "
-            "belongs to Python's runtime __iter__; "
-            f"arity={self.arity} starred={self.has_star} "
-            f"site={self.blame}",
-            **runtime_effect_evidence_from_terms(operation, operation, self.blame),
+        members, effect, guard = runtime_unpack_faces(
+            value,
+            prefix=self.fixed_prefix,
+            suffix=self.fixed_suffix,
+            has_star=self.has_star,
+            owner=self.owner,
+            blame=self.blame,
+            demand=demand,
         )
-        return term, operation, effect
+        return ExitSet.two_faced(self.mint_roster(members), effect, guard=guard)
 
     def _arity_mismatch_exit(self, value: Any, members: int, display: str) -> Any:
         """Named ValueError for decidable too-few / too-many (same door as name unpack)."""
@@ -307,3 +247,82 @@ class PositionalUnpackOperation:
                 gap_locus=GapLocus.CONSTRUCTION,
             )
         )
+
+
+def runtime_unpack_faces(
+    value: Any,
+    *,
+    prefix: int,
+    suffix: int,
+    has_star: bool,
+    owner: str,
+    blame: object,
+    demand: str,
+) -> tuple:
+    """``(members, effect, guard)``: both faces of unpacking ``value``, which
+    carries no authenticated cardinality (a symbolic term, an object).  The
+    one runtime answer of every unpack operation (``PositionalUnpackOperation``
+    and ``SequenceProjectionOperation``): it completes under ``guard`` with
+    ``members``, one per target leaf in source order, and halts with
+    ``effect`` (too few, too many, not iterable) under its complement.
+
+    The demand is the coordinate of the unpack's layout:
+    ``python:unpack.destructure(term, arity)`` for exactly ``arity`` members,
+    ``python:unpack.destructure_starred(term, prefix, suffix)`` for at least
+    ``prefix + suffix`` around a star.  ``guard`` is its
+    ``python:unpack.completes`` atom, so two layouts never share a claim that
+    they complete.  No member is assumed: each is its position's projection,
+    readable only on the completed face -- ``python:unpack.project(term,
+    index, arity)`` for a leaf ``index`` from the start (the coordinate a
+    comprehension's symbolic destructure reads:
+    ``comprehension_sugar._projection``), ``python:unpack.rest(term, prefix,
+    arity)`` for the star's list, and ``python:unpack.project_end(term,
+    distance, arity)`` for a leaf after the star, ``distance`` from the end
+    (1 is the last)."""
+    from sugar_lift_py_tests.effect import (
+        SequenceUnpackRuntimeEffect,
+        runtime_effect_evidence_from_terms,
+    )
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import atomic, ctor, num
+
+    arity = prefix + suffix
+    term = value.to_term(owner=f"{owner}.value")
+    if has_star:
+        operation = ctor(
+            "python:unpack.destructure_starred",
+            [term, num(prefix), num(suffix)],
+            symbol_kind="coordinate",
+        )
+    else:
+        operation = ctor(
+            "python:unpack.destructure",
+            [term, num(arity)],
+            symbol_kind="coordinate",
+        )
+
+    def projection(name: str, index: int):
+        return SymbolicValue(
+            ctor(name, [term, num(index), num(arity)], symbol_kind="coordinate")
+        )
+
+    members = tuple(projection("python:unpack.project", i) for i in range(prefix))
+    if has_star:
+        members = (
+            *members,
+            projection("python:unpack.rest", prefix),
+            *(
+                projection("python:unpack.project_end", suffix - j)
+                for j in range(suffix)
+            ),
+        )
+    effect = SequenceUnpackRuntimeEffect(
+        "sequence unpack runtime boundary: unpack demands "
+        f"{demand} but the right-hand side "
+        "carries no authenticated cardinality -- iteration count "
+        "belongs to Python's runtime __iter__; "
+        f"arity={arity} starred={has_star} "
+        f"site={blame}",
+        **runtime_effect_evidence_from_terms(operation, operation, blame),
+    )
+    return members, effect, atomic("python:unpack.completes", [operation])

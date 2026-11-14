@@ -56,10 +56,25 @@ def _assert_unpack_arity_obligation(out, *, arity: int, names: tuple[str, ...]):
     than refusing to have a meaning (#6316) and rather than assuming the count
     matched (which would be the one forbidden move). CPython binds nothing when
     `UNPACK_SEQUENCE` raises, so this asserts nothing bound too.
+
+    Nor does it claim the unpack always fails: the halt is one arm, under the
+    complement of the unpack's completes atom, and the statements after it
+    run beneath the completed arm.
     """
-    assert out.halts() == out.exits, out
-    (halt,) = out.halts()
+    (halt,) = _unpack_halts(out)
+    assert any(isinstance(exit_, Completed) for exit_ in out.exits), out
     return _assert_unpack_effect(halt.effect, arity=arity, names=names)
+
+
+def _unpack_halts(out):
+    from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+
+    assert isinstance(out, ExitSet), out
+    return [
+        exit_
+        for exit_ in out.halts()
+        if isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
+    ]
 
 
 def _return(exit_):
@@ -167,13 +182,12 @@ def test_pandas_blocks_nested_if_augassign_reads_unbound_binding_as_a_node() -> 
     # arity obligation is one HALTED face of the partition and the complementary
     # face still completes -- the guard and the obligation coexist, which is the
     # whole point of retaining the demand instead of refusing the statement.
+    # The unpack itself is two-faced too: beneath the branch, it completes
+    # under its completes atom and halts under the complement.
     out = _out(source)
-    assert isinstance(out, ExitSet)
-    halted = [exit_ for exit_ in out.exits if isinstance(exit_, Halted)]
-    completed = [exit_ for exit_ in out.exits if isinstance(exit_, Completed)]
-    assert len(halted) == 1
-    assert len(completed) == 1
-    _assert_unpack_effect(halted[0].effect, arity=2, names=("col", "loc"))
+    (halt,) = _unpack_halts(out)
+    assert any(isinstance(exit_, Completed) for exit_ in out.exits)
+    _assert_unpack_effect(halt.effect, arity=2, names=("col", "loc"))
 
 
 def test_pandas_html_if_augassign_reads_guarded_binding_as_a_node() -> None:

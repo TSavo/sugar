@@ -703,6 +703,49 @@ def test_an_exit_in_the_symbolic_item_reads_a_leaf_of_its_unpack() -> None:
     assert [exit_.guard for exit_ in unpack_halts] == [not_(completes)]
 
 
+_SYMBOLIC_UNPACK_NO_EXIT = (
+    "def f(xs):\n"
+    "    t = 0\n"
+    "    for a, b in xs:\n"
+    "        t += a\n"
+    "    return t\n"
+)
+
+
+def test_a_symbolic_item_with_no_exit_still_unpacks_its_target() -> None:
+    # The body has no ``return``/``raise``: the recurrence has no outward
+    # face.  The symbolic item still unpacks its target, so the unpack's
+    # halt is an arm of the loop and the recurrence follows its completed
+    # arm -- the halt is never dropped for want of a face to reduce.
+    loop = next(
+        statement
+        for statement in _function(_SYMBOLIC_UNPACK_NO_EXIT).sugar().statements
+        if isinstance(statement, LoopRecurrenceSugar)
+    )
+    assert not loop.outward_faces
+    xs = SymbolicValue(make_var("xs"))
+    outcome = loop._desugar_with_iterable(
+        xs, ReduceContext.root(owner="live-symbolic-unpack-no-exit")
+    )
+    item = ctor(
+        "python:loop.item",
+        [str_const(loop.target_cid), xs.to_term(owner="test")],
+        symbol_kind="coordinate",
+    )
+    completes = atomic(
+        "python:unpack.completes",
+        [ctor("python:unpack.destructure", [item, num(2)], symbol_kind="coordinate")],
+    )
+    unpack_halts = [
+        exit_
+        for exit_ in outcome.exits
+        if isinstance(exit_, Halted)
+        and isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
+    ]
+    assert [exit_.guard for exit_ in unpack_halts] == [not_(completes)]
+    assert any(isinstance(exit_, Completed) for exit_ in outcome.exits)
+
+
 def test_each_read_of_an_evaluation_is_spanned_at_its_use() -> None:
     rewritten = _function(
         "def f(x):\n    x += 1\n    y = x\n    return (x, y)\n"

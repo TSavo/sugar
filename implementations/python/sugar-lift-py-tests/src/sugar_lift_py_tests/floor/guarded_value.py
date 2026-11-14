@@ -365,26 +365,26 @@ class GuardedValue(FloorValue):
 
         Both rosters come from ``operation.target_names``, so they agree by
         construction; ``strict=True`` states that rather than assuming it.
+
+        An arm that does not answer one completed roster (it halts, or it is
+        a runtime unpack with both faces) keeps every one of its exits under
+        its own polarity, beside every exit of the other arm: neither arm's
+        halt nor its completion is dropped for the other's.
         """
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
-        from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import ExitSet
 
         owner = "GuardedValue.project_sequence_with"
         blame = operation.blame
         true_outcome = self.when_true.project_sequence_with(operation, ctx)
-        if true_outcome.halts() == true_outcome.exits:
-            return true_outcome.guarded(self.guard)
         false_outcome = self.when_false.project_sequence_with(operation, ctx)
-        if false_outcome.halts() == false_outcome.exits:
-            return false_outcome.guarded(not_(self.guard))
-        true_outcome = require_single_value(
-            true_outcome, owner=owner, blame=blame, arm="when_true"
-        )
-        false_outcome = require_single_value(
-            false_outcome, owner=owner, blame=blame, arm="when_false"
-        )
+        if true_outcome.completed_value() is None or (
+            false_outcome.completed_value() is None
+        ):
+            return true_outcome.guarded(self.guard).union(
+                false_outcome.guarded(not_(self.guard))
+            )
         true_bindings = _require_rebind_roster(
             true_outcome.completed_value(), owner=owner, blame=blame, arm="when_true"
         )

@@ -137,7 +137,8 @@ def test_a_member_binds_the_coordinate_last() -> None:
     sugar = comp.sugar()
     generator = sugar.generators[0]
     ctx = ReduceContext.root(owner="comprehension-ref")
-    inner = sugar._member_ctx(generator, TermValue(3), ctx)
+    unpacked, enter = sugar._member_unpack(generator, TermValue(3), ctx)
+    inner = enter(unpacked.completed_value())
     latest = inner.temporal.latest(generator.binding_coordinate_cid, "x")
     assert latest is not None
     assert latest.name == generator.binding_coordinate_cid
