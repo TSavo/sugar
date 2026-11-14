@@ -81,101 +81,121 @@ class NestedDynamicUnpackAssignSugar(Sugar):
     def _project(
         self, value: Any, pattern: tuple[NameUnpackPattern, ...], ctx: object
     ) -> ExitSet:
-        from sugar_lift_py_tests.operations.sequence_projection_operation import (
-            SequenceProjectionOperation,
-        )
+        return project_nested_pattern(value, pattern, ctx, site=self.site)
 
-        if all(isinstance(part, str) for part in pattern):
-            return SequenceProjectionOperation(
-                target_names=tuple(pattern),  # type: ignore[arg-type]
-                owner=type(self).__name__,
-                blame=self.site,
-            ).submit(value, ctx)
 
-        members = _authenticated_finite_members(value)
-        if members is None:
-            return self._runtime_nested(value, pattern)
+_OWNER = "NestedDynamicUnpackAssignSugar"
 
-        if len(members) != len(pattern):
-            return SequenceProjectionOperation(
-                target_names=tuple(
-                    p if isinstance(p, str) else f"@{i}" for i, p in enumerate(pattern)
-                ),
-                owner=type(self).__name__,
-                blame=self.site,
-            )._arity_mismatch_exit(value, len(members), "nested-unpack")
 
-        return self._bind_nested_authenticated(members, pattern, ctx)
+def project_nested_pattern(
+    value: Any, pattern: tuple[NameUnpackPattern, ...], ctx: object, *, site
+) -> ExitSet:
+    """The one nested Name-only unpack of an already-evaluated ``value``.
 
-    def _bind_nested_authenticated(
-        self,
-        members: tuple[Any, ...],
-        pattern: tuple[NameUnpackPattern, ...],
-        ctx: object,
-    ) -> ExitSet:
-        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            plain_completed_value,
-        )
+    Its completed face is the ``ScopeRebinds`` of every leaf, outer arity
+    first, then each nested member's; its halted face is the unpack's halt
+    (an arity mismatch, or no authenticated cardinality).  The statement's
+    sugar (``NestedDynamicUnpackAssignSugar``) unpacks its right-hand side
+    through it; a yield assignment's resume unpacks the resumed value through
+    it (``YieldAssignUnpackV1.project``).
+    """
+    from sugar_lift_py_tests.operations.sequence_projection_operation import (
+        SequenceProjectionOperation,
+    )
 
-        collected: list[tuple[str, Any]] = []
+    if all(isinstance(part, str) for part in pattern):
+        return SequenceProjectionOperation(
+            target_names=tuple(pattern),  # type: ignore[arg-type]
+            owner=_OWNER,
+            blame=site,
+        ).submit(value, ctx)
 
-        def step(index: int) -> ExitSet:
-            if index == len(pattern):
-                return ExitSet.completed(ScopeRebinds(tuple(collected)))
-            part = pattern[index]
-            member = members[index]
-            if isinstance(part, str):
-                collected.append((part, member))
-                return step(index + 1)
-            sub = self._project(member, part, ctx)
-            sub_value = plain_completed_value(sub)
-            if sub_value is None:
-                return sub
-            if isinstance(sub_value, ScopeRebinds):
-                collected.extend(sub_value.bindings)
-            else:
-                from sugar_source_tree.panic import SugarNotWritten
+    members = _authenticated_finite_members(value)
+    if members is None:
+        return _runtime_nested(value, pattern, site)
 
-                raise SugarNotWritten(
-                    blame=self.site,
-                    owner="NestedDynamicUnpackAssignSugar",
-                    observed=f"nested unpack sub-project produced {type(sub_value).__name__}",
-                    requested="ScopeRebinds of leaf names",
-                    fix="nested Name-only unpack must rebind leaves through ScopeRebinds",
-                )
+    if len(members) != len(pattern):
+        return SequenceProjectionOperation(
+            target_names=tuple(
+                p if isinstance(p, str) else f"@{i}" for i, p in enumerate(pattern)
+            ),
+            owner=_OWNER,
+            blame=site,
+        )._arity_mismatch_exit(value, len(members), "nested-unpack")
+
+    return _bind_nested_authenticated(members, pattern, ctx, site)
+
+
+def _bind_nested_authenticated(
+    members: tuple[Any, ...],
+    pattern: tuple[NameUnpackPattern, ...],
+    ctx: object,
+    site,
+) -> ExitSet:
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
+
+    collected: list[tuple[str, Any]] = []
+
+    def step(index: int) -> ExitSet:
+        if index == len(pattern):
+            return ExitSet.completed(ScopeRebinds(tuple(collected)))
+        part = pattern[index]
+        member = members[index]
+        if isinstance(part, str):
+            collected.append((part, member))
             return step(index + 1)
+        sub = project_nested_pattern(member, part, ctx, site=site)
+        sub_value = plain_completed_value(sub)
+        if sub_value is None:
+            return sub
+        if isinstance(sub_value, ScopeRebinds):
+            collected.extend(sub_value.bindings)
+        else:
+            from sugar_source_tree.panic import SugarNotWritten
 
-        return step(0)
-
-    def _runtime_nested(
-        self, value: Any, pattern: tuple[NameUnpackPattern, ...]
-    ) -> ExitSet:
-        from sugar_lift_py_tests.effect import (
-            SequenceUnpackRuntimeEffect,
-            runtime_effect_evidence_from_terms,
-        )
-        from sugar_lift_py_tests.ir import ctor, num
-
-        term = value.to_term(owner=f"{type(self).__name__}.value")
-        arity = len(pattern)
-        operation = ctor(
-            "python:unpack.destructure",
-            [term, num(arity)],
-            symbol_kind="coordinate",
-        )
-        desc = pattern_desc(pattern)
-        leaves = ", ".join(flatten_pattern_names(pattern))
-        return ExitSet.halted(
-            SequenceUnpackRuntimeEffect(
-                "nested sequence unpack runtime boundary: unpack demands "
-                f"nested pattern {desc} (outer arity={arity}, leaves=({leaves})) "
-                "but the right-hand side carries no authenticated cardinality -- "
-                "iteration count belongs to Python's runtime __iter__; "
-                f"arity={arity} nested=True site={self.site}",
-                **runtime_effect_evidence_from_terms(operation, operation, self.site),
+            raise SugarNotWritten(
+                blame=site,
+                owner=_OWNER,
+                observed=f"nested unpack sub-project produced {type(sub_value).__name__}",
+                requested="ScopeRebinds of leaf names",
+                fix="nested Name-only unpack must rebind leaves through ScopeRebinds",
             )
+        return step(index + 1)
+
+    return step(0)
+
+
+def _runtime_nested(
+    value: Any, pattern: tuple[NameUnpackPattern, ...], site
+) -> ExitSet:
+    from sugar_lift_py_tests.effect import (
+        SequenceUnpackRuntimeEffect,
+        runtime_effect_evidence_from_terms,
+    )
+    from sugar_lift_py_tests.ir import ctor, num
+
+    term = value.to_term(owner=f"{_OWNER}.value")
+    arity = len(pattern)
+    operation = ctor(
+        "python:unpack.destructure",
+        [term, num(arity)],
+        symbol_kind="coordinate",
+    )
+    desc = pattern_desc(pattern)
+    leaves = ", ".join(flatten_pattern_names(pattern))
+    return ExitSet.halted(
+        SequenceUnpackRuntimeEffect(
+            "nested sequence unpack runtime boundary: unpack demands "
+            f"nested pattern {desc} (outer arity={arity}, leaves=({leaves})) "
+            "but the right-hand side carries no authenticated cardinality -- "
+            "iteration count belongs to Python's runtime __iter__; "
+            f"arity={arity} nested=True site={site}",
+            **runtime_effect_evidence_from_terms(operation, operation, site),
         )
+    )
 
 
 def _authenticated_finite_members(value: Any) -> tuple[Any, ...] | None:

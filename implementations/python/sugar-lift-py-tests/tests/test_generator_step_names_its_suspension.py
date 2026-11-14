@@ -24,6 +24,7 @@ from sugar_lift_py_tests.generator_construction import (
     OpaqueStepV1,
     YieldAssignStepV1,
     YieldEffect,
+    YieldFromStepV1,
     YieldStepV1,
 )
 from sugar_lift_python_source.source_oracle import path_source
@@ -48,14 +49,12 @@ def _first_opaque(steps):
     ("source", "kind", "carries"),
     (
         # Residual opaque shapes still discriminate suspension ownership.
-        # (``x = yield 1`` and ``x = yield from xs`` are YieldAssignStepV1
-        # now; a store target of a yield is not named.)
-        ("def g(o):\n    o.x = yield 1\n    return o\n", "Assign", True),
-        ("def g(c, o):\n    if c:\n        o.x = yield 1\n", "If", True),
+        # (``x = yield 1``, ``x = yield from xs`` and ``o.x = yield 1`` are
+        # YieldAssignStepV1 now; a yield inside a larger expression is not.)
+        ("def g():\n    x = (yield 1) + 1\n    return x\n", "Assign", True),
+        ("def g(c):\n    if c:\n        x = (yield 1) + 1\n", "If", True),
         # Multi-target assign stays opaque without suspension.
         ("def g():\n    a, b = 1, 2\n    yield 3\n", "Assign", False),
-        # Every bare `yield from` -- where the delegation debt actually lives.
-        ("def g(xs):\n    yield from xs\n", "Expr", True),
     ),
 )
 def test_an_opaque_step_states_whether_it_holds_a_suspension(
@@ -76,12 +75,23 @@ def test_an_opaque_step_states_whether_it_holds_a_suspension(
         "def g():\n    a, b = yield 1\n    return a\n",
         "def g():\n    a, *b = yield 1\n    return a\n",
         "def g():\n    x = yield from (1, 2)\n    return x\n",
+        "def g():\n    (a, (b, c)) = yield 1\n    return a\n",
+        "def g(o):\n    o.x = yield 1\n    return o\n",
+        "def g(d, k):\n    d[k] = yield 1\n    return d\n",
     ),
 )
 def test_a_yield_assignment_is_a_named_step(tmp_path, source) -> None:
-    """A yield (or yield from) assigned to Name targets is one named step."""
+    """A yield (or yield from) assigned to Name, unpack or store targets is
+    one named step."""
     steps = _steps(tmp_path, source)
     assert isinstance(steps[0], YieldAssignStepV1)
+    assert not any(isinstance(step, OpaqueStepV1) for step in steps)
+
+
+def test_a_bare_yield_from_is_a_named_step(tmp_path) -> None:
+    """A bare ``yield from`` is the delegation step, not an opaque Expr."""
+    steps = _steps(tmp_path, "def g(xs):\n    yield from xs\n")
+    assert isinstance(steps[0], YieldFromStepV1)
     assert not any(isinstance(step, OpaqueStepV1) for step in steps)
 
 
@@ -100,14 +110,13 @@ def test_ordinary_assign_and_nameable_if_are_no_longer_opaque(tmp_path) -> None:
     ("source", "observed"),
     (
         (
-            "def g(o):\n    o.x = yield 1\n    return o\n",
+            "def g():\n    x = (yield 1) + 1\n    return x\n",
             "Assign carrying a suspension",
         ),
         (
-            "def g(c, o):\n    if c:\n        o.x = yield 1\n",
+            "def g(c):\n    if c:\n        x = (yield 1) + 1\n",
             "If carrying a suspension",
         ),
-        ("def g(xs):\n    yield from xs\n", "Expr carrying a suspension"),
     ),
 )
 def test_the_transition_gap_names_the_construct_it_could_not_consume(
@@ -149,9 +158,8 @@ def test_an_opaque_step_without_a_suspension_is_named_unchanged(tmp_path) -> Non
 @pytest.mark.parametrize(
     "source",
     (
-        "def g(o):\n    o.x = yield 1\n    return o\n",
-        "def g(c, o):\n    if c:\n        o.x = yield 1\n",
-        "def g(xs):\n    yield from xs\n",
+        "def g():\n    x = (yield 1) + 1\n    return x\n",
+        "def g(c):\n    if c:\n        x = (yield 1) + 1\n",
     ),
 )
 def test_every_previously_opaque_shape_is_still_opaque(tmp_path, source) -> None:

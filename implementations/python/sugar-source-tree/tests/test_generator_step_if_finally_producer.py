@@ -563,12 +563,12 @@ def test_branch_occurrence_tamper_changes_fragment_cid() -> None:
 
 
 def test_unsupported_x_yield_in_branch_keeps_whole_if_opaque() -> None:
-    # ``x = yield 1`` and ``x = yield from xs`` are YieldAssignStepV1; a store
-    # target of a yield is not named.
+    # ``x = yield 1``, ``x = yield from xs`` and ``o.x = yield 1`` are
+    # YieldAssignStepV1; a yield inside a larger expression is not named.
     steps = _steps(
-        "def manager(c, o):\n"
+        "def manager(c):\n"
         "    if c:\n"
-        "        o.x = yield 1\n"
+        "        x = (yield 1) + 1\n"
         "    yield 2\n"
     )
     assert isinstance(steps[0], OpaqueStepV1)
