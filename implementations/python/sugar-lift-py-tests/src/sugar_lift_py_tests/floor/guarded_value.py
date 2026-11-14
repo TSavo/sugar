@@ -85,6 +85,23 @@ def _beside(guard, true_outcome, false_outcome):
     return polarities.sequence(lambda taken: true_outcome if taken else false_outcome)
 
 
+def _siblings(guard, true_outcome, false_outcome, faces=(None, None)):
+    """Both arms' outcomes as siblings: each under its own polarity (``guard``
+    and its negation), joined by the one sibling join (``ExitSet.union``).
+
+    A halt is never dropped (#7757, #7827 item 1): an arm whose exits all
+    halt keeps them under its guard, beside every exit of the other arm --
+    its completions and its own halts.  ``faces`` is the pair of partition
+    faces the caller owns for the two polarities, when it owns one.
+    """
+    from sugar_lift_py_tests.ir import not_
+
+    true_face, false_face = faces
+    return true_outcome.guarded(guard, true_face).union(
+        false_outcome.guarded(not_(guard), false_face)
+    )
+
+
 def _joined(guard, true_outcome, false_outcome, *, owner: str, blame):
     """Two single-valued arms rejoined as one ``GuardedValue`` under ``guard``,
     rebuilt through ``sequence``: the joined arm owes what both owed."""
@@ -151,30 +168,25 @@ class GuardedValue(FloorValue):
 
         An arm whose operation waits on its caller (a parameter arm, answered
         with the carrier) keeps both arms' outcomes, each under its own
-        polarity (:func:`_beside`).
+        polarity (:func:`_beside`).  Both arms are always evaluated: an arm
+        that halts on every exit is a sibling of the other arm, never a
+        reason to skip it (:func:`_siblings`).
         """
-        from sugar_lift_py_tests.ir import not_
-
         owner = f"GuardedValue._map({operation})"
         true_outcome = operate(self.when_true)
-        if _all_halt(true_outcome):
-            return true_outcome.guarded(self.guard)
         false_outcome = operate(self.when_false)
         if _deferred(true_outcome) or _deferred(false_outcome):
             return _beside(self.guard, true_outcome, false_outcome)
-        if _all_halt(false_outcome):
-            return false_outcome.guarded(not_(self.guard))
-        # Dual-edge partitions from undecided native dispatch (BinOp/Compare):
-        # weaken each arm's faces under the branch guard and union.  Joining two
-        # partitions into one GuardedValue arm is not honest; the exit algebra
-        # already carries both completion and halt faces.
+        # An arm that halts, or a dual-edge partition from undecided native
+        # dispatch (BinOp/Compare): each arm's faces under its own polarity,
+        # unioned.  Joining two partitions into one GuardedValue arm is not
+        # honest; the exit algebra already carries both completion and halt
+        # faces.
         if (
             true_outcome.completed_value() is None
             or false_outcome.completed_value() is None
         ):
-            return true_outcome.guarded(self.guard).union(
-                false_outcome.guarded(not_(self.guard))
-            )
+            return _siblings(self.guard, true_outcome, false_outcome)
         return _joined(
             self.guard, true_outcome, false_outcome, owner=owner, blame=blame
         )
@@ -182,9 +194,8 @@ class GuardedValue(FloorValue):
     def _map_over(self, operand, operate, *, operation: str, blame):
         """Distribute ``operate(arm, operand)`` over both arms, a guarded
         ``operand`` split first: each of its arms meets both of this value's
-        arms, and the results rejoin under the operand's own guard."""
-        from sugar_lift_py_tests.ir import not_
-
+        arms, and the results rejoin under the operand's own guard.  Both of
+        the operand's arms are always evaluated (:func:`_siblings`)."""
         if not isinstance(operand, GuardedValue):
             return self._map(
                 lambda arm: operate(arm, operand), operation=operation, blame=blame
@@ -193,15 +204,13 @@ class GuardedValue(FloorValue):
         true_outcome = self._map_over(
             operand.when_true, operate, operation=operation, blame=blame
         )
-        if _all_halt(true_outcome):
-            return true_outcome.guarded(operand.guard)
         false_outcome = self._map_over(
             operand.when_false, operate, operation=operation, blame=blame
         )
         if _deferred(true_outcome) or _deferred(false_outcome):
             return _beside(operand.guard, true_outcome, false_outcome)
-        if _all_halt(false_outcome):
-            return false_outcome.guarded(not_(operand.guard))
+        if _all_halt(true_outcome) or _all_halt(false_outcome):
+            return _siblings(operand.guard, true_outcome, false_outcome)
         return _joined(
             operand.guard, true_outcome, false_outcome, owner=owner, blame=blame
         )
@@ -227,13 +236,11 @@ class GuardedValue(FloorValue):
 
         owner = f"GuardedValue._predicate({operation})"
         true_outcome = operate(self.when_true)
-        if _all_halt(true_outcome):
-            return true_outcome.guarded(self.guard)
         false_outcome = operate(self.when_false)
         if _deferred(true_outcome) or _deferred(false_outcome):
             return _beside(self.guard, true_outcome, false_outcome)
-        if _all_halt(false_outcome):
-            return false_outcome.guarded(not_(self.guard))
+        if _all_halt(true_outcome) or _all_halt(false_outcome):
+            return _siblings(self.guard, true_outcome, false_outcome)
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=blame, arm="when_true"
         )
@@ -312,18 +319,15 @@ class GuardedValue(FloorValue):
         """Distribute a binary predicate whose guarded value is the RHS.
 
         ``operate(arm)`` is the left operand's explicit predicate call on one
-        arm (#7757); ``operation`` only names it in a refusal.
+        arm (#7757); ``operation`` only names it in a refusal.  Both arms are
+        always evaluated (:func:`_siblings`).
         """
-        from sugar_lift_py_tests.ir import not_
-
         true_outcome = operate(self.when_true)
-        if _all_halt(true_outcome):
-            return true_outcome.guarded(self.guard)
         false_outcome = operate(self.when_false)
         if _deferred(true_outcome) or _deferred(false_outcome):
             return _beside(self.guard, true_outcome, false_outcome)
-        if _all_halt(false_outcome):
-            return false_outcome.guarded(not_(self.guard))
+        if _all_halt(true_outcome) or _all_halt(false_outcome):
+            return _siblings(self.guard, true_outcome, false_outcome)
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
 
         owner = f"GuardedValue._predicate_from_left({operation})"
@@ -348,31 +352,28 @@ class GuardedValue(FloorValue):
 
         ``operate(arm)`` is the left operand's explicit call of the operation
         on one arm, under the caller's context (#7757); ``operation`` names
-        the operation in a refusal and in the partition it owns.
+        the operation in a refusal and in the partition it owns.  Both arms
+        are always evaluated: an arm that halts is a sibling of the other
+        (:func:`_siblings`).
         """
-        from sugar_lift_py_tests.ir import not_
-
         owner = f"GuardedValue.map_from_left({operation})"
         true_outcome = operate(self.when_true)
-        if _all_halt(true_outcome):
-            return true_outcome.guarded(self.guard)
         false_outcome = operate(self.when_false)
         if _deferred(true_outcome) or _deferred(false_outcome):
             return _beside(self.guard, true_outcome, false_outcome)
-        if _all_halt(false_outcome):
-            return false_outcome.guarded(not_(self.guard))
-
         if (
             true_outcome.completed_value() is None
             or false_outcome.completed_value() is None
         ):
             from sugar_lift_py_tests.outcome.exit_set import partition
 
-            true_face, false_face = partition(
-                ("GuardedValue.map_from_left", str(site), operation, self.guard)
-            )
-            return true_outcome.guarded(self.guard, true_face).union(
-                false_outcome.guarded(not_(self.guard), false_face)
+            return _siblings(
+                self.guard,
+                true_outcome,
+                false_outcome,
+                partition(
+                    ("GuardedValue.map_from_left", str(site), operation, self.guard)
+                ),
             )
         return _joined(self.guard, true_outcome, false_outcome, owner=owner, blame=site)
 
@@ -468,7 +469,6 @@ class GuardedValue(FloorValue):
         halt nor its completion is dropped for the other's.
         """
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
-        from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import ExitSet
 
         owner = "GuardedValue.project_sequence_with"
@@ -478,9 +478,7 @@ class GuardedValue(FloorValue):
         if true_outcome.completed_value() is None or (
             false_outcome.completed_value() is None
         ):
-            return true_outcome.guarded(self.guard).union(
-                false_outcome.guarded(not_(self.guard))
-            )
+            return _siblings(self.guard, true_outcome, false_outcome)
         true_bindings = _require_rebind_roster(
             true_outcome.completed_value(), owner=owner, blame=blame, arm="when_true"
         )
