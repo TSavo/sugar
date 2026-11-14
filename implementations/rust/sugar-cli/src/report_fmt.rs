@@ -8,7 +8,7 @@ use serde_json::{json, Value as Json};
 use std::fmt::Write as _;
 use sugar_proof_envelope::LoadError;
 use sugar_verifier::superposition::{reports_from_report, Strength, SuperpositionReport};
-use sugar_verifier::{ObligationVerdict, Report};
+use sugar_verifier::{ObligationVerdict, Report, ReportVerdict};
 
 pub fn report_to_json(r: &Report) -> Json {
     let rows: Vec<Json> = r
@@ -368,21 +368,44 @@ fn format_verification_detail(out: &mut String, v: &Json) {
 /// have checked at least one callsite or one contract-level obligation;
 /// completely empty reports are vacuous.
 pub fn report_exit_code(r: &Report) -> u8 {
-    let toolchain_refuted = r
-        .toolchain_plans
-        .iter()
-        .any(|plan| plan.status == "refuted");
-    // A proof that owes anything (an `undecided` member) is never green.
-    if r.violations > 0
-        || r.owed > 0
-        || !r.load_errors.is_empty()
-        || toolchain_refuted
-        || r.rows.is_empty()
-    {
-        crate::EXIT_VERIFY_FAIL
-    } else {
-        crate::EXIT_OK
+    // Green means decided (#7848): the rule is `Report::verdict`. Refuted and
+    // not decided keep the one non-green code prove has always used for both
+    // (an `undecidable` row already exited 1); a `refused` row now joins them.
+    match r.verdict() {
+        ReportVerdict::Green => crate::EXIT_OK,
+        ReportVerdict::Refuted | ReportVerdict::NotDecided => crate::EXIT_VERIFY_FAIL,
     }
+}
+
+/// Prove's verdict line (#7848): `verdict` and the rows counted by status,
+/// added to prove's JSON report. `verify` keeps its own exit law and fields.
+pub fn verdict_fields(r: &Report) -> [(&'static str, Json); 2] {
+    let by_status = r
+        .status_counts()
+        .into_iter()
+        .map(|(status, count)| (status.as_str().to_string(), json!(count)))
+        .collect::<serde_json::Map<String, Json>>();
+    [
+        ("verdict", json!(r.verdict().as_str())),
+        ("byStatus", Json::Object(by_status)),
+    ]
+}
+
+/// The same, for prove's text report.
+pub fn format_verdict_lines(r: &Report) -> String {
+    let by_status = r
+        .status_counts()
+        .into_iter()
+        .filter(|(_, count)| *count > 0)
+        .map(|(status, count)| format!("{} {}", count, status.as_str()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let verdict = r.verdict();
+    let shown = match verdict {
+        ReportVerdict::Green => verdict.as_str().green().to_string(),
+        _ => verdict.as_str().red().to_string(),
+    };
+    format!("  rows            : {by_status}\n  verdict         : {shown}\n")
 }
 
 #[cfg(test)]
@@ -428,6 +451,51 @@ mod tests {
         r.owed = 1;
         assert_eq!(report_exit_code(&r), crate::EXIT_VERIFY_FAIL);
         assert_eq!(report_to_json(&r)["owed"], 1);
+    }
+
+    fn report_with_rows(statuses: &[ObligationVerdict]) -> Report {
+        let mut r = Report::default();
+        for (i, status) in statuses.iter().enumerate() {
+            r.rows.push(ReportRow {
+                callsite: CallSite {
+                    property_name: format!("p{i}"),
+                    ..CallSite::default()
+                },
+                status: *status,
+                reason: status.as_str().into(),
+                discharge_method: None,
+                body_discharge_tier: None,
+                verification: None,
+                verify_effect: sugar_verifier::VerifyEffectCarrier::NoEffect,
+            });
+        }
+        r
+    }
+
+    /// #7848: green means decided. A row that is not decided (`refused`
+    /// included) is never green; a refutation is `refuted`; prove's exit is
+    /// 0 only for green.
+    #[test]
+    fn green_means_decided() {
+        use ObligationVerdict::*;
+        let green = report_with_rows(&[Discharged, Discharged]);
+        assert_eq!(green.verdict(), ReportVerdict::Green);
+        assert_eq!(report_exit_code(&green), crate::EXIT_OK);
+
+        for not_decided in [Refused, Undecidable, SolverTimeout, Disagreement] {
+            let r = report_with_rows(&[Discharged, not_decided]);
+            assert_eq!(r.verdict(), ReportVerdict::NotDecided, "{not_decided:?}");
+            assert_eq!(report_exit_code(&r), crate::EXIT_VERIFY_FAIL);
+        }
+        let refuted = report_with_rows(&[Refused, Unsatisfied]);
+        assert_eq!(refuted.verdict(), ReportVerdict::Refuted);
+        assert_eq!(report_exit_code(&refuted), crate::EXIT_VERIFY_FAIL);
+
+        let fields = verdict_fields(&report_with_rows(&[Discharged, Refused, Refused]));
+        assert_eq!(fields[0].1, json!("not-decided"));
+        assert_eq!(fields[1].1["refused"], 2);
+        assert_eq!(fields[1].1["discharged"], 1);
+        assert_eq!(fields[1].1["solver-timeout"], 0);
     }
 
     #[test]
