@@ -758,18 +758,18 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         arm that falls through after
         an earlier guarded ``return`` took its exit where that return's guard
         held: it is split as the block composition splits a later halt
-        (``_prior_return_face``), the returned arm with its entries, the
-        recurrence under the fall-through guard.  Each exit is an arm of the
+        (``past_prior_returns``), the returned arm with its entries, the
+        recurrence under the fall-through guard without the ``return``
+        entries that guard excludes.  Each exit is an arm of the
         one run, so each is reported once."""
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
-        from sugar_lift_py_tests.ir import and_
         from sugar_lift_py_tests.outcome import Completed
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            _prior_return_face,
+            past_prior_returns,
         )
 
         if exhausted is None:
@@ -781,22 +781,17 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         def leave(state):
             if not state.can_fall_through:
                 return returned(state)
-            goes_on = exhausted(state.entries)
-            earlier = _prior_return_face(state, state.context)
-            if earlier is None:
-                return goes_on
-            continuation = (
-                state.fall_through[0]
-                if len(state.fall_through) == 1
-                else and_(list(state.fall_through))
-            )
-            # The loop goes on under the fall-through guard, and the earlier
-            # ``return`` took its exit beside it: one composition beneath
-            # both (``ExitSet.sequence``), which hands on an exhausted arm
-            # still waiting on its caller's actuals (an ``else`` suite).
-            branches = ExitSet((Completed(continuation, None), *earlier.exits))
-            return branches.sequence(
-                lambda block: goes_on if block is None else returned(block)
+            # The loop goes on under the guard that no earlier ``return`` of
+            # the item was taken, and that ``return`` took its exit beside
+            # it: the one composition a block gives a statement after a
+            # guarded ``return`` (``past_prior_returns``), which hands on an
+            # exhausted arm still waiting on its caller's actuals (an
+            # ``else`` suite).
+            return past_prior_returns(
+                state,
+                state.context,
+                lambda record: exhausted(record.entries),
+                returned,
             )
 
         def own_control(halt):
@@ -1095,16 +1090,36 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     def _after_iteration_state(self, state, runtime, resume, *, entries, index):
         """The loop's outcome after a completed iteration face whose record is
         ``state``: a ``return`` leaves the loop with what the items left,
-        through the one carry (``_left_with``)."""
-        combined = (*entries, *state.entries)
-        if not state.can_fall_through:
-            return self._left_with(combined, (), can_fall_through=False)
-        return resume(
-            state.context,
-            entries=combined,
-            carried=self._latched(runtime, state.context, index),
-            index=index + 1,
+        through the one carry (``_left_with``).
+
+        An item that falls through after a guarded ``return`` (``if x == c:
+        return x``) took that ``return`` where its guard held: the next item
+        -- and, after the last, the loop's exit -- runs only under the guard
+        that it was not taken, and the ``return`` leaves the loop as its own
+        arm beside it, through the one composition a block gives a statement
+        after a guarded ``return`` (``past_prior_returns``). So a later
+        ``return`` never stands beside it unguarded."""
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            past_prior_returns,
         )
+
+        def returned(record):
+            return self._left_with(
+                (*entries, *record.entries), (), can_fall_through=False
+            )
+
+        if not state.can_fall_through:
+            return returned(state)
+
+        def goes_on(record):
+            return resume(
+                record.context,
+                entries=(*entries, *record.entries),
+                carried=self._latched(runtime, record.context, index),
+                index=index + 1,
+            )
+
+        return past_prior_returns(state, state.context, goes_on, returned)
 
     def _desugar_while(self, runtime, ctx):
         """A live ``while``: its first item begins with the pre-loop values
