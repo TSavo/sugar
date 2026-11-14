@@ -79,6 +79,13 @@ class ClassDefinitionValue(GuardStableValue):
     # The class statement this value was built from.  ``Cls(x)`` applies its
     # one constructor frame, however the class is reached.
     class_definition: object = field(default=None, compare=False)
+    # ``(key, value)``: each default of each method ``def`` statement, as the
+    # class body evaluated it (``ClassDefinitionSugar._class_body``), under
+    # its per-parameter key (``nodes._default_evaluation_key``).  Python
+    # stores the values on the function; every call that omits the formal
+    # binds that one object (``object_value.bind_method_call`` passes them
+    # to ``bind_call``'s ``defaults``, as a lambda value's are).
+    method_defaults: tuple = field(default=(), compare=False)
 
     def __post_init__(self):
         if type(self.binding_target_occurrence) is not SourceFragmentCoordinateV1:

@@ -1439,6 +1439,75 @@ def test_a_module_def_bodys_raise_is_no_face_of_the_module_run() -> None:
     assert len([exit_ for exit_ in exits if isinstance(exit_, Completed)]) == 1
 
 
+def test_a_module_with_an_lru_cache_function_still_lets_f_read_x() -> None:
+    # ``@functools.lru_cache`` is applied by nothing here: the decorated
+    # name's value is the one ``undecided`` citation under its target symbol,
+    # the module body's run continues past it, and ``f`` reads ``X`` (#7757,
+    # residue of #8024).
+    from sugar_lift_py_tests.tree_enumerate import (
+        function_universe_outcome,
+        owner_reduction,
+    )
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    tree = _source(
+        "import functools\n"
+        "X = 1\n"
+        "@functools.lru_cache\n"
+        "def cached(n):\n    return n\n"
+        "def f():\n    return X\n"
+    )
+    (key,) = _assignment_keys(tree, "X")
+    outcome = function_universe_outcome(_function(tree))
+    assert _returned_value(outcome) == TermValue(1)
+    assert _module_end_value(tree, key) == TermValue(1)
+    run = owner_reduction(None, tree).outcome
+    assert "python:functools.lru_cache" in {item.symbol for item in owed_calls(run)}
+
+
+def test_a_decorated_module_class_applies_its_decorators_in_the_run() -> None:
+    # The module body's run applies a decorated class's decorators through
+    # the one decorator application, as a function body does: a source
+    # decorator that raises is the run's raise.
+    from sugar_lift_py_tests.tree_enumerate import owner_reduction
+
+    tree = _source(
+        "def mark(cls):\n    raise ValueError('applied')\n"
+        "@mark\n"
+        "class C:\n    pass\n"
+        "X = 1\n"
+        "def f():\n    return X\n"
+    )
+    exits = owner_reduction(None, tree).outcome.exits
+    halts = [exit_ for exit_ in exits if isinstance(exit_, Halted)]
+    assert [getattr(face.effect, "exception_name", None) for face in halts] == [
+        "ValueError"
+    ], exits
+    assert not [exit_ for exit_ in exits if isinstance(exit_, Completed)], exits
+
+
+def test_a_module_class_under_an_unknown_decorator_is_undecided() -> None:
+    # An imported class decorator is the ``undecided`` citation: the run
+    # completes past it and ``f`` reads ``X``.
+    from sugar_lift_py_tests.tree_enumerate import (
+        function_universe_outcome,
+        owner_reduction,
+    )
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    tree = _source(
+        "from elsewhere import register\n"
+        "@register\n"
+        "class C:\n    pass\n"
+        "X = 1\n"
+        "def f():\n    return X\n"
+    )
+    outcome = function_universe_outcome(_function(tree))
+    assert _returned_value(outcome) == TermValue(1)
+    run = owner_reduction(None, tree).outcome
+    assert "python:elsewhere.register" in {item.symbol for item in owed_calls(run)}
+
+
 def test_a_module_run_that_halts_refuses_the_read_by_its_key() -> None:
     # The module body's run completes on no arm: no import completed, so no
     # module-final value exists, and the read is refused by name.

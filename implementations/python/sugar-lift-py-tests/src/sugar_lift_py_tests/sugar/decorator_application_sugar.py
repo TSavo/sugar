@@ -16,18 +16,27 @@ statement runs (``sugar_source_tree.nodes._decorator_step``) into one
 - ``identity``: a builtin the one builtin door names whose application returns
   its argument (``typing.final``, ``abc.abstractmethod``, a modeled
   ``dataclasses.dataclass``, ``functools.wraps(w)``);
-- ``refused``: a builtin with no modeled application, refused by name;
-- ``unanswered``: an imported decorator (or a factory call of one).  Nothing
-  here answers it, so its application is the ``undecided`` member under the
-  import table's target symbol (reason ``unanswered``, ``UnknownCalleeCallV1``)
-  and the name is bound to that unanswered call's result, never the bare
-  definition;
+- ``refused``: a source decorator this does not carry as a value (an
+  ``async def`` or generator function used as a decorator), refused by name;
+- ``unanswered``: an imported decorator (or a factory call of one), or a
+  builtin with no modeled application (``functools.lru_cache``,
+  ``typing.overload``, a builtin decorator factory).  Nothing here answers
+  it, so its application is the ``undecided`` member under the target
+  symbol (reason ``unanswered``, ``UnknownCalleeCallV1``) and the name is
+  bound to that unanswered call's result, never the bare definition.  The
+  statement completes: only a read or call of the name is undecided, never
+  the run that binds it;
 - ``apply``: a source ``def`` (its frame), a ``class`` or decorated
   definition (its value's sugar), or any other expression: its value is
   called on the definition through the one call routine,
   ``callable_application_with`` (``enter_source_frame``, ``bind_call``,
   ``CallSiteValue.producer_outcome``), so every face of the decorator's body
   is the statement's.
+
+An ``async def`` or generator function is no value this carries
+(``uncarried``): its decorator expressions are evaluated, and what they make of
+it is one unanswered call, the ``undecided`` citation under the outermost
+decorator's target symbol where it has one.
 """
 
 from __future__ import annotations
@@ -48,8 +57,10 @@ class DecoratorStepV1:
     spelling: str = ""
     symbol: str | None = None
     refusal: str | None = None
-    # ``unanswered``: a factory call evaluated before its result is applied.
-    evaluate: object = field(default=None, compare=False)
+    # ``unanswered``: what is evaluated, in order, before the result is
+    # applied by nothing (an imported factory call, a builtin factory's
+    # arguments).
+    evaluate: tuple = field(default=(), compare=False)
     # ``apply``: the decorator is this source ``def``'s function ...
     frame: object = field(default=None, compare=False)
     # ... or the value this sugar reduces to.
@@ -64,8 +75,10 @@ class DecoratorStepV1:
         return cls("refused", site, spelling, refusal=refusal)
 
     @classmethod
-    def unanswered(cls, site, spelling, symbol, *, evaluate=None):
-        return cls("unanswered", site, spelling, symbol=symbol, evaluate=evaluate)
+    def unanswered(cls, site, spelling, symbol, *, evaluate=()):
+        return cls(
+            "unanswered", site, spelling, symbol=symbol, evaluate=tuple(evaluate)
+        )
 
     @classmethod
     def apply(cls, site, spelling, *, frame=None, callee=None):
@@ -80,9 +93,7 @@ class DecoratorStepV1:
         if self.kind == "refused":
             _refuse(self.site, self.refusal)
         if self.kind == "unanswered":
-            if self.evaluate is None:
-                return then(None)
-            return self.evaluate.desugar(ctx).and_then(lambda _value: then(None))
+            return _evaluated_in_order(self.evaluate, ctx, lambda: then(None))
         if self.kind == "apply":
             if self.frame is not None:
                 return then(_function_value(self.frame, self.site))
@@ -123,6 +134,9 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
     # applies the decorators again.  The statement's own application carries
     # None (``nodes._decorated_statement_sugar``).
     evaluation: str | None = None
+    # The definition is an ``async def`` or generator function, no value this
+    # carries: the application is one unanswered call (``_uncarried``).
+    uncarried: bool = False
 
     @classmethod
     def witnesses(cls):
@@ -186,8 +200,24 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
                     tuple(rest), evaluated + ((head, decorator),), ctx
                 ),
             )
+        if self.uncarried:
+            return self._uncarried(ctx)
         return self._definition_value(ctx).and_then(
             lambda value: self._apply(evaluated, value, ctx)
+        )
+
+    def _uncarried(self, ctx) -> ExitSet:
+        """``d1(d2(<definition>))`` over a definition this carries no value
+        of: one call nothing here answers, the ``undecided`` member under the
+        outermost decorator's target symbol where it has one (reason
+        ``unanswered``), completing with that call's own result."""
+        outermost = self.decorators[0]
+        return _unanswered_call(
+            outermost.symbol,
+            outermost.spelling or self.definition_name,
+            (),
+            outermost.site,
+            ctx,
         )
 
     def _definition_value(self, ctx) -> ExitSet:
@@ -231,39 +261,56 @@ def _function_value(frame, site):
     )
 
 
+def _evaluated_in_order(sugars, ctx, then) -> ExitSet:
+    """Each of ``sugars`` evaluated in order, every face of each kept, then
+    ``then()`` on every completed path."""
+    if not sugars:
+        return then()
+    head, *rest = sugars
+    return head.desugar(ctx).and_then(
+        lambda _value: _evaluated_in_order(tuple(rest), ctx, then)
+    )
+
+
 def _unanswered_application(step, value, ctx) -> ExitSet:
-    """``d(value)`` for a decorator nothing here answers: bound by the one
-    binder, bodiless, and two-faced as every unanswered call is
-    (``UnknownCalleeCallV1``): the ``undecided`` member under the import
-    table's target symbol, completing with this call's own result."""
+    """``d(value)`` for a decorator nothing here answers: the ``undecided``
+    member under its target symbol (``_unanswered_call``)."""
+    return _unanswered_call(step.symbol, step.spelling, (value,), step.site, ctx)
+
+
+def _unanswered_call(symbol, spelling, arguments, site, ctx) -> ExitSet:
+    """A call of a decorator nothing here answers on ``arguments``: bound by
+    the one binder, bodiless, and two-faced as every unanswered call is
+    (``UnknownCalleeCallV1``): the ``undecided`` member under ``symbol``
+    (the import table's or the builtin door's target symbol, None where the
+    decorator has none), completing with this call's own result."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.ir import ctor
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
     from sugar_lift_py_tests.sugar.call_site_sugar import bind_source_frame_call
 
-    symbol = step.symbol
     name = (
         symbol[len("python:") :]
         if isinstance(symbol, str) and symbol.startswith("python:")
-        else step.spelling
+        else spelling
     )
-    owner = str(step.site)
+    owner = str(site)
     callsite = bind_source_frame_call(
         name,
-        (value,),
+        tuple(arguments),
         (),
         frame=None,
         ctx=ctx,
         owner="DecoratorApplicationSugar",
-        blame=step.site,
+        blame=site,
         term=ctor(
             call_symbol(name),
-            [value.to_term(owner=owner)],
+            [value.to_term(owner=owner) for value in arguments],
             symbol_kind="coordinate",
         ),
         authenticated_target_symbol=symbol,
     )
-    return UnknownCalleeCallV1(name).faces(callsite, step.site)
+    return UnknownCalleeCallV1(name).faces(callsite, site)
 
 
 def _refuse(site, observed):

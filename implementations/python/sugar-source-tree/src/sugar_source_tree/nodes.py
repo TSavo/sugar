@@ -7219,11 +7219,13 @@ class Module(Node):
         exactly once.  A child construction gap therefore propagates with the
         child's owner; the module neither skips it nor invents completion.
 
-        A ``def`` statement constructs through the one def-statement rule
-        every body uses (``_def_statement_sugar``): it binds the function
-        value and never reduces the function's body, which runs only when the
-        function is called.  So a module-level function whose body raises or
-        refuses is no face of the module body's run (#7757 item 7).
+        A ``def`` or ``class`` statement constructs through the one
+        statement rule every body uses (``_body_statement_sugar``): a ``def``
+        binds the function value and never reduces the function's body,
+        which runs only when the function is called, so a module-level
+        function whose body raises or refuses is no face of the module body's
+        run (#7757 item 7); a decorated ``class`` applies its decorators
+        through the one decorator application, as in a function body.
         """
         from sugar_lift_py_tests.engine_log import reduction_span
         from sugar_lift_py_tests.sugar.module_block_sugar import ModuleBlockSugar
@@ -7236,11 +7238,7 @@ class Module(Node):
             with reduction_span(sugar="Construct", role="construction", site=where):
                 return ModuleBlockSugar(
                     statements=tuple(
-                        (
-                            _def_statement_sugar(statement)
-                            if isinstance(statement, (FunctionDef, AsyncFunctionDef))
-                            else statement.sugar()
-                        )
+                        _body_statement_sugar(statement)
                         for statement in substituted.body
                     ),
                     site=self.fragment,
@@ -8697,11 +8695,7 @@ class FunctionDef(Statement):
         lc = stmt.line_col_span()
         site = f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}"
         with reduction_span(sugar=f"Body.{stmt.kind}", role="construction", site=site):
-            if isinstance(stmt, (FunctionDef, AsyncFunctionDef)):
-                return _def_statement_sugar(stmt)
-            if not call_applies_own_frame(stmt):
-                return _decorated_statement_sugar(stmt)
-            return stmt.sugar()
+            return _body_statement_sugar(stmt)
 
     def _construct_sugar(self):
         """`def <name>(<formals>): <body>` constructs FunctionUniverseSugar WITH
@@ -9182,6 +9176,47 @@ class ClassDef(Statement):
             self._method_descriptor_kind(method),
         )
 
+    def _class_method_defaults(self, method, read):
+        """The defaults of the class-body ``def`` statement ``method``,
+        evaluated when the class body runs, as a member of the body in source
+        order: ``(ConstructedClassMethodDefaultsV1,)``, or ``()`` for a
+        statement that evaluates none.
+
+        Python evaluates a method's defaults when its ``def`` statement runs,
+        which is when the class body runs.  The statement is the one
+        def-statement rule's (``_def_statement_sugar``), reading through the
+        class body's ``read``: each default bound under its per-parameter key
+        (``_default_evaluation_key``, #8020), which the class value carries
+        to every call of the method (``ClassDefinitionValue.method_defaults``,
+        ``object_value.bind_method_call``).  A decorated method's descriptor
+        is the class body's descriptor table's, not applied here; its
+        defaults are evaluated where it is called, as before.  So is a
+        default that does not construct: its refusal is deferred to the
+        method's caller, as the method's own is
+        (``_construct_class_method_member``), never dropped."""
+        if not call_applies_own_frame(method):
+            return ()
+        from sugar_lift_py_tests.sugar.class_definition_sugar import (
+            ConstructedClassMethodDefaultsV1,
+        )
+        from sugar_lift_py_tests.sugar.default_value_sugar import (
+            DefinitionDefaultsSugar,
+        )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        try:
+            statement = _def_statement_sugar(method, read=read)
+        except SugarNotWritten:
+            return ()
+        if not isinstance(statement, DefinitionDefaultsSugar):
+            return ()
+        return (
+            ConstructedClassMethodDefaultsV1(
+                definition_fragment_cid=method.fragment.seal().cid,
+                defaults=statement,
+            ),
+        )
+
 
     def _sugar_source_class_base(self, base):
         """Sugar a base, unwrapping a local ``Base`` or ``Base[T]`` to that class.
@@ -9237,12 +9272,23 @@ class ClassDef(Statement):
         for statement in self.body:
             if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef)):
                 bound_here.add(statement.name)
-                continue
-            bound_here |= statement.names_bound_within()
+                if isinstance(statement, ClassDef) or not call_applies_own_frame(
+                    statement
+                ):
+                    continue
+                # A method's defaults are evaluated when the class body runs
+                # (``_class_method_defaults``); its body is not.
+                pending = [
+                    param.default
+                    for param in statement.params
+                    if param.default is not None
+                ]
+            else:
+                bound_here |= statement.names_bound_within()
+                pending = [statement]
             # A lambda's body runs when the lambda is called, and reads a
             # module global there (``Lambda._module_global_references``), not
             # when the class statement runs.
-            pending = [statement]
             seen: set[int] = set()
             while pending:
                 node = pending.pop()
@@ -9444,19 +9490,27 @@ class ClassDef(Statement):
         constructed = tuple(
             self._construct_class_method_member(method) for method in methods
         )
-        fields = conditional_fields(
-            tuple(
-                item
-                for index, item in enumerate(self.body)
-                if not isinstance(item, (FunctionDef, AsyncFunctionDef, Pass))
-                and not (
-                    index == 0
-                    and isinstance(item, Expr)
-                    and isinstance(item.value, Constant)
-                    and isinstance(item.value.value, str)
+        # The body in source order: each field assignment, and each method
+        # statement's defaults (placed before the field it precedes),
+        # evaluated when the class body runs.
+        body_fields = []
+        method_defaults = []
+        for index, item in enumerate(self.body):
+            if isinstance(item, (FunctionDef, AsyncFunctionDef)):
+                method_defaults.extend(
+                    (len(body_fields), defaults)
+                    for defaults in self._class_method_defaults(item, body_read)
                 )
-            )
-        )
+                continue
+            if isinstance(item, Pass) or (
+                index == 0
+                and isinstance(item, Expr)
+                and isinstance(item.value, Constant)
+                and isinstance(item.value.value, str)
+            ):
+                continue
+            body_fields.extend(conditional_fields((item,)))
+        fields = tuple(body_fields)
         base_sugars = ()
         if self.bases:
             context = self._require_construction_context(
@@ -9508,6 +9562,7 @@ class ClassDef(Statement):
             base_fragment_cids=tuple(base.fragment.seal().cid for base in self.bases),
             site=self.fragment,
             class_definition=self,
+            method_defaults=tuple(method_defaults),
         )
 
 
@@ -21809,7 +21864,7 @@ def _lambda_default_value_sugar(lambda_, index: int):
     )
 
 
-def _definition_defaults_sugar(statement):
+def _definition_defaults_sugar(statement, *, read=None):
     """An undecorated ``def`` statement in a body: it evaluates each default,
     left to right, where it stands, and binds each completed value under the
     default's key (``_default_evaluation_key``), as an assignment binds its
@@ -21829,7 +21884,10 @@ def _definition_defaults_sugar(statement):
     from sugar_lift_py_tests.sugar.default_value_sugar import DefinitionDefaultsSugar
 
     return DefinitionDefaultsSugar(
-        values=tuple(default.sugar() for _index, default in defaults),
+        values=tuple(
+            default.sugar() if read is None else read(default)
+            for _index, default in defaults
+        ),
         evaluations=tuple(
             (_default_evaluation_key(statement, index), position)
             for position, (index, _default) in enumerate(defaults)
@@ -21891,9 +21949,13 @@ def _decorated_statement_binding(statement, binding):
     return rewrite_with_leaves(statement, {"decorated_value": bound})
 
 
-def _def_statement_sugar(statement):
+def _def_statement_sugar(statement, *, read=None):
     """THE ``def`` / ``async def`` statement, wherever it stands: a module
-    body, a function body (#8014), the one rule (#7757 item 7).
+    body, a function body (#8014), a class body, the one rule (#7757 item
+    7).  ``read`` is how the enclosing body reads an expression the
+    statement evaluates (a class body reads a module name as the module held
+    it when the class statement ran, ``ClassDef._construct_sugar``); by
+    default the expression's own sugar.
 
     The statement builds the function and binds its name; the body runs
     only when the function is called, in the call's frame.  So the
@@ -21909,7 +21971,21 @@ def _def_statement_sugar(statement):
     if not call_applies_own_frame(statement):
         return _decorated_statement_sugar(statement)
     statement.discharge_by_substitution()
-    return _definition_defaults_sugar(statement)
+    return _definition_defaults_sugar(statement, read=read)
+
+
+def _body_statement_sugar(statement):
+    """One statement of a module or function body: a ``def`` through the one
+    def-statement rule (``_def_statement_sugar``), a decorated ``class``
+    through the one decorator application (``_decorated_statement_sugar``),
+    anything else its own sugar.  The module body and every function body
+    construct their statements here, so a decorated class applies its
+    decorators wherever its statement runs (#7757)."""
+    if isinstance(statement, (FunctionDef, AsyncFunctionDef)):
+        return _def_statement_sugar(statement)
+    if not call_applies_own_frame(statement):
+        return _decorated_statement_sugar(statement)
+    return statement.sugar()
 
 
 def _decorated_statement_sugar(statement):
@@ -21965,11 +22041,14 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
       (``staticmethod``, ``classmethod`` and ``property`` outside a class
       body, ``functools.lru_cache``/``cache``, ``typing.overload``, a
       ``contextlib.contextmanager`` this does not model, a builtin decorator
-      factory) is refused by name;
+      factory) is answered as an imported decorator is, under the builtin's
+      target symbol;
     - an imported decorator (the one import table's row,
       ``SourceUnit.import_reference_of``), or a factory call of one: nothing
       here answers it, so the application is the ``undecided`` member under
       that target symbol (reason ``unanswered``), never the bare definition;
+      the run that binds the name continues, and only a read or call of the
+      name is undecided;
     - a source ``def`` or ``class``: its value, applied through the one call
       routine (``callable_application_with``: ``enter_source_frame``,
       ``bind_call``, ``producer_outcome``); a decorated one is its own
@@ -21980,6 +22059,11 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     The decorator expressions are constructed where a module statement runs
     (``SourceUnit.module_execution_site``): the statement's own context, never
     its caller's.  The definition's value is constructed where it is called.
+    An ``async def`` or generator function is no value this carries: its
+    decorators are evaluated and their application is the one ``undecided``
+    citation (``DecoratorApplicationSugar.uncarried``).  Only a genuine
+    construction failure (the application reading its own result, a
+    definition with no frame) refuses.
     """
     from sugar_lift_py_tests.sugar.decorator_application_sugar import (
         DecoratorApplicationSugar,
@@ -22019,6 +22103,7 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
     frame = None
     class_sugar = None
     refusal = None
+    uncarried = False
     _FRAMES_UNDER_CONSTRUCTION.add(key)
     try:
         decorators = (
@@ -22029,12 +22114,14 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
         if isinstance(definition, ClassDef):
             class_sugar = definition.sugar()
         elif isinstance(definition, AsyncFunctionDef):
-            refusal = (
-                f"`async def {definition.name}` called through its decorators "
-                "returns a coroutine this does not carry as a value"
-            )
+            # A coroutine function is not a value this carries: what the
+            # decorators make of it is the one ``undecided`` citation.
+            uncarried = True
         else:
-            frame, refusal = _source_function_frame(definition)
+            frame, refusal = _definition_call_frame(definition)
+            if frame is not None and frame.generator_steps is not None:
+                # A generator function, likewise.
+                frame, uncarried = None, True
     finally:
         _FRAMES_UNDER_CONSTRUCTION.discard(key)
     return DecoratorApplicationSugar(
@@ -22045,6 +22132,7 @@ def _decorator_application_sugar(definition, bindings, site, *, evaluation=None)
         refusal=refusal,
         site=site,
         evaluation=evaluation,
+        uncarried=uncarried,
     )
 
 
@@ -22052,8 +22140,23 @@ def _source_function_frame(definition):
     """``(frame, None)``: the call frame of the source ``def`` ``definition``
     (its typed occurrence's), or ``(None, refusal)`` where it is not one this
     carries as a value: a generator function (its call allocates a
-    generator), or a definition whose frame is under construction up the
-    stack (a recursion seat)."""
+    generator), or a definition with no frame (``_definition_call_frame``)."""
+    frame, refusal = _definition_call_frame(definition)
+    if refusal is not None:
+        return None, refusal
+    if frame.generator_steps is not None:
+        return None, (
+            f"generator function `{definition.name}` is not carried as a "
+            "callable value"
+        )
+    return frame, None
+
+
+def _definition_call_frame(definition):
+    """``(frame, None)``: the call frame of the source ``def`` ``definition``
+    (its typed occurrence's), or ``(None, refusal)`` where it has none: a
+    definition whose frame is under construction up the stack (a recursion
+    seat), or none built."""
     identity = SourceOccurrenceIdentityV1.of(definition)
     original = next(
         (
@@ -22073,11 +22176,6 @@ def _source_function_frame(definition):
         )
     if frame is None:
         return None, f"`{definition.name}` has no source call frame"
-    if frame.generator_steps is not None:
-        return None, (
-            f"generator function `{definition.name}` is not carried as a "
-            "callable value"
-        )
     return frame, None
 
 
@@ -22090,6 +22188,22 @@ def _decorator_step(definition, decorator, bound):
 
     builtin = builtin_decorator_step(definition, decorator)
     if builtin is not None:
+        if builtin.kind == "unanswered" and isinstance(decorator, Call):
+            # A builtin factory nothing here answers: its arguments are
+            # evaluated where the statement runs (every face of them the
+            # statement's); the factory and what it returned are applied by
+            # nothing here.
+            _discharge_absorbed(decorator.func)
+            decorator.discharge_by_substitution()
+            for keyword in decorator.keywords:
+                keyword.discharge_by_substitution()
+            return DecoratorStepV1.unanswered(
+                builtin.site,
+                builtin.spelling,
+                builtin.symbol,
+                evaluate=tuple(argument.sugar() for argument in decorator.args)
+                + tuple(keyword.value.sugar() for keyword in decorator.keywords),
+            )
         _discharge_absorbed(decorator)
         return builtin
     unit = definition.unit
@@ -22101,7 +22215,7 @@ def _decorator_step(definition, decorator, bound):
             # The factory call is evaluated (an unanswered call of its own);
             # what it returned is applied by nothing here.
             return DecoratorStepV1.unanswered(
-                site, spelling, symbol, evaluate=decorator.sugar()
+                site, spelling, symbol, evaluate=(decorator.sugar(),)
             )
         return DecoratorStepV1.apply(site, spelling, callee=decorator.sugar())
     if isinstance(decorator, (Name, Attribute)):
@@ -22128,10 +22242,16 @@ def builtin_decorator_application(member, site, spelling, definition=None):
     ``typing.final`` and ``abc.abstractmethod`` return their argument
     (``identity``); ``dataclasses.dataclass`` over a ``class`` returns the
     class whose constructor frame is the ``__init__`` it writes
-    (``ClassDef._dataclass_generated_init_fields``).  Every other builtin is
-    ``refused`` by name.  Every reader of a builtin decorator's semantics asks
-    this (``_decorator_step``, ``ImportMemberValue.callable_application_with``,
-    the manager-protocol absence proof), never a table of its own (#7757).
+    (``ClassDef._dataclass_generated_init_fields``).  Every other builtin
+    (``functools.lru_cache``/``cache``, ``typing.overload``, a descriptor
+    constructor outside a class body, a ``dataclass`` this does not model)
+    is answered by nothing here: its application is the ``undecided`` member
+    under the builtin's target symbol (reason ``unanswered``), exactly as an
+    imported decorator's is, so only a read or call of the decorated name is
+    undecided, never the run that binds it.  Every reader of a builtin
+    decorator's semantics asks this (``_decorator_step``,
+    ``ImportMemberValue.callable_application_with``, the manager-protocol
+    absence proof), never a table of its own (#7757).
     """
     from sugar_lift_py_tests.sugar.decorator_application_sugar import (
         DecoratorStepV1,
@@ -22143,13 +22263,7 @@ def builtin_decorator_application(member, site, spelling, definition=None):
         and definition._dataclass_generated_init_fields() is not None
     ):
         return DecoratorStepV1.identity(site, spelling)
-    subject = "its argument" if definition is None else f"`{definition.name}`"
-    return DecoratorStepV1.refused(
-        site,
-        spelling,
-        f"builtin decorator {member.value} has no application modeled for "
-        f"{subject}",
-    )
+    return DecoratorStepV1.unanswered(site, spelling, member.value)
 
 
 def builtin_decorator_step(definition, decorator):
@@ -22162,8 +22276,10 @@ def builtin_decorator_step(definition, decorator):
     A decorator bound to a builtin is ``builtin_decorator_application``'s.  A
     call of a builtin decorator factory is ``functools.wraps(w)`` over names
     (it returns a decorator that copies ``w``'s metadata onto its argument and
-    returns it: ``identity``) or refused by name.  Nothing is constructed or
-    discharged here.
+    returns it: ``identity``); any other factory's result is applied by
+    nothing here (``unanswered`` under the factory's target symbol; the
+    statement evaluates the factory's arguments, ``_decorator_step``).
+    Nothing is constructed or discharged here.
     """
     from sugar_lift_py_tests.sugar.decorator_application_sugar import (
         DecoratorStepV1,
@@ -22186,12 +22302,7 @@ def builtin_decorator_step(definition, decorator):
         and all(isinstance(argument, Name) for argument in decorator.args)
     ):
         return DecoratorStepV1.identity(site, spelling)
-    return DecoratorStepV1.refused(
-        site,
-        spelling,
-        f"builtin decorator factory {factory.value} has no application "
-        f"modeled for `{definition.name}`",
-    )
+    return DecoratorStepV1.unanswered(site, spelling, factory.value)
 
 
 def _definition_decorator_step(target, site, spelling):

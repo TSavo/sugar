@@ -791,6 +791,11 @@ def bind_method_call(
         owner=owner,
         blame=blame,
         refuse=refuse,
+        # A formal the call omits binds the default the method's ``def``
+        # statement evaluated when the class body ran, carried on the class
+        # that defines it (``ClassDefinitionValue.method_defaults``), as a
+        # lambda value carries its own.
+        defaults=getattr(method.defining_class, "method_defaults", ()),
     )
 
 
@@ -874,8 +879,10 @@ def bind_call(
     import target), carried on the value unchanged.
 
     ``defaults`` are the ``(key, value)`` pairs a called lambda value carries
-    (``LambdaCallable.defaults``): the values its lambda expression evaluated
-    for its defaults.  They are bound under their keys where the frame binds
+    (``LambdaCallable.defaults``), or a method's class
+    (``ClassDefinitionValue.method_defaults``): the values its lambda
+    expression, or its ``def`` statement in the class body, evaluated for its
+    defaults.  They are bound under their keys where the frame binds
     the actuals, so a formal the call omits binds the carried value
     (``DefaultValueSugar``).
     """

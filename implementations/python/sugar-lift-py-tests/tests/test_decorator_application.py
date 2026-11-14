@@ -284,8 +284,9 @@ def test_a_builtin_decorator_is_decided_by_the_one_builtin_arm() -> None:
     """Every reader of a builtin decorator's semantics (the statement's
     application, an explicit ``final(f)`` through an import member, the
     manager-protocol absence proof) asks ``builtin_decorator_step``: identity
-    where the application returns its argument, refused by name otherwise,
-    and None for a decorator whose binding is no builtin."""
+    where the application returns its argument, unanswered (the ``undecided``
+    member under the builtin's target symbol) otherwise, and None for a
+    decorator whose binding is no builtin."""
     from sugar_source_tree.nodes import builtin_decorator_step
 
     tree = _tree(
@@ -312,8 +313,37 @@ def g():
         for node in tree.nodes()
         if isinstance(node, FunctionDef) and node.name == "g"
     )
-    kinds = [getattr(builtin_decorator_step(g, d), "kind", None) for d in g.decorators]
-    assert kinds == ["identity", "identity", "refused", None]
+    steps = [builtin_decorator_step(g, d) for d in g.decorators]
+    kinds = [getattr(step, "kind", None) for step in steps]
+    assert kinds == ["identity", "identity", "unanswered", None]
+    assert steps[2].symbol == "python:functools.lru_cache"
+
+
+def test_an_lru_cache_function_is_undecided_never_the_plain_body() -> None:
+    """``@functools.lru_cache`` is applied by nothing here: a call of the
+    name is the ``undecided`` member under its target symbol, never the
+    plain body and never a refusal of the statement."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    outcome = _test_function_outcome(
+        """\
+import functools
+
+
+@functools.lru_cache
+def scale(n):
+    raise ValueError('plain body')
+
+
+def test_scale():
+    value = scale(2)
+    assert value == 20
+"""
+    )
+    assert _raises(outcome, "ValueError") == []
+    assert "python:functools.lru_cache" in {
+        item.symbol for item in owed_calls(outcome)
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -688,6 +718,63 @@ def test_default():
     assert truthful.completed_value() is not None, truthful
     lying = _test_function_outcome(source.format(expected=2))
     assert _raises(lying, "AssertionError") != []
+
+
+def test_a_method_default_is_the_binding_at_its_class_statement() -> None:
+    """``x = 1; class C: def m(self, a=x): ...; x = 2; C().m()`` is 1: the
+    class body runs the method's ``def`` statement, which evaluates the
+    default once; the call binds that value (#8020), never ``x`` read again
+    at the call."""
+    source = """\
+def test_default():
+    x = 1
+
+    class C:
+        def m(self, a=x):
+            return a
+
+    x = 2
+    assert C().m() == {expected}
+"""
+    truthful = _test_function_outcome(source.format(expected=1))
+    assert _raises(truthful, "AssertionError") == []
+    assert truthful.completed_value() is not None, truthful
+    lying = _test_function_outcome(source.format(expected=2))
+    assert _raises(lying, "AssertionError") != []
+
+
+def test_the_class_statement_evaluates_its_methods_defaults() -> None:
+    """The class value carries each method default under the key the
+    method's frame reads, and a default that raises raises at the class
+    statement, whether or not the method is ever called."""
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
+
+    tree = _tree("class Box:\n    def pick(self, n=3):\n        return n\n")
+    (class_def,) = tuple(node for node in tree.nodes() if isinstance(node, ClassDef))
+    box = (
+        class_def.sugar()
+        .desugar(ReduceContext.root(owner="test"))
+        .completed_value()
+    )
+    frame = _function_named(tree, "pick").source_visible_call_frame()
+    (read,) = tuple(
+        default.evaluation
+        for default in frame.default_sugars
+        if isinstance(default, DefaultValueSugar)
+    )
+    assert [key for key, _value in box.method_defaults] == [read]
+    raising = _test_function_outcome(
+        """\
+def test_default():
+    class Box:
+        def pick(self, n=1 // 0):
+            return n
+
+    assert 1 == 1
+"""
+    )
+    assert _raises(raising, "ZeroDivisionError") != []
 
 
 def test_the_statement_and_the_frame_name_one_default_key() -> None:
