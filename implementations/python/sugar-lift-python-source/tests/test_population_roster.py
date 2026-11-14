@@ -4,9 +4,8 @@ Board 33982802518: cmResolutions constructed 0 / cited-opaque 5,812 /
 unconstructed 2,245, because stdlib was refused by KIND and every
 non-corpus distribution by absence from a one-name roster. The population
 is the corpus distribution plus every top-level module the code imports,
-read from the one import table (#7837, #7851). No package name is listed in
-code; ``SUGAR_ENROLLED_POPULATIONS`` may still declare more, optionally one
-module at a time (``cpython-stdlib:contextlib``).
+read from the one import table (#7837, #7851, #7859). No package name is
+listed in code or in the environment.
 """
 
 from __future__ import annotations
@@ -14,15 +13,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from sugar_lift_python_source import resolution_session
 from sugar_lift_python_source.resolution_session import (
-    ENROLLED_POPULATIONS_ENV,
     SourceResolutionSession,
     clear_walk_sessions,
-    declared_extra_populations,
-    enrolled_population_roster,
     population_admits,
 )
 from sugar_lift_py_tests.context_manager_contract import (
@@ -46,18 +40,12 @@ from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
 
 
-def test_no_package_name_is_listed_in_code(monkeypatch) -> None:
-    """Nothing is enrolled by a hard-coded name: with nothing declared, the
-    roster is the corpus distribution alone."""
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
+def test_no_package_name_is_listed_in_code_or_the_environment() -> None:
+    """Nothing is enrolled by a hard-coded name or a declared list: the
+    population is the corpus distribution plus what the code imports."""
     assert not hasattr(resolution_session, "STANDING_EXTRA_POPULATIONS")
-    assert declared_extra_populations() == frozenset()
-    assert enrolled_population_roster("pandas") == frozenset({"pandas"})
-    monkeypatch.setenv(ENROLLED_POPULATIONS_ENV, "pytest, cpython-stdlib:contextlib ,numpy")
-    assert declared_extra_populations() == frozenset(
-        {"pytest", "cpython-stdlib:contextlib", "numpy"}
-    )
-    assert "pandas" in enrolled_population_roster("pandas")
+    assert not hasattr(resolution_session, "ENROLLED_POPULATIONS_ENV")
+    assert not hasattr(resolution_session, "declared_extra_populations")
 
 
 def test_an_import_admits_its_own_top_level_module_only() -> None:
@@ -70,15 +58,6 @@ def test_an_import_admits_its_own_top_level_module_only() -> None:
     # No module, no admission by import: an import never admits a module no
     # artifact authenticates.
     assert not population_admits(roster, "contextlib", None, imported)
-
-
-def test_malformed_entries_refuse(monkeypatch) -> None:
-    monkeypatch.setenv(ENROLLED_POPULATIONS_ENV, "cpython-stdlib:contextlib.nullcontext")
-    with pytest.raises(TypeError, match="not a distribution name"):
-        declared_extra_populations()
-    monkeypatch.setenv(ENROLLED_POPULATIONS_ENV, "pytest raises")
-    with pytest.raises(TypeError):
-        declared_extra_populations()
 
 
 def test_module_scoped_entry_admits_only_its_module() -> None:
@@ -125,7 +104,7 @@ def _open(root: Path, name: str, *, session=None):
     return open_source_file_for_construction(root / name, **kwargs)
 
 
-def test_population_follows_from_imports_alone(tmp_path, monkeypatch) -> None:
+def test_population_follows_from_imports_alone(tmp_path) -> None:
     """A corpus-only roster, nothing declared, no distribution passed: the
     one thing that enrolls contextlib is that the code imports it.
 
@@ -148,7 +127,6 @@ def test_population_follows_from_imports_alone(tmp_path, monkeypatch) -> None:
     )
     from sugar_source_tree.tree import SourceFile
 
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
     root = _corpus(tmp_path, **{"nc.py": NULLCONTEXT})
     path = root / "nc.py"
     source = path.read_text(encoding="utf-8")
@@ -171,10 +149,9 @@ def test_population_follows_from_imports_alone(tmp_path, monkeypatch) -> None:
     assert isinstance(ref, SourceDerivedContextManagerRefV1), ref
 
 
-def test_importing_contextlib_stops_citing_nullcontext(tmp_path, monkeypatch) -> None:
+def test_importing_contextlib_stops_citing_nullcontext(tmp_path) -> None:
     """Truthful twin: the code imports contextlib, so nullcontext is derived
     from its source as a protocol resource that never suppresses."""
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
     source = (
         "from contextlib import nullcontext\n"
         "\n"

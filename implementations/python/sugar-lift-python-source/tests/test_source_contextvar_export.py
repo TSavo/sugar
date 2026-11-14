@@ -36,10 +36,7 @@ from sugar_lift_python_source.dependency_export_adapter import resolve_export
 from sugar_lift_python_source.language_owned_c_export import (
     floor_source_contextvar_export,
 )
-from sugar_lift_python_source.resolution_session import (
-    ENROLLED_POPULATIONS_ENV,
-    SourceResolutionSession,
-)
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.panic import SugarNotWritten
 
 from test_numpy_errstate_construction import _corpus, _with_resolution
@@ -139,10 +136,7 @@ def test_any_other_shape_keeps_the_gap(source):
     assert _floor(source) is None
 
 
-def test_with_np_printoptions_now_resolves_its_generator_manager(
-    tmp_path, monkeypatch
-):
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
+def test_with_np_printoptions_now_resolves_its_generator_manager(tmp_path):
     root = _corpus(
         tmp_path,
         **{

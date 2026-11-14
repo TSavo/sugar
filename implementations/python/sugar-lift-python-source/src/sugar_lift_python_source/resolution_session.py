@@ -94,7 +94,6 @@ from __future__ import annotations
 
 import collections
 import os
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -110,41 +109,6 @@ _ROSTER_UNSET = object()
 # retained frame_holds for every projected SourceFile forever recreated the
 # "shared context degrades across opens" disease at corpus scale.
 _DEFAULT_FRAME_MEMO_LIMIT = 512
-
-
-ENROLLED_POPULATIONS_ENV = "SUGAR_ENROLLED_POPULATIONS"
-
-_POPULATION_ENTRY = re.compile(r"^[A-Za-z0-9_.\-]+(:[A-Za-z_][A-Za-z0-9_]*)?$")
-
-def declared_extra_populations() -> frozenset[str]:
-    """The extra authenticated source populations this measurement enrolls.
-
-    No package name is hard-coded here: what the code imports enrolls itself
-    (``SourceUnit.imported_modules``, read from the one import table, and
-    ``population_admits``'s ``imported``). ``SUGAR_ENROLLED_POPULATIONS`` is a
-    comma list that may add more entries. An entry is a distribution name as
-    its dependency graph spells
-    it (``pytest``, ``numpy``, ``cpython-stdlib``) or a module-scoped form
-    ``<distribution>:<top-level module>`` (``cpython-stdlib:contextlib``)
-    that enrolls one module of a distribution so a population can be widened
-    one module at a time and measured (plan Cut 1). Malformed entries refuse.
-    """
-    raw = os.environ.get(ENROLLED_POPULATIONS_ENV, "")
-    entries = frozenset(item.strip() for item in raw.split(",") if item.strip())
-    for entry in entries:
-        if not _POPULATION_ENTRY.match(entry):
-            raise TypeError(
-                f"{ENROLLED_POPULATIONS_ENV} entry {entry!r} is not a distribution "
-                "name or '<distribution>:<module>'"
-            )
-    return entries
-
-
-def enrolled_population_roster(distribution: str) -> frozenset[str]:
-    """The corpus distribution plus every declared extra population."""
-    if not isinstance(distribution, str) or not distribution:
-        raise TypeError("enrolled_population_roster requires the corpus distribution")
-    return frozenset({distribution}) | declared_extra_populations()
 
 
 def population_admits(

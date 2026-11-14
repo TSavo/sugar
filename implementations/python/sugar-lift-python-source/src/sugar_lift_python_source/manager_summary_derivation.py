@@ -1816,13 +1816,14 @@ def populate_source_derived_resource_refs(
             distribution=distribution,
         )
     if distribution is not None:
-        from .resolution_session import enrolled_population_roster
+        from .resolution_session import _require_enrolled_distribution_roster
 
         # Never NARROW a session's declared population mid-walk: the walk
         # session was minted with the full roster; this open contributes its
-        # corpus distribution to it.
-        session.enrolled_distributions = enrolled_population_roster(
-            distribution
+        # corpus distribution to it. What the code imports joins through
+        # ``imported_modules``, never through a declared list.
+        session.enrolled_distributions = _require_enrolled_distribution_roster(
+            frozenset({distribution})
         ) | (session.enrolled_distributions or frozenset())
     elif session.enrolled_distributions is None:
         raise MissingEnrolledDistributionRoster(

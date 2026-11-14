@@ -105,22 +105,18 @@ def test_a_cross_wired_keyword_projection_is_refused(variant):
         )
 
 
-def test_printoptions_reads_its_keyword_through_kwargs(tmp_path, monkeypatch):
+def test_printoptions_reads_its_keyword_through_kwargs(tmp_path):
     """``np.printoptions(precision=3)`` binds ``kwargs`` and enters its body.
 
     It used to refuse at ``**kwargs`` (``unspecialized source-call formal``);
     now ``precision=3`` and ``printoptions()`` reach the same point inside
     ``_set_printoptions``.
     """
-    from sugar_lift_python_source.resolution_session import (
-        ENROLLED_POPULATIONS_ENV,
-        SourceResolutionSession,
-    )
+    from sugar_lift_python_source.resolution_session import SourceResolutionSession
     from sugar_source_tree.panic import SugarNotWritten
 
     from test_numpy_errstate_construction import _corpus, _open
 
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
     observed = {}
     for label, call in (("bare", "np.printoptions()"), ("kw", "np.printoptions(precision=3)")):
         (tmp_path / label).mkdir()

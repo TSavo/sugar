@@ -17,10 +17,7 @@ from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
-from sugar_lift_python_source.resolution_session import (
-    ENROLLED_POPULATIONS_ENV,
-    SourceResolutionSession,
-)
+from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import FunctionDef
 
 from test_numpy_errstate_construction import _corpus, _open
@@ -48,8 +45,7 @@ def _exits(tmp_path):
     return outcome_to_exitset(func.sugar().desugar()).exits
 
 
-def test_printoptions_cleanup_reads_the_frame(tmp_path, monkeypatch):
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
+def test_printoptions_cleanup_reads_the_frame(tmp_path):
     exits = _exits(tmp_path)
     returned = [
         statement.value

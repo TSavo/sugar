@@ -11,10 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from sugar_lift_python_source.resolution_session import (
-    ENROLLED_POPULATIONS_ENV,
-    clear_walk_sessions,
-)
+from sugar_lift_python_source.resolution_session import clear_walk_sessions
 from sugar_lift_py_tests.context_manager_contract import (
     EffectBoundarySemanticsV1,
     NeverSuppressesDispositionV1,
@@ -87,8 +84,7 @@ def _helpers(name: str) -> str:
     )
 
 
-def _assert_constructed(tmp_path: Path, monkeypatch, source: str) -> None:
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
+def _assert_constructed(tmp_path: Path, source: str) -> None:
     root = _corpus(tmp_path, **{"t.py": source})
     source_file = _open(root, "t.py")
     refs = source_file.root.unit.construction_context.source_derived_contract_refs
@@ -129,19 +125,19 @@ def _assert_constructed(tmp_path: Path, monkeypatch, source: str) -> None:
     assert halted[0].effect.exception_name == "ValueError"
 
 
-def test_stringio_never_suppresses(tmp_path, monkeypatch) -> None:
-    _assert_constructed(tmp_path, monkeypatch, _helpers("stringio"))
+def test_stringio_never_suppresses(tmp_path) -> None:
+    _assert_constructed(tmp_path, _helpers("stringio"))
 
 
-def test_bytesio_never_suppresses(tmp_path, monkeypatch) -> None:
-    _assert_constructed(tmp_path, monkeypatch, _helpers("bytesio"))
+def test_bytesio_never_suppresses(tmp_path) -> None:
+    _assert_constructed(tmp_path, _helpers("bytesio"))
 
 
-def test_from_io_import_stringio_never_suppresses(tmp_path, monkeypatch) -> None:
-    _assert_constructed(tmp_path, monkeypatch, _helpers("from_import"))
+def test_from_io_import_stringio_never_suppresses(tmp_path) -> None:
+    _assert_constructed(tmp_path, _helpers("from_import"))
 
 
-def test_io_open_is_not_the_iobase_floor(tmp_path, monkeypatch) -> None:
+def test_io_open_is_not_the_iobase_floor(tmp_path) -> None:
     """Lying twin: the _io floor is not a blanket enrollment of every C export.
 
     ``_io.open`` is a C function, so it constructs under the generic C-owned
@@ -155,7 +151,6 @@ def test_io_open_is_not_the_iobase_floor(tmp_path, monkeypatch) -> None:
         LanguageOwnedCManagerProtocol,
     )
 
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
     source = (
         "import io\n"
         "\n"

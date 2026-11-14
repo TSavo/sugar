@@ -25,7 +25,6 @@ from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResou
 from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_lift_python_source.resolution_session import (
-    ENROLLED_POPULATIONS_ENV,
     SourceResolutionSession,
     clear_walk_sessions,
 )
@@ -81,9 +80,9 @@ def _with_resolution(root: Path, name: str, *, session):
     return refs[site]
 
 
-def test_unenrolled_errstate_stays_call_target_off_population(tmp_path, monkeypatch) -> None:
-    """Standing extras include numpy, so this membrane control does not
-    pass ``distribution`` into populate (that door would re-widen)."""
+def test_unenrolled_errstate_stays_call_target_off_population(tmp_path) -> None:
+    """The code imports numpy, so this membrane control does not pass
+    ``distribution`` into populate (that door would widen the population)."""
     from sugar_lift_py_tests.canonicalizer import blake3_512_of
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
@@ -93,7 +92,6 @@ def test_unenrolled_errstate_stays_call_target_off_population(tmp_path, monkeypa
     )
     from sugar_source_tree.tree import SourceFile
 
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
     root = _corpus(tmp_path, **{"e.py": ERRSTATE})
     path = root / "e.py"
     source = path.read_text(encoding="utf-8")
@@ -116,8 +114,7 @@ def test_unenrolled_errstate_stays_call_target_off_population(tmp_path, monkeypa
     assert ref.roster.target_name == "python:numpy.errstate"
 
 
-def test_enrolled_errstate_constructs_with_its_c_call_enter_faces(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
+def test_enrolled_errstate_constructs_with_its_c_call_enter_faces(tmp_path) -> None:
     root = _corpus(tmp_path, **{"e.py": ERRSTATE})
     session = SourceResolutionSession(
         enrolled_distributions=frozenset({"tiny-corpus", "numpy"})
@@ -152,8 +149,7 @@ def test_enrolled_errstate_constructs_with_its_c_call_enter_faces(tmp_path, monk
     assert any("_make_extobj" in face.effect.producer_node_owner for face in halted)
 
 
-def test_enrolled_errstate_does_not_suppress_a_body_raise(tmp_path, monkeypatch) -> None:
-    monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
+def test_enrolled_errstate_does_not_suppress_a_body_raise(tmp_path) -> None:
     root = _corpus(tmp_path, **{"e.py": ERRSTATE_RAISE})
     session = SourceResolutionSession(
         enrolled_distributions=frozenset({"tiny-corpus", "numpy"})

@@ -1571,10 +1571,10 @@ def _graph_is_off_population(
     enrolled distribution that fails authentication is a defect, kept loud by
     the caller).
 
-    POPULATION FOLLOWS IMPORTS. The population is the corpus distribution,
+    POPULATION FOLLOWS IMPORTS. The population is the corpus distribution and
     every top-level module the opened code imports (``session.imported_modules``,
-    read from the one import table), and whatever the measurement declares
-    (``enrolled_population_roster``). No package name is listed in code.
+    read from the one import table). No package name is listed in code or in
+    the environment.
     An import admits only an authenticated graph's module: ``graph=None``
     stays cited unless a distribution-level entry names it. Nothing is
     refused by kind; stdlib used to be refused unconditionally, which is why

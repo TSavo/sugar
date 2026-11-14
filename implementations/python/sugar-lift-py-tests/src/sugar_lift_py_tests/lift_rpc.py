@@ -420,10 +420,7 @@ def open_source_file_for_construction(
     as it does at the ``context-manager-resolutions`` level: a halt is not
     turned into a file that opened (#7795).
     """
-    from sugar_lift_python_source.resolution_session import (
-        enrolled_population_roster,
-        walk_session_for,
-    )
+    from sugar_lift_python_source.resolution_session import walk_session_for
     from sugar_lift_python_source.source_oracle import workspace_path_source
     from sugar_source_tree.reporter import NULL_REPORTER
     from sugar_source_tree.tree import SourceFile
@@ -486,7 +483,7 @@ def open_source_file_for_construction(
                 )
             session = walk_session_for(
                 root,
-                enrolled_distributions=enrolled_population_roster(distribution),
+                enrolled_distributions=frozenset({distribution}),
             )
         populate_source_derived_resource_refs(
             source_file,
@@ -2572,9 +2569,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     populate_source_derived_resource_refs,
                 )
                 from sugar_lift_python_source.resolution_session import (
-        enrolled_population_roster,
-        walk_session_for,
-    )
+                    walk_session_for,
+                )
 
                 # Walk-scoped multi-resolve owner: same session as other opens
                 # under this workspace root (census / re-open amortization).
@@ -2595,7 +2591,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         path=full_path,
                         session=walk_session_for(
                             root,
-                            enrolled_distributions=enrolled_population_roster(distribution),
+                            enrolled_distributions=frozenset({distribution}),
                         ),
                         source_workspace_root=locus_root,
                         distribution=distribution,
