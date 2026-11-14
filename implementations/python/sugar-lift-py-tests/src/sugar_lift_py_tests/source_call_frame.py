@@ -421,6 +421,13 @@ class BoundSourceCallActualsV1:
         return carrier.discharge(ctx, projected)
 
 
+def _constructing_module_execution_site():
+    """The module execution site the frame being constructed is under."""
+    from sugar_source_tree.nodes import current_module_execution_site
+
+    return current_module_execution_site()
+
+
 @dataclass(frozen=True)
 class SourceVisibleCallFrameV1:
     """A body constructed by FunctionDef through the ordinary tree door."""
@@ -464,6 +471,18 @@ class SourceVisibleCallFrameV1:
     #: looked up before the call): its ``cls`` formal is not a parameter.
     bound_receiver_class: object | None = field(default=None, compare=False)
     declaration_frame_cid: str | None = field(default=None, compare=False)
+    #: Where the call this frame was constructed for runs while its module
+    #: body runs (``sugar_source_tree.nodes.ModuleExecutionSiteV1``), or None:
+    #: called from outside the module's execution.  A body reads a module
+    #: global as the module binds it there, so the frame read again at reduce
+    #: is read at the same site (``CallSiteSugar.desugar``).  A lookup aid,
+    #: never testimony: what the site decided is in the body.
+    module_execution_site: object | None = field(
+        default_factory=lambda: _constructing_module_execution_site(),
+        compare=False,
+        repr=False,
+        metadata={"testimony": "lookup"},
+    )
     frame_cid: str = field(init=False)
 
     def __post_init__(self) -> None:
