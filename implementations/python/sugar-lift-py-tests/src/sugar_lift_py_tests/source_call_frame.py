@@ -658,12 +658,26 @@ class SourceVisibleCallFrameV1:
                 value = named.pop(name)
                 present = True
             if not present and default is not None:
-                from sugar_lift_py_tests.outcome import Complete
+                from sugar_lift_py_tests.outcome import (
+                    NativeOperationExitCarrierV1,
+                    outcome_to_exitset,
+                )
 
                 outcome = default.desugar(ctx)
-                if not isinstance(outcome, Complete):
+                exits = (
+                    None
+                    if isinstance(outcome, NativeOperationExitCarrierV1)
+                    else outcome_to_exitset(outcome)
+                )
+                # One completed arm under truth that owes nothing: a default
+                # that owes would drop its debt into the bound actual.
+                value = (
+                    None
+                    if exits is None or exits.owed_items()
+                    else exits.completed_value()
+                )
+                if value is None:
                     raise SourceCallBindingGap("default did not construct completely")
-                value = outcome.value
                 present = True
             if not present:
                 raise SourceCallBindingGap(f"missing required formal {index}")

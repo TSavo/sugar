@@ -1485,7 +1485,6 @@ class GeneratorConstructionV1:
                 from sugar_lift_py_tests.caller_parameter_contract import (
                     NativeOperationExitCarrierV1,
                 )
-                from sugar_lift_py_tests.outcome import Complete, Incomplete
                 from sugar_source_tree.panic import SugarNotWritten
 
                 result = transition_assign(resolved_value)
@@ -1500,97 +1499,84 @@ class GeneratorConstructionV1:
                             "normalization"
                         ),
                     )
-                if isinstance(
-                    result, (Incomplete, ExitSet, NativeOperationExitCarrierV1)
-                ):
+                if isinstance(result, (ExitSet, NativeOperationExitCarrierV1)):
                     return result
-                return Complete(result)
+                return ExitSet.completed(result)
 
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
             )
-            from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
 
             if _halts_with_a_raise(value):
                 # The value raised: the step halts with the machine's state and
                 # still runs any already-written cited exit (as the attribute
                 # store, assert and term steps do for their halts).
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet.halted(value.effect, state=self)
-                )
-            if isinstance(value, NativeOperationExitCarrierV1):
+                return self._fold_pending_cited_opaque_exits(self._halts_here(value))
+            if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
                 return value.and_then(continue_assign)
-            if isinstance(value, (Incomplete, ExitSet)):
-                return outcome_to_exitset(value).and_then(continue_assign)
             return transition_assign(value)
         if isinstance(step, AttributeAssignStepV1):
-            from sugar_lift_py_tests.outcome import Complete, Incomplete
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
                 AttributeStoreEffectSugar,
             )
 
-            outcome = AttributeStoreEffectSugar(
-                receiver=step.receiver,
-                value=step.value,
-                attr=step.attr,
-                site=step.occurrence,
-            ).desugar(self._guard_evaluation_context())
-            if isinstance(outcome, Incomplete):
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet.halted(outcome.effect, state=self)
-                )
-            if isinstance(outcome, ExitSet):
-                # An undecided receiver's store answers its two faces
-                # (``store_faces``): the halted face leaves the machine here,
-                # the completed face resumes past the store (#7827 item 4).
-                return self._transition_term_exitset(step, outcome, requested)
-            if not isinstance(outcome, Complete):
+            outcome = _step_exits(
+                AttributeStoreEffectSugar(
+                    receiver=step.receiver,
+                    value=step.value,
+                    attr=step.attr,
+                    site=step.occurrence,
+                ).desugar(self._guard_evaluation_context())
+            )
+            if not isinstance(outcome, ExitSet):
                 return self._gap(
                     requested, f"attribute store returned {type(outcome).__name__}"
                 )
+            if not _plain_completion(outcome):
+                # A halt, or an undecided receiver's store answering its two
+                # faces (``store_faces``): the halted face leaves the machine
+                # here, the completed face resumes past the store (#7827
+                # item 4).
+                return self._transition_term_exitset(step, outcome, requested)
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, AssertStepV1):
-            from sugar_lift_py_tests.outcome import Complete, Incomplete
-
-            outcome = step.assert_sugar.desugar(self._guard_evaluation_context())
-            if isinstance(outcome, Incomplete):
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet.halted(outcome.effect, state=self)
-                )
-            if not isinstance(outcome, Complete):
+            outcome = _step_exits(
+                step.assert_sugar.desugar(self._guard_evaluation_context())
+            )
+            if _every_arm_halts(outcome):
+                return self._fold_pending_cited_opaque_exits(self._halts_here(outcome))
+            if not _plain_completion(outcome):
                 return self._gap(requested, f"assert returned {type(outcome).__name__}")
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, ImportFromStepV1):
-            from sugar_lift_py_tests.outcome import Complete
-
-            outcome = step.import_sugar.desugar(self._guard_evaluation_context())
-            if not isinstance(outcome, Complete):
+            outcome = _step_exits(
+                step.import_sugar.desugar(self._guard_evaluation_context())
+            )
+            if not _plain_completion(outcome):
                 return self._gap(
                     requested, f"import-from returned {type(outcome).__name__}"
                 )
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, ImportStepV1):
-            from sugar_lift_py_tests.outcome import Complete
-
-            outcome = step.import_sugar.desugar(self._guard_evaluation_context())
-            if not isinstance(outcome, Complete):
+            outcome = _step_exits(
+                step.import_sugar.desugar(self._guard_evaluation_context())
+            )
+            if not _plain_completion(outcome):
                 return self._gap(requested, f"import returned {type(outcome).__name__}")
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, WhileStepV1):
-            from sugar_lift_py_tests.outcome import Complete, Incomplete
-
             guard_outcome = self._guard_truth(step.guard)
-            if isinstance(guard_outcome, Incomplete):
+            if _every_arm_halts(guard_outcome):
                 return self._fold_pending_cited_opaque_exits(
-                    ExitSet.halted(guard_outcome.effect, state=self)
+                    self._halts_here(guard_outcome)
                 )
-            if not isinstance(guard_outcome, Complete):
+            if not _plain_completion(guard_outcome):
                 return self._gap(requested, "While guard is not ground")
-            decided = self._decide_guard(guard_outcome.value)
+            decided = self._decide_guard(guard_outcome.completed_value())
             if decided is False:
                 machine = replace(self, cursor=self.cursor + 1)
                 return machine._transition(requested)
@@ -1598,35 +1584,32 @@ class GeneratorConstructionV1:
                 return self._spliced((*step.body_steps, step))._transition(requested)
             return self._gap(requested, "While guard is not ground")
         if isinstance(step, RaiseStepV1):
-            from sugar_lift_py_tests.outcome import Incomplete
-
-            outcome = step.raise_sugar.desugar(self._guard_evaluation_context())
-            if isinstance(outcome, Incomplete):
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet.halted(outcome.effect, state=self)
-                )
+            outcome = _step_exits(
+                step.raise_sugar.desugar(self._guard_evaluation_context())
+            )
+            if _every_arm_halts(outcome):
+                return self._fold_pending_cited_opaque_exits(self._halts_here(outcome))
             return self._gap(
                 requested, f"raise did not halt ({type(outcome).__name__})"
             )
         if isinstance(step, TermStepV1):
-            from sugar_lift_py_tests.outcome import Complete, Incomplete
             from sugar_source_tree.panic import SugarNotWritten
 
             # A ConstructionPanic from the term is its own named refusal: it
             # propagates with its owner, requested, and observed intact. It is
             # never rewritten into a transition gap.
             try:
-                outcome = step.term.desugar(self._guard_evaluation_context())
+                outcome = _step_exits(
+                    step.term.desugar(self._guard_evaluation_context())
+                )
             except SugarNotWritten as exc:
                 return self._gap(requested, str(exc.observed))
-            if isinstance(outcome, Incomplete):
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet.halted(outcome.effect, state=self)
-                )
-            if isinstance(outcome, ExitSet):
-                return self._transition_term_exitset(step, outcome, requested)
-            if not isinstance(outcome, Complete):
+            if not isinstance(outcome, ExitSet):
                 return self._gap(requested, type(outcome).__name__)
+            if not _plain_completion(outcome):
+                # A halt leaves the machine here (with any written cited
+                # exit folded over it); a two-faced value splits it.
+                return self._transition_term_exitset(step, outcome, requested)
             machine = replace(self, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, ForStepV1):
@@ -1684,9 +1667,7 @@ class GeneratorConstructionV1:
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
             )
-            from sugar_lift_py_tests.outcome import Incomplete
-
-            if isinstance(value, (Incomplete, ExitSet, NativeOperationExitCarrierV1)):
+            if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
                 return self._gap(
                     requested, "yield value inside try/except may raise"
                 )
@@ -1705,7 +1686,6 @@ class GeneratorConstructionV1:
                 )
 
             def continue_return(resolved_value):
-                from sugar_lift_py_tests.outcome import Complete, ExitSet
                 from sugar_source_tree.panic import SugarNotWritten
 
                 result = transition_return(resolved_value)
@@ -1722,24 +1702,19 @@ class GeneratorConstructionV1:
                     )
                 if isinstance(result, ExitSet):
                     return result
-                return Complete(result)
+                return ExitSet.completed(result)
 
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
             )
-            from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
 
             if _halts_with_a_raise(value):
                 # The value raised: the step halts with the machine's state and
                 # still runs any already-written cited exit (as the attribute
                 # store, assert and term steps do for their halts).
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet.halted(value.effect, state=self)
-                )
-            if isinstance(value, NativeOperationExitCarrierV1):
+                return self._fold_pending_cited_opaque_exits(self._halts_here(value))
+            if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
                 return value.and_then(continue_return)
-            if isinstance(value, (Incomplete, ExitSet)):
-                return outcome_to_exitset(value).and_then(continue_return)
             return transition_return(value)
         value = self._reduce_value(step.value, requested)
         if isinstance(value, GeneratorTransitionGapV1):
@@ -1755,7 +1730,6 @@ class GeneratorConstructionV1:
             return YieldEffect(resolved_value, resume_coordinate, machine)
 
         def continue_yield(resolved_value):
-            from sugar_lift_py_tests.outcome import Complete, ExitSet
             from sugar_source_tree.panic import SugarNotWritten
 
             result = transition_yield(resolved_value)
@@ -1772,49 +1746,41 @@ class GeneratorConstructionV1:
                 )
             if isinstance(result, ExitSet):
                 return result
-            return Complete(result)
+            return ExitSet.completed(result)
 
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
-        from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
 
         if _halts_with_a_raise(value):
             # The value raised: the step halts with the machine's state and
             # still runs any already-written cited exit (as the attribute
             # store, assert and term steps do for their halts).
-            return self._fold_pending_cited_opaque_exits(
-                ExitSet.halted(value.effect, state=self)
-            )
-        if isinstance(value, NativeOperationExitCarrierV1):
+            return self._fold_pending_cited_opaque_exits(self._halts_here(value))
+        if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
             return value.and_then(continue_yield)
-        if isinstance(value, (Incomplete, ExitSet)):
-            return outcome_to_exitset(value).and_then(continue_yield)
         return transition_yield(value)
 
     def _transition_for(self, step: ForStepV1, requested: str):
         from sugar_lift_py_tests.operations import IteratorOperation
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        iterable = step.iterable.desugar(self._guard_evaluation_context())
-        if isinstance(iterable, Incomplete):
-            return self._fold_pending_cited_opaque_exits(
-                ExitSet.halted(iterable.effect, state=self)
-            )
-        if not isinstance(iterable, Complete):
+        iterable = _step_exits(step.iterable.desugar(self._guard_evaluation_context()))
+        if _every_arm_halts(iterable):
+            return self._fold_pending_cited_opaque_exits(self._halts_here(iterable))
+        if not _plain_completion(iterable):
             return self._gap(requested, type(iterable).__name__)
-        iterator = IteratorOperation(
-            owner="GeneratorConstructionV1.ForStepV1.iter",
-            blame=step.occurrence,
-        ).submit(iterable.value, self._guard_evaluation_context())
-        if isinstance(iterator, Incomplete):
-            return self._fold_pending_cited_opaque_exits(
-                ExitSet.halted(iterator.effect, state=self)
-            )
-        if not isinstance(iterator, Complete):
+        iterator = _step_exits(
+            IteratorOperation(
+                owner="GeneratorConstructionV1.ForStepV1.iter",
+                blame=step.occurrence,
+            ).submit(iterable.completed_value(), self._guard_evaluation_context())
+        )
+        if _every_arm_halts(iterator):
+            return self._fold_pending_cited_opaque_exits(self._halts_here(iterator))
+        if not _plain_completion(iterator):
             return self._gap(requested, type(iterator).__name__)
         runtime = _ForIteratorStepV1(
-            iterator.value,
+            iterator.completed_value(),
             step.target_coordinates,
             step.body_steps,
             step.module_cid,
@@ -1829,27 +1795,24 @@ class GeneratorConstructionV1:
 
     def _transition_yield_from(self, step: YieldFromStepV1, requested: str):
         from sugar_lift_py_tests.operations import IteratorOperation
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        iterable = step.iterable.desugar(self._guard_evaluation_context())
-        if isinstance(iterable, Incomplete):
-            return self._fold_pending_cited_opaque_exits(
-                ExitSet.halted(iterable.effect, state=self)
-            )
-        if not isinstance(iterable, Complete):
+        iterable = _step_exits(step.iterable.desugar(self._guard_evaluation_context()))
+        if _every_arm_halts(iterable):
+            return self._fold_pending_cited_opaque_exits(self._halts_here(iterable))
+        if not _plain_completion(iterable):
             return self._gap(requested, type(iterable).__name__)
-        iterator = IteratorOperation(
-            owner="GeneratorConstructionV1.YieldFromStepV1.iter",
-            blame=step.occurrence,
-        ).submit(iterable.value, self._guard_evaluation_context())
-        if isinstance(iterator, Incomplete):
-            return self._fold_pending_cited_opaque_exits(
-                ExitSet.halted(iterator.effect, state=self)
-            )
-        if not isinstance(iterator, Complete):
+        iterator = _step_exits(
+            IteratorOperation(
+                owner="GeneratorConstructionV1.YieldFromStepV1.iter",
+                blame=step.occurrence,
+            ).submit(iterable.completed_value(), self._guard_evaluation_context())
+        )
+        if _every_arm_halts(iterator):
+            return self._fold_pending_cited_opaque_exits(self._halts_here(iterator))
+        if not _plain_completion(iterator):
             return self._gap(requested, type(iterator).__name__)
         runtime = _YieldFromIteratorStepV1(
-            iterator.value, step.occurrence, step.occurrence_cid
+            iterator.completed_value(), step.occurrence, step.occurrence_cid
         )
         machine = replace(
             self,
@@ -1868,33 +1831,37 @@ class GeneratorConstructionV1:
         from sugar_lift_py_tests.floor.ground_exit import ground_raise_effect
         from sugar_lift_py_tests.floor.iterator_value import NextResult
         from sugar_lift_py_tests.operations import NextOperation
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        outcome = NextOperation(
-            owner="GeneratorConstructionV1.YieldFromStepV1.next",
-            blame=step.occurrence,
-        ).submit(step.iterator, self._guard_evaluation_context())
-        if isinstance(outcome, Incomplete):
-            effect = outcome.effect
+        outcome = _step_exits(
+            NextOperation(
+                owner="GeneratorConstructionV1.YieldFromStepV1.next",
+                blame=step.occurrence,
+            ).submit(step.iterator, self._guard_evaluation_context())
+        )
+        if _every_arm_halts(outcome):
+            halts = outcome.halts()
+            effect = halts[0].effect
             stop_identity = ground_raise_effect(
                 exception_name="StopIteration",
                 site=step.occurrence,
                 owner="GeneratorConstructionV1.YieldFromStepV1.next",
             ).exception_type_coordinate
             if (
-                isinstance(effect, RaiseEffect)
+                len(halts) == 1
+                and isinstance(effect, RaiseEffect)
                 and effect.exception_type_coordinate == stop_identity
                 and effect.occurrence_id == str(step.occurrence)
             ):
                 machine = replace(self, cursor=self.cursor + 1)
                 return machine._transition(requested)
-            return ExitSet.halted(effect, state=self)
-        if not isinstance(outcome, Complete) or not isinstance(
-            outcome.value, NextResult
+            return self._halts_here(outcome)
+        if not _plain_completion(outcome) or not isinstance(
+            outcome.completed_value(), NextResult
         ):
             return self._gap(requested, f"next_with returned {type(outcome).__name__}")
+        next_result = outcome.completed_value()
 
-        runtime = replace(step, iterator=outcome.value.advanced)
+        runtime = replace(step, iterator=next_result.advanced)
         machine = replace(
             self,
             steps=(
@@ -1905,7 +1872,7 @@ class GeneratorConstructionV1:
         )
         resume_coordinate = f"{self.instance_coordinate}:resume:{self.cursor + 1}"
         machine = replace(machine, suspended_resume_coordinate=resume_coordinate)
-        return YieldEffect(outcome.value.value, resume_coordinate, machine)
+        return YieldEffect(next_result.value, resume_coordinate, machine)
 
     def _transition_for_iterator(self, step: _ForIteratorStepV1, requested: str):
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
@@ -1916,31 +1883,34 @@ class GeneratorConstructionV1:
             PositionalUnpackOperation,
             UnpackMemberRoster,
         )
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
-
-        outcome = NextOperation(
-            owner="GeneratorConstructionV1.ForStepV1.next",
-            blame=step.occurrence,
-        ).submit(step.iterator, self._guard_evaluation_context())
-        if isinstance(outcome, Incomplete):
-            effect = outcome.effect
+        outcome = _step_exits(
+            NextOperation(
+                owner="GeneratorConstructionV1.ForStepV1.next",
+                blame=step.occurrence,
+            ).submit(step.iterator, self._guard_evaluation_context())
+        )
+        if _every_arm_halts(outcome):
+            halts = outcome.halts()
+            effect = halts[0].effect
             stop_identity = ground_raise_effect(
                 exception_name="StopIteration",
                 site=step.occurrence,
                 owner="GeneratorConstructionV1.ForStepV1.next",
             ).exception_type_coordinate
             if (
-                isinstance(effect, RaiseEffect)
+                len(halts) == 1
+                and isinstance(effect, RaiseEffect)
                 and effect.exception_type_coordinate == stop_identity
                 and effect.occurrence_id == str(step.occurrence)
             ):
                 machine = replace(self, cursor=self.cursor + 1)
                 return machine._transition(requested)
-            return ExitSet.halted(effect, state=self)
-        if not isinstance(outcome, Complete) or not isinstance(
-            outcome.value, NextResult
+            return self._halts_here(outcome)
+        if not _plain_completion(outcome) or not isinstance(
+            outcome.completed_value(), NextResult
         ):
             return self._gap(requested, f"next_with returned {type(outcome).__name__}")
+        next_result = outcome.completed_value()
 
         if (
             len(step.target_coordinates) == 1
@@ -1951,36 +1921,39 @@ class GeneratorConstructionV1:
             bindings = (
                 GeneratorLoopBindingV1(
                     step.target_coordinates[0],
-                    outcome.value.value,
+                    next_result.value,
                     step.occurrence,
                     fragment_cid=step.fragment_cid,
                 ),
             )
         else:
-            unpack = PositionalUnpackOperation(
-                fixed_prefix=len(step.target_coordinates),
-                fixed_suffix=0,
-                has_star=False,
-                owner="GeneratorConstructionV1.ForStepV1.target",
-                blame=step.occurrence,
-            ).submit(outcome.value.value, self._guard_evaluation_context())
-            if isinstance(unpack, Incomplete):
-                return ExitSet.halted(unpack.effect, state=self)
-            if not isinstance(unpack, Complete) or not isinstance(
-                unpack.value, UnpackMemberRoster
+            unpack = _step_exits(
+                PositionalUnpackOperation(
+                    fixed_prefix=len(step.target_coordinates),
+                    fixed_suffix=0,
+                    has_star=False,
+                    owner="GeneratorConstructionV1.ForStepV1.target",
+                    blame=step.occurrence,
+                ).submit(next_result.value, self._guard_evaluation_context())
+            )
+            if _every_arm_halts(unpack):
+                return self._halts_here(unpack)
+            if not _plain_completion(unpack) or not isinstance(
+                unpack.completed_value(), UnpackMemberRoster
             ):
                 return self._gap(
                     requested, f"target unpack returned {type(unpack).__name__}"
                 )
+            roster = unpack.completed_value()
             bindings = tuple(
                 GeneratorLoopBindingV1(
-                    coordinate, member, unpack.value.occurrence, unpack.value.demand_cid
+                    coordinate, member, roster.occurrence, roster.demand_cid
                 )
                 for coordinate, member in zip(
-                    step.target_coordinates, unpack.value.members, strict=True
+                    step.target_coordinates, roster.members, strict=True
                 )
             )
-        recurrence = replace(step, iterator=outcome.value.advanced)
+        recurrence = replace(step, iterator=next_result.advanced)
         steps = (
             *self.steps[: self.cursor],
             *step.body_steps,
@@ -1994,19 +1967,17 @@ class GeneratorConstructionV1:
 
     def _transition_nested_manager(self, step: NestedManagerStepV1, requested: str):
         """Enter nested protocol, bind entered state, splice body + exit step."""
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
-
         enter = getattr(step.nested_protocol, "enter_resource_outcome", None)
         if not callable(enter):
             return self._gap(requested, "nested manager without enter_resource_outcome")
-        outcome = enter()
-        if isinstance(outcome, Incomplete):
+        outcome = _step_exits(enter())
+        if _every_arm_halts(outcome):
             return outcome
-        if not isinstance(outcome, Complete):
+        if not _plain_completion(outcome):
             return self._gap(
                 requested, f"nested enter observed {type(outcome).__name__}"
             )
-        nested_entered = outcome.value
+        nested_entered = outcome.completed_value()
         nested_cid = getattr(
             step.nested_protocol, "protocol_construction_cid", ""
         ) or getattr(nested_entered, "protocol_construction_cid", "")
@@ -2039,7 +2010,6 @@ class GeneratorConstructionV1:
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
-        from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
         from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
             WithOpaqueCitedManagerSugar,
         )
@@ -2101,18 +2071,14 @@ class GeneratorConstructionV1:
                             "normalization"
                         ),
                     )
-                if isinstance(
-                    result, (Incomplete, ExitSet, NativeOperationExitCarrierV1)
-                ):
+                if isinstance(result, (ExitSet, NativeOperationExitCarrierV1)):
                     return result
-                return Complete(result)
+                return ExitSet.completed(result)
 
             return enter_es.and_then(continue_enter)
 
-        if isinstance(manager_value, NativeOperationExitCarrierV1):
+        if isinstance(manager_value, (ExitSet, NativeOperationExitCarrierV1)):
             return manager_value.and_then(continue_with_manager)
-        if isinstance(manager_value, (Incomplete, ExitSet)):
-            return outcome_to_exitset(manager_value).and_then(continue_with_manager)
         return continue_with_manager(manager_value)
 
     def _exit_nested_cited_opaque(
@@ -2183,22 +2149,13 @@ class GeneratorConstructionV1:
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
-        from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
         from sugar_lift_py_tests.outcome.exit_set import Halted
         from sugar_source_tree.panic import SugarNotWritten
 
-        halted = tuple(
-            replace(face, state=self)
-            for face in outcome.exits
-            if isinstance(face, Halted)
-        )
         completed = tuple(face for face in outcome.exits if not isinstance(face, Halted))
         parts = []
-        if halted:
-            folded = self._fold_pending_cited_opaque_exits(ExitSet(halted))
-            parts.append(
-                folded if isinstance(folded, ExitSet) else outcome_to_exitset(folded)
-            )
+        if outcome.halts():
+            parts.append(self._fold_pending_cited_opaque_exits(self._halts_here(outcome)))
         if completed:
             machine = replace(self, cursor=self.cursor + 1)
 
@@ -2215,11 +2172,9 @@ class GeneratorConstructionV1:
                             "normalization"
                         ),
                     )
-                if isinstance(
-                    result, (Incomplete, ExitSet, NativeOperationExitCarrierV1)
-                ):
+                if isinstance(result, (ExitSet, NativeOperationExitCarrierV1)):
                     return result
-                return Complete(result)
+                return ExitSet.completed(result)
 
             parts.append(ExitSet(completed).and_then(continue_term))
         if not parts:
@@ -2242,7 +2197,6 @@ class GeneratorConstructionV1:
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
         from sugar_lift_py_tests.outcome.exit_set import Halted
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -2271,11 +2225,9 @@ class GeneratorConstructionV1:
                         requested=after.requested,
                         fix="implement the transition after the finally cleanup",
                     )
-                if isinstance(
-                    after, (Incomplete, ExitSet, NativeOperationExitCarrierV1)
-                ):
+                if isinstance(after, (ExitSet, NativeOperationExitCarrierV1)):
                     return after
-                return Complete(after)
+                return ExitSet.completed(after)
 
             result = result.union(ExitSet(completed).and_then(continue_after))
         return result
@@ -2347,7 +2299,8 @@ class GeneratorConstructionV1:
         after_with = replace(self, cursor=last + 1)
         return ExitSet(
             tuple(
-                Completed(face.guard, after_with, face.faces)
+                # The suppressed face keeps its guard, faces and owed.
+                replace(face, value=after_with)
                 if isinstance(face, Completed) and face.value is self
                 else face
                 for face in result.exits
@@ -2404,7 +2357,6 @@ class GeneratorConstructionV1:
 
         from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, partition
 
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
@@ -2464,11 +2416,10 @@ class GeneratorConstructionV1:
                 if isinstance(transitioned, GeneratorTransitionGapV1):
                     _refuse_transition(transitioned)
                 if isinstance(
-                    transitioned,
-                    (Incomplete, ExitSet, NativeOperationExitCarrierV1),
+                    transitioned, (ExitSet, NativeOperationExitCarrierV1)
                 ):
                     return transitioned
-                return Complete(transitioned)
+                return ExitSet.completed(transitioned)
 
             transitioned = NativeOperationExitCarrierV1.compose_prefix(
                 branches, _transition_branch_machine
@@ -2479,11 +2430,8 @@ class GeneratorConstructionV1:
                 return ExitSet(
                     tuple(
                         (
-                            Completed(
-                                exit_.guard,
-                                exit_.value,
-                                exit_.faces | branch_faces,
-                            )
+                            # Guard, value and owed stay; the branch faces join.
+                            _replace(exit_, faces=exit_.faces | branch_faces)
                             if isinstance(exit_, Completed)
                             else exit_
                         )
@@ -2504,14 +2452,17 @@ class GeneratorConstructionV1:
                 transitioned, GeneratorTransitionGapV1
             ):
                 _refuse_transition(transitioned)
-            if isinstance(
-                transitioned,
-                (Incomplete, ExitSet, NativeOperationExitCarrierV1),
-            ):
+            if isinstance(transitioned, (ExitSet, NativeOperationExitCarrierV1)):
                 return transitioned
-            return Complete(transitioned)
+            return ExitSet.completed(transitioned)
 
         guard_outcome = self._guard_truth(step.guard)
+        if _every_arm_halts(guard_outcome):
+            return self._fold_pending_cited_opaque_exits(
+                self._halts_here(guard_outcome)
+            )
+        if _plain_completion(guard_outcome):
+            return _transition_truth(guard_outcome.completed_value())
         if isinstance(guard_outcome, ExitSet):
             projected = NativeOperationExitCarrierV1.compose_prefix(
                 guard_outcome, _project_guard_operand
@@ -2519,20 +2470,14 @@ class GeneratorConstructionV1:
         elif isinstance(guard_outcome, NativeOperationExitCarrierV1):
             projected = guard_outcome.and_then(_project_guard_operand)
         else:
-            projected = guard_outcome
-        if isinstance(guard_outcome, Incomplete):
-            return self._fold_pending_cited_opaque_exits(
-                ExitSet.halted(guard_outcome.effect, state=self)
-            )
+            return self._gap(requested, "If carrying a suspension")
         if isinstance(projected, ExitSet):
             return NativeOperationExitCarrierV1.compose_prefix(
                 projected, _transition_projected_truth
             )
         if isinstance(projected, NativeOperationExitCarrierV1):
             return projected.and_then(_transition_projected_truth)
-        if not isinstance(projected, Complete):
-            return self._gap(requested, "If carrying a suspension")
-        return _transition_truth(projected.value)
+        return self._gap(requested, "If carrying a suspension")
 
     def _spliced(self, branch_steps: tuple) -> "GeneratorConstructionV1":
         """This machine with the branch's steps in place of the `If`."""
@@ -2619,7 +2564,6 @@ class GeneratorConstructionV1:
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
-        from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
         from sugar_lift_py_tests.sugar.sugar_base import Sugar
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -2627,30 +2571,28 @@ class GeneratorConstructionV1:
         if isinstance(guard, Sugar):
             ctx = self._guard_evaluation_context()
             try:
-                outcome = guard.desugar(ctx)
+                outcome = _step_exits(guard.desugar(ctx))
             except SugarNotWritten:
                 # Unspecialized / wrong-coordinate formal: not a ground truth.
                 # Surface as undecided (None) so the branch stays a loud gap or
                 # partition path rather than inventing a default.
                 return None
-            if isinstance(outcome, Incomplete):
+            if isinstance(outcome, NativeOperationExitCarrierV1):
                 return outcome
-            if isinstance(outcome, (ExitSet, NativeOperationExitCarrierV1)):
-                return outcome
-            if not isinstance(outcome, Complete):
+            if not isinstance(outcome, ExitSet):
                 return None
-            value = outcome.value
+            if not _plain_completion(outcome):
+                # A halt, a split, or an owing arm: the caller reads the arms.
+                return outcome
+            value = outcome.completed_value()
         truth = getattr(value, "truth", None)
         if truth is None:
             return None
         # ConstructionPanic is BaseException by design so ordinary Exception
         # handlers cannot silence it. Do not catch BaseException here — that
         # would reclassify incomplete floors as undecided suspension gaps.
-        outcome = truth(self.instance_coordinate)
-        if isinstance(
-            outcome,
-            (Complete, Incomplete, ExitSet, NativeOperationExitCarrierV1),
-        ):
+        outcome = _step_exits(truth(self.instance_coordinate))
+        if isinstance(outcome, (ExitSet, NativeOperationExitCarrierV1)):
             return outcome
         return None
 
@@ -2687,7 +2629,6 @@ class GeneratorConstructionV1:
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
         from sugar_lift_py_tests.sugar.sugar_base import Sugar
         from sugar_source_tree.panic import SugarNotWritten
 
@@ -2695,13 +2636,15 @@ class GeneratorConstructionV1:
             return value
         ctx = self._guard_evaluation_context()
         try:
-            outcome = value.desugar(ctx)
+            outcome = _step_exits(value.desugar(ctx))
         except SugarNotWritten as exc:
             observed = getattr(exc, "observed", type(exc).__name__)
             return self._gap(requested, str(observed))
-        if isinstance(outcome, Complete):
-            return outcome.value
-        if isinstance(outcome, (Incomplete, ExitSet, NativeOperationExitCarrierV1)):
+        if _plain_completion(outcome):
+            return outcome.completed_value()
+        if isinstance(outcome, (ExitSet, NativeOperationExitCarrierV1)):
+            # A halt, a split, or an owing arm: the step sequences the arms
+            # (``and_then`` carries each arm's ``owed``).
             return outcome
         return self._gap(requested, type(outcome).__name__)
 
@@ -2747,6 +2690,14 @@ class GeneratorConstructionV1:
             step.statements, self._guard_evaluation_context()
         )
 
+    def _halts_here(self, outcome: ExitSet) -> ExitSet:
+        """Every halted arm of ``outcome``, leaving from this machine.
+
+        The generator's pre-halt state is the machine itself. Each arm keeps
+        its guard, faces and ``owed``.
+        """
+        return ExitSet(tuple(replace(halt, state=self) for halt in outcome.halts()))
+
     @staticmethod
     def _gap(requested: str, observed: str) -> GeneratorTransitionGapV1:
         return GeneratorTransitionGapV1(
@@ -2758,17 +2709,67 @@ class GeneratorConstructionV1:
 
 def _guard_exits(exit_set: ExitSet, face) -> ExitSet:
     """Conjoin one routing face's guard and partition keys onto every exit."""
-    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, _and_guards
+    from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
+        Halted,
+        _and_guards,
+        owed_union,
+    )
 
     out = []
     for inner in exit_set.exits:
         guard = _and_guards(face.guard, inner.guard)
         faces = face.faces | inner.faces
+        # The routing face's debts ride onto every exit under it.
+        owed = owed_union(face.owed, inner.owed)
         if isinstance(inner, Halted):
-            out.append(Halted(guard, inner.effect, inner.state, faces))
+            out.append(Halted(guard, inner.effect, inner.state, faces, owed))
         else:
-            out.append(Completed(guard, inner.value, faces))
+            out.append(Completed(guard, inner.value, faces, owed))
     return ExitSet(tuple(out)).normalize()
+
+
+def _step_exits(outcome):
+    """A step's outcome as arms, or the carrier / non-outcome it already is.
+
+    A linear ``Outcome`` from a producer that has not converted yet (#7825)
+    lifts through ``outcome_to_exitset``; a deferred native-operation carrier
+    and anything that is not an outcome pass through for the step to answer.
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.outcome import Outcome, outcome_to_exitset
+
+    if isinstance(outcome, NativeOperationExitCarrierV1) or not isinstance(
+        outcome, Outcome
+    ):
+        return outcome
+    return outcome_to_exitset(outcome)
+
+
+def _every_arm_halts(outcome) -> bool:
+    """CONVERSION RULE (#7825): what a linear halt read as is every arm halting."""
+    return (
+        isinstance(outcome, ExitSet)
+        and bool(outcome.exits)
+        and outcome.halts() == outcome.exits
+    )
+
+
+def _plain_completion(outcome) -> bool:
+    """CONVERSION RULE (#7825): what a linear completion read as is one
+    completed arm under truth, read with ``completed_value()``.
+
+    An arm that owes is not a plain completion: reading its value alone would
+    drop the debt, so the step keeps the arm set and sequences it, which
+    carries ``owed``.
+    """
+    return (
+        isinstance(outcome, ExitSet)
+        and outcome.completed_value() is not None
+        and not outcome.owed_items()
+    )
 
 
 def _halts_with_a_raise(value) -> bool:
@@ -2779,10 +2780,11 @@ def _halts_with_a_raise(value) -> bool:
     halted face, with the machine's state, is the whole outcome.
     """
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome.exit_set import _is_true
 
     return (
-        isinstance(value, Incomplete)
-        and isinstance(value.effect, RaiseEffect)
-        and not value.branch_conditions
+        _every_arm_halts(value)
+        and len(value.exits) == 1
+        and isinstance(value.exits[0].effect, RaiseEffect)
+        and _is_true(value.exits[0].guard)
     )

@@ -16,7 +16,7 @@ class ModuloRuntimeEffect(RuntimeEffect):
 def runtime_modulo(left, right, site):
     """Build one authenticated boundary for runtime modulo dispatch."""
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     operand = ctor(
         "%",
@@ -25,7 +25,7 @@ def runtime_modulo(left, right, site):
             right.to_term(owner=str(site)),
         ],
     )
-    return Incomplete(
+    return ExitSet.halted(
         ModuloRuntimeEffect(
             "modulo depends on runtime __mod__/__rmod__ dispatch; "
             f"left={type(left).__name__} right={type(right).__name__} site={site}",

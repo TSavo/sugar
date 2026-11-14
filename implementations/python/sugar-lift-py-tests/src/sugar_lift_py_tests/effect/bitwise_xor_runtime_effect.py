@@ -15,7 +15,7 @@ class BitwiseXorRuntimeEffect(RuntimeEffect):
 
 def runtime_bitwise_xor(left, right, site):
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     operand = ctor(
         "^",
@@ -24,7 +24,7 @@ def runtime_bitwise_xor(left, right, site):
             right.to_term(owner=str(site)),
         ],
     )
-    return Incomplete(
+    return ExitSet.halted(
         BitwiseXorRuntimeEffect(
             "bitwise xor depends on the opaque call result's "
             f"__xor__/__rxor__ dispatch; site={site}",

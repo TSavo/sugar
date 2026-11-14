@@ -215,7 +215,7 @@ def cpython_cited_fold(
     call two-faced.
     """
     from .floor.term_value import TermValue
-    from .outcome import Complete
+    from .outcome import ExitSet
 
     if not isinstance(unprojected, OffPopulationSourceCallV1) and not (
         isinstance(unprojected, UnprojectedSourceCallV1)
@@ -257,7 +257,7 @@ def cpython_cited_fold(
         return None
     (operand,) = arg_values
     if type(operand) is TermValue and type(operand.value) is int:
-        return Complete(operand)
+        return ExitSet.completed(operand)
     return None
 
 
@@ -747,21 +747,21 @@ def builtin_list_construct(target_name, arg_values, ctx=None, keyword_names=()):
     from .floor.dict_value import DictValue
     from .floor.list_value import ListValue
     from .floor.tuple_value import TupleValue
-    from .outcome import Complete
+    from .outcome import ExitSet
 
     if target_name != "list" or keyword_names or not _is_the_builtin("list", ctx):
         return None
     if not arg_values:
-        return Complete(ListValue(()))
+        return ExitSet.completed(ListValue(()))
     if len(arg_values) != 1:
         return None
     (source,) = arg_values
     if type(source) in (TupleValue, ListValue):
-        return Complete(ListValue(tuple(source.elements)))
+        return ExitSet.completed(ListValue(tuple(source.elements)))
     if type(source) is DictValue:
-        return Complete(ListValue(tuple(key for key, _ in source.entries)))
+        return ExitSet.completed(ListValue(tuple(key for key, _ in source.entries)))
     if type(source) is ComprehensionValue and source.finite_elements is not None:
-        return Complete(ListValue(tuple(source.finite_elements)))
+        return ExitSet.completed(ListValue(tuple(source.finite_elements)))
     return None
 
 

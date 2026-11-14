@@ -159,12 +159,12 @@ class PositionalUnpackOperation:
 
     def _authenticated_members(self, value: Any, members: tuple, display: str) -> Any:
         from sugar_lift_py_tests.floor.list_value import ListValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if not self.has_star:
             if len(members) != self.arity:
                 return self._arity_mismatch_exit(value, len(members), display)
-            return Complete(self.mint_roster(members))
+            return ExitSet.completed(self.mint_roster(members))
 
         fixed = self.arity
         if len(members) < fixed:
@@ -183,7 +183,7 @@ class PositionalUnpackOperation:
             ListValue(tuple(mid_vals)),
             *suffix_vals,
         )
-        return Complete(self.mint_roster(roster))
+        return ExitSet.completed(self.mint_roster(roster))
 
     def _runtime_cardinality(self, value: Any) -> Any:
         from sugar_lift_py_tests.effect import (
@@ -191,7 +191,7 @@ class PositionalUnpackOperation:
             runtime_effect_evidence_from_terms,
         )
         from sugar_lift_py_tests.ir import ctor, num
-        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         term = value.to_term(owner=f"{self.owner}.value")
         operation = ctor(
@@ -206,7 +206,7 @@ class PositionalUnpackOperation:
                 f"at least {self.arity} members for starred positional targets "
                 f"(prefix={self.fixed_prefix}, suffix={self.fixed_suffix})"
             )
-        return Incomplete(
+        return ExitSet.halted(
             SequenceUnpackRuntimeEffect(
                 "sequence unpack runtime boundary: unpack demands "
                 f"{demand} but the right-hand side "

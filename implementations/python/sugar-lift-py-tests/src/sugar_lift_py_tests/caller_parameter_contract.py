@@ -970,15 +970,17 @@ class NativeOperationExitCarrierV1:
         operator absent from the projector table, and projector arity mismatch
         remain undischarged — never a construction panic.
         """
-        from sugar_lift_py_tests.effect import RaiseEffect
+        from sugar_lift_py_tests.effect import RaiseEffect, effect_reason
         from sugar_lift_py_tests.outcome import (
-            Complete,
             ExitSet,
             Halted,
-            Incomplete,
             true_guard,
         )
-        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+        from sugar_lift_py_tests.outcome.exit_set import (
+            _is_true,
+            outcome_to_exitset,
+            owed_union,
+        )
 
         def apply_exitset_step(projected, step):
             projected = step(projected)
@@ -1065,15 +1067,24 @@ class NativeOperationExitCarrierV1:
 
         # Bind by the projector's declared parameter order.  Each lambda names
         # its Floor signature; this is not a generic method splat.
-        projected = projector(*actual_operands, self.site)
+        # Every Outcome variant passes the exit algebra's loud door (a linear
+        # one from a producer not yet converted lifts there).  In particular,
+        # never reinterpret an unresolved carrier as a normal completion.
+        exits = outcome_to_exitset(projector(*actual_operands, self.site))
+        # One arm that halts: the shape a projector's own effect takes.
+        sole_halt = (
+            exits.exits[0]
+            if len(exits.exits) == 1 and exits.halts() == exits.exits
+            else None
+        )
         if (
-            isinstance(projected, Incomplete)
-            and isinstance(projected.effect, RaiseEffect)
-            and not projected.branch_conditions
+            sole_halt is not None
+            and isinstance(sole_halt.effect, RaiseEffect)
+            and _is_true(sole_halt.guard)
         ):
             # A decided raise: the halt carries the exception identity and
             # the occurrence the exceptional resolution cites.
-            effect = projected.effect
+            effect = sole_halt.effect
             if effect.exception_type_coordinate is None or effect.occurrence_id is None:
                 resolution = NativeOperationResolutionV1.undischarged(
                     "native operation exception identity unproven"
@@ -1085,22 +1096,26 @@ class NativeOperationExitCarrierV1:
                     effect=effect,
                     pre_effect_state=self.pre_effect_state,
                 )
-            exits = resolution.project(source_node=self.demand.source_node)
-        elif isinstance(projected, Complete):
-            exits = NativeOperationResolutionV1.completed(projected.value).project(
+            projected_halt = resolution.project(source_node=self.demand.source_node)
+            # The resolution's halt owes what the projector's halt owed.
+            exits = ExitSet(
+                tuple(
+                    replace(arm, owed=owed_union(arm.owed, sole_halt.owed))
+                    for arm in projected_halt.exits
+                )
+            )
+        elif sole_halt is not None:
+            reason = effect_reason(sole_halt.effect)
+            if not _is_true(sole_halt.guard):
+                reason = (
+                    f"{reason}; effect occurs under branch condition "
+                    f"{sole_halt.guard!r}"
+                )
+            exits = NativeOperationResolutionV1.undischarged(reason).project(
                 source_node=self.demand.source_node
             )
-        elif isinstance(projected, Incomplete):
-            exits = NativeOperationResolutionV1.undischarged(projected.reason).project(
-                source_node=self.demand.source_node
-            )
-        elif isinstance(projected, ExitSet):
-            exits = projected
-        else:
-            # Other Outcome variants must pass through the exit algebra's loud
-            # door.  In particular, never reinterpret an unresolved carrier as
-            # a normal completion.
-            exits = outcome_to_exitset(projected)
+        # Otherwise the projected arms stand as they are: a completion is
+        # already its one completed arm, and its ``owed`` rides on it.
 
         # A short circuit recorded before later work (``return a if c else
         # -x``: the return, the block projection, an enclosing ``if``'s join)

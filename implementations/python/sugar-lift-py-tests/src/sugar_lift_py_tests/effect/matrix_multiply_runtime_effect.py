@@ -15,7 +15,7 @@ class MatrixMultiplyRuntimeEffect(RuntimeEffect):
 
 def runtime_matrix_multiply(left, right, site):
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     operand = ctor(
         "@",
@@ -24,7 +24,7 @@ def runtime_matrix_multiply(left, right, site):
             right.to_term(owner=str(site)),
         ],
     )
-    return Incomplete(
+    return ExitSet.halted(
         MatrixMultiplyRuntimeEffect(
             "matrix multiplication depends on the opaque right operand's "
             f"runtime __rmatmul__ dispatch; site={site}",

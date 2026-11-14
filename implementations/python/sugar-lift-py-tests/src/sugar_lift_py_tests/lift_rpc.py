@@ -654,11 +654,14 @@ def _parameter_contract_resume_rows(
     from sugar_lift_py_tests.ir import TermTableBuilder
 
     term_table = TermTableBuilder()
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.tree_enumerate import reduction_rows
 
     rows = reduction_rows(
-        Complete(resolved), owner=resolved, blame=None, def_memento=def_memento_dto
+        ExitSet.completed(resolved),
+        owner=resolved,
+        blame=None,
+        def_memento=def_memento_dto,
     )
     # A resumed function is skipped by the universe scan, so the calls its
     # one reduction (phase 1) left unanswered ride here: one `undecided` row
@@ -687,13 +690,16 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     universe enumerate. ``ConstructionPanic`` is *not* caught here — the sole
     production soft membranes are audit enumeration and
     ``_production_lift_child``; panics propagate to the process-terminal
-    JSON-RPC error + SystemExit handler. Incomplete / non-Universe outcomes
+    JSON-RPC error + SystemExit handler. Halting / non-Universe outcomes
     simply enroll no link unit (no owned demand).
     """
     from sugar_lift_py_tests import tree_enumerate as _tree
     from sugar_lift_py_tests import unanswered_calls as _unanswered
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.outcome import Complete, ExitSet
+    from sugar_lift_py_tests.outcome import (
+        NativeOperationExitCarrierV1,
+        outcome_to_exitset,
+    )
     from sugar_source_tree.panic import SugarNotWritten
 
     global _RETAINED_LINK_UNITS, _RETAINED_BY_MEMENTO
@@ -720,16 +726,12 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
                 # visible on the universe/audit scan; never catch
                 # ConstructionPanic to soft-continue.
                 continue
-            # One unconditional completed arm. An arm that owes something
-            # stays an ``ExitSet`` (``collapse`` keeps it), and is the same
-            # one arm (``ExitSet.completed_value``); any other ``ExitSet``
-            # enrolls nothing, as before.
-            if isinstance(outcome, ExitSet) and outcome.owed_items():
-                universe = outcome.completed_value()
-            elif isinstance(outcome, Complete):
-                universe = outcome.value
-            else:
+            # One unconditional completed arm (``ExitSet.completed_value``),
+            # owing or not: what it owes is retained with the unit below. A
+            # deferred carrier or any other arm set enrolls nothing.
+            if isinstance(outcome, NativeOperationExitCarrierV1):
                 continue
+            universe = outcome_to_exitset(outcome).completed_value()
             if not isinstance(universe, UniverseValue):
                 continue
             def_memento_dto = _tree.function_def_memento(fn, file_rel)

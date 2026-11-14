@@ -14,9 +14,9 @@ class CallableArgumentBindingRuntimeEffect(RuntimeEffect):
 
 
 def runtime_callable_argument_binding(operand, site):
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    return Incomplete(
+    return ExitSet.halted(
         CallableArgumentBindingRuntimeEffect(
             "call argument binding depends on the runtime keys of an opaque "
             f"**mapping expansion; site={site}",

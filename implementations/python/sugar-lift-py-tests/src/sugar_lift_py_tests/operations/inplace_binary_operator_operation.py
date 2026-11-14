@@ -85,17 +85,26 @@ class InplaceBinaryOperatorOperation:
 
 
 def after_inplace_notimplemented(projected, binary_fallback: Callable):
-    """NotImplemented (raw or Complete) → ordinary binary; all other faces stay.
+    """NotImplemented (raw or completed) → ordinary binary; all other faces stay.
 
-    Incomplete, ExitSet, carriers, and successful Complete values
+    Halts, split or owing arm sets, carriers, and other completed values
     surface unchanged — they never authorize binary fallback.
     """
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import (
+        NativeOperationExitCarrierV1,
+        Outcome,
+        outcome_to_exitset,
+    )
 
     if projected is NotImplemented:
         return binary_fallback()
-    if isinstance(projected, Complete) and projected.value is NotImplemented:
-        return binary_fallback()
+    if isinstance(projected, Outcome) and not isinstance(
+        projected, NativeOperationExitCarrierV1
+    ):
+        exits = outcome_to_exitset(projected)
+        # One completed NotImplemented arm under truth that owes nothing.
+        if exits.completed_value() is NotImplemented and not exits.owed_items():
+            return binary_fallback()
     return projected
 
 

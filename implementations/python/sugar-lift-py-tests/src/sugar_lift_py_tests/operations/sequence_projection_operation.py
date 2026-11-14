@@ -157,12 +157,12 @@ class SequenceProjectionOperation:
     def _authenticated_members(self, value: Any, members: tuple, display: str) -> Any:
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if self.star_name is None:
             if len(members) != self.arity:
                 return self._arity_mismatch_exit(value, len(members), display)
-            return Complete(
+            return ExitSet.completed(
                 ScopeRebinds(tuple(zip(self.target_names, members, strict=True)))
             )
 
@@ -185,7 +185,7 @@ class SequenceProjectionOperation:
             (self.star_name, ListValue(tuple(mid_vals))),
             *zip(self.suffix_names, suffix_vals, strict=True),
         )
-        return Complete(ScopeRebinds(rebinds))
+        return ExitSet.completed(ScopeRebinds(rebinds))
 
     def _runtime_cardinality(self, value: Any) -> Any:
         from sugar_lift_py_tests.effect import (
@@ -193,7 +193,7 @@ class SequenceProjectionOperation:
             runtime_effect_evidence_from_terms,
         )
         from sugar_lift_py_tests.ir import ctor, num
-        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         term = value.to_term(owner=f"{self.owner}.value")
         operation = ctor(
@@ -213,7 +213,7 @@ class SequenceProjectionOperation:
                 f"{', '.join(self.suffix_names)}"
             )
             demand = f"at least {self.arity} members for starred targets ({roster})"
-        return Incomplete(
+        return ExitSet.halted(
             SequenceUnpackRuntimeEffect(
                 "sequence unpack runtime boundary: unpack demands "
                 f"{demand} but the right-hand side "

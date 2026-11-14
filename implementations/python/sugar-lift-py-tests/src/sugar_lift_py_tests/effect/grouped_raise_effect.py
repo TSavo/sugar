@@ -67,7 +67,7 @@ class GroupedRaiseEffect:
 
 
 def _leaf_matches(effect: RaiseEffect, expected, site) -> bool:
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import outcome_to_exitset
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
     from sugar_source_tree.panic import SugarNotWritten
@@ -93,8 +93,8 @@ def _leaf_matches(effect: RaiseEffect, expected, site) -> bool:
             requested="RaiseEffect leaf with authenticated exception type testimony",
             fix="construct every group leaf through the ordinary exception floor",
         )
-    outcome = operation(expected, site)
-    if not isinstance(outcome, Complete):
+    value = outcome_to_exitset(operation(expected, site)).completed_value()
+    if value is None:
         raise SugarNotWritten(
             blame=site,
             owner="GroupedRaiseEffect.partition",
@@ -102,14 +102,14 @@ def _leaf_matches(effect: RaiseEffect, expected, site) -> bool:
             requested="closed true/false subtype partition for group topology",
             fix="keep symbolic group partition typed loud",
         )
-    if isinstance(outcome.value, TrueBoolLiteralSugar):
+    if isinstance(value, TrueBoolLiteralSugar):
         return True
-    if isinstance(outcome.value, FalseBoolLiteralSugar):
+    if isinstance(value, FalseBoolLiteralSugar):
         return False
     raise SugarNotWritten(
         blame=site,
         owner="GroupedRaiseEffect.partition",
-        observed=type(outcome.value).__name__,
+        observed=type(value).__name__,
         requested="closed boolean subtype partition",
         fix="keep unsupported subtype results typed loud",
     )
