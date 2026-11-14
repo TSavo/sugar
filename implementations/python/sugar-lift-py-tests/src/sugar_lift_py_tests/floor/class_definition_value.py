@@ -229,21 +229,29 @@ class ClassDefinitionValue(GuardStableValue):
         value and its C3 tail by its class statement's occurrence.  None when
         that ``__init__`` is a builtin's, is not decided, or its class has no
         value here."""
-        from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
-
         definition = self.class_definition
         if definition is None:
             return None
         owner = definition.initializer_entry()
         if owner is None or isinstance(owner, str):
             return None
-        if owner is definition:
+        return self.class_value_of_statement(owner)
+
+    def class_value_of_statement(self, owner) -> "ClassDefinitionValue | None":
+        """The class value built from the class statement ``owner``: this
+        value, or the class of its C3 tail whose statement is that
+        occurrence.  None when ``owner`` is None or no class here is it."""
+        from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
+
+        if owner is None:
+            return None
+        if owner is self.class_definition:
             return self
         identity = SourceOccurrenceIdentityV1.of(owner)
         return next(
             (
                 cls
-                for cls in self._c3_tail()
+                for cls in (self, *self._c3_tail())
                 if cls.class_definition is not None
                 and SourceOccurrenceIdentityV1.of(cls.class_definition) == identity
             ),

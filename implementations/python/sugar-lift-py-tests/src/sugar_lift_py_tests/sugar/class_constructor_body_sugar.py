@@ -66,6 +66,13 @@ class ClassConstructorBodySugar(Sugar):
     # the initializer has no positional formal, or the body is not a source
     # ``__init__`` (a dataclass's generated stores, a source ``__new__``).
     receiver_formal: str | None = field(default=None, compare=False)
+    # The class statement whose body defines the function this body runs:
+    # the PEP 3135 ``__class__`` cell a zero-argument ``super()`` in it reads.
+    # The class whose ``__init__`` the call runs -- for an inherited one, the
+    # base that wrote it (``ClassDef.initializer_entry``), never the called
+    # class; the class itself for its own ``__new__``.  None when the body is
+    # no source function's (a dataclass's generated stores have no cell).
+    cell_class_definition: object | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.constructed_new_method is None:
@@ -335,11 +342,21 @@ class ClassConstructorBodySugar(Sugar):
                 ClassDefinitionValue,
             )
 
-            if isinstance(value, ClassDefinitionValue):
+            # The cell is the class whose body defines the function the call
+            # runs (``cell_class_definition``), read as the class value this
+            # call's MRO holds for that statement: for an inherited
+            # ``__init__`` the base that wrote it, so a ``super()`` in it
+            # searches after that base, not after the called class (#7757).
+            cell = (
+                value.class_value_of_statement(self.cell_class_definition)
+                if isinstance(value, ClassDefinitionValue)
+                else None
+            )
+            if cell is not None:
                 temporal = temporal.bind_value(
                     "__class__",
-                    value,
-                    blame=f"{value.class_name}.__init__",
+                    cell,
+                    blame=f"{cell.class_name}.__init__",
                 )
             if self.receiver_formal is not None:
                 # The initializer's own frame local: it shadows whatever an
