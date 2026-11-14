@@ -391,7 +391,10 @@ pub(crate) fn is_consistency_candidate(body: &Json) -> bool {
         .and_then(|v| v.as_str())
         .or_else(|| body.get("contractName").and_then(|v| v.as_str()))
         .unwrap_or("");
-    !is_setup_binding_name(name)
+    // A class's stated ancestry is a fact its module's proof states, joined
+    // into a consumer's obligation (`with_exception_ancestry`), never a claim
+    // checked on its own.
+    !is_setup_binding_name(name) && !name.ends_with(EXCEPTION_ANCESTRY_SUFFIX)
 }
 
 /// A `::facts` / `::facts::N` contract is a setup binding, not an asserted
@@ -3528,6 +3531,160 @@ fn with_ambient_posts_with_instances(
     (IrFormula::And(operands).to_value(), partition)
 }
 
+// ── The ancestry join (step 9; #7757) ──────────────────────────────────────
+//
+// A Python consumer's `except Handler` against a raised class it imported
+// retains `adt.is_python_type(<class>, <handler>)`: nothing at lift testifies
+// to an imported class's bases. The class's defining module states them: its
+// proof carries one contract `<class symbol>::exception-ancestry` whose `inv`
+// is `adt.is_python_type(<class>, <ancestor>)` for every ancestor its source
+// testifies to. The two meet here, by the class's target symbol, and the
+// facts are conjoined with the consumer's question, so the solver decides it.
+
+/// The contract-name suffix of a class's ancestry row (the Python kit's
+/// `tree_enumerate.EXCEPTION_ANCESTRY_SUFFIX`): `<class symbol>` + this.
+pub(crate) const EXCEPTION_ANCESTRY_SUFFIX: &str = "::exception-ancestry";
+/// The open subclass question, and the fact that answers it.
+const PYTHON_IS_TYPE: &str = "adt.is_python_type";
+/// An exception class's coordinate (`exception_type_identity_of_symbol`).
+const PYTHON_EXCEPTION_TYPE_IDENTITY: &str = "python:exception_type_identity";
+
+/// Every stated ancestry fact in a pool, keyed by the class's target symbol.
+pub(crate) type ExceptionAncestry = BTreeMap<String, Vec<Json>>;
+
+/// `python:exception_type_identity("import", "<q>")` read as its target
+/// symbol `python:<q>`. A builtin or source-class coordinate names no symbol
+/// another proof states facts for.
+fn exception_identity_target_symbol(term: &Json) -> Option<String> {
+    if term.get("kind")?.as_str()? != "ctor"
+        || term.get("name")?.as_str()? != PYTHON_EXCEPTION_TYPE_IDENTITY
+    {
+        return None;
+    }
+    let args = term.get("args")?.as_array()?;
+    let [tag, qualified] = args.as_slice() else {
+        return None;
+    };
+    if tag.get("value")?.as_str()? != "import" {
+        return None;
+    }
+    let qualified = qualified.get("value")?.as_str()?;
+    if qualified.is_empty() {
+        return None;
+    }
+    Some(format!("python:{qualified}"))
+}
+
+/// The class symbol an `adt.is_python_type(<class>, _)` atom asks about.
+fn is_type_subject_symbol(formula: &Json) -> Option<String> {
+    if formula.get("kind")?.as_str()? != "atomic"
+        || formula.get("name")?.as_str()? != PYTHON_IS_TYPE
+    {
+        return None;
+    }
+    let args = formula.get("args")?.as_array()?;
+    let [subject, _ancestor] = args.as_slice() else {
+        return None;
+    };
+    exception_identity_target_symbol(subject)
+}
+
+/// The ancestry one contract body states, when it is an ancestry row:
+/// `(class symbol, facts)`. Only facts about the class the row names are
+/// read; a conjunct about anything else is not this row's statement.
+fn exception_ancestry_of(body: &Json) -> Option<(String, Vec<Json>)> {
+    let symbol = contract_property_name(body).strip_suffix(EXCEPTION_ANCESTRY_SUFFIX)?;
+    let inv = canonicalize_formula_json(body.get("inv").filter(|v| v.is_object())?);
+    let facts: Vec<Json> = top_level_conjuncts(inv)
+        .into_iter()
+        .filter(|fact| is_type_subject_symbol(fact).as_deref() == Some(symbol))
+        .collect();
+    (!facts.is_empty()).then(|| (symbol.to_string(), facts))
+}
+
+/// Every class ancestry the pool's proofs state.
+fn collect_exception_ancestry(pool: &MementoPool) -> ExceptionAncestry {
+    let mut ancestry = ExceptionAncestry::new();
+    for (_cid, member) in pool.contract_members() {
+        let Some(body) = pool
+            .contract_body_for_member(member)
+            .filter(|v| v.is_object())
+        else {
+            continue;
+        };
+        if let Some((symbol, facts)) = exception_ancestry_of(&body) {
+            merge_exception_ancestry(&mut ancestry, symbol, facts);
+        }
+    }
+    ancestry
+}
+
+fn merge_exception_ancestry(ancestry: &mut ExceptionAncestry, symbol: String, facts: Vec<Json>) {
+    let stated = ancestry.entry(symbol).or_default();
+    for fact in facts {
+        if !stated.contains(&fact) {
+            stated.push(fact);
+        }
+    }
+}
+
+fn collect_is_type_subject_symbols(node: &Json, out: &mut std::collections::BTreeSet<String>) {
+    if let Some(symbol) = is_type_subject_symbol(node) {
+        out.insert(symbol);
+        return;
+    }
+    for key in ["operands", "args"] {
+        if let Some(children) = node.get(key).and_then(|v| v.as_array()) {
+            for child in children {
+                collect_is_type_subject_symbols(child, out);
+            }
+        }
+    }
+    if let Some(body) = node.get("body") {
+        collect_is_type_subject_symbols(body, out);
+    }
+}
+
+/// The stated facts that answer `inv`'s open subclass questions: for each
+/// `adt.is_python_type(<class>, _)` in `inv` whose class is an import
+/// coordinate, the ancestry the pool states for that class's symbol. No
+/// proof states it: nothing, and the question stays open.
+fn exception_ancestry_facts_for_inv(inv: &Json, ancestry: &ExceptionAncestry) -> Vec<Json> {
+    if ancestry.is_empty() {
+        return Vec::new();
+    }
+    let mut symbols = std::collections::BTreeSet::new();
+    collect_is_type_subject_symbols(inv, &mut symbols);
+    let mut facts: Vec<Json> = Vec::new();
+    for symbol in &symbols {
+        for fact in ancestry.get(symbol).into_iter().flatten() {
+            if !facts.contains(fact) {
+                facts.push(fact.clone());
+            }
+        }
+    }
+    facts
+}
+
+/// THE ANCESTRY JOIN: conjoin the stated facts that answer `inv`'s open
+/// subclass questions. Each fact is ground and true of the class the
+/// defining module names, so it is conjoined at the top, wherever the
+/// question stands inside `inv`.
+fn with_exception_ancestry(inv: Json, ancestry: &ExceptionAncestry) -> Json {
+    let facts = exception_ancestry_facts_for_inv(&inv, ancestry);
+    if facts.is_empty() {
+        return inv;
+    }
+    debug!(
+        facts = facts.len(),
+        "verifier/linker: conjoining stated exception ancestry into obligation"
+    );
+    let mut operands = Vec::with_capacity(facts.len() + 1);
+    operands.push(inv);
+    operands.extend(facts);
+    IrFormula::And(operands).to_value()
+}
+
 fn with_local_forall_instances(inv: Json, property_name: &str) -> Json {
     let mut foralls = Vec::new();
     collect_ambient_foralls(&inv, &mut foralls);
@@ -3726,6 +3883,9 @@ pub struct ConsistencyIndex {
     ambient_foralls: Vec<Json>,
     ambient_ground_callsite_facts: Vec<AmbientGroundCallsiteFact>,
     ambient_posts: Vec<AmbientPost>,
+    /// The class ancestry this pool's proofs state, by class symbol: the
+    /// facts the ancestry join conjoins (`with_exception_ancestry`).
+    exception_ancestry: ExceptionAncestry,
     /// Raw (contract/property name, locus, optional speaker role) triples in
     /// pool iteration order. The project-local preference merge (consumer
     /// file beats vendor file for the squiggle anchor) happens at solve time
@@ -3830,6 +3990,7 @@ fn build_consistency_index_filtered(
         }
     }
     let ambient_posts = collect_ambient_posts(pool);
+    let exception_ancestry = collect_exception_ancestry(pool);
 
     // Pool-wide assertion-locus entries, keyed by contract/property name. The
     // callsite-keyed consistency candidate is a coalesced claim whose OWN body
@@ -3869,6 +4030,7 @@ fn build_consistency_index_filtered(
         ambient_foralls,
         ambient_ground_callsite_facts,
         ambient_posts,
+        exception_ancestry,
         locus_entries,
         witness_bodies: witness_bodies_in_pool(pool),
     }
@@ -4030,6 +4192,10 @@ pub fn verify_consistency_from_indexes(
             }
         }
     }
+    let mut exception_ancestry = base.exception_ancestry.clone();
+    for (symbol, facts) in overlay.iter().flat_map(|o| o.exception_ancestry.iter()) {
+        merge_exception_ancestry(&mut exception_ancestry, symbol.clone(), facts.clone());
+    }
 
     info!(
         candidates = candidates.len(),
@@ -4128,6 +4294,7 @@ pub fn verify_consistency_from_indexes(
                 property_name,
                 members,
                 &ambient_posts,
+                &exception_ancestry,
                 &ambient_ground_callsite_facts,
                 &ambient_foralls,
                 &locus_by_name,
@@ -4171,6 +4338,7 @@ fn process_consistency_group(
     property_name: &str,
     members: &[ConsistencyCandidate],
     ambient_posts: &[AmbientPost],
+    exception_ancestry: &ExceptionAncestry,
     ambient_ground_callsite_facts: &[AmbientGroundCallsiteFact],
     ambient_foralls: &[Json],
     locus_by_name: &HashMap<String, SourceLocus>,
@@ -4289,6 +4457,7 @@ fn process_consistency_group(
                 })
                 .collect();
             let (inv, ambient_partition) = with_ambient_posts_with_instances(inv, &ambient_posts);
+            let inv = with_exception_ancestry(inv, exception_ancestry);
             let linked_posts = ambient_partition.kept.clone();
             let dropped_ambient_posts = ambient_partition.dropped.clone();
             let (inv, skipped_same_kind_duplicate, vendor_facts) =
@@ -4347,6 +4516,7 @@ fn process_consistency_group(
                     ground_callsite_witness_keys(&original_inv, &scope, candidate.provenance_kind);
                 let (inv, ambient_partition) =
                     with_ambient_posts_with_instances(original_inv.clone(), &ambient_posts);
+                let inv = with_exception_ancestry(inv, exception_ancestry);
                 let linked_posts = ambient_partition.kept.clone();
                 let dropped_ambient_posts = ambient_partition.dropped.clone();
                 let (inv, skipped_same_kind_duplicate, vendor_facts) =
@@ -9342,6 +9512,162 @@ mod tests {
         assert_eq!(
             DroppedAmbientPostReason::CallTermDecodeFailed.label(),
             "call-term-decode-failed"
+        );
+    }
+
+    // ── The ancestry join (step 9; #7757): the `class E(ValueError)` twin ──
+    // vendor `vendor.py` defines `class E(ValueError): pass`. Its proof states
+    // the class's ancestry as `python:vendor.E::exception-ancestry`:
+    // `adt.is_python_type(E, ValueError)` and the language's ancestry above
+    // it, over the coordinates a consumer mints. The consumer imports `E`:
+    //
+    //     try:
+    //         raise E
+    //     except ValueError:
+    //         r = 1
+    //     except BaseException:
+    //         r = 2
+    //
+    // `assert r == 1` holds on the first arm alone: `is(E, ValueError)`.
+    // `assert r == 2` holds on the second arm alone:
+    // `not is(E, ValueError) and is(E, BaseException)`.
+    // Unstaged, both stay open. Staged, the match is decided.
+
+    fn ancestry_identity(tag: &str, name: &str) -> Json {
+        json!({
+            "kind": "ctor",
+            "name": PYTHON_EXCEPTION_TYPE_IDENTITY,
+            "args": [str_const(tag), str_const(name)]
+        })
+    }
+
+    fn ancestry_is_type(class: Json, ancestor: Json) -> Json {
+        json!({"kind": "atomic", "name": PYTHON_IS_TYPE, "args": [class, ancestor]})
+    }
+
+    fn ancestry_vendor_e() -> Json {
+        ancestry_identity("import", "vendor.E")
+    }
+
+    fn ancestry_builtin(name: &str) -> Json {
+        ancestry_identity("builtins", name)
+    }
+
+    /// The vendor's ancestry row, as mint writes it into the vendor's proof.
+    fn ancestry_vendor_row() -> Json {
+        json!({
+            "kind": "contract",
+            "name": "python:vendor.E::exception-ancestry",
+            "inv": {
+                "kind": "and",
+                "operands": [
+                    ancestry_is_type(ancestry_vendor_e(), ancestry_builtin("ValueError")),
+                    ancestry_is_type(ancestry_vendor_e(), ancestry_builtin("Exception")),
+                    ancestry_is_type(ancestry_vendor_e(), ancestry_builtin("BaseException"))
+                ]
+            }
+        })
+    }
+
+    fn ancestry_staged() -> ExceptionAncestry {
+        let (symbol, facts) = exception_ancestry_of(&ancestry_vendor_row()).expect("ancestry");
+        let mut ancestry = ExceptionAncestry::new();
+        merge_exception_ancestry(&mut ancestry, symbol, facts);
+        ancestry
+    }
+
+    /// The first arm's assertion: the handler `except ValueError` caught `E`.
+    fn caught_by_value_error() -> Json {
+        ancestry_is_type(ancestry_vendor_e(), ancestry_builtin("ValueError"))
+    }
+
+    /// The second arm's assertion: only `except BaseException` caught `E`.
+    fn caught_by_base_exception_only() -> Json {
+        json!({
+            "kind": "and",
+            "operands": [
+                {"kind": "not", "operands": [caught_by_value_error()]},
+                ancestry_is_type(ancestry_vendor_e(), ancestry_builtin("BaseException"))
+            ]
+        })
+    }
+
+    fn prove_with_ancestry(inv: Json, ancestry: &ExceptionAncestry) -> ConsistencyResult {
+        let inv = with_exception_ancestry(inv, ancestry);
+        let (plan, registry) = z3_plan_and_registry();
+        check_inv_consistency(
+            "except-claim".to_string(),
+            "consistency:test_except",
+            inv,
+            Vec::new(),
+            &plan,
+            &registry,
+            &test_compilers(),
+        )
+    }
+
+    #[test]
+    fn the_ancestry_row_is_a_stated_fact_never_a_claim() {
+        let row = ancestry_vendor_row();
+        assert!(!is_consistency_candidate(&row), "{row}");
+        let (symbol, facts) = exception_ancestry_of(&row).expect("ancestry row");
+        assert_eq!(symbol, "python:vendor.E");
+        assert_eq!(facts.len(), 3, "{facts:?}");
+    }
+
+    #[test]
+    fn the_ancestry_join_reads_the_class_symbol() {
+        let staged = ancestry_staged();
+        let facts = exception_ancestry_facts_for_inv(&caught_by_value_error(), &staged);
+        assert_eq!(facts.len(), 3, "{facts:?}");
+
+        // Another class, the same handler: nothing joins.
+        let other = ancestry_is_type(
+            ancestry_identity("import", "other.E"),
+            ancestry_builtin("ValueError"),
+        );
+        assert!(exception_ancestry_facts_for_inv(&other, &staged).is_empty());
+
+        // A class this pool states nothing for keeps its question open.
+        let none = ExceptionAncestry::new();
+        assert!(exception_ancestry_facts_for_inv(&caught_by_value_error(), &none).is_empty());
+    }
+
+    #[test]
+    fn except_twin_unstaged_stays_open() {
+        let unstaged = ExceptionAncestry::new();
+        let caught = prove_with_ancestry(caught_by_value_error(), &unstaged);
+        assert_ne!(
+            caught.verdict,
+            ObligationVerdict::Discharged,
+            "nothing states E's bases, so `is(E, ValueError)` alone is not decided: {}",
+            caught.reason
+        );
+        let missed = prove_with_ancestry(caught_by_base_exception_only(), &unstaged);
+        assert_eq!(
+            missed.verdict,
+            ObligationVerdict::Discharged,
+            "unstaged, nothing rules out a miss: {}",
+            missed.reason
+        );
+    }
+
+    #[test]
+    fn except_twin_staged_decides_the_match() {
+        let staged = ancestry_staged();
+        let caught = prove_with_ancestry(caught_by_value_error(), &staged);
+        assert_eq!(
+            caught.verdict,
+            ObligationVerdict::Discharged,
+            "the vendor states `is(E, ValueError)`, so the handler catches E: {}",
+            caught.reason
+        );
+        let missed = prove_with_ancestry(caught_by_base_exception_only(), &staged);
+        assert_eq!(
+            missed.verdict,
+            ObligationVerdict::Unsatisfied,
+            "the vendor states `is(E, ValueError)`, so `except ValueError` never misses E: {}",
+            missed.reason
         );
     }
 }

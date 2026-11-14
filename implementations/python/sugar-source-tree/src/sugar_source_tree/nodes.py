@@ -836,6 +836,29 @@ def _ordered_binding_keys(names):
     return ordered
 
 
+def exception_type_identity_of_symbol(target_symbol: str):
+    """The exception-class coordinate a target symbol names (#7757).
+
+    ``python:exception_type_identity("import", "<module>.<name>")``: the one
+    speller of it. A consumer's import door mints it for an import-bound type
+    operand (``SourceUnit.imported_exception_type_identity``), and the module
+    that defines the class mints the same coordinate for the facts its proof
+    states about that class (``SourceUnit.exception_class_ancestry``), so the
+    two meet at prove by the target symbol.
+    """
+    from sugar_lift_py_tests.ir import ctor, str_const
+
+    qualified = (
+        target_symbol[len("python:") :]
+        if target_symbol.startswith("python:")
+        else target_symbol
+    )
+    return ctor(
+        "python:exception_type_identity",
+        [str_const("import"), str_const(qualified)],
+    )
+
+
 @dataclass(frozen=True)
 class SourceUnit:
     """One parsed source: oracle-pinned text, its content address, its line table.
@@ -2513,8 +2536,6 @@ class SourceUnit:
         Other coordinates name the import target path, without inventing MRO
         or ClassValue ancestry when defining source is absent from the seat.
         """
-        from sugar_lift_py_tests.ir import ctor, str_const
-
         link = node
         attributes = []
         while isinstance(link, Attribute):
@@ -2543,10 +2564,7 @@ class SourceUnit:
                 return None
             identity, _mro = _builtin_exception_identity(components[1])
             return identity
-        return ctor(
-            "python:exception_type_identity",
-            [str_const("import"), str_const(qualified)],
-        )
+        return exception_type_identity_of_symbol(target)
 
     def provider_gated_import_target(self, node: "Name") -> str | None:
         """Closed optional-provider module target reaching ``node``, or None.
@@ -2942,6 +2960,143 @@ class SourceUnit:
             return True
 
         return tuple(result) if append_definition(definitions[0]) else None
+
+    def exception_class_ancestry(self):
+        """The exception classes this module defines, with their ancestry (#7757).
+
+        Returns ``((definition, symbol, identity, ancestors), ...)`` in source
+        order, one entry per module-level exception class:
+
+        - ``symbol`` is the class's target symbol, ``python:<module>.<name>``,
+          with the module name the one import table spells for this unit;
+        - ``identity`` is the coordinate a consumer's import door mints for
+          that symbol (``exception_type_identity_of_symbol``);
+        - ``ancestors`` are the coordinates of the classes it is a subclass
+          of, each testified by this source.
+
+        The module's proof states ``adt.is_python_type(identity, ancestor)``
+        for each ancestor. A consumer's ``except`` against the imported class
+        retains exactly ``adt.is_python_type(identity, handler)``; prove joins
+        that open question to these facts by the symbol.
+
+        What testifies to an ancestor:
+
+        - a builtin exception base, and the ancestry the language states for
+          it;
+        - a sibling exception class of this module, by its own symbol
+          coordinate, and that class's ancestry in turn;
+        - an import-bound base, by the coordinate the import door mints for
+          it. Its own ancestry is its defining proof's to state.
+
+        A base nothing testifies to (computed, subscripted, a call, a cycle)
+        states nothing. Every fact stated is true, and what is not stated
+        stays open at the consumer. A decorated class, or one with class
+        keywords (a metaclass), states nothing: its decorator or metaclass
+        decides what the name is bound to, not its header. A class whose
+        ancestry reaches no builtin exception is not known here to be an
+        exception class, and states nothing.
+        """
+        from sugar_lift_py_tests.import_binding import module_name_for_path
+
+        module = self._require_typed_module(
+            "SourceUnit.exception_class_ancestry", blame=self.filename
+        )
+        # The module name the import table spells for this unit's seat: the
+        # one a consumer's ``from <module> import <name>`` reaches.
+        root, path = self._lexical_import_seat()
+        try:
+            module_name = module_name_for_path(root, path)
+        except ValueError:
+            return ()
+        if not module_name:
+            return ()
+        bindings = self.module_direct_bindings or {}
+
+        def own_class(name):
+            bound = bindings.get(name, ())
+            if len(bound) != 1 or bound[0].kind != "ClassDef":
+                return None
+            definition = bound[0]
+            if definition.decorators or definition.keywords:
+                return None
+            return definition
+
+        def symbol_of(definition) -> str:
+            return f"python:{module_name}.{definition.name}"
+
+        memo: dict = {}
+
+        def ancestry(definition, visiting: frozenset):
+            """``(ancestors, reaches_a_builtin_exception)`` of ``definition``."""
+            if definition.name in memo:
+                return memo[definition.name]
+            if definition.name in visiting:
+                return (), False
+            visiting = visiting | {definition.name}
+            ancestors: list = []
+            exceptional = False
+
+            def add(identity) -> None:
+                if identity not in ancestors:
+                    ancestors.append(identity)
+
+            for base in definition.bases:
+                identity = None
+                if isinstance(base, Name):
+                    identity = self.exception_type_identity(base)
+                    if identity is None:
+                        identity = self.imported_exception_type_identity(base)
+                elif isinstance(base, Attribute):
+                    identity = self.imported_exception_type_identity(base)
+                if identity is None:
+                    continue
+                kind = getattr(identity.args[0], "value", None)
+                if kind == "builtins":
+                    builtin_ancestry = self._builtin_exception_ancestry(identity)
+                    for ancestor in builtin_ancestry or (identity,):
+                        add(ancestor)
+                    exceptional = True
+                elif kind == "source-class":
+                    sibling = own_class(base.id) if isinstance(base, Name) else None
+                    if sibling is None:
+                        continue
+                    sibling_ancestors, sibling_exceptional = ancestry(sibling, visiting)
+                    if not sibling_exceptional:
+                        continue
+                    add(exception_type_identity_of_symbol(symbol_of(sibling)))
+                    for ancestor in sibling_ancestors:
+                        add(ancestor)
+                    exceptional = True
+                else:
+                    add(identity)
+            result = (tuple(ancestors), exceptional)
+            memo[definition.name] = result
+            return result
+
+        stated = []
+        for statement in module.body:
+            if statement.kind != "ClassDef":
+                continue
+            definition = own_class(statement.name)
+            if definition is None:
+                continue
+            own = definition.line_col_span()
+            here = statement.line_col_span()
+            if (own.start_line, own.start_col) != (here.start_line, here.start_col):
+                continue
+            ancestors, exceptional = ancestry(definition, frozenset())
+            if not exceptional or not ancestors:
+                continue
+            symbol = symbol_of(definition)
+            stated.append(
+                (
+                    definition,
+                    symbol,
+                    exception_type_identity_of_symbol(symbol),
+                    ancestors,
+                )
+            )
+        return tuple(stated)
 
     def exception_class_value(self, node: "Name"):
         """Project one source-authenticated exception identity into one class graph."""
