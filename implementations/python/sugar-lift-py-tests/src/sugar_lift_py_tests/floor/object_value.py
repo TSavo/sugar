@@ -340,8 +340,28 @@ class ObjectValue(FloorValue):
             )
         class_value = self._resolved_class_field(name)
         if class_value is not None:
+            from sugar_lift_py_tests.floor.lambda_callable import LambdaCallable
             from sugar_lift_py_tests.outcome import ExitSet
 
+            if isinstance(class_value, LambdaCallable):
+                # A function in the class namespace read off an instance is
+                # what its descriptor binds (``function.__get__``: a method
+                # bound to this receiver), never the bare function: calling
+                # the bare one would bind no ``self``.  That binding of a
+                # class-field function is not constructed here.
+                self._floor_gap(
+                    owner="ObjectValue.attribute",
+                    blame=site,
+                    observed=(
+                        f"{self.class_name}.{name} is a function class field "
+                        "read off an instance"
+                    ),
+                    requested="the method its descriptor binds to this receiver",
+                    fix=(
+                        "bind a class-namespace function read off an instance "
+                        "(function.__get__) or keep the read loud"
+                    ),
+                )
             return ExitSet.completed(class_value)
         selected = next(
             (method for method in reversed(self.methods) if method.name == name),
@@ -356,9 +376,10 @@ class ObjectValue(FloorValue):
             # bound to the receiver's class.  The value is this receiver and
             # the name; its call dispatches through ``call_method_value`` on
             # this very receiver, so the one method door binds the implicit
-            # first actual by the descriptor kind (``implicit_arguments``)
-            # exactly as ``obj.m()`` does.  Nothing about the body is decided
-            # at the read.
+            # first actual by the descriptor kind (``implicit_arguments``).
+            # ``obj.m()`` is this read, then that call
+            # (``method_call_sugar._source_instance_method_call``).  Nothing
+            # about the body is decided at the read.
             from sugar_lift_py_tests.floor.bound_method_value import BoundMethodValue
             from sugar_lift_py_tests.outcome import ExitSet
 
@@ -666,7 +687,16 @@ class ObjectValue(FloorValue):
         keywords: tuple[tuple[str, FloorValue], ...] = (),
         required_frame: object | None = None,
     ) -> ExitSet:
-        """``self.<name>(*arguments, **keywords)``: select, bind, apply.
+        """The class's ``name`` called with this receiver: select on the
+        class, bind, apply.
+
+        This is the class side only: CPython's implicit special-method call
+        (``iter(o)``, ``o == p``, ``o[k]``, ``format``: ``type(o).<name>``,
+        which no instance field shadows), a property's getter, and the call
+        of a ``BoundMethodValue`` the attribute lookup already answered.  An
+        explicit ``o.m(...)`` never selects here: it is ``o.m`` read through
+        ``attribute`` (instance ``__dict__`` included), then that value
+        called (``method_call_sugar._source_instance_method_call``).
 
         The application is the one a plain call ``f(...)`` uses
         (``CallSiteValue.producer_outcome``, as ``CallSiteSugar`` applies it):

@@ -16,9 +16,11 @@ class BoundMethodValue(FloorValue):
     actual the one method door reads off the descriptor kind
     (``object_value.implicit_arguments``).
     This Floor carries exactly that pair and nothing else, so every call of
-    it dispatches through the receiver's own ``call_method_value`` (the same
-    selection ``MethodCallSugar`` uses), and any other use of the value
-    (truthiness, comparison, further attributes) stays a FloorValue panic.
+    it dispatches through the receiver's own ``call_method_value`` (the class
+    side of the lookup that answered it; ``o.m(...)`` on a source instance is
+    the attribute read answering this value, then this call), and any other
+    use of the value (truthiness, comparison, further attributes) stays a
+    FloorValue panic.
     """
 
     receiver: object

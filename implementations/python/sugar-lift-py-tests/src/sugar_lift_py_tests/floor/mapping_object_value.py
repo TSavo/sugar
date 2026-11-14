@@ -257,6 +257,33 @@ class MappingObjectValue(ObjectValue):
             )
         )
 
+    def attribute(self, name, site, ctx):
+        """``self.name`` by the one attribute lookup (``ObjectValue.attribute``)
+        with the authenticated ``dict`` base among the classes of the MRO.
+
+        A ``dict`` method is no data descriptor, so the instance ``__dict__``
+        comes first; after it, a name the MRO binds to ``dict``
+        (``protocol_owner``) whose method a door here applies
+        (``_DICT_BASE_ARITIES``) reads as that method bound to this receiver
+        (``BoundMethodValue``), whose call ``call_method_value`` answers from
+        the storage (``dict_base_call``).  On an instance whose fields are
+        not current the ``__dict__`` is not held: ``ObjectValue.attribute``'s
+        undecided read, as for every name that is no data descriptor."""
+        from .object_identity import contents_current
+
+        if (
+            name in _DICT_BASE_ARITIES
+            and contents_current(self)
+            and not any(field.name == name for field in self.fields)
+            and self.protocol_owner(name, site) == "dict"
+        ):
+            from sugar_lift_py_tests.outcome import ExitSet
+
+            from .bound_method_value import BoundMethodValue
+
+            return ExitSet.completed(BoundMethodValue(self, name))
+        return super().attribute(name, site, ctx)
+
     def call_method_value(
         self,
         name,
