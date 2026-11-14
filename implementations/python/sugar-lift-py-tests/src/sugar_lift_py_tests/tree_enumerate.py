@@ -211,9 +211,10 @@ class OwnerReduction:
     ``outcome`` is the reduction's outcome; ``asserts`` is every
     ``(coordinate, outcome)`` an assert inside it reduced to, in reduction
     order. Its unanswered calls are owed by the outcome's own arms
-    (``unanswered_calls.owed_calls``). ``ends`` is, for a module, the
-    context each completed arm of its run ended with
-    (``ModuleBlockSugar.run``); a function's reduction has none.
+    (``unanswered_calls.owed_calls``). ``ends`` is, for a module, each
+    completed arm of its run holding the context it ended with, under the
+    arm's guard and faces (``ModuleBlockSugar.run``); a function's
+    reduction has none.
     """
 
     __slots__ = ("unit", "outcome", "asserts", "ends")
@@ -281,7 +282,8 @@ _MODULE_RUNS_UNDER_WAY: AmbientSet = AmbientSet("module_runs_under_way")
 
 
 def module_end_contexts(unit) -> tuple:
-    """The context each completed arm of ``unit``'s module run ended with:
+    """The completed arms of ``unit``'s module run, each holding the context
+    it ended with under its own guard and faces (``ModuleBlockSugar.run``):
     the one source of module-final global values (#7757 item 7).
 
     The run is THE module reduction (``owner_reduction`` with no owner),
@@ -350,21 +352,6 @@ def module_end_contexts(unit) -> tuple:
     _MODULE_RUN_UNITS[key] = unit
     close_row(_MODULE_RUNS, memo, computation, reporter, value=ends)
     return ends
-
-
-def held_module_end_contexts(unit):
-    """``unit``'s module-end contexts where its run has already answered
-    with them here (``module_end_contexts``), else None.  Never runs the
-    module: a run not yet asked for, under way, or refused holds none."""
-    from sugar_source_tree.construction_cache import serve
-
-    key = id(unit)
-    if _MODULE_RUN_UNITS.get(key) is not unit or key in _MODULE_RUNS_UNDER_WAY:
-        return None
-    row = serve(_MODULE_RUNS, (key,), unit.constructed_module.root.reporter)
-    if row is None or row.panic is not None:
-        return None
-    return row.value
 
 
 def assert_outcome(sf: SourceFile, span: Optional[dict]):

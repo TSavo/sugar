@@ -30,7 +30,7 @@ class ReceiverFieldStoreValue(FloorValue):
 
     def extend_scope(self, ctx):
         """Advance every binding that names this exact constructed receiver."""
-        from sugar_lift_py_tests.sugar.call_site_sugar import settled_binding_value
+        from sugar_lift_py_tests.sugar.call_site_sugar import bound_value_read
 
         from .object_value import ObjectValue
 
@@ -46,9 +46,9 @@ class ReceiverFieldStoreValue(FloorValue):
         identity = self.receiver.identity
         matched = False
         for binding in ctx.temporal.bindings:
-            # A module-final key not yet read holds no receiver the store
-            # could have reached; one whose run answered holds its value.
-            candidate = settled_binding_value(binding.value)
+            # Every binding is read as any read reads it: a module-final
+            # key demands its module run, whether or not a read asked first.
+            candidate = bound_value_read(binding.value)
             if (
                 isinstance(candidate, ObjectValue)
                 and type(candidate) is type(self.receiver)
