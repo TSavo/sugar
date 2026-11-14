@@ -1,11 +1,12 @@
-"""Plan Cut 1: the population membrane is roster-only, declared, module-scoped.
+"""The population follows from what the code imports, never from a list.
 
 Board 33982802518: cmResolutions constructed 0 / cited-opaque 5,812 /
 unconstructed 2,245, because stdlib was refused by KIND and every
 non-corpus distribution by absence from a one-name roster. The population
-is now what the measurement DECLARES (``SUGAR_ENROLLED_POPULATIONS``):
-the corpus distribution plus extra authenticated source populations,
-optionally one module at a time (``cpython-stdlib:contextlib``).
+is the corpus distribution plus every top-level module the code imports,
+read from the one import table (#7837, #7851). No package name is listed in
+code; ``SUGAR_ENROLLED_POPULATIONS`` may still declare more, optionally one
+module at a time (``cpython-stdlib:contextlib``).
 """
 
 from __future__ import annotations
@@ -15,9 +16,9 @@ from pathlib import Path
 
 import pytest
 
+from sugar_lift_python_source import resolution_session
 from sugar_lift_python_source.resolution_session import (
     ENROLLED_POPULATIONS_ENV,
-    STANDING_EXTRA_POPULATIONS,
     SourceResolutionSession,
     clear_walk_sessions,
     declared_extra_populations,
@@ -30,7 +31,6 @@ from sugar_lift_py_tests.context_manager_contract import (
     ProtocolResourceSemanticsV1,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
-    OpaqueCitedContextManagerRefV1,
     SourceDerivedContextManagerRefV1,
 )
 from sugar_lift_py_tests.corpus_pin import pin_corpus
@@ -46,17 +46,30 @@ from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
 
 
-def test_roster_is_the_corpus_plus_declared_extras(monkeypatch) -> None:
+def test_no_package_name_is_listed_in_code(monkeypatch) -> None:
+    """Nothing is enrolled by a hard-coded name: with nothing declared, the
+    roster is the corpus distribution alone."""
     monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
-    assert STANDING_EXTRA_POPULATIONS == frozenset({"cpython-stdlib:contextlib", "numpy"})
-    assert enrolled_population_roster("pandas") == frozenset(
-        {"pandas"} | STANDING_EXTRA_POPULATIONS
-    )
+    assert not hasattr(resolution_session, "STANDING_EXTRA_POPULATIONS")
+    assert declared_extra_populations() == frozenset()
+    assert enrolled_population_roster("pandas") == frozenset({"pandas"})
     monkeypatch.setenv(ENROLLED_POPULATIONS_ENV, "pytest, cpython-stdlib:contextlib ,numpy")
     assert declared_extra_populations() == frozenset(
         {"pytest", "cpython-stdlib:contextlib", "numpy"}
-    ) | STANDING_EXTRA_POPULATIONS
+    )
     assert "pandas" in enrolled_population_roster("pandas")
+
+
+def test_an_import_admits_its_own_top_level_module_only() -> None:
+    roster = frozenset({"tiny-corpus"})
+    imported = frozenset({"contextlib", "numpy"})
+    assert population_admits(roster, "cpython-stdlib", "contextlib", imported)
+    assert population_admits(roster, "numpy", "numpy._core._ufunc_config", imported)
+    assert not population_admits(roster, "cpython-stdlib", "warnings", imported)
+    assert not population_admits(roster, "cpython-stdlib", "contextlib")
+    # No module, no admission by import: an import never admits a module no
+    # artifact authenticates.
+    assert not population_admits(roster, "contextlib", None, imported)
 
 
 def test_malformed_entries_refuse(monkeypatch) -> None:
@@ -83,13 +96,6 @@ NULLCONTEXT = (
     "\n"
     "def f():\n"
     "    with nullcontext():\n"
-    "        return 1\n"
-)
-WARNINGS = (
-    "import warnings\n"
-    "\n"
-    "def f():\n"
-    "    with warnings.catch_warnings():\n"
     "        return 1\n"
 )
 
@@ -119,26 +125,23 @@ def _open(root: Path, name: str, *, session=None):
     return open_source_file_for_construction(root / name, **kwargs)
 
 
-def _with_resolution(root: Path, name: str, *, session=None):
-    source_file = _open(root, name, session=session)
-    with_node = next(n for n in source_file.nodes() if isinstance(n, With))
-    refs = source_file.root.unit.construction_context.source_derived_contract_refs
-    line = with_node.line_col_span().start_line
-    (site,) = [k for k in refs if k.start_line == line]
-    return refs[site]
+def test_population_follows_from_imports_alone(tmp_path, monkeypatch) -> None:
+    """A corpus-only roster, nothing declared, no distribution passed: the
+    one thing that enrolls contextlib is that the code imports it.
 
-
-def test_stdlib_manager_is_cited_under_the_corpus_only_roster(tmp_path, monkeypatch) -> None:
-    """The membrane still cites when contextlib is not on the roster.
-
-    ``populate_source_derived_resource_refs`` widens a session with the
-    standing extras when ``distribution`` is passed, so this control does
-    not go through that door. It passes a corpus-only roster and no
-    distribution, which is the membrane without enrollment.
+    Before the open the session holds no imported module and contextlib is
+    off-population; the open reads the one import table, so contextlib joins
+    and ``nullcontext`` is derived from its source. ``warnings`` is not
+    imported, so it stays off-population.
     """
+    from types import SimpleNamespace
+
     from sugar_lift_py_tests.canonicalizer import blake3_512_of
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.manager_construction import (
+        _graph_is_off_population,
     )
     from sugar_lift_python_source.manager_summary_derivation import (
         populate_source_derived_resource_refs,
@@ -154,22 +157,23 @@ def test_stdlib_manager_is_cited_under_the_corpus_only_roster(tmp_path, monkeypa
         (source, str(path), blake3_512_of(source.encode("utf-8"))),
         construction_context=context,
     )
-    populate_source_derived_resource_refs(
-        tree,
-        root=root,
-        path=path,
-        session=SourceResolutionSession(
-            enrolled_distributions=frozenset({"tiny-corpus"})
-        ),
-    )
+    assert tree.unit.imported_modules() == frozenset({"contextlib"})
+    session = SourceResolutionSession(enrolled_distributions=frozenset({"tiny-corpus"}))
+    stdlib = SimpleNamespace(distribution_name="cpython-stdlib")
+    assert session.imported_modules == frozenset()
+    assert _graph_is_off_population(stdlib, session=session, module_name="contextlib")
+    populate_source_derived_resource_refs(tree, root=root, path=path, session=session)
+    assert session.enrolled_distributions == frozenset({"tiny-corpus"})
+    assert session.imported_modules == frozenset({"contextlib"})
+    assert not _graph_is_off_population(stdlib, session=session, module_name="contextlib")
+    assert _graph_is_off_population(stdlib, session=session, module_name="warnings")
     ref = next(iter(context.source_derived_contract_refs.values()))
-    assert isinstance(ref, OpaqueCitedContextManagerRefV1)
-    assert ref.roster.resolution_kind == "call-target-off-population"
+    assert isinstance(ref, SourceDerivedContextManagerRefV1), ref
 
 
-def test_enrolling_contextlib_stops_citing_nullcontext(tmp_path, monkeypatch) -> None:
-    """Truthful twin: with contextlib enrolled, nullcontext is derived from
-    its source as a protocol resource that never suppresses."""
+def test_importing_contextlib_stops_citing_nullcontext(tmp_path, monkeypatch) -> None:
+    """Truthful twin: the code imports contextlib, so nullcontext is derived
+    from its source as a protocol resource that never suppresses."""
     monkeypatch.delenv(ENROLLED_POPULATIONS_ENV, raising=False)
     source = (
         "from contextlib import nullcontext\n"
@@ -217,12 +221,3 @@ def test_enrolling_contextlib_stops_citing_nullcontext(tmp_path, monkeypatch) ->
     assert len(halted) == 1
     assert isinstance(halted[0].effect, RaiseEffect)
     assert halted[0].effect.exception_name == "ValueError"
-
-
-def test_enrolling_contextlib_does_not_enroll_warnings(tmp_path, monkeypatch) -> None:
-    """Lying twin: a module-scoped entry admits one module, not the stdlib."""
-    monkeypatch.setenv(ENROLLED_POPULATIONS_ENV, "cpython-stdlib:contextlib")
-    root = _corpus(tmp_path, **{"w.py": WARNINGS})
-    ref = _with_resolution(root, "w.py")
-    assert isinstance(ref, OpaqueCitedContextManagerRefV1)
-    assert ref.roster.resolution_kind == "call-target-off-population"

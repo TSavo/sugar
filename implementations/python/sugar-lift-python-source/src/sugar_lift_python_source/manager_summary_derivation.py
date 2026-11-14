@@ -1807,9 +1807,8 @@ def populate_source_derived_resource_refs(
     # Do not call session_or_new inside the receipt loop.
     session = session_or_new(session)
     # Population membrane: pin enrolls the consumer distribution (first path
-    # segment under the locus root), not test-only deps (pytest) or stdlib.
-    # Without this, one open of pandas/tests/io/json/test_pandas.py projected
-    # 40 pytest frames (~3.8s) after the stdlib-only membrane.
+    # segment under the locus root); other modules join only when the code
+    # imports them (below), never by a listed package name.
     if source_workspace_root is not None:
         _qualified_enrollment_coordinate(
             path,
@@ -1830,6 +1829,11 @@ def populate_source_derived_resource_refs(
             "missing-enrolled-distribution-roster: distribution authority was not "
             "supplied; refusing to infer an enrolled population from a path segment"
         )
+    # Population follows imports: the modules this code imports, read from
+    # the one import table, join the population. Never narrowed mid-walk.
+    session.imported_modules = (
+        session.imported_modules | source_file.unit.imported_modules()
+    )
     context = source_file.root.unit.construction_context
     if context is None:
         return
