@@ -269,3 +269,76 @@ def test_a_tuple_the_body_reads_is_unrolled() -> None:
         "    return 0\n"
     )
     assert len(_stores(body, "x")) == 2
+
+
+# ---------------------------------------------------------------------------
+# A list that escaped before the loop is not unrolled when the body runs code
+# that could reach it (#7757 item 7, the gap #7973 left).
+# ---------------------------------------------------------------------------
+
+
+def _escaped(escape: str, call: str, *, display: str = "[1, 2]") -> str:
+    return (
+        "def f(box, d, register):\n"
+        f"    xs = {display}\n"
+        f"{escape}"
+        "    for x in xs:\n"
+        f"        {call}\n"
+        "        r = x\n"
+        "    return 0\n"
+    )
+
+
+def test_a_list_stored_on_an_object_is_not_unrolled() -> None:
+    body = _body(_escaped("    box.items = xs\n", "box.grow()"))
+    assert _stores(body, "x") == []
+
+
+def test_a_list_stored_in_a_container_is_not_unrolled() -> None:
+    body = _body(_escaped("    d['k'] = xs\n", "d['k'].append(3)"))
+    assert _stores(body, "x") == []
+
+
+def test_a_list_passed_to_a_call_is_not_unrolled() -> None:
+    body = _body(_escaped("    register(xs)\n", "box.grow()"))
+    assert _stores(body, "x") == []
+
+
+def test_a_list_a_nested_def_captures_is_not_unrolled() -> None:
+    body = _body(
+        _escaped("    def grow():\n        xs.append(3)\n", "grow()")
+    )
+    assert _stores(body, "x") == []
+
+
+def test_a_list_a_lambda_captures_is_not_unrolled() -> None:
+    body = _body(_escaped("    grow = lambda: xs.append(3)\n", "grow()"))
+    assert _stores(body, "x") == []
+
+
+def test_a_list_an_alias_lets_escape_is_not_unrolled() -> None:
+    body = _body(_escaped("    ys = xs\n    box.items = ys\n", "box.grow()"))
+    assert _stores(body, "x") == []
+
+
+def test_a_list_stored_in_a_display_is_not_unrolled() -> None:
+    body = _body(_escaped("    box.held = [xs]\n", "box.grow()"))
+    assert _stores(body, "x") == []
+
+
+def test_an_escaped_tuple_is_unrolled() -> None:
+    body = _body(
+        _escaped("    box.items = xs\n", "box.grow()", display="(1, 2)")
+    )
+    assert len(_stores(body, "x")) == 2
+
+
+def test_an_escaped_list_with_a_pure_body_is_unrolled() -> None:
+    body = _body(_escaped("    box.items = xs\n", "r = x + 1"))
+    assert len(_stores(body, "x")) == 2
+
+
+def test_a_local_list_whose_body_calls_is_unrolled() -> None:
+    # Nothing but ``xs`` holds the list: a call in the body cannot reach it.
+    body = _body(_escaped("", "box.grow()"))
+    assert len(_stores(body, "x")) == 2
