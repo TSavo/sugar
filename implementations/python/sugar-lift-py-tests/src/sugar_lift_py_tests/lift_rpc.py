@@ -809,7 +809,7 @@ def _parameter_contract_resume_rows(
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-    universe, def_memento_dto, def_memento, unit, unanswered = retained
+    outcome, universe, def_memento_dto, def_memento, unit, unanswered = retained
     try:
         resolution_set = ParameterContractResolutionSetV1.from_value(raw_set)
         resume_apply_resolutions(unit, resolution_set)
@@ -824,17 +824,18 @@ def _parameter_contract_resume_rows(
             gap_locus=GapLocus.CONSTRUCTION,
         )
     # No candidate is ever enrolled (inventory item 43), so the retained
-    # universe projects as it stands.
-    resolved = universe
+    # reduction projects as it stands. Its rows are read off the retained
+    # outcome, every arm of it, through the one projection the full scan
+    # uses (``reduction_rows``): completions in the post, each halt as its
+    # panic locus. A resumed function states what the full scan states.
     from sugar_lift_py_tests.ir import TermTableBuilder
 
     term_table = TermTableBuilder()
-    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.tree_enumerate import reduction_rows
 
     rows = reduction_rows(
-        ExitSet.completed(resolved),
-        owner=resolved,
+        outcome,
+        owner=universe,
         blame=None,
         def_memento=def_memento_dto,
     )
@@ -909,7 +910,11 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
             unit = universe.link_unit_projection(def_memento)
             if unit is None:
                 continue
+            # The reduction's own outcome is retained, every arm of it: the
+            # resume reads its rows off this one outcome through the one
+            # projection the full scan uses (``reduction_rows``).
             _RETAINED_LINK_UNITS[unit.link_unit_cid] = (
+                outcome,
                 universe,
                 def_memento_dto,
                 def_memento,
