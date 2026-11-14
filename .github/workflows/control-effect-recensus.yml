@@ -57,6 +57,10 @@ on:
         description: "Optional subtree inside the corpus for a bounded run"
         required: false
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 

@@ -5,11 +5,15 @@ on:
   schedule:
     - cron: "29 9 * * *"
 
+# A newer push cancels the superseded run (owner ruling 2026-11-14, overrules
+# #7118); intermediate commits on main get no run of their own.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
-# NO `concurrency:` BLOCK. GitHub keeps only ONE pending run per group and
-# replaces a queued run with a newer one even under cancel-in-progress: false.
 # No machine-wide heavy-measurement lease; jobs run in parallel.
 
 jobs:
