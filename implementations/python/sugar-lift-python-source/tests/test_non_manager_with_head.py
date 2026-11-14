@@ -200,6 +200,49 @@ def test_a_base_shadowed_locally_is_the_local_binding(shadow):
     )
 
 
+@pytest.mark.parametrize(
+    ("module_tail", "proven"),
+    [
+        # a parameter named ``setattr`` is the parameter, not the builtin
+        ("def f(setattr, n):\n    setattr(M, n, 1)\n", True),
+        # a parameter named ``exec`` is the parameter, not the builtin
+        ("def f(exec):\n    exec('x')\n", True),
+        # the builtin ``setattr`` under another spelling is still the builtin
+        (
+            "from builtins import setattr as put\n"
+            "def f(n):\n    put(M, n, 1)\n",
+            False,
+        ),
+        # the builtin ``exec`` under another spelling is still the builtin
+        ("from builtins import exec as run\ndef f():\n    run('x')\n", False),
+        # the unshadowed builtin with a computed attribute name
+        ("def f(n):\n    setattr(M, n, 1)\n", False),
+        # a computed name on an imported module may retarget a base it holds
+        ("import abc\ndef f(n):\n    setattr(abc, n, 1)\n", False),
+    ],
+    ids=[
+        "setattr-parameter",
+        "exec-parameter",
+        "setattr-alias",
+        "exec-alias",
+        "setattr-builtin",
+        "setattr-module-receiver",
+    ],
+)
+def test_a_module_writer_is_known_by_its_binding(module_tail, proven):
+    """The module scan reads each callee through the binding its read
+    reaches (``language_callee_of`` / ``reads_dynamic_global_writer``), never
+    its spelling (#7757): a shadowing parameter is not the builtin, and the
+    builtin under an alias is."""
+    from sugar_lift_python_source.manager_protocol_absence import (
+        prove_manager_protocol_absence,
+    )
+
+    source = "class M:\n    pass\n" + module_tail
+    proof = prove_manager_protocol_absence(_class(source, "M"))
+    assert (proof is not None) is proven
+
+
 def test_a_callee_shadowed_by_a_parameter_is_not_the_module_class(tmp_path):
     """The ``with`` head's callee resolves through the binding its read
     reaches: ``M`` is ``f``'s parameter, so the module's ``class M`` (which

@@ -23,7 +23,11 @@ decorator application answers as returning its argument
 Any base that is neither keeps the use a runtime-selected gap.  The defining
 module must also never store ``__enter__``/``__exit__``/``__class__`` as an
 attribute, never call ``setattr``/``delattr`` where it could name them, and
-never call ``exec``/``eval``/``globals``/``locals``/``vars``.
+never call ``exec``/``eval``/``globals``/``locals``/``vars``.  Each callee is
+known by the binding its read reaches (``SourceUnit.language_callee_of`` and
+``SourceUnit.reads_dynamic_global_writer``), never by its spelling: a
+module's own ``exec`` is none of these, and ``from builtins import setattr as
+put`` makes ``put`` one.
 
 The proof answers which of the two names the MRO binds; when one is missing
 the ``with`` halts with the interpreter's own observed ``TypeError``.
@@ -39,8 +43,6 @@ from sugar_lift_py_tests.manager_protocol_absence_refusal import (
 )
 
 _FORBIDDEN_STORES = frozenset({*PROTOCOL_NAMES, "__class__"})
-_DYNAMIC_SCOPE_CALLS = frozenset({"exec", "eval", "globals", "locals", "vars"})
-_ATTRIBUTE_WRITERS = frozenset({"setattr", "delattr"})
 _FORBIDDEN_CLASS_NAMES = frozenset({"__new__", "__init_subclass__"})
 
 
@@ -354,9 +356,23 @@ def _expression_is_inert(expression, unit) -> bool:
                 is None
             ):
                 return False
-            if node.func.id in _DYNAMIC_SCOPE_CALLS | _ATTRIBUTE_WRITERS:
+            if unit.reads_dynamic_global_writer(node.func) or _writes_an_attribute(
+                unit, node.func
+            ):
                 return False
     return True
+
+
+def _writes_an_attribute(unit, callee) -> bool:
+    """Whether the read ``callee`` is bound to ``setattr`` or ``delattr``:
+    known by its binding at the read (``SourceUnit.language_callee_of``),
+    never by its spelling."""
+    from sugar_source_tree.nodes import LanguageCallee
+
+    return unit.language_callee_of(callee) in (
+        LanguageCallee.BUILTIN_SETATTR,
+        LanguageCallee.BUILTIN_DELATTR,
+    )
 
 
 def _module_admits_absence_proof(unit) -> bool:
@@ -377,16 +393,13 @@ def _scan_module(unit) -> bool:
         Delete,
         DeleteAttribute,
         For,
-        Import,
         ImportFrom,
-        Name,
         With,
     )
 
     module = getattr(unit, "typed_module", None)
     if module is None:
         return False
-    bindings = unit.module_direct_bindings or {}
     for node in module.walk():
         if isinstance(node, ImportFrom) and any(a.name == "*" for a in node.names):
             return False
@@ -405,24 +418,21 @@ def _scan_module(unit) -> bool:
             for leaf in target.walk():
                 if isinstance(leaf, Attribute) and leaf.attr in _FORBIDDEN_STORES:
                     return False
-        if isinstance(node, Call) and isinstance(node.func, Name):
-            name = node.func.id
-            if name in _DYNAMIC_SCOPE_CALLS and not bindings.get(name):
+        if not isinstance(node, Call):
+            continue
+        # The callee is the binding its read reaches, never its spelling.
+        if unit.reads_dynamic_global_writer(node.func):
+            return False
+        if _writes_an_attribute(unit, node.func):
+            if len(node.args) < 2:
                 return False
-            if name in _ATTRIBUTE_WRITERS and not bindings.get(name):
-                if len(node.args) < 2:
-                    return False
-                attribute = node.args[1]
-                if isinstance(attribute, Constant):
-                    if attribute.value in _FORBIDDEN_STORES:
-                        return False
-                    continue
-                # A computed attribute name may be anything: admitted only
-                # when the receiver is a module bound by ``import``.
-                receiver = node.args[0]
-                if not isinstance(receiver, Name):
-                    return False
-                binds = bindings.get(receiver.id, ())
-                if len(binds) != 1 or not isinstance(binds[0], Import):
-                    return False
+            # A computed attribute name may be anything, on any receiver: a
+            # module bound by ``import`` holds the bases a class statement
+            # reads (``abc.ABC``), so only a constant name not in the
+            # protocol is admitted.
+            attribute = node.args[1]
+            if not isinstance(attribute, Constant):
+                return False
+            if attribute.value in _FORBIDDEN_STORES:
+                return False
     return True
