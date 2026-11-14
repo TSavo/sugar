@@ -77,43 +77,7 @@ class BuiltinSemanticCallable(FloorValue):
         if self.operation == "python.super.construct":
             if operation.arguments or operation.keyword_names:
                 return super().callable_application_with(operation, ctx)
-            from sugar_lift_py_tests.floor.builtin_super_value import BuiltinSuperValue
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            if zero_argument_super_has_no_arguments(operation.site):
-                # CPython's ``super_init_without_args``: a frame whose code
-                # takes no positional argument raises before it reads any
-                # ``__class__`` cell.  Decided by the scope, so it is the
-                # call's halt, not a construction gap.
-                from sugar_lift_py_tests.floor.ground_exit import (
-                    ground_exceptional_exit,
-                )
-
-                return ground_exceptional_exit(
-                    exception_name="RuntimeError",
-                    site=operation.site,
-                    owner="BuiltinSemanticCallable.python.super",
-                )
-            current_class = ctx.temporal.value_if_bound("__class__")
-            receiver = zero_argument_super_receiver(operation.site, ctx.temporal)
-            if current_class is None or receiver is None:
-                from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-                construction_panic_gap(
-                    owner="BuiltinSemanticCallable.python.super",
-                    blame=str(operation.site),
-                    observed=(
-                        "zero-argument super() in a generator expression: its "
-                        "frame's first argument is the generator's .0 iterator"
-                        if zero_argument_super_in_generator_frame(operation.site)
-                        else "missing __class__ cell or first formal receiver"
-                    ),
-                    requested="authenticated zero-argument super context",
-                    fix="carry the defining class and bound first formal into the method body",
-                )
-            return ExitSet.completed(
-                BuiltinSuperValue(current_class=current_class, receiver=receiver)
-            )
+            return zero_argument_super(operation.site, ctx)
         if self.operation != "python.issubclass":
             return super().callable_application_with(operation, ctx)
         if len(operation.arguments) != 2 or operation.keyword_names:
@@ -604,11 +568,107 @@ def _super_frame_first_positional(site):
     return True, params[0]
 
 
+_SUPER_OWNER = "BuiltinSemanticCallable.python.super"
+
+
+def zero_argument_super(site, ctx):
+    """``super()`` with no actual at ``site``, in CPython's own order
+    (``super_init_without_args``, then ``supercheck``, Objects/typeobject.c):
+
+    1. a frame whose code takes no positional argument raises
+       ``RuntimeError`` (``zero_argument_super_has_no_arguments``);
+    2. a frame with no ``__class__`` cell of its own raises ``RuntimeError:
+       super(): __class__ cell not found`` -- decided by the frame's own
+       symtable block (``zero_argument_super_class_cell``), never by a
+       ``__class__`` some caller bound;
+    3. a generator expression's first argument is its ``.0`` iterator,
+       which is no instance of the class ``__class__`` holds: ``supercheck``
+       raises ``TypeError``;
+    4. otherwise ``super(__class__, obj)`` with ``obj`` the frame's first
+       formal (``zero_argument_super_receiver``) and ``__class__`` the
+       frame's cell, read as the class value the context binds for that
+       class statement: ``BuiltinSuperValue.constructed``, which makes the
+       instance check.
+
+    Each decided failure is the call's halt.  A cell or receiver not read
+    here refuses by name.
+    """
+    from sugar_lift_py_tests.floor.builtin_super_value import BuiltinSuperValue
+    from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+    if zero_argument_super_has_no_arguments(site):
+        return ground_exceptional_exit(
+            exception_name="RuntimeError", site=site, owner=_SUPER_OWNER
+        )
+    decided, cell = zero_argument_super_class_cell(site)
+    if decided and cell is None:
+        return ground_exceptional_exit(
+            exception_name="RuntimeError", site=site, owner=_SUPER_OWNER
+        )
+    if decided and zero_argument_super_in_generator_frame(site):
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner=_SUPER_OWNER
+        )
+    temporal = getattr(ctx, "temporal", None)
+    current_class = _class_cell_value(cell, temporal) if decided else None
+    receiver = zero_argument_super_receiver(site, temporal)
+    if current_class is None or receiver is None:
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner=_SUPER_OWNER,
+            blame=str(site),
+            observed=(
+                "the frame's __class__ cell is not read"
+                if not decided
+                else "the frame's __class__ cell holds no class value here"
+                if current_class is None
+                else "the frame's first formal is not bound"
+            ),
+            requested="authenticated zero-argument super context",
+            fix="carry the defining class and bound first formal into the method body",
+        )
+    return BuiltinSuperValue.constructed(current_class, receiver, site)
+
+
+def zero_argument_super_class_cell(site):
+    """``(decided, cell)`` for a zero-argument ``super()`` at ``site``: whether
+    the frame running it has a ``__class__`` cell of its own and the class
+    statement it holds (``SourceUnit.frame_class_cell``, off the frame's own
+    symtable block).  Not decided for a site with no source unit."""
+    unit = getattr(site, "unit", None)
+    node = getattr(site, "node", None)
+    if unit is None or node is None:
+        return False, None
+    return unit.frame_class_cell(node.line_col_span())
+
+
+def _class_cell_value(cell, temporal):
+    """The class value the frame's ``__class__`` cell holds: the context's
+    ``__class__`` binding when it is the class the cell's statement makes
+    (matched by source occurrence).  A binding of any other class is a
+    caller's, never this frame's cell: None."""
+    from sugar_source_tree.occurrence import SourceOccurrenceIdentityV1
+
+    if temporal is None or cell is None:
+        return None
+    bound = temporal.value_if_bound("__class__")
+    statement = getattr(bound, "class_definition", None)
+    if statement is None:
+        return None
+    if statement is cell or SourceOccurrenceIdentityV1.of(
+        statement
+    ) == SourceOccurrenceIdentityV1.of(cell):
+        return bound
+    return None
+
+
 def zero_argument_super_in_generator_frame(site) -> bool:
     """Whether a zero-argument ``super()`` at ``site`` runs in a generator
     expression's own frame, whose first argument -- the object ``super()``
     binds -- is the generator's ``.0`` iterator, never a formal of the
-    function around it."""
+    function around it: with a ``__class__`` cell, ``supercheck``'s
+    ``TypeError`` (``zero_argument_super``)."""
     _read, formal = _super_frame_first_positional(site)
     return formal is _GENERATOR_ITERATOR_ARGUMENT
 

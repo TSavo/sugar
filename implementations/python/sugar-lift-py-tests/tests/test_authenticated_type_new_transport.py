@@ -2,9 +2,10 @@
 
 import pytest
 
+from sugar_lift_py_tests.context import ReduceContext
+from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     BuiltinSuperValue,
-    ClassValue,
     MappingObjectValue,
     RuntimeClassValue,
     StringValue,
@@ -12,17 +13,29 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_source_tree.nodes import ClassDef
+from sugar_source_tree.tree import SourceFile
+
+_METACLASS = (
+    "class Meta(type):\n"
+    "    def __new__(mcs, name, bases, namespace, **kwds):\n"
+    "        return super().__new__(mcs, name, bases, namespace)\n"
+)
 
 
 def _super_value():
-    return BuiltinSuperValue(
-        current_class=type(
-            "CurrentClass",
-            (),
-            {"base_classes": (ClassValue(name="type", bases=(), record=None),)},
-        )(),
-        receiver=TermValue("metaclass"),
+    # ``super()`` in a metaclass's ``__new__`` binds the metaclass itself, a
+    # class whose own MRO (Meta, type, object) it walks: ``type.__new__``,
+    # selected by the builtin ``type`` the base reads by binding.
+    tree = SourceFile(
+        (_METACLASS, "type_new_transport.py", blake3_512_of(_METACLASS.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
+    definition = next(node for node in tree.root.body if isinstance(node, ClassDef))
+    meta = definition.sugar().desugar(ReduceContext.root(owner="test")).completed_value()
+    assert meta is not None
+    return BuiltinSuperValue(current_class=meta, receiver=meta)
 
 
 def test_type_new_result_carries_the_exact_namespace_as_class_dict() -> None:

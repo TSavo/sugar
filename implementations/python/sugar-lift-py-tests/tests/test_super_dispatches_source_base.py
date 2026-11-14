@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import pytest
-
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import CallSiteValue
 from sugar_lift_py_tests.floor.builtin_super_value import BuiltinSuperValue
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
@@ -65,7 +62,7 @@ def test_super_dispatches_into_source_defined_base_init() -> None:
     assert reduced.completed_value() is not None
 
 
-# --- lying twin: super() naming a method no base defines must stay loud --------
+# --- lying twin: super() naming a method no class after Derived binds ----------
 _LIAR = (
     "class Base:\n"
     "    def __init__(self, x):\n"
@@ -77,19 +74,60 @@ _LIAR = (
 )
 
 
-def test_super_refuses_absent_base_method() -> None:
-    context, (base, derived) = _constructed(_LIAR)
+def test_super_naming_an_absent_method_is_the_attribute_error() -> None:
+    # Derived's MRO is read whole (Derived, Base, object) and no class after
+    # Derived binds ``greet``: CPython's AttributeError, never a base method.
+    context, (_base, derived) = _constructed(_LIAR)
     receiver = derived.construct_receiver_state_from_block(None, "receiver")
     zuper = BuiltinSuperValue(current_class=derived, receiver=receiver)
 
-    with pytest.raises(SugarNotWritten):
-        zuper.call_method_value(
-            "greet",
+    outcome = zuper.call_method_value(
+        "greet",
+        (StringValue("v"),),
+        owner="test",
+        blame="super-greet",
+        ctx=context,
+    )
+
+    assert outcome.halts() == outcome.exits
+    assert [halt.effect.exception_name for halt in outcome.halts()] == [
+        "AttributeError"
+    ]
+
+
+# --- a method the selected class writes, never one it inherits -----------------
+_OWN_METHOD_ONLY = (
+    "class Base:\n"
+    "    def __init__(self, x):\n"
+    "        self.x = x\n"
+    "\n"
+    "class Middle(Base):\n"
+    "    pass\n"
+    "\n"
+    "class Derived(Middle):\n"
+    "    def __init__(self, x):\n"
+    "        super().__init__(x)\n"
+)
+
+
+def test_super_runs_the_first_class_after_the_cell_that_binds_the_name() -> None:
+    context, (base, _middle, derived) = _constructed(_OWN_METHOD_ONLY)
+    receiver = derived.construct_receiver_state_from_block(None, "receiver")
+
+    call = (
+        BuiltinSuperValue(current_class=derived, receiver=receiver)
+        .call_method_value(
+            "__init__",
             (StringValue("v"),),
             owner="test",
-            blame="super-greet",
+            blame="super-init",
             ctx=context,
         )
+        .completed_value()
+    )
+
+    assert isinstance(call, CallSiteValue)
+    assert call.lexical_defining_class is base
 
 
 _ANNOTATED = (

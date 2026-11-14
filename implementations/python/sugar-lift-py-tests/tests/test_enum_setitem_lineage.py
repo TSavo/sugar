@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import (
-    BuiltinDictClassValue,
     BuiltinSuperValue,
     CallSiteValue,
     MappingObjectValue,
@@ -99,14 +96,41 @@ def test_source_setitem_runs_then_super_returns_none_with_updated_receiver() -> 
     assert seen.completed_value() == StringValue("member")
 
 
+_SUPER_SETITEM = (
+    "class EnumNamespace(dict):\n"
+    "    def __setitem__(self, key, value):\n"
+    "        super().__setitem__(key, value)\n"
+)
+
+_METACLASS = (
+    "class EnumMeta(type):\n"
+    "    def __new__(mcs, name, bases, namespace):\n"
+    "        return super().__new__(mcs, name, bases, namespace)\n"
+)
+
+
+def _source_class(source: str):
+    tree = SourceFile(
+        (source, "enum_metaclass.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    definition = next(node for node in tree.root.body if isinstance(node, ClassDef))
+    value = (
+        definition.sugar()
+        .desugar(ReduceContext.root(owner="test_enum_setitem_lineage"))
+        .completed_value()
+    )
+    assert value is not None
+    return value
+
+
 def test_super_setitem_returns_none_and_carries_updated_namespace() -> None:
     """The builtin base call has two products; neither may replace the other."""
-    base = BuiltinDictClassValue(operation="python.dict.construct")
-    receiver = MappingObjectValue(
-        "EnumNamespace", (), identity="namespace-coordinate", entries=()
-    )
+    receiver, _context = _source_receiver(_SUPER_SETITEM)
+    # ``type(receiver).__mro__`` is EnumNamespace, dict, object: the class
+    # after the cell that binds ``__setitem__`` is ``dict``.
     selected_super = BuiltinSuperValue(
-        current_class=SimpleNamespace(base_classes=(base,)),
+        current_class=receiver.defining_class,
         receiver=receiver,
     )
 
@@ -124,17 +148,13 @@ def test_super_setitem_returns_none_and_carries_updated_namespace() -> None:
 
 def test_type_new_consumes_the_post_setitem_namespace_not_its_pre_state() -> None:
     """Deleting receiver transport makes ``_member_map_`` vanish at type.__new__."""
-    type_base = SimpleNamespace(name="type")
-    type_super = BuiltinSuperValue(
-        current_class=SimpleNamespace(base_classes=(type_base,)),
-        receiver=TermValue("metaclass"),
-    )
-    dict_base = BuiltinDictClassValue(operation="python.dict.construct")
-    namespace = MappingObjectValue(
-        "EnumNamespace", (), identity="namespace-coordinate", entries=()
-    )
+    metaclass = _source_class(_METACLASS)
+    # ``super()`` in a metaclass's ``__new__`` binds the metaclass itself, a
+    # class whose own MRO (EnumMeta, type, object) it walks: ``type.__new__``.
+    type_super = BuiltinSuperValue(current_class=metaclass, receiver=metaclass)
+    namespace, _context = _source_receiver(_SUPER_SETITEM)
     dict_super = BuiltinSuperValue(
-        current_class=SimpleNamespace(base_classes=(dict_base,)),
+        current_class=namespace.defining_class,
         receiver=namespace,
     )
     mutation = dict_super.call_method_value(
