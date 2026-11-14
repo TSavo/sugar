@@ -24,6 +24,7 @@ from sugar_lift_py_tests.context_manager_contract import (
     ExpectsModeV1,
     FormalArgumentProjectionV1,
     NoMessagePatternV1,
+    OptionalFormalArgumentProjectionV1,
 )
 from sugar_lift_py_tests.floor.branch_result_coordinate import (
     BranchResultAuthentication,
@@ -156,14 +157,14 @@ def test_unreduced_matches_call_projects_no_expected_operand():
     """``matches(exc_val)`` is not read through the ``expected_exceptions`` field."""
     behavior = _behavior()
     assert (
-        derivation._formal_index_for_coordinate(
-            _matches_formula(), _actual_terms(behavior), "python:exit_type"
+        derivation._expected_type_formal_index(
+            _matches_formula(), _actual_terms(behavior)
         )
         is None
     )
     assert (
-        derivation._formal_index_for_coordinate(
-            _matches_formula(), _actual_terms(behavior), "python:exit_value"
+        derivation._message_pattern_formal_index(
+            _matches_formula(), _actual_terms(behavior)
         )
         is None
     )
@@ -296,9 +297,79 @@ def test_none_func_formal_is_not_cited_by_exc_type_is_none():
         _identity_formula(), extra_actuals=(NoneValue(),)
     )
     formula = and_([not_(_no_effect_formula()), _identity_formula()])
-    assert (
-        derivation._formal_index_for_coordinate(
-            formula, _actual_terms(behavior), "python:exit_type"
-        )
-        == 0
+    assert derivation._expected_type_formal_index(formula, _actual_terms(behavior)) == 0
+
+
+def _exit_value_subtype_formula():
+    """``isinstance(exc_val, expected_exception)``: a type test on the value."""
+    return atomic(
+        "python.subtype",
+        [
+            ctor("python:exit_value", [str_const("exit-face")]),
+            make_var("expected_exception"),
+        ],
     )
+
+
+def _pattern_var():
+    return SymbolicValue(term=make_var("pattern"))
+
+
+def _message_search_formula():
+    """``re.search(pattern, str(exc_val))`` as the contract's message atom."""
+    return atomic(
+        "py.re_search",
+        [
+            make_var("pattern"),
+            ctor(
+                "py.exception_message",
+                [ctor("python:exit_value", [str_const("exit-face")])],
+            ),
+        ],
+    )
+
+
+def test_a_subtype_test_on_the_exit_value_is_no_message_operand():
+    """``isinstance(exc_val, E)`` cites neither a pattern nor the expected type."""
+    behavior = _behavior()
+    formula = _exit_value_subtype_formula()
+    assert (
+        derivation._message_pattern_formal_index(formula, _actual_terms(behavior))
+        is None
+    )
+    assert (
+        derivation._expected_type_formal_index(formula, _actual_terms(behavior))
+        is None
+    )
+
+
+def test_an_isinstance_exit_value_exit_seals_no_message_pattern():
+    """``exc_type is E and isinstance(exc_val, E)`` does not make ``E`` a pattern.
+
+    The decision reads the raised value, but by a type test, not a message
+    match: no message operand is projected, so the boundary is refused rather
+    than sealed with ``E`` as its message pattern.
+    """
+    behavior, protocol, exit_set = _nested_did_not_raise_exit(
+        and_([_identity_formula(), _exit_value_subtype_formula()])
+    )
+    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
+
+
+def test_an_isinstance_exit_value_alone_seals_nothing():
+    behavior, protocol, exit_set = _nested_did_not_raise_exit(
+        _exit_value_subtype_formula()
+    )
+    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
+
+
+def test_a_search_of_the_exit_message_is_the_message_pattern():
+    """The pattern is the formal the exit searches the raised message with."""
+    behavior, protocol, exit_set = _nested_did_not_raise_exit(
+        and_([_identity_formula(), _message_search_formula()]),
+        extra_actuals=(_pattern_var(),),
+    )
+    result = derivation._derive_effect_boundary(exit_set, protocol, behavior)
+    assert isinstance(result, EffectBoundarySemanticsV1)
+    assert result.expected_type_operand == FormalArgumentProjectionV1(0)
+    assert result.message_pattern_operand == OptionalFormalArgumentProjectionV1(1)

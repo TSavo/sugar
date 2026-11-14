@@ -337,14 +337,10 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
     # The operands are read off the exit's own formula. A call the exit made
     # but did not reduce (``self.matches(exc_val)``) is that call's undecided
     # citation: no field or method spelling stands in for its body (#7757).
-    expected_index = _formal_index_for_coordinate(
-        formula, actual_terms, "python:exit_type"
-    )
+    expected_index = _expected_type_formal_index(formula, actual_terms)
     if expected_index is None:
         return None
-    message_index = _formal_index_for_coordinate(
-        formula, actual_terms, "python:exit_value"
-    )
+    message_index = _message_pattern_formal_index(formula, actual_terms)
     absent_effect_halts = tuple(
         face
         for face in exit_set.exits
@@ -671,27 +667,22 @@ def _completed_faces_have_bodyless_free_calls(exit_set):
     return False
 
 
-def _formal_index_for_coordinate(formula, actual_terms, coordinate_name):
-    from sugar_lift_py_tests.ir import _Atomic, _Connective
+def _expected_type_formal_index(formula, actual_terms):
+    """The one factory formal the exit compares its ``exc_type`` against.
 
+    Only atoms over the ``python:exit_type`` coordinate are read. A type test
+    on the raised value (``isinstance(exc_val, E)``) is over
+    ``python:exit_value``, a different coordinate: it is not read here, and
+    it is never a message pattern either (#7757).
+    """
     candidates = set()
-    pending = [formula]
-    while pending:
-        current = pending.pop()
-        if isinstance(current, _Connective):
-            pending.extend(current.operands)
+    for atom in _formula_atoms(formula):
+        if atom.name not in {"eq", "py.eq", "identity", "python.subtype"}:
             continue
-        if not isinstance(current, _Atomic) or current.name not in {
-            "eq",
-            "py.eq",
-            "identity",
-            "python.subtype",
-        }:
-            continue
-        if not any(_term_contains_ctor(arg, coordinate_name) for arg in current.args):
+        if not any(_term_contains_ctor(arg, "python:exit_type") for arg in atom.args):
             continue
         for index, term in enumerate(actual_terms):
-            if term in current.args:
+            if term in atom.args:
                 # ``exc_type is None`` compares against the language
                 # singleton, not a factory formal that happens to be None
                 # (``func=None``).
@@ -699,6 +690,47 @@ def _formal_index_for_coordinate(formula, actual_terms, coordinate_name):
                     continue
                 candidates.add(index)
     return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def _message_pattern_formal_index(formula, actual_terms):
+    """The one factory formal the exit searches the raised value's message with.
+
+    The boundary's message pattern is the operand of the contract's own
+    message predicate, ``py.re_search(pattern, py.exception_message(raised))``
+    (``authenticated_exception_matching.raise_effect_message_verdict``). Only
+    that atom, with the exit value inside its message operand, cites a
+    pattern. An equality, identity or subtype test on ``exc_val`` itself is
+    not a match on its message (#7757).
+    """
+    from sugar_lift_py_tests.ir import _Ctor
+
+    candidates = set()
+    for atom in _formula_atoms(formula):
+        if atom.name != "py.re_search" or len(atom.args) != 2:
+            continue
+        pattern, message = atom.args
+        if not (
+            isinstance(message, _Ctor)
+            and message.name == "py.exception_message"
+            and _term_contains_ctor(message, "python:exit_value")
+        ):
+            continue
+        for index, term in enumerate(actual_terms):
+            if term == pattern and not _term_is_none_singleton(term):
+                candidates.add(index)
+    return next(iter(candidates)) if len(candidates) == 1 else None
+
+
+def _formula_atoms(formula):
+    from sugar_lift_py_tests.ir import _Atomic, _Connective
+
+    pending = [formula]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, _Connective):
+            pending.extend(current.operands)
+        elif isinstance(current, _Atomic):
+            yield current
 
 
 def _term_is_none_singleton(term):
