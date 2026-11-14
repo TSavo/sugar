@@ -264,20 +264,18 @@ class DictValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_source_tree.panic import SugarNotWritten
 
         if site is None:
             return self.undecided_subscript(index, site, owner="DictValue.subscript")
-        try:
-            term = ctor(
-                "py.subscript",
-                [
-                    self.to_term(owner="DictValue.subscript"),
-                    index.to_term(owner="DictValue.subscript"),
-                ],
-            )
-        except SugarNotWritten:
-            return self.undecided_subscript(index, site, owner="DictValue.subscript")
+        # A dict or key that has no term refuses by name (SugarNotWritten);
+        # the refusal propagates and is never an undecided-subscript fallback.
+        term = ctor(
+            "py.subscript",
+            [
+                self.to_term(owner="DictValue.subscript"),
+                index.to_term(owner="DictValue.subscript"),
+            ],
+        )
         return _opaque_subscript_faces(
             ExitSet.completed(SymbolicValue(term)), site, producer="DictValue.subscript"
         )

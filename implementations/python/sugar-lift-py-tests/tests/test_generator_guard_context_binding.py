@@ -29,7 +29,6 @@ from sugar_lift_py_tests.generator_construction import (
     FormalFloorBindingV1,
     GeneratorConstructionV1,
     GeneratorTerminationV1,
-    GeneratorTransitionGapV1,
     IfStepV1,
     ReturnStepV1,
     YieldEffect,
@@ -369,7 +368,10 @@ def test_wrong_coordinate_guard_refuses_when_roster_is_honest() -> None:
     )
     guard = BindingCoordinateRefSugar(other_entry.coordinate, other_param.fragment)
     machine = _machine(entry=entry, floor=floor, guard=guard)
-    assert isinstance(machine.resume(), GeneratorTransitionGapV1)
+    # The guard's own refusal propagates by name; it is never an undecided
+    # guard folded into a transition gap.
+    with pytest.raises(SugarNotWritten):
+        machine.resume()
 
 
 def test_node_sugar_never_invoked_on_guard_path() -> None:
