@@ -2,15 +2,16 @@
 //
 // #3809: SourceMemento is already self-locating (file + function_name + span + CIDs).
 //
-// Collapsed MementoPath / SourceMementoAtPath (#3942–#3947). Nesting is the
-// enumeration tree (parent enumerates child), not a second address type.
+// Collapsed MementoPath / SourceMementoAtPath (#3942–#3947).
 //
 // Asserts:
-// - each level returns SourceMementos with correct file/function/span
-// - tree structure carries nesting (site under function, assertion under site, …)
-// - factory 1:1 site ≡ assertion ≡ fact (same locus fields)
+// - the source_files level returns a self-locating file memento, and seeking
+//   it returns the same file
+// - the locus display is derived on demand from the memento alone
 //
-// No solve; kit rendezvous + enumerate only.
+// No solve; kit rendezvous + enumerate only. The levels below source_files
+// that this file once descended (functions, call_sites, assertions, facts)
+// are not driven from Rust: the one whole-tree walk is mint's (#7757 entry 5).
 
 use std::fs;
 use std::io::Write as _;
@@ -103,27 +104,6 @@ def test_b():
     project
 }
 
-fn stage_mathy_fixture(dir: &Path) -> PathBuf {
-    let project = dir.join("project");
-    fs::create_dir_all(&project).unwrap();
-    let fixture_src = repo_root()
-        .join("implementations/rust/sugar-compiler/tests/fixtures/enumerate_fixture/mathy.py");
-    fs::copy(&fixture_src, project.join("mathy.py")).expect("copy mathy fixture");
-    project
-}
-
-fn locus_key(m: &SourceMemento) -> String {
-    format!(
-        "{}|{}|{}:{}-{}:{}",
-        m.file,
-        m.source_function_name().unwrap_or(m.function_name.as_str()),
-        m.span.start_line,
-        m.span.start_col,
-        m.span.end_line,
-        m.span.end_col
-    )
-}
-
 #[test]
 fn source_returns_self_locating_file_memento() {
     if !python_blake3_available() {
@@ -152,244 +132,6 @@ fn source_returns_self_locating_file_memento() {
 
     let sought = kit.source_file(&project, m).expect("source_file seek");
     assert_eq!(sought.source_memento().file, m.file);
-}
-
-#[test]
-fn levels_return_self_locating_mementos_with_tree_nesting() {
-    if !python_blake3_available() {
-        eprintln!("skip: python3/blake3 unavailable");
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let project = stage_two_tests(dir.path());
-    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
-
-    let files = kit.source_files(&project).expect("source_files");
-    let mut found_site = false;
-    for file in &files {
-        assert_eq!(file.source_memento().file, "pair.py");
-        for function in file.functions().expect("functions") {
-            let fn_m = function.source_memento();
-            assert_eq!(fn_m.file, "pair.py");
-            let fn_name = fn_m
-                .source_function_name()
-                .unwrap_or(fn_m.function_name.as_str())
-                .to_string();
-            if fn_name.is_empty() {
-                continue;
-            }
-            eprintln!(
-                "RECEIPT function memento file={} fn={} span={}:{}-{}:{}",
-                fn_m.file,
-                fn_name,
-                fn_m.span.start_line,
-                fn_m.span.start_col,
-                fn_m.span.end_line,
-                fn_m.span.end_col
-            );
-
-            for site in function.call_sites().expect("call_sites") {
-                let site_m = site.source_memento();
-                assert_eq!(site_m.file, fn_m.file, "site under same file");
-                // Nesting: site is under this function (name match or span-in-parent)
-                let site_fn = site_m
-                    .source_function_name()
-                    .unwrap_or(site_m.function_name.as_str());
-                assert!(
-                    site_fn == fn_name || site_fn.is_empty(),
-                    "site fn={site_fn} under parent fn={fn_name}"
-                );
-                assert!(
-                    site_m.span.start_line > 0 || site_m.span.end_line > 0 || site_fn == fn_name,
-                    "site has locus: {}",
-                    memento_locus_display(site_m)
-                );
-                found_site = true;
-                eprintln!(
-                    "RECEIPT call_site memento {}",
-                    memento_locus_display(site_m)
-                );
-
-                let assertions = site.assertions().expect("assertions");
-                assert_eq!(assertions.len(), 1, "factory 1:1 site≡assertion");
-                for assertion in &assertions {
-                    let a_m = assertion.source_memento();
-                    // Factory 1:1 — same self-locating locus as site
-                    assert_eq!(a_m.file, site_m.file);
-                    assert_eq!(a_m.span, site_m.span);
-                    eprintln!("RECEIPT assertion memento {}", memento_locus_display(a_m));
-
-                    for fact in assertion.facts().expect("facts") {
-                        let f_m = fact.source_memento();
-                        assert_eq!(f_m.file, a_m.file);
-                        assert_eq!(f_m.span, a_m.span);
-                        eprintln!("RECEIPT fact memento {}", memento_locus_display(f_m));
-                    }
-                }
-            }
-        }
-    }
-    assert!(found_site, "expected at least one call site");
-}
-
-#[test]
-fn call_sites_partitioned_by_enclosing_function() {
-    if !python_blake3_available() {
-        eprintln!("skip: python3/blake3 unavailable");
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let project = stage_two_tests(dir.path());
-    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
-
-    let files = kit.source_files(&project).expect("source_files");
-    let mut by_fn: std::collections::BTreeMap<String, Vec<String>> =
-        std::collections::BTreeMap::new();
-    for function in files[0].functions().expect("functions") {
-        let name = function
-            .source_memento()
-            .source_function_name()
-            .unwrap_or("")
-            .to_string();
-        if name.is_empty() {
-            continue;
-        }
-        let keys: Vec<String> = function
-            .call_sites()
-            .expect("call_sites")
-            .iter()
-            .map(|s| locus_key(s.source_memento()))
-            .collect();
-        by_fn.insert(name, keys);
-    }
-    eprintln!("RECEIPT call_sites by function: {by_fn:?}");
-    if let Some(a) = by_fn.get("test_a") {
-        assert!(!a.is_empty(), "test_a owns sites");
-        for k in a {
-            assert!(k.contains("test_a") || k.starts_with("pair.py"), "{k}");
-            assert!(!k.contains("test_b"), "test_a must not own test_b: {k}");
-        }
-    }
-    if let Some(b) = by_fn.get("test_b") {
-        assert!(!b.is_empty(), "test_b owns sites");
-        for k in b {
-            assert!(k.contains("test_b") || k.starts_with("pair.py"), "{k}");
-        }
-    }
-}
-
-#[test]
-fn universe_linked_via_tree_not_path_type() {
-    if !python_blake3_available() {
-        eprintln!("skip: python3/blake3 unavailable");
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let project = stage_mathy_fixture(dir.path());
-    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
-
-    let mut found = false;
-    for file in kit.source_files(&project).expect("source_files") {
-        for function in file.functions().expect("functions") {
-            for site in function.call_sites().expect("call_sites") {
-                let site_m = site.source_memento();
-                if let Some(universe) = site.universe().expect("universe") {
-                    let u_m = universe.source_memento();
-                    // Universe has its own self-locating memento (member key)
-                    assert!(
-                        !u_m.function_name.is_empty() || u_m.source_function_name().is_some(),
-                        "universe memento carries identity"
-                    );
-                    // Linkage is tree structure (CallSite::universe), not a shared path field
-                    found = true;
-                    eprintln!(
-                        "RECEIPT universe linked under site={} → universe={}",
-                        memento_locus_display(site_m),
-                        memento_locus_display(u_m)
-                    );
-                }
-            }
-        }
-    }
-    assert!(found, "mathy fixture must yield at least one universe link");
-}
-
-#[test]
-fn full_descent_every_level_self_locating() {
-    if !python_blake3_available() {
-        eprintln!("skip: python3/blake3 unavailable");
-        return;
-    }
-    let dir = tempfile::tempdir().unwrap();
-    let project = stage_mathy_fixture(dir.path());
-    let kit = Kit::rendezvous(python_kit_manifest(dir.path())).expect("rendezvous");
-
-    let mut n_source = 0usize;
-    let mut n_function = 0usize;
-    let mut n_site = 0usize;
-    let mut n_assertion = 0usize;
-    let mut n_fact = 0usize;
-    let mut n_universe = 0usize;
-
-    for file in kit.source_files(&project).expect("source_files") {
-        let file_m = file.source_memento();
-        assert!(!file_m.file.is_empty());
-        n_source += 1;
-        eprintln!("RECEIPT level=source {}", memento_locus_display(file_m));
-
-        for function in file.functions().expect("functions") {
-            let fn_m = function.source_memento();
-            assert_eq!(fn_m.file, file_m.file);
-            n_function += 1;
-            eprintln!("RECEIPT level=functions {}", memento_locus_display(fn_m));
-
-            for site in function.call_sites().expect("call_sites") {
-                let site_m = site.source_memento();
-                assert_eq!(site_m.file, file_m.file);
-                n_site += 1;
-                eprintln!("RECEIPT level=call_sites {}", memento_locus_display(site_m));
-
-                if let Some(universe) = site.universe().expect("universe") {
-                    assert!(
-                        !universe.source_memento().file.is_empty()
-                            || !universe.source_memento().function_name.is_empty()
-                    );
-                    n_universe += 1;
-                    eprintln!(
-                        "RECEIPT level=universe {}",
-                        memento_locus_display(universe.source_memento())
-                    );
-                }
-
-                for assertion in site.assertions().expect("assertions") {
-                    let a_m = assertion.source_memento();
-                    assert_eq!(a_m.file, site_m.file);
-                    assert_eq!(a_m.span, site_m.span, "factory 1:1 site≡assertion span");
-                    n_assertion += 1;
-                    eprintln!("RECEIPT level=assertions {}", memento_locus_display(a_m));
-
-                    for fact in assertion.facts().expect("facts") {
-                        let f_m = fact.source_memento();
-                        assert_eq!(f_m.file, a_m.file);
-                        assert_eq!(f_m.span, a_m.span, "factory 1:1 assertion≡fact span");
-                        n_fact += 1;
-                        eprintln!("RECEIPT level=facts {}", memento_locus_display(f_m));
-                    }
-                }
-            }
-        }
-    }
-
-    eprintln!(
-        "RECEIPT descent_complete counts: source={n_source} functions={n_function} \
-         call_sites={n_site} assertions={n_assertion} facts={n_fact} universe={n_universe}"
-    );
-    assert!(n_source > 0 && n_function > 0 && n_site > 0);
-    assert!(n_assertion > 0 && n_fact > 0 && n_universe > 0);
-    assert_eq!(
-        n_site, n_assertion,
-        "factory 1:1 site count == assertion count"
-    );
 }
 
 #[test]

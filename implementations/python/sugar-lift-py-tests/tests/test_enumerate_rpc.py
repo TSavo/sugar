@@ -1,10 +1,10 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """Part 6, Phase 2: `sugar.enumerate` (`protocol/specs/2026-07-08-enumeration-protocol.md`).
 
-Exercises `_handle_enumerate` directly (in-process, no subprocess spawn --
-the rust side's spawn/wire round trip is covered by
-`sugar-compiler/tests/enumerate_conformance.rs`, which drives this SAME
-handler through the real JSON-RPC membrane end to end).
+Exercises `_handle_enumerate` directly (in-process, no subprocess spawn).
+The Rust side drives this handler only through mint's one door
+(`fold_enumerate_source_tree`: source_files -> universe); the assertion ->
+fact descent is gone (#7757 entry 5 / item 25).
 """
 
 from __future__ import annotations
@@ -407,9 +407,7 @@ def test_double():
 """
 
 
-@pytest.mark.parametrize(
-    "level", ["call_sites", "assertions", "universe", "facts"]
-)
+@pytest.mark.parametrize("level", ["call_sites", "universe"])
 def test_every_level_answers_the_same_when_asked_first(
     tmp_path: Path, level: str
 ) -> None:
@@ -430,14 +428,9 @@ def test_every_level_answers_the_same_when_asked_first(
     call_site = _enumerate("call_sites", tmp_path, at=functions["test_double"])[
         "nodes"
     ][0]["memento"]
-    assertion = _enumerate("assertions", tmp_path, at=call_site, seek=True)["nodes"][
-        0
-    ]["memento"]
     at, seek = {
         "call_sites": (functions["test_double"], False),
-        "assertions": (call_site, True),
         "universe": (call_site, True),
-        "facts": (assertion, True),
     }[level]
 
     warm = _enumerate(level, tmp_path, at=at, seek=seek)
@@ -493,96 +486,16 @@ def test_call_sites_scoped_to_enclosing_function(project: Path) -> None:
     assert len(test_add_call_sites) == 1
 
 
-def test_assertions_and_facts_carry_the_fol(project: Path) -> None:
-    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
-    functions = {
-        n["memento"].get("function_name")
-        or n["memento"].get("source_function_name"): n["memento"]
-        for n in _enumerate("functions", project, at=file_memento)["nodes"]
-    }
-    call_sites = _enumerate("call_sites", project, at=functions["test_add"])["nodes"]
-    assert len(call_sites) == 1
-    call_site_memento = call_sites[0]["memento"]
+def test_facts_is_answered_under_audit_frontier_only(project: Path) -> None:
+    """The assertion -> fact descent is gone (#7757 entry 5 / item 25).
 
-    assertion_result = _enumerate(
-        "assertions", project, at=call_site_memento, seek=True
-    )
-    assertions = assertion_result["nodes"]
-    assert len(assertions) == 1
-    assert assertion_result["termTable"]
-    assertion_memento = assertions[0]["memento"]
-
-    fact_result = _enumerate("facts", project, at=assertion_memento, seek=True)
-    facts = fact_result["nodes"]
-    assert len(facts) == 1
-    term_table = fact_result["termTable"]
-    assert term_table
-    formula = facts[0]["payload"]
-    assert formula["kind"] == "atomic"
-    # The call return has no sort warrant at atom construction, so Python
-    # equality remains stated; enumeration must not resurrect bare `=`.
-    assert formula["name"] == "py.eq"
-    # `add(2, 3) == 5`: both positions are closed references into the result table.
-    call_ref, literal_ref = formula["args"]
-    assert call_ref["kind"] == "term-ref"
-    assert literal_ref["kind"] == "term-ref"
-    assert call_ref["cid"] in term_table
-    assert literal_ref["cid"] in term_table
-
-    call_ctor = term_table[call_ref["cid"]]
-    assert call_ctor["kind"] == "ctor"
-    assert call_ctor["name"] == "call:add"
-    assert all(arg["kind"] == "term-ref" for arg in call_ctor["args"])
-    literal = term_table[literal_ref["cid"]]
-    assert literal == {
-        "kind": "const",
-        "value": 5,
-        "sort": {"kind": "primitive", "name": "Int"},
-    }
-
-    def resolve(cid: str, active: frozenset[str] = frozenset()):
-        assert cid not in active
-        node = term_table[cid]
-        if node["kind"] != "ctor":
-            return node
-        return {
-            "kind": "ctor",
-            "name": node["name"],
-            "args": [resolve(arg["cid"], active | {cid}) for arg in node["args"]],
-        }
-
-    for cid in term_table:
-        canonical = encode_jcs(_json_like_to_value(resolve(cid))).encode()
-        assert cid == blake3_512_of(canonical)
-
-
-def test_fact_construction_rewrites_enclosing_temporal_scope(tmp_path: Path) -> None:
-    """A fact is constructed from the rewritten function, not its raw Assert.
-
-    This is the bad twin for the old caller-side bypass: direct
-    ``assert_node.sugar()`` left ``x`` symbolic even though the preceding
-    assignment had already fixed it to 2.
+    `facts` is the board door's audit leaf; without auditFrontier it is a
+    typed refusal, never a second walk of a function's asserts.
     """
-    (tmp_path / "temporal.py").write_text(
-        "def add(a):\n    return a\n\n"
-        "def test_bound():\n    x = 2\n    assert add(x) == 2\n",
-        encoding="utf-8",
-    )
-    file_key = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
-    functions = {
-        n["memento"]["function_name"]: n["memento"]
-        for n in _enumerate("functions", tmp_path, at=file_key)["nodes"]
-    }
-    assertion = _enumerate("call_sites", tmp_path, at=functions["test_bound"])["nodes"][
-        0
-    ]["memento"]
-    result = _enumerate("facts", tmp_path, at=assertion, seek=True)
-    formula = result["nodes"][0]["payload"]
-    call = formula["args"][0]
-    argument = call["args"][0]
-    assert call["name"] == "call:add"
-    assert argument["kind"] == "const"
-    assert argument["value"] == 2
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    response = _enumerate_raw("facts", project, at=file_memento, seek=True)
+    assert response["error"]["code"] == -32602
+    assert "auditFrontier" in response["error"]["message"]
 
 
 def test_universe_cue_rewrites_temporal_callee_alias(tmp_path: Path) -> None:
@@ -651,12 +564,8 @@ def test_every_formula_bearing_enumerate_level_is_closed(project: Path) -> None:
     callsite_result = _enumerate("call_sites", project, at=function_memento)
     assert_closed(callsite_result)
     callsite_memento = callsite_result["nodes"][0]["memento"]
-    for level in ("assertions", "universe"):
-        assert_closed(_enumerate(level, project, at=callsite_memento, seek=True))
-    assertion = _enumerate("assertions", project, at=callsite_memento, seek=True)[
-        "nodes"
-    ][0]["memento"]
-    assert_closed(_enumerate("facts", project, at=assertion, seek=True))
+    assert_closed(_enumerate("universe", project, at=callsite_memento, seek=True))
+    assert_closed(_enumerate("universe", project, at=file_memento))
 
 
 def test_closed_enumerate_result_rejects_omitted_term_table() -> None:
@@ -816,28 +725,6 @@ def test_closed_enumerate_result_deduplicates_shared_reachable_subterms() -> Non
     assert len(result["termTable"]) == 2
 
 
-def test_facts_seek_is_idempotent(project: Path) -> None:
-    """Scan/seek coherence at the facts level (this landing's leaf, always
-    seek-answered): re-asking for the SAME assertion memento must return the
-    byte-identical node."""
-    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
-    functions = {
-        n["memento"].get("function_name")
-        or n["memento"].get("source_function_name"): n["memento"]
-        for n in _enumerate("functions", project, at=file_memento)["nodes"]
-    }
-    call_site_memento = _enumerate("call_sites", project, at=functions["test_add"])[
-        "nodes"
-    ][0]["memento"]
-    assertion_memento = _enumerate(
-        "assertions", project, at=call_site_memento, seek=True
-    )["nodes"][0]["memento"]
-
-    first = _enumerate("facts", project, at=assertion_memento, seek=True)["nodes"]
-    second = _enumerate("facts", project, at=assertion_memento, seek=True)["nodes"]
-    assert first == second
-
-
 def test_unknown_level_is_a_typed_rpc_error(project: Path) -> None:
     captured = []
     original_send = lift_rpc._send
@@ -850,22 +737,6 @@ def test_unknown_level_is_a_typed_rpc_error(project: Path) -> None:
         lift_rpc._send = original_send
     assert len(captured) == 1
     assert captured[0]["error"]["code"] == -32602
-
-
-def test_facts_on_a_missing_memento_is_a_gap_not_a_crash(project: Path) -> None:
-    fake_memento = {
-        "kind": "source-memento",
-        "file": "mathy.py",
-        "function_name": "add",
-        "span": {"start_line": 999, "start_col": 0, "end_line": 999, "end_col": 1},
-        "param_names": [],
-        "source_cid": "blake3-512:doesnotexist",
-        "template_cid": "blake3-512:doesnotexist",
-    }
-    result = _enumerate("facts", project, at=fake_memento, seek=True)
-    assert result["nodes"] == []
-    assert len(result["gaps"]) == 1
-    assert "reason" in result["gaps"][0]
 
 
 def _enumerate_raw(level: str, workspace_root, at=None, seek: bool = False):
@@ -907,7 +778,7 @@ def test_enumerate_refuses_path_traversal(project) -> None:
 def test_enumerate_empty_file_is_an_empty_level_not_an_error(project) -> None:
     """A comments-only file has no source sites: empty level, not -32603."""
     (project / "empty_mod.py").write_text("# nothing here\n", encoding="utf-8")
-    response = _enumerate_raw("assertions", project, at={"file": "empty_mod.py"})
+    response = _enumerate_raw("call_sites", project, at={"file": "empty_mod.py"})
     assert "error" not in response, response
     assert response["result"]["nodes"] == []
 
@@ -1132,10 +1003,10 @@ def test_exact_seek_for_unknown_callsite_is_a_loud_gap_not_substitution(
         assert result["gaps"][0]["memento"] == forged
 
 
-def test_assertion_exact_seek_returns_the_identical_observed_locus(
+def test_call_site_exact_seek_returns_the_identical_observed_locus(
     project: Path,
 ) -> None:
-    """An exact assertion seek is identity, never a second parent scan."""
+    """An exact call-site seek is identity, never a second parent scan."""
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
     function = next(
         node["memento"]
@@ -1144,7 +1015,7 @@ def test_assertion_exact_seek_returns_the_identical_observed_locus(
     )
     observed = _enumerate("call_sites", project, at=function)["nodes"][0]
 
-    result = _enumerate("assertions", project, at=observed["memento"], seek=True)
+    result = _enumerate("call_sites", project, at=observed["memento"], seek=True)
 
     assert result["gaps"] == []
     assert result["nodes"] == [observed]

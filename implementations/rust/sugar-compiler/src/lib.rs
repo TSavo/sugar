@@ -50,16 +50,9 @@ pub mod linker_inputs;
 /// and `Kit::source` (source-oracle lookup). See `resolve` module docs.
 pub mod resolve;
 
-/// Part 6, Phases 1+2: the strongly-typed navigable tree
-/// (`SourceFile`/`Function`/`CallSite`/`Assertion`/`Fact`/...) and the
-/// `sugar.enumerate` wire method that drives it lazily over the kit's
-/// membrane. See `tree` module docs.
+/// The `sugar.enumerate` wire method and mint's one whole-tree walk over it
+/// (`fold_enumerate_source_tree`). See `tree` module docs.
 pub mod tree;
-
-/// Campaign B: fold the enumerate tree into a `ProofGraph` via `feed`.
-/// Task 5 ships the red instrument surface; Task 6 implements the walk.
-/// See `feed_from_tree` module docs.
-pub mod feed_from_tree;
 
 use sugar_proof_envelope::{
     build_proof_envelope, ed25519_pubkey_string, ed25519_sign_string, Ed25519Seed,

@@ -6,18 +6,16 @@
 
 use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use owo_colors::OwoColorize;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Map, Value};
 
 use sugar_claim_envelope::{contract_cid_from_parts, contract_cid_of_ir_decl};
-use sugar_compiler::kit::{Kit, LiftManifest};
 use sugar_compiler::kit_path::{LiftTermKind, LiftTermNode, LiftTermTable};
 use sugar_proof_envelope::Member;
 use sugar_verifier::MemberKind;
@@ -27,118 +25,6 @@ use crate::component_plan::{self, ComponentPlan, ComponentPlanOptions, PlanInten
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
 use crate::project_config::{read_project_config, read_user_config, PluginEntry, ProjectConfig};
 use crate::{LiftArgs, EXIT_OK, EXIT_USER_ERROR, EXIT_VERIFY_FAIL};
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct RecoveredAudit {
-    kind: String,
-    recovery_override: bool,
-    status: String,
-    census: RecoveredAuditCensus,
-    panics: Vec<RecoveredFactoryPanic>,
-    effects: Vec<RecoveredEffect>,
-    suppressed_descendants: Vec<SuppressedAuditLocus>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct RecoveredAuditCensus {
-    kind: String,
-    source_files_enumerated: usize,
-    source_bodies_demanded: usize,
-    audit_leaves_completed: usize,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct RecoveredEffect {
-    locus: String,
-    effect: String,
-    category: String,
-    status: String,
-    reason: String,
-    demanded_body: Value,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct RecoveredFactoryPanic {
-    kind: String,
-    status: String,
-    reason: String,
-    locus: String,
-    gap: Value,
-    demanded_source: String,
-    terminal_gap_locus: String,
-    demanded_body: Value,
-    owner_identity: RecoveredPanicOwnerIdentity,
-}
-
-#[derive(Debug, Deserialize, PartialEq, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct RecoveredPanicOwnerIdentity {
-    demanded_body: Value,
-    demanded_source: String,
-    terminal_gap_locus: String,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields, rename_all = "camelCase")]
-struct SuppressedAuditLocus {
-    locus: String,
-    reason: String,
-    demanded_body: Value,
-}
-
-fn validate_recovered_audit(audit: &RecoveredAudit) -> Result<(), String> {
-    if audit.kind != "recovered-construction-audit" || !audit.recovery_override {
-        return Err("artifact must be a recovery-override construction audit".to_string());
-    }
-    if audit.census.kind != "recovered-frontier-census" {
-        return Err("census receipt has the wrong kind".to_string());
-    }
-    if audit.census.source_files_enumerated != audit.census.source_bodies_demanded {
-        return Err(format!(
-            "source body census mismatch: enumerated={} demanded={}",
-            audit.census.source_files_enumerated, audit.census.source_bodies_demanded
-        ));
-    }
-    for panic in &audit.panics {
-        let expected = RecoveredPanicOwnerIdentity {
-            demanded_body: panic.demanded_body.clone(),
-            demanded_source: panic.demanded_source.clone(),
-            terminal_gap_locus: panic.terminal_gap_locus.clone(),
-        };
-        if panic.owner_identity != expected {
-            return Err(format!(
-                "recovered panic ownerIdentity does not match demanded ownership at {}",
-                panic.locus
-            ));
-        }
-    }
-    match audit.status.as_str() {
-        "valid-empty"
-            if audit.census.source_files_enumerated == 0
-                && audit.census.audit_leaves_completed == 0
-                && audit.panics.is_empty() =>
-        {
-            Ok(())
-        }
-        "complete"
-            if audit.census.source_files_enumerated > 0 && audit.panics.is_empty() =>
-        {
-            Ok(())
-        }
-        "failed" if !audit.panics.is_empty() => Ok(()),
-        status => Err(format!(
-            "terminal/fatal/incomplete state status={status:?} sourceFiles={} bodies={} leaves={} panics={}",
-            audit.census.source_files_enumerated,
-            audit.census.source_bodies_demanded,
-            audit.census.audit_leaves_completed,
-            audit.panics.len()
-        )),
-    }
-}
 
 pub fn run(args: LiftArgs) -> u8 {
     let project_root = args.project.clone().unwrap_or_else(|| PathBuf::from("."));
@@ -213,68 +99,6 @@ pub fn run(args: LiftArgs) -> u8 {
         &surface,
         lift_options.workspace_override.clone(),
     )];
-
-    if args.audit_frontier {
-        let frontier_path = args
-            .output
-            .as_ref()
-            .cloned()
-            .unwrap_or_else(|| project_root.join("frontier.json"));
-        if let Err(error) = fs::remove_file(&frontier_path) {
-            if error.kind() != std::io::ErrorKind::NotFound {
-                eprintln!(
-                    "{}: remove stale recovered frontier {}: {error}",
-                    "error".red().bold(),
-                    frontier_path.display()
-                );
-                return EXIT_USER_ERROR;
-            }
-        }
-        match recovered_audit_tree(&project_root, &surface, &args.allowed_broken_components) {
-            Ok(response) => {
-                let audit = match serde_json::from_value::<RecoveredAudit>(response) {
-                    Ok(audit) => audit,
-                    Err(error) => {
-                        eprintln!(
-                            "{}: invalid recovered construction audit: {error}",
-                            "error".red().bold()
-                        );
-                        return EXIT_VERIFY_FAIL;
-                    }
-                };
-                if let Err(error) = validate_recovered_audit(&audit) {
-                    eprintln!(
-                        "{}: invalid recovered construction audit: {error}",
-                        "error".red().bold()
-                    );
-                    return EXIT_VERIFY_FAIL;
-                }
-                let rendered = match serde_json::to_string_pretty(&audit) {
-                    Ok(value) => format!("{value}\n"),
-                    Err(error) => {
-                        eprintln!(
-                            "{}: serialize recovered construction audit: {error}",
-                            "error".red().bold()
-                        );
-                        return EXIT_USER_ERROR;
-                    }
-                };
-                if let Err(error) = write_output(Some(&frontier_path), rendered.as_bytes()) {
-                    eprintln!("{}: {error}", "error".red().bold());
-                    return EXIT_USER_ERROR;
-                }
-                return if audit.panics.is_empty() {
-                    EXIT_OK
-                } else {
-                    EXIT_VERIFY_FAIL
-                };
-            }
-            Err(error) => {
-                eprintln!("{}: {error}", "error".red().bold());
-                return EXIT_VERIFY_FAIL;
-            }
-        }
-    }
 
     match lift_plugin::dispatch_lift_path(&project_root, &surface, lift_options, true) {
         Ok(session) => {
@@ -471,34 +295,6 @@ pub fn run(args: LiftArgs) -> u8 {
             EXIT_VERIFY_FAIL
         }
     }
-}
-
-/// The recovered audit is a compiler tree fold, not a lift-plugin response.
-/// Keep its rendezvous at the binary command seam: `cmd_lift` is intentionally
-/// absent from the `sugar-cli` library target, while `lift_plugin` is shared by
-/// both targets. Putting this command-only wrapper in the shared module made it
-/// compiler-proven dead in the library build (#4381).
-fn recovered_audit_tree(
-    project_root: &Path,
-    surface: &str,
-    allowed_broken_components: &[String],
-) -> Result<Value, String> {
-    let manifest = lift_plugin::find_manifest_for_surface(project_root, surface).map_err(|error| {
-        format!(
-            "lift-plugin.manifest: {error}; configure a lift manifest whose sugar.enumerate method serves the keyed audit tree"
-        )
-    })?;
-    let kit = Kit::rendezvous(LiftManifest::resolved(
-        surface.to_string(),
-        manifest.name.clone(),
-        lift_plugin::dialect_for_surface(surface),
-        manifest.command.clone(),
-        lift_plugin::absolute_working_dir_for_manifest(project_root, &manifest),
-        manifest.method.clone(),
-    ))
-    .map_err(|error| format!("lift.rendezvous: {error}"))?;
-    sugar_compiler::tree::fold_recovered_audit(&kit, project_root, allowed_broken_components)
-        .map_err(|error| format!("lift.path: {error}"))
 }
 
 fn lift_report_graph_plugins(
@@ -10438,195 +10234,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn recovered_audit_effect_rows_round_trip_without_loss() {
-        let fixture = serde_json::json!({
-            "kind": "recovered-construction-audit",
-            "recoveryOverride": true,
-            "status": "complete",
-            "census": {
-                "kind": "recovered-frontier-census",
-                "sourceFilesEnumerated": 1,
-                "sourceBodiesDemanded": 1,
-                "auditLeavesCompleted": 1
-            },
-            "panics": [],
-            "effects": [{
-                "locus": "pkg.py:7:4",
-                "effect": "GetattrRuntimeEffect",
-                "category": "runtime",
-                "status": "boundary",
-                "reason": "attribute access crosses a runtime boundary",
-                "demandedBody": {"file": "pkg.py", "qualname": "f"}
-            }],
-            "suppressedDescendants": []
-        });
-
-        let audit: RecoveredAudit =
-            serde_json::from_value(fixture.clone()).expect("typed recovered audit");
-        assert_eq!(audit.effects.len(), 1);
-        let effect = &audit.effects[0];
-        assert_eq!(effect.locus, "pkg.py:7:4");
-        assert_eq!(effect.effect, "GetattrRuntimeEffect");
-        assert_eq!(effect.category, "runtime");
-        assert_eq!(effect.status, "boundary");
-        assert_eq!(effect.reason, "attribute access crosses a runtime boundary");
-        assert_eq!(effect.demanded_body["file"], "pkg.py");
-        assert_eq!(serde_json::to_value(audit).expect("round trip"), fixture);
-    }
-
-    #[test]
-    fn recovered_audit_suppressed_ownership_round_trips_without_loss() {
-        let fixture = serde_json::json!({
-            "kind": "recovered-construction-audit",
-            "recoveryOverride": true,
-            "status": "complete",
-            "census": {
-                "kind": "recovered-frontier-census",
-                "sourceFilesEnumerated": 1,
-                "sourceBodiesDemanded": 1,
-                "auditLeavesCompleted": 1
-            },
-            "panics": [],
-            "effects": [],
-            "suppressedDescendants": [{
-                "locus": "numpy/core.py:9:2",
-                "reason": "ancestor FactoryPanic poisoned this source locus",
-                "demandedBody": {"file": "numpy/core.py", "qualname": "array"}
-            }]
-        });
-
-        let audit: RecoveredAudit =
-            serde_json::from_value(fixture.clone()).expect("typed recovered audit");
-        assert_eq!(
-            audit.suppressed_descendants[0].demanded_body["file"],
-            "numpy/core.py"
-        );
-        assert_eq!(serde_json::to_value(audit).expect("round trip"), fixture);
-    }
-
-    #[test]
-    fn recovered_audit_panic_ownership_round_trips_without_loss() {
-        let demanded_body = serde_json::json!({
-            "file": "numpy/core.py",
-            "qualname": "array",
-            "source_cid": "blake3-512:abc"
-        });
-        let fixture = serde_json::json!({
-            "kind": "recovered-construction-audit",
-            "recoveryOverride": true,
-            "status": "failed",
-            "census": {
-                "kind": "recovered-frontier-census",
-                "sourceFilesEnumerated": 1,
-                "sourceBodiesDemanded": 1,
-                "auditLeavesCompleted": 1
-            },
-            "panics": [{
-                "kind": "FactoryPanic",
-                "status": "mandatory-panic",
-                "reason": "missing floor",
-                "locus": "numpy/core.py:7:4",
-                "gap": {"blame": "typing.py:9:2"},
-                "demandedSource": "definition:array",
-                "terminalGapLocus": "typing.py:9:2",
-                "demandedBody": demanded_body,
-                "ownerIdentity": {
-                    "demandedBody": demanded_body,
-                    "demandedSource": "definition:array",
-                    "terminalGapLocus": "typing.py:9:2"
-                }
-            }],
-            "effects": [],
-            "suppressedDescendants": []
-        });
-
-        let audit: RecoveredAudit =
-            serde_json::from_value(fixture.clone()).expect("typed recovered audit");
-        validate_recovered_audit(&audit).expect("matching panic ownership");
-        assert_eq!(serde_json::to_value(audit).expect("round trip"), fixture);
-    }
-
-    #[test]
-    fn recovered_audit_decode_requires_closed_census_receipt() {
-        let fixture = serde_json::json!({
-            "kind": "recovered-construction-audit",
-            "recoveryOverride": true,
-            "status": "complete",
-            "panics": [],
-            "effects": [],
-            "suppressedDescendants": []
-        });
-
-        let error = serde_json::from_value::<RecoveredAudit>(fixture)
-            .expect_err("census-less 0/0/0 must not decode");
-        assert!(error.to_string().contains("census"), "{error}");
-    }
-
-    #[test]
-    fn recovered_audit_validation_rejects_mismatched_census() {
-        let audit = serde_json::from_value::<RecoveredAudit>(serde_json::json!({
-            "kind": "recovered-construction-audit",
-            "recoveryOverride": true,
-            "status": "complete",
-            "census": {
-                "kind": "recovered-frontier-census",
-                "sourceFilesEnumerated": 2,
-                "sourceBodiesDemanded": 1,
-                "auditLeavesCompleted": 1
-            },
-            "panics": [],
-            "effects": [],
-            "suppressedDescendants": []
-        }))
-        .expect("typed recovered audit");
-
-        let error = validate_recovered_audit(&audit).expect_err("mismatch must be rejected");
-        assert!(error.contains("census mismatch"), "{error}");
-    }
-
-    fn recovered_audit_fixture(name: &str) -> Value {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../protocol/conformance/recovered-audit")
-            .join(name);
-        let raw = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
-        serde_json::from_str(&raw)
-            .unwrap_or_else(|error| panic!("parse {}: {error}", path.display()))
-    }
-
-    #[test]
-    fn recovered_audit_tree_goldens_round_trip_without_loss() {
-        for name in [
-            "tree-valid-empty.json",
-            "tree-complete-effects.json",
-            "tree-failed-full.json",
-        ] {
-            let fixture = recovered_audit_fixture(name);
-            let audit: RecoveredAudit = serde_json::from_value(fixture.clone())
-                .unwrap_or_else(|error| panic!("{name} must decode as tree wire: {error}"));
-            validate_recovered_audit(&audit)
-                .unwrap_or_else(|error| panic!("{name} must validate: {error}"));
-            let round_trip = serde_json::to_value(&audit).expect("closed tree wire must serialize");
-            assert_eq!(
-                round_trip, fixture,
-                "{name}: tree schema round-trip must be lossless"
-            );
-        }
-    }
-
-    #[test]
-    fn recovered_audit_tree_golden_rejects_unknown_fields() {
-        let fixture = recovered_audit_fixture("bad-tree-unknown-field.json");
-        let error = serde_json::from_value::<RecoveredAudit>(fixture)
-            .expect_err("unknown tree lane must be rejected");
-        assert!(
-            error.to_string().contains("inventedLane")
-                || error.to_string().contains("unknown field"),
-            "{error}"
-        );
-    }
-
     fn test_memento_cid(label: &str) -> MementoCid {
         MementoCid::try_parse(sugar_canonicalizer::blake3_512_of(label.as_bytes()))
             .expect("test CID must parse")
@@ -11107,9 +10714,6 @@ mod tests {
             visual: false,
             contract: None,
             allow_failed_components: false,
-            audit_frontier: false,
-            continue_on_construction_gaps: false,
-            allowed_broken_components: vec![],
             out: OutputFlags::default(),
         };
         assert_eq!(run(args), crate::EXIT_USER_ERROR);
