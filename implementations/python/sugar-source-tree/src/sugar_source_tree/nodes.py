@@ -286,10 +286,17 @@ class _GeneratorCleanupAbsentV1:
 
 @dataclass(frozen=True)
 class _ReceiverFieldProjection:
+    """``o.attr = v`` on a coordinate receiver, read by a later ``o.attr``:
+    the read is a reference to the store statement's evaluation (the value
+    ``v`` completed with at the store), never ``v`` again."""
+
     receiver_coordinate_cid: str
     selector: str
     store_occurrence: object
-    value: "Node"
+    evaluation: str
+    # The right-hand side the place was given: which object a read of it
+    # denotes (``_evaluation_ref``, ``of``), never its value.
+    of: object
 
 
 def _receiver_coordinate_cid(receiver) -> str | None:
@@ -3702,6 +3709,7 @@ def _evaluation_ref(
     walrus: bool = False,
     cell: bool = False,
     deferred: bool = False,
+    place: bool = False,
     of: "Optional[Node]" = None,
     recurrence: bool = False,
 ) -> "Node":
@@ -3729,6 +3737,14 @@ def _evaluation_ref(
     in it writes (``ListComp._walrus_recurrence``): where the comprehension
     bound no running value, the read is refused by name.
 
+    ``place`` marks a read of what a store put in a place: ``o.x`` after
+    ``o.x = v`` (``_ReceiverFieldProjection``, ``ReceiverFieldStoreState``),
+    ``d``'s contents after ``d[k] = v`` (``BuiltinContainerProjection``).
+    The store statement binds the value under ``evaluation``
+    (``KeyedStoreSugar``, ``ContainerMutationStatementSugar``); the read
+    resolves through the key only.  ``name`` is then a label: a place has no
+    name to fall back to, so an unbound key is refused.
+
     ``of`` is the right-hand side an assignment's target was given: which
     object the name denotes, never its value.  The value is the key's; the
     object is what a store on it reaches (``container_mutation._identity``:
@@ -3750,6 +3766,8 @@ def _evaluation_ref(
         slots = (*slots, ("cell", Leaf(True)))
     if deferred:
         slots = (*slots, ("deferred", Leaf(True)))
+    if place:
+        slots = (*slots, ("place", Leaf(True)))
     if of is not None:
         slots = (*slots, ("of", Leaf(of)))
     if recurrence:
@@ -8771,7 +8789,7 @@ def _substituted_unpack_store_leaves(statement, target, scope):
     return rewrite(target, elts=tuple(new_elts))
 
 
-def _valued_store_target_sugar(target, value_sugar, site):
+def _valued_store_target_sugar(target, value_sugar, site, evaluation=None):
     """The ONE ladder for a valued attribute/subscript store target.
 
     ``o.x = v`` and ``o.x: T = v`` are the SAME runtime store — an annotation
@@ -8781,6 +8799,11 @@ def _valued_store_target_sugar(target, value_sugar, site):
     receiver is a receiver field store, and any other receiver is the typed
     runtime store effect. Returns ``None`` for a target this ladder does not
     own, so the caller stays loud.
+
+    ``evaluation`` is the statement's key when a later read of the place
+    reads it (``_store_evaluation``): the store then evaluates ``v`` once,
+    binds it under the key, and stores the value read through it
+    (``KeyedStoreSugar``).
     """
     from sugar_lift_py_tests.sugar.place_assign_sugar import PlaceAssignSugar
 
@@ -8798,10 +8821,24 @@ def _valued_store_target_sugar(target, value_sugar, site):
                 ReceiverFieldStoreSugar,
             )
 
-            return ReceiverFieldStoreSugar(
-                receiver=target.value.sugar(),
+            if evaluation is None:
+                return ReceiverFieldStoreSugar(
+                    receiver=target.value.sugar(),
+                    value=value_sugar,
+                    attr=target.attr,
+                    site=site,
+                )
+            from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
+
+            return KeyedStoreSugar(
                 value=value_sugar,
-                attr=target.attr,
+                store=ReceiverFieldStoreSugar(
+                    receiver=target.value.sugar(),
+                    value=_place_read_sugar(evaluation, f".{target.attr}", site),
+                    attr=target.attr,
+                    site=site,
+                ),
+                evaluation=evaluation,
                 site=site,
             )
         from sugar_lift_py_tests.sugar.store_effect_sugar import (
@@ -8866,12 +8903,37 @@ def _store_target_binding(statement, target, scope):
     }
 
 
+def _keyed_store_target(target) -> bool:
+    """Whether substitution threads a store to ``target`` into later reads
+    of the same place: ``o.attr`` on a coordinate receiver
+    (``_receiver_field_projection_binding``).  Such a store carries its
+    statement's evaluation key, and every later read of the place is a
+    reference to it."""
+    return (
+        isinstance(target, Attribute)
+        and _receiver_coordinate_cid(target.value) is not None
+    )
+
+
+def _store_evaluation(statement, target):
+    """The key a keyed store (``_keyed_store_target``) binds its value under:
+    the statement's evaluation.  None for any other target, or a statement
+    never substituted (it carries no key)."""
+    evaluation = getattr(statement, "evaluation", None)
+    if not isinstance(evaluation, str) or not _keyed_store_target(target):
+        return None
+    return evaluation
+
+
 def _receiver_field_projection_binding(statement, target, scope):
-    if not isinstance(target, Attribute):
+    """``o.attr = v`` on a coordinate receiver: every later ``o.attr`` reads
+    the value the store completed with, through the store statement's key
+    (``_ReceiverFieldProjection``, ``KeyedStoreSugar``), never ``v`` inlined
+    and evaluated again.  A statement with no key threads nothing."""
+    evaluation = _store_evaluation(statement, target)
+    if evaluation is None:
         return None
     receiver_coordinate_cid = _receiver_coordinate_cid(target.value)
-    if receiver_coordinate_cid is None:
-        return None
     prior = scope.get(_RECEIVER_FIELD_PROJECTIONS)
     projections = dict(prior) if isinstance(prior, dict) else {}
     key = (receiver_coordinate_cid, target.attr)
@@ -8879,9 +8941,18 @@ def _receiver_field_projection_binding(statement, target, scope):
         receiver_coordinate_cid=receiver_coordinate_cid,
         selector=target.attr,
         store_occurrence=statement.fragment,
-        value=statement.value,
+        evaluation=evaluation,
+        of=statement.value,
     )
     return {_RECEIVER_FIELD_PROJECTIONS: projections}
+
+
+def _place_read_sugar(evaluation: str, label: str, site):
+    """The sugar of a read of what a keyed store put in a place: its key
+    (``EvaluationRefSugar``, ``place``)."""
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
+
+    return EvaluationRefSugar(evaluation=evaluation, name=label, site=site, place=True)
 
 
 def _has_authenticated_source_method(receiver, name: str) -> bool:
@@ -8985,14 +9056,20 @@ class Assign(Statement):
         # No retention: the relation is keyed by SOURCE OCCURRENCE, and the
         # rewrite denotes the same occurrence, so its row joins by construction.
         rewritten = self if not changes else rewrite(self, **changes)
-        if rewritten._dynamic_unpack_target() is None and not (
-            rewritten._keyed_names()
+        if (
+            rewritten._dynamic_unpack_target() is None
+            and not rewritten._keyed_names()
+            and not (
+                len(rewritten.targets) == 1
+                and _keyed_store_target(rewritten.targets[0])
+            )
         ):
             return rewritten
         # ``a, b = f()``: the statement's one evaluation is unpacked at
         # reduce.  ``y = e``, whatever ``e`` is: the statement evaluates ``e``
-        # once, here.  Either way, carry the key so every later read of a
-        # target is a reference to that target's projection of it (temporal
+        # once, here.  ``o.x = e`` on a coordinate receiver: a later ``o.x``
+        # reads what the store put there.  Each way, carry the key so every
+        # later read is a reference to the statement's evaluation (temporal
         # choice 1).
         leaves = {
             "evaluation": self._evaluation_key(scope),
@@ -9149,6 +9226,19 @@ class Assign(Statement):
         from .backend import Child, Leaf, materialize
         from .shadow import ShadowNode, _handle_of
 
+        # The statement evaluates ``value`` once and binds it under its key;
+        # the receiver's post-state, which every later read of the name
+        # reads, holds a reference to that key, never ``value`` itself
+        # (``KeyedStoreSugar``).
+        evaluation = self._evaluation_key(scope)
+        stored = _evaluation_ref(
+            self,
+            new_value.span,
+            evaluation,
+            f".{target.attr}",
+            place=True,
+            of=new_value,
+        )
         post_state = materialize(
             self.unit,
             ShadowNode(
@@ -9156,7 +9246,7 @@ class Assign(Statement):
                 self.span,
                 (
                     ("receiver", Child(_handle_of(receiver))),
-                    ("value", Child(_handle_of(new_value))),
+                    ("value", Child(_handle_of(stored))),
                     ("attr", Leaf(target.attr)),
                 ),
             ),
@@ -9169,7 +9259,9 @@ class Assign(Statement):
                 self.span,
                 (
                     ("receiver_name", Leaf(target.value.id)),
+                    ("value", Child(_handle_of(new_value))),
                     ("post_state", Child(_handle_of(post_state))),
+                    ("evaluation", Leaf(evaluation)),
                 ),
             ),
             self.reporter,
@@ -9647,11 +9739,18 @@ class Assign(Statement):
         }
 
     def _object_place_state(self, entry: BindingEntryV1):
-        del entry
         if not isinstance(self.value, Call):
             return None
         definition = self.unit.source_allocation_definition_for_call(self.value)
         if definition is None:
+            # The call's result, kept as its object identity: a read of the
+            # name reads the value the call completed with at this statement,
+            # through the statement's key (the reference the name was bound
+            # to), never the call reduced again.  A statement never
+            # substituted carries no key, and its binding is left as it is.
+            reference = unwrap_binding_state(entry.state)
+            if not isinstance(reference, EvaluationRef):
+                return None
             from .backend import Child, Leaf, materialize
             from .object_identity import OpaqueObjectCoordinateV1
             from .shadow import ShadowNode, _handle_of
@@ -9670,6 +9769,8 @@ class Assign(Statement):
                     (
                         ("object_coordinate", Leaf(coordinate)),
                         ("base", Child(_handle_of(self.value))),
+                        ("evaluation", Leaf(reference.evaluation)),
+                        ("name", Leaf(reference.name)),
                     ),
                 ),
                 self.reporter,
@@ -10031,7 +10132,10 @@ class Assign(Statement):
             self.targets[0], (Attribute, Subscript)
         ):
             store = _valued_store_target_sugar(
-                self.targets[0], self.value.sugar(), self.fragment
+                self.targets[0],
+                self.value.sugar(),
+                self.fragment,
+                evaluation=_store_evaluation(self, self.targets[0]),
             )
             if store is not None:
                 return store
@@ -10306,7 +10410,10 @@ class AnnAssign(Statement):
 
         A Name target with a value is ``y = e``: the statement evaluates ``e``
         once, here, and carries its key, so every later read of ``y`` is a
-        reference to ``y``'s projection of it (``target_evaluations``)."""
+        reference to ``y``'s projection of it (``target_evaluations``).  A
+        keyed store (``o.x: T = e`` on a coordinate receiver,
+        ``_keyed_store_target``) carries its key the same way: a later
+        ``o.x`` reads what the store put there."""
         from .shadow import rewrite, rewrite_with_leaves
 
         changed = {}
@@ -10319,7 +10426,9 @@ class AnnAssign(Statement):
             if new_target is not None:
                 changed["target"] = new_target
         rewritten = self if not changed else rewrite(self, **changed)
-        if self.value is None or not isinstance(self.target, Name):
+        if self.value is None or not (
+            isinstance(self.target, Name) or _keyed_store_target(rewritten.target)
+        ):
             return rewritten
         return rewrite_with_leaves(
             rewritten,
@@ -10409,7 +10518,10 @@ class AnnAssign(Statement):
             )
         if self.value is not None and isinstance(self.target, (Attribute, Subscript)):
             store = _valued_store_target_sugar(
-                self.target, self.value.sugar(), self.fragment
+                self.target,
+                self.value.sugar(),
+                self.fragment,
+                evaluation=_store_evaluation(self, self.target),
             )
             if store is not None:
                 return store
@@ -14507,9 +14619,17 @@ class Break(Statement):
 
 
 class ReceiverFieldStoreStatement(Statement):
+    """``o.attr = value`` on a receiver a name holds: ``o`` is rebound to the
+    receiver's post-state.  ``value`` is evaluated here, once, and bound
+    under ``evaluation``; the post-state's stored value is a reference to
+    that key (``place``), so a later read of ``o`` never evaluates
+    ``value`` again."""
+
     receiver_name: str
+    value: Expression
     post_state: Expression
-    _child_fields = ("post_state",)
+    evaluation: str
+    _child_fields = ("value", "post_state")
 
     def substitute(self, scope):
         del scope
@@ -14520,9 +14640,15 @@ class ReceiverFieldStoreStatement(Statement):
         return {self.receiver_name: self.post_state}
 
     def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
         from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
 
-        return ExprStatementSugar(self.post_state.sugar(), self.fragment)
+        return KeyedStoreSugar(
+            value=self.value.sugar(),
+            store=ExprStatementSugar(self.post_state.sugar(), self.fragment),
+            evaluation=self.evaluation,
+            site=self.fragment,
+        )
 
 
 class Continue(Statement):
@@ -17330,10 +17456,17 @@ class Constant(Expression):
 
 
 class OpaqueObjectStateV1(Expression):
-    """Authenticated opaque call-result identity with no field testimony."""
+    """Authenticated opaque call-result identity with no field testimony.
+
+    ``base`` is the call (the object's identity, read structurally by the
+    ``with``-manager and container readers); ``evaluation`` is the key of the
+    assignment's evaluation the name was bound to (``Assign.target_evaluations``).
+    A read of the name reads the value the call completed with there."""
 
     object_coordinate: object
     base: Expression
+    evaluation: str
+    name: str
     _child_fields = ("base",)
 
     def substitute(self, scope):
@@ -17341,11 +17474,18 @@ class OpaqueObjectStateV1(Expression):
         return self
 
     def _construct_sugar(self):
-        """Identity is transparent until a consumer asks for unproved behavior."""
+        """The value the call completed with at its assignment, read through
+        the assignment's key: the same read the name's reference makes
+        (``EvaluationRefSugar``).  The call is never reduced again here."""
         from .object_identity import decode_object_coordinate_v1
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
+            EvaluationRefSugar,
+        )
 
         decode_object_coordinate_v1(self.object_coordinate.wire())
-        return self.base.sugar()
+        return EvaluationRefSugar(
+            evaluation=self.evaluation, name=self.name, site=self.fragment
+        )
 
 
 class ObjectPlaceStateV1(Expression):
@@ -17810,7 +17950,16 @@ class Attribute(Expression):
         if receiver_coordinate_cid is not None and isinstance(projections, dict):
             projection = projections.get((receiver_coordinate_cid, self.attr))
             if isinstance(projection, _ReceiverFieldProjection):
-                return projection.value
+                # The value the store completed with, read through its key at
+                # this read's site; the stored expression is never inlined.
+                return _evaluation_ref(
+                    self,
+                    self.span,
+                    projection.evaluation,
+                    f".{self.attr}",
+                    place=True,
+                    of=projection.of,
+                )
         if (
             isinstance(receiver, IfExp)
             and isinstance(receiver.body, ObjectPlaceStateV1)
@@ -18076,7 +18225,12 @@ class PathAfterCall(Expression):
 
 
 class BuiltinContainerProjection(Expression):
-    """The receiver's post-state (0) or the call's value (1) of one call."""
+    """The receiver's post-state (0) or the call's value (1) of one call.
+
+    A decided call's statement binds the call's pair under its key
+    (``evaluation``, ``mutation_statement``): the projection reads the pair
+    there, never the call (and its operands) evaluated again.  A projection
+    with no key (a path mutation's result) reads its call."""
 
     call: Expression
     index: int
@@ -18091,8 +18245,14 @@ class BuiltinContainerProjection(Expression):
             BuiltinContainerProjectionSugar,
         )
 
+        evaluation = getattr(self, "evaluation", None)
+        pair = (
+            _place_read_sugar(evaluation, f".{self.call.method}()", self.fragment)
+            if isinstance(evaluation, str)
+            else self.call.sugar()
+        )
         return BuiltinContainerProjectionSugar(
-            call=self.call.sugar(), index=self.index, site=self.fragment
+            call=pair, index=self.index, site=self.fragment
         )
 
 
@@ -18162,9 +18322,11 @@ class ContainerMutationStatement(Statement):
             ContainerMutationStatementSugar,
         )
 
+        evaluation = getattr(self, "evaluation", None)
         return ContainerMutationStatementSugar(
             evaluated=tuple(node.sugar() for node in self.evaluated),
             site=self.fragment,
+            evaluation=evaluation if isinstance(evaluation, str) else None,
         )
 
 
@@ -18251,6 +18413,7 @@ class Name(Expression):
                     walrus=getattr(bound, "walrus", False) is True,
                     cell=getattr(bound, "cell", False) is True,
                     deferred=getattr(bound, "deferred", False) is True,
+                    place=getattr(bound, "place", False) is True,
                     of=getattr(bound, "of", None),
                     recurrence=getattr(bound, "recurrence", False) is True,
                 )
@@ -18411,7 +18574,10 @@ class EvaluationRef(Expression):
     recurrence binds per item.  Inside a comprehension a read of a name a
     walrus in it writes is a member reference to the comprehension's
     running value of the name (``ListComp._walrus_recurrence``), marked
-    ``recurrence``.  Built by ``_evaluation_ref`` only.
+    ``recurrence``.  A read of what a store put in a place (``o.x`` after
+    ``o.x = v``, ``d`` after ``d[k] = v``) is marked ``place``: the store
+    binds the value under the key and the read resolves through it only.
+    Built by ``_evaluation_ref`` only.
     """
 
     evaluation: str
@@ -18440,6 +18606,7 @@ class EvaluationRef(Expression):
             walrus=getattr(self, "walrus", False) is True,
             deferred=getattr(self, "deferred", False) is True,
             recurrence=getattr(self, "recurrence", False) is True,
+            place=getattr(self, "place", False) is True,
         )
 
 

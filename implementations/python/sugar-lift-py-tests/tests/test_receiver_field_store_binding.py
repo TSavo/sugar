@@ -16,6 +16,8 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
     ReceiverFieldStoreStateSugar,
 )
+from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
+from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 from sugar_lift_py_tests.sugar.constructed_receiver_ref_sugar import (
     ConstructedReceiverRefSugar,
@@ -106,11 +108,18 @@ def test_class_initializer_reaches_the_authenticated_receiver_store_entrance() -
     statement = universe.statements[0]
     frame = definition.source_visible_constructor_frame()
 
-    assert isinstance(statement, ExprStatementSugar)
-    assert isinstance(statement.value, ReceiverFieldStoreStateSugar)
-    assert isinstance(statement.value.receiver, ConstructedReceiverRefSugar)
+    # The statement evaluates its value once under its key; the store reads
+    # the value through that key (``KeyedStoreSugar``).
+    assert isinstance(statement, KeyedStoreSugar)
+    store = statement.store
+    assert isinstance(store, ExprStatementSugar)
+    assert isinstance(store.value, ReceiverFieldStoreStateSugar)
+    assert isinstance(store.value.value, EvaluationRefSugar)
+    assert store.value.value.place
+    assert store.value.value.evaluation == statement.evaluation
+    assert isinstance(store.value.receiver, ConstructedReceiverRefSugar)
     assert (
-        statement.value.receiver.binding_coordinate_cid
+        store.value.receiver.binding_coordinate_cid
         == frame.body.receiver_coordinate_cid
     )
 

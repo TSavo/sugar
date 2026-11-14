@@ -357,16 +357,20 @@ def _call_node(statement, site_node, receiver, method, args, kind, tags, value_f
     )
 
 
-def _projection(site_node, call, index, tags):
+def _projection(site_node, call, index, tags, evaluation=None):
+    """Element ``index`` of ``call``'s ``(post-state, result)`` pair.
+
+    With ``evaluation`` (a decided call's statement key, ``mutation_statement``)
+    the projection reads the pair the statement bound under that key
+    (``ContainerMutationStatementSugar``): ``d[k] = v; ...; d[k]`` reads the
+    dict the store left, never the call (and ``v``) evaluated again."""
     from .backend import Child, Leaf
     from .shadow import _handle_of
 
-    return _materialize(
-        site_node,
-        "BuiltinContainerProjection",
-        (("call", Child(_handle_of(call))), ("index", Leaf(index))),
-        tags,
-    )
+    fields = (("call", Child(_handle_of(call))), ("index", Leaf(index)))
+    if evaluation is not None:
+        fields = (*fields, ("evaluation", Leaf(evaluation)))
+    return _materialize(site_node, "BuiltinContainerProjection", fields, tags)
 
 
 def _havoc(site_node, label, tags):
@@ -380,20 +384,20 @@ def _havoc(site_node, label, tags):
     )
 
 
-def _statement(statement, names, states, evaluated, tags):
+def _statement(statement, names, states, evaluated, tags, evaluation=None):
+    """The shadow statement; with ``evaluation`` it binds its call's pair
+    (``evaluated[0]``) under that key, which its projections read."""
     from .backend import Children, Leaf
     from .shadow import _handle_of
 
-    return _materialize(
-        statement,
-        "ContainerMutationStatement",
-        (
-            ("names", Leaf(tuple(names))),
-            ("states", Children(tuple(_handle_of(state) for state in states))),
-            ("evaluated", Children(tuple(_handle_of(node) for node in evaluated))),
-        ),
-        tags,
+    fields = (
+        ("names", Leaf(tuple(names))),
+        ("states", Children(tuple(_handle_of(state) for state in states))),
+        ("evaluated", Children(tuple(_handle_of(node) for node in evaluated))),
     )
+    if evaluation is not None:
+        fields = (*fields, ("evaluation", Leaf(evaluation)))
+    return _materialize(statement, "ContainerMutationStatement", fields, tags)
 
 
 def mutation_statement(
@@ -421,7 +425,10 @@ def mutation_statement(
     call = _call_node(
         statement, call_site, receiver, method, args, kind, tags, value_first
     )
-    post = _projection(call_site, call, 0, tags)
+    # The statement evaluates the call once and binds its pair under its own
+    # key; the receiver's post-state and the call's value read that key.
+    evaluation = statement._evaluation_key(scope)
+    post = _projection(call_site, call, 0, tags, evaluation)
     exact, containing = aliases(scope, receiver)
     names, states, evaluated = [], [], [call]
     for name in exact:
@@ -434,8 +441,8 @@ def mutation_statement(
         evaluated.append(havoc)
     if target_name is not None:
         names.append(target_name)
-        states.append(_projection(call_site, call, 1, tags))
-    return _statement(statement, names, states, evaluated, tags)
+        states.append(_projection(call_site, call, 1, tags, evaluation))
+    return _statement(statement, names, states, evaluated, tags, evaluation)
 
 
 def _is_pure_call(call, scope) -> bool:

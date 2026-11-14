@@ -17,9 +17,11 @@ The law has two halves, and this module owns both:
 - **A read never re-evaluates.** Substitution rewrites every later read of a
   Name target to a reference to its key (``EvaluationRefSugar``): the value
   the statement completed with, never the RHS inlined at the read and
-  evaluated again against whatever was rebound since.  A read of the RHS
-  sugar itself that is still inlined (a call's result kept as its object
-  identity, ``Assign.refine_binding_entries``; a stored field) answers
+  evaluated again against whatever was rebound since.  A call's result kept
+  as its object identity (``Assign.refine_binding_entries``,
+  ``OpaqueObjectStateV1``) reads the same key; a stored field or a
+  container's contents after a store read the store's key (``place``).  A
+  read of a RHS sugar that is still inlined answers
   ``ExitSet.completed(<completed value>)`` from the record when it is
   recorded: the value from the face the statement completed under, never a
   second evaluation that could raise again.

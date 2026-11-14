@@ -65,6 +65,11 @@ see (an unsubstituted unpack) still binds the name. The read is then
 whichever of the two was bound last: the evaluation, or a later write of the
 name.
 
+A read of what a store put in a place (``place``: ``o.x`` after ``o.x = v``,
+``d`` after ``d[k] = v``) resolves through the store's key only: the store
+binds the value it stored there, and the read never evaluates ``v`` again.
+A place has no name, so where the key is unbound the read is refused.
+
 A walrus's reference (``walrus``) resolves through the key only. A walrus
 nested in a larger expression carries its bind out to the enclosing statement
 on the value, through the one operand door every operand consumer uses
@@ -122,6 +127,9 @@ class EvaluationRefSugar(ConstructedTermSugar):
     # A member reference to a comprehension's running value of a name a
     # walrus in it writes (``ComprehensionSugar.walrus_recurrence``).
     recurrence: bool = False
+    # A read of what a store put in a place (``o.x`` after ``o.x = v``, ``d``
+    # after ``d[k] = v``): resolves through the key only; ``name`` is a label.
+    place: bool = False
 
     @classmethod
     def witnesses(cls):
@@ -140,6 +148,8 @@ class EvaluationRefSugar(ConstructedTermSugar):
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
         if self.member:
             return self._member(temporal)
+        if self.place:
+            return self._place(temporal)
         if temporal is not None:
             key = evaluation_here(self.evaluation)
             latest = temporal.latest(key, self.name)
@@ -206,6 +216,38 @@ class EvaluationRefSugar(ConstructedTermSugar):
             return False
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
         return temporal is None or temporal.value_if_bound(self.evaluation) is None
+
+    def _place(self, temporal) -> ExitSet:
+        """What a store put in a place, read through the store's key: the
+        value the store completed with (``KeyedStoreSugar``,
+        ``ContainerMutationStatementSugar``), never the stored expression
+        evaluated again.  A place has no name to read in its stead, so a key
+        this temporal never received is refused: the store never completed
+        here, or the read was carried out of the frame that ran it."""
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        bound = (
+            temporal.value_if_bound(evaluation_here(self.evaluation))
+            if temporal is not None
+            else None
+        )
+        if bound is None:
+            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+            construction_panic_gap(
+                owner="EvaluationRefSugar",
+                blame=self.site,
+                observed=(
+                    f"read of `{self.name}` with its store's evaluation "
+                    f"{self.evaluation} unbound"
+                ),
+                requested="the store's completed value bound under its key",
+                fix=(
+                    "reduce the read after the store statement in the frame "
+                    "that ran it; the store binds what it stored under its key"
+                ),
+            )
+        return ExitSet.completed(bound)
 
     def _member(self, temporal) -> ExitSet:
         """A comprehension member's coordinate (or, read by a lambda the

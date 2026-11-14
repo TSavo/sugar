@@ -173,6 +173,57 @@ class ChainedAssignSugar(Sugar):
 
 
 @dataclass(frozen=True)
+class KeyedStoreSugar(Sugar):
+    """``o.x = v`` whose stored value a later read of the place reads.
+
+    Substitution threads the store into later reads of the place (``o.x``
+    on a coordinate receiver, ``_ReceiverFieldProjection``; every read of
+    ``o`` after a receiver field store, ``ReceiverFieldStoreState``).  Each
+    such read is a reference to this statement's evaluation (``place``),
+    never ``v`` inlined at the read and evaluated again against whatever was
+    rebound since (``o.x = x; x += 1; return o.x``).
+
+    ``value`` is the right-hand side, evaluated HERE, once: its halts are the
+    statement's, and its completed value is bound under ``evaluation``.
+    ``store`` is the store itself, built with its value read through that
+    key, and runs after the value is bound (Python evaluates the right-hand
+    side before the target).
+    """
+
+    value: Sugar
+    store: Sugar
+    evaluation: str
+    site: object = dataclass_field(compare=False)
+    halts_at_statement_head: ClassVar[bool] = True
+
+    @classmethod
+    def witnesses(cls):
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="typed store effect",
+            reason="the store's own sugar owns its faces; this binds its value once",
+        )
+
+    def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.context import ReduceContext
+        from sugar_lift_py_tests.sugar.assigned_value import (
+            evaluate_assignment_values,
+        )
+
+        if ctx is None:
+            ctx = ReduceContext.root(owner="KeyedStoreSugar")
+
+        def store(active, completed):
+            # The value is bound under the key: the store reads it there.
+            del completed
+            return _reduce_targets((self.store,), active, ctx)
+
+        return evaluate_assignment_values(
+            (self.value,), ctx, tail=store, evaluations=((self.evaluation, 0),)
+        )
+
+
+@dataclass(frozen=True)
 class _PreconstructedStoreSugar(Sugar):
     """One chained target consuming the statement's already-reduced RHS."""
 
