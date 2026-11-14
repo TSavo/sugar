@@ -104,7 +104,7 @@ def _restrict(exits, guard):
 
 
 def _halted_face(face, prefix_guard):
-    """Preserve a Halted face (effect + state + owed) under an outer prefix."""
+    """Preserve a Halted face (effect + state) under an outer prefix."""
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 
     combined = _and_parts(prefix_guard, face.guard)
@@ -115,7 +115,6 @@ def _halted_face(face, prefix_guard):
                 face.effect,
                 face.state,
                 face.faces,
-                face.pending_contracts,
             ),
         )
     )

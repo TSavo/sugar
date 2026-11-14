@@ -57,43 +57,6 @@ class UniverseValue(FloorValue):
         )
 
     def post(self) -> Formula:
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            ContractConditionalConstructionV1,
-        )
-
-        # A pending conditional candidate is NOT projectable. The resume path
-        # MECHANICALLY REPLACES each exactly-resolved candidate with its retained
-        # .value before projecting, so a resumed record reaches post() with NO
-        # pending entry. Any candidate still standing here means no resume
-        # authorized it -- post() panics (resume-exclusive; never a fast lane).
-        pending = tuple(
-            entry
-            for entry in self.record.statements
-            if isinstance(entry, ContractConditionalConstructionV1)
-        )
-        if pending:
-            from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-            construction_panic_gap(
-                owner="UniverseValue.post",
-                blame=self.name,
-                observed=(
-                    "pending parameter contract demands "
-                    + ",".join(
-                        demand.demand_cid
-                        for entry in pending
-                        for demand in entry.demands
-                    )
-                ),
-                requested="authenticated ParameterContractResolutionV1 rows",
-                fix=(
-                    "discharge every exact demand/candidate CID through the Rust "
-                    "linker; never admit the serialized candidate before resolution"
-                ),
-                gap_kind=GapKind.FLOOR,
-                gap_locus=GapLocus.CONSTRUCTION,
-            )
         exits = tuple(
             formula
             for entry in self.record.statements
@@ -186,65 +149,31 @@ class UniverseValue(FloorValue):
 
     def link_unit_projection(self, def_memento):
         """PRE-POST projection: assemble this function's ParameterContractLinkUnitV1
-        WITHOUT calling post(). Gathers the pending ContractConditionalConstructionV1
-        the body enrolled, emits the ParameterOwnedContractV1 (its own formals +
-        the demands it STRUCTURALLY OWNS), and returns the link unit. The RPC
-        level retains this immutable universe keyed by link_unit_cid so Phase-3
-        resume reuses it (materialize-once) rather than reconstructing."""
+        WITHOUT calling post(): its own formals, no owned demand and no
+        candidate. Nothing in the lift owes a parameter contract (inventory item
+        43), so the unit is the callee's structural identity alone; the wire
+        shape is unchanged. The RPC level retains this immutable universe keyed
+        by link_unit_cid so Phase-3 resume reuses it rather than reconstructing.
+        """
         from sugar_lift_py_tests.caller_parameter_contract import (
-            ContractConditionalConstructionV1,
             ParameterContractLinkUnitV1,
             ParameterOwnedContractV1,
         )
 
-        pending = tuple(
-            entry
-            for entry in self.record.statements
-            if isinstance(entry, ContractConditionalConstructionV1)
-        )
         coords = tuple(self.formal_coordinates)
         if not coords:
-            # No formals -> no formal coordinate -> no demand can be owned here.
-            if pending:
-                from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-                from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-                construction_panic_gap(
-                    owner="UniverseValue.link_unit_projection",
-                    blame=self.name,
-                    observed="pending demands without any formal coordinate",
-                    requested="a formal coordinate that owns each demand",
-                    fix="thread formal coordinates into the universe",
-                    gap_kind=GapKind.FLOOR,
-                    gap_locus=GapLocus.CONSTRUCTION,
-                )
             return None
-        owner_cid = coords[0].owner_source_identity_cid
-        owner_locus = coords[0].owner_definition_locus
-        coord_cids = {coordinate.coordinate_cid for coordinate in coords}
-        # Flatten over the entry's demand SET (#6352). `contribution` already
-        # split it into one row per demand on the way into the record, so this
-        # normally sees singletons; iterating the set keeps the reader correct
-        # for any producer that reaches the record without splitting, instead of
-        # silently owning only the first.
-        owned_demands = [
-            demand.demand_cid
-            for entry in pending
-            for demand in entry.demands
-            if demand.formal_coordinate_cid in coord_cids
-            and demand.owner_source_identity_cid == owner_cid
-        ]
         owned = ParameterOwnedContractV1.mint(
             name=self.name,
-            owner_source_identity_cid=owner_cid,
-            owner_definition_locus=owner_locus,
+            owner_source_identity_cid=coords[0].owner_source_identity_cid,
+            owner_definition_locus=coords[0].owner_definition_locus,
             formal_coordinates=coords,
-            declared_demand_cids=owned_demands,
+            declared_demand_cids=[],
         )
         return ParameterContractLinkUnitV1.mint(
             source_memento=def_memento,
             parameter_owned_contract=owned,
-            candidates=pending,
+            candidates=(),
             call_edges=(),
         )
 

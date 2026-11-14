@@ -149,7 +149,7 @@ def test_a_partitioned_operand_compares_on_each_receiver_and_keeps_its_halt():
     raised = ground_exceptional_exit(
         exception_name="ValueError", site=site, owner="test"
     ).value
-    halts = (Halted(true_guard(), raised.effect, None, frozenset(), ()),)
+    halts = (Halted(true_guard(), raised.effect, None, frozenset()),)
     partition = ReceiverStatePartitionValue(
         exits=ExitSet((*halts, Completed(true_guard(), TermValue(1))))
     )

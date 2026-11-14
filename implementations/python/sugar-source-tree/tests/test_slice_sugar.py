@@ -22,11 +22,6 @@ def _sub(src):
     for entry in universe.record.statements:
         if type(entry).__name__ == "ReturnValue":
             return entry.value.term
-        if type(entry).__name__ == "ContractConditionalConstructionV1":
-            ret = entry.value
-            if type(ret).__name__ == "ReturnValue":
-                return ret.value.term
-            return getattr(ret, "term", ret)
     raise AssertionError(
         f"no subscript term: {[type(s).__name__ for s in universe.record.statements]}"
     )

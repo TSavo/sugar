@@ -141,7 +141,6 @@ class WithResourceSugar(Sugar):
                                     enter_exit.effect,
                                     enter_exit.state,
                                     enter_exit.faces,
-                                    enter_exit.pending_contracts,
                                 ),
                             )
                         )

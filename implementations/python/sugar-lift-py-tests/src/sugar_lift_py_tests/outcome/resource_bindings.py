@@ -197,7 +197,6 @@ def prepend_facts_to_exitset(exits, facts: tuple):
                     exit_.effect,
                     state,
                     exit_.faces,
-                    exit_.pending_contracts,
                 )
             )
             continue
@@ -208,7 +207,6 @@ def prepend_facts_to_exitset(exits, facts: tuple):
                     exit_.guard,
                     replace(value, entries=(*facts, *value.entries)),
                     exit_.faces,
-                    exit_.pending_contracts,
                 )
             )
         else:

@@ -369,7 +369,6 @@ def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return")
                     _and(face.guard, _and(remaining, local_guard)),
                     item.value,
                     face.faces,
-                    face.pending_contracts,
                 )
             )
             remaining = _and(remaining, complement_guard(local_guard))
@@ -390,7 +389,6 @@ def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return")
                     _and(face.guard, _and(remaining, fall_guard)),
                     NoneValue(),
                     face.faces,
-                    face.pending_contracts,
                 )
             )
         # A terminal residue without a return contributes no completed result.

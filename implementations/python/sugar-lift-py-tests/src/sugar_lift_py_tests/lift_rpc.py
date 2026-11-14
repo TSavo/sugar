@@ -608,7 +608,7 @@ def _parameter_contract_resume_rows(
     universe, def_memento_dto, def_memento, unit = retained
     try:
         resolution_set = ParameterContractResolutionSetV1.from_value(raw_set)
-        accepted = resume_apply_resolutions(unit, resolution_set)
+        resume_apply_resolutions(unit, resolution_set)
     except (ResumeStalePanic, ValueError) as exc:
         construction_panic_gap(
             owner="parameter-contract-resume",
@@ -619,11 +619,9 @@ def _parameter_contract_resume_rows(
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-    # Materialize-once + value correctness: replace each resolved candidate with
-    # its retained .value and project the resumed record normally.
-    from sugar_lift_py_tests.caller_parameter_contract import resume_project
-
-    resolved = resume_project(universe, accepted)
+    # No candidate is ever enrolled (inventory item 43), so the retained
+    # universe projects as it stands.
+    resolved = universe
     from sugar_lift_py_tests.ir import TermTableBuilder
 
     term_table = TermTableBuilder()

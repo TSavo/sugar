@@ -72,47 +72,13 @@ class SubscriptSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: Any = None) -> Outcome:
-        # THE INDEX CAN OWE A CONTRACT, and `and_then` has no arm for a carrier:
-        # a carrier wraps a value together with an obligation, which is neither a
-        # value nor a partition, so `outcome_to_exitset` panics NAMED on it
-        # (#6352). `xs[p[0]:]` and `res.append(s[pos:ps.span()[0]])` both arrive
-        # here that way -- the second is the `slice_sugar` family, whose demand
-        # now survives its own fold instead of being read off with `.value`.
-        #
-        # So hoist both operands' obligations, fold the plain values exactly as
-        # before, and re-attach the union to the result. `rewrap_pending` is the
-        # sole re-attachment door and is itself loud when the joined outcome has
-        # nowhere to carry the demand: nothing here drops an obligation quietly.
-        #
-        # Operand reduction may also publish a dual-edge ExitSet. Sequence its
+        # Operand reduction may publish a dual-edge ExitSet. Sequence its
         # completed faces through the receiver floor; a typed refusal remains a
         # refusal and must never be converted into an empty outcome.
-        from dataclasses import replace
+        from sugar_lift_py_tests.outcome import outcome_to_exitset
 
-        from sugar_lift_py_tests.caller_parameter_contract import merge_demands
-        from sugar_lift_py_tests.floor.single_outcome_law import (
-            pending_demand,
-            rewrap_pending,
-        )
-        from sugar_lift_py_tests.outcome import outcome_to_exitset, true_guard
-
-        # A subscript expression has no guard of its own, so both obligations
-        # hoist unconditionally.
-        pending = None
-        plain = []
-        for operand in (self.receiver, self.index):
-            entry, value_outcome = pending_demand(operand.desugar(ctx), true_guard())
-            if entry is not None:
-                pending = (
-                    entry
-                    if pending is None
-                    else replace(
-                        pending,
-                        demands=merge_demands(pending.demands, entry.demands),
-                    )
-                )
-            plain.append(value_outcome)
-        receiver_outcome, index_outcome = plain
+        receiver_outcome = self.receiver.desugar(ctx)
+        index_outcome = self.index.desugar(ctx)
 
         from sugar_lift_py_tests.outcome import ExitSet as _ExitSet
 
@@ -134,9 +100,7 @@ class SubscriptSugar(ConstructedTermSugar):
                     lambda index: self._subscript(receiver, index, ctx)
                 )
             )
-        return rewrap_pending(
-            pending, subscripted, owner=type(self).__name__, blame=self.site
-        )
+        return subscripted
 
     def _subscript(self, receiver, index, ctx):
         """One door: prefer ``subscript_with`` (operation) over legacy ``subscript``.

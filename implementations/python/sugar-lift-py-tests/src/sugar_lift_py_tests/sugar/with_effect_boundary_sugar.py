@@ -581,13 +581,12 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
             remaining = entries[:index] + entries[index + 1 :]
             carried = replace(record, entries=remaining)
             if isinstance(face, Completed):
-                return Completed(guard, carried, faces, face.pending_contracts)
+                return Completed(guard, carried, faces)
             return Halted(
                 guard,
                 face.effect,
                 carried,
                 faces,
-                face.pending_contracts,
             )
 
         def failed(guard, faces):
@@ -597,7 +596,6 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
                     ExpectationNotMetEffect("warning", site),
                     record,
                     faces,
-                    face.pending_contracts,
                 )
             return replace(face, guard=guard, faces=faces)
 
@@ -742,7 +740,6 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
                         ExpectationNotMetEffect("warning", site),
                         record,
                         face.faces,
-                        face.pending_contracts,
                     )
                 )
             else:

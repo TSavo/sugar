@@ -136,7 +136,6 @@ def test_deep_runtime_operand_decision_is_construction_closed() -> None:
     assert not is_lift_time_decidable(runtime)
 
 
-
 def test_dynamic_type_operand_effect_names_its_operation() -> None:
     """A constructor partition can identity-hash a dynamic isinstance halt."""
     from sugar_lift_py_tests.effect import (
@@ -160,11 +159,7 @@ def test_dynamic_type_operand_effect_names_its_operation() -> None:
     assert term.args == (operation,)
 
     partition = ReceiverStatePartitionValue(
-        exits=ExitSet(
-            (
-                Halted(true_guard(), effect, None, frozenset(), ()),
-            )
-        )
+        exits=ExitSet((Halted(true_guard(), effect, None, frozenset()),))
     )
     identity = partition.identity
     assert isinstance(identity, str) and identity

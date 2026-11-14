@@ -260,7 +260,6 @@ class WithOpaqueCitedManagerSugar(Sugar):
                                     enter_exit.effect,
                                     enter_exit.state,
                                     enter_exit.faces,
-                                    enter_exit.pending_contracts,
                                 ),
                             )
                         )
@@ -291,7 +290,6 @@ class WithOpaqueCitedManagerSugar(Sugar):
                                 entries=(), can_fall_through=True, fall_through=()
                             ),
                             body_exit.faces,
-                            body_exit.pending_contracts,
                         )
                     # ONE router for both questions. A completed body leaves
                     # completed unless exit halts; a halted body leaves as BOTH

@@ -29,54 +29,16 @@ def _reduce_into(element_sugars, ctx, build):
     law through it -- ``Complete`` continues (a constructed raise keeps the
     control-flow value and evaluates no enclosing step), ``Incomplete`` propagates
     the effect and never runs the tail, ``ExitSet`` threads every completed arm
-    while halted arms bypass, and a pending parameter-contract candidate keeps its
-    demand attached while its carried value continues.
+    while halted arms bypass.
 
     Reading ``.value`` off the outcome instead assumed exactly one arm, which is
     false the moment an element can halt: `[a, d[k] := f()]`, an element whose
     store partitions, a comparison chain that raises on one face. That assumption
-    was the `'ExitSet' object has no attribute 'value'` defect, and it also
-    dropped a pending contract demand on the floor.
+    was the `'ExitSet' object has no attribute 'value'` defect.
     """
-    from sugar_lift_py_tests.floor.single_outcome_law import (
-        pending_demand,
-        rewrap_pending,
-    )
-    from dataclasses import replace
-
-    from sugar_lift_py_tests.caller_parameter_contract import merge_demands
-    from sugar_lift_py_tests.outcome import true_guard
     from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
-    owner = f"collection {build.__name__}"
     reduced = tuple(element.desugar(ctx) for element in element_sugars)
-
-    # An element that owes a parameter contract (`[p[0], 1]` for a formal `p`)
-    # wraps its value rather than being one; the exit algebra has no arm for it,
-    # so hoist the demand out of the fold and re-attach it to the built
-    # collection. The element's demand is unconditional here -- a collection
-    # display has no guard of its own -- so it hoists at `true_guard`.
-    pending = None
-    stripped = []
-    for outcome in reduced:
-        entry, plain = pending_demand(outcome, true_guard())
-        if entry is not None:
-            # EVERY element's obligations accumulate into one demand SET
-            # (#6352). `[p[0], q[1]]` owes `python:indexable(p)` AND
-            # `python:indexable(q)`; this used to panic NAMED on the second
-            # distinct demand because the carrier held exactly one. The union
-            # dedupes by `demand_cid` -- the content address of the whole
-            # obligation -- so `[p[0], p[0]]` is still one obligation, and two
-            # different ones stay two.
-            pending = (
-                entry
-                if pending is None
-                else replace(
-                    pending,
-                    demands=merge_demands(pending.demands, entry.demands),
-                )
-            )
-        stripped.append(plain)
 
     # An element that PARTITIONS enters the fold with at most one completed arm
     # (#6324). `and_then` is `ExitSet.sequence`, which distributes the tail
@@ -88,7 +50,7 @@ def _reduce_into(element_sugars, ctx, build):
     # level. The accumulator itself cannot be factored -- its completed value is
     # the growing tuple this fold is building.
     outcome = Complete(())
-    for element_outcome in stripped:
+    for element_outcome in reduced:
         outcome = outcome.and_then(
             lambda collected, got=factored_operand(element_outcome): got.and_then(
                 lambda value: Complete((*collected, value))
@@ -98,7 +60,7 @@ def _reduce_into(element_sugars, ctx, build):
         built = outcome.and_then(build)
     else:
         built = outcome.and_then(lambda values: Complete(build(values)))
-    return rewrap_pending(pending, built, owner=owner, blame=owner)
+    return built
 
 
 @dataclass(frozen=True)

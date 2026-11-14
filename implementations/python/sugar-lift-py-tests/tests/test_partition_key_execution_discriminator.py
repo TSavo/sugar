@@ -55,10 +55,8 @@ def _two_arms(left_key, right_key, left_guard: str, right_guard: str):
     _, right_face = partition(right_key)
     return ExitSet(
         (
-            Completed(atomic(left_guard, ()), TermValue(1), frozenset({left_face}), ()),
-            Completed(
-                atomic(right_guard, ()), TermValue(2), frozenset({right_face}), ()
-            ),
+            Completed(atomic(left_guard, ()), TermValue(1), frozenset({left_face})),
+            Completed(atomic(right_guard, ()), TermValue(2), frozenset({right_face})),
         )
     )
 

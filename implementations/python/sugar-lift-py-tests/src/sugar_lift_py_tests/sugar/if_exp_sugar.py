@@ -130,48 +130,6 @@ class IfExpSugar(ConstructedTermSugar):
         then_out = self.body.desugar(ctx)
         else_out = self.orelse.desugar(ctx)
 
-        # A PENDING PARAMETER-CONTRACT ARM (`p[0] if c else 1`, where `p` is a
-        # formal) wraps a value together with a demand the linker discharges. The
-        # value joins normally; the demand rides back out on the joined result,
-        # weakened to the arm's own face -- a caller that never takes the arm owes
-        # nothing. `demanded_under` weakens the demand WITHOUT guarding the value,
-        # because the join below guards the value itself.
-        pending = _pending(then_out), _pending(else_out)
-        if any(pending):
-            if all(pending):
-                # BOTH ARMS PENDING (#6352). `p[0] if c else q[1]` owes
-                # `c -> python:indexable(p)` AND `not c -> python:indexable(q)`
-                # -- two obligations, each on its own face. This used to be
-                # loud, because the carrier held exactly one demand.
-                #
-                # Each arm weakens under ITS OWN face before the union, so
-                # neither is owed where it does not run, and the sets union by
-                # content address. The then arm's value carries the joined set.
-                from dataclasses import replace
-
-                from sugar_lift_py_tests.caller_parameter_contract import (
-                    merge_demands,
-                )
-
-                then_entry = then_out.demanded_under(formula)
-                else_entry = else_out.demanded_under(not_formula)
-                joined = replace(
-                    then_entry,
-                    demands=merge_demands(then_entry.demands, else_entry.demands),
-                )
-                return joined.and_then(
-                    lambda value: self._join_arms(
-                        formula, Complete(value), Complete(else_entry.value)
-                    )
-                )
-            if pending[0]:
-                return then_out.demanded_under(formula).and_then(
-                    lambda value: self._join_arms(formula, Complete(value), else_out)
-                )
-            return else_out.demanded_under(not_formula).and_then(
-                lambda value: self._join_arms(formula, then_out, Complete(value))
-            )
-
         # A deferred native-operation arm is not an ExitSet. Forcing it through
         # outcome_to_exitset panics; BoolOp already keeps that carrier beside
         # the already-decided face via short_circuit. The same law applies
@@ -283,18 +241,3 @@ class IfExpSugar(ConstructedTermSugar):
         # partitioned stays partitioned -- a caller threads it with `and_then`,
         # which is how every other partition in the lift is consumed.
         return exits.collapse()
-
-
-def _pending(outcome):
-    """The outcome as a pending parameter-contract entry, or ``None``.
-
-    A pending entry is an ``Outcome`` variant that WRAPS a value: it is neither a
-    plain value nor a partition, so it has no arm in the exit algebra
-    (``outcome_to_exitset`` refuses it). It is unwrapped before the join and
-    re-wrapped after.
-    """
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        ContractConditionalConstructionV1,
-    )
-
-    return outcome if isinstance(outcome, ContractConditionalConstructionV1) else None

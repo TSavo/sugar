@@ -398,28 +398,6 @@ def _assigned_rows(value) -> tuple:
     return getattr(context, "assigned_values", ()) or ()
 
 
-def _obligations(exit_: "Exit[T]") -> tuple:
-    """An arm's obligations by content address, order-free (#6352).
-
-    Keyed by ``demand_cid`` -- the obligation's own content address -- never by
-    hashing the carrier, which holds a floor value and a term. Both arm kinds
-    answer here: a completed face owes exactly the way a halted face does.
-
-    The empty case is the overwhelmingly common one and is answered without
-    building anything: this runs once per arm per ``normalize``, and
-    ``normalize`` is the hottest call in the reducer.
-    """
-    if not exit_.pending_contracts:
-        return ()
-    return tuple(
-        sorted(
-            demand.demand_cid
-            for entry in exit_.pending_contracts
-            for demand in entry.demands
-        )
-    )
-
-
 # Identity-retained destination hashes (#7664).  A frozen dataclass's hash is a
 # function of its content, which cannot change, so one live object hashes the
 # same forever.  ``normalize`` re-buckets the same arm values on every call
@@ -466,14 +444,11 @@ def _destination_key(exit_: "Exit[T]") -> object:
     """
     try:
         if isinstance(exit_, Completed):
-            # Obligations are part of the destination on this face too: two
-            # completed arms owing different things are different destinations.
-            return ("completed", _retained_hash(exit_.value), _obligations(exit_))
+            return ("completed", _retained_hash(exit_.value))
         return (
             "halted",
             _retained_hash(exit_.effect),
             _retained_hash(exit_.state),
-            _obligations(exit_),
         )
     except TypeError:
         return _UNHASHABLE
@@ -481,38 +456,7 @@ def _destination_key(exit_: "Exit[T]") -> object:
 
 @dataclass(frozen=True)
 class Completed(Generic[T]):
-    """Control left with this value, under this guard.
-
-    ``pending_contracts`` is the COMPLETED face of the parameter-contract
-    carrier, the twin of the field ``Halted`` has carried since #6352. An
-    operation distributed onto a value that already owed a caller obligation
-    can answer with a partition -- `(a if c else b)[i]` where the subscript
-    enrolled `python:indexable(b)` and the following step contained a store --
-    and until this field existed the exit algebra had no arm that held a value
-    together with an undischarged obligation. That was the ONE remaining LOUD
-    category in ``single_outcome_law.rewrap_pending``, and the panic said so:
-    "give the exit algebra an arm for a pending contract demand, so each
-    completed face carries the demands weakened under its own guard".
-
-    ENTRIES ARE CARRIED AS INCURRED, NOT PRE-WEAKENED. The arm's own ``guard``
-    already states the face it is owed on, so `g -> D` is minted exactly once,
-    at the block boundary that enrols it
-    (``function_universe_sugar._enrol_exit_obligations``), under the guard the
-    arm finally holds. Weakening at every restriction instead re-mints a
-    ``demand_cid`` -- a blake3 over the JCS of the formula -- on every
-    ``guarded``, ``sequence`` and ``and_exit`` step, and since a re-minted
-    obligation is a DIFFERENT destination, it also stops arms merging in
-    ``normalize`` and stops the same obligation deduping when it reaches a join
-    twice -- `F and F` would stop being `F`. Observed on pandas
-    `core/reshape/merge.py`, where a `sample` of the per-restriction spelling
-    was dominated by blake3 and JCS encoding. Same obligation, same face, one
-    mint.
-
-    Like ``Halted.pending_contracts`` it is part of the DESTINATION, not
-    testimony: two arms owing different things are different destinations and
-    must not merge under a disjunction. Obligations are therefore compared,
-    unlike ``faces``.
-    """
+    """Control left with this value, under this guard."""
 
     guard: Formula
     value: T
@@ -523,26 +467,11 @@ class Completed(Generic[T]):
     faces: frozenset[PartitionFace] = _dataclass_field(
         default=_NO_FACES, compare=False, repr=False
     )
-    pending_contracts: tuple = ()
 
 
 @dataclass(frozen=True)
 class Halted:
-    """Control left with this effect, under this guard, from this state.
-
-    ``pending_contracts`` conserves obligations incurred BEFORE the effect
-    across the ``Incomplete`` -> halted conversion (#6352). Each is already
-    weakened under this arm's own guard by ``outcome_to_exitset``, so the arm
-    carries ``g -> D`` rather than a bare ``D``.
-
-    It is deliberately NOT routed like ``faces``. A merged arm holds under a
-    DISJUNCTION, so partition testimony may only keep what every contributing
-    arm carried -- intersecting is what stops a merged arm claiming a face it
-    held on one side only. Obligations must not be intersected (that drops one)
-    and must not be unioned (that owes one on a face that never runs), so they
-    take neither route: they are part of the DESTINATION, and two arms owing
-    different things are different destinations that never merge at all.
-    """
+    """Control left with this effect, under this guard, from this state."""
 
     guard: Formula
     effect: Effect
@@ -550,7 +479,6 @@ class Halted:
     faces: frozenset[PartitionFace] = _dataclass_field(
         default=_NO_FACES, compare=False, repr=False
     )
-    pending_contracts: tuple = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect", require_effect(self.effect))
@@ -601,23 +529,15 @@ class ExitSet(Generic[T]):
         arms instead of trying to re-prove it from guard shape. Omitting it is
         the honest default for a restriction that is not a partition face.
 
-        Obligations RIDE ALONG unchanged and narrow with the arm's guard, which
-        is the whole point of carrying them on the arm: ``combined`` is the face
-        they are owed on, and `combined -> D` is minted once at enrolment. This
-        method used to rebuild each arm from its guard, effect and state alone,
-        so ``Halted.pending_contracts`` was dropped here outright -- conserved
-        across the `Incomplete` -> halted conversion by #6352, then lost one
-        call later.
         """
         exits: list[Exit[T]] = []
         for exit_ in self.exits:
             combined = _and_guards(guard, exit_.guard)
             faces = exit_.faces if face is None else exit_.faces | {face}
-            owed = exit_.pending_contracts
             if isinstance(exit_, Completed):
-                exits.append(Completed(combined, exit_.value, faces, owed))
+                exits.append(Completed(combined, exit_.value, faces))
             else:
-                exits.append(Halted(combined, exit_.effect, exit_.state, faces, owed))
+                exits.append(Halted(combined, exit_.effect, exit_.state, faces))
         return ExitSet(tuple(exits)).normalize()
 
     def with_partition_face(self, partition_id: str, face: int) -> "ExitSet[T]":
@@ -748,19 +668,7 @@ class ExitSet(Generic[T]):
         for arm in completed[1:]:
             factored_faces = factored_faces & arm.faces
 
-        # Obligations UNION rather than intersect. `faces` is testimony -- a
-        # claim true of one arm says nothing about the merged face, so only
-        # what every arm carried survives. An obligation is the opposite: it
-        # was really incurred on the arm that carries it, that arm is still
-        # reachable inside the factored face, and each entry is already
-        # weakened under its own arm's guard, so `g_i -> D` remains exactly as
-        # true of the disjunction. Intersecting here would DROP every
-        # obligation any single arm owed, which is the silent-drop this whole
-        # field exists to stop.
-        from sugar_lift_py_tests.caller_parameter_contract import merge_pending
-
-        factored_owed = merge_pending(*(arm.pending_contracts for arm in completed))
-        factored = Completed(face_guard, chain, factored_faces, factored_owed)
+        factored = Completed(face_guard, chain, factored_faces)
         exits: list[Exit[T]] = []
         placed = False
         for exit_ in self.exits:
@@ -828,10 +736,6 @@ class ExitSet(Generic[T]):
                     isinstance(exit_, Completed)
                     and isinstance(prior, Completed)
                     and exit_.value == prior.value
-                    # #6352: arms owing different obligations are different
-                    # destinations on THIS face too. Merging them would keep
-                    # the prior's and drop the arrival's, silently.
-                    and _obligations(exit_) == _obligations(prior)
                     # Arms that completed an assignment with different values
                     # (``y = -x if c else 0``) hold equal records but different
                     # recorded values: merging them would keep the prior's
@@ -843,10 +747,6 @@ class ExitSet(Generic[T]):
                     and isinstance(prior, Halted)
                     and exit_.effect == prior.effect
                     and exit_.state == prior.state
-                    # #6352: arms owing different obligations are different
-                    # destinations. Merging them would keep the prior's and
-                    # drop the arrival's, silently.
-                    and _obligations(exit_) == _obligations(prior)
                 )
                 # Same destination under a DISJOINED guard. Only a split BOTH
                 # contributors spoke about survives -- a partition one of them
@@ -858,9 +758,6 @@ class ExitSet(Generic[T]):
                         _or_guards(prior.guard, exit_.guard),
                         prior.value,
                         _merge_faces(prior.faces, exit_.faces),
-                        # Equal by `same_completed`; stated explicitly so the
-                        # field cannot be dropped by a later edit here.
-                        prior.pending_contracts,
                     )
                     break
                 if same_halted:
@@ -869,10 +766,6 @@ class ExitSet(Generic[T]):
                         prior.effect,
                         prior.state,
                         _merge_faces(prior.faces, exit_.faces),
-                        # Equal by `same_halted`, so this conserves rather than
-                        # chooses; stated explicitly so the field cannot be
-                        # dropped by a later edit to this constructor.
-                        prior.pending_contracts,
                     )
                     break
             else:
@@ -896,7 +789,6 @@ class ExitSet(Generic[T]):
         each side is already weakened under its own face and `g -> D` still
         holds under `g and h`. Nothing is conjoined into a single demand.
         """
-        from sugar_lift_py_tests.caller_parameter_contract import merge_pending
 
         exits: list[Exit[U]] = []
         for exit_ in self.exits:
@@ -907,14 +799,11 @@ class ExitSet(Generic[T]):
                 guard = _and_guards(exit_.guard, following.guard)
                 # Conjoined guard: both sets of testimony hold of the result.
                 faces = exit_.faces | following.faces
-                owed = merge_pending(
-                    exit_.pending_contracts, following.pending_contracts
-                )
                 if isinstance(following, Completed):
-                    exits.append(Completed(guard, following.value, faces, owed))
+                    exits.append(Completed(guard, following.value, faces))
                 else:
                     exits.append(
-                        Halted(guard, following.effect, following.state, faces, owed)
+                        Halted(guard, following.effect, following.state, faces)
                     )
         return ExitSet(tuple(exits)).normalize()
 
@@ -948,29 +837,25 @@ class ExitSet(Generic[T]):
         # ran and the cleanup ran, so both incurred what they incurred; which
         # of the two decides the outgoing SHAPE says nothing about who owes.
         # Superseding is a choice about the exit, never a discharge.
-        from sugar_lift_py_tests.caller_parameter_contract import merge_pending
 
         exits: list[Exit[object]] = []
         for incoming in self.exits:
             for clean in cleanup_exits:
                 guard = _and_guards(incoming.guard, clean.guard)
                 faces = incoming.faces | clean.faces
-                owed = merge_pending(
-                    incoming.pending_contracts, clean.pending_contracts
-                )
                 if isinstance(clean, Halted):
-                    exits.append(Halted(guard, clean.effect, clean.state, faces, owed))
+                    exits.append(Halted(guard, clean.effect, clean.state, faces))
                     continue
                 if restores(clean.value):
                     if isinstance(incoming, Completed):
-                        exits.append(Completed(guard, incoming.value, faces, owed))
+                        exits.append(Completed(guard, incoming.value, faces))
                     else:
                         exits.append(
-                            Halted(guard, incoming.effect, incoming.state, faces, owed)
+                            Halted(guard, incoming.effect, incoming.state, faces)
                         )
                 else:
                     # Terminal cleanup completion supersedes (return in finally).
-                    exits.append(Completed(guard, clean.value, faces, owed))
+                    exits.append(Completed(guard, clean.value, faces))
         return ExitSet(tuple(exits)).normalize()
 
     def and_exit(
@@ -1005,27 +890,18 @@ class ExitSet(Generic[T]):
             exit_disposition_effect,
         )
 
-        from sugar_lift_py_tests.caller_parameter_contract import merge_pending
-
-        def _place(target: list, guard, verdict, carried, arm_faces, owed):
-            """One outgoing arm per verdict shape. Conserves the incoming arm.
-
-            ``owed`` is the pending caller obligation this arm carries (#6392),
-            threaded unchanged: authenticating an observation slot neither
-            discharges an obligation nor incurs one.
-            """
+        def _place(target: list, guard, verdict, carried, arm_faces):
+            """One outgoing arm per verdict shape. Conserves the incoming arm."""
             if verdict is None:
-                target.append(Completed(guard, carried, arm_faces, owed))
+                target.append(Completed(guard, carried, arm_faces))
             elif isinstance(verdict, ConsumedObservation):
                 # Consumed AND authenticating a slot: the testimony rides the
                 # completed arm it belongs to, never a sibling arm.
                 target.append(
-                    Completed(
-                        guard, _carry_facts(carried, verdict.facts), arm_faces, owed
-                    )
+                    Completed(guard, _carry_facts(carried, verdict.facts), arm_faces)
                 )
             else:
-                target.append(Halted(guard, verdict, carried, arm_faces, owed))
+                target.append(Halted(guard, verdict, carried, arm_faces))
 
         exit_exits = exit_es.exits
         exits: list[Exit[object]] = []
@@ -1033,13 +909,8 @@ class ExitSet(Generic[T]):
             for ex in exit_exits:
                 guard = _and_guards(incoming.guard, ex.guard)
                 faces = incoming.faces | ex.faces
-                # The body ran and the exit expression ran; both sides'
-                # obligations are owed on the outgoing arm. A contract decides
-                # the SHAPE of the exit, never who owes what was incurred
-                # reaching it -- suppression is not discharge.
-                owed = merge_pending(incoming.pending_contracts, ex.pending_contracts)
                 if isinstance(ex, Halted):
-                    exits.append(Halted(guard, ex.effect, ex.state, faces, owed))
+                    exits.append(Halted(guard, ex.effect, ex.state, faces))
                     continue
                 carried = (
                     incoming.value
@@ -1076,18 +947,16 @@ class ExitSet(Generic[T]):
                         ),
                     ):
                         # The retention narrows this arm's guard; `sub_guard`
-                        # IS that narrowing, and the obligation is minted
-                        # against it once, at enrolment.
+                        # IS that narrowing.
                         _place(
                             exits,
                             sub_guard,
                             sub_verdict,
                             carried,
                             faces | {sub_face},
-                            owed,
                         )
                     continue
-                _place(exits, guard, verdict, carried, faces, owed)
+                _place(exits, guard, verdict, carried, faces)
         return ExitSet(tuple(exits)).normalize()
 
     def and_exit_truthiness(self, exit_es: "ExitSet[object]", *, site: object):
@@ -1099,7 +968,6 @@ class ExitSet(Generic[T]):
         the effect and falsity restores that exact effect; neither face is
         discarded.
         """
-        from sugar_lift_py_tests.caller_parameter_contract import merge_pending
         from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
         exits: list[Exit[object]] = []
@@ -1107,12 +975,11 @@ class ExitSet(Generic[T]):
             for ex in exit_es.exits:
                 guard = _and_guards(incoming.guard, ex.guard)
                 faces = incoming.faces | ex.faces
-                owed = merge_pending(incoming.pending_contracts, ex.pending_contracts)
                 if isinstance(ex, Halted):
-                    exits.append(Halted(guard, ex.effect, ex.state, faces, owed))
+                    exits.append(Halted(guard, ex.effect, ex.state, faces))
                     continue
                 if isinstance(incoming, Completed):
-                    exits.append(Completed(guard, incoming.value, faces, owed))
+                    exits.append(Completed(guard, incoming.value, faces))
                     continue
                 from sugar_lift_py_tests.floor import TermValue
 
@@ -1136,7 +1003,6 @@ class ExitSet(Generic[T]):
                         _and_guards(guard, truth),
                         incoming.state,
                         faces | {truth_face},
-                        owed,
                     )
                 )
                 exits.append(
@@ -1145,45 +1011,19 @@ class ExitSet(Generic[T]):
                         incoming.effect,
                         incoming.state,
                         faces | {falsity_face},
-                        owed,
                     )
                 )
         return ExitSet(tuple(exits)).normalize()
 
     def collapse(self):
-        """Return the old linear Outcome only for one unconditional exit.
-
-        An arm that OWES something collapses to the linear shape that carries
-        the obligation, never to the one that does not: a completed arm becomes
-        the pending carrier it came from, a halted arm becomes an ``Incomplete``
-        holding the same obligations. ``Complete(value)`` and
-        ``Incomplete(effect)`` have no field for a demand, so returning them
-        here would discharge nothing and look resolved -- the exact drop
-        ``rewrap_pending`` refuses.
-        """
+        """Return the old linear Outcome only for one unconditional exit."""
         normalized = self.normalize()
         if len(normalized.exits) != 1 or not _is_true(normalized.exits[0].guard):
             return self if normalized == self else normalized
         exit_ = normalized.exits[0]
         if isinstance(exit_, Completed):
-            if len(exit_.pending_contracts) == 1:
-                # ONE pending construction: that IS the linear carrier, holding
-                # this arm's value. Its demand set rides across unchanged.
-                from dataclasses import replace as _replace
-
-                return _replace(exit_.pending_contracts[0], value=exit_.value)
-            if exit_.pending_contracts:
-                # SEVERAL distinct pending constructions. The linear carrier
-                # holds one candidate and every demand in it carries that same
-                # candidate address, so two candidates have no single linear
-                # shape -- fusing them would attribute one construction's
-                # demands to another construction's candidate. The exit algebra
-                # IS the shape that holds several, so the arm stays here. This
-                # is not a gap and not a drop: collapse already answers with the
-                # ExitSet whenever no linear shape denotes it.
-                return normalized
             return Complete(exit_.value)
-        return Incomplete(exit_.effect, pending_contracts=exit_.pending_contracts)
+        return Incomplete(exit_.effect)
 
 
 def sole_completed_outcome(outcome):
@@ -1210,23 +1050,7 @@ def sole_completed_outcome(outcome):
             "A body with several completed faces has no single success path to "
             "project onto — reason over the ExitSet arms directly."
         )
-    sole = completed[0]
-    if len(sole.pending_contracts) == 1:
-        # The success path still OWES what it incurred. `Complete` has no field
-        # for it, so project onto the carrier instead of dropping it.
-        from dataclasses import replace as _replace
-
-        return _replace(sole.pending_contracts[0], value=sole.value)
-    if sole.pending_contracts:
-        raise ValueError(
-            "sole_completed_outcome cannot project a completed arm owing "
-            f"{len(sole.pending_contracts)} distinct pending constructions onto "
-            "one linear outcome: a carrier holds ONE candidate and every demand "
-            "in it carries that candidate's address, so fusing two would "
-            "attribute one construction's obligations to another's candidate. "
-            "Reason over the ExitSet arm directly."
-        )
-    return Complete(sole.value)
+    return Complete(completed[0].value)
 
 
 def factored_operand(outcome):
@@ -1273,69 +1097,16 @@ def outcome_to_exitset(outcome) -> ExitSet:
     if isinstance(outcome, Complete):
         return ExitSet.completed(outcome.value)
     if isinstance(outcome, Incomplete):
-        # CONSERVATION AT THE CONVERSION BOUNDARY (#6352). An `Incomplete` can
-        # carry obligations incurred BEFORE its effect (`o.x = p[k]` evaluates
-        # `p[k]`, then the store answers). This conversion used to build the
-        # halted arm from `effect` alone, so those obligations vanished HERE --
-        # silently, on a boundary, where nothing downstream could report them.
-        # A demand that disappears at an effect -> halted conversion is
-        # unattributable afterward: no caller owes it and no instrument knows.
-        #
-        # They cross AS INCURRED. The arm's own guard is the face they are owed
-        # on, and `guard -> D` is minted once, at the block boundary that enrols
-        # them. Weakening here as well would mint the same implication twice
-        # over -- and every re-mint is a new `demand_cid`, which is a new
-        # destination, which stops the arm merging in `normalize`.
-        contracts = tuple(getattr(outcome, "pending_contracts", ()))
         if outcome.branch_conditions:
             guard = and_(list(outcome.branch_conditions))
-            return ExitSet(
-                (
-                    Halted(
-                        guard,
-                        outcome.effect,
-                        None,
-                        pending_contracts=contracts,
-                    ),
-                )
-            ).normalize()
-        return ExitSet(
-            (
-                Halted(
-                    true_guard(),
-                    outcome.effect,
-                    None,
-                    pending_contracts=contracts,
-                ),
-            )
-        ).normalize()
+            return ExitSet((Halted(guard, outcome.effect, None),)).normalize()
+        return ExitSet((Halted(true_guard(), outcome.effect, None),)).normalize()
 
-    # A PENDING PARAMETER-CONTRACT CARRIER (#6352). This USED to panic: the exit
-    # algebra had no arm that wrapped a value together with an undischarged
-    # obligation, so the only honest answer was a named gap.
-    #
-    # `Completed.pending_contracts` is that arm. The carrier converts to one
-    # unconditional completed exit holding the carried value and owing exactly
-    # what the carrier owed -- the same conversion `Incomplete` gets, on the
-    # other face. Nothing is hoisted, nothing is dropped, and the round trip
-    # back through `collapse` returns the carrier.
     from sugar_lift_py_tests.caller_parameter_contract import (
-        ContractConditionalConstructionV1,
         NativeOperationExitCarrierV1,
     )
     from sugar_lift_py_tests.gap.info import GapKind
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-    if isinstance(outcome, ContractConditionalConstructionV1):
-        return ExitSet(
-            (
-                Completed(
-                    true_guard(),
-                    outcome.value,
-                    pending_contracts=(outcome,),
-                ),
-            )
-        ).normalize()
 
     if isinstance(outcome, NativeOperationExitCarrierV1):
 

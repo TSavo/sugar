@@ -572,17 +572,12 @@ class _DeferredOutwardFace:
 
 def _outward_face_partition(outcome, face, *, guarded=False):
     """The exits one outward face contributes: each return is the face's one
-    block entry (a pending demand rides beside it), each halt keeps the
-    face's state."""
+    block entry, each halt keeps the face's state."""
     from sugar_lift_py_tests.floor.block_value import BlockValue
-    from sugar_lift_py_tests.floor.single_outcome_law import pending_demand
     from sugar_lift_py_tests.outcome import Completed, Halted
     from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
-    # A pending demand's home is a block entry, and this face builds
-    # exactly one: it rides beside the return in the same record.
-    pending, plain = pending_demand(outcome, face.guard)
-    exits = outcome_to_exitset(plain)
+    exits = outcome_to_exitset(outcome)
     if guarded:
         exits = exits.guarded(face.guard)
     partition = []
@@ -590,8 +585,7 @@ def _outward_face_partition(outcome, face, *, guarded=False):
         if isinstance(exit_, Halted):
             partition.append(Halted(exit_.guard, exit_.effect, face.state))
             continue
-        entries = (exit_.value,) if pending is None else (pending, exit_.value)
         partition.append(
-            Completed(exit_.guard, BlockValue(entries, can_fall_through=False))
+            Completed(exit_.guard, BlockValue((exit_.value,), can_fall_through=False))
         )
     return tuple(partition)

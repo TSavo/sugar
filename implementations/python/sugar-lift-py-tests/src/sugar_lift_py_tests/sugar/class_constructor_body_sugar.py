@@ -216,7 +216,6 @@ class ClassConstructorBodySugar(Sugar):
                                 )
                             ),
                             face.faces,
-                            face.pending_contracts,
                         )
                     )
                 # ``Cls(x)`` is a call: the initializer's halted faces are the

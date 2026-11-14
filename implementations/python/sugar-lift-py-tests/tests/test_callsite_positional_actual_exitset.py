@@ -24,12 +24,6 @@ from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_source_tree.panic import SugarNotWritten
 
 
-@dataclass(frozen=True)
-class _Pending:
-    candidate_cid: str
-    demands: tuple = ()
-
-
 @dataclass
 class _CountingSourceBody(ConstructedTermSugar):
     outcome: ExitSet
@@ -87,20 +81,17 @@ def _source_call_partition(result_coordinate: str = "py.listcomp"):
                 RaiseEffect.for_builtin("TypeError", occurrence="source.py:3:8"),
                 TermValue(11),
                 frozenset({left_face}),
-                (_Pending("pending:left"),),
             ),
             Halted(
                 right_guard,
                 RaiseEffect.for_builtin("ValueError", occurrence="source.py:5:8"),
                 TermValue(22),
                 frozenset({right_face}),
-                (_Pending("pending:right"),),
             ),
             Completed(
                 completed_guard,
                 block,
                 frozenset({completed_face}),
-                (_Pending("pending:completed"),),
             ),
         )
     )
@@ -147,9 +138,6 @@ def test_outer_call_sequences_retained_three_arm_source_actual_once() -> None:
     assert len(outer_completed) == 1
     assert outer_completed[0].guard == produced_completed[0].guard
     assert outer_completed[0].faces == produced_completed[0].faces
-    assert (
-        outer_completed[0].pending_contracts == produced_completed[0].pending_contracts
-    )
     projected_call = outer_completed[0].value
     assert isinstance(projected_call, CallSiteValue)
     assert projected_call.target_name == "len"
@@ -181,7 +169,6 @@ def test_outer_call_sequences_retained_keyword_source_actual_symmetrically() -> 
     completed = next(face for face in outer.exits if isinstance(face, Completed))
     assert completed.guard == produced_completed.guard
     assert completed.faces == produced_completed.faces
-    assert completed.pending_contracts == produced_completed.pending_contracts
     projected_call = completed.value
     assert isinstance(projected_call, CallSiteValue)
     assert projected_call.target_name == "consume"

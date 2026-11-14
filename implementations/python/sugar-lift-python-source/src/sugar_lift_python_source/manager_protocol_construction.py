@@ -522,7 +522,6 @@ def _resource_enter_transitions(receiver: ObjectValue, enter_outcome, *, blame: 
                 guard,
                 EnteredManagerStateValue(face.value, state),
                 faces,
-                face.pending_contracts,
             )
             for guard, state, faces in states
         )

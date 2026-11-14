@@ -100,9 +100,6 @@ def test_prepend_rides_on_halt_state_and_keeps_completed_fields():
     fact = object()
     prior = object()
     guard = atomic("g", ())
-    from types import SimpleNamespace
-
-    pending = (SimpleNamespace(demands=()),)
     halted = Halted(
         guard,
         UndeterminedRaiseEffect(blame="b", occurrence="b"),
@@ -115,7 +112,6 @@ def test_prepend_rides_on_halt_state_and_keeps_completed_fields():
         atomic("h", ()),
         _ReducedBlock(entries=(), can_fall_through=True, fall_through=()),
         frozenset(),
-        pending,
     )
     out = prepend_facts_to_exitset(
         ExitSet((halted, stateless, done)), (fact,)
@@ -126,4 +122,3 @@ def test_prepend_rides_on_halt_state_and_keeps_completed_fields():
     states = sorted((face.state.entries for face in halts), key=len)
     assert states == [(fact,), (fact, prior)]
     assert dones[0].value.entries == (fact,)
-    assert dones[0].pending_contracts == pending

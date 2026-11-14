@@ -60,109 +60,6 @@ def _extend_receiver_store_scope(value, ctx):
     return value.extend_scope(ctx)
 
 
-def _enrol_exit_obligations(exits: ExitSet) -> ExitSet:
-    """Move every arm's pending obligations INTO that arm's block record.
-
-    THE NAMED CONSUMPTION. ``Completed.pending_contracts`` and
-    ``Halted.pending_contracts`` are in-flight carriers: they conserve an
-    obligation through the exit algebra, but nothing downstream of the algebra
-    reads them, so an arm that still owed something when the block finished had
-    its obligation vanish at this boundary -- conserved for the whole flight and
-    dropped on landing. Enrolment is what makes it discharged rather than
-    forgotten: ``entry.contribution()`` is the same one-row-per-demand split a
-    completed carrier goes through, and the rows join the block's entries, where
-    ``link_unit_projection`` enrols them for the linker.
-
-    The field is CLEARED as the rows are appended. That is what makes this a
-    consumption and not a duplication: the obligation exists in exactly one
-    place afterwards.
-
-    THIS IS ALSO THE ONE MINT. An arm carries its obligations as they were
-    incurred; the arm's ``guard`` is the face they are owed on, so `guard -> D`
-    is minted here, once, against the guard the arm finally holds. An arm under
-    the true guard owes the bare obligation and is not re-minted at all.
-
-    An arm with no block to enrol into (a halted arm whose state is ``None``)
-    stays LOUD, and the gap belongs to the PRODUCER that built it, not here.
-    Every composition that fans a halt across incoming arms -- ``and_finally``
-    over a cleanup halt, ``and_exit`` over an exit-expression halt,
-    ``outcome_to_exitset`` over an ``Incomplete`` -- can emit a halted arm whose
-    ``state`` is ``None``, and an obligation incurred on the path that reached
-    it then has no record to be owed on.
-
-    Two things that look like answers are not. Splicing the enclosing block's
-    prefix onto such an arm is sound about what happened but changes what
-    ``state is None`` MEANS: ``exit_disposition._boundary_halted_edge`` reads it
-    as "the reducer omitted the real pre-halt state" and refuses on it, so
-    supplying a record here would silence that refusal for exactly the arms that
-    owe. Synthesising a record whose entries are only the demand rows is worse
-    -- it asserts a temporal record where the producer said there was none.
-    Measured: it is one row on pandas `core/reshape/pivot.py:284` (two demands
-    from `pivot.py:327:19`, the `data[to_filter]` subscript on a formal), and
-    one loud row naming the producer is the honest answer until the producer
-    carries the record.
-    """
-    if not any(exit_.pending_contracts for exit_ in exits.exits):
-        # The overwhelmingly common case, and it must cost nothing: this runs at
-        # the end of EVERY block reduction, nested ones included, and rebuilding
-        # the set would pay for a second `normalize` over every arm of every
-        # block that never owed anything.
-        return exits
-
-    from sugar_lift_py_tests.caller_parameter_contract import weaken_pending
-    from sugar_lift_py_tests.gap.info import GapKind
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
-    from sugar_lift_py_tests.outcome.exit_set import _is_true
-
-    enrolled: list[object] = []
-    for exit_ in exits.exits:
-        if not exit_.pending_contracts:
-            enrolled.append(exit_)
-            continue
-        owed = (
-            exit_.pending_contracts
-            if _is_true(exit_.guard)
-            else weaken_pending(exit_.pending_contracts, exit_.guard)
-        )
-        rows = tuple(row for entry in owed for row in entry.contribution())
-        block = exit_.value if isinstance(exit_, Completed) else exit_.state
-        if not isinstance(block, _ReducedBlock):
-            construction_panic_gap(
-                owner="reduce_block_to_exitset.enrol_exit_obligations",
-                blame=exit_.pending_contracts[0].source_node,
-                observed=(
-                    "a block exit owing "
-                    + ", ".join(
-                        demand.demand_cid
-                        for entry in exit_.pending_contracts
-                        for demand in entry.demands
-                    )
-                    + f" carries {type(block).__name__} where its reduced block "
-                    "record should be, so there is nothing to enrol the "
-                    "obligation into"
-                ),
-                requested="a reduced block record on every exit that owes",
-                fix=(
-                    "carry the reduced block on this arm, or hand the obligation "
-                    "to the producer that does; never drop it and never enrol it "
-                    "on a block that did not run"
-                ),
-                gap_kind=GapKind.FLOOR,
-            )
-        widened = _ReducedBlock(
-            (*block.entries, *rows),
-            block.can_fall_through,
-            block.fall_through,
-            block.transforms,
-            block.context,
-        )
-        if isinstance(exit_, Completed):
-            enrolled.append(Completed(exit_.guard, widened, exit_.faces, ()))
-        else:
-            enrolled.append(Halted(exit_.guard, exit_.effect, widened, exit_.faces, ()))
-    return ExitSet(tuple(enrolled)).normalize()
-
-
 def _prefixed(state: _ReducedBlock, inner: object) -> object:
     """The temporal state of a halt INSIDE a nested statement, read from outside.
 
@@ -205,36 +102,8 @@ def _halt_state(state: _ReducedBlock, exit_) -> object:
     an ``Incomplete`` to ``Halted(guard, effect, None)`` because that conversion
     has no record to offer, and ``and_finally`` / ``and_exit`` fan cleanup and
     exit halts across incoming arms the same way.
-
-    A stateless halt that OWES is the one case where ``None`` is not an answer.
-    The obligation was incurred on the path that reached the halt, and
-    ``_enrol_exit_obligations`` needs a record to enrol it into. The prefix IS
-    that record: an arm with no nested record halted at the top of this
-    statement, so everything this block had established when the statement began
-    is the complete temporal record for that path. Nothing is invented -- the
-    prefix genuinely happened.
-
-    WHY THIS DOES NOT WEAKEN THE BOUNDARY REFUSAL.
-    ``exit_disposition._boundary_halted_edge`` reads ``state is None`` as "the
-    reducer omitted the real pre-halt state" and refuses on it, so supplying a
-    record where that check will see one would silence it. It will not see this
-    one: that check runs inside ``ExitSet.and_exit``, during the statement's own
-    ``head.desugar(ctx)``, which is UPSTREAM of this seam. By the time a
-    statement hands its ExitSet back here, its boundary edges are already
-    decided.
-
-    Narrow on purpose. An arm that owes nothing keeps exactly the state it had,
-    so no existing temporal testimony moves; this supplies a record only where
-    one is now required and was previously absent. Measured on the 22-file
-    pandas 3.0.3 slice: with this, `pivot.py:536` and `format.py:1620` enrol and
-    drain; without it, all three sites merely change owner from
-    `ContractConditionalConstructionV1.and_then` to this module's refusal, which
-    is reattribution, not a drain.
     """
-    spliced = _prefixed(state, exit_.state)
-    if exit_.pending_contracts and not isinstance(spliced, _ReducedBlock):
-        return state
-    return spliced
+    return _prefixed(state, exit_.state)
 
 
 def _is_return_entry(entry) -> bool:
@@ -525,11 +394,10 @@ def reduce_block_to_exitset(
                                 if head_halt and exit_.state is None
                                 else _halt_state(state, exit_),
                                 # This rebuild used to state three fields, so it
-                                # dropped BOTH the arm's partition testimony and
-                                # its pending obligations on the way through --
-                                # the same shape of loss `ExitSet.guarded` had.
+                                # dropped the arm's partition testimony on the way
+                                # through -- the same shape of loss
+                                # `ExitSet.guarded` had.
                                 exit_.faces,
-                                exit_.pending_contracts,
                             )
                             if isinstance(exit_, Halted)
                             else exit_
@@ -639,7 +507,6 @@ def reduce_block_to_exitset(
             and isinstance(exits.exits[0], Completed)
             and exits.exits[0].guard == true_guard()
             and not exits.exits[0].faces
-            and not exits.exits[0].pending_contracts
         ):
             # The straight-line singleton is the only ExitSet face that can
             # become a deferred native-operation carrier without needing a
@@ -665,7 +532,7 @@ def reduce_block_to_exitset(
         return exits
     from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
 
-    return _enrol_exit_obligations(promote_raise_halts(exits))
+    return promote_raise_halts(exits)
 
 
 def reduce_statements(statements: tuple, ctx: object = None):
