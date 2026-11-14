@@ -1,28 +1,20 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// in_process_prove.rs: THE TERMINUS's gate. Drives `sugar-lsp --in-process`
-// over REAL LSP stdio (Content-Length framed JSON-RPC) against a
-// self-contained fixture project:
+// in_process_prove.rs: drives `sugar-lsp --in-process` over real LSP stdio
+// (Content-Length framed JSON-RPC) against a self-contained fixture project:
 //
-//   * a VENDOR proof staged at `.sugar/imports/` (minted once offline via
-//     `mint_project_scratch_proof` against a throwaway vendor project —
-//     mint remains the *seal/publish* door, not the LSP solve feed)
-//     swearing `demo.check(2,3) == 5`.
-//   * a CONSUMER project with a mock kit that answers `sugar.enumerate`
-//     from the CURRENTLY OPEN buffer (overlay workspace_root) and asserts
-//     either `== 6` (contradicts the vendor -> RED) or `== 5` (agrees -> GREEN).
+//   * a VENDOR proof staged at `.sugar/imports/`, minted through `sugar
+//     mint`'s door (`sugar_cli::cmd_mint::mint_project`) against a throwaway
+//     vendor project, swearing `demo.check(2,3) == 5`.
+//   * a CONSUMER project with a mock kit that lifts the CURRENTLY OPEN buffer
+//     (overlay workspace_root) and asserts either `== 6` (contradicts the
+//     vendor -> RED) or `== 5` (agrees -> GREEN).
 //
-// `didOpen` the bad-shaped buffer -> expect `publishDiagnostics` carrying the
-// three-fact message (`Vendor fact:` / `Vendor universe:` / `Your fact:` /
-// `Conjoined:` / `→ UNSAT`). `didChange` to the good twin -> diagnostics
-// clear.
-//
-// HONESTY NOTE: this exercises the REAL #3809 composition
-// (`build_prove_context_for` -> enumerate→fold feed ->
-// `verify_consistency_scoped_with_base_index` -> `row_to_json` ->
-// `fol_format::format_detail`) end to end. The kit is a fixture Python RPC
-// mock speaking `sugar.enumerate` (not a real language kit). The
-// pandas/python witness is `real_python_kit_*` + the golden LSP-vs-API test.
+// The LSP mints the buffer through `sugar mint`'s door and proves it through
+// `sugar prove`'s door (item 35 on #7757). `lsp_rows_equal_prove_rows` pins
+// that the LSP reports exactly the rows `sugar mint` + `sugar prove` produce
+// on the same project. The kit is a fixture Python RPC mock (not a real
+// language kit).
 
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -308,9 +300,23 @@ fn write_dynamic_mock_lifter(
 
 const CONTRACT_NAME: &str = "demo.check#euf#c:1(2,3)::assertion";
 
-/// Mint the vendor's sworn `demo.check(2,3) == 5` proof in-process (no
-/// subprocess `sugar` binary needed) and stage it at
-/// `<consumer_dir>/.sugar/imports/`.
+/// The door `sugar mint --project <project> --quiet` goes through.
+fn mint_args(project: &Path) -> sugar_cli::cmd_mint::MintArgs {
+    sugar_cli::cmd_mint::MintArgs {
+        project: Some(project.to_path_buf()),
+        kit: None,
+        surface: None,
+        library_bindings: false,
+        out: None,
+        flags: sugar_cli::OutputFlags {
+            json: false,
+            quiet: true,
+        },
+    }
+}
+
+/// Mint the vendor's sworn `demo.check(2,3) == 5` proof in-process through
+/// `sugar mint`'s door and stage it at `<consumer_dir>/.sugar/imports/`.
 fn stage_vendor_proof(consumer_dir: &Path) {
     let vendor_dir = unique_dir("vendor");
     fs::create_dir_all(vendor_dir.join(".sugar")).expect("mkdir vendor .sugar");
@@ -325,18 +331,60 @@ fn stage_vendor_proof(consumer_dir: &Path) {
         &contract_ir_document(CONTRACT_NAME, "vendor/lib.py", 5),
     );
 
-    let scratch_dir = unique_dir("vendor-scratch");
-    let scratch = sugar_cli::cmd_mint::mint_project_scratch_proof(&vendor_dir, &scratch_dir, false)
-        .expect("mint vendor scratch proof")
+    let minted = sugar_cli::cmd_mint::mint_project(&mint_args(&vendor_dir))
+        .unwrap_or_else(|(_, message)| panic!("mint vendor proof: {message}"));
+    let vendor_proof = minted
+        .proof_file
         .expect("vendor project must mint a non-empty catalog");
 
     let imports_dir = consumer_dir.join(".sugar").join("imports");
     fs::create_dir_all(&imports_dir).expect("mkdir .sugar/imports");
-    let proof_path = imports_dir.join(format!("{}.proof", scratch.cid));
-    fs::write(&proof_path, &scratch.bytes).expect("write staged vendor .proof");
+    let proof_path = imports_dir.join(vendor_proof.file_name().expect("proof file name"));
+    fs::copy(&vendor_proof, &proof_path).expect("stage vendor .proof");
 
     fs::remove_dir_all(&vendor_dir).ok();
-    fs::remove_dir_all(&scratch_dir).ok();
+}
+
+/// Item 35 on #7757: the LSP's rows for a buffer are the rows `sugar mint`
+/// then `sugar prove` produce on the same project.
+#[test]
+fn lsp_rows_equal_prove_rows() {
+    let consumer = build_consumer_fixture("rows-parity");
+    let file = consumer.join("src").join("lib.rs");
+    let source = "// BAD_MARKER: fn check(a,b) asserted == 6\n";
+    fs::write(&file, source).expect("write buffer to disk");
+
+    // The LSP: mint the buffer through the mint door, prove it through the
+    // prove door.
+    let ctx = sugar_lsp::prove_engine::build_prove_context_for(&consumer);
+    let lsp = sugar_lsp::prove_engine::solve_buffer(&ctx, &file, source);
+    assert!(
+        lsp.failure.is_none(),
+        "LSP solve failed: {:?}",
+        lsp.failure
+    );
+
+    // `sugar mint` then `sugar prove` on the project itself.
+    sugar_cli::cmd_mint::mint_project(&mint_args(&consumer))
+        .unwrap_or_else(|(_, message)| panic!("sugar mint: {message}"));
+    let proven = sugar_cli::prove_door::build_prove_outcome_with_options(
+        &consumer,
+        "z3",
+        sugar_cli::component_plan::ComponentPlanOptions {
+            allow_failed_components: false,
+        },
+    )
+    .unwrap_or_else(|error| panic!("sugar prove: {error}"));
+    let prove_rows = sugar_cli::prove_door::prove_rows(&proven.artifact.report);
+
+    assert!(!prove_rows.is_empty(), "sugar prove reported no rows");
+    assert_eq!(
+        lsp.rows, prove_rows,
+        "the LSP must report exactly prove's rows (item 35 on #7757)"
+    );
+
+    fs::remove_dir_all(&consumer).ok();
+    fs::remove_dir_all(sugar_lsp::prove_engine::overlay_root_for(&consumer)).ok();
 }
 
 /// Build the self-contained consumer fixture project: `.sugar/config.toml`

@@ -1,166 +1,59 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// prove_engine.rs: THE TERMINUS -- prove an open buffer IN-PROCESS by
-// linking the engine directly into sugar-lsp. No daemon RPC, no subprocess
-// solver.
+// prove_engine.rs: prove an open buffer in-process through the two doors the
+// CLI uses (item 35 on #7757; lifting and proving are never conflated).
 //
-// #3809 composition (one path with CLI prove / the enumeration protocol):
+//   1. Stage the edited buffer into a source overlay of the project: its
+//      sources, its `.sugar` lift surface and the `.proof` files mint staged
+//      directly in `.sugar/imports`.
+//   2. Mint the overlay through `sugar mint`'s door
+//      (`sugar_cli::cmd_mint::mint_project`), which writes the minted `.proof`
+//      at the overlay root.
+//   3. Prove the overlay through `sugar prove`'s door
+//      (`sugar_cli::prove_door::build_prove_outcome_with_options`), which
+//      reads that `.proof` and the staged imports and nothing else.
+//   4. Report prove's rows (`sugar_cli::prove_door::prove_rows`).
 //
-//   1. `build_prove_context_for`: load the VENDOR-ONLY base pool from
-//      `.sugar/imports`, build solver plan/registry, compilers, and base
-//      `ConsistencyIndex` ONCE. Held resident in the LanguageServer.
-//   2. `solve_buffer`: stage the edited buffer into a source overlay, then
-//      FEED claims via the SAME door as `sugar prove` kit face:
-//        rendezvous kit → `sugar.enumerate` walk → `feed_from_tree::fold_project`
-//        → `pool_from_graph_with_speaker` (consumer speaker)
-//      Then discharge through THE resident-base SOLVE door
-//      (`verify_consistency_scoped_with_base_index` — zero project FS for
-//      claim facts). NO parallel `mint_project_scratch_proof` feed.
-//
-// #3928 gap-3 door identity (after #3981 deleted the separate `warm_solve`
-// symbol): warmth is derived residency, not a second function.
-//   - LSP face:  `verify_consistency_scoped_with_base_index` (resident base
-//     index + overlay pool already fed)
-//   - Runner face: `sugar_compiler::orchestrate::solve_project_with_pool`
-//     (preloaded multi-speaker pool)
-// Both doors are pool-resident discharge. Process-wide plan residency across
-// CLI invocations remains optional residual (daemon last mile).
-//
-// Mint remains the door for sealed `.proof` publish / vendor cache seal
-// (auto_mode); it is not the LSP solve feed.
+// The LSP starts no kit of its own, folds nothing into a pool of its own,
+// mints no bridges and no vendor proofs, and walks nothing below
+// `.sugar/imports`.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
-use libsugar::core::Dialect;
 use serde_json::Value as Json;
-use sugar_compiler::feed_from_tree;
-use sugar_compiler::kit::{Kit, LiftManifest};
-use sugar_compiler::orchestrate::pool_from_graph_with_speaker;
-use sugar_proof_envelope::Speaker;
-use sugar_verifier::consistency::ConsistencyIndex;
-use sugar_verifier::solvers::{SolverHandle, SolverPlan, SolverSeat};
 
-/// Resident context for in-process proving, mirroring
-/// `sugar-linkerd::state::ProveContext` field for field: the SAME
-/// pool/plan/registry/compilers/manifest/index construction, built by
-/// composing `sugar_verifier`'s public API directly rather than importing
-/// the daemon crate (which has no lib target).
+/// What the LSP holds between solves: the project it proves. Every solve
+/// reads the project's staged imports afresh through the prove door, so
+/// there is nothing else to keep resident.
 pub struct ProveContext {
-    pub pool: sugar_verifier::types::MementoPool,
-    pub plan: SolverPlan,
-    pub registry: std::collections::HashMap<SolverSeat, SolverHandle>,
-    pub compilers: sugar_ir_compiler::registry::Registry,
     pub project_root: PathBuf,
-    /// Coarse invalidation manifest: every `.proof` path under
-    /// `project_root/.sugar/imports` mapped to its mtime AS OF the last
-    /// (re)build. `solve_buffer` re-stats this cheaply before each call; any
-    /// drift (a fresh vendor import landing) triggers a full rebuild.
-    pub proof_manifest: BTreeMap<PathBuf, SystemTime>,
-    pub consistency_index: ConsistencyIndex,
 }
 
-/// Coarse `.proof` manifest scan: every `*.proof` file under `root` mapped to
-/// its mtime. Mirrors `sugar-linkerd::server::scan_proof_manifest`'s filter
-/// (extension == "proof") exactly -- duplicated because that function is
-/// private to a binary crate with no lib target, never a divergent
-/// reimplementation of the LOADING logic itself.
-pub fn scan_proof_manifest(root: &Path) -> BTreeMap<PathBuf, SystemTime> {
-    let mut out = BTreeMap::new();
-    if !root.exists() {
-        return out;
-    }
-    for entry in walkdir::WalkDir::new(root)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        if !entry.file_type().is_file() {
-            continue;
-        }
-        if entry
-            .path()
-            .extension()
-            .map(|e| e == "proof")
-            .unwrap_or(false)
-        {
-            if let Ok(meta) = entry.metadata() {
-                if let Ok(mtime) = meta.modified() {
-                    out.insert(entry.path().to_path_buf(), mtime);
-                }
-            }
-        }
-    }
-    out
-}
-
-/// Minimal PATH scan for an executable, so the default single-z3 fallback is
-/// an HONEST capability (z3 present vs absent), mirroring
-/// `sugar-linkerd::server::which_on_path`.
-fn which_on_path(bin: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(bin);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-    }
-    None
-}
-
-/// Build the resident `ProveContext` for `project_root`: same construction
-/// `sugar_verifier::runner::Runner::new`/`cmd_prove` use
-/// (`load_pool` + `build_plan_and_registry_pub` + `compiler_registry::build`),
-/// scoped to the VENDOR-ONLY `.sugar/imports` pool (never the consumer's own
-/// on-disk `.proof`/`.sugar/runs` -- the per-buffer overlay is the SOLE
-/// consumer testimony, so loading a stale consumer proof alongside it would
-/// double-testify and the green/red flip would never flip).
 pub fn build_prove_context_for(project_root: &Path) -> ProveContext {
-    let imports_root = project_root.join(".sugar").join("imports");
-
-    let pool = sugar_verifier::load_all_proofs::run(&imports_root);
-
-    // #3809 PR A: LSP is a client of the solve API — load [solvers] here and
-    // feed solvers_config; solve never opens config.toml.
-    let solvers_config = sugar_verifier::SolversConfig::load(project_root)
-        .ok()
-        .flatten();
-    let legacy_z3_fallback =
-        which_on_path("z3").map(|_| sugar_verifier::LegacyZ3Fallback::compat("z3"));
-    let cfg = sugar_verifier::RunnerConfig {
-        project_root: project_root.to_path_buf(),
-        legacy_z3_fallback,
-        solvers_config,
-        ..Default::default()
-    };
-    let (plan, registry) = sugar_verifier::runner::build_plan_and_registry_pub(&cfg);
-
-    let compilers = sugar_verifier::compiler_registry::build(project_root);
-    let proof_manifest = scan_proof_manifest(&imports_root);
-    let consistency_index = sugar_verifier::consistency::build_consistency_index(&pool);
-
     ProveContext {
-        pool,
-        plan,
-        registry,
-        compilers,
         project_root: project_root.to_path_buf(),
-        proof_manifest,
-        consistency_index,
     }
 }
 
-/// Build (or refresh) the SOURCE-OVERLAY lift project for a solve request: a
-/// stable per-project directory holding the project's lift surface --
-/// `.sugar/config.toml`, `.sugar/lift/**`, `.sugar/ir-compilers/**` -- and its
-/// source files, with the request's buffer content substituted at
-/// `request_file`'s project-relative path. Deliberately EXCLUDED:
-/// `.sugar/imports` (the vendor pool is resident already), any `*.proof`,
-/// `.sugar/runs|cache|witnesses`, and dot/target dirs.
-///
-/// The overlay is the workspace_root the kit sees for `sugar.enumerate` —
-/// same staging role as before mint-as-feed, now the enumerate→fold mount.
+/// The `.proof` files directly in `dir` (not below it).
+fn proof_files_in(dir: &Path) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "proof"))
+        .collect()
+}
+
+/// Build (or refresh) the source overlay for a solve: a stable per-project
+/// directory holding the project's sources and its `.sugar` lift surface,
+/// with the request's buffer substituted at `request_file`'s project-relative
+/// path. On every call the overlay's `.sugar/imports` is replaced by the
+/// `.proof` files directly in the project's `.sugar/imports`, and the
+/// overlay's root `.proof` files (an earlier solve's mint) are removed, so
+/// the prove door reads exactly this buffer's mint plus the staged imports.
 pub fn build_source_overlay_project(
     project_root: &Path,
     overlay_root: &Path,
@@ -193,20 +86,11 @@ pub fn build_source_overlay_project(
             std::fs::copy(&cfg, overlay_root.join(".sugar").join("config.toml"))
                 .map_err(|e| e.to_string())?;
         }
-        let lift_dir = project_root.join(".sugar").join("lift");
-        if lift_dir.is_dir() {
-            copy_tree(&lift_dir, &overlay_root.join(".sugar").join("lift"))?;
-        }
-        let ir_compilers_dir = project_root.join(".sugar").join("ir-compilers");
-        if ir_compilers_dir.is_dir() {
-            copy_tree(
-                &ir_compilers_dir,
-                &overlay_root.join(".sugar").join("ir-compilers"),
-            )?;
-        }
-        let comps = project_root.join(".sugar").join("components");
-        if comps.is_dir() {
-            copy_tree(&comps, &overlay_root.join(".sugar").join("components"))?;
+        for dir in ["lift", "ir-compilers", "components"] {
+            let from = project_root.join(".sugar").join(dir);
+            if from.is_dir() {
+                copy_tree(&from, &overlay_root.join(".sugar").join(dir))?;
+            }
         }
 
         fn copy_sources(from: &Path, to: &Path, depth: usize) -> Result<(), String> {
@@ -243,6 +127,28 @@ pub fn build_source_overlay_project(
         std::fs::write(&populated_marker, "").map_err(|e| e.to_string())?;
     }
 
+    // The staged imports, as the project has them now (directly in
+    // `.sugar/imports`, never below it).
+    let overlay_imports = overlay_root.join(".sugar").join("imports");
+    if overlay_imports.exists() {
+        std::fs::remove_dir_all(&overlay_imports).map_err(|e| e.to_string())?;
+    }
+    let project_imports = project_root.join(".sugar").join("imports");
+    let staged = proof_files_in(&project_imports);
+    if !staged.is_empty() {
+        std::fs::create_dir_all(&overlay_imports).map_err(|e| e.to_string())?;
+        for proof in staged {
+            if let Some(name) = proof.file_name() {
+                std::fs::copy(&proof, overlay_imports.join(name)).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
+    // An earlier solve's mint is not this buffer's proof.
+    for stale in proof_files_in(overlay_root) {
+        std::fs::remove_file(&stale).map_err(|e| e.to_string())?;
+    }
+
     let rel = request_file
         .strip_prefix(project_root)
         .unwrap_or(request_file);
@@ -254,520 +160,78 @@ pub fn build_source_overlay_project(
     Ok(())
 }
 
-/// Result of one `solve_buffer` call: rendered rows (wire-identical to
-/// `sugar prove --json` / the daemon's `proveConsistency`, via the SAME
-/// `sugar_verifier::report::row_to_json`), plus whether the overlay feed
-/// degraded to the resident base pool alone (and why).
+/// Result of one `solve_buffer` call: prove's rows for the buffer, or why
+/// mint or prove refused it (then `rows` is empty).
 pub struct SolveOutcome {
     pub rows: Vec<Json>,
-    pub degraded: bool,
-    pub degraded_reason: Option<String>,
-    /// Client-side auto-lift log lines (#4007); empty when disabled/no imports.
-    pub auto_logs: Vec<String>,
-    /// Best-effort kit lift-report JSON (factoryWalk + liftCoverage) for report mode.
-    pub report_lift: Option<Json>,
+    pub failure: Option<String>,
 }
 
-/// Dialect for a lift surface name (mirrors CLI `try_rendezvous_prove_kit`).
-fn dialect_for_surface(surface: &str) -> Dialect {
-    match surface {
-        "rust" => Dialect::Rust,
-        "c" => Dialect::C,
-        "python" => Dialect::Other("python".into()),
-        other => Dialect::Other(other.to_string()),
-    }
-}
-
-/// Why the LSP overlay kit face is unavailable.
-///
-/// #3901 first-match residual: multi-surface projects must never take the
-/// first successful rendezvous and silently drop sibling surfaces. The named
-/// multi-surface witness is the only multi-plugin outcome (CLI `NoKit::MultiSurface`
-/// parity). Callers degrade to the resident disk pool with this reason loud.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum OverlayNoKit {
-    /// Zero configured lift plugins.
-    NoLiftSurface,
-    /// Multi-surface config: one Kit cannot represent the composed plan.
-    MultiSurface { count: usize },
-    /// Single surface but empty command vector.
-    EmptyCommand { surface: String },
-    /// Single surface: manifest resolution failed.
-    ManifestMissing { surface: String, detail: String },
-    /// Single surface: kit rendezvous failed (handshake / spawn / declaration).
-    RendezvousFailed { surface: String, detail: String },
-}
-
-impl std::fmt::Display for OverlayNoKit {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            OverlayNoKit::NoLiftSurface => {
-                write!(f, "no lift kit configured (no [[plugins]] lift surfaces)")
-            }
-            OverlayNoKit::MultiSurface { count } => write!(
-                f,
-                "multi-surface plan ({count} lifts); refusing first-match kit selection (#3901). \
-                 Composed .proof / multi-kit fold required; overlay degrades named. \
-                 Replacement: single [[plugins]] lift surface — never first-match Ok(kit)"
-            ),
-            OverlayNoKit::EmptyCommand { surface } => {
-                write!(f, "empty lift command for surface `{surface}`")
-            }
-            OverlayNoKit::ManifestMissing { surface, detail } => {
-                write!(f, "lift manifest missing for surface `{surface}`: {detail}")
-            }
-            OverlayNoKit::RendezvousFailed { surface, detail } => {
-                write!(f, "lift kit rendezvous failed for `{surface}`: {detail}")
-            }
-        }
-    }
-}
-
-/// Rendezvous the single configured lift kit for `project_root`.
-///
-/// #3901: multi-surface first-match is unexpressible. Exactly one lift plugin
-/// is required for the overlay kit face; zero → `NoLiftSurface`, many →
-/// `MultiSurface { count }` (named degrade, never first Ok(kit)).
-fn try_rendezvous_lift_kit(project_root: &Path) -> Result<Kit, String> {
-    resolve_overlay_kit_face(project_root).map_err(|n| n.to_string())
-}
-
-/// One constructor for the overlay kit face — exhaustive over named outcomes.
-fn resolve_overlay_kit_face(project_root: &Path) -> Result<Kit, OverlayNoKit> {
-    let cfg = sugar_cli::project_config::read_project_config(project_root);
-    let lift_plugins: Vec<_> = cfg.plugins.iter().filter(|p| p.is_lift_plugin()).collect();
-    match lift_plugins.as_slice() {
-        [] => Err(OverlayNoKit::NoLiftSurface),
-        [plugin] => {
-            let planned =
-                sugar_cli::lift_plugin::find_manifest_for_surface(project_root, &plugin.surface)
-                    .map_err(|detail| OverlayNoKit::ManifestMissing {
-                        surface: plugin.surface.clone(),
-                        detail,
-                    })?;
-            if planned.command.is_empty() {
-                return Err(OverlayNoKit::EmptyCommand {
-                    surface: planned.surface.clone(),
-                });
-            }
-            let working_dir =
-                sugar_cli::lift_plugin::absolute_working_dir_for_manifest(project_root, &planned);
-            let manifest = LiftManifest::resolved(
-                planned.surface.clone(),
-                planned.name.clone(),
-                dialect_for_surface(&planned.surface),
-                planned.command.clone(),
-                working_dir,
-                planned.method.clone(),
-            );
-            Kit::rendezvous(manifest).map_err(|e| OverlayNoKit::RendezvousFailed {
-                surface: planned.surface.clone(),
-                detail: e.to_string(),
-            })
-        }
-        many => Err(OverlayNoKit::MultiSurface { count: many.len() }),
-    }
-}
-
-/// #3809: consumer feed half — enumerate→fold→pool, NOT batch mint.
-///
-/// Walk `sugar.enumerate` via `fold_project`, stamp consumer speaker at pool
-/// intake (`pool_from_graph_with_speaker`). Vendor testimony stays on the
-/// resident base index, not re-merged here.
-pub fn feed_overlay_pool(
-    overlay_root: &Path,
-) -> Result<sugar_verifier::types::MementoPool, String> {
-    let kit = try_rendezvous_lift_kit(overlay_root)?;
-    let speaker = Speaker::consumer("sugar-lsp");
-    let graph = feed_from_tree::fold_project(&kit, overlay_root, Some(&speaker))
-        .map_err(|e| format!("enumerate→fold feed failed: {e}"))?;
-    pool_from_graph_with_speaker(&graph, speaker)
-        .map_err(|e| format!("fold→pool speaker stamp failed: {e}"))
-}
-
-/// #3802 consumer-testimony half of the soundness floor.
-///
-/// Call on the pure enumerate→fold pool **before** dependency-bridge injection
-/// (injection loads vendor members, which must not count as consumer testimony).
-pub fn assess_consumer_overlay_testimony(
-    pool: &sugar_verifier::types::MementoPool,
-) -> Result<(), String> {
-    use sugar_verifier::types::MemberKind;
-
-    let contracts = pool.member_count_by_kind(MemberKind::Contract);
-    let sources = pool.member_count_by_kind(MemberKind::SourceMemento);
-    if contracts == 0 && sources == 0 {
-        return Err(
-            "overlay produced no consumer testimony; falling back to resident disk-pool"
-                .to_string(),
-        );
-    }
-
-    // Consistency candidates are the anchored claims the scoped solve door
-    // can actually discharge. Contracts that are not candidates (setup
-    // bindings, pre-bearing shells) do not count as testimony for this guard.
-    let index = sugar_verifier::consistency::build_consistency_index(pool);
-    if index.candidate_count() == 0 {
-        return Err(
-            "overlay produced no consumer-anchored consistency candidates; falling back to resident disk-pool"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
-/// #3808 binding half of the soundness floor.
-///
-/// Call **after** `inject_dependency_bridges_into_pool`. When the project
-/// declares import deps whose contracts need post/universe bridges, the
-/// overlay must carry at least one Bridge or LibrarySugarBindingEntry.
-pub fn assess_overlay_vendor_bindings(
-    pool: &sugar_verifier::types::MementoPool,
-    project_root: &Path,
-) -> Result<(), String> {
-    use sugar_verifier::types::MemberKind;
-
-    if !sugar_cli::cmd_mint::project_declares_import_dependencies(project_root) {
-        return Ok(());
-    }
-    let dep_bindings = sugar_cli::cmd_mint::contract_bindings_from_dependency_proofs(project_root);
-    if !sugar_cli::cmd_mint::dependency_bindings_need_bridges(&dep_bindings) {
-        // Case-1 (same-name sworn conjoins) does not need bridges.
-        return Ok(());
-    }
-    let bridges = pool.member_count_by_kind(MemberKind::Bridge);
-    let bindings = pool.member_count_by_kind(MemberKind::LibrarySugarBindingEntry);
-    if bridges == 0 && bindings == 0 {
-        return Err(
-            "overlay produced no vendor bindings despite declared dependencies; falling back to resident disk-pool"
-                .to_string(),
-        );
-    }
-    Ok(())
-}
-
-/// Combined soundness check for tests that hold a fully prepared overlay pool
-/// (consumer feed + dependency bridges already applied).
-pub fn assess_overlay_soundness(
-    pool: &sugar_verifier::types::MementoPool,
-    project_root: &Path,
-) -> Result<(), String> {
-    assess_consumer_overlay_testimony(pool)?;
-    assess_overlay_vendor_bindings(pool, project_root)
-}
-
-/// Solve one edited buffer against the resident base index: stage the
-/// SOURCE-OVERLAY, FEED consumer claims via enumerate→fold (one composition
-/// with the API), and drive THE resident-base SOLVE door
-/// ([`sugar_verifier::consistency::verify_consistency_scoped_with_base_index`]).
-/// Warmth is derived (base index already resident) — zero project FS for
-/// claim facts. `ctx` is never mutated (caller owns rebuild).
-pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutcome {
-    // #4007 Auto mode (LSP client): lift importable vendor source into a
-    // working base pool, then rebuild the consistency index from that pool.
-    // Solve still only sees mementos — site-packages is never opened inside
-    // the solve door.
-    let mut auto_logs: Vec<String> = Vec::new();
-    let owned_auto_index: Option<sugar_verifier::consistency::ConsistencyIndex> =
-        if crate::auto_mode::auto_lift_enabled() {
-            let mut working_base_pool = ctx.pool.clone();
-            auto_logs = crate::auto_mode::auto_lift_imports_into_pool(
-                &ctx.project_root,
-                source,
-                &mut working_base_pool,
-            );
-            Some(sugar_verifier::consistency::build_consistency_index(
-                &working_base_pool,
-            ))
-        } else {
-            None
-        };
-    let working_index: &sugar_verifier::consistency::ConsistencyIndex =
-        owned_auto_index.as_ref().unwrap_or(&ctx.consistency_index);
-
-    let overlay_root =
-        std::env::temp_dir()
-            .join("sugar-lsp-lift-src")
-            .join(sugar_canonicalizer::blake3_512_hex(
-                ctx.project_root.display().to_string().as_bytes(),
-            ));
-
-    if let Err(err) = build_source_overlay_project(&ctx.project_root, &overlay_root, file, source) {
-        return SolveOutcome {
+impl SolveOutcome {
+    fn failed(reason: String) -> Self {
+        SolveOutcome {
             rows: Vec::new(),
-            degraded: true,
-            degraded_reason: Some(format!(
-                "source-overlay build failed; falling back to resident disk-pool: {err}"
-            )),
-            auto_logs,
-            report_lift: None,
-        };
-    }
-
-    // #3809: one feed -- enumerate→fold→pool. No mint_project_scratch_proof.
-    // #3802/#3808 soundness floor: never return un-degraded when the overlay
-    // produced no real anchored testimony, or declared deps but no vendor
-    // bindings/bridges (case-2 universe laws would silently vanish).
-    let (overlay_pool, degraded, degraded_reason) = match feed_overlay_pool(&overlay_root) {
-        Ok(mut pool) => {
-            // Consumer testimony first -- before injection loads vendor members
-            // that must not masquerade as consumer-anchored candidates (#3802).
-            if let Err(reason) = assess_consumer_overlay_testimony(&pool) {
-                (
-                    sugar_verifier::types::MementoPool::default(),
-                    true,
-                    Some(reason),
-                )
-            } else {
-                // #3808 root cause: stage consumer→vendor bridges from the
-                // resident import set (in-process; overlay tree deliberately
-                // excludes `.sugar/imports`). Case-2 ambient-post specialization
-                // needs these bridges so target contract bodies resolve.
-                let _injected = sugar_cli::cmd_mint::inject_dependency_bridges_into_pool(
-                    &ctx.project_root,
-                    &mut pool,
-                );
-                if let Err(reason) = assess_overlay_vendor_bindings(&pool, &ctx.project_root) {
-                    (
-                        sugar_verifier::types::MementoPool::default(),
-                        true,
-                        Some(reason),
-                    )
-                } else {
-                    (pool, false, None)
-                }
-            }
+            failure: Some(reason),
         }
-        Err(err) => (
-            sugar_verifier::types::MementoPool::default(),
-            true,
-            Some(format!(
-                "enumerate→fold feed failed; falling back to resident disk-pool: {err}"
-            )),
-        ),
-    };
-
-    // #3809: one solve door; base index is client-fed (imports + auto-lift mementos).
-    let results = sugar_verifier::consistency::verify_consistency_scoped_with_base_index(
-        working_index,
-        &overlay_pool,
-        &ctx.plan,
-        &ctx.registry,
-        &ctx.compilers,
-        &ctx.project_root,
-        &ctx.project_root,
-    );
-
-    // #4148: if declared deps need vendor bridges and any ambient vendor post
-    // was dropped during specialization (open after substitution, decode fail),
-    // the vendor law never reached the solve -- degrade to cold. Over-degrade is
-    // safe; silent un-degraded green on a vacuous refuse is not.
-    let (degraded, degraded_reason) = if !degraded {
-        match assess_dropped_ambient_posts(&results, &ctx.project_root) {
-            Ok(()) => (false, None),
-            Err(reason) => (true, Some(reason)),
-        }
-    } else {
-        (degraded, degraded_reason)
-    };
-
-    let rows: Vec<Json> = results
-        .iter()
-        .map(|cr| {
-            let mut report = sugar_verifier::types::Report::default();
-            // Whole-value door: carries the producer's typed verify effect (#7349)
-            // so the LSP row cannot omit it the way a field-by-field call could.
-            sugar_verifier::report::add_consistency_result(cr, &mut report);
-            sugar_verifier::report::row_to_json(&report.rows[0])
-        })
-        .collect();
-
-    // Report mode surfaces: best-effort kit lift report on the overlay
-    // (factory dig green→red + Minority yellow). Failures stay silent in payload.
-    let report_out = overlay_root.join(".sugar").join("report-mode-out");
-    let _ = std::fs::create_dir_all(&report_out);
-    let report_lift =
-        match sugar_cli::cmd_mint::report_lift_response_for_project(&overlay_root, &report_out) {
-            Ok(v) => Some(v),
-            Err(err) => {
-                tracing::debug!(error = %err, "report-mode lift snapshot skipped");
-                None
-            }
-        };
-
-    SolveOutcome {
-        rows,
-        degraded,
-        degraded_reason,
-        auto_logs,
-        report_lift,
     }
 }
 
-/// #4148 post-survival half of the soundness floor.
-///
-/// Under declared deps that need bridges, any dropped ambient vendor post means
-/// the overlay did not apply the vendor law it was handed. Force degrade so
-/// the extension falls back cold -- never un-degraded vacuous refuse.
-pub fn assess_dropped_ambient_posts(
-    results: &[sugar_verifier::consistency::ConsistencyResult],
-    project_root: &Path,
-) -> Result<(), String> {
-    if !sugar_cli::cmd_mint::project_declares_import_dependencies(project_root) {
-        return Ok(());
-    }
-    let dep_bindings = sugar_cli::cmd_mint::contract_bindings_from_dependency_proofs(project_root);
-    if !sugar_cli::cmd_mint::dependency_bindings_need_bridges(&dep_bindings) {
-        return Ok(());
-    }
-    let dropped: Vec<_> = results
-        .iter()
-        .flat_map(|r| r.dropped_ambient_posts.iter())
-        .collect();
-    if dropped.is_empty() {
-        return Ok(());
-    }
-    let n = dropped.len();
-    let reasons: Vec<&str> = dropped
-        .iter()
-        .map(|d| d.reason.label())
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect();
-    Err(format!(
-        "overlay dropped {n} vendor post(s) as not-closed after specialization \
-         (reasons: {}); the vendor law never reached the solve -- falling back to resident disk-pool",
-        reasons.join(", ")
-    ))
+/// Where the overlay for `project_root` lives.
+pub fn overlay_root_for(project_root: &Path) -> PathBuf {
+    std::env::temp_dir()
+        .join("sugar-lsp-lift-src")
+        .join(sugar_canonicalizer::blake3_512_hex(
+            project_root.display().to_string().as_bytes(),
+        ))
 }
 
-/// #3901 first-match residual instrument (LSP half).
-///
-/// Axes (measured live; red while any > 0):
-///   R_lsp_first_match_kit_selection — multi-surface loop `return Ok(kit)` face
-///   R_lsp_multi_surface_unnamed     — multi-plugin without OverlayNoKit::MultiSurface
-#[cfg(test)]
-mod first_match_3901_tests {
-    use super::*;
-    use std::fs;
+/// Mint `project_root` through `sugar mint`'s door (`sugar mint --project
+/// <root> --quiet`), writing the minted `.proof` at the root.
+pub fn mint_through_the_mint_door(project_root: &Path) -> Result<(), String> {
+    let args = sugar_cli::cmd_mint::MintArgs {
+        project: Some(project_root.to_path_buf()),
+        kit: None,
+        surface: None,
+        library_bindings: false,
+        out: None,
+        // Quiet: stdout is the LSP's JSON-RPC channel.
+        flags: sugar_cli::OutputFlags {
+            json: false,
+            quiet: true,
+        },
+    };
+    sugar_cli::cmd_mint::mint_project(&args)
+        .map(|_| ())
+        .map_err(|(_, message)| format!("mint refused the buffer: {message}"))
+}
 
-    fn production_half(src: &str) -> &str {
-        src.split("#[cfg(test)]").next().unwrap_or(src)
+/// Prove `project_root` through `sugar prove`'s door (`sugar prove --project
+/// <root>`) and return prove's rows.
+pub fn prove_through_the_prove_door(project_root: &Path) -> Result<Vec<Json>, String> {
+    let options = sugar_cli::component_plan::ComponentPlanOptions {
+        allow_failed_components: false,
+    };
+    let proven = sugar_cli::prove_door::build_prove_outcome_with_options(project_root, "z3", options)
+        .map_err(|error| format!("prove refused the buffer: {error}"))?;
+    Ok(sugar_cli::prove_door::prove_rows(&proven.artifact.report))
+}
+
+/// Solve one edited buffer: stage it into the overlay, mint the overlay
+/// through the mint door, prove it through the prove door, and report
+/// prove's rows.
+pub fn solve_buffer(ctx: &ProveContext, file: &Path, source: &str) -> SolveOutcome {
+    let overlay_root = overlay_root_for(&ctx.project_root);
+    if let Err(err) = build_source_overlay_project(&ctx.project_root, &overlay_root, file, source) {
+        return SolveOutcome::failed(format!("source-overlay build failed: {err}"));
     }
-
-    /// Production membrane: multi-surface first-match is unexpressible.
-    #[test]
-    fn r_lsp_first_match_kit_selection_is_zero() {
-        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/prove_engine.rs");
-        let full = fs::read_to_string(&path).expect("read prove_engine.rs");
-        let production = production_half(&full);
-
-        let mut offenders: Vec<String> = Vec::new();
-
-        // Illegal shape: loop over plugins that returns Ok(kit) on first success.
-        // The pre-fix face was `for plugin in … { match Kit::rendezvous { Ok(kit) => return Ok(kit) } }`.
-        if production.contains("for plugin in")
-            && production.contains("return Ok(kit)")
-            && production.contains("is_lift_plugin")
-        {
-            offenders.push(
-                "R_lsp_first_match_kit_selection: for-plugin loop still first-matches Ok(kit). \
-                 Replacement: match lift_plugins { [] => NoLiftSurface, [one] => rendezvous, many => MultiSurface }"
-                    .into(),
-            );
-        }
-
-        // Required architecture: named multi-surface witness + exhaustive resolver.
-        if !production.contains("MultiSurface") {
-            offenders.push(
-                "R_lsp_multi_surface_unnamed: OverlayNoKit::MultiSurface missing. \
-                 Replacement: multi-plugin → Err(MultiSurface { count })"
-                    .into(),
-            );
-        }
-        if !production.contains("resolve_overlay_kit_face") {
-            offenders.push(
-                "R_lsp_first_match_kit_selection: resolve_overlay_kit_face missing. \
-                 Replacement: one constructor, never first-match loop"
-                    .into(),
-            );
-        }
-        if !production.contains("enum OverlayNoKit") {
-            offenders.push(
-                "R_lsp_multi_surface_unnamed: OverlayNoKit witness type missing. \
-                 Replacement: enum OverlayNoKit { NoLiftSurface, MultiSurface, … }"
-                    .into(),
-            );
-        }
-
-        let r = offenders.len();
-        eprintln!("#3901 LSP first-match membrane on sugar-lsp/src/prove_engine.rs");
-        for o in &offenders {
-            eprintln!("  offender: {o}");
-        }
-        eprintln!("R_lsp_first_match_kit_selection={r}");
-        assert!(
-            r == 0,
-            "R_lsp_first_match_kit_selection={r} — multi-surface first-match is the illegal shape (#3901). \
-             Replacement: resolve_overlay_kit_face match {{ [] => NoLiftSurface, [one] => Kit, many => MultiSurface }}. \
-             offenders:\n{}",
-            offenders.join("\n")
-        );
+    if let Err(reason) = mint_through_the_mint_door(&overlay_root) {
+        return SolveOutcome::failed(reason);
     }
-
-    /// Behavioral pin: two [[plugins]] lift surfaces → MultiSurface, never Kit.
-    #[test]
-    fn multi_surface_config_is_named_multi_surface_not_first_match() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let sugar = dir.path().join(".sugar");
-        fs::create_dir_all(&sugar).expect("mkdir .sugar");
-        fs::write(
-            sugar.join("config.toml"),
-            r#"
-[[plugins]]
-surface = "alpha"
-
-[[plugins]]
-surface = "beta"
-"#,
-        )
-        .expect("write config");
-
-        let err = match resolve_overlay_kit_face(dir.path()) {
-            Ok(_) => panic!(
-                "R_lsp_first_match_kit_selection=1 — multi-surface must NOT first-match into Kit \
-                 (drops sibling surfaces). Replacement: OverlayNoKit::MultiSurface"
-            ),
-            Err(e) => e,
-        };
-        assert_eq!(
-            err,
-            OverlayNoKit::MultiSurface { count: 2 },
-            "R_lsp_first_match_kit_selection offender: expected MultiSurface{{count:2}}, got {err}"
-        );
-        let msg = err.to_string();
-        assert!(
-            msg.contains("multi-surface") && msg.contains("first-match"),
-            "multi-surface witness must name the crime for the next agent: {msg}"
-        );
-        eprintln!(
-            "R_lsp_first_match_kit_selection multi_surface=0 — OverlayNoKit::MultiSurface count=2"
-        );
-    }
-
-    /// Zero lift plugins → named NoLiftSurface (not a silent empty loop).
-    #[test]
-    fn zero_lift_plugins_is_named_no_lift_surface() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let sugar = dir.path().join(".sugar");
-        fs::create_dir_all(&sugar).expect("mkdir .sugar");
-        fs::write(sugar.join("config.toml"), "# empty project config\n").expect("write config");
-
-        let err = match resolve_overlay_kit_face(dir.path()) {
-            Ok(_) => panic!("zero plugins must name NoLiftSurface, not return Kit"),
-            Err(e) => e,
-        };
-        assert_eq!(err, OverlayNoKit::NoLiftSurface);
-        eprintln!("R_lsp_first_match_kit_selection no_lift=0 — OverlayNoKit::NoLiftSurface");
+    match prove_through_the_prove_door(&overlay_root) {
+        Ok(rows) => SolveOutcome {
+            rows,
+            failure: None,
+        },
+        Err(reason) => SolveOutcome::failed(reason),
     }
 }

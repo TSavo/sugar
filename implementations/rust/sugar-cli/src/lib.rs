@@ -47,4 +47,5 @@ pub mod kit_dispatch;
 pub mod lift_plugin;
 pub mod panic_annotations_runtime;
 pub mod project_config;
+pub mod prove_door;
 pub mod report_witness;
