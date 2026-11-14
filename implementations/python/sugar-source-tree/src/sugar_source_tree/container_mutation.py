@@ -232,11 +232,7 @@ def _state(value):
 
     if isinstance(value, BindingEntryV1):
         value = value.state
-    try:
-        value = unwrap_binding_state(value)
-    except Exception:  # pragma: no cover - defensive: not a node state
-        return value
-    return _identity(value)
+    return _identity(unwrap_binding_state(value))
 
 
 _FORMAL_KINDS = ("FormalRef", "BindingCoordinateRef")

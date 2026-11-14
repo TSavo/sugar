@@ -50,7 +50,6 @@ _SOURCE_ORACLE_BOUNDARIES = frozenset(
     {
         "tree.py",
         "corpus.py",
-        "bench_backends.py",
         "fragment.py",
     }
 )

@@ -1116,8 +1116,9 @@ def _semantic_value_cid_for_bound_node(node: "Node") -> str:
     """Content CID of one bound Node's actual value.
 
     Prefers an already-authenticated construction testimony on the node, then
-    the closed constructed-value envelope of its sugar, then the node shape
-    CID. Genuinely unavailable content refuses loud.
+    the closed constructed-value envelope of its sugar. A sugar that refuses,
+    or a value that does not canonicalize, propagates as itself; the node
+    shape CID is never a stand-in for the value's content.
     """
     construction = getattr(node, "construction_testimony", None)
     if construction is not None:
@@ -1128,30 +1129,8 @@ def _semantic_value_cid_for_bound_node(node: "Node") -> str:
         if isinstance(cid, str) and cid.startswith("blake3-512:"):
             # construction_testimony may itself be ConstructedValueTestimonyV1.
             return construction.semantic_value_cid
-    try:
-        constructed = node.sugar()
-        return cid_of_json(_constructed_preimage(constructed))
-    except BindingStateWireGap:
-        raise
-    except Exception as cause:
-        # SugarNotWritten / SourceTreePanic are refusal, not soft-miss. Shape
-        # CID fallback after refusal would mint sealed testimony for a value
-        # whose sugar declined — silent green. Refuse seal loud instead.
-        from sugar_source_tree.panic import SourceTreePanic, SugarNotWritten
-
-        if isinstance(cause, (SugarNotWritten, SourceTreePanic)):
-            raise BindingStateWireGap(
-                "constructed-value testimony unavailable: "
-                f"{type(cause).__name__}: {cause}"
-            ) from cause
-        try:
-            return node_construction_shape_cid(node)
-        except (TypeError, ValueError) as shape_cause:
-            raise BindingStateWireGap(
-                "constructed-value testimony unavailable: "
-                f"{type(cause).__name__}: {cause}; "
-                f"shape: {type(shape_cause).__name__}: {shape_cause}"
-            ) from cause
+    constructed = node.sugar()
+    return cid_of_json(_constructed_preimage(constructed))
 
 
 def seal_bound_binding_entry_v1(
@@ -1592,16 +1571,13 @@ def _validated_native_cid(value: object) -> str | None:
     key = (type(value), cid)
     if key in _VALIDATED_NATIVE_CIDS:
         return cid
-    try:
-        preimage = value.preimage  # type: ignore[attr-defined]
-    except Exception:  # noqa: BLE001 -- an unreadable preimage authenticates nothing
-        return None
+    # An absent preimage is a miss. A preimage that raises, or one that does
+    # not canonicalize, is a fault in the value that claims the CID, and it
+    # propagates as itself.
+    preimage = getattr(value, "preimage", None)
     if not isinstance(preimage, (dict, list)):
         return None
-    try:
-        recomputed = cid_of_json(preimage)
-    except (TypeError, ValueError):
-        return None
+    recomputed = cid_of_json(preimage)
     if recomputed != cid:
         return None
     _VALIDATED_NATIVE_CIDS.add(key)

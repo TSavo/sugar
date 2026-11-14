@@ -92,7 +92,10 @@ def prove_manager_protocol_absence(class_def) -> ManagerProtocolAbsenceV1 | None
         if entry.cited is not None:
             # A cited base's own MRO is the interpreter's: its tail is the
             # cited classes after it (``abc.ABC`` -> ``object``).
-            tail = tuple(_cited_entry(callee, entries) for callee in entry.cited.tail)
+            tail = tuple(
+                _cited_tail_entry(callee, entries, class_def)
+                for callee in entry.cited.tail
+            )
         else:
             tail = c3_tail(
                 _direct_bases(entry, entries),
@@ -178,6 +181,30 @@ def _cited_entry(callee, entries):
             raise _Unproven(callee)
         entries[key] = _Entry(key, cited=cited)
     return entries[key]
+
+
+def _cited_tail_entry(callee, entries, class_def):
+    """One member of a cited base's interpreter tail.
+
+    ``cited_language_base`` cites a base only when every class after it on
+    the interpreter's MRO is itself cited, so a tail member with no citation
+    is a fault in the citation table, never an unproven program. It refuses
+    by name; it is not the ``_Unproven`` answer of a source class.
+    """
+    if cited_language_base(callee) is None:
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame=class_def.fragment,
+            owner="prove_manager_protocol_absence",
+            observed=f"cited base tail member {callee!r} has no citation",
+            requested="a citation for every class on a cited base's interpreter MRO",
+            fix=(
+                "cite the tail member in "
+                "manager_protocol_absence_refusal._cited_base_classes"
+            ),
+        )
+    return _cited_entry(callee, entries)
 
 
 class _Unproven(Exception):
