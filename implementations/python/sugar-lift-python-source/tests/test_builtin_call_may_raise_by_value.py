@@ -1261,6 +1261,153 @@ def test_an_instance_this_frame_built_still_answers_its_field(tmp_path):
     assert halts == []
 
 
+# The residue #8151 named (#7757): on an instance that arrived by binding,
+# ``del o.x`` decided ``AttributeError`` from the fields it arrived with; a
+# method or class field was answered from the class although another alias
+# may have stored an instance field that shadows it; and a name nothing
+# records panicked.  CPython's lookup (``object.__getattribute__``) answers a
+# class data descriptor first, then the instance ``__dict__``, then the
+# class: on such an instance only a data descriptor is decided.
+
+
+def _undecided_delete(outcome):
+    """The undecided delete: the same object after it, still not current,
+    under the ``python:delattr.completes`` atom; only an undetermined raise,
+    never an exception read from the fields; both faces owed."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+    from sugar_lift_py_tests.outcome import Completed
+
+    (completed,) = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    assert isinstance(completed.value, ObjectValue)
+    assert not contents_current(completed.value)
+    assert "python:delattr.completes" in _term_names(completed.guard)
+    assert outcome.halts()
+    assert all(
+        type(halt.effect) is UndeterminedRaiseEffect for halt in outcome.halts()
+    )
+    assert all(exit_.owed for exit_ in outcome.exits)
+    return completed.value
+
+
+def test_a_stale_instances_delete_is_the_undecided_delete():
+    from dataclasses import replace
+
+    from sugar_source_tree.panic import SugarNotWritten
+
+    made, stale = _instance_made_and_arrived()
+    # Current: a field it holds is deleted, decided.
+    assert made.delattr("x", "del-site", None).completed_value() is not None
+    # Not current: a field it arrived with may be gone, one it did not may be
+    # there.  Either way the delete is undecided.
+    for name in ("x", "zz"):
+        after = _undecided_delete(stale.delattr(name, "del-site", None))
+        assert name not in {field.name for field in after.fields}
+        assert after.arrival == stale.arrival
+    # An instance that names no arrival cannot be told apart: refused.
+    with pytest.raises(SugarNotWritten):
+        replace(stale, arrival=None).delattr("x", "del-site", None)
+
+
+def test_a_stale_instances_unknown_name_is_the_undecided_read():
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    _made, stale = _instance_made_and_arrived()
+    # Another alias may have added it: never the construction panic.
+    outcome = stale.attribute("zz", "read-site", None)
+    completed = _completed_values(outcome)
+    assert completed and all(type(value) is CallSiteValue for value in completed)
+    assert outcome.halts()
+
+
+def test_a_helper_never_decides_the_delete_of_a_field_its_object_lacked(
+    tmp_path,
+):
+    # ``o`` arrived without ``y``; another alias may have stored it since, so
+    # ``del o.y`` may complete.
+    source = (
+        _C
+        + "def g(o):\n"
+        + "    del o.y\n"
+        + "    return 1\n"
+        + "def f():\n"
+        + "    return g(C(5))\n"
+    )
+    returns, halts = _returns(tmp_path, source)
+    assert TermValue(1) in returns
+    assert "AttributeError" not in _halt_names(halts)
+
+
+_K = (
+    "class K:\n"
+    "    k = 7\n"
+    "    def __init__(self, x):\n"
+    "        self.x = x\n"
+    "    def m(self):\n"
+    "        return 1\n"
+    "    @property\n"
+    "    def v(self):\n"
+    "        return 4\n"
+)
+
+
+def test_a_helper_never_reads_a_class_field_its_object_may_shadow(tmp_path):
+    source = _K + "def g(o):\n    return o.k\ndef f():\n    return g(K(5))\n"
+    returns, halts = _returns(tmp_path, source)
+    assert returns and TermValue(7) not in returns
+    assert halts
+
+
+def test_a_helper_never_reads_a_method_its_object_may_shadow(tmp_path):
+    from sugar_lift_py_tests.floor.bound_method_value import BoundMethodValue
+
+    source = _K + "def g(o):\n    return o.m\ndef f():\n    return g(K(5))\n"
+    returns, halts = _returns(tmp_path, source)
+    assert returns
+    assert not any(type(value) is BoundMethodValue for value in returns)
+    assert halts
+
+
+def test_a_helper_reads_a_name_nothing_records_as_undecided(tmp_path):
+    source = _K + "def g(o):\n    return o.zz\ndef f():\n    return g(K(5))\n"
+    returns, halts = _returns(tmp_path, source)
+    assert returns and halts
+
+
+def test_a_property_wins_over_any_alias_store(tmp_path):
+    # A property is a data descriptor: the instance ``__dict__`` never
+    # shadows it, so its getter answers on an instance that arrived.
+    source = _K + "def g(o):\n    return o.v\ndef f():\n    return g(K(5))\n"
+    returns, _halts = _returns(tmp_path, source)
+    assert TermValue(4) in returns
+
+
+@pytest.mark.parametrize(
+    "expression, recorded",
+    [
+        ("getattr(o, 'x', 0)", 5),
+        ("getattr(o, 'k', 0)", 7),
+        ("hasattr(o, 'x')", None),
+        ("hasattr(o, 'zz')", None),
+    ],
+)
+def test_hasattr_and_getattr_on_an_arrived_instance_are_never_its_fields(
+    tmp_path, expression, recorded
+):
+    # Neither builtin reads the instance's recorded fields or its class: each
+    # is the one unanswered call over it, which may complete or raise.
+    source = (
+        _K
+        + f"def g(o):\n    return {expression}\n"
+        + "def f():\n    return g(K(5))\n"
+    )
+    returns, halts = _returns(tmp_path, source)
+    assert returns and halts
+    if recorded is not None:
+        assert TermValue(recorded) not in returns
+
+
 # The residue of #8145: a mapping pattern's ``**rest`` over a stale dict
 # walked the entries the dict arrived with (a contents read that bypassed
 # ``contents_current``), and a container a builtin handed back from its
