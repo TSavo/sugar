@@ -22,6 +22,7 @@ from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import CallSiteValue
 from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.floor.tuple_value import TupleValue
+from sugar_lift_py_tests.occurrence import occurrence_key, site_coordinate_cid
 
 import itertools
 
@@ -83,7 +84,11 @@ def test_each_loop_iteration_calls_its_own_unknown(tmp_path: Path) -> None:
     # The loop's x is the result of the LAST evaluation, not the call spelling.
     assert isinstance(returned, CallSiteValue)
     assert returned.term.name == "python:call_result"
-    assert returned.term.args[1].value.endswith("#1")
+    # The evaluation is named by `python:occurrence(<site coordinate CID>,
+    # <path>…)` (#7808): the last path segment is iteration 1.
+    occurrence = returned.term.args[1]
+    assert occurrence.name == "python:occurrence"
+    assert occurrence.args[-1].value.endswith("#1")
 
     assert len(_completion_atoms(rows)) == 2
     # Three outcomes: raise in iteration 0, raise in iteration 1, return.
@@ -124,7 +129,16 @@ def test_a_later_iteration_reads_the_earlier_iterations_value(tmp_path: Path) ->
     # Iteration 1 reads x before reassigning it: iteration 0's value, not a
     # fresh evaluation under iteration 1 and not the pre-loop 'z'.
     assert isinstance(returned, CallSiteValue)
-    assert returned.term.args[1].value == halt
+    # The same evaluation, both parts of its identity checked against the
+    # halt: the halt keeps `str(site)@path`; the call term names the same site
+    # by coordinate and the same path (#7808).
+    occurrence = returned.term.args[1]
+    assert occurrence.name == "python:occurrence"
+    path = tuple(arg.value for arg in occurrence.args[1:])
+    # The halt key was built from this site under this path ...
+    assert halt == occurrence_key(returned.site, path)
+    # ... and the call term names that same site by its coordinate.
+    assert occurrence.args[0].value == site_coordinate_cid(returned.site)
 
 
 def test_nested_loops_key_every_iteration_pair(tmp_path: Path) -> None:

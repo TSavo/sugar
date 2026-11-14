@@ -457,12 +457,12 @@ class CallSiteValue(FloorValue):
         ground = _ground_scalar_return(retained.value)
         if ground is not None:
             return ground
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.occurrence import occurrence_term
 
         return ctor(
             "python:call_result",
-            (self.term, str_const(occurrence_key(self.site, self.occurrence_path))),
+            (self.term, occurrence_term(self.site, self.occurrence_path)),
         )
 
     def denotes_a_value(self) -> bool:
@@ -1313,7 +1313,9 @@ class CallSiteValue(FloorValue):
                 "line": self.site.line,
                 "col": self.site.col,
             }
-            edge["callsite"] = str(self.site)
+            from sugar_lift_py_tests.occurrence import site_coordinate_cid
+
+            edge["callsite"] = site_coordinate_cid(self.site)
         return (edge,)
 
     def project_callsite_with(self, operation, ctx):
