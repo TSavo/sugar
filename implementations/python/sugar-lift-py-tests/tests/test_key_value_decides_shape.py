@@ -20,7 +20,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.temporal.temporal_context import projection_key
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import path_source
@@ -83,7 +83,8 @@ def _returned(outcome) -> list:
         for entry in getattr(value, "statements", ()) or ():
             visit(entry)
 
-    for exit_ in outcome_to_exitset(outcome).exits:
+    assert isinstance(outcome, ExitSet), outcome
+    for exit_ in outcome.exits:
         if isinstance(exit_, Completed):
             visit(exit_.value)
     return found

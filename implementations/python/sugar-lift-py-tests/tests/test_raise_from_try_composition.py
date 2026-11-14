@@ -32,7 +32,6 @@ from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 
 def _desugar(source: str, *, name: str = "raise_from_try.py"):
@@ -262,10 +261,10 @@ def test_halt_while_evaluating_cause_prevents_outer_raise():
     """If the cause expression halts, the outer RaiseEffect is never emitted."""
     outer = _call_exception("RuntimeError", "outer")
     cause_halt = ExitSet.halted(
-        RaiseEffect(
-            exception_name="KeyError",
+        RaiseEffect.for_builtin(
+            "KeyError",
             blame="unit.py:9:4",
-            occurrence=AuthenticatedRaiseLocus.of("unit.py:9:4"),
+            occurrence="unit.py:9:4",
             raised_value=_call_exception("KeyError", "cause-boom"),
         )
     )

@@ -63,6 +63,7 @@ from sugar_lift_py_tests.context_manager_contract import (
     WarningEffectKindV1,
     WarningObservationBindingV1,
 )
+from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.effect import ExpectationNotMetEffect
 from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, NoneValue
 from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
@@ -128,6 +129,11 @@ def _entries(source: str, stem: str):
         ).functions()
     )
     exits = reduce_block_to_exitset(function.sugar().statements, None)
+    if isinstance(exits, NativeOperationExitCarrierV1):
+        # ``orient != "tight"`` waits on its caller's actuals. Discharged with
+        # none, the operation is its cited unanswered face and every arm
+        # composed after it (the warn, the return) still stands.
+        exits = exits.discharge(None, {})
     return tuple(
         entry
         for face in exits.exits

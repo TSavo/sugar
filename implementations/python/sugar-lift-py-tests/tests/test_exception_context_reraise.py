@@ -30,7 +30,6 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
 
 def _desugar(source: str, *, name: str = "context_reraise.py"):
@@ -208,10 +207,10 @@ def test_bare_reraise_is_exact_inflight_effect_identity():
         resolve_in_flight_effect,
     )
 
-    incoming = RaiseEffect(
-        exception_name="ValueError",
+    incoming = RaiseEffect.for_builtin(
+        "ValueError",
         blame="body.py:1:0",
-        occurrence=AuthenticatedRaiseLocus.of("body.py:1:0"),
+        occurrence="body.py:1:0",
         raised_value=_call_exc("ValueError", "first"),
     )
     ctx = bind_in_flight_effect(

@@ -12,6 +12,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import atomic, ctor, formula_term, make_var, num, str_const
+from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_py_tests.temporal.builtin_name_bindings import (
     builtin_callable_names,
@@ -47,7 +48,12 @@ def test_opaque_arithmetic_cites_operator_coordinate(method, operator, kind) -> 
     if kind == "callsite":
         left = CallSiteValue("opaque", (), (), ctor("call:opaque", []), None)
     outcome = getattr(left, method)(TermValue(2), "arithmetic.py:1", None)
-    assert outcome.value.to_term(owner="test") == ctor(
+    # The undecided operand keeps its raise face; the one completed face
+    # cites the operator coordinate over both operands.
+    (completed,) = [
+        exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)
+    ]
+    assert completed.value.to_term(owner="test") == ctor(
         operator, [left.to_term(owner="test"), num(2)]
     )
 

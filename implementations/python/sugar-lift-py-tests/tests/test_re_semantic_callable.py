@@ -41,7 +41,10 @@ def _apply(op_name, pattern, subject, keyword_names=()):
 def _str_typed_subject():
     """``type(x).__name__``: a value known only to be a ``str``."""
     name = SymbolicValue(make_var("exc_type")).attribute("__name__", "name-attr", None)
-    subject = name.completed_value()
+    # The read keeps its raise face (an object need not have ``__name__``);
+    # the subject is the value of its one completed face.
+    (read,) = _completed(name)
+    subject = read.value
     assert subject.names_a_string()
     return subject
 
@@ -78,17 +81,22 @@ def test_search_truthful_and_lying() -> None:
 
 
 def test_match_is_anchored_at_start() -> None:
-    assert isinstance(_apply("python.re.match", "abc", "abcdef").value, ReMatchValue)
-    assert isinstance(_apply("python.re.match", "bcd", "abcdef").value, NoneValue)
+    hit = _apply("python.re.match", "abc", "abcdef").completed_value()
+    miss = _apply("python.re.match", "bcd", "abcdef").completed_value()
+    assert isinstance(hit, ReMatchValue)
+    assert isinstance(miss, NoneValue)
 
 
 def test_fullmatch_requires_both_ends() -> None:
-    assert isinstance(_apply("python.re.fullmatch", "a.c", "abc").value, ReMatchValue)
-    assert isinstance(_apply("python.re.fullmatch", "ab", "abc").value, NoneValue)
+    hit = _apply("python.re.fullmatch", "a.c", "abc").completed_value()
+    miss = _apply("python.re.fullmatch", "ab", "abc").completed_value()
+    assert isinstance(hit, ReMatchValue)
+    assert isinstance(miss, NoneValue)
 
 
 def test_groups_are_recoverable() -> None:
-    m = _apply("python.re.search", r"(\d+)-(\d+)", "id 12-345").value
+    m = _apply("python.re.search", r"(\d+)-(\d+)", "id 12-345").completed_value()
+    assert isinstance(m, ReMatchValue)
     assert m.group_text(0) == "12-345"
     assert m.group_text(1) == "12" and m.group_text(2) == "345"
 

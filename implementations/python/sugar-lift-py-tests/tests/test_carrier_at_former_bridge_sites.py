@@ -124,7 +124,8 @@ def _expression(source: str):
 
 
 def _raise_effect(name: str) -> RaiseEffect:
-    return RaiseEffect(occurrence=AuthenticatedRaiseLocus.of(name))
+    """An authenticated raise: a named type and a locus, both required."""
+    return RaiseEffect.for_builtin("RuntimeError", occurrence=name)
 
 
 # --- the one refusal --------------------------------------------------------
