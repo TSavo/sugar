@@ -202,19 +202,48 @@ BUILTIN_EXCEPTION_BASES: dict[str, tuple[str, ...]] = {
 # ``SyntaxError_init`` reads its second actual as a 4..6-tuple,
 # ``UnicodeEncodeError_init`` / ``UnicodeDecodeError_init`` /
 # ``UnicodeTranslateError_init`` parse a fixed typed signature, and
-# ``BaseExceptionGroup_new`` requires ``(message, exceptions)``.  A class
-# under one of them (``IndentationError``, ``TabError``, ``ExceptionGroup``)
-# inherits that constructor.  Every other builtin exception accepts any
-# positional actuals and stores them as ``args`` (``BaseException_new``).
+# ``BaseExceptionGroup_new`` requires ``(message, exceptions)``, and
+# ``OSError_new`` / ``oserror_init`` drop the filename actuals from ``args``
+# (``OSError(2, 'x', 'f').args == (2, 'x')``).  A class under one of them
+# (``IndentationError``, ``TabError``, ``ExceptionGroup``,
+# ``FileNotFoundError``) inherits that constructor.  Every other builtin
+# exception accepts any positional actuals and stores them as ``args``
+# (``BaseException_new``).
 _PARTIAL_EXCEPTION_CONSTRUCTORS = frozenset(
     {
         "BaseExceptionGroup",
+        "OSError",
         "SyntaxError",
         "UnicodeDecodeError",
         "UnicodeEncodeError",
         "UnicodeTranslateError",
     }
 )
+
+
+# The builtin exceptions whose constructor reads keyword actuals (CPython
+# Objects/exceptions.c): ``ImportError_init`` (``name``, ``path``,
+# ``name_from``), ``AttributeError_init`` (``name``, ``obj``) and
+# ``NameError_init`` (``name``).  A class under one of them may inherit that
+# constructor.  Every other args-total builtin exception initializes through
+# ``BaseException_init``, whose ``_PyArg_NoKeywords`` raises TypeError for any
+# keyword actual.
+_KEYWORD_EXCEPTION_CONSTRUCTORS = frozenset(
+    {"AttributeError", "ImportError", "NameError"}
+)
+
+
+def _builtin_exception_ancestry(root: str) -> frozenset[str]:
+    """``root`` and every builtin exception class it derives from."""
+    pending = [root]
+    seen: set[str] = set()
+    while pending:
+        current = pending.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        pending.extend(BUILTIN_EXCEPTION_BASES.get(current, ()))
+    return frozenset(seen)
 
 
 def builtin_exception_constructor_is_args_total(name: str) -> bool:
@@ -226,17 +255,20 @@ def builtin_exception_constructor_is_args_total(name: str) -> bool:
     root = canonical_builtin_exception_name(name)
     if root not in BUILTIN_EXCEPTION_NAMES:
         return False
-    pending = [root]
-    seen: set[str] = set()
-    while pending:
-        current = pending.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        if current in _PARTIAL_EXCEPTION_CONSTRUCTORS:
-            return False
-        pending.extend(BUILTIN_EXCEPTION_BASES.get(current, ()))
-    return True
+    return not (_builtin_exception_ancestry(root) & _PARTIAL_EXCEPTION_CONSTRUCTORS)
+
+
+def builtin_exception_constructor_rejects_keywords(name: str) -> bool:
+    """Whether a call of the builtin exception class bound to ``name`` with
+    any keyword actual raises TypeError: its constructor is BaseException's
+    (``builtin_exception_constructor_is_args_total``) and no class of its
+    ancestry reads keywords (``_KEYWORD_EXCEPTION_CONSTRUCTORS``), so
+    ``BaseException_init`` rejects them.  False for every other name: what
+    such a call does with keywords is not read here."""
+    if not builtin_exception_constructor_is_args_total(name):
+        return False
+    root = canonical_builtin_exception_name(name)
+    return not (_builtin_exception_ancestry(root) & _KEYWORD_EXCEPTION_CONSTRUCTORS)
 
 
 def builtin_name_temporal():

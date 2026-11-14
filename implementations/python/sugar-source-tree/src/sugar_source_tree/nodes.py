@@ -3195,28 +3195,40 @@ class SourceUnit:
 
     @staticmethod
     def source_class_has_plain_source_body(definition: "ClassDef") -> bool:
-        """Methods and simple class-body fields only, over bases read by binding.
+        """Methods and simple class-body fields only, over the class's one
+        base walk.
 
-        Each base is the binding its read reaches at the base expression,
-        never its spelling (#7757): the one module ``class`` statement
-        (``module_definition_at``) is walked in turn; ``object`` bound through
-        the builtin namespace (``LanguageCallee.BUILTIN_OBJECT``) is the base
-        every class has; a builtin exception class (``name_reference_at``)
-        whose constructor is BaseException's ``(*args)`` law
-        (``builtin_exception_constructor_is_args_total``) is admitted only
-        when no class of the walk writes ``__init__``, so the class call is
-        that construction -- the inherited-exception frame of
+        The classes are the class's MRO read by binding
+        (``ClassDef.method_resolution_order``, #7757): every source class of
+        it has a plain body, ``object`` is the base every class has, and a
+        builtin exception class is admitted when its constructor is
+        BaseException's ``(*args)`` law
+        (``builtin_exception_constructor_is_args_total``).  The class call
+        then runs the first ``__init__`` of that order
+        (``ClassDef.initializer_entry``): a source ``def __init__`` is its
+        frame, whose ``super().__init__(...)`` reaches the builtin
+        exception's ``__init__``
+        (``BuiltinExceptionClassValue.initialize_instance``); a builtin
+        exception's is the inherited-exception frame of
         ``source_visible_constructor_frame``, whose instance carries its
         ``args``.  ``__new__`` is refused in every body, by ``def`` or by
         assignment, and an assigned ``__init__`` is refused (the frame reads
         only a ``def``).  Constructor hooks, decorators, keywords, type
-        parameters, and any other base -- one the lifter cannot read --
-        stay outside this door: that call is the unanswered call.
+        parameters, and a walk that cannot be read -- a base the lifter
+        cannot read -- stay outside this door: that call is the unanswered
+        call.
         """
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
             builtin_exception_constructor_is_args_total,
         )
 
+        if not isinstance(definition, ClassDef):
+            return False
+        if definition._authenticated_new_constructor_shape() is not None:
+            return True
+        order = definition.method_resolution_order()
+        if order is None:
+            return False
         forbidden_methods = {
             "__new__",
             "__getattr__",
@@ -3227,21 +3239,13 @@ class SourceUnit:
             "__setitem__",
             "__delitem__",
         }
-        builtins_prefix = "python:builtins."
-        initializer_written = False
-        exception_construction = False
 
         def field_names(member) -> tuple[str, ...]:
             if isinstance(member, Assign):
                 return tuple(target.id for target in member.targets)
             return (member.target.id,)
 
-        def plain(cls, seen: frozenset[int]) -> bool:
-            nonlocal initializer_written, exception_construction
-            if not isinstance(cls, ClassDef):
-                return False
-            if cls._authenticated_new_constructor_shape() is not None:
-                return True
+        def plain(cls) -> bool:
             if cls.keywords or cls.decorators or cls.type_params:
                 return False
             for index, member in enumerate(cls.body):
@@ -3258,8 +3262,6 @@ class SourceUnit:
                         and cls._method_descriptor_kind(member) is None
                     ):
                         return False
-                    if member.name == "__init__":
-                        initializer_written = True
                     continue
                 if SourceUnit._is_simple_class_field_statement(member):
                     if any(
@@ -3269,43 +3271,17 @@ class SourceUnit:
                         return False
                     continue
                 return False
-            if id(cls) in seen:
-                return False
-            seen = seen | {id(cls)}
-            unit = cls.unit
-            for base in cls.bases:
-                read = base.value if isinstance(base, Subscript) else base
-                if not isinstance(read, Name):
-                    return False
-                span = read.line_col_span()
-                source_base = unit.module_definition_at(read.id, span)
-                if isinstance(source_base, ClassDef):
-                    if not plain(source_base, seen):
-                        return False
-                    continue
-                if read is not base:
-                    return False
-                target = unit.name_reference_at(read.id, span)
-                if LanguageCallee.of(target) is LanguageCallee.BUILTIN_OBJECT:
-                    continue
-                if (
-                    target is not None
-                    and target.startswith(builtins_prefix)
-                    and builtin_exception_constructor_is_args_total(
-                        target[len(builtins_prefix) :]
-                    )
-                ):
-                    exception_construction = True
-                    continue
-                return False
             return True
 
-        if not plain(definition, frozenset()):
-            return False
-        # A source ``__init__`` anywhere in the walk may stand before
-        # BaseException's in the MRO, or after it: which runs is not read
-        # here, so that class is not admitted through a builtin exception.
-        return not (initializer_written and exception_construction)
+        for entry in order:
+            if isinstance(entry, ClassDef):
+                if not plain(entry):
+                    return False
+            elif entry != "object" and not builtin_exception_constructor_is_args_total(
+                entry
+            ):
+                return False
+        return True
 
     @staticmethod
     def source_class_admits_source_constructor_frame(
@@ -3315,11 +3291,12 @@ class SourceUnit:
 
         Ordinary classes already pass through default-attribute behavior.
         A class whose body is only methods and simple name assignments, and
-        whose bases are the same kind of authenticated local class, ``object``,
-        or a builtin exception class with no source ``__init__`` before it
-        (``source_class_has_plain_source_body``), carries the frame: its
-        constructor is decided, so the call constructs.  Unauthenticated or
-        computed bases stay outside this door.  A
+        whose MRO, read by binding, is the same kind of authenticated local
+        class, ``object``, or a builtin exception class whose constructor is
+        BaseException's (``source_class_has_plain_source_body``), carries the
+        frame: its constructor is the first ``__init__`` of that order, so
+        the call constructs.  Unauthenticated or computed bases stay outside
+        this door.  A
         decorated class binds its name to the decorators' result: a call of
         it calls that value (``DecoratedDefinitionRef``), never this frame.
         """
@@ -9865,60 +9842,172 @@ class ClassDef(Statement):
         )
 
 
-    def _source_initializer_class(self) -> "ClassDef | None":
-        """The class that wrote the inherited or own source ``__init__``."""
-        seen: set[int] = set()
+    def method_resolution_order(self) -> "tuple | None":
+        """This class's MRO, every base read by its binding: THE base walk.
 
-        def owner_of(definition: "ClassDef") -> "ClassDef | None":
-            if id(definition) in seen:
-                return None
-            seen.add(id(definition))
-            own = next(
-                (
-                    item
-                    for item in reversed(definition.body)
-                    if isinstance(item, FunctionDef) and item.name == "__init__"
-                ),
-                None,
-            )
-            if own is not None:
-                return definition
-            for base in definition.bases:
-                name = None
-                if isinstance(base, Name):
-                    name = base.id
-                elif isinstance(base, Subscript) and isinstance(base.value, Name):
-                    name = base.value.id
-                else:
-                    return None
-                bindings = (definition.unit.module_direct_bindings or {}).get(name, ())
-                if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
-                    return None
-                found = owner_of(bindings[0])
-                if found is not None:
-                    return found
-            return None
+        Each base expression is read where it stands, never by its spelling
+        (#7757): the one module ``class`` statement its read reaches
+        (``SourceUnit.module_definition_at``, also under a subscript
+        ``Base[T]``) is walked in turn; ``object`` reached through the
+        builtin namespace (``LanguageCallee.BUILTIN_OBJECT``) is the entry
+        ``"object"``; a builtin exception class the read reaches
+        (``SourceUnit.name_reference_at``) is its canonical builtins name,
+        whose bases are the language's (``BUILTIN_EXCEPTION_BASES``).  A
+        class with no base has ``object``.  The order is the C3
+        linearization by the one MRO law the class values read
+        (``class_definition_value.c3_tail``), this class first; each entry is
+        a ``ClassDef`` or a builtin class name.
 
-        return owner_of(self)
+        None when a base is anything else -- an import, a computed or
+        attributed base, a class local to a function, a cycle of class
+        statements: which classes follow it, and in what order, is not read.
 
-    def _source_initializer(self) -> "FunctionDef | None":
-        """This class's ``__init__``, or the first authenticated local base's.
-
-        Ordinary classes with no source initializer still inherit
-        ``object.__init__`` (zero formals). Unauthenticated, computed, or
-        attributed bases are not a source initializer.
+        Every reader of a class's bases reads this walk: the constructor
+        frame's admission (``SourceUnit.source_class_has_plain_source_body``),
+        the ``__init__`` a call of the class runs (``initializer_entry``),
+        and the constructor defaults a class value binds
+        (``ClassDefinitionValue.constructor_defaults``).
         """
-        owner = self._source_initializer_class()
-        if owner is None:
+        from sugar_lift_py_tests.floor.class_definition_value import c3_tail
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            BUILTIN_EXCEPTION_BASES,
+        )
+
+        def key(entry):
+            if isinstance(entry, ClassDef):
+                return SourceOccurrenceIdentityV1.of(entry)
+            return entry
+
+        def bases_of(entry):
+            if isinstance(entry, str):
+                if entry == "object":
+                    return ()
+                return BUILTIN_EXCEPTION_BASES.get(entry, ()) or ("object",)
+            read_bases = tuple(entry._read_base(base) for base in entry.bases)
+            if any(read is None for read in read_bases):
+                return None
+            return read_bases or ("object",)
+
+        entries: dict = {}
+        tails: dict = {}
+        visiting: set = set()
+
+        def tail(entry_key):
+            if entry_key in tails:
+                return tails[entry_key]
+            if entry_key in visiting:
+                return None
+            visiting.add(entry_key)
+            bases = bases_of(entries[entry_key])
+            if bases is None:
+                return None
+            base_keys = tuple(key(base) for base in bases)
+            for base, base_key in zip(bases, base_keys):
+                entries.setdefault(base_key, base)
+                if tail(base_key) is None:
+                    return None
+            visiting.discard(entry_key)
+            tails[entry_key] = c3_tail(
+                base_keys,
+                tails.__getitem__,
+                blame=self.fragment,
+                owner="ClassDef.method_resolution_order",
+            )
+            return tails[entry_key]
+
+        own = key(self)
+        entries[own] = self
+        found = tail(own)
+        if found is None:
             return None
+        return (self, *(entries[entry_key] for entry_key in found))
+
+    def _read_base(self, base):
+        """One base expression of this class statement, read by its binding
+        where it stands: the module ``class`` statement the read reaches
+        (also under a subscript ``Base[T]``), ``"object"`` for the builtin
+        ``object``, a builtin exception class's canonical name, else None."""
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            BUILTIN_EXCEPTION_NAMES,
+            canonical_builtin_exception_name,
+        )
+
+        read = base.value if isinstance(base, Subscript) else base
+        if not isinstance(read, Name):
+            return None
+        span = read.line_col_span()
+        source = self.unit.module_definition_at(read.id, span)
+        if isinstance(source, ClassDef):
+            return source
+        if read is not base:
+            return None
+        target = self.unit.name_reference_at(read.id, span)
+        if LanguageCallee.of(target) is LanguageCallee.BUILTIN_OBJECT:
+            return "object"
+        builtins_prefix = "python:builtins."
+        if target is None or not target.startswith(builtins_prefix):
+            return None
+        name = canonical_builtin_exception_name(target[len(builtins_prefix) :])
+        return name if name in BUILTIN_EXCEPTION_NAMES else None
+
+    def _written_initializer(self) -> "FunctionDef | None":
+        """The ``def __init__`` this class body writes: the last one, Python's
+        live binding (overload stubs precede the implementation)."""
         return next(
             (
                 item
-                for item in reversed(owner.body)
+                for item in reversed(self.body)
                 if isinstance(item, FunctionDef) and item.name == "__init__"
             ),
             None,
         )
+
+    def initializer_entry(self):
+        """The first class of the MRO (``method_resolution_order``) that has
+        ``__init__``, which a call of this class runs: a ``ClassDef`` whose
+        body writes ``def __init__``, or a builtin class name -- ``object``
+        and every builtin exception class carry their own ``__init__``.
+
+        A source ``__init__`` anywhere in a chain that ends in a builtin
+        exception base is just the first ``__init__`` found; a source class
+        after a builtin exception in the order is never reached by the call.
+
+        When the order is not read (``method_resolution_order`` is None),
+        only its head is decided: this class, then its first base, which
+        follows the class in every MRO Python builds (the C3 merge takes the
+        first base's head first; any other order is a TypeError at class
+        creation).  Their own ``__init__`` is the entry; otherwise None.
+        """
+        order = self.method_resolution_order()
+        if order is None:
+            first = self._read_base(self.bases[0]) if self.bases else None
+            head = (self,) if not isinstance(first, ClassDef) else (self, first)
+            return next(
+                (entry for entry in head if entry._written_initializer() is not None),
+                None,
+            )
+        return next(
+            (
+                entry
+                for entry in order
+                if not isinstance(entry, ClassDef)
+                or entry._written_initializer() is not None
+            ),
+            None,
+        )
+
+    def _source_initializer(self) -> "FunctionDef | None":
+        """The source ``def __init__`` a call of this class runs: the first
+        ``__init__`` of its MRO (``initializer_entry``) when a source class
+        wrote it.
+
+        None when that ``__init__`` is a builtin's (``object.__init__``, zero
+        formals, or a builtin exception's ``(*args)``) or is not decided.
+        """
+        owner = self.initializer_entry()
+        if not isinstance(owner, ClassDef):
+            return None
+        return owner._written_initializer()
 
     def _dataclass_generated_init_fields(self):
         """The ``__init__`` ``@dataclasses.dataclass`` writes, as its fields.
