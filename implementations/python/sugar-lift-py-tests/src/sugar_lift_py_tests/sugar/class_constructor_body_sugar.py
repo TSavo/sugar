@@ -17,11 +17,19 @@ class ReceiverAtReturnValue(FloorValue):
     ``site``.  The call returns that object on the face that leaves by the
     ``return`` (``ClassConstructorBodySugar``) when ``returned`` is
     ``None``, and raises CPython's ``TypeError: __init__() should return
-    None`` when it is not; never the value itself."""
+    None`` when it is not; never the value itself.
+
+    ``past_exits``: the read (unreduced) of the receiver past the code that
+    runs after the ``return`` before the frame is left -- a ``finally``'s
+    stores on ``self``, a ``with``'s exit -- where that code touches it
+    (``nodes._receiver_past_exits``).  That code runs after the ``return``
+    is reduced, so the class call reads it where the face ends, in the
+    context that code left (``ClassConstructorBodySugar._leaving_by``)."""
 
     receiver: FloorValue
     returned: object = None
     site: object = field(default=None, compare=False)
+    past_exits: object = field(default=None, compare=False)
 
     def to_term(self, *, owner: str):
         return self.receiver.to_term(owner=owner)
@@ -38,6 +46,9 @@ class InitializerReturnSugar(Sugar):
     value: Sugar | None
     receiver: Sugar
     site: object = field(compare=False)
+    # The receiver's read past the code that runs after the ``return``
+    # (``ReceiverAtReturnValue.past_exits``), reduced where the face ends.
+    past_exits: Sugar | None = None
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -63,7 +74,10 @@ class InitializerReturnSugar(Sugar):
                 lambda receiver: ExitSet.completed(
                     ReturnValue(
                         ReceiverAtReturnValue(
-                            peel_walrus_binds(receiver)[1], returned, self.site
+                            peel_walrus_binds(receiver)[1],
+                            returned,
+                            self.site,
+                            self.past_exits,
                         )
                     )
                 )
@@ -394,25 +408,29 @@ class ClassConstructorBodySugar(Sugar):
                 fix="bind the receiver formal where the initializer ends",
             )
         context = record.context if record.context is not None else ctx
+
+        def ended(part):
+            return part.context if part.context is not None else context
+
         if not record.can_fall_through:
-            return self._receiver_at_its_returns(record)
+            return self._receiver_at_its_returns(record, context)
         return past_prior_returns(
             record,
             context,
-            lambda went_on: self.receiver_at_end.desugar(
-                went_on.context if went_on.context is not None else context
-            ),
-            self._receiver_at_its_returns,
+            lambda went_on: self.receiver_at_end.desugar(ended(went_on)),
+            lambda returned: self._receiver_at_its_returns(returned, ended(returned)),
         )
 
-    def _receiver_at_its_returns(self, record) -> ExitSet:
+    def _receiver_at_its_returns(self, record, context=None) -> ExitSet:
         """The object the class call returns on a face of its initializer
         that left by a ``return``: the receiver each ``return`` of the record
         carries (``ReceiverAtReturnValue``), under that ``return``'s own
         guard, where the value it returned is ``None``; a ``TypeError``
-        where it is not (``_leaving_by``).  A ``return`` that carries none
-        (no name held the receiver where it stood) is refused by name, as is
-        a face that left by no ``return``."""
+        where it is not (``_leaving_by``).  ``context`` is the context the
+        face ends in, past the code that ran after the ``return``.  A
+        ``return`` that carries none (no name held the receiver where it
+        stood) is refused by name, as is a face that left by no
+        ``return``."""
         from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
         from sugar_lift_py_tests.floor.return_value import ReturnValue
         from sugar_lift_py_tests.ir import and_
@@ -447,16 +465,27 @@ class ClassConstructorBodySugar(Sugar):
                     "no receiver (no name held it where the return stood)"
                 )
         if unguarded:
-            return self._leaving_by(unguarded[0].value)
-        arms = [self._leaving_by(entry.value, guard_of(entry)) for entry in guarded]
+            return self._leaving_by(unguarded[0].value, context=context)
+        arms = [
+            self._leaving_by(entry.value, guard_of(entry), context)
+            for entry in guarded
+        ]
         return ExitSet(()).union(*arms)
 
-    def _leaving_by(self, left: ReceiverAtReturnValue, guard=None) -> ExitSet:
+    def _leaving_by(
+        self, left: ReceiverAtReturnValue, guard=None, context=None
+    ) -> ExitSet:
         """The class call leaving by one ``return`` of its initializer (under
         ``guard``): ``type.__call__`` checks what ``__init__`` returned
         after the frame is left -- past every ``finally`` and ``__exit__``,
         out of reach of the initializer's own handlers -- and returns the
         object only when it is ``None``.
+
+        The object is the receiver as the frame left it: where code that
+        ran after the ``return`` touched it (``left.past_exits``: a
+        ``finally``'s store on ``self``), its read past that code, reduced in
+        ``context`` -- the context the face ends in, after that code ran;
+        else the receiver the ``return`` read where it stood.
 
         The returned value's ``None``-ness is asked as ``is`` asks it
         (``object_identity.object_identity``): ``None`` completes with the
@@ -466,6 +495,23 @@ class ClassConstructorBodySugar(Sugar):
         ``None``-ness is undecided is two-faced owing (``ExitSet.two_faced``):
         the receiver under the site-keyed ``...completes`` atom, that
         ``TypeError`` on the other face."""
+        if left.past_exits is not None:
+            from dataclasses import replace
+
+            from sugar_lift_py_tests.floor.named_expression_value import (
+                peel_walrus_binds,
+            )
+
+            return left.past_exits.desugar(context).and_then(
+                lambda receiver: self._leaving_by(
+                    replace(
+                        left,
+                        receiver=peel_walrus_binds(receiver)[1],
+                        past_exits=None,
+                    ),
+                    guard,
+                )
+            )
         site = left.site if left.site is not None else self.site
         verdict = _returns_none(left.returned, site)
         if verdict is True:

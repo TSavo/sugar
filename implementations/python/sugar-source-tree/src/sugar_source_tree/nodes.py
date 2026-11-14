@@ -1181,7 +1181,7 @@ def _initializer_returns(body) -> tuple:
     stands: at the top, under an ``if`` or a ``match``, inside a loop (its
     read there is the item's, as every read in the body is), inside a
     ``try`` or a ``with``.  ``exits`` is the code that runs after it before
-    the frame is left, innermost first: ``("finally", clause)`` for each
+    the frame is left, innermost first: ``("finally", try)`` for each
     enclosing ``try`` whose ``finally`` it is not in (its handlers and
     ``else`` never run after a ``return``), ``("with", managers)`` for each
     enclosing ``with`` (its managers' ``__exit__``).  The receiver it leaves
@@ -1197,7 +1197,7 @@ def _initializer_returns(body) -> tuple:
         if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
             return
         if isinstance(node, (Try, TryStar)) and node.finalbody:
-            inner = (("finally", tuple(node.finalbody)), *exits)
+            inner = (("finally", node), *exits)
             for statement in node.body:
                 walk(statement, inner)
             for handler in node.handlers:
@@ -1228,13 +1228,19 @@ def _receiver_past_exits(owner: "Node", held: _InitializerReceiverV1, scope, rea
     ``owner`` stands, in ``scope``) as the frame leaves it: past each exit
     that runs after the ``return`` (``_initializer_returns``), innermost
     first, each threaded by the one threading -- a ``finally`` clause as the
-    block threads its statements (``_substitute_body_tracked``), a ``with``'s
+    block threads its statements (``_substitute_body_tracked``: a store on
+    the object is its field store, a call on it the one door, a call that
+    may reach it the one exposure rule), as the copy the ``try`` runs after
+    a completed face, which a pending ``return`` is (``_exit_path_scope``
+    ``"completion"``: the keys its statements bind there), a ``with``'s
     exit as the block threads the ``with`` after it, by its managers'
-    exposure (``container_mutation.thread_header``).  Where an exit leaves
-    any name that holds the object bound otherwise -- a store on it, a call
-    that may reach it, a rebinding -- what the frame left of it is not the
-    read at the ``return``, which runs before that exit: the object is
-    unknown after the body (``container_mutation._havoc``).  Else ``read``."""
+    exposure (``container_mutation.thread_header``).  The object leaves as
+    the last exit left it: its read there (``_receiver_read``), which the
+    class call reads where the face ends, after the exits ran
+    (``InitializerReturn.past_exits``).  ``read`` itself where no exit
+    touched any name; the object unknown after the body
+    (``container_mutation._havoc``) where no name holds it any more after
+    the exits."""
     exits = held.exits_at(owner) or ()
     if not exits:
         return read
@@ -1245,27 +1251,31 @@ def _receiver_past_exits(owner: "Node", held: _InitializerReceiverV1, scope, rea
         for key, value in scope.items()
         if key is not _MODULE_STATEMENT_STATES
     }
+    start = current
     for kind, code in exits:
         if kind == "finally":
-            _items, _changed, net = owner._substitute_body_tracked(code, current)
-            after = {**current, **net}
+            _items, _changed, net = owner._substitute_body_tracked(
+                code.finalbody, _exit_path_scope(code, "completion", current)
+            )
+            current = {**current, **net}
         else:
             header = tuple(expression.substitute(current) for expression in code)
-            after = thread_header(header, current, current)
-        for name, value in current.items():
-            if (
-                isinstance(name, str)
-                and _denotes(value, held.receiver)
-                and after.get(name) is not value
-            ):
-                return _havoc(owner, held.name, ())
-        current = after
-    return read
+            current = thread_header(header, current, current)
+    if all(current.get(name) is value for name, value in start.items()):
+        return read
+    after = _receiver_read(owner, held, current)
+    if after is None:
+        return _havoc(owner, held.name, ())
+    return after
 
 
-def _initializer_return(statement: "Node", value, receiver: "Node") -> "Node":
+def _initializer_return(
+    statement: "Node", value, receiver: "Node", past_exits=None
+) -> "Node":
     """``statement`` (an initializer's ``return``) carrying the receiver's
-    read where it stands (``InitializerReturn``)."""
+    read where it stands (``InitializerReturn``), and its read past the code
+    that runs after it (``past_exits``, ``_receiver_past_exits``) where that
+    code touches it."""
     from .backend import Child, MaybeChild, materialize
     from .shadow import ShadowNode, _handle_of
 
@@ -1277,6 +1287,10 @@ def _initializer_return(statement: "Node", value, receiver: "Node") -> "Node":
             (
                 ("value", MaybeChild(None if value is None else _handle_of(value))),
                 ("receiver", Child(_handle_of(receiver))),
+                (
+                    "past_exits",
+                    MaybeChild(None if past_exits is None else _handle_of(past_exits)),
+                ),
             ),
         ),
         statement.reporter,
@@ -1382,8 +1396,9 @@ def _super_door(statement, scope, source, call=None, *, target_name=None):
 
     ``call`` is ``source`` substituted against ``scope`` (substituted here
     when not given).  ``target_name``: the name the statement binds the
-    call's value to (``x = super().m(...)``; an initializer's ``return
-    super().m(...)`` binds ``_RETURNED``).  None for any other operation.
+    call's value to (``x = super().m(...)``; a call nested in a larger
+    expression binds its temporary, ``_super_calls_hoisted``).  None for any
+    other operation.
 
     Only in a class call's initializer (``_INITIALIZER_RECEIVER``), whose
     stores on the receiver are states of it in the tree
@@ -1439,9 +1454,202 @@ def _super_door(statement, scope, source, call=None, *, target_name=None):
     )
 
 
-# The name an initializer's ``return super().m(...)`` binds the call's value
-# to (``Return.substitute``): no identifier, so no source name is it.
-_RETURNED = "<returned>"
+def _super_calls_hoisted(statement, scope):
+    """``(doors, statement, scope)``: every ``super().m(...)`` of a class
+    call's initializer that ``statement`` evaluates inside a larger
+    expression (``x = 1 + super().m()``, ``f(super().m())``, ``self.y =
+    super().m()``, ``return super().m()``, ``if super().m():``) taken
+    through the one call-on-self path, as one alone in a statement is: the
+    one door on the frame's receiver formal (``_super_door``), binding the
+    call's value to a temporary, threaded first; then ``statement`` with the
+    call replaced by a read of that temporary, substituted in the scope the
+    door left -- so the base method runs on ``self`` as the statement reads
+    it, and everything after the call reads ``self`` as the call left it.
+
+    The call is hoisted only where nothing ``statement`` evaluates before it
+    runs code (``_first_super_call``): moving it first changes no order
+    Python keeps.  Each call so hoisted, in evaluation order, is one door;
+    ``doors`` are their statements, already substituted, which the block
+    threads before the statement (``_substitute_body_tracked``), and
+    ``scope`` the scope after them.  Outside an initializer, or where no
+    call is so hoisted, ``((), statement, scope)``."""
+    held = scope.get(_INITIALIZER_RECEIVER)
+    if not isinstance(held, _InitializerReceiverV1) or not _calls_super(statement):
+        return (), statement, scope
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+    from .backend import Child, Children, Leaf, materialize
+    from .container_mutation import havoc_after
+    from .shadow import (
+        OccurrenceShadowNode,
+        ShadowNode,
+        _handle_of,
+        occurrence_tags_of,
+    )
+
+    doors = []
+    while True:
+        path = _first_super_call(statement)
+        if path is None:
+            break
+        parent, name, index = path[-1]
+        call = getattr(parent, name) if index is None else getattr(parent, name)[index]
+        temporary = f"<super {call.span.start}:{call.span.end}>"
+        # The door is its own statement over the call: ``<temporary> =
+        # super().m(...)``, keyed as a projection of the statement's own
+        # evaluation, so the statement keeps its key and the door has one of
+        # its own; an iteration's copy keeps its occurrence.
+        slots = (
+            ("targets", Children((_handle_of(For._make_name(call, temporary)),))),
+            ("value", Child(_handle_of(call))),
+            (
+                "evaluation",
+                Leaf(projection_key(statement._evaluation_key(scope), temporary)),
+            ),
+            ("evaluation_exit_path", Leaf(statement._evaluation_exit_path(scope))),
+        )
+        tags = occurrence_tags_of(statement)
+        ref = (
+            OccurrenceShadowNode("Assign", call.span, slots, tags)
+            if tags
+            else ShadowNode("Assign", call.span, slots)
+        )
+        assignment = materialize(statement.unit, ref, statement.reporter)
+        door = _super_door(assignment, scope, call, target_name=temporary)
+        if door is None:
+            break
+        after = {**scope, **_store_statement_binding(door, scope)}
+        scope = havoc_after(door, scope, after)
+        doors.append(door)
+        statement = _with_child_replaced(path, For._make_name(call, temporary))
+    return tuple(doors), statement, scope
+
+
+def _first_super_call(statement):
+    """The path ``[(node, field, index)]`` from ``statement`` down to the
+    first ``super().m(...)`` (``_super_method``) it evaluates, when
+    everything it evaluates before that call runs no code
+    (``container_mutation._cannot_halt``: a read, a constant, a display of
+    such), the call is reached on every path through the statement
+    (``_evaluated_edge``) and its operands hold no other ``super()`` call
+    and no walrus; else None.
+    A call that is the whole of an ``Expr`` or of ``x = ...`` is the door
+    in place (``Expr._super_mutation``, ``Assign.substitute``): None."""
+    from .container_mutation import _cannot_halt, _evaluation_order
+
+    def walk(node, path):
+        # ``("found", path)``, ``("clear", None)`` (nothing in ``node`` runs
+        # code), or ``("blocked", None)``.
+        if _super_method(node) is not None:
+            operands = (*node.args, *(keyword.value for keyword in node.keywords))
+            if any(_calls_super(operand) for operand in operands) or any(
+                inner.kind == "NamedExpr"
+                for operand in operands
+                for inner in operand.walk()
+            ):
+                # Another ``super()`` call runs first; a walrus binds for
+                # the rest of the block, which the door does not publish.
+                return "blocked", None
+            return "found", path
+        for name, index, child in _evaluation_order(node):
+            if not isinstance(child, Node):
+                continue
+            if _evaluated_edge(node, name, index):
+                outcome, found = walk(child, (*path, (node, name, index)))
+                if outcome != "clear":
+                    return outcome, found
+            elif not _cannot_halt(child):
+                return "blocked", None
+        # A keyword argument is its value: handing it on runs nothing.
+        if node.kind == "Keyword" or _cannot_halt(node):
+            return "clear", None
+        return "blocked", None
+
+    outcome, path = walk(statement, ())
+    if outcome != "found" or not path:
+        return None
+    if len(path) == 1:
+        if isinstance(statement, Expr) or (
+            isinstance(statement, Assign)
+            and len(statement.targets) == 1
+            and isinstance(statement.targets[0], Name)
+        ):
+            return None
+    return list(path)
+
+
+def _evaluated_edge(node, name, index) -> bool:
+    """Whether Python evaluates ``node``'s child at ``(name, index)`` on
+    every path through ``node`` that completes, as one of its operands --
+    never in a branch of ``and``/``or``/``x if t else y`` or a later
+    comparison of a chain, never in a comprehension or a nested scope, never
+    an assignment's target, and never in a statement's own suite (each
+    suite's statements are its block's, threaded there).  A ``while`` test
+    runs again before every item: it is no edge."""
+    kind = node.kind
+    if kind in _OPERAND_EDGE_KINDS:
+        return True
+    if kind in ("Assign", "AnnAssign", "AugAssign", "NamedExpr", "FormattedValue"):
+        return name == "value"
+    if kind in ("If", "Assert", "IfExp"):
+        return name == "test"
+    if kind in ("For", "AsyncFor"):
+        return name == "iter"
+    if kind == "Match":
+        return name == "subject"
+    if kind in ("With", "AsyncWith"):
+        return name == "items" and index == 0
+    if kind == "WithItem":
+        return name == "context_expr"
+    if kind == "BoolOp":
+        return index == 0
+    if kind == "Compare":
+        return name == "left" or index == 0
+    return False
+
+
+# Nodes every operand of which Python evaluates, in order, before the node
+# itself completes.
+_OPERAND_EDGE_KINDS = frozenset(
+    {
+        "Expr",
+        "Return",
+        "Raise",
+        "Call",
+        "Keyword",
+        "Starred",
+        "Attribute",
+        "Subscript",
+        "Slice",
+        "BinOp",
+        "UnaryOp",
+        "Tuple",
+        "List",
+        "Set",
+        "JoinedStr",
+    }
+)
+
+
+def _with_child_replaced(path, replacement):
+    """The node at ``path[0]`` with the node ``path`` leads to replaced by
+    ``replacement``: each node on the way rewritten around its new child
+    (its span kept), a call's lexical row carried, and each node the rewrite
+    replaced answered as discharged by substitution."""
+    from .shadow import _retain_call_row, rewrite
+
+    (parent, name, index), rest = path[0], path[1:]
+    child = getattr(parent, name) if index is None else getattr(parent, name)[index]
+    new_child = replacement if not rest else _with_child_replaced(rest, replacement)
+    child.discharge_by_substitution()
+    if index is None:
+        rewritten = rewrite(parent, **{name: new_child})
+    else:
+        items = list(getattr(parent, name))
+        items[index] = new_child
+        rewritten = rewrite(parent, **{name: tuple(items)})
+    _retain_call_row(parent, rewritten)
+    return rewritten
 
 
 def _calls_super(node) -> bool:
@@ -8228,7 +8436,15 @@ class Node(Typed):
                 role="temporal",
                 site=f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}",
             ):
-                new_stmt = stmt.substitute(scope)
+                # A ``super().m(...)`` of an initializer nested in the
+                # statement is the one door on ``self``, threaded first
+                # (``_super_calls_hoisted``); the statement then reads its
+                # value through a temporary.
+                doors, source, scope = _super_calls_hoisted(stmt, scope)
+                if doors:
+                    new_items.extend(doors)
+                    changed = True
+                new_stmt = source.substitute(scope)
                 live_loop_bindings = None
                 published = {}
                 if isinstance(new_stmt, (For, While)):
@@ -12897,41 +13113,32 @@ class Return(Statement):
         -- ``InitializerReturn``, which the class call returns on the face
         that leaves by it (``ClassConstructorBodySugar``).
 
-        ``return super().m(...)`` is the one door on the frame's receiver
-        formal (``_super_door``) binding ``_RETURNED``, then the ``return``
-        of that name: the receiver it leaves with is the one the call
-        states it left."""
+        ``return super().m(...)`` (anywhere in the returned value) reaches
+        here as the return of the call's value: the block threads the call
+        first through the one door on the frame's receiver formal
+        (``_super_calls_hoisted``), so the receiver it leaves with is the one
+        the call states it left."""
         held = scope.get(_INITIALIZER_RECEIVER)
         if not isinstance(held, _InitializerReceiverV1) or not held.reads_at(self):
             return self._substitute_children(scope)
         from .container_mutation import havoc_after
 
-        if self.value is not None:
-            door = _super_door(self, scope, self.value, target_name=_RETURNED)
-            if door is not None:
-                after = {**scope, **_store_statement_binding(door, scope)}
-                after = havoc_after(door, scope, after)
-                value = _name_read(self, _RETURNED, after)
-                if value is not None:
-                    return _Splice((door, self._leaving(held, after, value)))
         rewritten = self._substitute_children(scope)
         after = havoc_after(rewritten, scope, scope)
-        return self._leaving(held, after, rewritten.value, rewritten)
+        return self._leaving(held, after, rewritten)
 
-    def _leaving(self, held, scope, value, rewritten=None):
-        """This initializer ``return`` of ``value`` (already substituted)
+    def _leaving(self, held, scope, rewritten):
+        """This initializer ``return`` (``rewritten``, already substituted)
         carrying the receiver's read in ``scope`` past the exits after it
         (``InitializerReturn``); where no name holds the receiver there, the
         plain ``return``, whose face the class call refuses by name."""
         receiver = _receiver_read(self, held, scope)
         if receiver is None:
-            if rewritten is not None:
-                return rewritten
-            from .shadow import rewrite
-
-            return rewrite(self, value=value)
-        receiver = _receiver_past_exits(self, held, scope, receiver)
-        return _initializer_return(self, value, receiver)
+            return rewritten
+        past = _receiver_past_exits(self, held, scope, receiver)
+        return _initializer_return(
+            self, rewritten.value, receiver, None if past is receiver else past
+        )
 
     def _construct_sugar(self):
         """Construct the function exit, including Python's real empty return."""
@@ -12947,10 +13154,15 @@ class InitializerReturn(Return):
     """A ``return`` of a class call's initializer with the read of the
     receiver where it stands (``Return.substitute``): the object the class
     call returns when the initializer leaves by it, which no read after the
-    initializer's last statement gives."""
+    initializer's last statement gives.  ``past_exits``: where code runs
+    after the ``return`` before the frame is left and touches the object (a
+    ``finally`` that stores on ``self``, a ``with``'s exit that may reach
+    it), the read of it past that code (``_receiver_past_exits``), which the
+    class call reads where the face ends, after that code ran."""
 
     receiver: Expression
-    _child_fields = ("value", "receiver")
+    past_exits: Optional[Expression]
+    _child_fields = ("value", "receiver", "past_exits")
 
     def substitute(self, scope):
         del scope
@@ -12965,6 +13177,9 @@ class InitializerReturn(Return):
             value=self.value.sugar() if self.value is not None else None,
             receiver=self.receiver.sugar(),
             site=self.fragment,
+            past_exits=(
+                self.past_exits.sugar() if self.past_exits is not None else None
+            ),
         )
 
 
@@ -19613,23 +19828,39 @@ class ReceiverFieldStoreStatement(Statement):
         return self
 
     def substitution_binding(self, scope):
-        """The receiver name, and every name bound to the object it holds
-        here -- read as the one door reads a name's object
-        (``container_mutation.aliases``' exact names: ``same_object``, one
-        object identity) -- bound to the post-state.  A name whose value
-        only holds the object inside another value keeps its binding."""
-        from .container_mutation import _identity, _state, same_object
+        """The store reaches every holder of the object exactly as the one
+        door's mutation does (``container_mutation.aliases``,
+        ``holder_states``): the receiver name and every name bound to the
+        object it holds here (``same_object``, one object identity) are
+        bound to the post-state; every name whose value holds the object
+        inside another value (``lst = [o]``, ``d = {'k': o}``, ``t = (o,)``,
+        another object's field), or may be it (a member whose identity is
+        undecided), to its value after the store -- the opaque post-state,
+        never its old value.  A field store is the plain store of one field
+        (``ordinary=False``): a name that merely shares something with the
+        object keeps its binding."""
+        from .container_mutation import _identity, aliases, holder_states
+        from .shadow import occurrence_tags_of
 
         names = [self.receiver_name]
-        root = _identity(self.post_state.receiver)
+        held = []
+        receiver = self.post_state.receiver
+        root = _identity(receiver)
         if scope and isinstance(root, Node) and not isinstance(root, Name):
-            for name, value in scope.items():
-                if not isinstance(name, str) or name in names:
-                    continue
-                state = _state(value)
-                if isinstance(state, Node) and same_object(state, root):
-                    names.append(name)
-        return {name: self.post_state for name in names}
+            exact, containing = aliases(scope, root)
+            names.extend(name for name in exact if name not in names)
+            held = holder_states(
+                self,
+                scope,
+                receiver=receiver,
+                root=root,
+                containing=containing,
+                method="__setattr__",
+                tags=occurrence_tags_of(self),
+                skip=names,
+                ordinary=False,
+            )
+        return {**dict(held), **{name: self.post_state for name in names}}
 
     def _construct_sugar(self):
         return self.keyed_store(self.value.sugar())
