@@ -144,8 +144,8 @@ def _halt_state(state: _ReducedBlock, exit_) -> object:
 
 def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
     """The record a suite resumes from where a halt left: an ``except``
-    handler that caught it, a ``finally`` beneath it, a ``with`` exit it
-    reaches.
+    handler that caught it, a ``finally`` beneath it (or beneath a completed
+    face, ``TrySugar``), a ``with`` exit it reaches.
 
     A halt's record is everything the block reached before it halted --
     every store, rebind, container mutation and walrus bind, in its
@@ -157,8 +157,13 @@ def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
     fall-through flag is about the block that halted, not the suite that
     resumes, and the guard of every ``return`` before the halt is already
     on the halt's arm (the reducer guards everything after a ``return`` by
-    its fall-through), so it is not stated again. A record reduced with no
-    context (a nested record its producer built bare) reads ``ctx``.
+    its fall-through), so it is not stated again -- neither as a
+    fall-through guard nor as the transform that would guard every entry
+    the suite adds. A ``finally`` beneath a completed face runs on every
+    path through it, a ``return`` taken under a guard included, so it too
+    resumes unguarded; the face's own guards go back on when its exit is
+    re-emitted (``TrySugar``). A record reduced with no context (a nested
+    record its producer built bare) reads ``ctx``.
 
     A halt with no record of its own -- ``None``, which a compound
     statement hands back when it offers none (``_halt_state``), or the bare
@@ -174,6 +179,7 @@ def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
             state,
             can_fall_through=True,
             fall_through=(),
+            transforms=(),
             context=state.context if state.context is not None else ctx,
         )
     if state is None or isinstance(state, ReduceContext):

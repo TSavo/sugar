@@ -10,6 +10,14 @@ after a statement (``reduce_block_to_exitset(..., after=)``,
 context the ``try`` began in, beside an empty record: whatever the body did
 before the raise was invisible to it, and the record the try left with by the
 handler held none of it.
+
+The same holds for a ``finally`` beneath a completed body and beneath a
+``return``: it continues from the record that arrives at it, and the exit it
+let through is re-emitted after it (a pending ``return`` follows the
+``finally``'s entries, and is discarded when the ``finally`` returns itself).
+A halt raised inside a called function reaches the caller in the caller's
+record at the call (``call_site_value.at_the_call``): a name the callee binds
+never shadows the caller's.
 """
 
 from __future__ import annotations
@@ -184,3 +192,96 @@ def test_a_handler_after_a_loop_that_raised_carries_what_the_items_did() -> None
     assert records, outcome
     assert _holds(records, _ONE), records
     assert _holds(records, ListValue((TermValue(1), TermValue(2)))), records
+
+
+def test_a_finally_after_a_completed_body_reads_its_store() -> None:
+    # The body completed after ``x = 1``: the ``finally`` continues from that
+    # record, not from the context the try began in (``x = 0``).
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    x = 0\n"
+            "    try:\n"
+            "        x = 1\n"
+            "    finally:\n"
+            "        return x\n"
+        )
+    )
+    assert _returned_value(outcome) == TermValue(1)
+
+
+def test_a_finally_after_a_return_reads_the_store_before_it() -> None:
+    # The body stored ``x = 1`` and returned; the ``finally`` reads the store,
+    # and its own ``return`` discards the pending ``return 5``.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    x = 0\n"
+            "    try:\n"
+            "        x = 1\n"
+            "        return 5\n"
+            "    finally:\n"
+            "        return x\n"
+        )
+    )
+    assert _returned_value(outcome) == TermValue(1)
+
+
+def test_a_return_the_body_took_follows_a_finally_that_falls_through() -> None:
+    # The ``finally`` runs after the body's append and before the pending
+    # ``return 7`` leaves: the record holds both appends and the return.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    acc = []\n"
+            "    try:\n"
+            "        acc.append(1)\n"
+            "        return 7\n"
+            "    finally:\n"
+            "        acc.append(2)\n"
+        )
+    )
+    assert _returned_value(outcome) == TermValue(7)
+    records = _records(outcome)
+    assert _holds(records, _ONE), records
+    assert _holds(records, ListValue((TermValue(1), TermValue(2)))), records
+
+
+def test_a_handler_reads_the_callers_name_not_the_callees() -> None:
+    # ``g`` binds its own local ``x = 2`` and raises: the halt reaches ``f``
+    # at the call, in ``f``'s record there, so the handler returns ``f``'s 1.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    x = 1\n"
+            "    try:\n"
+            "        g()\n"
+            "    except ValueError:\n"
+            "        return x\n"
+            "def g():\n"
+            "    x = 2\n"
+            "    raise ValueError()\n"
+        )
+    )
+    assert _returned_value(outcome) == TermValue(1)
+
+
+def test_a_call_halt_keeps_what_the_caller_did_before_the_call() -> None:
+    # The caller appended before the call; the callee binds a list of its own
+    # under the same name.  The handler reads the caller's ``acc``.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    acc = []\n"
+            "    try:\n"
+            "        acc.append(1)\n"
+            "        g()\n"
+            "    except ValueError:\n"
+            "        return acc\n"
+            "def g():\n"
+            "    acc = [9]\n"
+            "    raise ValueError()\n"
+        )
+    )
+    assert _returned_value(outcome) == _ONE
+    assert _holds(_records(outcome), _ONE), _records(outcome)
