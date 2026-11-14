@@ -26,6 +26,15 @@ class SetValue(GuardStableValue):
         compare=False,
         metadata={"testimony": "provenance"},
     )
+    # The binding read a value with no ``allocation`` arrived through: what
+    # an undecided read names the object by (``object_identity.arrived``,
+    # ``identity_term``).
+    arrival: str | None = dataclass_field(
+        default=None,
+        kw_only=True,
+        compare=False,
+        metadata={"testimony": "provenance"},
+    )
 
     def attribute(self, name, site, ctx):
         # Bound methods and fields on a constructed set (``set().add``, ``s.union``) stay the
@@ -222,10 +231,14 @@ def _set_operation(finite, name, left, right, site):
 
 
 def undecided_length(container, site):
-    """``len(container)`` as the ``call:len`` coordinate: never a count."""
+    """``len(container)`` as the ``call:len`` coordinate: never a count, and
+    over the object, never contents that are not current
+    (``object_identity.identity_term``)."""
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor
     from sugar_lift_py_tests.outcome import ExitSet
+
+    from .object_identity import identity_term
 
     owner = str(site)
     return ExitSet.completed(
@@ -235,7 +248,7 @@ def undecided_length(container, site):
             parameters=(),
             term=ctor(
                 call_symbol("len"),
-                (container.to_term(owner=owner),),
+                (identity_term(container, site, "receiver", owner=owner),),
                 symbol_kind="builtin",
             ),
             body=None,
@@ -310,11 +323,17 @@ def _symbolic_set_operation(name, left, right, site):
     from sugar_lift_py_tests.ir import ctor
     from sugar_lift_py_tests.outcome import ExitSet
 
+    from .object_identity import identity_term
+
+    owner = str(site)
     return ExitSet.completed(
         SymbolicValue(
             ctor(
                 name,
-                [left.to_term(owner=str(site)), right.to_term(owner=str(site))],
+                [
+                    identity_term(left, site, "left", owner=owner),
+                    identity_term(right, site, "right", owner=owner),
+                ],
             )
         )
     )

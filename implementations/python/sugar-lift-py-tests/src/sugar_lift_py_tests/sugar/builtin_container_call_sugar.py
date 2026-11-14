@@ -748,16 +748,25 @@ def _replace_path(value, steps, post, check_shared):
     member there must be the same kind of container ``post`` is. With
     ``check_shared``, no other member along the path may present a decided
     container of that kind (it could be the very object the call changed, and
-    would show its old contents)."""
+    would show its old contents).
+
+    A ``list``/``dict`` along the path whose contents are not current
+    (``object_identity.contents_current``) has no position to find: its
+    key's place and its index's bound are not read from contents it may no
+    longer hold.  None, so the path's root after the call is the opaque
+    post-state the call leaves (``_unknown_after``)."""
     from dataclasses import replace
 
     from sugar_lift_py_tests.floor import builtin_container_method as law
     from sugar_lift_py_tests.floor.dict_value import DictValue
     from sugar_lift_py_tests.floor.list_value import ListValue
     from sugar_lift_py_tests.floor.object_field import ObjectField
+    from sugar_lift_py_tests.floor.object_identity import contents_stale
     from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
+    if contents_stale(value):
+        return None
     (kind, key), rest = steps[0], steps[1:]
     target = law.container_kind(post)
 

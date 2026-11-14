@@ -616,7 +616,7 @@ def _project_method_call(receiver, name, keyword_names, *operands_site_and_ctx):
     positional = tuple(operands[:split])
     kw_values = tuple(zip(names, operands[split:]))
     return dispatch_method_call(
-        name.value, arrived(receiver), positional, kw_values, site, ctx
+        name.value, arrived(receiver, site), positional, kw_values, site, ctx
     )
 
 

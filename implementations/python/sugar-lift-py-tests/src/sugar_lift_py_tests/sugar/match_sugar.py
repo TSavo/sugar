@@ -329,21 +329,66 @@ def _match_sequence(spec, value, site, ctx):
     ):
         return _outcome(False)
     return _projected(value.length(site)).sequence(
-        lambda length: _sequence_of_length(
-            spec, value, _ground_length(length, site), site, ctx
-        )
+        lambda length: _sequence_of_length(spec, value, length, site, ctx)
     )
 
 
-def _ground_length(length, site) -> int:
+def _sequence_of_length(spec, value, length, site, ctx):
+    """The pattern over the subject's ``length``: a ground count decides
+    it; any other length is the ``call:len`` coordinate (a list whose
+    contents are not current, ``object_identity.contents_current``), split
+    on like any undecided length -- the pattern's length test is the split's
+    formula (``_decide``), and each arm runs under its guard."""
     from sugar_lift_py_tests.floor import TermValue
 
     if type(length) is TermValue and type(length.value) is int:
-        return length.value
-    _undecided(site, f"sequence length {type(length).__name__}")
+        return _sequence_of_ground_length(spec, value, length.value, site, ctx)
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+    if not (type(length) is CallSiteValue and length.target_name == "len"):
+        _undecided(site, f"sequence length {type(length).__name__}")
+    from sugar_lift_py_tests.ir import eq, gte
+
+    owner = "MatchSugar.pattern"
+    fixed = len(spec.before) + len(spec.after)
+    test = gte if spec.has_star else eq
+    formula = test(
+        length.to_term(owner=owner), TermValue(fixed).to_term(owner=owner)
+    )
+    return _then_match(
+        _decide(formula, site),
+        lambda: _sequence_of_undecided_length(spec, value, site, ctx),
+    )
 
 
-def _sequence_of_length(spec, value, length, site, ctx):
+def _sequence_of_undecided_length(spec, value, site, ctx):
+    """The items of a subject of a length the pattern takes but the floor
+    does not count: each before the star at its index, each after it at
+    its index from the end, and the star's capture the slice between."""
+    after = len(spec.after)
+    positions = (
+        *((index, sub) for index, sub in enumerate(spec.before)),
+        *((index - after, sub) for index, sub in enumerate(spec.after)),
+    )
+    matched = _match_items(value, positions, site, ctx)
+    if not spec.has_star or spec.star_key is None:
+        return matched
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.floor.slice_value import SliceValue
+
+    between = SliceValue(
+        TermValue(len(spec.before)), TermValue(-after) if after else None, None
+    )
+    return _then_match(
+        matched,
+        lambda: _each(
+            _read(value, between, site, ctx),
+            lambda items: _outcome(True, ((spec.star_key, items),)),
+        ),
+    )
+
+
+def _sequence_of_ground_length(spec, value, length, site, ctx):
     fixed = len(spec.before) + len(spec.after)
     if (length < fixed) if spec.has_star else (length != fixed):
         return _outcome(False)

@@ -686,21 +686,178 @@ def test_a_mapping_patterns_rest_of_a_stale_dict_is_not_current():
         assert contents_current(rest) is current
 
 
-def test_a_sequence_pattern_over_a_stale_list_never_takes_its_length():
+def test_a_sequence_pattern_over_a_stale_list_splits_on_its_length():
+    from sugar_lift_py_tests.outcome import Completed
     from sugar_lift_py_tests.sugar.match_sugar import (
-        CapturePatternSpec,
         SequencePatternSpec,
         match_pattern,
     )
-    from sugar_source_tree.panic import SugarNotWritten
 
     _made, stale = _made_and_arrived()
-    wildcard = CapturePatternSpec(None, None)
-    spec = SequencePatternSpec(before=(wildcard, wildcard))
-    # Its length is the ``call:len`` coordinate: the pattern test is refused
-    # by name, never matched against the two members it arrived with.
+    # Its length is the ``call:len`` coordinate: the pattern splits on it,
+    # matched under ``len == 0`` and not under its complement -- never
+    # decided from the two members it arrived with.
+    outcome = match_pattern(SequencePatternSpec(before=()), stale, "match-site", None)
+    faces = [exit_ for exit_ in outcome.exits if isinstance(exit_, Completed)]
+    assert sorted(face.value.matched for face in faces) == [False, True]
+    for face in faces:
+        names = _term_names(face.guard)
+        assert any("len" in str(name) for name in names)
+        assert "python:object_read" in names
+        assert "array" not in names
+
+
+@pytest.mark.parametrize("pattern", ["[a, b]", "[a, *rest]", "[*rest, b]"])
+def test_a_helper_matches_the_list_it_arrived_with_on_both_lengths(
+    tmp_path, pattern
+):
+    # ``xs`` reaches ``g`` by binding: whether it has the pattern's length is
+    # not read from the contents the caller built, so both cases stand.
+    source = (
+        "def g(xs):\n"
+        + "    match xs:\n"
+        + f"        case {pattern}:\n"
+        + "            return 1\n"
+        + "        case _:\n"
+        + "            return 0\n"
+        + "def f():\n"
+        + "    return g([1, 2])\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert TermValue(1) in returns
+    assert TermValue(0) in returns
+
+
+# The residue of #8129: an undecided read's term names a stale container by
+# its identity, a ``match`` sequence pattern splits on a stale list's
+# ``call:len``, and a path store through a stale root is the opaque
+# post-state.
+
+
+def _term_names(term, depth=0):
+    """Every constructor and atom name in ``term``, at any depth."""
+    names = {getattr(term, "name", None)}
+    if depth > 64:
+        return names
+    children = (
+        *(getattr(term, "args", ()) or ()),
+        *(getattr(term, "operands", ()) or ()),
+    )
+    body = getattr(term, "body", None)
+    for child in (*children, *(() if body is None else (body,))):
+        names |= _term_names(child, depth + 1)
+    return names
+
+
+def _object_reads(term, depth=0):
+    found = []
+    if getattr(term, "name", None) == "python:object_read":
+        found.append(term)
+    if depth > 64:
+        return found
+    for arg in getattr(term, "args", ()) or ():
+        found.extend(_object_reads(arg, depth + 1))
+    return found
+
+
+def test_an_undecided_reads_term_never_carries_stale_contents():
+    from sugar_lift_py_tests.floor.object_identity import identity_term
+
+    made, stale = _made_and_arrived()
+    terms = (
+        stale.length("len-site").completed_value().term,
+        stale.truth("truth-site").completed_value().formula,
+        _completed_values(stale.subscript(TermValue(0), "sub-site"))[0].term,
+        _completed_values(stale.equals(TermValue(3), "eq-site", None))[0].formula,
+        _completed_values(stale.contains(TermValue(1), "in-site"))[0].formula,
+    )
+    for term in terms:
+        names = _term_names(term)
+        # The object, never the ``array(1, 2)`` it arrived as.
+        assert "python:object_read" in names
+        assert "array" not in names
+    # A current list is its contents: its term is unchanged.
+    assert identity_term(made, "site", "receiver", owner="t") == made.to_term(
+        owner="t"
+    )
+    # Inside a tuple, only the stale member is named by its object.
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    held = identity_term(TupleValue((stale, made)), "site", "left", owner="t")
+    assert len(_object_reads(held)) == 1
+    assert "array" in _term_names(held)
+
+
+def test_a_stale_object_is_named_per_read_and_per_arrival():
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.floor.object_identity import arrived, identity_term
+
+    _made, stale = _made_and_arrived()
+    first = replace(stale, arrival="read-a")
+    second = replace(stale, arrival="read-b")
+    # Two reads of one object are two unknowns: it may change between them.
+    assert identity_term(first, "len-1", "receiver", owner="t") != identity_term(
+        first, "len-2", "receiver", owner="t"
+    )
+    # Two objects one read meets (a ``match``'s patterns all read at the
+    # match) are told apart by the binding read each arrived through, never
+    # by their contents -- equal here.
+    assert identity_term(first, "site", "receiver", owner="t") != identity_term(
+        second, "site", "receiver", owner="t"
+    )
+    # A container that already arrived keeps its arrival: it is that object.
+    assert arrived(first).arrival == "read-a"
+
+
+def test_a_siteless_read_of_a_stale_object_refuses_by_name():
+    from sugar_lift_py_tests.floor.object_identity import identity_term
+    from sugar_source_tree.panic import SugarNotWritten
+
+    made, stale = _made_and_arrived()
+    assert identity_term(made, None, "receiver", owner="t") == made.to_term(owner="t")
     with pytest.raises(SugarNotWritten):
-        match_pattern(spec, stale, "match-site", None)
+        identity_term(stale, None, "receiver", owner="t")
+
+
+def test_a_path_store_through_a_stale_root_finds_no_position():
+    from sugar_lift_py_tests.floor import DictValue
+    from sugar_lift_py_tests.floor.object_identity import arrived
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _replace_path
+
+    inner = ListValue((TermValue(1),), allocation="inner")
+    root = DictValue(((StringValue("k"), inner),), allocation="root")
+    post = ListValue((TermValue(1), TermValue(2)), allocation="inner")
+    steps = (("item", "k"),)
+    # A current root: the member at the path is replaced by the post-state.
+    updated = _replace_path(root, steps, post, False)
+    assert updated == DictValue(((StringValue("k"), post),), allocation="root")
+    assert updated.allocation == "root"
+    # A stale root: the key's place is not read from contents it may no
+    # longer hold -- the root after the call is the opaque post-state.
+    assert _replace_path(arrived(root), steps, post, False) is None
+    # Nor a stale container further down the path.
+    nested = DictValue(((StringValue("r"), arrived(root)),), allocation="outer")
+    assert _replace_path(nested, (("item", "r"), ("item", "k")), post, False) is None
+
+
+def test_a_helper_storing_through_the_dict_it_arrived_with_never_reads_it(
+    tmp_path,
+):
+    # ``d`` reaches ``g`` by binding: ``d["k"].append(2)`` locates nothing in
+    # the contents the caller built, so ``d`` after it is not those contents
+    # with the member replaced.
+    source = (
+        "def g(d):\n"
+        + '    d["k"].append(2)\n'
+        + "    return d\n"
+        + "def f():\n"
+        + '    return g({"k": [1]})\n'
+    )
+    from sugar_lift_py_tests.floor import DictValue
+
+    returns, _halts = _returns(tmp_path, source)
+    assert not any(type(value) is DictValue for value in returns)
 
 
 def test_a_generators_walrus_binding_is_not_current_when_it_resumes():

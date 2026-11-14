@@ -94,6 +94,97 @@ def holds_stale(value, depth=0) -> bool:
     return False
 
 
+def identity_term(value, site, role: str, *, owner: str):
+    """The term an undecided read at ``site`` names its operand ``value`` by.
+
+    ``value``'s own term when no container in it is stale (``holds_stale``):
+    its contents are its object's contents now.  Otherwise each stale
+    container in it, at any depth, is named by its identity, never by the
+    contents it arrived with -- a proof states no fact about contents the
+    program may no longer hold:
+    ``python:object_read(<read occurrence>, <role and path>, <arrival>)``,
+    the object the binding read ``arrival`` (``arrived``) handed over, as
+    this read finds it.  The read's occurrence keys it because the object
+    may change between two reads (``len(xs)`` twice is two unknowns); the
+    arrival tells two objects one read meets apart (a ``match``'s patterns
+    all read at the match).  The one place every undecided form (subscript,
+    iteration, ``next``, truth, attribute, membership, length, equality, a
+    binary or set operation) mints an operand's term.
+
+    A stale operand of a read with no site is the lifter's own gap: it
+    cannot key the object, so it refuses by name."""
+    if not holds_stale(value):
+        return value.to_term(owner=owner)
+    if site is None:
+        from sugar_source_tree.panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            blame=None,
+            owner=owner,
+            observed=(
+                f"undecided read of a stale {type(value).__name__} "
+                "with no source site"
+            ),
+            requested="the read's source site, to name the object it reads",
+            fix="carry the read's fragment to the floor that mints its term",
+        )
+    from sugar_lift_py_tests.occurrence import occurrence_key
+
+    return _named(value, occurrence_key(site), role).to_term(owner=owner)
+
+
+def _named(value, key: str, path: str, depth=0):
+    """``value`` with each stale container in it replaced by its object's
+    term (``identity_term``)."""
+    from dataclasses import replace
+
+    from .dict_value import DictValue
+    from .guarded_value import GuardedValue
+    from .list_value import ListValue
+    from .set_value import SetValue
+    from .symbolic_value import SymbolicValue
+    from .tuple_value import TupleValue
+
+    if contents_stale(value):
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return SymbolicValue(
+            ctor(
+                "python:object_read",
+                (str_const(key), str_const(path), str_const(value.arrival or "")),
+            )
+        )
+    if depth > 32:
+        return value
+    kind = type(value)
+    if kind in (ListValue, SetValue, TupleValue):
+        return replace(
+            value,
+            elements=tuple(
+                _named(element, key, f"{path}/{position}", depth + 1)
+                for position, element in enumerate(value.elements)
+            ),
+        )
+    if kind is DictValue:
+        return replace(
+            value,
+            entries=tuple(
+                (
+                    _named(entry, key, f"{path}/{position}k", depth + 1),
+                    _named(item, key, f"{path}/{position}", depth + 1),
+                )
+                for position, (entry, item) in enumerate(value.entries)
+            ),
+        )
+    if kind is GuardedValue:
+        return replace(
+            value,
+            when_true=_named(value.when_true, key, path, depth + 1),
+            when_false=_named(value.when_false, key, path, depth + 1),
+        )
+    return value
+
+
 def made_if_current(site, *operands) -> str | None:
     """The ``allocation`` of a new object an operation at ``site`` made from
     ``operands``' contents (``xs + ys``, ``xs[1:]``, ``s | t``): ``made_at``
@@ -104,12 +195,37 @@ def made_if_current(site, *operands) -> str | None:
     return made_at(site)
 
 
-def arrived(value):
-    """``value`` as it reaches a frame by binding: every builtin container in
-    it, at any depth, without its ``allocation``.
+def arrived(value, site=None):
+    """``value`` as it reaches a frame by binding at the read ``site``: every
+    builtin container in it, at any depth, without its ``allocation``.
 
     Its contents are what the binding held, not the object's contents now,
-    and which construction made it is not this frame's to say."""
+    and which construction made it is not this frame's to say.  What names
+    the object instead is the binding read it arrived through: a container
+    with no ``arrival`` yet takes the read's occurrence
+    (``occurrence.occurrence_key`` of ``site``), a member the path to it
+    inside (``<read>/<position>``).  A container that already has one keeps
+    it: it is still that object.  Only ``identity_term`` reads it.  A read
+    with no site (or none with a source coordinate) names none."""
+    memo = []
+
+    def through():
+        if not memo:
+            memo.append(_arrival_at(site))
+        return memo[0]
+
+    return _arrived(value, through)
+
+
+def _arrival_at(site) -> str | None:
+    from sugar_lift_py_tests.occurrence import named_site_cid, occurrence_key
+
+    if named_site_cid(site) is None:
+        return None
+    return occurrence_key(site)
+
+
+def _arrived(value, through):
     from dataclasses import replace
 
     from .dict_value import DictValue
@@ -118,39 +234,57 @@ def arrived(value):
     from .set_value import SetValue
     from .tuple_value import TupleValue
 
+    def inner(position):
+        def path():
+            outer = through()
+            return None if outer is None else f"{outer}/{position}"
+
+        return path
+
     kind = type(value)
     if kind in (ListValue, SetValue, TupleValue):
-        elements = tuple(arrived(element) for element in value.elements)
+        elements = tuple(
+            _arrived(element, inner(position))
+            for position, element in enumerate(value.elements)
+        )
         unchanged = all(a is b for a, b in zip(elements, value.elements))
-        if unchanged and getattr(value, "allocation", None) is None:
-            return value
         if kind is TupleValue:
-            return replace(value, elements=elements)
-        return replace(value, elements=elements, allocation=None)
+            return value if unchanged else replace(value, elements=elements)
+        stamp = value.arrival if value.arrival is not None else through()
+        if unchanged and value.allocation is None and stamp == value.arrival:
+            return value
+        return replace(value, elements=elements, allocation=None, arrival=stamp)
     if kind is DictValue:
-        entries = tuple((arrived(key), arrived(item)) for key, item in value.entries)
+        entries = tuple(
+            (
+                _arrived(key, inner(f"{position}k")),
+                _arrived(item, inner(position)),
+            )
+            for position, (key, item) in enumerate(value.entries)
+        )
         unchanged = all(
             a is b
             for pair, original in zip(entries, value.entries)
             for a, b in zip(pair, original)
         )
-        if unchanged and value.allocation is None:
+        stamp = value.arrival if value.arrival is not None else through()
+        if unchanged and value.allocation is None and stamp == value.arrival:
             return value
-        return replace(value, entries=entries, allocation=None)
+        return replace(value, entries=entries, allocation=None, arrival=stamp)
     if kind is GuardedValue:
-        when_true = arrived(value.when_true)
-        when_false = arrived(value.when_false)
+        when_true = _arrived(value.when_true, through)
+        when_false = _arrived(value.when_false, through)
         if when_true is value.when_true and when_false is value.when_false:
             return value
         return replace(value, when_true=when_true, when_false=when_false)
     return value
 
 
-def arrived_outcome(outcome):
-    """``outcome`` with each completed value ``arrived``."""
+def arrived_outcome(outcome, site=None):
+    """``outcome`` with each completed value ``arrived`` at ``site``."""
     from sugar_lift_py_tests.outcome import ExitSet
 
-    return outcome.and_then(lambda value: ExitSet.completed(arrived(value)))
+    return outcome.and_then(lambda value: ExitSet.completed(arrived(value, site)))
 
 
 def mutable_object_identity(left, right, site):

@@ -82,7 +82,7 @@ class NameSugar(ConstructedTermSugar):
 
                 # A formal's actual, a module global, a generator's write:
                 # the value reached this read by binding.
-                return ExitSet.completed(arrived(binding.value))
+                return ExitSet.completed(arrived(binding.value, self.site))
             # A builtin is read only through the binding at this read
             # (``_builtin_floor_value``): a name a star import, a module or
             # function rebinding, or a parameter may bind is not the builtin.

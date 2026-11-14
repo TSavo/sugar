@@ -24,6 +24,15 @@ class DictValue(GuardStableValue):
         compare=False,
         metadata={"testimony": "provenance"},
     )
+    # The binding read a value with no ``allocation`` arrived through: what
+    # an undecided read names the object by (``object_identity.arrived``,
+    # ``identity_term``).
+    arrival: str | None = dataclass_field(
+        default=None,
+        kw_only=True,
+        compare=False,
+        metadata={"testimony": "provenance"},
+    )
 
     def mapping_entries(self) -> tuple:
         return self.entries

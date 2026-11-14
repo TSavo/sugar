@@ -26,6 +26,15 @@ class ListValue(GuardStableValue):
         compare=False,
         metadata={"testimony": "provenance"},
     )
+    # The binding read a value with no ``allocation`` arrived through: what
+    # an undecided read names the object by (``object_identity.arrived``,
+    # ``identity_term``).
+    arrival: str | None = dataclass_field(
+        default=None,
+        kw_only=True,
+        compare=False,
+        metadata={"testimony": "provenance"},
+    )
 
     def denotes_value(self) -> bool:
         """This floor value denotes a ``list``."""
@@ -220,7 +229,9 @@ class ListValue(GuardStableValue):
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.outcome import ExitSet
 
-            self_term = self.to_term(owner=str(site))
+            from .object_identity import identity_term
+
+            self_term = identity_term(self, site, "left", owner=str(site))
             return ExitSet.completed(
                 ComprehensionValue(
                     ctor(
@@ -236,7 +247,11 @@ class ListValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if type(other) in (CallSiteValue, SymbolicValue):
-            return SymbolicValue(self.to_term(owner=str(site))).add(other, site, ctx)
+            from .object_identity import identity_term
+
+            return SymbolicValue(
+                identity_term(self, site, "left", owner=str(site))
+            ).add(other, site, ctx)
         if other.denotes_value() and other.runtime_type_is_decided():
             # ``list + <decided non-list>`` is Python's TypeError.  Undecided
             # rights stay on the shared third-value law via super().

@@ -188,6 +188,7 @@ def membership(container, item, members, *, kind, member_role, container_role, h
     if all(decision is False for decision in decisions):
         return _bool_result(False, site)
     if any(decision is None for decision in decisions):
+        from sugar_lift_py_tests.floor.object_identity import identity_term
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
         from sugar_lift_py_tests.outcome import ExitSet
@@ -197,9 +198,17 @@ def membership(container, item, members, *, kind, member_role, container_role, h
                 atomic(
                     f"python.{kind}.contains",
                     [
-                        item.to_term(owner=f"python.{kind}.contains {member_role}"),
-                        container.to_term(
-                            owner=f"python.{kind}.contains {container_role}"
+                        identity_term(
+                            item,
+                            site,
+                            "item",
+                            owner=f"python.{kind}.contains {member_role}",
+                        ),
+                        identity_term(
+                            container,
+                            site,
+                            "container",
+                            owner=f"python.{kind}.contains {container_role}",
                         ),
                     ],
                 ),

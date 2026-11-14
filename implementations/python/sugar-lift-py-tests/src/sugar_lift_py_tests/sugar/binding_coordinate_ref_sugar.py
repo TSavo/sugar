@@ -29,7 +29,7 @@ class BindingCoordinateRefSugar(ConstructedTermSugar):
                 from sugar_lift_py_tests.outcome import ExitSet
 
                 # The caller's actual reached this frame by binding.
-                return ExitSet.completed(arrived(value))
+                return ExitSet.completed(arrived(value, self.site))
         from sugar_source_tree.panic import SugarNotWritten
 
         raise SugarNotWritten(

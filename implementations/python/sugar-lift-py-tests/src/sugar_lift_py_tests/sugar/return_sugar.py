@@ -54,6 +54,6 @@ class ReturnSugar(Sugar):
         # made is not current in the caller's (``object_identity``).
         return self.value.desugar(ctx).and_then(
             lambda value: ExitSet.completed(
-                ReturnValue(arrived(peel_walrus_binds(value)[1]))
+                ReturnValue(arrived(peel_walrus_binds(value)[1], self.site))
             )
         )
