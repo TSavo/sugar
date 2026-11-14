@@ -474,6 +474,45 @@ def test_a_nested_nonlocal_rebind_is_never_the_old_value() -> None:
     assert returned != TermValue(0)
 
 
+def test_a_nested_nonlocal_increment_is_read_by_the_enclosing_function() -> None:
+    # ``bump`` reads and writes the enclosing ``n`` through its cell: the call
+    # binds the cell's value at the call (``Call._closure_cells``), the body
+    # writes it, and the enclosing function reads the write after the call
+    # (``source_helper_actual_states``): ``n + 1``, never the ``4`` bound
+    # before and never a refusal.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    n = 4\n"
+            "    def bump():\n"
+            "        nonlocal n\n"
+            "        n += 1\n"
+            "    bump()\n"
+            "    return n\n"
+        )
+    )
+    assert _returned_value(outcome) == TermValue(5)
+
+
+def test_an_operator_on_a_source_object_then_a_module_list_is_not_stale() -> None:
+    # ``O + 1`` runs ``C.__add__``, which appends to the module's list: an
+    # operator whose operand's value is a source object may run code, so it
+    # reaches every module object the caller reads (``_ambient_targets``),
+    # as a call does.  ``L`` is never the ``[]`` the module bound.
+    returned = _read_after(
+        "def f():\n"
+        "    O + 1\n"
+        "    return L\n"
+        "L = []\n"
+        "class C:\n"
+        "    def __add__(self, other):\n"
+        "        L.append(other)\n"
+        "        return self\n"
+        "O = C()\n"
+    )
+    assert returned != ListValue(())
+
+
 def test_a_callable_handed_out_reaches_the_cell() -> None:
     # ``inner`` is handed to code the caller does not follow (a builtin that
     # calls it): the cell it appends to is exposed to that call, never read
