@@ -67,7 +67,9 @@ class LiveForRuntimeV1:
     # Per carried name, in ``carried_names`` order: ``(header, writes,
     # else_writes)``.  ``header`` is the loop header's evaluation key the body
     # and the ``else`` suite read the name through
-    # (``nodes._loop_header_evaluation_key``), None for a loop target;
+    # (``nodes._loop_header_evaluation_key``); for a loop target it is the
+    # target's per-item key (``nodes._loop_target_evaluation_key``), which the
+    # recurrence binds to the item's projection after the header;
     # ``writes`` (``else_writes``) are the keys every write of the name in the
     # body (in the ``else`` suite) binds its value under (``_carried_writes``).
     # All are construct-time keys; the recurrence qualifies them where it runs
@@ -75,6 +77,11 @@ class LiveForRuntimeV1:
     carried_evaluations: tuple[
         tuple[str | None, tuple[str, ...], tuple[str, ...]], ...
     ] = ()
+    # Per target leaf, in ``target_pattern.names`` order: the key the
+    # recurrence binds the item's projection of that leaf under
+    # (``nodes._loop_target_evaluation_key``).  The body and the ``else``
+    # read the target through it; the name is never written.
+    target_evaluations: tuple[str, ...] = ()
 
 
 def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
@@ -85,9 +92,16 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
     evaluation, every assignment (``y = e``, ``y: T = e``, an unpack) each
     target's projection of its evaluation, every assignment (an ``if``'s phi
     among them) its carried write of the name (``carried_write_key``), and a
-    nested live ``for`` the
-    binding coordinate it publishes the name under.  The recurrence reads the
-    latest of these and the header, so what an item hands on is the write
+    nested live ``for`` the binding coordinate it publishes the name under.
+    A nested ``for`` whose target is a name this loop carries (``for x in
+    xs: for x in ys``) writes it on every item: a live one carries that
+    target itself (``construct_live_loop_recurrence``) and publishes its
+    last value under its coordinate, read here like any other name it
+    publishes; an unrolled one opens each iteration with its keyed store
+    ``x = <element>`` (``For._iteration_unpacks``), an assignment read here
+    by its projection, so the last iteration's is the latest.  The
+    recurrence reads the latest of these and the header, so what an item
+    hands on is the write
     that ran last on the path it took: a ``continue`` or ``break`` mid-body,
     or a write in one arm of an ``if``, hands on what it wrote.
 
@@ -493,10 +507,21 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
 
     if not isinstance(loop, (For, While)) or loop.owned_loop_target is None:
         raise BindingStateWireGap("live loop producer requires an owned For/While")
+    # A ``for`` rebinds its target on every item: a target bound before the
+    # loop is carried, so the loop publishes the value it leaves with (the
+    # last item's, or the pre-loop value when there was none), as it does for
+    # every name its body writes.
+    target_names = (
+        frozenset(loop.unit.require_target_pattern(loop, loop.target).names)
+        if isinstance(loop, For)
+        else frozenset()
+    )
     carried_names = tuple(
         sorted(
             name
-            for name in For._stmts_bound_names((*loop.body, *loop.orelse))
+            for name in (
+                For._stmts_bound_names((*loop.body, *loop.orelse)) | target_names
+            )
             if isinstance(scope.get(name), BindingEntryV1)
         )
     )
@@ -897,17 +922,19 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     records = _conserve_unique_records(records)
     construction = decode_loop_construction_v1({"root": root, "records": records})
     if isinstance(loop, For):
-        from .nodes import _loop_header_evaluation_key
+        from .nodes import _loop_header_evaluation_key, _loop_target_evaluation_key
 
         pattern = loop.unit.require_target_pattern(loop, loop.target)
-        target_names = set(pattern.names)
         writes = _carried_writes(loop.body, carried_names)
         else_writes = _carried_writes(loop.orelse, carried_names)
 
         def header(name):
-            # The loop target is bound per item by the recurrence itself.
+            # A carried target's header is its per-item key: the recurrence
+            # binds it to what the previous item handed on, then to this
+            # item's projection, and after the last item to what that item
+            # handed on.
             if name in target_names:
-                return None
+                return _loop_target_evaluation_key(loop, name, scope)
             return _loop_header_evaluation_key(loop, name, scope)
 
         carried_evaluations = tuple(
@@ -926,6 +953,10 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                 tuple(statement.sugar() for statement in loop.body),
                 tuple(statement.sugar() for statement in loop.orelse),
                 carried_evaluations,
+                tuple(
+                    _loop_target_evaluation_key(loop, name, scope)
+                    for name in pattern.names
+                ),
             ),
         )
 

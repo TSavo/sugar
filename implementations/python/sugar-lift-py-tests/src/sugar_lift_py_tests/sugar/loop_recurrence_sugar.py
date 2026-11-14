@@ -304,7 +304,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
-        from sugar_lift_py_tests.temporal import bind_temporal
 
         outcome = NextOperation(owner="LoopRecurrenceSugar", blame=self.site).submit(
             iterator, ctx
@@ -317,7 +316,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 and _is_authenticated_stop_iteration(effect)
             ):
                 finished = self._finish_iterator(
-                    runtime, ctx, entries=entries, carried=carried
+                    runtime, ctx, entries=entries, carried=carried, items=index
                 )
                 if isinstance(finished, ExitSet):
                     # Exhaustion is this loop's own control: the loop consumes
@@ -345,34 +344,23 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             return ExitSet(
                 tuple(replace(face, state=ctx) for face in projected.halts())
             ).normalize()
-        target_bindings = projected.completed_value()
-        if target_bindings is None or projected.owed_items():
+        projections = projected.completed_value()
+        if projections is None or projected.owed_items():
             return projected
-        iteration_ctx = ctx
-        for name, coordinate_cid, value in target_bindings:
-            iteration_ctx = bind_temporal(
-                iteration_ctx,
-                name,
-                value,
-                owner="LoopRecurrenceSugar",
-                blame=str(self.site),
-            )
-            iteration_ctx = bind_temporal(
-                iteration_ctx,
-                coordinate_cid,
-                value,
-                owner="LoopRecurrenceSugar.target-coordinate",
-                blame=str(self.site),
-            )
         from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
 
         # Each iteration is its own evaluation of the body's sites: a call in
         # iteration 2 is never claimed to complete exactly when iteration 1's
         # did (the unrolled loop's law, sugar/loop iteration segments).  Its
         # statement evaluations are its own keys too (``evaluation_here``),
-        # and its reads of a carried name read this item's header.
+        # its reads of a carried name read this item's header, and its reads
+        # of the target read this item's projection, bound under the target's
+        # key after the header (a carried target's header is that key).
         with entered(loop_iteration_segment(self.target_cid, index)):
-            iteration_ctx = self._enter_header(runtime, iteration_ctx, carried)
+            iteration_ctx = self._enter_header(runtime, ctx, carried)
+            iteration_ctx, target_bindings = self._enter_target(
+                runtime, iteration_ctx, projections
+            )
             body = reduce_block_to_exitset(runtime.body_sugars, iteration_ctx)
         if not isinstance(body, ExitSet):
             return body
@@ -523,6 +511,79 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
         return ctx
 
+    def _target_keys(self, runtime):
+        """Each target leaf's name, to the key the recurrence binds its
+        projection under (``LiveForRuntimeV1.target_evaluations``)."""
+        names = tuple(runtime.target_pattern.names)
+        keys = tuple(getattr(runtime, "target_evaluations", ()))
+        if len(keys) != len(names):
+            raise TypeError("live for runtime omitted its target evaluation keys")
+        return dict(zip(names, keys, strict=True))
+
+    def _enter_target(self, runtime, ctx, projections):
+        """Bind this item's projection of each target leaf under the leaf's
+        key, qualified by the item (``evaluation_here``), and under the
+        leaf's binding coordinate.  The name is never written: the body and
+        the ``else`` read the target through its key (``For.substitute``).
+
+        Returns the context and, per leaf, ``(key, coordinate, value)``: the
+        identity a loop-control halt's state must hold
+        (``_require_loop_control_state``)."""
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+        from sugar_lift_py_tests.temporal import bind_temporal
+
+        keys = self._target_keys(runtime)
+        bindings = []
+        for name, coordinate_cid, value in projections:
+            key = evaluation_here(keys[name])
+            ctx = bind_temporal(
+                ctx,
+                key,
+                value,
+                owner="LoopRecurrenceSugar.target",
+                blame=str(self.site),
+            )
+            ctx = bind_temporal(
+                ctx,
+                coordinate_cid,
+                value,
+                owner="LoopRecurrenceSugar.target-coordinate",
+                blame=str(self.site),
+            )
+            bindings.append((key, coordinate_cid, value))
+        return ctx, tuple(bindings)
+
+    def _leave_target(self, runtime, ctx, items):
+        """Bind, outside every item, each target leaf's key to the last
+        item's projection of it (item ``items - 1``): the value the ``else``
+        suite reads the target as.  A carried target's header is the same
+        key, and ``_enter_header`` binds it after this to what the last item
+        handed on.  With no item, nothing is bound: the target was never
+        assigned."""
+        from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+        from sugar_lift_py_tests.temporal import bind_temporal
+
+        temporal = getattr(ctx, "temporal", None)
+        if temporal is None or items < 1:
+            return ctx
+        keys = tuple(self._target_keys(runtime).values())
+        with entered(loop_iteration_segment(self.target_cid, items - 1)):
+            last = tuple(
+                temporal.value_if_bound(evaluation_here(key)) for key in keys
+            )
+        for key, value in zip(keys, last, strict=True):
+            if value is None:
+                continue
+            ctx = bind_temporal(
+                ctx,
+                evaluation_here(key),
+                value,
+                owner="LoopRecurrenceSugar.target-after-items",
+                blame=str(self.site),
+            )
+        return ctx
+
     def _latched(self, runtime, ctx, index):
         """The value of each carried name item ``index`` hands on: the latest
         of every write of it in the body (``x += e``, a walrus ``(x := e)``,
@@ -557,23 +618,20 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         it binds (the body's, or the ``else`` suite's:
         ``LiveForRuntimeV1.carried_evaluations``) and the header's, qualified
         by the reduction running now (``evaluation_here``).  A write never
-        binds the name: the latest write is the one that ran last on the path
-        taken, wherever it sits (an arm of an ``if``, before a ``continue``).
-        A loop target has no header: the recurrence binds it per item, under
-        its name."""
+        binds the name, and the name is never read: the latest write is the
+        one that ran last on the path taken, wherever it sits (an arm of an
+        ``if``, before a ``continue``).  A loop target's header is its
+        per-item key, bound to the item's projection after the header
+        (``_enter_target``)."""
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
 
         values = []
-        for name, (header, writes, else_writes) in zip(
-            runtime.carried_names,
-            self._carried_evaluations(runtime),
-            strict=True,
-        ):
+        for header, writes, else_writes in self._carried_evaluations(runtime):
             keys = tuple(
                 evaluation_here(key) for key in (else_writes if else_suite else writes)
             )
-            start = name if header is None else evaluation_here(header)
-            binding = temporal.latest(*keys, start)
+            starts = () if header is None else (evaluation_here(header),)
+            binding = temporal.latest(*keys, *starts)
             values.append(None if binding is None else binding.value)
         return tuple(values)
 
@@ -640,16 +698,18 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
         A loop-control halt carries the context it received at its source
         occurrence.  The current target Floor was bound into that context by
-        this recurrence, so object identity authenticates the context without
-        rebuilding a reduced block or accepting an ambient/foreign scope.
+        this recurrence, under the target's per-item key and its binding
+        coordinate (``_enter_target``), so object identity authenticates the
+        context without rebuilding a reduced block or accepting an
+        ambient/foreign scope.
         """
         from sugar_lift_py_tests.context.reduce_context import ReduceContext
 
         if not isinstance(state, ReduceContext):
             raise TypeError("loop control omitted its exact ReduceContext state")
-        for target_name, coordinate_cid, target_value in target_bindings:
+        for target_key, coordinate_cid, target_value in target_bindings:
             if (
-                state.temporal.value_if_bound(target_name) is not target_value
+                state.temporal.value_if_bound(target_key) is not target_value
                 or state.temporal.value_if_bound(coordinate_cid) is not target_value
             ):
                 raise TypeError(
@@ -657,7 +717,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 )
         return state
 
-    def _finish_iterator(self, runtime, ctx, *, entries, carried=None):
+    def _finish_iterator(self, runtime, ctx, *, entries, carried=None, items=0):
+        """The loop's outcome after its ``items`` items were exhausted."""
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
@@ -671,10 +732,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
         # The else runs once, after every item.  It reads each carried name
         # through the header, bound here, outside every item, to what the last
-        # item handed on (``carried``); the loop leaves with the latest of the
+        # item handed on (``carried``), and the target through its key, bound
+        # here to the last item's projection (``_leave_target``; a carried
+        # target's is its header); the loop leaves with the latest of the
         # else's writes of each name and that header (``_after_else``).
         otherwise = reduce_block_to_exitset(
-            runtime.else_sugars, self._enter_header(runtime, ctx, carried)
+            runtime.else_sugars,
+            self._enter_header(
+                runtime, self._leave_target(runtime, ctx, items), carried
+            ),
         )
         if not isinstance(otherwise, ExitSet) or len(otherwise.exits) != 1:
             return otherwise
@@ -706,7 +772,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         """Publish each carried name's value as the loop leaves: ``carried``,
         what the leaving item (``_latched``) or the ``else`` suite
         (``_after_else``) left it with; without it (an item entered directly,
-        with no values handed to it) the name."""
+        with no values handed to it) the name.  The value is published under
+        the name's binding coordinate only: every read after the loop is a
+        ``LoopBindingRef`` to it (``project_loop_post_binding``), and the
+        name is never written."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 
@@ -724,7 +793,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
             if value is None:
                 raise TypeError("loop recurrence omitted a carried binding")
-            projected.append(ScopeRebind(name, value))
             projected.append(ScopeRebind(coordinate_cid, value))
         return ExitSet.completed(
             BlockValue(

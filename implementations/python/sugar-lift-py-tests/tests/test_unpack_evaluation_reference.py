@@ -207,14 +207,17 @@ def _read(name: str) -> EvaluationRefSugar:
     return EvaluationRefSugar(evaluation=key, name=name, site=None)
 
 
-def test_a_completed_unpack_binds_each_projection() -> None:
+def test_a_completed_unpack_binds_each_projection_and_no_name() -> None:
     bindings = (
-        ("a", ONE),
-        ("b", TWO),
         (projection_key(KEY, "a"), ONE),
         (projection_key(KEY, "b"), TWO),
     )
     assert _value(_flat(KEY).desugar(None)) == ScopeRebinds(bindings)
+    ctx = _value(_flat(KEY).desugar(None)).extend_scope(
+        ReduceContext.root(owner="unpack-evaluation-no-name")
+    )
+    assert ctx.temporal.value_if_bound("a") is None
+    assert ctx.temporal.value_if_bound("b") is None
 
 
 def test_an_unsubstituted_unpack_binds_the_names_alone() -> None:
@@ -250,8 +253,8 @@ def test_a_name_leaf_beside_a_store_binds_its_projection() -> None:
     name = NameUnpackTarget("a", evaluation=KEY).apply_member(ONE, None)
     star = StarUnpackTarget("r", evaluation=KEY).apply_member(ONE, None)
     plain = NameUnpackTarget("a").apply_member(ONE, None)
-    assert _value(name) == ScopeRebinds((("a", ONE), (key_a, ONE)))
-    assert _value(star) == ScopeRebinds((("r", ONE), (key_r, ONE)))
+    assert _value(name) == ScopeRebinds(((key_a, ONE),))
+    assert _value(star) == ScopeRebinds(((key_r, ONE),))
     assert _value(plain) == ScopeRebind("a", ONE)
 
 
