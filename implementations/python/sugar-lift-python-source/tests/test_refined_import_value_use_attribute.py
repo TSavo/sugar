@@ -1,8 +1,8 @@
-"""A frame's resolved import value-use still reads as its import member (#7744).
+"""A frame's import value-use reads as its import member (#7744).
 
-Inside a dependency frame, receipt seating refines the authenticated value-use
-receipt at ``urllib.request.urlopen`` into the source object it resolves to
-(``ResolvedPythonObjectV1``).  ``pandas.io.common.urlopen`` is::
+Inside a dependency frame, the authenticated value-use receipt at
+``urllib.request.urlopen`` is the whole answer: no dependency source refines
+it (step 3).  ``pandas.io.common.urlopen`` is::
 
     def urlopen(*args, **kwargs):
         import urllib.request
@@ -59,27 +59,3 @@ def test_a_refined_member_reads_as_the_import_member(tmp_path):
     assert any("urllib.request.urlopen" in owner for owner in owners)
     # Never read as an attribute of an unknown or module value.
     assert not any(owner.startswith("UnknownAttribute") for owner in owners)
-
-
-def test_a_resolution_without_its_receipt_is_never_read(tmp_path, monkeypatch):
-    # The lying twin: the resolved object alone names a definition, not a
-    # value.  When the receipt it refined is not transported, the read refuses
-    # loudly instead of minting a member from the definition.
-    import pytest
-    from sugar_source_tree.nodes import SourceUnit
-
-    original = SourceUnit.seat_import_value_use_resolution
-
-    def seat_and_drop_receipt(self, span, resolved, *, source_cid):
-        original(self, span, resolved, source_cid=source_cid)
-        if type(resolved).__name__ != "ResolvedPythonObjectV1":
-            return
-        table = self.construction_context.source_import_value_receipts_by_site
-        for key in [k for k in table if tuple(k[2:]) == tuple(span)]:
-            del table[key]
-
-    monkeypatch.setattr(
-        SourceUnit, "seat_import_value_use_resolution", seat_and_drop_receipt
-    )
-    with pytest.raises(Exception, match="no transported receipt predecessor"):
-        _owners(tmp_path, "urlopen")

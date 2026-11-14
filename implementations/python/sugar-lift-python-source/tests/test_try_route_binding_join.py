@@ -171,7 +171,7 @@ def _lift(tmp_path: Path, source: str) -> _Lift:
 
 def _routes(lift, *handler_types):
     """The completed route and one route per handler, as guards."""
-    completes = lift.atom("python:source_call.completes", "dedent")
+    completes = lift.atom("python:unknown_callee_call.completes", "dedent")
     caught = [
         lift.atom("adt.is_python_type", "dedent", f"'{name}'") for name in handler_types
     ]

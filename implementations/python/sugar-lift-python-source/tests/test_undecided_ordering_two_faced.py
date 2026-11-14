@@ -128,8 +128,8 @@ def test_a_chain_evaluates_its_middle_once_and_short_circuits(tmp_path):
     returns, halts = _split(tmp_path, source)
     owners = _owners(halts)
     # The middle operand is called once; the right operand once.
-    assert owners.count("UnprojectedSourceCall:textwrap.dedent") == 1
-    assert owners.count("UnprojectedSourceCall:textwrap.indent") == 1
+    assert owners.count("UnknownCallee:textwrap.dedent") == 1
+    assert owners.count("UnknownCallee:textwrap.indent") == 1
     # Two comparisons, each two-faced.
     assert owners.count("UndecidedCompare:Lt") == 2
     # Two returns: the first comparison's falsy value, or the second's value.
@@ -142,7 +142,7 @@ def test_a_chain_evaluates_its_middle_once_and_short_circuits(tmp_path):
     (indent_halt_guard,) = [
         g
         for h, g in halts
-        if getattr(h, "producer_node_owner", None) == "UnprojectedSourceCall:textwrap.indent"
+        if getattr(h, "producer_node_owner", None) == "UnknownCallee:textwrap.indent"
     ]
     first_atom = str(first[0].formula)
     assert first_atom in str(indent_halt_guard)

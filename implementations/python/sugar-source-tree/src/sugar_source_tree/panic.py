@@ -168,10 +168,9 @@ class UnresolvedImportValueUseV1:
     ``_config.get_verbosity`` inside ``RaisesExc._check_match``).
 
     So the seater DEFERS the refusal instead of raising: it records this marker
-    at the exact use coordinate.  It is neither an ``AuthenticatedImportUseV1``
-    receipt nor a ``ResolvedPythonObjectV1`` — it can NEVER ride as an
-    authenticated value.  When the force-floor actually REACHES the use, the
-    value-use consumer raises the identical ``ImportValueUseResolutionGap`` at
+    at the exact use coordinate.  It is not an ``AuthenticatedImportUseV1``
+    receipt — it can NEVER ride as an authenticated value.  When the
+    force-floor actually REACHES the use, the value-use consumer raises the identical ``ImportValueUseResolutionGap`` at
     that coordinate (the same countable construction-panic row it was before,
     just minted at consume time).  A use the contract never reaches is never
     consumed, so the manager constructs.

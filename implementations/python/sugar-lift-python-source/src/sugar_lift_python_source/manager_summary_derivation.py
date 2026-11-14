@@ -1734,10 +1734,6 @@ def populate_source_derived_resource_refs(
         authenticated_import_value_use_receipts,
     )
 
-    from .dependency_artifact import (
-        ResolvedPythonObjectV1,
-        resolve_import_binding,
-    )
     from .resolution_session import session_or_new
 
     # Multi-resolve owner entry: one session for every receipt in this loop.
@@ -1848,67 +1844,20 @@ def populate_source_derived_resource_refs(
             graphs.setdefault(top, graph)
 
     def read_imported_head(receipt, coordinate, call, exit_face_id) -> None:
-        """The import door: a head whose callee carries an import receipt."""
-        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-        graph = graphs.get(top_level)
-        if graph is None and session.enabled:
-            graph = session.dependency_graphs.get(top_level)
-            if graph is not None:
-                graphs[top_level] = graph
-        if graph is None:
-            from .dependency_artifact import (
-                DependencyArtifactAuthenticationError,
-                authenticate_dependency_top_level,
-            )
+        """The import door: a head whose callee carries an import receipt.
 
-            try:
-                graph = authenticate_dependency_top_level(
-                    top_level, distribution_index=distribution_index
-                )
-            except DependencyArtifactAuthenticationError as exc:
-                # No artifact authenticates the head callee's top-level
-                # module, so the lifter does not have it: not bridged, and the
-                # manager is cited naming its import target, exactly as an
-                # authenticated off-population callee is.  That is the one
-                # statement: no label is chosen by the exception or a default,
-                # and what it is implemented in is never asked.
-                _install_derivation_gap(
-                    context,
-                    coordinate,
-                    receipt,
-                    "call-target-off-population",
-                    f"dependency artifact authentication failed for {top_level}: {exc}",
-                )
-                return
-            graphs[top_level] = graph
-            if session.enabled:
-                session.dependency_graphs[top_level] = graph
-        resolved = resolve_import_binding(receipt, graph=graph, session=session)
-        if not isinstance(resolved, ResolvedPythonObjectV1):
-            from .manager_construction import _absent_module_is_off_population
-
-            # The export door found no source for the head callee here.  When
-            # the module that would hold it is not bridged, the manager is
-            # cited naming its import target; what it is implemented in is
-            # never asked.  Any other gap stays its named gap.
-            if _absent_module_is_off_population(
-                resolved, session=session, dependency_graphs=graphs
-            ):
-                kind = "call-target-off-population"
-            else:
-                kind = getattr(resolved, "kind", None) or "no-derived-contract"
-            _install_derivation_gap(context, coordinate, receipt, str(kind))
-            return
-        # An imported call is a coordinate plus an edge: the authenticated
-        # definition names the edge's target, and its body is never read.
-        # The manager stands cited by that target; the imported proof binds
-        # the edge.
+        An imported call is a coordinate plus an edge (step 3): the import
+        table's target symbol names the edge, and no dependency source is read
+        to decide what the name is.  The manager stands cited by that target;
+        an imported proof binds the edge, and where none does it stays
+        unanswered.
+        """
         _install_derivation_gap(
             context,
             coordinate,
             receipt,
             "call-target-off-population",
-            f"{resolved.module_name}.{resolved.definition.name}",
+            receipt.target_symbol,
         )
 
     _WithReader(
@@ -1925,17 +1874,6 @@ def populate_source_derived_resource_refs(
         paired_receipts=paired_receipts,
         read_imported_head=read_imported_head,
     ).read_all()
-    # The module's own source-defined calls carry their may-raise testimony.
-    # The seat reads only the call receipts and no ``with`` row; it is not a
-    # ``with`` reader.
-    _seat_unprojected_source_calls(
-        context,
-        call_receipts_by_site,
-        manager_use_keys=frozenset(uses),
-        graphs=graphs,
-        session=session,
-        distribution_index=distribution_index,
-    )
     _seat_selected_manager_refs(context, selected_arms, selected_coordinates)
     _rewrite_installed_generator_frames(context)
 
@@ -2096,9 +2034,6 @@ class _WithReader:
             coordinate,
             call,
             value_receipts_by_site=self.value_receipts_by_site,
-            graphs=self.graphs,
-            session=self.session,
-            distribution_index=self.distribution_index,
         ):
             return
         binds = (call.unit.module_direct_bindings or {}).get(call.func.id, ())
@@ -2128,9 +2063,6 @@ class _WithReader:
                 call,
                 exit_face_id,
                 definition,
-                session=self.session,
-                graphs=self.graphs,
-                distribution_index=self.distribution_index,
             )
         elif type(definition) is FunctionDef:
             _read_same_module_factory_head(
@@ -2138,9 +2070,6 @@ class _WithReader:
                 coordinate,
                 definition,
                 value_receipts_by_site=self.value_receipts_by_site,
-                graphs=self.graphs,
-                session=self.session,
-                distribution_index=self.distribution_index,
             )
 
     def _read_item_head(self, coordinate, item) -> None:
@@ -2217,81 +2146,6 @@ def _seat_selected_manager_refs(context, selected_arms, selected_coordinates) ->
             use_site=use_site,
             arms=tuple((arm, table.pop(arm, None)) for arm in arms),
         )
-
-
-def _seat_unprojected_source_calls(
-    context,
-    call_receipts_by_site,
-    *,
-    manager_use_keys,
-    graphs,
-    session,
-    distribution_index,
-) -> None:
-    """Seat the may-raise testimony at this module's own source-defined calls.
-
-    The exact call receipt is resolved through the authenticated import
-    graph; a source-defined callee whose body is not projected at this call
-    is seated at its exact Call span. Any other callee is left to the call's
-    own door: what it is written in is never asked. With-head manager calls
-    keep their own contract and are never seated here.
-    """
-    from .dependency_artifact import (
-        DependencyArtifactAuthenticationError,
-        ResolvedPythonObjectV1,
-        authenticate_dependency_top_level,
-        resolve_import_binding,
-    )
-
-    for site_key, receipt in call_receipts_by_site.items():
-        source_cid, *span = site_key
-        if tuple(span) in manager_use_keys:
-            continue
-        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-        graph = graphs.get(top_level)
-        if graph is None and session.enabled:
-            graph = session.dependency_graphs.get(top_level)
-        if graph is None:
-            try:
-                graph = authenticate_dependency_top_level(
-                    top_level, distribution_index=distribution_index
-                )
-            except DependencyArtifactAuthenticationError:
-                # No authenticated graph: no source-defined callee to seat.
-                continue
-            graphs[top_level] = graph
-            if session.enabled:
-                session.dependency_graphs[top_level] = graph
-        imported = resolve_import_binding(receipt, graph=graph, session=session)
-        if isinstance(imported, ResolvedPythonObjectV1) and imported.definition.kind in (
-            "function",
-            "class",
-        ):
-            # Source-defined callee (a function, or a class whose construction
-            # runs its unprojected __new__/__init__): its body is never
-            # projected at this module's own call, so the call is not total.
-            # Seat the may-raise testimony at the exact Call span; a call that
-            # does carry a projected body at construction ignores it.
-            from sugar_lift_py_tests.source_call_resolution import (
-                UnprojectedSourceCallV1,
-            )
-
-            site = receipt.use["useSite"]
-            context.unprojected_source_calls[
-                (
-                    "call-site",
-                    source_cid,
-                    site["startLine"],
-                    site["startCol"],
-                    site["endLine"],
-                    site["endCol"],
-                )
-            ] = UnprojectedSourceCallV1(
-                imported.module_name,
-                imported.definition.name,
-                imported.definition.kind,
-                imported.cid,
-            )
 
 
 def _rewrite_installed_generator_frames(context) -> None:
@@ -2456,9 +2310,6 @@ def _read_assigned_partition_head(
     call,
     *,
     value_receipts_by_site,
-    graphs,
-    session,
-    distribution_index,
 ) -> bool:
     """Derive ``with m(...)`` where ``m`` is assigned an import value per arm.
 
@@ -2469,10 +2320,9 @@ def _read_assigned_partition_head(
     however, is an authenticated import value with its own receipt.
 
     Law: the reaching value of the callee is exactly the set of assignment
-    arms when nothing else binds the name in the function. Each arm resolves
-    through the ordinary import door. The membrane's off-population refusal
-    cites the member (the same seat a direct ``with gzip.GzipFile(...)`` gets);
-    a partition whose members are all cited is minted as one
+    arms when nothing else binds the name in the function. Each arm is cited
+    by its import target (the same seat a direct ``with gzip.GzipFile(...)``
+    gets); the partition of cited members is minted as one
     ``PartitionedOpaqueCitedContextManagerRefV1``. Anything else stays a loud
     typed gap naming the arm that refused -- never ``runtime-selected``.
 
@@ -2485,13 +2335,6 @@ def _read_assigned_partition_head(
         mint_opaque_cited_context_manager_ref,
         mint_partitioned_opaque_cited_context_manager_ref,
         opaque_source_call_roster_of,
-    )
-
-    from .dependency_artifact import (
-        DependencyArtifactAuthenticationError,
-        ResolvedPythonObjectV1,
-        authenticate_dependency_top_level,
-        resolve_import_binding,
     )
 
     def arm_coordinate(node):
@@ -2515,20 +2358,6 @@ def _read_assigned_partition_head(
                 span.end_col,
             )
         )
-
-    def graph_for(receipt):
-        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-        graph = graphs.get(top_level)
-        if graph is None and session.enabled:
-            graph = session.dependency_graphs.get(top_level)
-        if graph is None:
-            graph = authenticate_dependency_top_level(
-                top_level, distribution_index=distribution_index
-            )
-            if session.enabled:
-                session.dependency_graphs[top_level] = graph
-        graphs[top_level] = graph
-        return graph
 
     function = _enclosing_function(source_file, call)
     if function is None:
@@ -2567,25 +2396,10 @@ def _read_assigned_partition_head(
         )
         return True
     members = []
-    failed = None
     for node, receipt in receipted:
         member_site = arm_coordinate(node)
-        try:
-            graph = graph_for(receipt)
-        except DependencyArtifactAuthenticationError:
-            # No artifact authenticates the member's module: the lifter
-            # does not have it, so it is not bridged -- the same one
-            # citation as an authenticated off-population member, never
-            # a label chosen by the exception.
-            graph = None
-        if graph is not None:
-            resolved = resolve_import_binding(receipt, graph=graph, session=session)
-            if not isinstance(resolved, ResolvedPythonObjectV1):
-                kind = getattr(resolved, "kind", None) or "no-derived-contract"
-                failed = (f"partition-member-{kind}", receipt.target_symbol)
-                break
-            # The member is an imported call: cited by its target, its
-            # body never read.
+        # The member is an imported call: cited by the import table's target
+        # symbol (step 3), no dependency source read.
         demand_cid = receipt.demand.get("cid", receipt.use["cid"])
         roster = opaque_source_call_roster_of(
             OpaqueSourceCallObligationV1(
@@ -2597,10 +2411,6 @@ def _read_assigned_partition_head(
         )
         context.opaque_source_call_obligations.setdefault(member_site, roster)
         members.append(mint_opaque_cited_context_manager_ref(roster=roster))
-    if failed is not None:
-        kind, detail = failed
-        _install_derivation_gap(context, coordinate, first_receipt, kind, detail)
-        return True
     context.source_derived_contract_refs[coordinate] = (
         mint_partitioned_opaque_cited_context_manager_ref(
             use_site=coordinate, members=tuple(members)
@@ -3080,38 +2890,23 @@ def _read_same_module_factory_head(
     function_def,
     *,
     value_receipts_by_site,
-    graphs,
-    session,
-    distribution_index,
 ) -> None:
     """``with f(...)`` where ``f`` is this module's plain factory.
 
     ``pandas.io.common.urlopen`` is ``import urllib.request`` then ``return
     urllib.request.urlopen(*args, **kwargs)``: the manager the With enters is
-    that vendor call's result.  The returned call's callee is followed through
-    its authenticated import value receipt to the object the export door
-    names.  When
-    the callee is off the enrolled population (CPython's ``urllib.request``),
-    the manager is cited, never materialized: the With keeps Python's law with
-    enter, exit and suppression open and two-faced
-    (``WithOpaqueCitedManagerSugar``), and the head still runs the factory's
-    own body.  Any other return shape, or a callee the door does not cite,
-    is left for ``With`` to refuse.
+    that vendor call's result.  The returned call's callee carries an
+    authenticated import value receipt, and the manager is cited by that
+    receipt's target symbol (step 3), never materialized and no dependency
+    source read: the With keeps Python's law with enter, exit and suppression
+    open and two-faced (``WithOpaqueCitedManagerSugar``), and the head still
+    runs the factory's own body.  Any other return shape, or a callee with no
+    import receipt, is left for ``With`` to refuse.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         OpaqueSourceCallObligationV1,
         OpaqueSourceCallRosterV1,
         mint_opaque_cited_context_manager_ref,
-    )
-
-    from .dependency_artifact import (
-        DependencyArtifactAuthenticationError,
-        ResolvedPythonObjectV1,
-        resolve_import_binding,
-    )
-    from .manager_construction import (
-        _dependency_graph_for_top,
-        _graph_is_off_population,
     )
 
     if function_def.decorators:
@@ -3134,23 +2929,6 @@ def _read_same_module_factory_head(
     )
     if receipt is None:
         return
-    top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-    try:
-        graph = graphs.get(top_level) or _dependency_graph_for_top(
-            top_level,
-            session=session,
-            dependency_graphs=graphs,
-            distribution_index=distribution_index,
-        )
-    except DependencyArtifactAuthenticationError:
-        return
-    resolved = resolve_import_binding(receipt, graph=graph, session=session)
-    if not isinstance(resolved, ResolvedPythonObjectV1):
-        return
-    if not _graph_is_off_population(
-        graph, session=session, module_name=resolved.module_name
-    ):
-        return
     roster = OpaqueSourceCallRosterV1(
         coordinate,
         receipt.target_symbol,
@@ -3159,7 +2937,7 @@ def _read_same_module_factory_head(
             OpaqueSourceCallObligationV1(
                 coordinate,
                 receipt.target_symbol,
-                resolved.cid,
+                receipt.demand.get("cid", receipt.use["cid"]),
                 resolution_kind="call-target-off-population",
             ),
         ),
@@ -3175,10 +2953,6 @@ def _read_same_module_generator_head(
     call,
     exit_face_id,
     function_def,
-    *,
-    session,
-    graphs,
-    distribution_index,
 ) -> None:
     """Derive ``with g(...)`` where ``g`` is a same-module decorated generator.
 
@@ -3207,15 +2981,7 @@ def _read_same_module_generator_head(
         # decorator's source constructs one class whose MRO is proven to
         # lack ``__enter__``/``__exit__`` (``@asynccontextmanager``), the
         # With raises the interpreter's TypeError after the call.
-        _publish_decorated_non_manager_head(
-            context,
-            coordinate,
-            call,
-            function_def,
-            session=session,
-            graphs=graphs,
-            distribution_index=distribution_index,
-        )
+        _publish_decorated_non_manager_head(context, coordinate, call, function_def)
         return
     target_symbol = f"python:local:{function_def.name}"
     try:
@@ -3238,23 +3004,11 @@ def _read_same_module_generator_head(
     if (
         _protocol_coords_from_generator_decorators(
             generator_target,
-            session=session,
-            graph=None,
-            dependency_graphs=graphs,
-            distribution_index=distribution_index,
             declined=declined,
         )
         is None
     ):
-        if _publish_decorated_non_manager_head(
-            context,
-            coordinate,
-            call,
-            function_def,
-            session=session,
-            graphs=graphs,
-            distribution_index=distribution_index,
-        ):
+        if _publish_decorated_non_manager_head(context, coordinate, call, function_def):
             return
         _install_local_derivation_gap(
             context,
@@ -3278,10 +3032,6 @@ def _read_same_module_generator_head(
             generator_target=generator_target,
             exit_face_id=exit_face_id,
             receipt=None,
-            session=session,
-            graph=None,
-            dependency_graphs=graphs,
-            distribution_index=distribution_index,
             resolved_cid=cid_of_json(
                 {
                     "kind": "same-module-generator-manager",
@@ -3578,7 +3328,7 @@ def _publish_proven_non_manager_head(
 
 
 def _publish_decorated_non_manager_head(
-    context, coordinate, call, function_def, *, session, graphs, distribution_index
+    context, coordinate, call, function_def
 ) -> bool:
     """``with g(...)`` for ``@d async def g``: seat ``g``'s frame and the proof
     that ``d``'s constructed class lacks the sync protocol."""
@@ -3589,13 +3339,7 @@ def _publish_decorated_non_manager_head(
 
     if len(function_def.decorators) != 1:
         return False
-    outcome = _construct_decorator_function(
-        function_def.decorators[0],
-        session=session,
-        graph=None,
-        dependency_graphs=graphs,
-        distribution_index=distribution_index,
-    )
+    outcome = _construct_decorator_function(function_def.decorators[0])
     if not isinstance(outcome, DecoratorConstructedV1):
         return False
     proof = prove_decorated_manager_absence(function_def, outcome.function)
@@ -3737,10 +3481,6 @@ def _publish_generator_backed_resource_contract(
     generator_target,
     exit_face_id,
     receipt,
-    session,
-    graph=None,
-    dependency_graphs=None,
-    distribution_index=None,
     resolved_cid: str,
     local_target_symbol: str | None = None,
 ) -> None:
@@ -3781,10 +3521,6 @@ def _publish_generator_backed_resource_contract(
     declined: list[str] = []
     coords = _protocol_coords_from_generator_decorators(
         generator_target,
-        session=session,
-        graph=graph,
-        dependency_graphs=dependency_graphs,
-        distribution_index=distribution_index,
         declined=declined,
     )
     if coords is None:
@@ -3825,9 +3561,6 @@ def _publish_generator_backed_resource_contract(
     )
     nested_layers, nested_gap = _project_nested_manager_layers(
         generator_target,
-        session=session,
-        graph=graph,
-        distribution_index=distribution_index,
         exit_face_id=exit_face_id,
     )
     if nested_gap is not None:
@@ -3913,9 +3646,6 @@ def _generator_protocol_construction_gap(protocol):
 def _project_nested_manager_layers(
     generator_target,
     *,
-    session,
-    graph=None,
-    distribution_index=None,
     exit_face_id: str,
 ) -> tuple[tuple[GeneratorNestedManagerLayerV1, ...], tuple[str, str] | None]:
     """Project With-of-source-defined-manager layers inside a generator body.
@@ -3954,12 +3684,7 @@ def _project_nested_manager_layers(
                     if not isinstance(expr, Call):
                         # Non-Call With is not a nested generator manager layer.
                         continue
-                    nested_fn = _resolve_nested_generator_function(
-                        expr,
-                        session=session,
-                        graph=graph,
-                        distribution_index=distribution_index,
-                    )
+                    nested_fn = _resolve_nested_generator_function(expr)
                     if nested_fn is None:
                         # Not a resolvable source-defined manager — leave Opaque.
                         continue
@@ -3973,12 +3698,7 @@ def _project_nested_manager_layers(
                         continue
                     # Recognized nested generator manager: must publish honestly
                     # or gap loud — never skip.
-                    coords = _protocol_coords_from_generator_decorators(
-                        nested_target,
-                        session=session,
-                        graph=graph,
-                        distribution_index=distribution_index,
-                    )
+                    coords = _protocol_coords_from_generator_decorators(nested_target)
                     if coords is None:
                         return (
                             "nested-manager",
@@ -4086,11 +3806,13 @@ def _source_visible_frame_for_function(function_def):
     return frame, function_def
 
 
-def _resolve_nested_generator_function(
-    call, *, session, graph=None, distribution_index=None
-):
-    """Resolve Call.func to a same-module or imported FunctionDef when possible."""
-    from sugar_source_tree.nodes import FunctionDef, ImportFrom, Name
+def _resolve_nested_generator_function(call):
+    """Resolve Call.func to a same-module FunctionDef when possible.
+
+    An imported callee is never resolved to a body here: it is answered only
+    by its import target (step 3).
+    """
+    from sugar_source_tree.nodes import FunctionDef, Name
 
     func = call.func
     if not isinstance(func, Name):
@@ -4098,17 +3820,6 @@ def _resolve_nested_generator_function(
     binds = (func.unit.module_direct_bindings or {}).get(func.id, ())
     if len(binds) == 1 and isinstance(binds[0], FunctionDef):
         return binds[0]
-    if len(binds) == 1 and isinstance(binds[0], ImportFrom):
-        outcome = _construct_decorator_function(
-            func,
-            session=session,
-            graph=graph,
-            distribution_index=distribution_index,
-        )
-        if isinstance(outcome, DecoratorConstructedV1) and isinstance(
-            outcome.function, FunctionDef
-        ):
-            return outcome.function
     return None
 
 
@@ -4967,10 +4678,6 @@ def _mint_yield_face(statement) -> GeneratorYieldFaceV1:
 def _protocol_coords_from_generator_decorators(
     generator_target,
     *,
-    session,
-    graph=None,
-    dependency_graphs=None,
-    distribution_index=None,
     declined=None,
 ):
     """Construct enter/exit definition sites from generator decorator testimony."""
@@ -4989,13 +4696,7 @@ def _protocol_coords_from_generator_decorators(
     if declined is None:
         declined = []
     for decorator in decorators:
-        outcome = _construct_decorator_function(
-            decorator,
-            session=session,
-            graph=graph,
-            dependency_graphs=dependency_graphs,
-            distribution_index=distribution_index,
-        )
+        outcome = _construct_decorator_function(decorator)
         # Closed set, reconciled here. A citation is NOT a decline-and-forget:
         # it is a named, authenticated identity this road cannot yet consume,
         # and the reason travels so the refusal downstream can say so.
@@ -5047,28 +4748,19 @@ class DecoratorCitedV1:
 
     module_name: str
     exported_name: str
-    resolved: object
     membrane_kind: str
-    membrane_detail: str | None
 
 
 @dataclass(frozen=True)
 class DecoratorUnresolvedV1:
     """No decorator identity at this site, with the reason named.
 
-    ``absent`` is the only member that means "nothing was there". Every other
-    member is a lookup that failed, and the two must never share a value.
-    ``undecided`` is the one statement for a decorator nothing here answers
-    (no artifact authenticates its module): the exception never chooses the
-    label, and what was observed rides in the detail (#7757 item 4).
+    ``absent`` means nothing names the decorator: no import binding and no
+    same-module ``def``.  An imported decorator is never unresolved here; it
+    is cited (``DecoratorCitedV1``).
     """
 
-    kind: Literal[
-        "absent",
-        "undecided",
-        "module-absent-from-graph",
-        "export-unresolved",
-    ]
+    kind: Literal["absent"]
     detail: str
 
 
@@ -5077,23 +4769,14 @@ DecoratorResolutionV1 = (
 )
 
 
-def _construct_decorator_function(
-    decorator,
-    *,
-    session,
-    graph=None,
-    dependency_graphs=None,
-    distribution_index=None,
-):
-    """Resolve and construct the decorator callable from typed import testimony."""
-    from sugar_source_tree.nodes import FunctionDef, Name
+def _construct_decorator_function(decorator):
+    """Construct the decorator callable from typed import testimony.
 
-    from .dependency_artifact import (
-        DependencyArtifactAuthenticationError,
-        ResolvedPythonObjectV1,
-        authenticate_dependency_top_level,
-        resolve_authenticated_module_export,
-    )
+    A same-module ``def`` is constructed.  An imported decorator is cited by
+    its import binding (step 3): no dependency source is read to decide what
+    the name is.
+    """
+    from sugar_source_tree.nodes import FunctionDef, Name
 
     binding = _decorator_module_export_binding(decorator)
     if binding is None:
@@ -5106,83 +4789,13 @@ def _construct_decorator_function(
             "absent", "decorator names no authenticated import or module binding"
         )
     module_name, exported_name = binding
-    graphs = []
-    if graph is not None:
-        graphs.append(graph)
-    top_level = module_name.split(".", 1)[0]
-    local_graphs = dependency_graphs if dependency_graphs is not None else {}
-    authenticated_dependency = local_graphs.get(top_level)
-    if authenticated_dependency is None and session is not None and session.enabled:
-        authenticated_dependency = session.dependency_graphs.get(top_level)
-        if authenticated_dependency is not None:
-            local_graphs[top_level] = authenticated_dependency
-            if dependency_graphs is not None:
-                dependency_graphs[top_level] = authenticated_dependency
-    if authenticated_dependency is None:
-        try:
-            authenticated_dependency = authenticate_dependency_top_level(
-                top_level, distribution_index=distribution_index
-            )
-        except DependencyArtifactAuthenticationError:
-            authenticated_dependency = None
-        else:
-            local_graphs[top_level] = authenticated_dependency
-            if dependency_graphs is not None:
-                dependency_graphs[top_level] = authenticated_dependency
-            if session is not None and session.enabled:
-                session.dependency_graphs[top_level] = authenticated_dependency
-    if authenticated_dependency is not None and authenticated_dependency not in graphs:
-        graphs.append(authenticated_dependency)
-    if not any(module_name in candidate.modules for candidate in graphs):
-        try:
-            authenticated_dependency = authenticate_dependency_top_level(
-                top_level, distribution_index=distribution_index
-            )
-        except DependencyArtifactAuthenticationError as exc:
-            from sugar_lift_py_tests.context_manager_resolution import (
-                UNDECIDED_GAP_KIND,
-            )
-
-            return DecoratorUnresolvedV1(
-                UNDECIDED_GAP_KIND,
-                f"dependency artifact authentication failed for {module_name}: {exc}",
-            )
-        if session is not None and session.enabled:
-            session.dependency_graphs[top_level] = authenticated_dependency
-        if dependency_graphs is not None:
-            dependency_graphs[top_level] = authenticated_dependency
-        if authenticated_dependency not in graphs:
-            graphs.append(authenticated_dependency)
-    resolved = None
-    resolved_graph = None
-    for candidate in graphs:
-        if module_name not in candidate.modules:
-            continue
-        result = resolve_authenticated_module_export(
-            graph=candidate,
-            binding_cid=decorator.fragment.seal().cid,
-            module_name=module_name,
-            exported_name=exported_name,
-            session=session,
-        )
-        if isinstance(result, ResolvedPythonObjectV1):
-            resolved = result
-            resolved_graph = candidate
-            break
-    if resolved is None or resolved_graph is None:
-        return DecoratorUnresolvedV1(
-            "export-unresolved",
-            f"{module_name}.{exported_name} did not resolve in any authenticated graph",
-        )
-    # An imported decorator is a coordinate plus an edge: its identity is
-    # authenticated and addressable, and its body is never read.  A citation
-    # is not absence: it is never mistaken for "there was no decorator".
+    # An imported decorator is a coordinate plus an edge: its identity is the
+    # import binding, and its body is never read.  A citation is not absence:
+    # it is never mistaken for "there was no decorator".
     return DecoratorCitedV1(
         module_name=module_name,
         exported_name=exported_name,
-        resolved=resolved,
         membrane_kind="call-target-off-population",
-        membrane_detail=None,
     )
 
 

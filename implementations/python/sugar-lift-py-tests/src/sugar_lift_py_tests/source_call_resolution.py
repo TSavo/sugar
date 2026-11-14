@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal
 
 
 def _occurrence_result(callsite, site):
@@ -30,74 +29,6 @@ def _occurrence_result(callsite, site):
         callsite,
         term=ctor("python:call_result", (callsite.term, occurrence_term(site))),
     )
-
-
-@dataclass(frozen=True)
-class UnprojectedSourceCallV1:
-    """An authenticated source-defined callee whose body was not projected here.
-
-    Seated at an exact consumer call site after the import receipt resolved to
-    a Python ``def``/``class`` in an authenticated dependency artifact. The
-    body is real source but was not projected at this site, so the call may
-    raise anything: it completes only under the opaque partition atom
-    ``python:source_call.completes(module, name, site)`` and halts with an
-    ``UndeterminedRaiseEffect`` under its complement. It never names what the
-    callee does.
-
-    A ``class`` callee is a construction: ``type.__call__`` runs the class's
-    own (or an inherited) ``__new__``/``__init__``, none of which is projected
-    here, so it is the same two-faced law under its own atom
-    ``python:source_construction.completes(module, name, site)`` and owner
-    ``UnprojectedSourceConstruction:<module>.<name>``. Exception classes are no
-    exception: constructing one runs its ``__init__`` before any ``raise``.
-    """
-
-    module_name: str
-    definition_name: str
-    definition_kind: Literal["function", "class"]
-    resolved_object_cid: str
-
-    def faces(self, callsite, site):
-        """Two faces for one bodiless call: opaque completion or a raise."""
-        from .effect.raise_effect import UndeterminedRaiseEffect
-        from .ir import atomic, ctor, str_const
-        from .occurrence import occurrence_key
-        from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
-
-        noun = (
-            "source_construction" if self.definition_kind == "class" else "source_call"
-        )
-        key = occurrence_key(site)
-        call = ctor(
-            f"python:{noun}",
-            (
-                str_const(self.module_name),
-                str_const(self.definition_name),
-                str_const(key),
-            ),
-        )
-        completes = atomic(f"python:{noun}.completes", [call])
-        owner = (
-            "UnprojectedSourceConstruction"
-            if self.definition_kind == "class"
-            else "UnprojectedSourceCall"
-        )
-        return ExitSet(
-            (
-                Completed(completes, _occurrence_result(callsite, site)),
-                Halted(
-                    complement_guard(completes),
-                    UndeterminedRaiseEffect(
-                        blame=str(site) if site is not None else None,
-                        occurrence=key if site is not None else None,
-                        producer_node_owner=(
-                            f"{owner}:{self.module_name}.{self.definition_name}"
-                        ),
-                    ),
-                    None,
-                ),
-            )
-        ).normalize()
 
 
 def _constant_str(value):
@@ -197,8 +128,8 @@ def cpython_cited_fold(
     """A stdlib call with no projected body whose result CPython's source decides.
 
     ``unprojected`` is the call's may-raise testimony: an off-population
-    citation or an unprojected source function; it says only that the call
-    has no projected body, never which callee it is.
+    citation or a callee nothing here answers (``UnknownCalleeCallV1``); it
+    says only that the call has no projected body, never which callee it is.
 
     ``language_callee`` is the ``LanguageCallee`` the Call node bound the
     callee to; ``importlib.import_module`` and ``operator.index`` are
@@ -217,10 +148,7 @@ def cpython_cited_fold(
     from .floor.term_value import TermValue
     from .outcome import ExitSet
 
-    if not isinstance(unprojected, OffPopulationSourceCallV1) and not (
-        isinstance(unprojected, UnprojectedSourceCallV1)
-        and unprojected.definition_kind == "function"
-    ):
+    if not isinstance(unprojected, (OffPopulationSourceCallV1, UnknownCalleeCallV1)):
         return None
     from sugar_source_tree.nodes import LanguageCallee
 

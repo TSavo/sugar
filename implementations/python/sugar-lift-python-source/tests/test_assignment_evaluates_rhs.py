@@ -34,7 +34,7 @@ from sugar_lift_py_tests.outcome import ExitSet, Halted
 
 from test_undetermined_raise_except_matching import _exits
 
-DEDENT = "UnprojectedSourceCall:textwrap.dedent"
+DEDENT = "UnknownCallee:textwrap.dedent"
 
 
 def _rows(exits):
@@ -142,12 +142,14 @@ def _start(site_text):
 
 
 def _call_start(atom):
+    # ``python:unknown_callee_call(<callee>, python:occurrence(<site CID>, …))``
     (call,) = atom.args
-    return _start(call.args[-1].value)
+    occurrence = call.args[-1]
+    return _start(occurrence.args[0].value)
 
 
 def _completes(atom):
-    return atom.name in ("python:source_call.completes",)
+    return atom.name in ("python:unknown_callee_call.completes",)
 
 
 def _is_type(atom, name):

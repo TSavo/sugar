@@ -1,17 +1,17 @@
-"""A consumer module's own call to a source-defined dependency is two-faced.
+"""A consumer module's own call to an imported callee is unanswered.
 
-``textwrap.dedent`` resolves through the authenticated import graph to a
-Python ``def`` in ``textwrap.py``. The consumer module's own call never had
-that body projected at its site (frame projection runs only inside
-dependency frames, and off-population sources are cited, not rebuilt), so
-``return textwrap.dedent("x")`` lifted as a bodiless ``CallSiteValue`` with a
-single Completed face: a claim that the call never raises. A body that was
-not projected may raise anything. The call now completes as the same
-``CallSiteValue`` only under ``python:source_call.completes`` and halts with
-an ``UndeterminedRaiseEffect`` under its complement. Nothing about the
-callee's behavior is invented; a call whose body IS projected is untouched.
-Constructing an imported source-defined class is covered by
-``test_source_class_construction_may_raise.py``.
+Step 3: an imported name is answered only from the imported proofs in
+``.sugar/imports/``; no dependency source is read to decide what it is. So
+``return textwrap.dedent("x")`` is a call nothing in this proof answers: it
+completes as the call-site value only under
+``python:unknown_callee_call.completes``, halts with an
+``UndeterminedRaiseEffect`` under its complement, and both arms owe the call
+as the proof's ``undecided`` member (reason ``unanswered``) under the import
+table's target symbol. Nothing about the callee's behavior is invented, and
+the call is never a total completion.
+
+Before #7757 item 6 the installed ``textwrap.py`` was read with stdlib ``ast``
+to decide that ``dedent`` is a ``def``, and that face owed nothing.
 """
 
 from __future__ import annotations
@@ -21,8 +21,8 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-from sugar_lift_py_tests.floor import CallSiteValue
 from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.unanswered_calls import owed_calls
 from sugar_source_tree.nodes import FunctionDef
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
@@ -44,10 +44,10 @@ def _owners(exits):
     )
 
 
-def _completes_under_source_call_atom(exits, name: str) -> bool:
+def _completes_under_unanswered_atom(exits, name: str) -> bool:
     completed = [face for face in exits.exits if isinstance(face, Completed)]
     return bool(completed) and all(
-        "python:source_call.completes" in repr(face.guard)
+        "python:unknown_callee_call.completes" in repr(face.guard)
         and f"value='{name}'" in repr(face.guard)
         for face in completed
     )
@@ -61,10 +61,11 @@ def _completes_under_source_call_atom(exits, name: str) -> bool:
         'import textwrap\ndef f():\n    textwrap.dedent("x")\n    return 1\n',
     ],
 )
-def test_unprojected_source_function_call_may_raise(tmp_path, source) -> None:
+def test_imported_function_call_is_unanswered(tmp_path, source) -> None:
     exits = _exits(tmp_path, source)
-    assert _owners(exits) == ["UnprojectedSourceCall:textwrap.dedent"]
-    assert _completes_under_source_call_atom(exits, "dedent")
+    assert _owners(exits) == ["UnknownCallee:textwrap.dedent"]
+    assert _completes_under_unanswered_atom(exits, "textwrap.dedent")
+    assert [call.symbol for call in owed_calls(exits)] == ["python:textwrap.dedent"]
 
 
 def test_completed_face_keeps_the_call_coordinate(tmp_path) -> None:
@@ -74,7 +75,7 @@ def test_completed_face_keeps_the_call_coordinate(tmp_path) -> None:
     )
 
 
-def test_each_unprojected_call_site_has_its_own_raise_face(tmp_path) -> None:
+def test_each_unanswered_call_site_has_its_own_raise_face(tmp_path) -> None:
     exits = _exits(
         tmp_path,
         'import textwrap\ndef f():\n    textwrap.dedent("a")\n    return textwrap.dedent("b")\n',
@@ -82,6 +83,7 @@ def test_each_unprojected_call_site_has_its_own_raise_face(tmp_path) -> None:
     halts = [face for face in exits.exits if isinstance(face, Halted)]
     assert len(halts) == 2
     assert len({face.effect.blame for face in halts}) == 2
+    assert len(owed_calls(exits)) == 2
 
 
 def test_a_callee_with_no_source_is_not_asked_its_language(tmp_path) -> None:

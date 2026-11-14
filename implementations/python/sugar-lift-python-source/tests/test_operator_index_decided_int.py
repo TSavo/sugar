@@ -6,7 +6,7 @@ returns ``Py_NewRef(item)`` for an int, and ``PyNumber_Index`` copies only a
 non-exact result.  So an exact ``int`` comes back unchanged and nothing is
 raised.  The stdlib ``operator`` module is off the enrolled population, so
 the call used to be two-faced (``OffPopulationCall:python:operator.index``,
-or ``UnprojectedSourceCall:operator.index`` from a consumer)
+or the unanswered ``UnknownCallee:operator.index`` from a consumer)
 even for ``operator.index(3)``, which is numpy's ``_make_options_dict`` under
 ``precision=3``.  A bool, a str, or an unknown value stays two-faced.
 """

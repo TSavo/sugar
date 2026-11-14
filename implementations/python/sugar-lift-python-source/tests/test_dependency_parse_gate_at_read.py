@@ -30,7 +30,6 @@ from sugar_lift_python_source.dependency_artifact import (
     DependencyArtifactAuthenticationError,
     DependencyArtifactGraph,
 )
-from sugar_lift_python_source.resolution_session import SourceResolutionSession
 
 GOOD = "def build(value):\n    return value\n"
 OTHER = "LIMIT = 3\n"
@@ -306,21 +305,3 @@ def test_a_module_that_is_not_utf8_is_still_refused_at_authentication(
     assert str(refused.value) == (
         "recorded Python module gated_pkg.whole is not parseable UTF-8 source"
     )
-
-
-def test_resolving_an_import_into_an_unparseable_module_is_refused_by_name(
-    tmp_path: Path,
-) -> None:
-    """The reader the lifter uses meets the same refusal, not a bare error."""
-    graph = DependencyArtifactGraph.authenticate(_with_one_unparseable(tmp_path))
-
-    with pytest.raises(DependencyArtifactAuthenticationError, match=REFUSAL):
-        da.resolve_authenticated_module_export(
-            graph=graph,
-            binding_cid="blake3-512:" + "ab" * 64,
-            module_name="gated_pkg.broken",
-            exported_name="build",
-            session=SourceResolutionSession(
-                enrolled_distributions=frozenset({"gated_dist"})
-            ),
-        )

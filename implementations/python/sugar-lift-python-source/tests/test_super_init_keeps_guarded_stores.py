@@ -60,7 +60,7 @@ def test_completed_construction_keeps_the_compiled_match(tmp_path, source):
 
     # Exactly one completed construction: where re.compile completed.
     (face,) = completed
-    assert getattr(face.guard, "name", None) == "python:source_call.completes"
+    assert getattr(face.guard, "name", None) == "python:unknown_callee_call.completes"
     match = _returned(face)
     assert "re" in repr(match) and "compile" in repr(match)
     assert type(match).__name__ != "NoneValue"

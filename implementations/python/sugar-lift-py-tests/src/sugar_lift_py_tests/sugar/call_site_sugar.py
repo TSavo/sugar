@@ -60,26 +60,23 @@ _NO_LEXICAL_SOURCE_CALL_ROW = DefinitionOccurrenceAbsentV1(
 
 
 
-def _unprojected_source_call(sugar):
-    """Return the may-raise testimony seated at this exact call, if any."""
-    unit = getattr(sugar.site, "unit", None)
-    context = getattr(unit, "construction_context", None) if unit is not None else None
-    calls = getattr(context, "unprojected_source_calls", None) if context is not None else None
-    if not calls:
+def _import_bound_unanswered_call(sugar):
+    """The may-raise testimony for a bodiless call to an import-bound callee.
+
+    The one import table (``SourceUnit.import_reference_of``) names the
+    callee's target symbol; no dependency source is read to decide what the
+    name is (step 3).  Nothing in this proof answers the call, so it is the
+    unanswered ``undecided`` member under that symbol and two-faced -- never a
+    total completion.  A call cited off the population keeps its citation,
+    and a ``with`` item's resolved manager keeps its resolution's faces.
+    """
+    if sugar.reference_symbol is None or sugar.contract_resolution_gap is not None:
         return None
-    try:
-        span = sugar.site.line_col_span
-        key = (
-            "call-site",
-            sugar.site.source_cid,
-            span.start_line,
-            span.start_col,
-            span.end_line,
-            span.end_col,
-        )
-    except (AttributeError, TypeError):
+    if sugar.site is None or _resolved_manager_construction(sugar):
         return None
-    return calls.get(key)
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+    return UnknownCalleeCallV1(sugar.spelled_target)
 
 
 _OFF_POPULATION = "call-target-off-population:"
@@ -910,7 +907,7 @@ class CallSiteSugar(ConstructedTermSugar):
                 ),
             )
         if callsite.body is None:
-            unprojected = _unprojected_source_call(self)
+            unprojected = _import_bound_unanswered_call(self)
             if unprojected is None:
                 unprojected = _off_population_source_call(self)
             if unprojected is not None:
