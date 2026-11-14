@@ -306,24 +306,44 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         if not self.outward_faces:
             return ExitSet.completed(recurrence)
 
-        from sugar_lift_py_tests.outcome import Completed
-
         halted_guards = [face.guard for face in self.outward_faces]
         completed_guard = not_(
             halted_guards[0] if len(halted_guards) == 1 else or_(halted_guards)
         )
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-
-        exits = [Completed(completed_guard, recurrence)]
-        deferred = []
         # An outward face is a statement of the body (``return x``, ``raise
         # E(x)``), reduced in the recurrence's one symbolic item: its reads of
         # a carried name and of the target are references to their keys
         # (``For.substitute``), bound here for that item exactly as for a
-        # concrete one (``_enter_symbolic_item``).
-        item_ctx, item = self._enter_symbolic_item(runtime, ctx, iterable, heads)
+        # concrete one (``_enter_symbolic_item``).  The item's target unpack
+        # runs first: the recurrence and its faces are what follows its
+        # completed arm (``ExitSet.sequence``), and its halt (too few, too
+        # many, not iterable) is an arm of the recurrence as it is.
+        projected, enter, item = self._enter_symbolic_item(
+            runtime, ctx, iterable, heads
+        )
+
+        def faces_in(projections):
+            return self._outward_exits(
+                enter(projections), item, recurrence, completed_guard
+            )
+
+        if len(projected.exits) == 1:
+            # One way in (a name target, a ``while``): the faces are exactly
+            # what follows it, a face waiting on its caller's actuals handed on.
+            return projected.and_then(faces_in)
+        return projected.sequence(faces_in)
+
+    def _outward_exits(self, item_ctx, item, recurrence, completed_guard):
+        """The recurrence's exits in one entered symbolic item (``item_ctx``):
+        the recurrence under ``completed_guard``, and each outward face's
+        partition under its own guard."""
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.outcome import Completed
+
+        exits = [Completed(completed_guard, recurrence)]
+        deferred = []
         for face in self.outward_faces:
             with item():
                 outcome = face.statement_sugar.desugar(item_ctx)
@@ -849,85 +869,82 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         return ctx, tuple(bindings)
 
     def _enter_symbolic_item(self, runtime, ctx, iterable, heads):
-        """The context the recurrence's one symbolic item reduces its outward
-        faces in, and the item to enter while it does.
+        """The recurrence's one symbolic item: ``(projected, enter, item)``.
+        ``projected`` is the item's target unpack, an ``ExitSet`` whose
+        completed arms hold the leaves' projections; ``enter(projections)``
+        is the context the outward faces reduce in on such an arm; ``item``
+        is the item to enter while they do.
 
         A concrete item binds, inside its own segment, each carried name's
         header to the value the item begins with (``_enter_header``), then
-        each target leaf's key to the item's projection (``_enter_target``).
-        The symbolic item binds the same keys the same way, inside its own
-        segment (``loop_symbolic_item_segment``): each header to the
-        recurrence's value of the name (``heads``, ``python:loop.recurrence``)
-        and the target to the item of the symbolic iterable
-        (``python:loop.item``).  A read in a face decides through its key;
-        the name is never read.
+        unpacks its value into the target (``_project_iteration_target``)
+        and binds each leaf's key to its projection (``_enter_target``).
+        The symbolic item does the same, inside its own segment
+        (``loop_symbolic_item_segment``): each header to the recurrence's
+        value of the name (``heads``, ``python:loop.recurrence``), then the
+        item of the symbolic iterable (``python:loop.item``) through the same
+        unpack.  A read in a face decides through its key; the name is never
+        read.
 
-        A destructuring target's leaves are left unbound, and so are their
-        headers (a carried leaf's header is its key): the item's unpack can
-        halt and the recurrence carries no face for that halt, so a read of
-        a leaf is refused by name (``EvaluationRefSugar._unbound``), never
-        completed past it.  A ``while`` without a runtime has no item: the
-        context is unchanged and nothing is entered; a live ``while``'s
-        symbolic item binds its headers only (it has no target)."""
+        A name target's unpack is the item whole.  A destructuring target's
+        is the item's runtime unpack (``guarded``): each leaf's key (a
+        carried leaf's header is its key) is bound to its projection on the
+        unpack's completed arm, and its halt is an arm as it is, from the
+        context entering the item, as a concrete item's unpack halt is
+        (``_advance_iterator``).  A ``while`` without a runtime has no item:
+        the context is unchanged and nothing is entered; a live ``while``'s
+        symbolic item binds its headers only (it has no target, so nothing
+        to unpack)."""
         from contextlib import nullcontext
+        from dataclasses import replace
         from functools import partial
 
         from sugar_lift_py_tests.occurrence import entered, loop_symbolic_item_segment
-        from sugar_source_tree.nodes import Name
+        from sugar_lift_py_tests.outcome import Halted
 
         if runtime is None or (ctx is not None and not hasattr(ctx, "temporal")):
-            return ctx, nullcontext
+            return ExitSet.completed(()), lambda _projections: ctx, nullcontext
         if ctx is None:
             from sugar_lift_py_tests.context import ReduceContext
 
             ctx = ReduceContext.root(owner="LoopRecurrenceSugar.symbolic-item")
         item = partial(entered, loop_symbolic_item_segment(self.target_cid))
+        starts = tuple(SymbolicValue(head) for head in heads)
         pattern = getattr(runtime, "target_pattern", None)
         if pattern is None:
             with item():
-                ctx = self._enter_header(
-                    runtime, ctx, tuple(SymbolicValue(head) for head in heads)
-                )
-            return ctx, item
-        named = isinstance(pattern.target, Name)
-        target_keys = frozenset(self._target_keys(runtime).values())
-        starts = tuple(
-            SymbolicValue(head) if named or header not in target_keys else None
-            for (header, _writes, _else_writes), head in zip(
-                self._carried_evaluations(runtime), heads, strict=True
-            )
+                header_ctx = self._enter_header(runtime, ctx, starts)
+            return ExitSet.completed(()), lambda _projections: header_ctx, item
+        element = ctor(
+            "python:loop.item",
+            [
+                str_const(self.target_cid),
+                *(
+                    ()
+                    if iterable is None
+                    else (iterable.to_term(owner="LoopRecurrenceSugar"),)
+                ),
+            ],
+            symbol_kind="coordinate",
         )
         with item():
-            ctx = self._enter_header(runtime, ctx, starts)
-            if named:
-                coordinates = {
-                    coordinate.projection_path: coordinate
-                    for coordinate in pattern.target_coordinates
-                }
-                element = ctor(
-                    "python:loop.item",
-                    [
-                        str_const(self.target_cid),
-                        *(
-                            ()
-                            if iterable is None
-                            else (iterable.to_term(owner="LoopRecurrenceSugar"),)
-                        ),
-                    ],
-                    symbol_kind="coordinate",
-                )
-                ctx, _bindings = self._enter_target(
-                    runtime,
-                    ctx,
-                    (
-                        (
-                            pattern.target.id,
-                            coordinates[("target",)].cid,
-                            SymbolicValue(element),
-                        ),
-                    ),
-                )
-        return ctx, item
+            header_ctx = self._enter_header(runtime, ctx, starts)
+            projected = self._project_iteration_target(
+                pattern, SymbolicValue(element), header_ctx, guarded=True
+            )
+        projected = ExitSet(
+            tuple(
+                replace(exit_, state=ctx) if isinstance(exit_, Halted) else exit_
+                for exit_ in projected.exits
+            )
+        ).normalize()
+
+        def enter(projections):
+            # Each completed arm binds its own leaves, inside the item.
+            with item():
+                return self._enter_target(runtime, header_ctx, projections)[0]
+
+        return projected, enter, item
 
     def _leave_target(self, runtime, ctx, items):
         """Bind, outside every item, each target leaf's key to the last
@@ -1015,8 +1032,17 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             values.append(None if binding is None else binding.value)
         return tuple(values)
 
-    def _project_iteration_target(self, pattern, value, ctx):
-        """Project every target leaf through the Floor-owned unpack door."""
+    def _project_iteration_target(self, pattern, value, ctx, *, guarded=False):
+        """Project every target leaf through the Floor-owned unpack door.
+
+        Completes with ``(name, coordinate, value)`` per leaf, in source
+        order; each unpack's halt is an arm beside it, nothing bound.  A
+        concrete item's unpack answers one plain roster or halts.  The
+        symbolic item's (``guarded``: ``_enter_symbolic_item``) answers both
+        faces of its runtime unpack (``PositionalUnpackOperation.
+        guarded_symbolic``): the leaves are read from each completed arm
+        (``ExitSet.sequence``), beneath its guard and carrying what it owes,
+        and an inner unpack's halt is an arm beneath the outer one's."""
         from sugar_lift_py_tests.operations.positional_unpack_operation import (
             PositionalUnpackOperation,
             UnpackMemberRoster,
@@ -1041,37 +1067,53 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 has_star=False,
                 owner="LoopRecurrenceSugar.target",
                 blame=target.fragment,
+                guarded_symbolic=guarded,
             )
             unpacked = _require_exit_set(
                 operation.submit(current, ctx), owner="LoopRecurrenceSugar.target"
             )
             if unpacked.exits and unpacked.halts() == unpacked.exits:
                 return unpacked
-            roster = unpacked.completed_value()
             # A roster owing something has no linear place for the debt: it is
-            # refused with every other shape, never carried on without it.
-            if not isinstance(roster, UnpackMemberRoster) or unpacked.owed_items():
+            # refused with every other shape, never carried on without it.  A
+            # concrete item's unpack answers one plain roster; only the
+            # symbolic item's guarded unpack answers a completed face beside
+            # its halt.
+            if unpacked.owed_items() or (
+                not guarded and unpacked.completed_value() is None
+            ):
                 raise TypeError(
                     "positional target unpack omitted its authenticated roster"
                 )
-            if (
-                roster.occurrence is not target.fragment
-                or roster.demand_cid != operation.demand_cid()
-                or len(roster.members) != len(target.elts)
-            ):
-                raise TypeError(
-                    "positional target unpack returned cross-wired testimony"
-                )
-            bindings = []
-            for index, (child, member) in enumerate(
-                zip(target.elts, roster.members, strict=True)
-            ):
-                child_result = project(child, member, (*path, index))
-                child_bindings = child_result.completed_value()
-                if child_bindings is None:
-                    return child_result
-                bindings.extend(child_bindings)
-            return ExitSet.completed(tuple(bindings))
+
+            def leaves(roster):
+                if not isinstance(roster, UnpackMemberRoster):
+                    raise TypeError(
+                        "positional target unpack omitted its authenticated roster"
+                    )
+                if (
+                    roster.occurrence is not target.fragment
+                    or roster.demand_cid != operation.demand_cid()
+                    or len(roster.members) != len(target.elts)
+                ):
+                    raise TypeError(
+                        "positional target unpack returned cross-wired testimony"
+                    )
+
+                def collect(index, bindings):
+                    if index == len(target.elts):
+                        return ExitSet.completed(bindings)
+                    # A child's halt is an arm as it is; its leaves join the
+                    # siblings' on each completed arm.
+                    return project(
+                        target.elts[index], roster.members[index], (*path, index)
+                    ).sequence(
+                        lambda child: collect(index + 1, (*bindings, *child))
+                    )
+
+                return collect(0, ())
+
+            return unpacked.sequence(leaves)
 
         return project(pattern.target, value)
 
