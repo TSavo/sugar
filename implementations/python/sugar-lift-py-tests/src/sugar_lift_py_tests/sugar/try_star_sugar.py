@@ -108,11 +108,6 @@ class TryStarSugar(Sugar):
             ]
             # Faces that leave the residual walk (non-raise halts).
             retained: list = []
-            # A handler arm whose guard conjoined with its face's path is false
-            # is unreachable: ``sequence`` drops it, so it answers no arm. That
-            # is not the empty handler walk the completion fallback below
-            # reads, and must not reach it.
-            unreachable = False
 
             for matchers, handler_body, slot_id in self.handlers:
                 if not isinstance(matchers, tuple):
@@ -169,8 +164,6 @@ class TryStarSugar(Sugar):
                     composed = path.sequence(
                         lambda _state, exits=handler_exits: exits
                     )
-                    if len(composed.exits) < len(handler_exits.exits):
-                        unreachable = True
                     for arm in composed.exits:
                         if isinstance(arm, Halted):
                             exceptional = face.exceptional
@@ -232,10 +225,10 @@ class TryStarSugar(Sugar):
                         Completed(face.guard, face.state, face.faces, face.owed)
                     )
 
-            if not retained and not unreachable:
-                retained.append(
-                    Completed(true_guard(), _seed_temporal(exit_.state, ctx))
-                )
+            # No arm is invented: when no path leaves the handlers (every arm
+            # was unsatisfiable, so ``sequence`` dropped it), the continuation
+            # is exactly the empty set ``sequence`` composed. A raise is never
+            # a completion (#7825).
             # Not normalized here: ``sequence`` conjoins the body halt's guard
             # first and normalizes the composed set once.
             return ExitSet(tuple(retained))
