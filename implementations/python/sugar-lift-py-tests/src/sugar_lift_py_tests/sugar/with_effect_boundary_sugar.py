@@ -82,15 +82,13 @@ class WithEffectBoundarySugar(Sugar):
                 continue
             # Python evaluates the context expression first. A constructor
             # halt leaves the With as itself: nothing was entered, so neither
-            # the body nor __exit__ runs and the boundary never sees it.
+            # the body nor __exit__ runs and the boundary never sees it. It
+            # runs beneath the manager face (``ExitSet.sequence``), so it
+            # keeps the face's guard, faces and ``owed`` beside its own.
             for halt in construction_halts:
                 routed.append(
-                    ExitSet(
-                        (
-                            replace_exit_guard(
-                                halt, _and_guard(manager_exit.guard, halt.guard)
-                            ),
-                        )
+                    ExitSet((manager_exit,)).sequence(
+                        lambda _manager, halt=halt: ExitSet((halt,))
                     )
                 )
             if construction_guard is not None:
@@ -157,7 +155,11 @@ class WithEffectBoundarySugar(Sugar):
                     )
                     continue
 
-                body_es = body_es_once.guarded(face_manager.guard)
+                # The body runs beneath the manager face: its guard, faces
+                # and ``owed`` ride onto every body arm.
+                body_es = ExitSet((face_manager,)).sequence(
+                    lambda _manager: body_es_once
+                )
 
                 disposition = EffectBoundaryDisposition(
                     matcher=AuthenticatedRaiseMatcher(
@@ -188,10 +190,7 @@ class WithEffectBoundarySugar(Sugar):
                 requested="one completed or halted manager face",
                 fix="keep empty manager outcomes loud",
             )
-        result = routed[0]
-        for part in routed[1:]:
-            result = result.union(part)
-        return result
+        return routed[0].union(*routed[1:])
 
     def _construction_faces(self):
         """``(halts, completed_guard)`` of the manager's own construction.
@@ -475,11 +474,9 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
         MatchRetained,
         warning_effect_message_verdict,
     )
-    from sugar_lift_py_tests.ir import and_
     from sugar_lift_py_tests.outcome.exit_set import (
         Completed,
         ExitSet,
-        Halted,
         complement_guard,
         partition,
     )
@@ -499,8 +496,15 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
             site=site,
         )
 
-    body_es = reduce_block_to_exitset(body, ctx).guarded(manager_exit.guard)
-    exits = []
+    # The body runs beneath the manager face: its guard, faces and ``owed``
+    # ride onto every body arm.
+    body_es = ExitSet((manager_exit,)).sequence(
+        lambda _manager: reduce_block_to_exitset(body, ctx)
+    )
+    # Every face continues beneath itself (``ExitSet.sequence``): what the
+    # boundary makes of it keeps the face's guard, faces and ``owed``, and the
+    # routed faces join through ``ExitSet.union``.
+    parts = []
     for face in body_es.exits:
         record = face.value if isinstance(face, Completed) else face.state
         entries = getattr(record, "entries", None)
@@ -573,52 +577,47 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
         # ONE matcher: identity + optional message. No local MatchDecided mint.
         verdict = warning_effect_message_verdict(observation.effect, expected, pattern)
 
-        def successful(guard, faces):
+        def restored(carried, face=face):
+            # The face goes on as itself -- its completion, or its halt --
+            # over ``carried``.
+            if isinstance(face, Completed):
+                return ExitSet.completed(carried)
+            return ExitSet.halted(face.effect, state=carried)
+
+        def successful():
             assert index is not None
             remaining = entries[:index] + entries[index + 1 :]
-            carried = replace(record, entries=remaining)
-            if isinstance(face, Completed):
-                return Completed(guard, carried, faces, face.owed)
-            return Halted(
-                guard,
-                face.effect,
-                carried,
-                faces,
-                face.owed,
-            )
+            return restored(replace(record, entries=remaining))
 
-        def failed(guard, faces):
+        def failed():
             if isinstance(mode, ExpectsModeV1):
-                return Halted(
-                    guard,
-                    ExpectationNotMetEffect("warning", site),
-                    record,
-                    faces,
-                    face.owed,
+                return ExitSet.halted(
+                    ExpectationNotMetEffect("warning", site), state=record
                 )
-            return replace(face, guard=guard, faces=faces)
+            return restored(record)
 
         if isinstance(verdict, MatchDecided):
-            exits.append(
-                successful(face.guard, face.faces)
-                if verdict.value
-                else failed(face.guard, face.faces)
+            following = successful() if verdict.value else failed()
+            parts.append(
+                ExitSet((face,)).sequence(
+                    lambda _value, f=following: f, consume=lambda _halt, f=following: f
+                )
             )
             continue
         if isinstance(verdict, MatchRetained):
             held, rejected = partition(
                 ("warning-boundary-message", verdict.obligation, face.guard)
             )
-            exits.extend(
-                (
-                    successful(
-                        and_([face.guard, verdict.obligation]),
-                        face.faces | {held},
-                    ),
-                    failed(
-                        and_([face.guard, complement_guard(verdict.obligation)]),
-                        face.faces | {rejected},
-                    ),
+            following = (
+                successful()
+                .guarded(verdict.obligation, held)
+                .union(
+                    failed().guarded(complement_guard(verdict.obligation), rejected)
+                )
+            )
+            parts.append(
+                ExitSet((face,)).sequence(
+                    lambda _value, f=following: f, consume=lambda _halt, f=following: f
                 )
             )
             continue
@@ -631,7 +630,7 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
             requested="a written warning-message verdict class",
             fix=f"write warning-message arm for {type(verdict).__name__}",
         )
-    return ExitSet(tuple(exits)).normalize()
+    return ExitSet(()).union(*parts)
 
 
 def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
@@ -655,13 +654,17 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
     from sugar_lift_py_tests.floor.warning_observation_value import (
         WarningObservationValue,
     )
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
     from sugar_source_tree.panic import SugarNotWritten
 
-    body_es = reduce_block_to_exitset(body, ctx).guarded(manager_exit.guard)
+    # The body runs beneath the manager face: its guard, faces and ``owed``
+    # ride onto every body arm.
+    body_es = ExitSet((manager_exit,)).sequence(
+        lambda _manager: reduce_block_to_exitset(body, ctx)
+    )
     # The inverted contract is proved by a POSITIVE completed edge whose
     # temporal record contains no matching warning observation.  An empty
     # ExitSet says the body never resolved; it is not a vacuous proof of
@@ -679,19 +682,21 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
                 "absence of a halt is not completion testimony"
             ),
         )
-    exits = []
-    for face in body_es.exits:
-        # Matching-category routing already reads both faces the same way:
-        # Completed carries the reduced block as its value; Halted carries
-        # the pre-halt record as its state.
-        record = face.value if isinstance(face, Completed) else face.state
+
+    def unmet(record, *, halted):
+        """What follows one face whose record is ``record`` (its value, or
+        its pre-halt state when ``halted``): the assertion's unmet halt, or
+        ``None`` when the face goes on as itself.
+
+        Matching-category routing already reads both faces the same way:
+        Completed carries the reduced block as its value; Halted carries the
+        pre-halt record as its state."""
         entries = getattr(record, "entries", None)
         if not isinstance(entries, tuple):
-            if isinstance(face, Halted):
+            if halted:
                 # Exception edge without a temporal record: do not invent a
                 # warning verdict. Restore the halt as the body left it.
-                exits.append(face)
-                continue
+                return None
             raise SugarNotWritten(
                 blame=site,
                 owner="WithEffectBoundarySugar.warning_observation",
@@ -730,18 +735,10 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
                 # Fail the inverted contract with the assertion effect only.
                 # Never mint a WarningEffect here — observations arrive only
                 # from the producer, and unmet is ExpectationNotMetEffect.
-                exits.append(
-                    Halted(
-                        face.guard,
-                        ExpectationNotMetEffect("warning", site),
-                        record,
-                        face.faces,
-                        face.owed,
-                    )
+                return ExitSet.halted(
+                    ExpectationNotMetEffect("warning", site), state=record
                 )
-            else:
-                exits.append(face)
-            continue
+            return None
         unresolved_members = _unresolved_producer_coordinates(entries)
         if unresolved_members:
             refusal = SugarNotWritten(
@@ -761,8 +758,18 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
             raise refusal
         # Decidable absence: completed stays completed; exception edge restores
         # the original halt without inventing any warning effect.
-        exits.append(face)
-    return ExitSet(tuple(exits)).normalize()
+        return None
+
+    def after_completion(value):
+        following = unmet(value, halted=False)
+        return ExitSet.completed(value) if following is None else following
+
+    # Each face's verdict runs beneath it (``ExitSet.sequence``; ``consume=``
+    # for the halts the boundary decides), so it keeps the face's guard,
+    # faces and ``owed``.
+    return body_es.sequence(
+        after_completion, consume=lambda halt: unmet(halt.state, halted=True)
+    )
 
 
 def _and_guard(left, right):

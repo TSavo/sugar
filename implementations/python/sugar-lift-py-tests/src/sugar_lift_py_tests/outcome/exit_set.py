@@ -627,8 +627,15 @@ class ExitSet(Generic[T]):
             )
         ).normalize()
 
-    def union(self, other: "ExitSet[T]") -> "ExitSet[T]":
-        return ExitSet((*self.exits, *other.exits)).normalize()
+    def union(self, *others: "ExitSet[T]") -> "ExitSet[T]":
+        """THE JOIN of sibling exit sets: every arm of each, in order, merged
+        once by ``normalize`` (equal destinations disjoin their guards and owe
+        every debt). Any number of siblings join in one call, so a join of
+        many never re-normalizes the arms gathered so far. Nobody concatenates
+        arm lists by hand (#7825)."""
+        return ExitSet(
+            (*self.exits, *(exit_ for other in others for exit_ in other.exits))
+        ).normalize()
 
     def guarded(
         self, guard: Formula, face: PartitionFace | None = None

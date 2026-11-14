@@ -1067,11 +1067,7 @@ class NativeOperationExitCarrierV1:
         ExitSet-wide step still runs, so the arms composed beside it stand. A
         halt is never dropped (#7825).
         """
-        from sugar_lift_py_tests.outcome import (
-            ExitSet,
-            Halted,
-            true_guard,
-        )
+        from sugar_lift_py_tests.outcome import ExitSet, true_guard
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
         def apply_exitset_step(projected, step):
@@ -1125,19 +1121,16 @@ class NativeOperationExitCarrierV1:
 
         def union_short_circuit(exits, short):
             continuing_guard, stopped, continuing_face, stopped_face = short
-            stopping_exits = []
-            for exit_ in stopped.exits:
-                if isinstance(exit_, Halted):
-                    # A first-leg exception predates the truth-value split and
-                    # bypasses both faces unchanged.
-                    stopping_exits.append(exit_)
-                    continue
-                stopping_exits.extend(
-                    ExitSet((exit_,)).guarded(true_guard(), stopped_face).exits
+            # Each completed first-leg face stops on the stopped side of the
+            # split (``sequence``: its guard, faces and ``owed`` ride on). A
+            # first-leg exception predates the truth-value split and bypasses
+            # both faces unchanged. The two legs join through the one join.
+            stopping = stopped.sequence(
+                lambda value: ExitSet.completed(value).guarded(
+                    true_guard(), stopped_face
                 )
-            return exits.guarded(continuing_guard, continuing_face).union(
-                ExitSet(tuple(stopping_exits))
             )
+            return exits.guarded(continuing_guard, continuing_face).union(stopping)
 
         def at_point(exits, continuation_count):
             # Exit-set steps and short circuits enrolled at this continuation

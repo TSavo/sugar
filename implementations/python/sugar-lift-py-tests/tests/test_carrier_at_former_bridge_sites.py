@@ -982,15 +982,15 @@ def test_prior_returns_join_a_composed_carrier_once_it_discharges():
     )
 
     carrier, left, right = _carrier()
-    returned = Completed(atomic("test.returned", []), TermValue(9))
+    returned = ExitSet.completed(TermValue(9), atomic("test.returned", []))
 
-    composed = _beside_prior_returns(carrier, (returned,))
+    composed = _beside_prior_returns(carrier, returned)
 
     assert isinstance(composed, NativeOperationExitCarrierV1)
     exits = composed.discharge(None, _actuals(left, right))
     assert isinstance(exits, ExitSet)
     eager = _beside_prior_returns(
-        carrier.discharge(None, _actuals(left, right)), (returned,)
+        carrier.discharge(None, _actuals(left, right)), returned
     )
     assert exits == eager
     values = [exit_.value for exit_ in exits.exits]
