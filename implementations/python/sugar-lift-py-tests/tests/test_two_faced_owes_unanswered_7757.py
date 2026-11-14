@@ -127,13 +127,36 @@ def test_an_undecided_read_with_no_site_is_the_lifters_gap() -> None:
         receiver.undecided_subscript(TermValue(0), None, owner="t")
 
 
-def test_an_opaque_subscript_owes_its_read() -> None:
-    from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
-
-    faces = _opaque_subscript_faces(
-        ExitSet.completed(SymbolicValue(make_var("s"))), _Site()
+def _subscript_operation():
+    from sugar_lift_py_tests.operations.subscript_operation import (
+        SubscriptOperation,
     )
+
+    return SubscriptOperation(index=TermValue(0), owner="SubscriptSugar", blame=_Site())
+
+
+def test_an_opaque_subscript_owes_its_read() -> None:
+    """The opaque arm of ``CallSiteValue.subscript_with`` answers the faces
+    once: one completed arm, one halt, one debt -- not faces wrapped around
+    faces."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+
+    receiver = CallSiteValue("vendor.op", (), (), ctor("call:vendor.op", []), None)
+    faces = receiver.subscript_with(_subscript_operation(), None)
     _assert_two_faced_and_owed(faces, "CallSiteValue.subscript")
+
+
+def test_a_symbolic_subscript_through_its_operation_owes_its_read() -> None:
+    """``SymbolicValue.subscript_with`` (every ``symbolic[k]`` in source, by
+    ``SubscriptSugar``) is the same two faces as ``SymbolicValue.subscript``:
+    it never completes without the undecided face."""
+    operation = _subscript_operation()
+    faces = operation.submit(SymbolicValue(make_var("s")), None)
+    _assert_two_faced_and_owed(faces, "SymbolicValue.subscript")
+    (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
+    assert "python:subscript.completes" in repr(done.guard)
+    assert faces.completed_value() is None
 
 
 def test_an_undecided_binary_operation_owes_its_dispatch() -> None:

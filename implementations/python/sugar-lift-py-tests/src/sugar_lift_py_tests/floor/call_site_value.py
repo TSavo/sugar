@@ -1313,12 +1313,12 @@ class CallSiteValue(FloorValue):
     def subscript_with(self, operation, ctx):
         """Subscript on a callsite result.
 
-        Dig when the body floors; otherwise retain this callsite's symbolic
-        term. The operation owns the submission door -- the deleted central
-        dispatcher must never be rediscovered here.
+        Dig when the body floors; otherwise the read of this callsite's
+        result is undecided and answers the one two-faced form
+        (:meth:`FloorValue.undecided_subscript`), produced once. The operation
+        owns the submission door -- the deleted central dispatcher must never
+        be rediscovered here.
         """
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-
         if self.builtin_exception_class is not None:
             decided = self._builtin_exception_instance_subscript(operation.blame)
             if decided is not None:
@@ -1329,8 +1329,9 @@ class CallSiteValue(FloorValue):
         )
         if floor is not None:
             return operation.submit(floor, ctx)
-        outcome = operation.submit(SymbolicValue(self.result_term()), ctx)
-        return _opaque_subscript_faces(outcome, getattr(operation, "blame", None))
+        return self.undecided_subscript(
+            operation.index, operation.blame, owner="CallSiteValue.subscript"
+        )
 
     def project_sequence_with(self, operation, ctx):
         """``a, b = f(...)``: unpack of a callsite result.
@@ -2053,50 +2054,6 @@ def list_append_coordinate_value(prior, value, site) -> CallSiteValue:
         ),
         body=None,
         site=site,
-    )
-
-
-def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"):
-    """``opaque()[k]`` may raise: complete only under an opaque partition atom.
-
-    The receiver is a call result with no projected body, so its runtime type
-    and ``__getitem__`` are undecided. A completed symbolic ``py.subscript``
-    stands only under ``python:subscript.completes(python:subscript(<that
-    term>, <site>))``, keyed on the exact source site so two subscripts of the
-    same term are never forced to agree; the complement halts with an
-    ``UndeterminedRaiseEffect``. No exception type is guessed and no member is
-    invented. Any other outcome is left as produced.
-    """
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.ir import atomic, ctor, str_const
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-
-    from sugar_lift_py_tests.occurrence import occurrence_key
-
-    value = outcome.completed_value() if isinstance(outcome, ExitSet) else None
-    if value is None:
-        return outcome
-    # Both faces are rebuilt from the one completed arm: each owes its debts.
-    owed = outcome.owed_items()
-    key = occurrence_key(site)
-    subscript = ctor(
-        "python:subscript",
-        (
-            value.to_term(owner="CallSiteValue.subscript"),
-            str_const(key),
-        ),
-    )
-    completes = atomic("python:subscript.completes", [subscript])
-    return ExitSet.two_faced(
-        value,
-        UndeterminedRaiseEffect(
-            blame=str(site) if site is not None else None,
-            occurrence=key if site is not None else None,
-            producer_node_owner=producer,
-        ),
-        guard=completes,
-        site=site,
-        owed=owed,
     )
 
 
