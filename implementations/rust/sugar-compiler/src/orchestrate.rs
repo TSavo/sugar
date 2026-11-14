@@ -409,6 +409,12 @@ pub fn resolve_imports_for_walk(
 /// named gap, and the table is bound back into the kit, which constructs only
 /// after that. A kit that does not answer `sugar.plugin.bind_call_contract_refs`
 /// is untouched: nothing is asked of it and nothing is bound.
+///
+/// No contract applies here (step 6 as amended). A wrong answer is refused by
+/// prove's join (step 9). The round's remaining role for Python is to carry
+/// each enrolled call's demand symbol to its edge, and to refuse a call with
+/// no definite import target; the one import door (#7837) can carry both,
+/// and then this round leaves Python's mint.
 pub fn resolve_imports_before_construction(
     kit: &Kit,
     workspace_root: &Path,

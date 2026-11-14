@@ -3056,6 +3056,21 @@ pub enum DroppedAmbientPostReason {
     OpaqueCallSubject,
     /// Consumer call term failed to decode as a ctor (fell through to atomic).
     CallTermDecodeFailed,
+    /// The join's refusals of a contract that answered the call wrongly
+    /// (step 9; ruling 2 on #7766). They were the preliminary fold's
+    /// `contract_resolution_gap` kinds; prove reads the vendor contract, so
+    /// prove refuses. Each one refuses the row it touches by name.
+    ///
+    /// Two imported bridges state the call's symbol with different targets.
+    AmbiguousTarget,
+    /// The contract's formals do not match the call's arguments.
+    ImportSignatureMismatch,
+    /// The bridge targets a member that is not a function contract.
+    WrongContractKind,
+    /// The bridge pins a provider bundle that does not hold its target.
+    WrongProvider,
+    /// The bridge's target contract is not in the proofs prove read.
+    StaleContractRef,
 }
 
 /// One ambient vendor post that matched a callsite but did not enter `linkedPosts`.
@@ -3074,8 +3089,47 @@ impl DroppedAmbientPostReason {
             DroppedAmbientPostReason::OpenAfterSpecialization => "open-after-specialization",
             DroppedAmbientPostReason::OpaqueCallSubject => "opaque-call-subject",
             DroppedAmbientPostReason::CallTermDecodeFailed => "call-term-decode-failed",
+            DroppedAmbientPostReason::AmbiguousTarget => "ambiguous-target",
+            DroppedAmbientPostReason::ImportSignatureMismatch => "import-signature-mismatch",
+            DroppedAmbientPostReason::WrongContractKind => "wrong-contract-kind",
+            DroppedAmbientPostReason::WrongProvider => "wrong-provider",
+            DroppedAmbientPostReason::StaleContractRef => "stale-or-malformed-contract-ref",
         }
     }
+
+    /// True for the join's refusals: something answered the call, wrongly.
+    pub fn is_wrong_answer(&self) -> bool {
+        matches!(
+            self,
+            DroppedAmbientPostReason::AmbiguousTarget
+                | DroppedAmbientPostReason::ImportSignatureMismatch
+                | DroppedAmbientPostReason::WrongContractKind
+                | DroppedAmbientPostReason::WrongProvider
+                | DroppedAmbientPostReason::StaleContractRef
+        )
+    }
+}
+
+/// A row whose claim reads a call that a contract answered wrongly is refused
+/// by name (step 9). The vendor's answer never reaches the solve, and the row
+/// is never green on what remains.
+fn refuse_wrong_answers(result: &mut ConsistencyResult) {
+    let wrong: Vec<String> = result
+        .dropped_ambient_posts
+        .iter()
+        .filter(|d| d.reason.is_wrong_answer())
+        .map(|d| format!("{} for {}", d.reason.label(), d.source_symbol))
+        .collect();
+    if wrong.is_empty() {
+        return;
+    }
+    result.verdict = ObligationVerdict::Refused;
+    result.reason = format!(
+        "join refused: a contract answers the call wrongly ({})",
+        wrong.join(", ")
+    );
+    result.effect = None;
+    result.verification = None;
 }
 
 /// Partition of ambient-post specialization (#4148 type fence).
@@ -3089,10 +3143,21 @@ struct AmbientPostInstances {
     dropped: Vec<DroppedAmbientPost>,
 }
 
+/// One vendor answer to one unanswered call (step 9): the consumer's
+/// `undecided` member (`reason: unanswered`) joined, by its `symbol`, to the
+/// imported bridge whose `sourceSymbol` is the same string. `site_cid` is the
+/// member's `SourceFragmentCoordinateV1` CID, the first argument of the
+/// `python:occurrence` in the `python:call_result` the claim constrains.
 #[derive(Debug, Clone)]
 struct AmbientPost {
     binding: BridgeBinding,
     post: Json,
+    /// The joined member's CID.
+    member_cid: String,
+    site_cid: String,
+    /// `Some` when the answer is wrong: the row that reads this call is
+    /// refused by name and `post` is never conjoined.
+    refusal: Option<DroppedAmbientPostReason>,
 }
 
 #[derive(Debug, Clone)]
@@ -3103,77 +3168,223 @@ struct LinkedPostInstance {
     instantiated_post: Json,
 }
 
-fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
-    let mut posts = Vec::new();
-    for (_bridge_cid, bridge_env) in pool.bridge_members() {
-        let Some(source_symbol) = bridge_env
-            .field("sourceSymbol")
-            .and_then(|v| v.as_str())
-            .map(str::to_string)
-        else {
+/// The ctor a Python call's completed result is: `python:call_result(<call
+/// term>, python:occurrence(<site coordinate CID>, <path>…))`.
+const PYTHON_CALL_RESULT: &str = "python:call_result";
+const PYTHON_OCCURRENCE: &str = "python:occurrence";
+
+/// One unanswered call member, as the join reads it.
+struct UnansweredEdge {
+    member_cid: String,
+    symbol: String,
+    site_cid: String,
+}
+
+/// The CID of an `undecided` member's site as a `SourceFragmentCoordinateV1`
+/// (the five coordinate keys, without `file`): the same content the lifter
+/// spells as the first argument of the call's `python:occurrence`.
+fn undecided_site_coordinate_cid(site: &sugar_proof_envelope::UndecidedSite) -> String {
+    sugar_canonicalizer::jcs_cid_of_json(&serde_json::json!({
+        "sourceCid": site.source_cid.as_str(),
+        "startLine": site.start_line,
+        "startCol": site.start_col,
+        "endLine": site.end_line,
+        "endCol": site.end_col,
+    }))
+}
+
+/// Every `undecided` member with `reason: unanswered` and a `symbol`. A
+/// member with no symbol names nothing another proof could answer: it stays
+/// owed and the join never reads it.
+fn unanswered_edges(pool: &MementoPool) -> Vec<UnansweredEdge> {
+    use sugar_proof_envelope::{UndecidedMember, UndecidedReason};
+    let mut edges = Vec::new();
+    for (cid, member) in pool.undecided_members() {
+        let Ok(undecided) = UndecidedMember::from_stored(member) else {
             continue;
         };
-        if source_symbol.is_empty() {
+        if undecided.reason != UndecidedReason::Unanswered {
             continue;
         }
-        let Some(target_cid) = bridge_env
-            .field("targetContractCid")
-            .and_then(|v| v.as_str())
-            .and_then(|raw| MementoCid::try_parse(raw.to_string()).ok())
-        else {
+        let Some(symbol) = undecided.symbol.clone().filter(|s| !s.is_empty()) else {
             continue;
         };
-        let Some(body) = pool.contract_body_by_cid(&target_cid) else {
-            continue;
-        };
-        let Some(post) = body
-            .get("post")
-            .or_else(|| body.get("postcondition"))
-            .filter(|v| v.is_object())
-            .cloned()
-        else {
-            continue;
-        };
-        let Some(formals_arr) = body.get("formals").and_then(|v| v.as_array()) else {
-            continue;
-        };
-        let Some(formals) = formals_arr
-            .iter()
-            .map(|v| v.as_str().map(str::to_string))
-            .collect::<Option<Vec<_>>>()
-        else {
-            continue;
-        };
-        let out_binding = body
-            .get("outBinding")
-            .or_else(|| body.get("out_binding"))
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .unwrap_or("out")
-            .to_string();
-        let target_proof_cid = bridge_env
-            .field("targetProofCid")
-            .and_then(|v| v.as_str())
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .or_else(|| {
-                pool.bridge_self_bundle_by_symbol
-                    .get(&source_symbol)
-                    .cloned()
-                    .map(|cid| cid.to_string())
-            });
-        posts.push(AmbientPost {
-            binding: BridgeBinding {
-                source_symbol,
-                target_cid: target_cid.to_string(),
-                target_proof_cid,
-                formals,
-                out_binding,
-            },
-            post,
+        edges.push(UnansweredEdge {
+            member_cid: cid.to_string(),
+            symbol,
+            site_cid: undecided_site_coordinate_cid(&undecided.site),
         });
     }
+    edges
+}
+
+/// What one bridge answers for `symbol`: its binding and post, or the
+/// reason the answer is wrong. `Ok(None)` when the contract states no post:
+/// it answers nothing, and the call stays owed.
+fn bridge_answer(
+    pool: &MementoPool,
+    symbol: &str,
+    bridge_env: &sugar_proof_envelope::StoredMember,
+) -> Result<Option<(BridgeBinding, Json)>, (String, DroppedAmbientPostReason)> {
+    let raw_target = bridge_env
+        .field("targetContractCid")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let Some(target_cid) = MementoCid::try_parse(raw_target.clone()).ok() else {
+        return Err((raw_target, DroppedAmbientPostReason::StaleContractRef));
+    };
+    let Some(body) = pool.contract_body_by_cid(&target_cid) else {
+        return Err((raw_target, DroppedAmbientPostReason::StaleContractRef));
+    };
+    let target_proof_cid = bridge_env
+        .field("targetProofCid")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    if let Some(bundle) = target_proof_cid
+        .as_ref()
+        .and_then(|raw| MementoCid::try_parse(raw.clone()).ok())
+        .and_then(|bundle| pool.bundle_members.get(&bundle))
+    {
+        if !bundle.contains(&target_cid) {
+            return Err((raw_target, DroppedAmbientPostReason::WrongProvider));
+        }
+    }
+    let Some(formals) = body
+        .get("formals")
+        .and_then(|v| v.as_array())
+        .and_then(|formals| {
+            formals
+                .iter()
+                .map(|v| v.as_str().map(str::to_string))
+                .collect::<Option<Vec<_>>>()
+        })
+    else {
+        return Err((raw_target, DroppedAmbientPostReason::WrongContractKind));
+    };
+    let Some(post) = body
+        .get("post")
+        .or_else(|| body.get("postcondition"))
+        .filter(|v| v.is_object())
+        .cloned()
+    else {
+        return Ok(None);
+    };
+    let out_binding = body
+        .get("outBinding")
+        .or_else(|| body.get("out_binding"))
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .unwrap_or("out")
+        .to_string();
+    let target_proof_cid = target_proof_cid.or_else(|| {
+        pool.bridge_self_bundle_by_symbol
+            .get(symbol)
+            .cloned()
+            .map(|cid| cid.to_string())
+    });
+    Ok(Some((
+        BridgeBinding {
+            source_symbol: symbol.to_string(),
+            target_cid: target_cid.to_string(),
+            target_proof_cid,
+            formals,
+            out_binding,
+        },
+        post,
+    )))
+}
+
+/// THE JOIN (step 9; row 0a.5). Each unanswered call member's `symbol` is
+/// joined to the bridge whose `sourceSymbol` is the same string: the
+/// imported proof that answers it. The join is by symbol and site, never by
+/// a call term's spelling: the consumer's call term is the same whether
+/// anything answers it.
+///
+/// - No bridge states the symbol: the edge is unbound and the member stays
+///   owed (nothing here).
+/// - Bridges state it with more than one target: refused, `ambiguous-target`.
+/// - A bridge's target is missing, of the wrong kind or from the wrong
+///   provider: refused by name.
+fn collect_ambient_posts(pool: &MementoPool) -> Vec<AmbientPost> {
+    let edges = unanswered_edges(pool);
+    let mut posts = Vec::new();
+    for edge in &edges {
+        let bridges: Vec<&sugar_proof_envelope::StoredMember> = pool
+            .bridge_members()
+            .filter(|(_, bridge)| {
+                bridge.field("sourceSymbol").and_then(|v| v.as_str()) == Some(edge.symbol.as_str())
+            })
+            .map(|(_, bridge)| bridge)
+            .collect();
+        let Some(first) = bridges.first() else {
+            continue;
+        };
+        let targets: std::collections::BTreeSet<&str> = bridges
+            .iter()
+            .filter_map(|bridge| bridge.field("targetContractCid").and_then(|v| v.as_str()))
+            .collect();
+        let answer = if targets.len() > 1 {
+            Err((
+                targets.into_iter().collect::<Vec<_>>().join(" | "),
+                DroppedAmbientPostReason::AmbiguousTarget,
+            ))
+        } else {
+            bridge_answer(pool, &edge.symbol, first)
+        };
+        match answer {
+            Ok(Some((binding, post))) => posts.push(AmbientPost {
+                binding,
+                post,
+                member_cid: edge.member_cid.clone(),
+                site_cid: edge.site_cid.clone(),
+                refusal: None,
+            }),
+            Ok(None) => {}
+            Err((target_cid, reason)) => posts.push(AmbientPost {
+                binding: BridgeBinding {
+                    source_symbol: edge.symbol.clone(),
+                    target_cid,
+                    target_proof_cid: None,
+                    formals: Vec::new(),
+                    out_binding: String::new(),
+                },
+                post: Json::Null,
+                member_cid: edge.member_cid.clone(),
+                site_cid: edge.site_cid.clone(),
+                refusal: Some(reason),
+            }),
+        }
+    }
     posts
+}
+
+/// The `undecided` members the join answers: a vendor contract states a post
+/// for the call, rightly. They are no longer owed; their call's row carries
+/// the verdict. A member answered wrongly stays owed, and its row is refused.
+pub(crate) fn joined_member_cids(pool: &MementoPool) -> std::collections::BTreeSet<String> {
+    collect_ambient_posts(pool)
+        .into_iter()
+        .filter(|post| post.refusal.is_none())
+        .map(|post| post.member_cid)
+        .collect()
+}
+
+/// `python:call_result(<call>, python:occurrence(<site CID>, …))` read as
+/// `(<call>, <site CID>)`. `None` when the term is not that shape.
+fn call_result_parts(term: &Json) -> Option<(&Json, &str)> {
+    let args = term.get("args")?.as_array()?;
+    let [call, occurrence] = args.as_slice() else {
+        return None;
+    };
+    if occurrence.get("kind")?.as_str()? != "ctor"
+        || occurrence.get("name")?.as_str()? != PYTHON_OCCURRENCE
+    {
+        return None;
+    }
+    let site = occurrence.get("args")?.as_array()?.first()?.get("value")?.as_str()?;
+    Some((call, site))
 }
 
 pub(crate) fn linked_post_instance_count(pool: &MementoPool, body: &Json) -> usize {
@@ -3209,37 +3420,49 @@ fn linked_ambient_post_instances_for_inv(
     let mut kept = Vec::new();
     let mut dropped = Vec::new();
     let mut seen = std::collections::BTreeSet::new();
-    for callsite in &callsites {
-        let Some(name) = callsite.get("name").and_then(|v| v.as_str()) else {
-            // Call term did not decode as a named ctor -- record if ambient
-            // posts exist that we intended to apply (subject opaque / decode fail).
-            if !ambient.is_empty() {
-                dropped.push(DroppedAmbientPost {
-                    source_symbol: "<unknown-call>".to_string(),
-                    target_cid: String::new(),
-                    reason: DroppedAmbientPostReason::CallTermDecodeFailed,
-                    spelling: compact_json(callsite),
-                });
-            }
-            continue;
-        };
-        let Some(args) = callsite.get("args").and_then(|v| v.as_array()) else {
+    // The join reads only the term the claim constrains: the call's
+    // completed result at its occurrence. The vendor's `out` IS that term.
+    for result_term in callsites
+        .iter()
+        .filter(|term| term.get("name").and_then(|v| v.as_str()) == Some(PYTHON_CALL_RESULT))
+    {
+        let Some((call, site_cid)) = call_result_parts(result_term) else {
             dropped.push(DroppedAmbientPost {
-                source_symbol: name.to_string(),
+                source_symbol: "<unknown-call>".to_string(),
                 target_cid: String::new(),
                 reason: DroppedAmbientPostReason::CallTermDecodeFailed,
-                spelling: compact_json(callsite),
+                spelling: compact_json(result_term),
             });
             continue;
         };
-        for post in ambient.iter().filter(|post| {
-            let bare = name
-                .strip_prefix("call:")
-                .or_else(|| name.strip_prefix("method:"))
-                .unwrap_or(name);
-            (post.binding.source_symbol == name || post.binding.source_symbol == bare)
-                && post.binding.formals.len() == args.len()
-        }) {
+        for post in ambient.iter().filter(|post| post.site_cid == site_cid) {
+            if let Some(reason) = &post.refusal {
+                dropped.push(DroppedAmbientPost {
+                    source_symbol: post.binding.source_symbol.clone(),
+                    target_cid: post.binding.target_cid.clone(),
+                    reason: reason.clone(),
+                    spelling: compact_json(result_term),
+                });
+                continue;
+            }
+            let Some(args) = call.get("args").and_then(|v| v.as_array()) else {
+                dropped.push(DroppedAmbientPost {
+                    source_symbol: post.binding.source_symbol.clone(),
+                    target_cid: post.binding.target_cid.clone(),
+                    reason: DroppedAmbientPostReason::CallTermDecodeFailed,
+                    spelling: compact_json(call),
+                });
+                continue;
+            };
+            if post.binding.formals.len() != args.len() {
+                dropped.push(DroppedAmbientPost {
+                    source_symbol: post.binding.source_symbol.clone(),
+                    target_cid: post.binding.target_cid.clone(),
+                    reason: DroppedAmbientPostReason::ImportSignatureMismatch,
+                    spelling: compact_json(call),
+                });
+                continue;
+            }
             let mut instance = post.post.clone();
             for (formal, actual) in post.binding.formals.iter().zip(args.iter()) {
                 instance = crate::instantiate::substitute_formula_pub(&instance, formal, actual);
@@ -3247,7 +3470,7 @@ fn linked_ambient_post_instances_for_inv(
             instance = crate::instantiate::substitute_formula_pub(
                 &instance,
                 &post.binding.out_binding,
-                callsite,
+                result_term,
             );
             // Fold grounded primitives after specialization so linked posts
             // and structural dual faces see concrete values (#4398).
@@ -3272,7 +3495,7 @@ fn linked_ambient_post_instances_for_inv(
             if seen.insert(key) {
                 kept.push(LinkedPostInstance {
                     binding: post.binding.clone(),
-                    call: callsite.clone(),
+                    call: result_term.clone(),
                     vendor_post: post.post.clone(),
                     instantiated_post: canonicalize_formula_json(&instance),
                 });
@@ -3782,15 +4005,16 @@ pub fn verify_consistency_from_indexes(
                 .flat_map(|o| o.ambient_ground_callsite_facts.iter().cloned()),
         )
         .collect();
-    // Ambient posts merge with (source_symbol, target_cid) dedupe: the
+    // Joined posts merge with (site, source_symbol, target_cid) dedupe: the
     // merged-pool run sees one bridge member per CID, so an overlay proof
     // re-declaring a base bridge must not conjoin the same post twice.
     let mut ambient_posts: Vec<AmbientPost> = base.ambient_posts.clone();
     if let Some(o) = overlay {
-        let seen: std::collections::HashSet<(String, String)> = ambient_posts
+        let seen: std::collections::HashSet<(String, String, String)> = ambient_posts
             .iter()
             .map(|p| {
                 (
+                    p.site_cid.clone(),
                     p.binding.source_symbol.clone(),
                     p.binding.target_cid.clone(),
                 )
@@ -3798,6 +4022,7 @@ pub fn verify_consistency_from_indexes(
             .collect();
         for p in &o.ambient_posts {
             if !seen.contains(&(
+                p.site_cid.clone(),
                 p.binding.source_symbol.clone(),
                 p.binding.target_cid.clone(),
             )) {
@@ -4111,6 +4336,7 @@ fn process_consistency_group(
                 );
             }
             result.dropped_ambient_posts = dropped_ambient_posts;
+            refuse_wrong_answers(&mut result);
             out.push(result);
         } else {
             for candidate in &inv_candidates {
@@ -4172,6 +4398,7 @@ fn process_consistency_group(
                     attach_conjoined_facts(&mut result, &original_inv, &vendor_facts, &sworn);
                 }
                 result.dropped_ambient_posts = dropped_ambient_posts;
+                refuse_wrong_answers(&mut result);
                 if !suppress_standalone_support_vacuity(
                     property_name,
                     candidate,
@@ -8789,17 +9016,50 @@ mod tests {
     // a match was attempted is a law violation (silent green class).
     // -----------------------------------------------------------------------
 
-    fn ambient_post_encode_base64(post: Json, formals: Vec<String>) -> AmbientPost {
+    /// The joined call's site: the `SourceFragmentCoordinateV1` CID the
+    /// member's site hashes to, and the first argument of the claim's
+    /// `python:occurrence`.
+    const JOIN_SITE: &str = "blake3-512:join-site";
+
+    fn joined_post(symbol: &str, site_cid: &str, post: Json, formals: Vec<String>) -> AmbientPost {
         AmbientPost {
             binding: BridgeBinding {
-                source_symbol: "call:encodeBase64".to_string(),
+                source_symbol: symbol.to_string(),
                 target_cid: "test-target-cid".to_string(),
                 target_proof_cid: None,
                 formals,
                 out_binding: "out".to_string(),
             },
             post,
+            member_cid: "test-member-cid".to_string(),
+            site_cid: site_cid.to_string(),
+            refusal: None,
         }
+    }
+
+    fn ambient_post_encode_base64(post: Json, formals: Vec<String>) -> AmbientPost {
+        joined_post("python:b64.encodeBase64", JOIN_SITE, post, formals)
+    }
+
+    /// `python:call_result(<call>, python:occurrence(<site>))`: the term a
+    /// Python claim constrains for one evaluation of a call.
+    fn call_result(call: Json, site_cid: &str) -> Json {
+        json!({
+            "kind": "ctor",
+            "name": PYTHON_CALL_RESULT,
+            "args": [
+                call,
+                {
+                    "kind": "ctor",
+                    "name": PYTHON_OCCURRENCE,
+                    "args": [{
+                        "kind": "const",
+                        "sort": {"kind": "primitive", "name": "String"},
+                        "value": site_cid
+                    }]
+                }
+            ]
+        })
     }
 
     fn consumer_inv_encode_base64(rhs: &str) -> Json {
@@ -8807,17 +9067,20 @@ mod tests {
             "kind": "atomic",
             "name": "=",
             "args": [
-                {
-                    "kind": "ctor",
-                    "name": "call:encodeBase64",
-                    "args": [
-                        {
-                            "kind": "const",
-                            "sort": {"kind": "primitive", "name": "String"},
-                            "value": "xyz"
-                        }
-                    ]
-                },
+                call_result(
+                    json!({
+                        "kind": "ctor",
+                        "name": "call:encodeBase64",
+                        "args": [
+                            {
+                                "kind": "const",
+                                "sort": {"kind": "primitive", "name": "String"},
+                                "value": "xyz"
+                            }
+                        ]
+                    }),
+                    JOIN_SITE,
+                ),
                 {
                     "kind": "const",
                     "sort": {"kind": "primitive", "name": "String"},
@@ -8825,6 +9088,115 @@ mod tests {
                 }
             ]
         })
+    }
+
+    // ── The join (step 9): the `ident` twin ─────────────────────────────
+    // vendor `idn.py`: `def ident(x): return x`, post `out = x`, bridged as
+    // `python:idn.ident`; the consumer's unanswered member names that symbol
+    // at the call's site. The vendor's `out` is the consumer's
+    // `python:call_result` at that occurrence, never the inner call term.
+
+    fn ident_vendor_post() -> AmbientPost {
+        joined_post(
+            "python:idn.ident",
+            JOIN_SITE,
+            eqf(var("out"), var("x")),
+            vec!["x".to_string()],
+        )
+    }
+
+    fn ident_claim(rhs: i64, site_cid: &str) -> Json {
+        let call = json!({"kind": "ctor", "name": "call:ident", "args": [int(3)]});
+        eqf(call_result(call, site_cid), int(rhs))
+    }
+
+    fn prove_joined(inv: Json, ambient: &[AmbientPost]) -> ConsistencyResult {
+        let (inv, partition) = with_ambient_posts_with_instances(inv, ambient);
+        let (plan, registry) = z3_plan_and_registry();
+        let mut result = check_inv_consistency(
+            "ident-claim".to_string(),
+            "consistency:test_ident",
+            inv,
+            partition.kept.clone(),
+            &plan,
+            &registry,
+            &test_compilers(),
+        );
+        result.dropped_ambient_posts = partition.dropped;
+        refuse_wrong_answers(&mut result);
+        result
+    }
+
+    #[test]
+    fn the_join_conjoins_the_vendor_post_onto_the_call_result() {
+        let partition =
+            linked_ambient_post_instances_for_inv(&ident_claim(3, JOIN_SITE), &[ident_vendor_post()]);
+        assert!(partition.dropped.is_empty(), "{:?}", partition.dropped);
+        assert_eq!(partition.kept.len(), 1, "{partition:?}");
+        let call = json!({"kind": "ctor", "name": "call:ident", "args": [int(3)]});
+        assert_eq!(
+            partition.kept[0].instantiated_post,
+            canonicalize_formula_json(&eqf(call_result(call, JOIN_SITE), int(3))),
+            "out := the call_result at the occurrence, x := the actual"
+        );
+    }
+
+    #[test]
+    fn ident_twin_truthful_half_is_sat() {
+        let result = prove_joined(ident_claim(3, JOIN_SITE), &[ident_vendor_post()]);
+        assert_eq!(
+            result.verdict,
+            ObligationVerdict::Discharged,
+            "ident(3) == 3 under the joined `out = x` is sat: {}",
+            result.reason
+        );
+    }
+
+    #[test]
+    fn ident_twin_lying_half_is_unsat() {
+        let result = prove_joined(ident_claim(4, JOIN_SITE), &[ident_vendor_post()]);
+        assert_eq!(
+            result.verdict,
+            ObligationVerdict::Unsatisfied,
+            "ident(3) == 4 under the joined `out = x` is unsat: {}",
+            result.reason
+        );
+    }
+
+    #[test]
+    fn the_join_reads_the_site_never_the_call_spelling() {
+        // Same call spelling, another occurrence: nothing joins there.
+        let partition = linked_ambient_post_instances_for_inv(
+            &ident_claim(4, "blake3-512:another-site"),
+            &[ident_vendor_post()],
+        );
+        assert!(partition.kept.is_empty(), "{partition:?}");
+        assert!(partition.dropped.is_empty(), "{partition:?}");
+    }
+
+    #[test]
+    fn a_wrong_answer_refuses_the_row_by_name() {
+        let mut wrong = ident_vendor_post();
+        wrong.refusal = Some(DroppedAmbientPostReason::AmbiguousTarget);
+        wrong.post = Json::Null;
+        let result = prove_joined(ident_claim(3, JOIN_SITE), &[wrong]);
+        assert_eq!(result.verdict, ObligationVerdict::Refused, "{}", result.reason);
+        assert!(
+            result.reason.contains("ambiguous-target for python:idn.ident"),
+            "{}",
+            result.reason
+        );
+
+        // Formals that do not match the call's arguments: refused, never skipped.
+        let mut arity = ident_vendor_post();
+        arity.binding.formals = vec!["x".to_string(), "y".to_string()];
+        let result = prove_joined(ident_claim(3, JOIN_SITE), &[arity]);
+        assert_eq!(result.verdict, ObligationVerdict::Refused, "{}", result.reason);
+        assert!(
+            result.reason.contains("import-signature-mismatch"),
+            "{}",
+            result.reason
+        );
     }
 
     #[test]
@@ -8863,7 +9235,7 @@ mod tests {
             partition.dropped[0].reason.label(),
             "open-after-specialization"
         );
-        assert_eq!(partition.dropped[0].source_symbol, "call:encodeBase64");
+        assert_eq!(partition.dropped[0].source_symbol, "python:b64.encodeBase64");
     }
 
     #[test]
@@ -8922,7 +9294,7 @@ mod tests {
             "kind": "atomic",
             "name": "=",
             "args": [
-                {"kind": "ctor", "name": "call:encodeBase64"},
+                call_result(json!({"kind": "ctor", "name": "call:encodeBase64"}), JOIN_SITE),
                 {
                     "kind": "const",
                     "sort": {"kind": "primitive", "name": "String"},

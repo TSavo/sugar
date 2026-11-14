@@ -106,20 +106,23 @@ class CallContractResolutionGapV1:
     kind: CallContractResolutionGapKindV1
     candidate_member_cids: tuple[str, ...]
 
-    def names_an_unanswered_target(self) -> bool:
-        """True when this gap is "not bridged": the import door named ONE
-        definite target symbol and nothing answers it. The module is not in
-        the corpus, or it is and no authenticated contract states the symbol.
+    def names_a_definite_target(self) -> bool:
+        """True when the import door named ONE definite target symbol. The
+        call then stands as coordinate plus edge, whatever answers it (step
+        6): nothing (the module is not in the corpus, or no authenticated
+        contract states the symbol), or something wrong (two contracts for one
+        symbol, a signature the call does not match, a member of the wrong
+        kind, the wrong provider, a stale or malformed reference). A wrong
+        answer is refused by prove's join, which reads the vendor contract
+        (step 9; ruling 2 on #7766), never here.
 
-        Every other kind is not this. Three name no definite import target
-        (no lexical binding, a non-import shadow, an ambiguous binding); five
-        mean something answered and it is wrong (two contracts for one symbol,
-        a signature the call does not match, a member of the wrong kind, the
-        wrong provider, a stale or malformed reference). Those stay refusals.
+        Three kinds name no definite import target (no lexical binding, a
+        non-import shadow, an ambiguous binding). Those stay refusals.
         """
-        return self.target_symbol is not None and self.kind in (
-            CallContractResolutionGapKindV1.TARGET_NOT_IN_CORPUS,
-            CallContractResolutionGapKindV1.NO_AUTHENTICATED_CONTRACT,
+        return self.target_symbol is not None and self.kind not in (
+            CallContractResolutionGapKindV1.NO_LEXICAL_BINDING,
+            CallContractResolutionGapKindV1.SHADOWED_NON_IMPORT,
+            CallContractResolutionGapKindV1.AMBIGUOUS_LEXICAL_BINDING,
         )
 
 
