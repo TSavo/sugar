@@ -13,9 +13,11 @@ same presence of ``__enter__`` / ``__exit__``, and records what it raised.
 It also cites the two language-owned bases a source MRO may end in --
 ``object`` and ``abc.ABC`` (with its metaclass ``abc.ABCMeta``) -- by reading
 their attribute sets from the running interpreter, so an absence proof never
-invents what they define.  A base and a decorator reach a citation by their
-binding (``sugar_source_tree.nodes.LanguageCallee``, read through the one
-import table and the builtin namespace), never by how the source spells them.
+invents what they define.  A base reaches a citation by its binding
+(``sugar_source_tree.nodes.LanguageCallee``, read through the one import table
+and the builtin namespace), never by how the source spells it.  What a
+decorator returns is never cited here: it is the one decorator application's
+(``sugar_source_tree.nodes.builtin_decorator_step``, #7757).
 """
 
 from __future__ import annotations
@@ -144,29 +146,3 @@ def cited_language_base(callee) -> CitedLanguageBaseV1 | None:
         subclass_gains=gains,
         metaclass_overrides_call=overrides_call,
     )
-
-
-@lru_cache(maxsize=None)
-def cited_identity_decorator(callee) -> bool:
-    """Whether the method decorator ``callee`` binds returns its argument
-    unchanged.
-
-    Only the binding ``abc.abstractmethod`` is cited: applying it to a probe
-    function is observed to return that same function, adding
-    ``__isabstractmethod__`` only.  A decorator that returned anything else
-    could rebind a name.
-    """
-    import abc
-
-    from sugar_source_tree.nodes import LanguageCallee
-
-    decorator = {LanguageCallee.ABC_ABSTRACTMETHOD: abc.abstractmethod}.get(callee)
-    if decorator is None:
-        return False
-
-    def probe():  # pragma: no cover - never called
-        return None
-
-    before = set(vars(probe))
-    result = decorator(probe)
-    return result is probe and set(vars(probe)) - before <= {"__isabstractmethod__"}

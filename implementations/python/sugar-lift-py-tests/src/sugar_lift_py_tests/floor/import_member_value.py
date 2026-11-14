@@ -214,21 +214,25 @@ class ImportMemberValue(FloorValue):
         friends) have language-owned semantics; when THIS authenticated member
         is one of them and its operands are concrete, decide it here.
 
-        ``typing.final(f)`` tries ``f.__final__ = True``, swallows the failure,
-        and returns ``f``: the call is its one positional operand.  The
-        ``__final__`` marker is not carried on the returned floor.
+        A builtin decorator called on one positional operand (``final(f)``
+        is ``@final`` spelled as a call) is the one decorator application's
+        (``builtin_decorator_application``, #7757): applied where it answers
+        (``typing.final`` and ``abc.abstractmethod`` return their operand),
+        else the ordinary boundary.
         """
-        from sugar_source_tree.nodes import LanguageCallee
+        from sugar_source_tree.nodes import builtin_decorator_application
 
         language_callee = self.language_callee()
         if (
-            language_callee is LanguageCallee.TYPING_FINAL
+            language_callee is not None
             and not operation.keyword_names
             and len(operation.arguments) == 1
         ):
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            return ExitSet.completed(operation.arguments[0])
+            step = builtin_decorator_application(
+                language_callee, operation.site, self.qualified_name
+            )
+            if step.kind == "identity":
+                return step.applied(None, operation.arguments[0], ctx)
         operation_name = self.c_floor_semantic_operation(language_callee)
         if operation_name is not None:
             decided = self._decide_c_floor_semantic(operation_name, operation, ctx)

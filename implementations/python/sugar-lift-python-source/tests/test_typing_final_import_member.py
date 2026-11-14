@@ -1,10 +1,11 @@
 """An authenticated ``typing.final`` applied to one operand returns that operand.
 
 ``typing.final(f)`` tries ``f.__final__ = True``, swallows the failure and
-returns ``f``; a class under ``@final`` is that class.  Recognition is keyed
-on the authenticated import target, so any other import member -- and any
-other call shape of ``typing.final`` -- stays the undecided import-member
-runtime boundary.
+returns ``f``; a class under ``@final`` is that class.  The answer is the one
+decorator application's (``builtin_decorator_application``, #7757), keyed on
+the authenticated import target, so ``abc.abstractmethod(f)`` is answered the
+same way and any other import member -- and any other call shape -- stays the
+undecided import-member runtime boundary.
 """
 
 from __future__ import annotations
@@ -26,12 +27,16 @@ from sugar_source_tree.tree import SourceFile
 
 
 _SOURCE = (
+    "from abc import abstractmethod\n"
     "from typing import final, runtime_checkable\n"
     "@final\n"
     "class Sealed:\n"
     "    pass\n"
     "@runtime_checkable\n"
     "class Checked:\n"
+    "    pass\n"
+    "@abstractmethod\n"
+    "def g():\n"
     "    pass\n"
 )
 
@@ -70,6 +75,18 @@ class _Op:
 
 def test_typing_final_returns_its_one_operand(tmp_path) -> None:
     member, site = _member(tmp_path, "typing.final")
+    operand = StringValue("the decorated floor")
+    out = member.callable_application_with(_Op([operand], site), None)
+    assert type(out) is ExitSet
+    assert out.completed_value() is operand
+
+
+def test_abc_abstractmethod_is_answered_by_the_same_one_application(
+    tmp_path,
+) -> None:
+    """``abstractmethod(f)`` marks ``f`` and returns it: the one decorator
+    application answers it exactly as it answers ``@abstractmethod``."""
+    member, site = _member(tmp_path, "abc.abstractmethod")
     operand = StringValue("the decorated floor")
     out = member.callable_application_with(_Op([operand], site), None)
     assert type(out) is ExitSet

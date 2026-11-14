@@ -2077,13 +2077,7 @@ class _WithReader:
             )
         ):
             self.read_within(definition)
-            _read_same_module_generator_head(
-                context,
-                coordinate,
-                call,
-                exit_face_id,
-                definition,
-            )
+            _read_same_module_generator_head(context, coordinate, call, definition)
         elif type(definition) is FunctionDef:
             _read_same_module_factory_head(
                 context,
@@ -2171,11 +2165,10 @@ def _seat_selected_manager_refs(context, selected_arms, selected_coordinates) ->
 def _rewrite_installed_generator_frames(context) -> None:
     """Rewrite seated generator frames after contract refs are published.
 
-    ``_publish_generator_backed_resource_contract`` only rewrites a
-    protocol-backing copy, and only when decorator coordinates exist. A bare
-    generator (pandas ``assert_produces_warning``, a local ``yield`` manager)
-    is consumed from ``source_call_frames``. Apply the cited-opaque rewrite
-    to those live frames once the manager-source refs are seated.
+    A seated generator (pandas ``assert_produces_warning``, a local ``yield``
+    manager, a ``contextlib.contextmanager`` generator) is consumed from
+    ``source_call_frames``. Apply the cited-opaque rewrite to those live
+    frames once the manager-source refs are seated.
 
     ``bind_node_actuals`` re-emits steps from the FunctionDef, which would
     drop the rewrite; wrap those frames so bind reapplies it.
@@ -2981,103 +2974,46 @@ def _read_same_module_factory_head(
     )
 
 
-def _read_same_module_generator_head(
-    context,
-    coordinate,
-    call,
-    exit_face_id,
-    function_def,
-) -> None:
-    """Derive ``with g(...)`` where ``g`` is a same-module decorated generator.
+def _read_same_module_generator_head(context, coordinate, call, function_def) -> None:
+    """Seat ``with g(...)``'s frame where the call of ``g`` applies it.
 
-    Import receipts never fire for a local callee, so a module's own
-    ``@contextlib.contextmanager`` generator was left ``runtime-selected``
-    and its generator protocol was never applied. The law is the import
-    road's, applied to the module binding: ``Call.func`` binds to exactly one
-    module FunctionDef whose body is a generator and whose decorator resolves
-    (through its authenticated import binding) to a function returning a
-    helper that constructs one class with distinct ``__enter__``/``__exit__``
-    -- contextlib's ``_GeneratorContextManager``, cited from the stdlib source.
-    The frame is seated and published through the same generator-backed door,
-    so the one ``generator_manager_exit`` law runs every body exit. When the
-    decorator's protocol cannot be cited, the use is a named gap, never a
-    seated frame: a local generator is not a manager on its spelling.
+    Import receipts never fire for a local callee.  Whether a call of the
+    module generator function ``g`` runs ``g``'s own frame is the one decorator
+    application's rule (``call_applies_own_frame``, #7757), never read here
+    from a decorator's spelling or body:
+
+    - an undecorated generator function returns the generator object itself,
+      which has no ``__enter__``: the frame is seated so the With constructs
+      the interpreter's own TypeError (#7595), never a manager and never a
+      runtime-selected gap;
+    - a generator function whose one decorator is bound to
+      ``contextlib.contextmanager`` builds ``_GeneratorContextManager`` over
+      the generator its frame allocates: the frame is seated and the With
+      applies contextlib's law to it (``GeneratorWithSugar``,
+      ``generator_manager_exit``).  This is the only decorated definition
+      whose call keeps its frame;
+    - every other decorated definition binds its name to its decorators'
+      result, and a call of it calls that value (``DecoratorApplicationSugar``).
+      Nothing is seated: what a decorator returns is not decided here, and the
+      With's require door refuses the head by name.
     """
-    from sugar_source_tree.nodes import AsyncFunctionDef
+    from sugar_source_tree.nodes import call_applies_own_frame
     from sugar_source_tree.panic import SugarNotWritten
 
-    from .canonical import cid_of_json
     from .manager_construction import _install_source_call_frame
 
-    if isinstance(function_def, AsyncFunctionDef) and function_def.decorators:
-        # What a decorated ``async def`` returns is the decorator's to say;
-        # no generator protocol is read from its spelling.  When the
-        # decorator's source constructs one class whose MRO is proven to
-        # lack ``__enter__``/``__exit__`` (``@asynccontextmanager``), the
-        # With raises the interpreter's TypeError after the call.
-        _publish_decorated_non_manager_head(context, coordinate, call, function_def)
+    if not call_applies_own_frame(function_def):
         return
-    target_symbol = f"python:local:{function_def.name}"
     try:
-        frame, generator_target = _source_visible_frame_for_function(function_def)
+        frame, _generator_target = _source_visible_frame_for_function(function_def)
     except (SugarNotWritten, TypeError):
         # No frame, no generator claim: the require door stays loud.
         return
     if frame is None or frame.generator_steps is None:
         # Not a generator: the require door owns it.
         return
-    if not getattr(function_def, "decorators", ()):
-        # An undecorated generator function returns the generator object
-        # itself, which has no ``__enter__``: seat the frame so the With
-        # constructs the interpreter's own TypeError (#7595), never a
-        # manager and never a runtime-selected gap.
-        _install_source_call_frame(context, call, frame)
-        context.source_manager_provider_calls[coordinate] = call
-        return
-    declined: list[str] = []
-    if (
-        _protocol_coords_from_generator_decorators(
-            generator_target,
-            declined=declined,
-        )
-        is None
-    ):
-        if _publish_decorated_non_manager_head(context, coordinate, call, function_def):
-            return
-        _install_local_derivation_gap(
-            context,
-            coordinate,
-            target_symbol,
-            "generator-protocol",
-            "native enter/exit definition coordinates unavailable"
-            + (f" [{'; '.join(declined)}]" if declined else ""),
-        )
-        return
-    # Seat the frame in the form the installed-frame rewrite leaves it,
-    # so the protocol's frame CID is the CID the provider call allocates.
-    frame = _as_rewriting_generator_frame(_frame_with_nested_manager_steps(frame, ()))
     _install_source_call_frame(context, call, frame)
     context.source_manager_provider_calls[coordinate] = call
-    try:
-        _publish_generator_backed_resource_contract(
-            context,
-            coordinate,
-            frame=frame,
-            generator_target=generator_target,
-            exit_face_id=exit_face_id,
-            receipt=None,
-            resolved_cid=cid_of_json(
-                {
-                    "kind": "same-module-generator-manager",
-                    "schemaVersion": "1",
-                    "definitionCid": function_def.fragment.seal().cid,
-                }
-            ),
-            local_target_symbol=target_symbol,
-        )
-    except (SugarNotWritten, TypeError) as exc:
-        kind, detail = _populate_body_defect_kind_detail(exc)
-        _install_local_derivation_gap(context, coordinate, target_symbol, kind, detail)
 
 
 def _read_builtin_name_head(context, coordinate, call, *, session) -> None:
@@ -3363,38 +3299,6 @@ def _publish_proven_non_manager_head(
     return True
 
 
-def _publish_decorated_non_manager_head(
-    context, coordinate, call, function_def
-) -> bool:
-    """``with g(...)`` for ``@d async def g``: seat ``g``'s frame and the proof
-    that ``d``'s constructed class lacks the sync protocol."""
-    from sugar_source_tree.panic import SugarNotWritten
-
-    from .manager_construction import _install_source_call_frame
-    from .manager_protocol_absence import prove_decorated_manager_absence
-
-    if len(function_def.decorators) != 1:
-        return False
-    outcome = _construct_decorator_function(function_def.decorators[0])
-    if not isinstance(outcome, DecoratorConstructedV1):
-        return False
-    proof = prove_decorated_manager_absence(function_def, outcome.function)
-    if proof is None:
-        return False
-    try:
-        frame, _generator_target = _source_visible_frame_for_function(function_def)
-    except (SugarNotWritten, TypeError):
-        return False
-    if frame is None or frame.generator_steps is None:
-        return False
-    # ``helper(*args, **kwds)`` constructs the class, whose ``__init__`` calls
-    # ``func(*args, **kwds)``: the call's argument binding is g's own frame.
-    _install_source_call_frame(context, call, frame)
-    context.source_manager_provider_calls[coordinate] = call
-    context.source_non_manager_heads[coordinate] = proof
-    return True
-
-
 def _install_local_derivation_gap(
     context, coordinate, target_symbol: str, kind: str, detail: str | None = None
 ) -> None:
@@ -3509,327 +3413,6 @@ def _publish_class_protocol_native_definitions(context, receiver, behavior) -> N
     )
 
 
-def _publish_generator_backed_resource_contract(
-    context,
-    receiver,
-    *,
-    frame,
-    generator_target,
-    exit_face_id,
-    receipt,
-    resolved_cid: str,
-    local_target_symbol: str | None = None,
-) -> None:
-    """Publish native enter/exit + one closed generator-backed resource ref.
-
-    Requires authenticated generator lifecycle (frame.generator_steps) and
-    decorator-constructed enter/exit definition coordinates. Installs
-    ``SourceDerivedGeneratorResourceRefV1`` carrying generator protocol
-    testimony — never a fabricated ObjectValue receiver.
-    """
-    from sugar_lift_py_tests.context_manager_contract import (
-        EnterResultContractV1,
-        ExitContractV1,
-        ImportSignatureV2,
-        ProtocolResourceSemanticsV1,
-        ReturnTruthinessDispositionV1,
-    )
-    from sugar_lift_py_tests.context_manager_resolution import (
-        NativeProtocolSlot,
-        SourceDerivedGeneratorResourceRefV1,
-    )
-    from sugar_lift_py_tests.ir import PrimitiveSort
-
-    from .manager_protocol_construction import (
-        ManagerProtocolConstructionGapV1,
-        construct_generator_backed_protocol,
-    )
-
-    def _install_derivation_gap(context, receiver, receipt, kind, detail=None):
-        # A same-module manager has no import receipt: its demand is local.
-        if receipt is None:
-            _install_local_derivation_gap(
-                context, receiver, local_target_symbol, kind, detail
-            )
-            return
-        _install_derivation_gap_for_receipt(context, receiver, receipt, kind, detail)
-
-    declined: list[str] = []
-    coords = _protocol_coords_from_generator_decorators(
-        generator_target,
-        declined=declined,
-    )
-    if coords is None:
-        # Name WHY, per decorator. "unavailable" was true of an off-population
-        # citation, a missing binding and a malformed decorator body alike, so
-        # the row could not say which one a reader was looking at.
-        _install_derivation_gap(
-            context,
-            receiver,
-            receipt,
-            "generator-protocol",
-            "native enter/exit definition coordinates unavailable"
-            + (f" [{'; '.join(declined)}]" if declined else ""),
-        )
-        return
-    enter, exit_ = coords
-    _publish_native_definition(
-        context, receiver, NativeProtocolSlot.CONTEXT_ENTER, enter
-    )
-    _publish_native_definition(
-        context, receiver, NativeProtocolSlot.CONTEXT_EXIT, exit_
-    )
-    protocol = construct_generator_backed_protocol(
-        frame=frame,
-        enter_definition=enter,
-        exit_definition=exit_,
-        exit_face_id=exit_face_id,
-        construction_cid=resolved_cid,
-    )
-    # Closed gap surface only — not an isinstance asker over protocol wrappers.
-    gap = _generator_protocol_construction_gap(protocol)
-    if gap is not None:
-        kind, detail = _gap_kind_and_detail(gap)
-        _install_derivation_gap(context, receiver, receipt, kind, detail)
-        return
-    enter_halts, yield_faces, exit_halts = _project_generator_lifecycle_faces(
-        generator_target
-    )
-    nested_layers, nested_gap = _project_nested_manager_layers(
-        generator_target,
-        exit_face_id=exit_face_id,
-    )
-    if nested_gap is not None:
-        kind, detail = nested_gap
-        _install_derivation_gap(context, receiver, receipt, kind, detail)
-        return
-    # When nested layers resolve, rewrite Opaque With steps to NestedManagerStep
-    # on a published frame (producer-owned; not a nodes.py emission edit).
-    published_frame = _frame_with_nested_manager_steps(frame, nested_layers)
-    if published_frame is not frame:
-        protocol = construct_generator_backed_protocol(
-            frame=published_frame,
-            enter_definition=enter,
-            exit_definition=exit_,
-            exit_face_id=exit_face_id,
-            construction_cid=resolved_cid,
-        )
-        gap = _generator_protocol_construction_gap(protocol)
-        if gap is not None:
-            kind, detail = _gap_kind_and_detail(gap)
-            _install_derivation_gap(context, receiver, receipt, kind, detail)
-            return
-    # Lifecycle *is* the generator-backed protocol surface (subclass); it
-    # publishes under SourceDerivedGeneratorResourceRefV1 without a second
-    # isinstance filter over wrapper spelling.
-    lifecycle = GeneratorBackedLifecycleProtocolV1.from_protocol(
-        protocol,
-        enter_halt_faces=enter_halts,
-        yield_faces=yield_faces,
-        exit_halt_faces=exit_halts,
-        nested_manager_layers=nested_layers,
-    )
-    # Generator exit truthiness is the GCM throw/resume result — not a forged
-    # NeverSuppresses theorem from an ObjectValue receiver.
-    semantics = ProtocolResourceSemanticsV1(
-        EnterResultContractV1(PrimitiveSort("Value")),
-        ExitContractV1(ReturnTruthinessDispositionV1()),
-    )
-    signature = ImportSignatureV2(())
-    summary_preimage = {
-        "kind": "source-derived-generator-resource-summary",
-        "schemaVersion": "1",
-        "protocolConstructionCid": lifecycle.protocol_construction_cid,
-        "generatorFrameCid": lifecycle.generator_frame_cid,
-        "enterDefinition": enter.wire(),
-        "exitDefinition": exit_.wire(),
-        "enterHaltFaceCids": [face.cid for face in lifecycle.enter_halt_faces],
-        "yieldFaceCids": [face.cid for face in lifecycle.yield_faces],
-        "exitHaltFaceCids": [face.cid for face in lifecycle.exit_halt_faces],
-        "nestedManagerLayerCids": [
-            layer.cid for layer in lifecycle.nested_manager_layers
-        ],
-        "lifecycleCid": lifecycle.lifecycle_cid,
-        "semantics": json.loads(encode_jcs(semantics_to_value(semantics))),
-        "importSignature": json.loads(encode_jcs(_signature_to_value(signature))),
-    }
-    context.source_derived_contract_refs[receiver] = (
-        SourceDerivedGeneratorResourceRefV1(
-            receiver,
-            cid_of_json(summary_preimage),
-            semantics,
-            signature,
-            lifecycle,
-        )
-    )
-
-
-def _generator_protocol_construction_gap(protocol):
-    """Return a construction gap when ``construct_generator_backed_protocol`` refused.
-
-    Closed gap surface: only the gap type is recognized. Success values are the
-    protocol surface (base or lifecycle subclass) admitted by construction, not
-    by an isinstance asker over wrapper spelling.
-    """
-    from .manager_protocol_construction import ManagerProtocolConstructionGapV1
-
-    # type(protocol) is the closed door: gap class vs success protocol class.
-    if type(protocol) is ManagerProtocolConstructionGapV1:
-        return protocol
-    return None
-
-
-def _project_nested_manager_layers(
-    generator_target,
-    *,
-    exit_face_id: str,
-) -> tuple[tuple[GeneratorNestedManagerLayerV1, ...], tuple[str, str] | None]:
-    """Project With-of-source-defined-manager layers inside a generator body.
-
-    Returns (layers, None) on success. When a nested With cannot honestly
-    publish as a generator-backed protocol, returns
-    ``((), ("nested-manager", detail))`` — a loud named gap, never a skip.
-    Each layer also carries ``body_steps`` (peer of pre-yield Assign/If/Yield)
-    for NestedManagerStep rewrite without nodes.py emission.
-    """
-    from sugar_source_tree.nodes import (
-        Call,
-        Expr,
-        FunctionDef,
-        If,
-        Try,
-        With,
-        Yield,
-    )
-
-    from .manager_protocol_construction import construct_generator_backed_protocol
-
-    if not isinstance(generator_target, FunctionDef):
-        return (), None
-
-    layers: list[GeneratorNestedManagerLayerV1] = []
-
-    def visit(stmts, *, past: bool) -> tuple[str, str] | None:
-        for statement in stmts:
-            if isinstance(statement, Expr) and isinstance(statement.value, Yield):
-                past = True
-                continue
-            if isinstance(statement, With):
-                for item in statement.items:
-                    expr = item.context_expr
-                    if not isinstance(expr, Call):
-                        # Non-Call With is not a nested generator manager layer.
-                        continue
-                    nested_fn = _resolve_nested_generator_function(expr)
-                    if nested_fn is None:
-                        # Not a resolvable source-defined manager — leave Opaque.
-                        continue
-                    nested_frame, nested_target = _source_visible_frame_for_function(
-                        nested_fn
-                    )
-                    if nested_frame is None or nested_target is None:
-                        continue
-                    if getattr(nested_frame, "generator_steps", None) is None:
-                        # Source function but not a generator CM — not our layer.
-                        continue
-                    # Recognized nested generator manager: must publish honestly
-                    # or gap loud — never skip.
-                    coords = _protocol_coords_from_generator_decorators(nested_target)
-                    if coords is None:
-                        return (
-                            "nested-manager",
-                            "nested manager native enter/exit definitions unavailable",
-                        )
-                    n_enter, n_exit = coords
-                    nested_protocol = construct_generator_backed_protocol(
-                        frame=nested_frame,
-                        enter_definition=n_enter,
-                        exit_definition=n_exit,
-                        exit_face_id=(
-                            f"{exit_face_id}:nested:"
-                            f"{statement.fragment.seal().cid[:16]}"
-                        ),
-                        construction_cid=nested_frame.frame_cid,
-                    )
-                    if (
-                        _generator_protocol_construction_gap(nested_protocol)
-                        is not None
-                    ):
-                        return (
-                            "nested-manager",
-                            "nested manager protocol construction refused",
-                        )
-                    body_steps = _nameable_nested_with_body_steps(statement.body)
-                    if body_steps is None:
-                        return (
-                            "nested-manager",
-                            "nested With body holds an unnameable statement",
-                        )
-                    phase: Literal["pre-yield", "post-yield"] = (
-                        "post-yield" if past else "pre-yield"
-                    )
-                    # Occurrence identity is the With item's context expression
-                    # fragment — distinct per nested Call, not the outer protocol.
-                    item_cid = expr.fragment.seal().cid
-                    occurrence = {
-                        "kind": "generator-nested-with-occurrence",
-                        "schemaVersion": "1",
-                        "cid": item_cid,
-                        "withCid": statement.fragment.seal().cid,
-                    }
-                    layers.append(
-                        GeneratorNestedManagerLayerV1.mint(
-                            occurrence=occurrence,
-                            nested_protocol_construction_cid=(
-                                nested_protocol.protocol_construction_cid
-                            ),
-                            nested_generator_frame_cid=nested_frame.frame_cid,
-                            temporal_phase=phase,
-                            nested_protocol=nested_protocol,
-                            body_steps=body_steps,
-                        )
-                    )
-                # Yield inside With body counts as past-yield for following stmts.
-                if any(
-                    isinstance(s, Expr) and isinstance(s.value, Yield)
-                    for s in statement.body
-                ):
-                    past = True
-                gap = visit(statement.body, past=past)
-                if gap is not None:
-                    return gap
-                continue
-            if isinstance(statement, If):
-                gap = visit(statement.body, past=past)
-                if gap is not None:
-                    return gap
-                gap = visit(statement.orelse, past=past)
-                if gap is not None:
-                    return gap
-                continue
-            if isinstance(statement, Try):
-                gap = visit(statement.body, past=past)
-                if gap is not None:
-                    return gap
-                for handler in statement.handlers:
-                    gap = visit(handler.body, past=past)
-                    if gap is not None:
-                        return gap
-                gap = visit(statement.orelse, past=past)
-                if gap is not None:
-                    return gap
-                gap = visit(statement.finalbody, past=past)
-                if gap is not None:
-                    return gap
-                continue
-        return None
-
-    gap = visit(generator_target.body, past=False)
-    if gap is not None:
-        return (), gap
-    return tuple(layers), None
-
-
 def _source_visible_frame_for_function(function_def):
     """Build (frame, FunctionDef) for a same-module generator FunctionDef."""
     from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
@@ -3840,23 +3423,6 @@ def _source_visible_frame_for_function(function_def):
     if frame is None:
         return None, None
     return frame, function_def
-
-
-def _resolve_nested_generator_function(call):
-    """Resolve Call.func to a same-module FunctionDef when possible.
-
-    An imported callee is never resolved to a body here: it is answered only
-    by its import target (step 3).
-    """
-    from sugar_source_tree.nodes import FunctionDef, Name
-
-    func = call.func
-    if not isinstance(func, Name):
-        return None
-    binds = (func.unit.module_direct_bindings or {}).get(func.id, ())
-    if len(binds) == 1 and isinstance(binds[0], FunctionDef):
-        return binds[0]
-    return None
 
 
 def _nameable_nested_with_body_steps(body, *, scope=None) -> tuple | None:
@@ -4309,283 +3875,6 @@ def _mint_yield_face(statement) -> GeneratorYieldFaceV1:
     )
 
 
-def _protocol_coords_from_generator_decorators(
-    generator_target,
-    *,
-    declined=None,
-):
-    """Construct enter/exit definition sites from generator decorator testimony."""
-    from sugar_source_tree.nodes import FunctionDef
-
-    if not isinstance(generator_target, FunctionDef):
-        return None
-    decorators = getattr(generator_target, "decorators", ()) or ()
-    if not decorators:
-        return None
-    published = []
-    # Out-parameter: pass a list and each decorator that could not supply
-    # coordinates appends the NAMED reason it could not. Same shape as
-    # ``_substitute_body_tracked(..., edge_states=...)``; the return contract is
-    # unchanged so existing callers and tests are untouched.
-    if declined is None:
-        declined = []
-    for decorator in decorators:
-        outcome = _construct_decorator_function(decorator)
-        # Closed set, reconciled here. A citation is NOT a decline-and-forget:
-        # it is a named, authenticated identity this road cannot yet consume,
-        # and the reason travels so the refusal downstream can say so.
-        if isinstance(outcome, DecoratorCitedV1):
-            declined.append(
-                f"{outcome.module_name}.{outcome.exported_name}: "
-                f"{outcome.membrane_kind}"
-            )
-            continue
-        if isinstance(outcome, DecoratorUnresolvedV1):
-            declined.append(f"{outcome.kind}: {outcome.detail}")
-            continue
-        if not isinstance(outcome, DecoratorConstructedV1):
-            raise TypeError(
-                "decorator resolution must be one of the closed outcomes; "
-                f"got {type(outcome).__name__}"
-            )
-        returned_class = _sole_returned_manager_class(outcome.function)
-        if returned_class is None:
-            declined.append("decorator body does not return exactly one manager class")
-            continue
-        coords = _enter_exit_sites_from_class_def(returned_class)
-        if coords is None:
-            declined.append("returned class publishes no distinct __enter__/__exit__")
-            continue
-        published.append(coords)
-    # Exactly one decorator arm may yield protocol coordinates; several would
-    # reintroduce first-candidate selection across independent wrappers.
-    if len(published) != 1:
-        return None
-    return published[0]
-
-
-@dataclass(frozen=True)
-class DecoratorConstructedV1:
-    """The decorator resolved to a source-visible FunctionDef we constructed."""
-
-    function: object
-
-
-@dataclass(frozen=True)
-class DecoratorCitedV1:
-    """The decorator is an authenticated import: cited, its body never read.
-
-    Not an absence: the identity is known and content-addressed. An imported
-    callee is a coordinate plus an edge; what a consumer may NOT do is mistake
-    this citation for "there was no decorator".
-    """
-
-    module_name: str
-    exported_name: str
-    membrane_kind: str
-
-
-@dataclass(frozen=True)
-class DecoratorUnresolvedV1:
-    """No decorator identity at this site, with the reason named.
-
-    ``absent`` means nothing names the decorator: no import binding and no
-    same-module ``def``.  An imported decorator is never unresolved here; it
-    is cited (``DecoratorCitedV1``).
-    """
-
-    kind: Literal["absent"]
-    detail: str
-
-
-DecoratorResolutionV1 = (
-    DecoratorConstructedV1 | DecoratorCitedV1 | DecoratorUnresolvedV1
-)
-
-
-def _construct_decorator_function(decorator):
-    """Construct the decorator callable from typed import testimony.
-
-    A same-module ``def`` is constructed.  An imported decorator is cited by
-    its import binding (step 3): no dependency source is read to decide what
-    the name is.
-    """
-    from sugar_source_tree.nodes import FunctionDef, Name
-
-    binding = _decorator_module_export_binding(decorator)
-    if binding is None:
-        # Same-module FunctionDef bound under the decorator Name.
-        if isinstance(decorator, Name):
-            binds = (decorator.unit.module_direct_bindings or {}).get(decorator.id, ())
-            if len(binds) == 1 and isinstance(binds[0], FunctionDef):
-                return DecoratorConstructedV1(binds[0])
-        return DecoratorUnresolvedV1(
-            "absent", "decorator names no authenticated import or module binding"
-        )
-    module_name, exported_name = binding
-    # An imported decorator is a coordinate plus an edge: its identity is the
-    # import binding, and its body is never read.  A citation is not absence:
-    # it is never mistaken for "there was no decorator".
-    return DecoratorCitedV1(
-        module_name=module_name,
-        exported_name=exported_name,
-        membrane_kind="call-target-off-population",
-    )
-
-
-def _decorator_module_export_binding(decorator) -> tuple[str, str] | None:
-    """Read (module_name, exported_name) from authenticated import bindings."""
-    from sugar_source_tree.nodes import Attribute, Import, ImportFrom, Name
-
-    unit = decorator.unit
-    bindings = unit.module_direct_bindings or {}
-    if isinstance(decorator, Name):
-        binds = bindings.get(decorator.id, ())
-        if len(binds) != 1:
-            return None
-        bind = binds[0]
-        if not isinstance(bind, ImportFrom) or not bind.module:
-            return None
-        for alias in bind.names:
-            local = alias.asname or alias.name
-            if local == decorator.id:
-                return bind.module, alias.name
-        return None
-    if isinstance(decorator, Attribute) and isinstance(decorator.value, Name):
-        binds = bindings.get(decorator.value.id, ())
-        if len(binds) != 1:
-            return None
-        bind = binds[0]
-        if isinstance(bind, Import):
-            for alias in bind.names:
-                local = alias.asname or alias.name
-                if local == decorator.value.id:
-                    return alias.name, decorator.attr
-        if isinstance(bind, ImportFrom) and bind.module:
-            # ``from pkg import mod`` then ``@mod.decorator`` — module is
-            # pkg.mod when the imported name is a module re-export.
-            for alias in bind.names:
-                local = alias.asname or alias.name
-                if local == decorator.value.id:
-                    return f"{bind.module}.{alias.name}", decorator.attr
-        return None
-    return None
-
-
-def _sole_returned_manager_class(decorator_fn):
-    """Project the sole class the decorator's returned helper constructs.
-
-    The decorator body must return exactly one nested FunctionDef (the helper).
-    That helper must construct exactly one class on return. Multiple helpers or
-    multiple classes refuse — never first-candidate selection.
-    """
-    from sugar_source_tree.nodes import ClassDef, FunctionDef, Name, Return
-
-    nested = {
-        stmt.name: stmt for stmt in decorator_fn.body if isinstance(stmt, FunctionDef)
-    }
-    returned_helpers = []
-    for stmt in decorator_fn.body:
-        if not isinstance(stmt, Return):
-            continue
-        value = stmt.value
-        if isinstance(value, Name) and value.id in nested:
-            returned_helpers.append(nested[value.id])
-    if len(returned_helpers) != 1:
-        # Direct ``return Class(...)`` without a nested helper is also sole.
-        direct = _classes_constructed_by_returns(decorator_fn.body)
-        if len(direct) == 1:
-            return direct[0]
-        return None
-    classes = _classes_constructed_by_returns(returned_helpers[0].body)
-    if len(classes) != 1:
-        return None
-    return classes[0]
-
-
-def _classes_constructed_by_returns(statements) -> tuple:
-    """ClassDefs reached by ``return Name(...)`` through module bindings.
-
-    Walks typed statement structure (If/For/With/Try bodies) so branched
-    helpers that construct two classes refuse sole-class projection. This is
-    child-node projection, not source scanning.
-    """
-    from sugar_source_tree.nodes import (
-        Call,
-        ClassDef,
-        For,
-        If,
-        Name,
-        Return,
-        Try,
-        While,
-        With,
-    )
-
-    found = []
-    seen = set()
-
-    def visit(stmts) -> None:
-        for stmt in stmts:
-            if isinstance(stmt, Return):
-                value = stmt.value
-                if not isinstance(value, Call) or not isinstance(value.func, Name):
-                    continue
-                binds = (value.func.unit.module_direct_bindings or {}).get(
-                    value.func.id, ()
-                )
-                for bind in binds:
-                    if not isinstance(bind, ClassDef):
-                        continue
-                    key = (
-                        bind.unit.source_cid,
-                        bind.line_col_span().start_line,
-                        bind.line_col_span().start_col,
-                        bind.line_col_span().end_line,
-                        bind.line_col_span().end_col,
-                    )
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    found.append(bind)
-            elif isinstance(stmt, If):
-                visit(stmt.body)
-                visit(stmt.orelse)
-            elif isinstance(stmt, (For, While)):
-                visit(stmt.body)
-                visit(stmt.orelse)
-            elif isinstance(stmt, With):
-                visit(stmt.body)
-            elif isinstance(stmt, Try):
-                visit(stmt.body)
-                for handler in stmt.handlers:
-                    visit(handler.body)
-                visit(stmt.orelse)
-                visit(stmt.finalbody)
-
-    visit(statements)
-    return tuple(found)
-
-
-def _enter_exit_sites_from_class_def(class_def):
-    """Read constructed ``__enter__`` / ``__exit__`` definition sites."""
-    from sugar_source_tree.nodes import FunctionDef
-
-    enter = exit_ = None
-    for item in class_def.body:
-        if not isinstance(item, FunctionDef):
-            continue
-        frame = item.source_visible_call_frame()
-        site = frame.definition_site
-        if item.name == "__enter__":
-            enter = site
-        elif item.name == "__exit__":
-            exit_ = site
-    if enter is None or exit_ is None or enter == exit_:
-        return None
-    return enter, exit_
-
-
 def _direct_with_call_uses(root) -> dict:
     """Direct ``with Call(...)`` uses under ``root``.
 
@@ -4847,10 +4136,6 @@ def _seat_off_population_citation(
         mint_opaque_cited_context_manager_ref(roster=roster)
     )
     return True
-
-
-def _install_derivation_gap_for_receipt(context, coordinate, receipt, kind, detail=None):
-    return _install_derivation_gap(context, coordinate, receipt, kind, detail)
 
 
 def _install_derivation_gap(

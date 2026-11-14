@@ -259,7 +259,7 @@ class LanguageCallee(_enum.Enum):
 
 # The builtin method descriptor constructors a decorator's binding may reach,
 # by the descriptor kind ``ClassDef._method_descriptor_kind`` answers.
-_METHOD_DESCRIPTOR_KINDS = {
+METHOD_DESCRIPTOR_KINDS = {
     LanguageCallee.BUILTIN_PROPERTY: "property",
     LanguageCallee.BUILTIN_CLASSMETHOD: "classmethod",
     LanguageCallee.BUILTIN_STATICMETHOD: "staticmethod",
@@ -2812,13 +2812,13 @@ class SourceUnit:
             # A decorated definition binds its name to the decorators'
             # result: the call is that value's (``DecoratedDefinitionRef``),
             # never this definition's body (#7757).
-            return definition if _call_applies_own_frame(definition) else None
+            return definition if call_applies_own_frame(definition) else None
 
         span = call.line_col_span()
         definition = self.module_definition_at(call.func.id, span)
         if not isinstance(
             definition, (FunctionDef, AsyncFunctionDef)
-        ) or not _call_applies_own_frame(definition):
+        ) or not call_applies_own_frame(definition):
             return None
         definition_span = definition.line_col_span()
         if (
@@ -2872,12 +2872,12 @@ class SourceUnit:
         that value (``DecoratedDefinitionRef``), never of the definition's
         own frame (#7757).  A ``contextlib.contextmanager`` generator function
         is the one decorated definition whose call keeps its frame
-        (``_call_applies_own_frame``).
+        (``call_applies_own_frame``).
         """
         if not isinstance(call.func, Name):
             return None
         definition = self.module_definition_at(call.func.id, call.line_col_span())
-        if definition is None or _call_applies_own_frame(definition):
+        if definition is None or call_applies_own_frame(definition):
             return None
         return definition
 
@@ -7372,7 +7372,7 @@ class FunctionDef(Statement):
         filtered_body = tuple(
             statement
             for statement in self.body
-            if not _call_applies_own_frame(statement)
+            if not call_applies_own_frame(statement)
             or all(statement is not row.definition_occurrence for row in lexical_rows)
         )
         substituted_body, _ = self._substitute_body(filtered_body, formal_scope)
@@ -8600,7 +8600,7 @@ class FunctionDef(Statement):
         lc = stmt.line_col_span()
         site = f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}"
         with reduction_span(sugar=f"Body.{stmt.kind}", role="construction", site=site):
-            if not _call_applies_own_frame(stmt):
+            if not call_applies_own_frame(stmt):
                 return _decorated_statement_sugar(stmt)
             if isinstance(stmt, (FunctionDef, AsyncFunctionDef)):
                 # A ``def`` statement builds the function and binds its name
@@ -8932,7 +8932,7 @@ class ClassDef(Statement):
         """
         if len(method.decorators) != 1:
             return None
-        return _METHOD_DESCRIPTOR_KINDS.get(
+        return METHOD_DESCRIPTOR_KINDS.get(
             self.unit.language_callee_of(method.decorators[0])
         )
 
@@ -9111,7 +9111,7 @@ class ClassDef(Statement):
         if name is not None:
             bindings = (self.unit.module_direct_bindings or {}).get(name, ())
             if len(bindings) == 1 and isinstance(bindings[0], ClassDef):
-                if not _call_applies_own_frame(bindings[0]):
+                if not call_applies_own_frame(bindings[0]):
                     # A decorated base is the decorators' result (#7757).
                     return _decorated_definition_ref(
                         bindings[0],
@@ -19251,7 +19251,7 @@ class Call(Expression):
             )
             else None
         )
-        if lexical_row is not None and not _call_applies_own_frame(
+        if lexical_row is not None and not call_applies_own_frame(
             lexical_row.definition_occurrence
         ):
             # A decorated local definition binds its name to the decorators'
@@ -19409,7 +19409,7 @@ class Call(Expression):
                 )
                 else None
             )
-            if lexical_row is not None and not _call_applies_own_frame(
+            if lexical_row is not None and not call_applies_own_frame(
                 lexical_row.definition_occurrence
             ):
                 # The decorators' result, not this frame (#7757).
@@ -21430,7 +21430,7 @@ class DecoratedDefinitionRef(Expression):
         )
 
 
-def _call_applies_own_frame(definition) -> bool:
+def call_applies_own_frame(definition) -> bool:
     """Whether a call of the name ``definition`` binds applies the
     definition's own frame.
 
@@ -21505,7 +21505,7 @@ def _decorated_statement_binding(statement, binding):
     ``decorated_value`` leaf, the ``DecoratedDefinitionRef`` its substitution
     bound its name to (``_local_definition_binding``): the statement's own
     reduction is that application (``FunctionDef._sugar_body_statement``)."""
-    if _call_applies_own_frame(statement):
+    if call_applies_own_frame(statement):
         return statement
     bound = (binding or {}).get(statement.name)
     if bound is None:
@@ -21694,43 +21694,14 @@ def _decorator_step(definition, decorator, bound):
         DecoratorStepV1,
     )
 
+    builtin = builtin_decorator_step(definition, decorator)
+    if builtin is not None:
+        _discharge_absorbed(decorator)
+        return builtin
     unit = definition.unit
     site = decorator.fragment
     spelling = decorator.segment()
-    member = unit.language_callee_of(decorator)
-    if member is not None:
-        _discharge_absorbed(decorator)
-        if member in _IDENTITY_DECORATORS or (
-            member is LanguageCallee.DATACLASSES_DATACLASS
-            and isinstance(definition, ClassDef)
-            and definition._dataclass_generated_init_fields() is not None
-        ):
-            return DecoratorStepV1.identity(site, spelling)
-        return DecoratorStepV1.refused(
-            site,
-            spelling,
-            f"builtin decorator {member.value} has no application modeled for "
-            f"`{definition.name}`",
-        )
     if isinstance(decorator, Call):
-        factory = unit.language_callee_of(decorator.func)
-        if factory is not None:
-            if (
-                factory is LanguageCallee.FUNCTOOLS_WRAPS
-                and not decorator.keywords
-                and all(isinstance(argument, Name) for argument in decorator.args)
-            ):
-                # ``wraps(w)`` reads names and returns a decorator that copies
-                # ``w``'s metadata onto its argument and returns it.
-                _discharge_absorbed(decorator)
-                return DecoratorStepV1.identity(site, spelling)
-            _discharge_absorbed(decorator)
-            return DecoratorStepV1.refused(
-                site,
-                spelling,
-                f"builtin decorator factory {factory.value} has no application "
-                f"modeled for `{definition.name}`",
-            )
         symbol = unit.import_reference_of(decorator.func)
         if symbol is not None:
             # The factory call is evaluated (an unanswered call of its own);
@@ -21754,6 +21725,81 @@ def _decorator_step(definition, decorator, bound):
     return DecoratorStepV1.apply(site, spelling, callee=decorator.sugar())
 
 
+def builtin_decorator_application(member, site, spelling, definition=None):
+    """The one decorator application's answer for the builtin decorator
+    ``member`` (the ``LanguageCallee`` the one builtin door named) applied to
+    ``definition`` (the ``def``/``class`` it decorates, or None for an
+    explicit call ``member(value)``): a ``DecoratorStepV1``.
+
+    ``typing.final`` and ``abc.abstractmethod`` return their argument
+    (``identity``); ``dataclasses.dataclass`` over a ``class`` returns the
+    class whose constructor frame is the ``__init__`` it writes
+    (``ClassDef._dataclass_generated_init_fields``).  Every other builtin is
+    ``refused`` by name.  Every reader of a builtin decorator's semantics asks
+    this (``_decorator_step``, ``ImportMemberValue.callable_application_with``,
+    the manager-protocol absence proof), never a table of its own (#7757).
+    """
+    from sugar_lift_py_tests.sugar.decorator_application_sugar import (
+        DecoratorStepV1,
+    )
+
+    if member in _IDENTITY_DECORATORS or (
+        member is LanguageCallee.DATACLASSES_DATACLASS
+        and isinstance(definition, ClassDef)
+        and definition._dataclass_generated_init_fields() is not None
+    ):
+        return DecoratorStepV1.identity(site, spelling)
+    subject = "its argument" if definition is None else f"`{definition.name}`"
+    return DecoratorStepV1.refused(
+        site,
+        spelling,
+        f"builtin decorator {member.value} has no application modeled for "
+        f"{subject}",
+    )
+
+
+def builtin_decorator_step(definition, decorator):
+    """The builtin arm of the one decorator application: ``decorator`` of
+    ``definition`` decided from its binding through the one builtin door
+    (``SourceUnit.language_callee_of``), or None where that binding is no
+    builtin (an imported, source or other decorator, which
+    ``_decorator_step`` decides).
+
+    A decorator bound to a builtin is ``builtin_decorator_application``'s.  A
+    call of a builtin decorator factory is ``functools.wraps(w)`` over names
+    (it returns a decorator that copies ``w``'s metadata onto its argument and
+    returns it: ``identity``) or refused by name.  Nothing is constructed or
+    discharged here.
+    """
+    from sugar_lift_py_tests.sugar.decorator_application_sugar import (
+        DecoratorStepV1,
+    )
+
+    unit = definition.unit
+    site = decorator.fragment
+    spelling = decorator.segment()
+    member = unit.language_callee_of(decorator)
+    if member is not None:
+        return builtin_decorator_application(member, site, spelling, definition)
+    if not isinstance(decorator, Call):
+        return None
+    factory = unit.language_callee_of(decorator.func)
+    if factory is None:
+        return None
+    if (
+        factory is LanguageCallee.FUNCTOOLS_WRAPS
+        and not decorator.keywords
+        and all(isinstance(argument, Name) for argument in decorator.args)
+    ):
+        return DecoratorStepV1.identity(site, spelling)
+    return DecoratorStepV1.refused(
+        site,
+        spelling,
+        f"builtin decorator factory {factory.value} has no application "
+        f"modeled for `{definition.name}`",
+    )
+
+
 def _definition_decorator_step(target, site, spelling):
     """A decorator bound to the source ``def``/``class`` ``target``: its value,
     applied through the one call routine."""
@@ -21761,7 +21807,7 @@ def _definition_decorator_step(target, site, spelling):
         DecoratorStepV1,
     )
 
-    if not _call_applies_own_frame(target):
+    if not call_applies_own_frame(target):
         return DecoratorStepV1.apply(
             site,
             spelling,
@@ -21831,7 +21877,7 @@ def _local_definition_binding(definition, scope):
     local = isinstance(lexical, frozenset) and definition.name in lexical
     if not (local or _module_threads(scope, definition.name)):
         return None
-    if _call_applies_own_frame(definition):
+    if call_applies_own_frame(definition):
         return {definition.name: definition}
     return {
         definition.name: _decorated_definition_ref(
