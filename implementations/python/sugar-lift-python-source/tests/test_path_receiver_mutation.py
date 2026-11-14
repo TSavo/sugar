@@ -1018,7 +1018,6 @@ def test_the_class_call_reads_self_where_its_initializer_ends():
     # ``self`` after ``reset(self)``: its value after the call the one
     # exposure rule rebinds it to, never the stored fields.
     assert type(body.receiver_at_end) is ReceiverAfterCallSugar
-    assert not body.returns_early
 
 
 def test_self_exposed_in_init_is_the_object_the_class_call_returns(tmp_path):
@@ -1049,10 +1048,11 @@ def test_the_class_call_returns_every_store_of_its_initializer(tmp_path):
 
 
 def test_the_class_call_returns_self_after_a_method_call_on_it(tmp_path):
-    # ``self.helper()`` takes the one door: the receiver is the door's value
-    # after the call (a source object a method of its own reaches may have
-    # changed), so the instance is that value -- what a read of ``self``
-    # after the call gives -- never ``x`` alone as stored before it.
+    # ``self.helper()`` takes the one door, and the method the receiver's
+    # class binds runs on it.  Every effect it has on its ``self`` is a field
+    # store it carries to its caller, so the door's receiver after the call
+    # is the receiver with that store: the instance holds ``z``, and still
+    # ``x``.
     source = (
         "class C:\n"
         "    def __init__(self):\n"
@@ -1061,7 +1061,26 @@ def test_the_class_call_returns_self_after_a_method_call_on_it(tmp_path):
         "    def helper(self):\n"
         "        self.z = 3\n"
         "def f():\n"
-        "    return C()\n"
+        "    c = C()\n"
+        "    return (c.x, c.z)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(_ints(1, 3))
+
+
+def test_a_method_that_hands_self_on_leaves_the_instance_unknown(tmp_path):
+    # ``helper`` hands its ``self`` to ``g``: what it did to the object is
+    # not its stores alone, so the receiver after ``self.helper(g)`` is
+    # unknown -- never ``x`` and ``z`` read as if nothing else happened.
+    source = (
+        "class C:\n"
+        "    def __init__(self, g):\n"
+        "        self.x = 1\n"
+        "        self.helper(g)\n"
+        "    def helper(self, g):\n"
+        "        self.z = 3\n"
+        "        g(self)\n"
+        "def f(g):\n"
+        "    return C(g)\n"
     )
     returns, _halts = _returns(tmp_path, source)
     assert returns
@@ -1280,3 +1299,156 @@ def test_a_bound_setdefault_pop_through_a_path_changes_every_alias(tmp_path):
             fresh(ListValue, (fresh(DictValue, ((StringValue("x"), after),)),)),
         )
     )
+
+
+def test_a_method_storing_under_a_guard_leaves_the_instance_unknown(tmp_path):
+    # A store under the method's own guard is not carried to its caller, so
+    # the carried stores are not all the method did: unknown, never ``z``
+    # missing or present on every path.
+    source = (
+        "class C:\n"
+        "    def __init__(self, flag):\n"
+        "        self.x = 1\n"
+        "        self.helper(flag)\n"
+        "    def helper(self, flag):\n"
+        "        if flag:\n"
+        "            self.z = 3\n"
+        "def f(flag):\n"
+        "    return C(flag)\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert returns
+    assert all(_unknown_after_call(value) for value in returns)
+
+
+# ``self = other`` rebinds the name, never the object: the class call returns
+# the receiver ``__init__`` ran on, read by its identity where the
+# initializer ends.
+
+
+def test_rebinding_the_receiver_name_never_returns_the_other_object(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self, other):\n"
+        "        self.x = 1\n"
+        "        self = other\n"
+        "def f(o):\n"
+        "    return C(o).x\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(1)
+
+
+def test_another_name_still_holding_the_receiver_is_read_where_it_ends(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self, other):\n"
+        "        me = self\n"
+        "        self = other\n"
+        "        me.x = 1\n"
+        "def f(o):\n"
+        "    return C(o).x\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(1)
+
+
+# Zero-argument ``super().__init__(...)`` is a call on ``self``: the base
+# initializer the receiver's MRO selects runs on the object as the derived
+# initializer left it so far, and its stores land after the derived ones
+# made before it.
+
+
+_BASE_STORES_X = "class B:\n    def __init__(self):\n        self.x = 2\n"
+
+
+def test_a_base_store_after_the_derived_store_wins(tmp_path):
+    source = _BASE_STORES_X + (
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "        super().__init__()\n"
+        "def f():\n"
+        "    return D().x\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(2)
+
+
+def test_a_derived_store_after_the_base_initializer_wins(tmp_path):
+    source = _BASE_STORES_X + (
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        super().__init__()\n"
+        "        self.x = 1\n"
+        "def f():\n"
+        "    return D().x\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(1)
+
+
+def test_the_base_initializer_reads_the_derived_stores_made_before_it(tmp_path):
+    source = (
+        "class B:\n"
+        "    def __init__(self):\n"
+        "        self.y = self.x\n"
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "        super().__init__()\n"
+        "def f():\n"
+        "    d = D()\n"
+        "    return (d.x, d.y)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(_ints(1, 1))
+
+
+def test_a_base_initializer_that_hands_self_on_leaves_it_unknown(tmp_path):
+    # The base initializer is followed, but what it did to the receiver is
+    # not its stores alone: the one exposure rule leaves the receiver
+    # unknown after the call.
+    source = (
+        "class B:\n"
+        "    def __init__(self, g):\n"
+        "        g(self)\n"
+        "class D(B):\n"
+        "    def __init__(self, g):\n"
+        "        super().__init__(g)\n"
+        "def f(g):\n"
+        "    return D(g)\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert returns
+    assert all(_unknown_after_call(value) for value in returns)
+
+
+# A ``return`` before the initializer's last statement leaves the class call
+# with the receiver as it stood at that ``return``.
+
+
+def test_each_return_of_the_initializer_leaves_with_its_own_receiver(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self, flag):\n"
+        "        self.x = 1\n"
+        "        if flag:\n"
+        "            self.y = 2\n"
+        "            return\n"
+        "        self.y = 3\n"
+        "def f(flag):\n"
+        "    return C(flag).y\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert TermValue(2) in returns
+    assert TermValue(3) in returns
+
+
+def test_an_unconditional_early_return_leaves_before_the_later_stores(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self, flag):\n"
+        "        self.y = 2\n"
+        "        if flag:\n"
+        "            return\n"
+        "        self.y = 3\n"
+        "def f():\n"
+        "    return C(True).y\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(2)

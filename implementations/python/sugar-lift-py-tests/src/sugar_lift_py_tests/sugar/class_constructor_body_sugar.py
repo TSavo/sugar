@@ -1,9 +1,69 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import ClassVar
 
+from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+
+
+@dataclass(frozen=True)
+class ReceiverAtReturnValue(FloorValue):
+    """What a ``return`` of a class call's initializer leaves with, as the
+    class call reads it: the receiver as it stood at that ``return``
+    (``InitializerReturnSugar``).  The call returns that object on the face
+    that leaves by the ``return`` (``ClassConstructorBodySugar``), never the
+    value the ``return`` names."""
+
+    receiver: FloorValue
+
+    def to_term(self, *, owner: str):
+        return self.receiver.to_term(owner=owner)
+
+
+@dataclass(frozen=True)
+class InitializerReturnSugar(Sugar):
+    """A ``return`` of a class call's initializer (``nodes.InitializerReturn``):
+    its value is evaluated, as any ``return``'s is, and it leaves with the
+    receiver read where it stands -- after every store and call before it,
+    and after the stores its own value's calls carry (``written_by``) --
+    which the read after the initializer's last statement is not."""
+
+    value: Sugar | None
+    receiver: Sugar
+    site: object = field(compare=False)
+    halts_at_statement_head: ClassVar[bool] = True
+
+    @classmethod
+    def witnesses(cls):
+        from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="ReturnValue",
+            reason="a class call reads the receiver its return leaves with",
+        )
+
+    def desugar(self, ctx: object = None) -> ExitSet:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            peel_walrus_binds,
+            written_by,
+        )
+        from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+        def leaving(at):
+            return self.receiver.desugar(at).and_then(
+                lambda receiver: ExitSet.completed(
+                    ReturnValue(ReceiverAtReturnValue(peel_walrus_binds(receiver)[1]))
+                )
+            )
+
+        if self.value is None:
+            return leaving(ctx)
+        return self.value.desugar(ctx).and_then(
+            lambda value: leaving(written_by(value, ctx))
+        )
 
 
 def refuse_unrun_source_new(definition, *, new_method, runs_new, site, owner):
@@ -77,13 +137,12 @@ class ClassConstructorBodySugar(Sugar):
     # initializer's last statement (``nodes._read_where_the_body_ends``),
     # reduced in the context the initializer's end record left
     # (``_receiver_where_it_ends``) -- after every store on it, after every
-    # call the one exposure rule lets reach it.  None when no initializer
-    # binds the receiver by name (a source ``__new__`` returns its own).
+    # call the one exposure rule lets reach it, by the object's identity and
+    # never by the formal's name.  A face that leaves by a ``return`` reads
+    # the receiver that ``return`` carries (``InitializerReturnSugar``).
+    # None when no initializer binds the receiver by name (a source
+    # ``__new__`` returns its own).
     receiver_at_end: Sugar | None = field(default=None, compare=False)
-    # A ``return`` leaves the initializer before its last statement: on the
-    # face it leaves by, the read after the last statement is not the
-    # receiver it left with.
-    returns_early: bool = field(default=False, compare=False)
     # The class call's own site, set where the call binds this body
     # (``enter`` at the call): the construction that makes the instance in
     # the calling frame (``object_identity.made_at``), its ``allocation``.
@@ -255,41 +314,96 @@ class ClassConstructorBodySugar(Sugar):
 
     def _receiver_where_it_ends(self, record, ctx) -> ExitSet:
         """The object the class call returns on one completed face of its
-        initializer: the receiver as a read of it after the initializer's
-        last statement gives it (``receiver_at_end``), reduced in the
-        context that face's end record left (``record.context``).
+        initializer: ``type.__call__`` returns the object ``__init__`` ran
+        on, in the state ``__init__`` left it -- after the one exposure
+        rule's rebinding (``g(self)``) the receiver is its value after that
+        call, after a call that states what it did to it
+        (``self.helper()``, ``super().__init__()``) its value as the call
+        left it, and after a later store that value with the store.  It is
+        the object, read by its identity, never whatever the formal's name
+        is bound to (``self = other``), and never rebuilt from the
+        initializer's stores collected again.
 
-        ``type.__call__`` returns the object ``__init__`` ran on, in the
-        state ``__init__`` left it: after the one exposure rule's rebinding
-        (``g(self)``, ``self.helper()``) the receiver is its value after
-        that call, and after a later store that value with the store.  It
-        is never rebuilt from the initializer's stores collected again.
-
-        A face that left by a ``return`` before the initializer's last
-        statement (``returns_early``) left with the receiver as it stood at
-        that ``return``, which the read after the last statement is not:
-        refused by name, as is an initializer whose end binds no receiver."""
+        On a face that fell through, the receiver as a read of it after the
+        initializer's last statement gives it (``receiver_at_end``), reduced
+        in the context the face's end record left (``record.context``).  On
+        a face that left by a ``return``, the receiver that ``return``
+        carries (``InitializerReturnSugar``), read where it stood; a face
+        that went on past a guarded ``return`` is split where the block
+        splits it (``past_prior_returns``).  An initializer whose end binds
+        no receiver is refused by name."""
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            past_prior_returns,
+        )
         from sugar_source_tree.panic import SugarNotWritten
 
-        if self.receiver_at_end is None or (
-            self.returns_early and not record.can_fall_through
-        ):
+        if self.receiver_at_end is None:
             raise SugarNotWritten(
                 blame=self.site,
                 owner="ClassConstructorBodySugar.receiver",
-                observed=(
-                    "an initializer face that left by a return before its "
-                    "last statement"
-                    if self.receiver_at_end is not None
-                    else "an initializer whose end binds no receiver"
-                ),
+                observed="an initializer whose end binds no receiver",
                 requested="the receiver as the initializer left it on this face",
-                fix=(
-                    "read the receiver where each return leaves the initializer"
-                ),
+                fix="bind the receiver formal where the initializer ends",
             )
         context = record.context if record.context is not None else ctx
-        return self.receiver_at_end.desugar(context)
+        if not record.can_fall_through:
+            return self._receiver_at_its_returns(record)
+        return past_prior_returns(
+            record,
+            context,
+            lambda went_on: self.receiver_at_end.desugar(
+                went_on.context if went_on.context is not None else context
+            ),
+            self._receiver_at_its_returns,
+        )
+
+    def _receiver_at_its_returns(self, record) -> ExitSet:
+        """The object the class call returns on a face of its initializer
+        that left by a ``return``: the receiver each ``return`` of the record
+        carries (``ReceiverAtReturnValue``), under that ``return``'s own
+        guard.  A ``return`` that carries none (one inside a ``try``, a
+        ``with`` or a loop, ``nodes._returns_read_where_they_stand``) is
+        refused by name, as is a face that left by no ``return``."""
+        from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+        from sugar_lift_py_tests.floor.return_value import ReturnValue
+        from sugar_lift_py_tests.ir import and_
+        from sugar_source_tree.panic import SugarNotWritten
+
+        def refuse(observed):
+            raise SugarNotWritten(
+                blame=self.site,
+                owner="ClassConstructorBodySugar.receiver",
+                observed=observed,
+                requested="the receiver as the initializer left it on this face",
+                fix="read the receiver where each return leaves the initializer",
+            )
+
+        def guard_of(entry):
+            if len(entry.guards) == 1:
+                return entry.guards[0]
+            return and_(list(entry.guards))
+
+        unguarded = [entry for entry in record.entries if type(entry) is ReturnValue]
+        guarded = [
+            entry for entry in record.entries if isinstance(entry, GuardedReturn)
+        ]
+        if not unguarded and not guarded:
+            refuse("an initializer face that left by no return and cannot go on")
+        if unguarded and (guarded or len(unguarded) > 1):
+            refuse("an initializer face that left by more than one unguarded return")
+        for entry in (*unguarded, *guarded):
+            if not isinstance(entry.value, ReceiverAtReturnValue):
+                refuse(
+                    "an initializer face that left by a return that carries "
+                    "no receiver (inside a try, a with or a loop)"
+                )
+        if unguarded:
+            return ExitSet.completed(unguarded[0].value.receiver)
+        arms = [
+            ExitSet.completed(entry.value.receiver, guard_of(entry))
+            for entry in guarded
+        ]
+        return ExitSet(()).union(*arms)
 
     def _made(self) -> dict:
         """The ``allocation`` and ``arrival`` of the instance this class call

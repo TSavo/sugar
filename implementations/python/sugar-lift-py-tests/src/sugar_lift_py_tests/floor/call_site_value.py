@@ -281,6 +281,13 @@ class CallSiteValue(FloorValue):
     closure: tuple[tuple[str, FloorValue], ...] = dataclass_field(
         default=(), compare=False, repr=False
     )
+    # The frame this call binds states what its body does to the object of
+    # its first actual: that object's field stores, which the call carries
+    # (``SourceVisibleCallFrameV1.first_formal_stated_by_stores``,
+    # ``receiver_after_its_call``).
+    first_actual_stated_by_stores: bool = dataclass_field(
+        default=False, compare=False, repr=False
+    )
     _retained_source_completion: object | None = dataclass_field(
         default=None, init=False, compare=False, repr=False
     )
@@ -1969,27 +1976,164 @@ def caller_visible_stores(entries) -> tuple:
     from sugar_lift_py_tests.floor.receiver_field_store_value import (
         ReceiverFieldStoreValue,
     )
-    from sugar_lift_py_tests.outcome.exit_set import _is_true
-
-    def unconditional(guard) -> bool:
-        if _is_true(guard):
-            return True
-        if getattr(guard, "kind", None) == "and":
-            return all(
-                unconditional(operand) for operand in getattr(guard, "operands", ())
-            )
-        return False
 
     stores = []
     for entry in entries:
         if isinstance(entry, GuardedReceiverFieldStoreValue):
-            if unconditional(entry.guard):
+            if _unconditional(entry.guard):
                 stores.append(
                     ReceiverFieldStoreValue(entry.receiver, entry.attr, entry.value)
                 )
         elif isinstance(entry, ReceiverFieldStoreValue):
             stores.append(entry)
     return tuple(stores)
+
+
+def _unconditional(guard) -> bool:
+    """A guard that is truth, a nested empty ``and`` included."""
+    from sugar_lift_py_tests.outcome.exit_set import _is_true
+
+    if _is_true(guard):
+        return True
+    if getattr(guard, "kind", None) == "and":
+        return all(
+            _unconditional(operand) for operand in getattr(guard, "operands", ())
+        )
+    return False
+
+
+def receiver_after_its_call(receiver, result):
+    """``receiver`` as an ordinary call made on it left it (``result``, the
+    call's completed value), where the call states that; None where it does
+    not, and the receiver is then unknown after the call (the one exposure
+    rule, ``PathContainerCallSugar``).
+
+    The call states it through the one projection of what a callee did to
+    objects its caller sees (``caller_visible_stores``), read off the
+    callee's own record where the call stands:
+
+    - a source body run on ``receiver`` as its first actual, whose every
+      effect on that object is a field store on its first formal or a base
+      initializer's own call on it (``first_actual_stated_by_stores``):
+      ``receiver`` with each of the record's stores on it, none under a
+      guard of the body's own, in the order the body made them, and each
+      base initializer call's own statement of it (this rule again; an
+      unanswered one states nothing);
+    - a builtin's own transition of it (``ReceiverOwnedMutationResult``):
+      the receiver after that transition.
+
+    A call that did not run a body on ``receiver`` (an unanswered callee,
+    a body run on another object) states nothing about it."""
+    from .named_expression_value import peel_walrus_binds
+    from .object_value import ObjectValue
+
+    if not isinstance(receiver, ObjectValue):
+        return None
+    _binds, call = peel_walrus_binds(result)
+    return _stated_after(call, receiver)
+
+
+def _stated_after(call, receiver):
+    """``receiver`` after ``call`` (a call's completed value, or a record's
+    entry for one) where the call states it (``receiver_after_its_call``),
+    else None."""
+    from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
+        GuardedReceiverFieldStoreValue,
+    )
+    from sugar_lift_py_tests.floor.receiver_field_store_value import (
+        ReceiverFieldStoreValue,
+    )
+
+    from .block_value import BlockValue
+    from .named_expression_value import peel_walrus_binds
+    from .receiver_owned_mutation_result import ReceiverOwnedMutationResult
+
+    if isinstance(call, ReceiverOwnedMutationResult):
+        if _same_object_value(call.receiver_before, receiver):
+            return call.receiver_after
+        return None
+    if (
+        not isinstance(call, CallSiteValue)
+        or not call.first_actual_stated_by_stores
+        or not carries_its_stores_to_the_caller(call)
+        or not call.arg_values
+        or not _same_object_value(call.arg_values[0], receiver)
+    ):
+        return None
+    completion = call.retained_source_completion_outcome()
+    record = None if completion is None else completion.completed_value()
+    if not isinstance(record, BlockValue) or _guarded_store_on(
+        record.statements, receiver
+    ):
+        return None
+    state = receiver
+    for entry in record.statements:
+        entry = peel_walrus_binds(entry)[1]
+        if isinstance(entry, GuardedReceiverFieldStoreValue):
+            if not _same_object_value(entry.receiver, receiver):
+                continue
+            if not _unconditional(entry.guard):
+                return None
+            state = state.with_field_store(entry.attr, entry.value)
+        elif isinstance(entry, ReceiverFieldStoreValue):
+            if _same_object_value(entry.receiver, receiver):
+                state = state.with_field_store(entry.attr, entry.value)
+        elif isinstance(entry, ReceiverOwnedMutationResult):
+            if _same_object_value(entry.receiver_before, receiver):
+                state = entry.receiver_after
+        elif isinstance(entry, CallSiteValue):
+            if entry.body is None:
+                # An unanswered call the body made in statement position (a
+                # base initializer whose class is not read among them):
+                # what it did to the object is not stated.
+                return None
+            if entry.arg_values and _same_object_value(entry.arg_values[0], receiver):
+                state = _stated_after(entry, state)
+                if state is None:
+                    return None
+    return state
+
+
+def _same_object_value(value, receiver) -> bool:
+    """``value`` is ``receiver``'s object: an instance of its exact floor
+    type with its identity (``ReceiverFieldStoreValue.extend_scope``)."""
+    identity = getattr(receiver, "identity", None)
+    return (
+        isinstance(identity, str)
+        and bool(identity)
+        and type(value) is type(receiver)
+        and getattr(value, "identity", None) == identity
+    )
+
+
+def _guarded_store_on(entries, receiver) -> bool:
+    """Whether a record's ``entries`` hold a field store on ``receiver``'s
+    object under a guard: one the call does not carry
+    (``caller_visible_stores``), so what the body left of it is not its
+    carried stores alone."""
+    from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
+    from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
+        GuardedReceiverFieldStoreValue,
+    )
+
+    from .block_value import BlockValue
+
+    for entry in entries:
+        if (
+            isinstance(entry, GuardedReceiverFieldStoreValue)
+            and not _unconditional(entry.guard)
+            and _same_object_value(entry.receiver, receiver)
+        ):
+            return True
+        if isinstance(entry, BlockValue):
+            nested = entry.statements
+        elif isinstance(entry, GuardedFaces):
+            nested = (*entry.unconditional_entries, *entry.entries)
+        else:
+            continue
+        if _guarded_store_on(nested, receiver):
+            return True
+    return False
 
 
 def _record_entries(state) -> tuple:

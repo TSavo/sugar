@@ -257,8 +257,20 @@ class BuiltinSuperValue(FloorValue):
             return self._type_new(arguments, keywords, blame)
         if name == "__init__" and entry in ("object", "dict"):
             # ``object_init`` / ``dict_init`` with no actual: nothing to do.
+            # The receiver leaves the call as it came (its transition is the
+            # identity), which the statement's receiver reads after it
+            # (``call_site_value.receiver_after_its_call``); the call's value
+            # is ``None``.
             if not arguments and not keywords:
-                return ExitSet.completed(NoneValue())
+                from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+                    ReceiverOwnedMutationResult,
+                )
+
+                return ExitSet.completed(
+                    ReceiverOwnedMutationResult(
+                        self.receiver, self.receiver, NoneValue()
+                    )
+                )
         elif entry == "dict" and not keywords:
             answered = self._dict_base_call(name, arguments, blame, ctx)
             if answered is not None:
