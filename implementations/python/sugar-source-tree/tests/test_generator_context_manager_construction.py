@@ -4,7 +4,8 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceFragmentCoordinateV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.ir import ctor, eq, num, str_const
 from sugar_source_tree.nodes import Call, FunctionDef, With
 from sugar_source_tree.panic import SugarNotWritten
@@ -29,6 +30,17 @@ def _coordinate(node) -> SourceFragmentCoordinateV1:
         span.end_line,
         span.end_col,
     )
+
+
+def _raise_halts(statements) -> list:
+    """The raise arms of the recorded entries in which every arm halts."""
+    return [
+        halt
+        for entry in statements
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+        if isinstance(halt.effect, RaiseEffect)
+    ]
 
 
 def _with_sugar(
@@ -60,8 +72,9 @@ def test_renamed_generator_manager_enters_at_first_yield_without_name_authority(
 
     assert type(sugar).__name__ == "GeneratorWithSugar"
     outcome = sugar.desugar()
-    assert isinstance(outcome, Complete)
-    assert outcome.value.statements[0].formula == eq(
+    value = outcome.completed_value()
+    assert value is not None
+    assert value.statements[0].formula == eq(
         ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
     )
 
@@ -78,22 +91,16 @@ def test_premature_return_on_enter_is_the_observed_manager_raise():
 
     Not a SugarNotWritten refusal of a real Python outcome: the consumer
     routes GeneratorTerminationV1 through the observed entry refusal into
-    a Halted RaiseEffect arm that exitset_to_outcome projects as Incomplete
-    inside the block.
+    a Halted RaiseEffect arm recorded as an all-halting entry inside the block.
     """
-    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.generator_entry_refusal import observed_entry_refusal
-    from sugar_lift_py_tests.outcome import Incomplete
 
     sugar = _with_sugar("    return 7\n    yield 8", bind_entered=False)
     outcome = sugar.desugar()
-    assert isinstance(outcome, Complete)
-    raises = [
-        entry
-        for entry in outcome.value.statements
-        if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect)
-    ]
-    assert len(raises) == 1, outcome.value.statements
+    value = outcome.completed_value()
+    assert value is not None
+    raises = _raise_halts(value.statements)
+    assert len(raises) == 1, value.statements
     refusal = observed_entry_refusal()
     assert raises[0].effect.exception_name == refusal.exception_name
     assert raises[0].effect.raised_value == refusal.message
@@ -101,18 +108,13 @@ def test_premature_return_on_enter_is_the_observed_manager_raise():
 
 def test_never_yield_on_enter_is_the_observed_manager_raise():
     """``if False: yield`` never suspends — same enter raise as premature return."""
-    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.generator_entry_refusal import observed_entry_refusal
-    from sugar_lift_py_tests.outcome import Incomplete
 
     sugar = _with_sugar("    if False:\n        yield 1", bind_entered=False)
     outcome = sugar.desugar()
-    assert isinstance(outcome, Complete)
-    raises = [
-        entry
-        for entry in outcome.value.statements
-        if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect)
-    ]
+    value = outcome.completed_value()
+    assert value is not None
+    raises = _raise_halts(value.statements)
     assert len(raises) == 1
     refusal = observed_entry_refusal()
     assert raises[0].effect.exception_name == refusal.exception_name
@@ -135,10 +137,14 @@ def test_exceptional_exit_throws_into_machine_and_preserves_both_body_faces():
 
     outcome = sugar.desugar()
 
-    assert isinstance(outcome, Complete)
-    contributions = outcome.value.statements
-    assert any(type(item).__name__ == "Incomplete" for item in contributions)
-    assert outcome.value.can_fall_through
+    value = outcome.completed_value()
+    assert value is not None
+    contributions = value.statements
+    assert any(
+        isinstance(item, ExitSet) and item.exits and item.halts() == item.exits
+        for item in contributions
+    )
+    assert value.can_fall_through
 
 
 def test_contextmanager_style_try_finally_resumes_cleanup_before_termination():
@@ -146,8 +152,9 @@ def test_contextmanager_style_try_finally_resumes_cleanup_before_termination():
 
     outcome = sugar.desugar()
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.statements[0].formula == eq(
+    value = outcome.completed_value()
+    assert value is not None
+    assert value.statements[0].formula == eq(
         ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
     )
 
@@ -163,8 +170,9 @@ def test_docstring_is_stepped_and_is_never_the_blocker():
     sugar = _with_sugar("    '''Real work happens below.'''\n    yield 7")
 
     outcome = sugar.desugar()
-    assert isinstance(outcome, Complete)
-    assert outcome.value.statements[0].formula == eq(
+    value = outcome.completed_value()
+    assert value is not None
+    assert value.statements[0].formula == eq(
         ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
     )
 
@@ -174,8 +182,9 @@ def test_term_step_executes_a_call_expression_before_yield():
     sugar = _with_sugar("    record()\n    yield 7")
 
     outcome = sugar.desugar()
-    assert isinstance(outcome, Complete)
-    assert outcome.value.statements[0].formula == eq(
+    value = outcome.completed_value()
+    assert value is not None
+    assert value.statements[0].formula == eq(
         ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
     )
 
@@ -185,8 +194,9 @@ def test_assign_step_executes_a_name_binding_before_yield():
     sugar = _with_sugar("    '''Doc.'''\n    hidden = True\n    yield 7")
 
     outcome = sugar.desugar()
-    assert isinstance(outcome, Complete)
-    assert outcome.value.statements[0].formula == eq(
+    value = outcome.completed_value()
+    assert value is not None
+    assert value.statements[0].formula == eq(
         ctor("enter_result_value", [str_const(sugar.enter_slot_id)]), num(7)
     )
 

@@ -1,6 +1,6 @@
 """`try` as the STRUCTURAL surface of the effect router: except clauses match
 by authenticated exception identity (the same rule with-contracts ride), matching handlers
-consume the Incomplete, non-matches propagate, else/finally splice, and the
+consume the halt, non-matches propagate, else/finally splice, and the
 loud residuals stay loud. Mirror of test_with_contract.py for the native-syntax
 twin."""
 
@@ -68,9 +68,15 @@ def _exception_identity(function, name: str):
 
 
 def _incompletes(v):
-    from sugar_lift_py_tests.outcome import Incomplete
+    """The halted arms of the recorded entries in which every arm halts."""
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    return [e for e in v.record.contribution() if isinstance(e, Incomplete)]
+    return [
+        halt
+        for entry in v.record.contribution()
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+    ]
 
 
 def test_matching_except_consumes_raise_and_try_completes():
@@ -110,7 +116,7 @@ def test_handler_own_raise_propagates():
 
 def test_except_keyerror_does_not_catch_valueerror():
     # Exact-match discrimination (the mismatch twin): except KeyError does NOT
-    # silently catch a ValueError body -- the Incomplete survives.
+    # silently catch a ValueError body -- the halt survives.
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
     v = _val(
@@ -222,7 +228,7 @@ def test_unresolved_raised_identity_is_retained_not_decided_at_the_router():
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.effect_router import ObservedEffectBinding
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     out = (
         _fn(
@@ -235,14 +241,16 @@ def test_unresolved_raised_identity_is_retained_not_decided_at_the_router():
         .sugar()
         .desugar()
     )
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, UniverseValue)
-    record = out.value.record
+    value = out.completed_value()
+    assert isinstance(value, UniverseValue)
+    record = value.record
     # Residual halt under the open type test (miss face).
     residual = tuple(
-        entry
+        halt
         for entry in record.statements
-        if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect)
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+        if isinstance(halt.effect, RaiseEffect)
     )
     assert residual, "miss face of retained identity must remain a raise"
     # Match-arm binding testimony must not invent TypeError / RuntimeEffect.
@@ -258,7 +266,6 @@ def test_unresolved_raised_identity_is_retained_not_decided_at_the_router():
 
 def test_bare_reraise_reemits_the_exact_inflight_raise():
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     function = _fn(
         "def A():\n"
@@ -268,18 +275,19 @@ def test_bare_reraise_reemits_the_exact_inflight_raise():
         "        raise\n"
     )
     out = function.sugar().desugar()
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_type_coordinate == _exception_identity(
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_type_coordinate == _exception_identity(
         function, "ValueError"
     )
-    assert out.effect.exception_name == "ValueError"
-    assert out.effect.occurrence.endswith(":6:8")
+    assert halt.effect.exception_name == "ValueError"
+    assert halt.effect.occurrence.endswith(":6:8")
 
 
 def test_nested_bare_reraise_uses_the_nearest_handler_slot():
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     out = (
         _fn(
@@ -295,13 +303,16 @@ def test_nested_bare_reraise_uses_the_nearest_handler_slot():
         .sugar()
         .desugar()
     )
-    if isinstance(out, Incomplete):
-        effects = (out.effect,)
+    if out.exits and out.halts() == out.exits:
+        effects = tuple(halt.effect for halt in out.halts())
     else:
+        value = out.completed_value()
+        assert value is not None, out
         effects = tuple(
-            entry.effect
-            for entry in out.value.record.contribution()
-            if isinstance(entry, Incomplete)
+            halt.effect
+            for entry in value.record.contribution()
+            if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+            for halt in entry.halts()
         )
     assert len(effects) == 1
     assert isinstance(effects[0], RaiseEffect)
@@ -543,7 +554,6 @@ def test_finally_fallthrough_preserves_continue_for_the_matching_loop():
 def test_finally_raise_supersedes_break_instead_of_fabricating_loop_exit():
     """A cleanup halt supersedes the incoming break face."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     function = _fn(
         "class ArbitraryCleanupFault(Exception):\n"
@@ -557,12 +567,13 @@ def test_finally_raise_supersedes_break_instead_of_fabricating_loop_exit():
         "    return 11\n"
     )
     out = function.sugar().desugar()
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_type_coordinate == _exception_identity(
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_type_coordinate == _exception_identity(
         function, "ArbitraryCleanupFault"
     )
-    assert out.effect.exception_name == "ArbitraryCleanupFault"
+    assert halt.effect.exception_name == "ArbitraryCleanupFault"
 
 
 def test_finally_return_supersedes_break_exit():
@@ -582,7 +593,6 @@ def test_finally_return_supersedes_break_exit():
 
 def test_nested_exception_group_constructs_tree_without_flattening():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -596,11 +606,12 @@ def test_nested_exception_group_constructs_tree_without_flattening():
         .desugar()
     )
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, GroupedRaiseEffect)
-    assert len(outcome.effect.children) == 2
-    assert isinstance(outcome.effect.children[0], RaiseEffect)
-    nested = outcome.effect.children[1]
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, GroupedRaiseEffect)
+    assert len(halt.effect.children) == 2
+    assert isinstance(halt.effect.children[0], RaiseEffect)
+    nested = halt.effect.children[1]
     assert isinstance(nested, GroupedRaiseEffect)
     assert len(nested.children) == 2
     assert all(isinstance(item, RaiseEffect) for item in nested.children)
@@ -610,7 +621,6 @@ def test_nested_exception_group_constructs_tree_without_flattening():
 
 def test_except_star_partitions_nested_group_and_propagates_only_residual():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -623,8 +633,9 @@ def test_except_star_partitions_nested_group_and_propagates_only_residual():
         .sugar()
         .desugar()
     )
-    assert isinstance(outcome, Incomplete)
-    residual = outcome.effect
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    residual = halt.effect
     assert isinstance(residual, GroupedRaiseEffect)
     assert isinstance(residual.children[0], RaiseEffect)
     assert residual.children[0].exception_name == "TypeError"
@@ -647,14 +658,11 @@ def test_except_star_residual_flows_to_subsequent_handlers():
         .sugar()
         .desugar()
     )
-    from sugar_lift_py_tests.outcome import Complete
-
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
 
 
 def test_except_star_bare_reraise_regroups_original_tree():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -667,9 +675,10 @@ def test_except_star_bare_reraise_regroups_original_tree():
         .sugar()
         .desugar()
     )
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, GroupedRaiseEffect)
-    assert [leaf.exception_name for leaf in outcome.effect.children] == [
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in halt.effect.children] == [
         "ValueError",
         "TypeError",
     ]
@@ -677,7 +686,6 @@ def test_except_star_bare_reraise_regroups_original_tree():
 
 def test_except_star_never_selects_only_first_leaf():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -690,14 +698,14 @@ def test_except_star_never_selects_only_first_leaf():
         .sugar()
         .desugar()
     )
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, GroupedRaiseEffect)
-    assert [leaf.exception_name for leaf in outcome.effect.children] == ["TypeError"]
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in halt.effect.children] == ["TypeError"]
 
 
 def test_except_star_matches_renamed_source_subclass_by_mro_identity():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -712,14 +720,14 @@ def test_except_star_matches_renamed_source_subclass_by_mro_identity():
         .sugar()
         .desugar()
     )
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, GroupedRaiseEffect)
-    assert [leaf.exception_name for leaf in outcome.effect.children] == ["TypeError"]
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in halt.effect.children] == ["TypeError"]
 
 
 def test_except_star_handler_raise_regroups_with_unmatched_residual():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -732,16 +740,16 @@ def test_except_star_handler_raise_regroups_with_unmatched_residual():
         .sugar()
         .desugar()
     )
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, GroupedRaiseEffect)
-    assert isinstance(outcome.effect.children[0], RaiseEffect)
-    assert outcome.effect.children[0].exception_name == "KeyError"
-    assert isinstance(outcome.effect.children[1], GroupedRaiseEffect)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, GroupedRaiseEffect)
+    assert isinstance(halt.effect.children[0], RaiseEffect)
+    assert halt.effect.children[0].exception_name == "KeyError"
+    assert isinstance(halt.effect.children[1], GroupedRaiseEffect)
 
 
 def test_shadowed_exception_group_spelling_does_not_construct_group_effect():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -752,14 +760,14 @@ def test_shadowed_exception_group_spelling_does_not_construct_group_effect():
         .sugar()
         .desugar()
     )
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert not isinstance(outcome.effect, GroupedRaiseEffect)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert not isinstance(halt.effect, GroupedRaiseEffect)
 
 
 def test_ordinary_except_does_not_consume_grouped_raise():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -772,8 +780,9 @@ def test_ordinary_except_does_not_consume_grouped_raise():
         .sugar()
         .desugar()
     )
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, GroupedRaiseEffect)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, GroupedRaiseEffect)
 
 
 def test_warnings_warn_with_an_explicit_category_mints_authenticated_testimony():
@@ -913,7 +922,6 @@ def test_except_as_bound_name_observes_the_routed_effect_identity():
     pure EffectCoordinate. The lying path (coordinate without preimage) is
     pinned unit-side; here the truthful source path must complete.
     """
-    from sugar_lift_py_tests.outcome import Incomplete
 
     v = _val(
         "def A():\n"
@@ -932,7 +940,12 @@ def test_except_as_bound_name_observes_the_routed_effect_identity():
     assert post.args[0].name == "out"
     assert post.args[1].name != "python:effect_slot"
     # No residual incomplete from a missing context preimage.
-    assert not any(isinstance(e, Incomplete) for e in v.record.contribution())
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    assert not any(
+        isinstance(e, ExitSet) and e.exits and e.halts() == e.exits
+        for e in v.record.contribution()
+    )
 
 
 def test_except_as_does_not_bind_on_uncaught_path():
@@ -1107,7 +1120,6 @@ if __name__ == "__main__":
 def test_except_star_type_tuple_partitions_every_listed_type():
     """`except* (A, B)` nets both A and B; only the unlisted leaf survives."""
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -1120,9 +1132,10 @@ def test_except_star_type_tuple_partitions_every_listed_type():
         .sugar()
         .desugar()
     )
-    assert isinstance(outcome, Incomplete), outcome
-    assert isinstance(outcome.effect, GroupedRaiseEffect)
-    assert [leaf.exception_name for leaf in outcome.effect.children] == ["KeyError"]
+    assert outcome.halts() == outcome.exits, outcome
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in halt.effect.children] == ["KeyError"]
 
 
 def test_except_star_type_tuple_runs_its_body_exactly_once():
@@ -1134,7 +1147,6 @@ def test_except_star_type_tuple_runs_its_body_exactly_once():
     Counting the leaf is what discriminates; the residual alone does not.
     """
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -1147,16 +1159,16 @@ def test_except_star_type_tuple_runs_its_body_exactly_once():
         .sugar()
         .desugar()
     )
-    assert isinstance(outcome, Incomplete), outcome
-    assert isinstance(outcome.effect, GroupedRaiseEffect)
-    names = [leaf.exception_name for leaf in outcome.effect.children]
+    assert outcome.halts() == outcome.exits, outcome
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, GroupedRaiseEffect)
+    names = [leaf.exception_name for leaf in halt.effect.children]
     assert names == ["RuntimeError"], names
 
 
 def test_except_star_type_tuple_binds_one_group_of_all_matched_leaves():
     """A bare re-raise regroups BOTH matched leaves, in original topology."""
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -1169,9 +1181,10 @@ def test_except_star_type_tuple_binds_one_group_of_all_matched_leaves():
         .sugar()
         .desugar()
     )
-    assert isinstance(outcome, Incomplete), outcome
-    assert isinstance(outcome.effect, GroupedRaiseEffect)
-    assert [leaf.exception_name for leaf in outcome.effect.children] == [
+    assert outcome.halts() == outcome.exits, outcome
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in halt.effect.children] == [
         "ValueError",
         "TypeError",
         "KeyError",
@@ -1180,7 +1193,6 @@ def test_except_star_type_tuple_binds_one_group_of_all_matched_leaves():
 
 def test_except_star_type_tuple_with_no_matching_leaf_stays_whole():
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     outcome = (
         _fn(
@@ -1193,9 +1205,10 @@ def test_except_star_type_tuple_with_no_matching_leaf_stays_whole():
         .sugar()
         .desugar()
     )
-    assert isinstance(outcome, Incomplete), outcome
-    assert isinstance(outcome.effect, GroupedRaiseEffect)
-    assert [leaf.exception_name for leaf in outcome.effect.children] == ["KeyError"]
+    assert outcome.halts() == outcome.exits, outcome
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in halt.effect.children] == ["KeyError"]
 
 
 def test_except_star_empty_type_tuple_stays_loud():

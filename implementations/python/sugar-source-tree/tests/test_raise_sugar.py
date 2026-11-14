@@ -1,8 +1,8 @@
 """`raise` sugar on the AST tree: the halt arm, proven through the node.
 
 A raise never states a fact and never returns a value -- it exits. So its
-`.sugar().desugar()` is an `Incomplete(RaiseEffect)`, the halt arm of
-`match(Sugar) { Some => cite_or_effect, None => panic }`, not a `Complete`
+`.sugar().desugar()` is `ExitSet.halted(RaiseEffect)`, the halt arm of
+`match(Sugar) { Some => cite_or_effect, None => panic }`, not a completed
 floor value. The exception child builds normally and rides on the effect; its
 structural name is routing provenance only. Explicit causes are covered by the
 binary raise contract tests; bare re-raise remains an active-context gap.
@@ -27,17 +27,16 @@ def _raise(src: str):
 
 
 def _effect(src: str):
-    from sugar_lift_py_tests.outcome import Incomplete
-
     out = _raise(src).sugar().desugar()
-    assert isinstance(out, Incomplete), f"raise must halt, got {type(out).__name__}"
-    assert type(out.effect).__name__ == "RaiseEffect"
-    return out.effect
+    assert out.halts() == out.exits, f"raise must halt, got {out!r}"
+    (halt,) = out.halts()
+    assert type(halt.effect).__name__ == "RaiseEffect"
+    return halt.effect
 
 
 def test_raise_is_the_halt_arm_not_a_value():
-    # def A(): raise ValueError -- desugars to Incomplete(RaiseEffect), a typed
-    # red halt, never a Complete floor value.
+    # def A(): raise ValueError -- desugars to ExitSet.halted(RaiseEffect), a
+    # typed red halt, never a completed floor value.
     eff = _effect("def A():\n    raise ValueError\n")
     assert eff.exception_name == "ValueError"
     assert "raise ValueError" in eff.reason
@@ -117,7 +116,7 @@ def test_handler_reraise_resolves_in_flight_effect_not_isolated_desugar():
     Wrong entrance would desugar the bare Raise in isolation (no effect testimony).
     The real door is function/Try reduction, which bind_in_flight_effect owns.
     """
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False, dir="/tmp") as f:
         f.write(
@@ -131,20 +130,9 @@ def test_handler_reraise_resolves_in_flight_effect_not_isolated_desugar():
     fn = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
     # Full body door — not an isolated Raise.desugar without handler context.
     outcome = fn.sugar().desugar()
-    # Universe/block may collapse to ExitSet or Incomplete; extract raise effects.
-    effects = []
-    if isinstance(outcome, Incomplete):
-        effects.append(outcome.effect)
-    else:
-        exits = getattr(outcome, "exits", None) or getattr(
-            getattr(outcome, "value", None), "exits", ()
-        )
-        if exits is None:
-            exits = ()
-        for exit_ in exits:
-            eff = getattr(exit_, "effect", None)
-            if eff is not None:
-                effects.append(eff)
+    # The universe is an ExitSet; extract the raise effects of its halted arms.
+    assert isinstance(outcome, ExitSet), outcome
+    effects = [halt.effect for halt in outcome.halts()]
     assert effects, f"expected a raise effect from handler re-raise, got {outcome!r}"
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
@@ -164,4 +152,4 @@ if __name__ == "__main__":
     test_raise_call_form_carries_exception_type_coordinate()
     test_local_exception_class_constructs_authenticated_raise_effect()
     test_handler_reraise_resolves_in_flight_effect_not_isolated_desugar()
-    print("ok: raise -> Incomplete(RaiseEffect); explicit cause carried")
+    print("ok: raise -> ExitSet.halted(RaiseEffect); explicit cause carried")

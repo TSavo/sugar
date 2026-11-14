@@ -11,7 +11,7 @@ import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect, RaiseEffect
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 from sugar_source_tree.fragment import SourceFragment as TreeSourceFragment
@@ -35,6 +35,16 @@ from sugar_lift_py_tests.outcome.exit_set import (
 def _entries(src):
     outcome = _completed(_fn(src).sugar().desugar())
     return outcome.value.record.statements
+
+
+def _red(entries) -> list:
+    """The halted arms of the recorded entries in which every arm halts."""
+    return [
+        halt
+        for entry in entries
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+    ]
 
 
 class _CountingSugar(Sugar):
@@ -70,7 +80,7 @@ def test_attribute_store_lifts_a_red_effect_and_the_block_continues():
     # Free undecided ``o`` retains dual-face AttributeStoreRuntimeEffect.
     # Formal receivers mint setattr_named (see formal-caller twins).
     entries = _entries("def A(v):\n    o.a = v\n    return v\n")
-    red = [e for e in entries if isinstance(e, Incomplete)]
+    red = _red(entries)
     assert len(red) == 1
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
     # the block kept reducing: a ReturnValue entry rides beside the effect
@@ -116,7 +126,7 @@ def test_attribute_store_witness_site_is_the_tree_fragment():
     currency, not a reconstructed/factory one, and the operand cites the
     attribute actually stored."""
     entries = _entries("def A(v):\n    o.a = v\n    return v\n")
-    (red,) = [e for e in entries if isinstance(e, Incomplete)]
+    (red,) = _red(entries)
     witness = red.effect.witness
     assert isinstance(witness.site, TreeSourceFragment)
     assert witness.site.text == "o.a = v"
@@ -137,7 +147,7 @@ def test_subscript_store_demand_names_all_three_formal_coordinates():
 
 def test_two_stores_in_one_block_both_lift_and_discriminate_by_target():
     entries = _entries("def A(v, w):\n    o.a = v\n    o.b = w\n    return v\n")
-    red = [e for e in entries if isinstance(e, Incomplete)]
+    red = _red(entries)
     assert len(red) == 2
     operands = {repr(e.effect.witness.runtime_operand.term) for e in red}
     assert any("value='a'" in operand and "name='v'" in operand for operand in operands)
@@ -166,9 +176,10 @@ def test_symbolic_attribute_store_witnesses_real_receiver_and_value_terms():
     assignment = next(node for node in function.walk() if node.kind == "Assign")
     outcome = assignment.sugar().desugar()
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, AttributeStoreRuntimeEffect)
-    operation = repr(outcome.effect.witness.operation)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, AttributeStoreRuntimeEffect)
+    operation = repr(halt.effect.witness.operation)
     assert "symbolic_receiver" in operation
     assert "constructed_value" in operation
     assert "payload" in operation
@@ -203,7 +214,7 @@ def test_rhs_constructs_before_halted_receiver_and_store_does_not_continue():
     sugar = assignment.sugar()
     receiver_calls = []
     value_calls = []
-    halt = Incomplete(
+    halt = ExitSet.halted(
         RaiseEffect.for_builtin(
             "ArbitraryError",
             occurrence="implementations/python/sugar-source-tree/tests/test_store_target_effect.py:205:0",

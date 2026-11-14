@@ -5,14 +5,16 @@ import pytest
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 
 
 def completed_function_value(function):
     """Project only an outcome that really completed; never accept a carrier."""
     outcome = function.sugar().desugar()
-    assert isinstance(outcome, Complete), outcome
-    return outcome.value
+    assert isinstance(outcome, ExitSet), outcome
+    value = outcome.completed_value()
+    assert value is not None, outcome
+    return value
 
 
 def native_carrier_for(function, *, operator):
@@ -26,7 +28,7 @@ def native_carrier_for(function, *, operator):
 
 
 def authenticated_function_value(function, *, operator, actuals=None):
-    """Complete through the function's own source-frame binder testimony."""
+    """Completed through the function's own source-frame binder testimony."""
     carrier = native_carrier_for(function, operator=operator)
     frame = function.source_visible_call_frame()
     if actuals is None:

@@ -16,7 +16,7 @@ import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
@@ -29,8 +29,8 @@ def _post(src: str):
         path = f.name
     function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
     outcome = function.sugar().desugar()
-    if isinstance(outcome, Complete):
-        return outcome.value.post()
+    if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
+        return outcome.completed_value().post()
     # Deleted expectation: a formal predicate was completed before caller binding.
     return authenticated_function_value(function, operator="equals").post()
 

@@ -17,7 +17,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
     GeneratorTerminationV1,
@@ -70,12 +70,12 @@ def test_source_visible_zero_parameter_call_carries_the_ordinary_body() -> None:
 
     outcome = call.sugar().desugar()
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.body == frame.body
-    assert outcome.value.parameters == ()
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert outcome.completed_value().body == frame.body
+    assert outcome.completed_value().parameters == ()
     assert frame.frame_cid.startswith("blake3-512:")
-    constructed = outcome.value.force_floor(
+    constructed = outcome.completed_value().force_floor(
         None, owner="source-visible-call-frame", project_callsite=False
     )
     assert isinstance(constructed, BlockValue)
@@ -99,9 +99,9 @@ def test_renamed_generator_call_allocates_without_eager_body_reduction() -> None
 
     outcome = call.sugar().desugar()
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, GeneratorConstructionV1)
-    yielded = outcome.value.resume()
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), GeneratorConstructionV1)
+    yielded = outcome.completed_value().resume()
     assert isinstance(yielded, YieldEffect)
     assert yielded.value == TermValue(7)
     terminated = yielded.machine.resume()
@@ -124,11 +124,11 @@ def test_parameterized_source_frame_projects_the_exact_actual_by_coordinate() ->
 
     outcome = call.sugar().desugar()
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
     assert len(frame.formal_coordinates) == 1
     assert frame.formal_coordinates[0].projection_path == ("formal", 0)
-    constructed = outcome.value.force_floor(
+    constructed = outcome.completed_value().force_floor(
         None, owner="coordinate-source-visible-call-frame", project_callsite=False
     )
     assert isinstance(constructed, BlockValue)
@@ -157,14 +157,14 @@ def test_class_definition_constructs_methods_but_receiver_state_awaits_coordinat
 
     outcome = class_node.sugar().desugar()
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.class_name == "RenamedGuard"
-    assert tuple(method.name for method in outcome.value.methods) == (
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().class_name == "RenamedGuard"
+    assert tuple(method.name for method in outcome.completed_value().methods) == (
         "__init__",
         "enter",
     )
-    assert outcome.value.initializer is not None
-    assert outcome.value.class_definition_cid.startswith("blake3-512:")
+    assert outcome.completed_value().initializer is not None
+    assert outcome.completed_value().class_definition_cid.startswith("blake3-512:")
     receiver = (
         call.sugar()
         .desugar()
@@ -487,7 +487,7 @@ def test_class_body_chained_assign_constructs_each_exact_binding(monkeypatch) ->
     def complete_attribute(self, ctx=None):
         assert self is attribute
         calls.append((self, ctx))
-        return Complete(TermValue(7))
+        return ExitSet.completed(TermValue(7))
 
     monkeypatch.setattr(type(attribute), "desugar", complete_attribute)
 
@@ -527,9 +527,9 @@ def test_yield_from_only_function_allocates_a_generator_not_an_eager_call() -> N
 
     outcome = call.sugar().desugar()
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, GeneratorConstructionV1)
-    assert not isinstance(outcome.value, CallSiteValue)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), GeneratorConstructionV1)
+    assert not isinstance(outcome.completed_value(), CallSiteValue)
 
 
 def test_yield_from_tuple_delegates_each_value_then_returns_to_the_generator() -> None:
@@ -689,5 +689,5 @@ def test_class_value_application_refuses_source_new_and_keeps_plain_class() -> N
     plain = class_value(
         "class RenamedWriter:\n    def write(self):\n        return 1\n"
     ).callable_application_with(operation, None)
-    assert isinstance(plain, Complete)
-    assert plain.value.class_name == "RenamedWriter"
+    assert plain.completed_value() is not None
+    assert plain.completed_value().class_name == "RenamedWriter"

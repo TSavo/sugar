@@ -29,7 +29,7 @@ import pytest
 from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -133,12 +133,13 @@ def test_symbolic_receiver_retains_the_arity_demand_and_binds_nothing() -> None:
     """POSITIVE. A plain-name RHS has no lift-time cardinality."""
     seen, out = _receivers("def A(p):\n a, b = p\n return a\n")
     assert seen == ["SymbolicValue"]
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, SequenceUnpackRuntimeEffect)
-    assert "exactly 2 members" in out.effect.reason
-    assert "(a, b)" in out.effect.reason
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    assert "exactly 2 members" in halt.effect.reason
+    assert "(a, b)" in halt.effect.reason
     # CPython binds nothing when UNPACK_SEQUENCE raises. Neither does this.
-    assert not isinstance(getattr(out.effect, "value", None), ScopeRebinds)
+    assert not isinstance(getattr(halt.effect, "value", None), ScopeRebinds)
 
 
 def test_the_retained_arity_is_the_targets_own_count_not_a_constant() -> None:
@@ -195,11 +196,11 @@ def test_matching_arity_binds_each_name_to_the_member_already_in_hand() -> None:
 
     members = (TermValue(7), TermValue(9))
     out = _operation("a", "b").submit(TupleLiteralValue(members), None)
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, ScopeRebinds)
-    assert len(out.value.bindings) == 2
-    names = tuple(name for name, _ in out.value.bindings)
-    bound = tuple(value for _, value in out.value.bindings)
+    rebinds = out.completed_value()
+    assert isinstance(rebinds, ScopeRebinds)
+    assert len(rebinds.bindings) == 2
+    names = tuple(name for name, _ in rebinds.bindings)
+    bound = tuple(value for _, value in rebinds.bindings)
     assert names == ("a", "b")
     # The SAME objects, not equal reconstructions.
     assert bound[0] is members[0]
@@ -246,11 +247,11 @@ def test_a_display_right_hand_side_never_reaches_this_operation() -> None:
     """
     seen, out = _receivers("def A():\n a, b = (1, 2)\n return a\n")
     assert seen == []
-    assert isinstance(out, Complete)
+    assert out.completed_value() is not None
 
     seen, out = _receivers("def A():\n a, b = [1, 2]\n return a\n")
     assert seen == []
-    assert isinstance(out, Complete)
+    assert out.completed_value() is not None
 
     # And the tree owns the display mismatch, ahead of any floor question.
     seen, raised = _receivers("def A():\n a, b = (1, 2, 3)\n return a\n")
@@ -278,11 +279,12 @@ def test_callsite_receiver_answers_like_its_dug_floor() -> None:
     seen, out = _receivers("def A(o):\n a, b = o.split()\n return a\n")
     # Dug to the opaque residual, then re-dispatched on the EUF receiver term.
     assert seen == ["CallSiteValue", "SymbolicValue"], seen
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, SequenceUnpackRuntimeEffect)
-    assert "exactly 2 members" in out.effect.reason
-    assert "(a, b)" in out.effect.reason
-    assert not isinstance(getattr(out.effect, "value", None), ScopeRebinds)
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    assert "exactly 2 members" in halt.effect.reason
+    assert "(a, b)" in halt.effect.reason
+    assert not isinstance(getattr(halt.effect, "value", None), ScopeRebinds)
 
 
 def test_a_callsite_digs_before_it_falls_back_to_the_symbolic_term() -> None:
@@ -315,11 +317,11 @@ def test_a_callsite_digs_before_it_falls_back_to_the_symbolic_term() -> None:
     # and the callsite's own answer is that display's answer.
     assert [name for name, _ in answers] == ["TupleLiteralValue", "CallSiteValue"]
     for _, answer in answers:
-        assert isinstance(answer, Complete)
-        assert isinstance(answer.value, ScopeRebinds)
-        assert tuple(n for n, _ in answer.value.bindings) == ("a", "b")
+        rebinds = answer.completed_value()
+        assert isinstance(rebinds, ScopeRebinds)
+        assert tuple(n for n, _ in rebinds.bindings) == ("a", "b")
         # The SAME member objects the dug display was holding.
-        assert tuple(v for _, v in answer.value.bindings) == members
+        assert tuple(v for _, v in rebinds.bindings) == members
     del CallSiteValue
 
 
@@ -355,9 +357,10 @@ def test_comprehension_receiver_retains_the_arity_demand() -> None:
     ):
         seen, out = _receivers(source)
         assert seen == ["ComprehensionValue"], seen
-        assert isinstance(out, Incomplete)
-        assert isinstance(out.effect, SequenceUnpackRuntimeEffect)
-        assert "exactly 2 members" in out.effect.reason
+        assert out.halts() == out.exits
+        (halt,) = out.halts()
+        assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+        assert "exactly 2 members" in halt.effect.reason
 
 
 def test_absent_finite_testimony_is_not_read_as_zero_members() -> None:
@@ -373,8 +376,9 @@ def test_absent_finite_testimony_is_not_read_as_zero_members() -> None:
 
     absent = ComprehensionValue(make_var("xs"), finite_elements=None)
     out = _operation("a", "b").submit(absent, None)
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, SequenceUnpackRuntimeEffect)
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
 
 
 def test_present_finite_testimony_binds_and_a_wrong_count_stays_loud() -> None:
@@ -390,9 +394,9 @@ def test_present_finite_testimony_binds_and_a_wrong_count_stays_loud() -> None:
     present = ComprehensionValue(make_var("xs"), finite_elements=members)
 
     out = _operation("a", "b").submit(present, None)
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, ScopeRebinds)
-    assert tuple(name for name, _ in out.value.bindings) == ("a", "b")
+    value = out.completed_value()
+    assert isinstance(value, ScopeRebinds)
+    assert tuple(name for name, _ in value.bindings) == ("a", "b")
 
     with pytest.raises(ConstructionPanic):
         _operation("a", "b", "c").submit(present, None)

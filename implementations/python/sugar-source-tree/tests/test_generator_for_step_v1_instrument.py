@@ -30,7 +30,7 @@ from sugar_lift_py_tests.floor.iterator_value import (
 )
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.floor.tuple_value import TupleValue
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -250,7 +250,7 @@ class _ValueSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner: str):
         return self.value.to_term(owner=owner)
@@ -264,7 +264,7 @@ class _TracingIterable(FloorValue):
     def iter_with(self, operation, ctx):
         del operation, ctx
         self.events.append("iter_with")
-        return Complete(_TracingIterator(self.elements, self.events))
+        return ExitSet.completed(_TracingIterator(self.elements, self.events))
 
 
 @dataclass(frozen=True)
@@ -278,7 +278,7 @@ class _TracingIterator(FloorValue):
             # Production authentication door: source occurrence + builtin
             # StopIteration coordinate. The test never fabricates the effect.
             return ListIteratorValue((), index=0).next_with(operation, ctx)
-        return Complete(
+        return ExitSet.completed(
             NextResult(
                 self.elements[0],
                 _TracingIterator(self.elements[1:], self.events),
@@ -294,7 +294,7 @@ class _NextHaltIterable(FloorValue):
     def iter_with(self, operation, ctx):
         del operation, ctx
         self.events.append("iter_with")
-        return Complete(_NextHaltIterator(self.effect, self.events))
+        return ExitSet.completed(_NextHaltIterator(self.effect, self.events))
 
 
 @dataclass(frozen=True)
@@ -305,7 +305,7 @@ class _NextHaltIterator(FloorValue):
     def next_with(self, operation, ctx):
         del operation, ctx
         self.events.append("next_with")
-        return Incomplete(self.effect)
+        return ExitSet.halted(self.effect)
 
 
 @dataclass(frozen=True)
@@ -321,7 +321,7 @@ class _ObserveTargetBindings(ConstructedTermSugar):
     def desugar(self, ctx=None):
         values = tuple(ctx.temporal.value_for(cid) for cid in self.coordinate_cids)
         self.events.append(("body", values))
-        return Complete(TermValue(0))
+        return ExitSet.completed(TermValue(0))
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -346,7 +346,7 @@ class _HaltBody(ConstructedTermSugar):
     def desugar(self, ctx=None):
         del ctx
         self.events.append("body_halt")
-        return Incomplete(self.effect)
+        return ExitSet.halted(self.effect)
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import str_const
@@ -412,7 +412,7 @@ class _IterableHaltSugar(ConstructedTermSugar):
     def desugar(self, ctx=None):
         del ctx
         self.events.append("iterable_halt")
-        return Incomplete(self.effect)
+        return ExitSet.halted(self.effect)
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import str_const
@@ -439,8 +439,8 @@ class _HaltOnBodyVisit(ConstructedTermSugar):
         self.visits.append(visit)
         self.events.append(("body_visit", visit))
         if visit == self.halt_at:
-            return Incomplete(self.effect)
-        return Complete(TermValue(visit))
+            return ExitSet.halted(self.effect)
+        return ExitSet.completed(TermValue(visit))
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import str_const

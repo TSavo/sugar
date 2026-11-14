@@ -23,7 +23,7 @@ import pytest
 
 from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -41,22 +41,23 @@ def _statements(out):
     """Every body statement the lift produced, across whatever shape it produced.
 
     A function whose body partitions reduces to an ExitSet of universes rather
-    than to one `Complete`; both are lawful, and a twin about "does this lift"
-    must not be blind to the partitioned shape.
+    than to one unconditional completed universe; both are lawful, and a twin
+    about "does this lift" must not be blind to the partitioned shape.
     """
-    from sugar_lift_py_tests.outcome import Completed, ExitSet
+    from sugar_lift_py_tests.outcome import Completed
 
-    if isinstance(out, ExitSet):
-        rows = []
-        for exit_ in out.exits:
-            if isinstance(exit_, Completed):
-                assert isinstance(exit_.value, UniverseValue)
-                rows.extend(exit_.value.record.statements)
-        assert rows
-        return tuple(rows)
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, UniverseValue)
-    return out.value.record.statements
+    assert isinstance(out, ExitSet), out
+    value = out.completed_value()
+    if value is not None:
+        assert isinstance(value, UniverseValue)
+        return value.record.statements
+    rows = []
+    for exit_ in out.exits:
+        if isinstance(exit_, Completed):
+            assert isinstance(exit_.value, UniverseValue)
+            rows.extend(exit_.value.record.statements)
+    assert rows
+    return tuple(rows)
 
 
 def _discharged_dict_method(out):
@@ -149,7 +150,7 @@ def test_collection_element_that_partitions_lifts() -> None:
 def test_collection_of_plain_elements_is_one_completed_value() -> None:
     """DISCRIMINATING. No element partitions -> exactly one universe, no split."""
     out = _out("def f():\n return [1, 2, 3]\n")
-    assert isinstance(_out("def f():\n return [1, 2, 3]\n"), Complete)
+    assert _out("def f():\n return [1, 2, 3]\n").completed_value() is not None
     assert len(_statements(out)) >= 1
 
 
@@ -306,7 +307,7 @@ def test_a_condition_with_no_formula_at_all_is_still_loud() -> None:
     class _Walrus:
         def truth(self, site):
             del site
-            return Complete(NamedExpressionValue("n", carried))
+            return ExitSet.completed(NamedExpressionValue("n", carried))
 
     with pytest.raises(NotImplementedError, match="TermValue"):
         predicate_formula(_Walrus(), site="twin")

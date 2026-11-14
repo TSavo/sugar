@@ -34,7 +34,6 @@ from sugar_lift_py_tests.generator_construction import (
     YieldStepV1,
 )
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.ir import atomic, not_, str_const
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
@@ -57,7 +56,7 @@ class _ProducedActualSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner: str):
         del owner
@@ -113,9 +112,9 @@ def _production_machine(source: str, actual: ConstructedTermSugar):
         site=call.fragment,
         source_call_frame=frame,
     ).desugar(ReduceContext.root(owner="generator-step-if-finally"))
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, GeneratorConstructionV1)
-    return outcome.value
+    value = outcome.completed_value()
+    assert isinstance(value, GeneratorConstructionV1)
+    return value
 
 
 # ---------------------------------------------------------------------------

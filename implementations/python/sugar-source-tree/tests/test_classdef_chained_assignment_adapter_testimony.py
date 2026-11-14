@@ -7,7 +7,7 @@ import importlib.util
 import pytest
 
 from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 from sugar_lift_python_source.dependency_artifact import DependencyArtifactGraph
 from sugar_source_tree.nodes import Assign, ClassDef
@@ -96,9 +96,9 @@ def test_re_regexflag_chained_names_retain_targets_and_one_evaluated_floor(
         if self.name.startswith("SRE_FLAG_") and 145 <= span.start_line <= 154:
             if span.start_line == 146 and self.name == "SRE_FLAG_IGNORECASE":
                 evaluations += 1
-                return Complete(exact_floor)
-            return Complete(TermValue(span.start_line))
-        return Complete(TermValue(span.start_line))
+                return ExitSet.completed(exact_floor)
+            return ExitSet.completed(TermValue(span.start_line))
+        return ExitSet.completed(TermValue(span.start_line))
 
     monkeypatch.setattr(AttributeSugar, "desugar", authenticated_attribute_floor)
 

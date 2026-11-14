@@ -7,7 +7,6 @@ import pytest
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor.block_value import BlockValue
-from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.cpython_adapter import CPythonAstBackend
 from sugar_source_tree.nodes import Assert, FunctionDef, Module, Name
 from sugar_source_tree.panic import SugarNotWritten
@@ -101,9 +100,9 @@ def test_module_block_reduces_to_the_ordinary_block_floor() -> None:
     outcome = sugar.desugar()
 
     assert isinstance(tree.root, Module)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, BlockValue)
-    assert outcome.value.can_fall_through is True
+    value = outcome.completed_value()
+    assert isinstance(value, BlockValue)
+    assert value.can_fall_through is True
 
 
 def test_backend_materializes_one_module_before_module_block_construction(

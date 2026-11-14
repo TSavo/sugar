@@ -95,9 +95,15 @@ def _out(src: str):
 
 
 def _incompletes(v):
-    from sugar_lift_py_tests.outcome import Incomplete
+    """The halted arms of the recorded entries in which every arm halts."""
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    return [e for e in v.record.contribution() if isinstance(e, Incomplete)]
+    return [
+        halt
+        for entry in v.record.contribution()
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -151,8 +157,6 @@ def test_first_matching_handler_only_second_arm_unreachable():
 
 def test_first_match_only_does_not_sequence_later_arm_return():
     """Later arms are not sequenced after a match — second return is dead."""
-    from sugar_lift_py_tests.outcome import Incomplete
-
     out = _out(
         "class RootFault(Exception):\n"
         "    pass\n"
@@ -167,8 +171,9 @@ def test_first_match_only_does_not_sequence_later_arm_return():
         "        return 99\n"
         "    return z\n"
     )
-    assert not isinstance(out, Incomplete)
-    v = out.value
+    assert out.halts() != out.exits
+    v = out.completed_value()
+    assert v is not None
     assert _incompletes(v) == []
     assert v.post().args[1].value == 1
 
@@ -379,8 +384,6 @@ def test_finally_on_exit_7_continue():
 def test_bare_reraise_preserves_the_same_effect_occurrence():
     """Bare ``raise`` re-emits the in-flight RaiseEffect — same occurrence."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
     out = _out(
         "def A():\n"
         "    try:\n"
@@ -388,20 +391,19 @@ def test_bare_reraise_preserves_the_same_effect_occurrence():
         "    except ValueError:\n"
         "        raise\n"
     )
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_name == "ValueError"
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "ValueError"
     # Occurrence is the original raise site (line of ``raise ValueError``),
     # not a reconstructed site at the bare re-raise.
-    assert out.effect.occurrence.endswith(":6:8")
-    assert out.effect.exception_type_coordinate == _identity("ValueError")
+    assert halt.effect.occurrence.endswith(":6:8")
+    assert halt.effect.exception_type_coordinate == _identity("ValueError")
 
 
 def test_bare_reraise_is_not_a_reconstructed_raise_at_handler_site():
     """No invented new occurrence at the bare-raise line."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
     out = _out(
         "def A():\n"
         "    try:\n"
@@ -409,11 +411,12 @@ def test_bare_reraise_is_not_a_reconstructed_raise_at_handler_site():
         "    except ValueError:\n"
         "        raise\n"
     )
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
     # Bare re-raise is on a later line; occurrence must NOT be that line.
-    assert not out.effect.occurrence.endswith(":8:8")
-    assert not out.effect.occurrence.endswith(":8:9")
+    assert not halt.effect.occurrence.endswith(":8:8")
+    assert not halt.effect.occurrence.endswith(":8:9")
 
 
 # ---------------------------------------------------------------------------
@@ -460,8 +463,6 @@ def test_handler_halt_does_not_invent_post_try_fallthrough():
 def test_handler_raise_carries_the_handled_occurrence_as_context():
     """An explicit handler raise authenticates Python's chaining edge."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
     out = _out(
         "def A():\n"
         "    try:\n"
@@ -469,12 +470,13 @@ def test_handler_raise_carries_the_handled_occurrence_as_context():
         "    except ImportError:\n"
         "        raise ValueError('outer')\n"
     )
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_name == "ValueError"
-    assert isinstance(out.effect.context_effect, RaiseEffect)
-    assert out.effect.context_effect.exception_name == "ImportError"
-    assert out.effect.context_effect.occurrence.endswith(":6:8")
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "ValueError"
+    assert isinstance(halt.effect.context_effect, RaiseEffect)
+    assert halt.effect.context_effect.exception_name == "ImportError"
+    assert halt.effect.context_effect.occurrence.endswith(":6:8")
 
 
 # ---------------------------------------------------------------------------
@@ -501,8 +503,6 @@ def test_ordinary_except_does_not_absorb_grouped_raise_silently():
     The halt must survive AND must not have been rewritten into the arm's
     ``ValueError`` -- absorbing it silently is the failure this pins.
     """
-    from sugar_lift_py_tests.outcome import Incomplete
-
     outcome = _out(
         "def A():\n"
         "    try:\n"
@@ -512,11 +512,12 @@ def test_ordinary_except_does_not_absorb_grouped_raise_silently():
     )
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
 
-    assert isinstance(outcome, Incomplete)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
     # Not absorbed, and NOT rewritten into the arm's ordinary ValueError:
     # the grouped effect stays grouped, which is what keeps except* separate.
-    assert isinstance(outcome.effect, GroupedRaiseEffect)
-    assert getattr(outcome.effect, "exception_name", None) != "ValueError"
+    assert isinstance(halt.effect, GroupedRaiseEffect)
+    assert getattr(halt.effect, "exception_name", None) != "ValueError"
 
 
 # ---------------------------------------------------------------------------
@@ -568,19 +569,14 @@ def test_finally_return_override_bites_when_cleanup_is_read_as_restoring():
     finally:
         ExitSet.and_finally = real
 
-    from sugar_lift_py_tests.outcome import Incomplete
-
-    assert isinstance(
-        out, Incomplete
-    ), "perturbation must resurrect the overridden halt"
-    assert out.effect.exception_name == "ValueError"
+    assert out.halts() == out.exits, "perturbation must resurrect the overridden halt"
+    (halt,) = out.halts()
+    assert halt.effect.exception_name == "ValueError"
 
 
 def test_finally_raise_overrides_an_incoming_halt():
     """(line 6) Cleanup halt supersedes the body halt -- KeyError, not ValueError."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
     out = _out(
         "def A(z):\n"
         "    try:\n"
@@ -588,9 +584,10 @@ def test_finally_raise_overrides_an_incoming_halt():
         "    finally:\n"
         "        raise KeyError\n"
     )
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_name == "KeyError"
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "KeyError"
 
 
 def test_finally_raise_overrides_an_incoming_completion():

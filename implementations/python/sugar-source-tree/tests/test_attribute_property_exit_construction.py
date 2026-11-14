@@ -6,7 +6,7 @@ import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.outcome import Complete, ExitSet
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Halted
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
@@ -156,7 +156,7 @@ def test_source_property_getter_that_returns_completes_without_a_raise(
 
     outcome = _body_attribute(tree).sugar().desugar(None)
 
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
 
 
 def test_shadowed_property_spelling_does_not_authorize_descriptor_dispatch(

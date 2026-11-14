@@ -38,7 +38,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_lift_py_tests.effect import ExpectationNotMetEffect, RaiseEffect
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
@@ -179,11 +179,11 @@ class _InjectedSourceProtocol:
 
     def enter_resource_outcome(self, ctx=None):
         del ctx
-        return Complete(SimpleNamespace(enter_value=TermValue(7)))
+        return ExitSet.completed(SimpleNamespace(enter_value=TermValue(7)))
 
     def exit_outcome_for(self, entered, ctx=None):
         del entered, ctx
-        return Complete(TermValue(False))
+        return ExitSet.completed(TermValue(False))
 
 
 def _source_derived(use_site):

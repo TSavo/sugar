@@ -3,7 +3,7 @@ from __future__ import annotations
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue
-from sugar_lift_py_tests.outcome import Complete, ExitSet
+from sugar_lift_py_tests.outcome import ExitSet
 
 
 def _outcome(tmp_path, source: str):
@@ -31,11 +31,12 @@ def test_unconditional_while_return_has_no_fabricated_else_face(tmp_path) -> Non
         "        return 9\n",
     )
 
-    assert isinstance(outcome, Complete), outcome
-    assert isinstance(outcome.value.record, BlockValue)
+    value = outcome.completed_value()
+    assert value is not None, outcome
+    assert isinstance(value.record, BlockValue)
     returns = tuple(
         entry
-        for entry in outcome.value.record.statements
+        for entry in value.record.statements
         if isinstance(entry, ReturnValue)
     )
     assert len(returns) == 1

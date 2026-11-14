@@ -50,7 +50,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.ir import PrimitiveSort
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 from sugar_lift_python_source.source_oracle import path_source
@@ -330,11 +330,11 @@ def _resource(*, enter=None, body=None, slot="M", exit_probe=None):
                 1,
             )
 
-    exit_sugar = _FixedSugar(Complete(_FloorValue("exited")), probe=exit_probe)
+    exit_sugar = _FixedSugar(ExitSet.completed(_FloorValue("exited")), probe=exit_probe)
     return WithResourceSugar(
-        manager=_FixedSugar(Complete(_FloorValue(f"mgr{slot}"))),
+        manager=_FixedSugar(ExitSet.completed(_FloorValue(f"mgr{slot}"))),
         manager_slot_id=slot,
-        enter=enter or _FixedSugar(Complete(_FloorValue("entered"))),
+        enter=enter or _FixedSugar(ExitSet.completed(_FloorValue("entered"))),
         exit=exit_sugar,
         exit_face_id=f"{slot}#exit_face",
         body=body if body is not None else (),
@@ -347,6 +347,18 @@ def _resource(*, enter=None, body=None, slot="M", exit_probe=None):
         ),
         site=None,
     )
+
+
+def _reds(out) -> list:
+    """The halted arms of the completed block's entries in which every arm halts."""
+    value = out.completed_value()
+    assert value is not None, out
+    return [
+        halt
+        for entry in value.contribution()
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+    ]
 
 
 def _nested_pair(inner_enter, *, outer_exit_probe, inner_exit_probe):
@@ -364,14 +376,14 @@ def test_failure_entering_second_manager_still_exits_first():
     outer_exit, inner_exit = [], []
     halt = RaiseEffect.for_builtin("OSError", occurrence="b.py:1:0")
     sugar = _nested_pair(
-        _FixedSugar(Incomplete(halt)),
+        _FixedSugar(ExitSet.halted(halt)),
         outer_exit_probe=outer_exit,
         inner_exit_probe=inner_exit,
     )
     out = sugar.desugar()
     assert inner_exit == [], "B was never entered; B.__exit__ must not run"
     assert outer_exit == [1], "A was entered; A.__exit__ must run on B's enter halt"
-    reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
+    reds = _reds(out)
     assert any(r.effect == halt for r in reds), "the enter halt must be preserved"
 
 
@@ -381,7 +393,7 @@ def test_discrimination_first_exit_is_not_skipped_on_the_halted_edge():
     outer_exit, inner_exit = [], []
     sugar = _nested_pair(
         _FixedSugar(
-            Incomplete(
+            ExitSet.halted(
                 RaiseEffect.for_builtin(
                     "OSError",
                     occurrence="implementations/python/sugar-source-tree/tests/test_with_multiple_managers.py:383:0",
@@ -400,7 +412,7 @@ def test_body_completion_still_runs_both_exits():
     """LAW: the completed edge runs both exits too (inner then outer)."""
     outer_exit, inner_exit = [], []
     sugar = _nested_pair(
-        _FixedSugar(Complete(_FloorValue("entered"))),
+        _FixedSugar(ExitSet.completed(_FloorValue("entered"))),
         outer_exit_probe=outer_exit,
         inner_exit_probe=inner_exit,
     )
@@ -412,7 +424,7 @@ def test_body_completion_still_runs_both_exits():
 def test_discrimination_completion_path_does_not_skip_the_inner_exit():
     outer_exit, inner_exit = [], []
     sugar = _nested_pair(
-        _FixedSugar(Complete(_FloorValue("entered"))),
+        _FixedSugar(ExitSet.completed(_FloorValue("entered"))),
         outer_exit_probe=outer_exit,
         inner_exit_probe=inner_exit,
     )
@@ -427,13 +439,13 @@ def test_body_halt_inside_nested_managers_runs_both_exits():
     outer_exit, inner_exit = [], []
     halt = RaiseEffect.for_builtin("ValueError", occurrence="body.py:2:4")
     inner = _resource(
-        body=(_FixedSugar(Incomplete(halt)),), slot="B", exit_probe=inner_exit
+        body=(_FixedSugar(ExitSet.halted(halt)),), slot="B", exit_probe=inner_exit
     )
     sugar = _resource(body=(inner,), slot="A", exit_probe=outer_exit)
     out = sugar.desugar()
     assert inner_exit == [1]
     assert outer_exit == [1]
-    reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
+    reds = _reds(out)
     assert any(r.effect == halt for r in reds)
 
 
@@ -441,10 +453,10 @@ def test_discrimination_body_halt_is_not_suppressed_by_never_suppresses():
     outer_exit, inner_exit = [], []
     halt = RaiseEffect.for_builtin("ValueError", occurrence="body.py:2:4")
     inner = _resource(
-        body=(_FixedSugar(Incomplete(halt)),), slot="B", exit_probe=inner_exit
+        body=(_FixedSugar(ExitSet.halted(halt)),), slot="B", exit_probe=inner_exit
     )
     out = _resource(body=(inner,), slot="A", exit_probe=outer_exit).desugar()
-    reds = [e for e in out.value.contribution() if isinstance(e, Incomplete)]
+    reds = _reds(out)
     with pytest.raises(AssertionError):
         assert reds == [], "NeverSuppresses must not consume the body halt"
 

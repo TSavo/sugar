@@ -12,7 +12,7 @@ from sugar_lift_py_tests.context.reduce_context import ReduceContext
 from sugar_lift_py_tests.floor.iterator_value import TupleIteratorValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.floor.tuple_value import TupleValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.temporal import bind_temporal
 from sugar_source_tree.binding_state import mint_binding_coordinate_v1
 from sugar_source_tree.nodes import (
@@ -55,9 +55,10 @@ def _loop_sugar(source: str):
 
 
 def _completed_post(outcome):
-    if isinstance(outcome, Complete):
-        return outcome.value.post()
     assert isinstance(outcome, ExitSet), outcome
+    value = outcome.completed_value()
+    if value is not None:
+        return value.post()
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
     assert len(completed) == 1, completed
     return completed[0].value.post()

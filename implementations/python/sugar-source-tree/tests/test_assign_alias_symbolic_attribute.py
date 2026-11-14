@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 
 from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
@@ -97,10 +97,11 @@ def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():
 
     record = done.value.record.statements
     stores = [
-        entry
+        halt
         for entry in record
-        if isinstance(entry, Incomplete)
-        and isinstance(entry.effect, AttributeStoreRuntimeEffect)
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+        if isinstance(halt.effect, AttributeStoreRuntimeEffect)
     ]
     assert len(stores) == 1
     assert isinstance(stopped.effect, AttributeStoreRuntimeEffect)

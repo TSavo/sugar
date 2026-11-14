@@ -7,7 +7,7 @@ import pytest
 from sugar_lift_py_tests.context.reduce_context import ReduceContext
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 from sugar_lift_py_tests.temporal import bind_temporal
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -27,9 +27,10 @@ def _function(source: str):
 
 
 def _completed_post(outcome):
-    if isinstance(outcome, Complete):
-        return outcome.value.post()
     assert isinstance(outcome, ExitSet), outcome
+    value = outcome.completed_value()
+    if value is not None:
+        return value.post()
     completed = [face for face in outcome.exits if isinstance(face, Completed)]
     assert len(completed) == 1, completed
     return completed[0].value.post()
