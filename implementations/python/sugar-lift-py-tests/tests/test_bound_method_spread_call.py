@@ -17,7 +17,6 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -34,8 +33,8 @@ def _returned(source: str):
         if isinstance(node, FunctionDef) and node.name == "f"
     )
     outcome = function_universe_outcome(function)
-    assert isinstance(outcome, Complete)
-    (statement,) = outcome.value.record.statements
+    assert outcome.completed_value() is not None
+    (statement,) = outcome.completed_value().record.statements
     return statement.value
 
 
@@ -64,9 +63,9 @@ def _method_result(source: str):
     assert isinstance(call, CallSiteValue)
     assert call.target_name == "Box.pick"
     outcome = call.retained_source_completion_outcome()
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, BlockValue)
-    (returned,) = outcome.value.statements
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), BlockValue)
+    (returned,) = outcome.completed_value().statements
     assert isinstance(returned, ReturnValue)
     return returned.value
 

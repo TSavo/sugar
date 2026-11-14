@@ -14,7 +14,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import CallSiteValue, NoneValue, SymbolicValue
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.ir import ctor, make_var
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.source_oracle import workspace_path_source
@@ -80,7 +80,7 @@ class _ReceiverSugar(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
 
 def _assert_undecided(node: Attribute, receiver, *, name: str | None = None) -> None:
@@ -180,8 +180,8 @@ def test_symbolic_receiver_attribute_is_the_same_named_third_value() -> None:
 def test_lying_known_member_does_not_license_blanket_attribute_error() -> None:
     outcome = NoneValue().attribute("__class__", "lying-none-class")
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, SymbolicValue)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), SymbolicValue)
 
 
 def test_replacing_bad_with_known_member_still_cannot_invent_an_exit() -> None:

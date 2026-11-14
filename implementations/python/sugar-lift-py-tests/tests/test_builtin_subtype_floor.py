@@ -10,7 +10,6 @@ def _class(name, *bases):
 
 
 def test_constructed_subtype_graph_closes_direct_transitive_and_unrelated():
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
@@ -19,12 +18,13 @@ def test_constructed_subtype_graph_closes_direct_transitive_and_unrelated():
     leaf = _class("RenamedLeaf", middle)
     unrelated = _class("RenamedOther")
 
-    assert isinstance(leaf.test_python_subtype(base, "site"), Complete)
+    assert leaf.test_python_subtype(base, "site").completed_value() is not None
     assert isinstance(
-        leaf.test_python_subtype(base, "site").value, TrueBoolLiteralSugar
+        leaf.test_python_subtype(base, "site").completed_value(), TrueBoolLiteralSugar
     )
     assert isinstance(
-        leaf.test_python_subtype(unrelated, "site").value, FalseBoolLiteralSugar
+        leaf.test_python_subtype(unrelated, "site").completed_value(),
+        FalseBoolLiteralSugar,
     )
 
 
@@ -38,11 +38,11 @@ def test_tuple_of_types_is_finite_subtype_disjunction():
     other = _class("Other")
 
     assert isinstance(
-        leaf.test_python_subtype(TupleValue((other, base)), "site").value,
+        leaf.test_python_subtype(TupleValue((other, base)), "site").completed_value(),
         TrueBoolLiteralSugar,
     )
     assert isinstance(
-        base.test_python_subtype(TupleValue((other, leaf)), "site").value,
+        base.test_python_subtype(TupleValue((other, leaf)), "site").completed_value(),
         FalseBoolLiteralSugar,
     )
 
@@ -53,7 +53,7 @@ def test_symbolic_subtype_emits_typed_obligation():
 
     subtype = SymbolicValue(make_var("T"))
     supertype = SymbolicValue(ctor("python:type", [make_var("U")]))
-    result = subtype.test_python_subtype(supertype, "site").value
+    result = subtype.test_python_subtype(supertype, "site").completed_value()
 
     assert isinstance(result.formula, _Atomic)
     assert result.formula.name == "python.subtype"
@@ -115,13 +115,13 @@ def test_authenticated_builtin_issubclass_callable_uses_floor_not_spelling():
     result = receiver.callable_application_with(
         CallableApplication((leaf, base), (), "site"), None
     )
-    assert isinstance(result.value, TrueBoolLiteralSugar)
-    witness = receiver.witness_for((leaf, base), result.value)
+    assert isinstance(result.completed_value(), TrueBoolLiteralSugar)
+    witness = receiver.witness_for((leaf, base), result.completed_value())
     witness.verify(
         receiver.runtime_identity,
         receiver.operation,
         (leaf.to_term(owner="test"), base.to_term(owner="test")),
-        result.value.to_term(owner="test"),
+        result.completed_value().to_term(owner="test"),
     )
 
 
@@ -137,7 +137,7 @@ def test_named_call_dispatches_through_authenticated_temporal_floor():
     from dataclasses import dataclass
 
     from sugar_lift_py_tests.context import ReduceContext
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
@@ -151,7 +151,7 @@ def test_named_call_dispatches_through_authenticated_temporal_floor():
             return ()
 
         def desugar(self, ctx=None):
-            return Complete(self.value)
+            return ExitSet.completed(self.value)
 
     base = _class("Base")
     leaf = _class("Leaf", base)
@@ -159,4 +159,4 @@ def test_named_call_dispatches_through_authenticated_temporal_floor():
         "issubclass", (ValueSugar(leaf), ValueSugar(base)), "site"
     ).desugar(ReduceContext.root(owner="named-call-dispatch"))
 
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)

@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 from sugar_lift_py_tests.ir import make_var, num, py_eq
 from sugar_lift_py_tests.floor.none_value import NoneValue
-from sugar_lift_py_tests.outcome import Complete, outcome_to_exitset
+from sugar_lift_py_tests.outcome import outcome_to_exitset
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
@@ -80,8 +80,8 @@ def test_none_and_true_is_false() -> None:
         NoneLiteralSugar(site=site),
         TrueBoolLiteralSugar(site=site),
     )
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, NoneValue)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(),NoneValue)
 
 
 def test_true_and_false_is_false() -> None:
@@ -91,8 +91,8 @@ def test_true_and_false_is_false() -> None:
         TrueBoolLiteralSugar(site=site),
         FalseBoolLiteralSugar(site=site),
     )
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, FalseBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(),FalseBoolLiteralSugar)
 
 
 def test_none_or_true_is_true() -> None:
@@ -102,8 +102,8 @@ def test_none_or_true_is_true() -> None:
         NoneLiteralSugar(site=site),
         TrueBoolLiteralSugar(site=site),
     )
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(),TrueBoolLiteralSugar)
 
 
 def test_symbolic_and_true_absorbs_to_symbolic() -> None:
@@ -137,16 +137,16 @@ def test_false_and_symbolic_is_false() -> None:
     """False and (z == 1) → false; proves ∧ selects false, not the symbolic."""
     site = _Site()
     outcome = _bool_op("And", FalseBoolLiteralSugar(site=site), _z_eq_1())
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, FalseBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(),FalseBoolLiteralSugar)
 
 
 def test_true_or_symbolic_is_true() -> None:
     """True or (z == 1) → true; proves ∨ selects true, not the symbolic."""
     site = _Site()
     outcome = _bool_op("Or", TrueBoolLiteralSugar(site=site), _z_eq_1())
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(),TrueBoolLiteralSugar)
 
 
 def test_symbolic_and_false_is_false() -> None:
@@ -204,7 +204,7 @@ def test_ground_string_inequality_and_does_not_evaluate_later_operand() -> None:
         ),
         _Unevaluated(site=site),
     )
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     assert not any(
         isinstance(value, TrueBoolLiteralSugar) for value in _completed_values(outcome)
     )

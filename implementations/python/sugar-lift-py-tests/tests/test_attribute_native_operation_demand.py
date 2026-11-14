@@ -34,9 +34,9 @@ class _ValueSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         del ctx
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner: str):
         del owner

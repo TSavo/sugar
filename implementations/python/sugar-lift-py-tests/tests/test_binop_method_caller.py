@@ -45,12 +45,11 @@ from sugar_lift_py_tests.floor import (
     ReturnValue,
     TermValue,
 )
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 from test_method_call_application_twins import bound_method_call_at
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.effect import RaiseEffect
 
 METHOD_BODY = (
@@ -169,17 +168,17 @@ def _only_halted(outcome: object, *, require_pre_effect_state: bool = True) -> H
 
 
 def _assert_completed_call(outcome) -> CallSiteValue:
-    assert isinstance(outcome, Complete), outcome
-    assert isinstance(outcome.value, CallSiteValue), outcome.value
-    return outcome.value
+    assert outcome.completed_value() is not None, outcome
+    assert isinstance(
+        outcome.completed_value(), CallSiteValue
+    ), outcome.completed_value()
+    return outcome.completed_value()
 
 
 def _returned_term(outcome) -> TermValue:
     """Pull the returned TermValue from discharge or producer_outcome."""
     if isinstance(outcome, ExitSet):
         value = _only_completed(outcome).value
-    elif isinstance(outcome, Complete):
-        value = outcome.value
     elif isinstance(outcome, Completed):
         value = outcome.value
     else:
@@ -228,8 +227,13 @@ def _collect_raise_values(root) -> list:
         if id(value) in seen:
             continue
         seen.add(id(value))
-        if isinstance(value, Incomplete) and isinstance(value.effect, RaiseEffect):
-            found.append(value)
+        if (
+            isinstance(value, ExitSet)
+            and len(value.exits) == 1
+            and value.halts() == value.exits
+            and isinstance(value.halts()[0].effect, RaiseEffect)
+        ):
+            found.append(value.halts()[0])
             continue
         statements = getattr(value, "statements", None)
         if statements:
@@ -389,7 +393,7 @@ def test_incompatible_operands_method_call_halts_with_named_typeerror() -> None:
 
     Formal discharge (sibling test) owns pre-effect identity under #6659.
     Bound-method ``producer_outcome`` for a return expression may publish
-    ``Complete(CallSiteValue)`` whose dig surfaces a TypeError halt
+    ``ExitSet.completed(CallSiteValue)`` whose dig surfaces a TypeError halt
     rather than ``ExitSet(Halted)`` — statement stores (setitem) project the
     halt face; return-of-add digs the raise. Either face must name TypeError;
     a completed sum is the silent-wrong twin. When sole Halted surfaces,
@@ -404,26 +408,34 @@ def test_incompatible_operands_method_call_halts_with_named_typeerror() -> None:
     _, method, _pending = _method_definition()
     floor_site = method.body[0].fragment
     direct = NoneValue().add(TermValue(2), floor_site)
-    assert isinstance(direct, Incomplete), direct
-    assert direct.effect.exception_name == "TypeError"
+    assert len(direct.exits) == 1 and direct.halts() == direct.exits, direct
+    assert direct.halts()[0].effect.exception_name == "TypeError"
 
     outcome = site.producer_outcome(None)
-    if isinstance(outcome, ExitSet) and len(outcome.exits) == 1:
+    if (
+        isinstance(outcome, ExitSet)
+        and len(outcome.exits) == 1
+        and outcome.completed_value() is None
+    ):
         halted = outcome.exits[0]
         assert isinstance(halted, Halted), halted
         assert halted.effect.exception_type_coordinate == _identity("TypeError")
         assert halted.effect.occurrence_id == str(site)
         assert halted.state is not None, (
             "bound-method producer_outcome TypeError halt lacks pre-effect "
-            "state — sole Halted still collapses through Incomplete (#6659)"
+            "state — sole Halted still drops its state (#6659)"
         )
         return
 
     # Return-expression projection: dig must surface a TypeError halt,
     # never a completed numeric sum.
-    assert isinstance(outcome, Complete), outcome
-    assert isinstance(outcome.value, CallSiteValue), outcome.value
-    dug = outcome.value._dig_floor_or_none(None, owner="binop-method-caller")
+    assert outcome.completed_value() is not None, outcome
+    assert isinstance(
+        outcome.completed_value(), CallSiteValue
+    ), outcome.completed_value()
+    dug = outcome.completed_value()._dig_floor_or_none(
+        None, owner="binop-method-caller"
+    )
     assert dug is not None, outcome
     raises = _collect_raise_values(dug)
     assert raises, f"no raise under dig: {type(dug).__name__} {dug!r:.300}"

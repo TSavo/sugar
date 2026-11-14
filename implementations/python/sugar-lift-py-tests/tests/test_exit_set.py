@@ -7,7 +7,6 @@ from sugar_lift_py_tests.context_manager_contract import (
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 from sugar_lift_py_tests.ir import atomic, make_var, not_, or_
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
@@ -21,17 +20,20 @@ def _guard(name: str):
     return atomic(name, [make_var("state")])
 
 
-def test_single_unconditional_completed_collapses_to_complete():
-    assert ExitSet.completed("state").collapse() == Complete("state")
+def test_single_unconditional_completed_answers_its_completed_value():
+    assert ExitSet.completed("state").completed_value() == "state"
 
 
-def test_single_unconditional_halted_collapses_to_incomplete():
+def test_single_unconditional_halted_is_one_halted_arm():
     effect = RaiseEffect.for_builtin(
         "ValueError",
         occurrence="implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:209:0",
     )
 
-    assert ExitSet.halted(effect).collapse() == Incomplete(effect)
+    halted = ExitSet.halted(effect)
+    assert len(halted.exits) == 1 and halted.halts() == halted.exits
+    assert [h.effect for h in halted.halts()] == [effect]
+    assert halted.completed_value() is None
 
 
 def test_conditional_halt_keeps_halted_and_complementary_completed_exits():
@@ -47,7 +49,7 @@ def test_conditional_halt_keeps_halted_and_complementary_completed_exits():
         Halted(condition, effect, "state"),
         Completed(not_(condition), "state"),
     )
-    assert exits.collapse() is exits
+    assert exits.completed_value() is None
 
 
 def test_union_normalize_merges_equal_exits_by_disjoining_their_guards():
@@ -91,7 +93,7 @@ def test_block_reduction_retains_complement_of_guarded_halt():
     class GuardedHalt:
         def desugar(self, ctx=None):
             del ctx
-            return Incomplete(effect).guarded(condition)
+            return ExitSet.halted(effect).guarded(condition)
 
     exits = reduce_block_to_exitset((GuardedHalt(),))
 
@@ -104,7 +106,7 @@ def test_block_reduction_retains_complement_of_guarded_halt():
 def test_and_finally_cleanup_completion_restores_incoming_completed():
     incoming = ExitSet.completed("try-state")
     after = incoming.and_finally(lambda: ExitSet.completed("cleanup-done"))
-    assert after.collapse() == Complete("try-state")
+    assert after == ExitSet.completed("try-state")
 
 
 def test_and_finally_cleanup_completion_restores_incoming_halted():
@@ -114,7 +116,7 @@ def test_and_finally_cleanup_completion_restores_incoming_halted():
     )
     incoming = ExitSet.halted(effect)
     after = incoming.and_finally(lambda: ExitSet.completed("cleanup-done"))
-    assert after.collapse() == Incomplete(effect)
+    assert after == ExitSet.halted(effect)
 
 
 def test_and_finally_cleanup_halt_supersedes_incoming():
@@ -128,7 +130,7 @@ def test_and_finally_cleanup_halt_supersedes_incoming():
     )
     incoming = ExitSet.halted(original)
     after = incoming.and_finally(lambda: ExitSet.halted(cleanup))
-    assert after.collapse() == Incomplete(cleanup)
+    assert after == ExitSet.halted(cleanup)
 
 
 def test_and_finally_cleanup_halt_supersedes_completed():
@@ -138,7 +140,7 @@ def test_and_finally_cleanup_halt_supersedes_completed():
     )
     incoming = ExitSet.completed("ok")
     after = incoming.and_finally(lambda: ExitSet.halted(cleanup))
-    assert after.collapse() == Incomplete(cleanup)
+    assert after == ExitSet.halted(cleanup)
 
 
 def test_and_finally_terminal_cleanup_completion_supersedes():
@@ -147,7 +149,7 @@ def test_and_finally_terminal_cleanup_completion_supersedes():
         lambda: ExitSet.completed("return-from-finally"),
         cleanup_restores=lambda value: False,
     )
-    assert after.collapse() == Complete("return-from-finally")
+    assert after == ExitSet.completed("return-from-finally")
 
 
 def test_and_finally_runs_cleanup_on_every_conditional_exit():
@@ -178,7 +180,7 @@ def test_and_finally_runs_cleanup_on_every_conditional_exit():
 def test_and_exit_completion_keeps_body_completed():
     incoming = ExitSet.completed("body")
     after = incoming.and_exit(ExitSet.completed(False), disposition=NeverSuppresses())
-    assert after.collapse() == Complete("body")
+    assert after == ExitSet.completed("body")
 
 
 def test_and_exit_halt_supersedes_body_completed():
@@ -188,7 +190,7 @@ def test_and_exit_halt_supersedes_body_completed():
     )
     incoming = ExitSet.completed("body")
     after = incoming.and_exit(ExitSet.halted(exit_halt), disposition=NeverSuppresses())
-    assert after.collapse() == Incomplete(exit_halt)
+    assert after == ExitSet.halted(exit_halt)
 
 
 def test_and_exit_halt_supersedes_body_halted():
@@ -202,7 +204,7 @@ def test_and_exit_halt_supersedes_body_halted():
     )
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(ExitSet.halted(exit_halt), disposition=NeverSuppresses())
-    assert after.collapse() == Incomplete(exit_halt)
+    assert after == ExitSet.halted(exit_halt)
 
 
 def test_and_exit_never_suppresses_restores_body_halt():
@@ -212,7 +214,7 @@ def test_and_exit_never_suppresses_restores_body_halt():
     )
     incoming = ExitSet.halted(body)
     after = incoming.and_exit(ExitSet.completed(False), disposition=NeverSuppresses())
-    assert after.collapse() == Incomplete(body)
+    assert after == ExitSet.halted(body)
 
 
 def test_and_exit_proven_contract_consumes_named_halt():
@@ -229,7 +231,7 @@ def test_and_exit_proven_contract_consumes_named_halt():
         ExitSet.completed(True),
         disposition=ExitSuppressionContract.suppresses(("ValueError",)),
     )
-    assert after.collapse() == Complete(None)
+    assert after == ExitSet.completed(None)
 
 
 def test_and_exit_runtime_selected_leaves_open_residual_not_guessed():
@@ -242,7 +244,7 @@ def test_and_exit_runtime_selected_leaves_open_residual_not_guessed():
         ExitSet.completed(True),
         disposition=RuntimeSelected(),
     )
-    assert after.collapse() == Incomplete(body)
+    assert after == ExitSet.halted(body)
 
 
 def test_and_exit_fans_exitset_across_conditional_faces():
@@ -273,7 +275,7 @@ def test_and_exit_proven_contract_suppresses_only_matching_face():
         ExitSet.completed(True),
         disposition=ExitSuppressionContract.suppresses(("ValueError",)),
     )
-    assert after.collapse() == Complete("state")
+    assert after == ExitSet.completed("state")
 
 
 def test_and_exit_membrane_suppresses_matcher_authority():
@@ -290,4 +292,4 @@ def test_and_exit_membrane_suppresses_matcher_authority():
         ExitSet.completed(True),
         disposition=Suppresses(EffectMatcher(kind="raise", name="KeyError")),
     )
-    assert after.collapse() == Complete(None)
+    assert after == ExitSet.completed(None)

@@ -366,10 +366,8 @@ def _function(body: str):
 
 def _faces(outcome) -> tuple[int, int]:
     """(completed faces, halted faces) of a function's universe outcome."""
-    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
-    if isinstance(outcome, Complete):
-        return 1, 0
     assert isinstance(outcome, ExitSet), outcome
     return (
         sum(isinstance(face, Completed) for face in outcome.exits),
