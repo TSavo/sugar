@@ -884,7 +884,12 @@ class ExitSet(Generic[T]):
 
         return ExitSet(tuple(merged))
 
-    def sequence(self, step: Callable[[T], "ExitSet[U]"]) -> "ExitSet[U]":
+    def sequence(
+        self,
+        step: Callable[[T], "ExitSet[U]"],
+        *,
+        consume: Callable[[Halted], "ExitSet[U] | None"] | None = None,
+    ) -> "ExitSet[U]":
         """Map ``step`` over completed exits; halted exits bypass the tail.
 
         The prefix arm's obligations ride onto EVERY exit the tail produced
@@ -894,14 +899,27 @@ class ExitSet(Generic[T]):
         answers after the demand was incurred. Conjoined guards, so union:
         each side is already weakened under its own face and `g -> D` still
         holds under `g and h`. Nothing is conjoined into a single demand.
+
+        ``consume`` is for a composition that continues past a halt it owns
+        (a loop's own ``break``/``continue``, the ``StopIteration`` that
+        exhausts its iterator). It is handed each halted arm and answers the
+        set that continues beneath that halt, or ``None`` to let the halt
+        stand. A consumed halt's continuation is composed exactly as a
+        completed arm's is: conjoined guard, both sets of faces, and the
+        halt's ``owed`` first. This is the one composition of a continuation
+        beneath an arm; there is no second way to carry a prefix's debts.
         """
 
         exits: list[Exit[U]] = []
         for exit_ in self.exits:
             if isinstance(exit_, Halted):
-                exits.append(exit_)
-                continue
-            for following in step(exit_.value).exits:
+                continued = None if consume is None else consume(exit_)
+                if continued is None:
+                    exits.append(exit_)
+                    continue
+            else:
+                continued = step(exit_.value)
+            for following in continued.exits:
                 guard = _and_guards(exit_.guard, following.guard)
                 # Conjoined guard: both sets of testimony hold of the result.
                 faces = exit_.faces | following.faces

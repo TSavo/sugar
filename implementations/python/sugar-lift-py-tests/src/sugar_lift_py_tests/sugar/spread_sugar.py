@@ -41,69 +41,73 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
     ``finish`` is also invoked once rather than once per completed tuple. The old
     chain re-``desugar``ed each tail operand once per prefix arm; the fold walks
     the operands in the same source order, once each.
+
+    Every operand, and ``finish``, runs beneath the PREFIX -- the one completed
+    arm the operands so far left through -- by ``ExitSet.sequence``: what it
+    produces takes the prefix's guard, faces and ``owed``. Its halts leave the
+    fold there; its completed face is the next prefix. Only the one prefix arm
+    is sequenced each step, never the halts collected so far, so the work stays
+    linear in the operand count.
     """
     from sugar_lift_py_tests.outcome.exit_set import (
+        Completed,
         ExitSet,
-        Halted,
-        _and_guards,
-        _is_true,
         outcome_to_exitset,
-        owed_union,
-        true_guard,
     )
 
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
-    from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
-    prefix_guard = true_guard()
-    # What the operands' completed faces so far owe: every arm continuing
-    # past them owes it (the ``sequence`` law, by union).
-    prefix_owed: tuple = ()
+    # Truth before the first operand; afterwards the operands' completed path.
+    prefix = ExitSet.completed(None)
     values = list(done)
     halted: list = []
+
+    def leave(following, *, prefix, halted):
+        """The fold's exits: every collected halt, then ``following`` beneath
+        the prefix."""
+        beneath = prefix.sequence(lambda _last: following)
+        return ExitSet((*halted, *beneath.exits)).normalize()
 
     for index, sugar in enumerate(sugars):
         # A deferred native-operation operand is not an ExitSet. Forcing it
         # through outcome_to_exitset panics; IfExp and BoolOp already keep
         # that carrier until discharge. The remaining operands and finish
         # wait via and_then so the list does not invent a completed message.
+        # The operands before it already ran: once the carrier discharges, its
+        # exits leave beneath their prefix beside every halt they collected. A
+        # halt is never dropped.
         desugared = sugar.desugar(ctx)
         if isinstance(desugared, NativeOperationExitCarrierV1):
             already = tuple(values)
             remaining = sugars[index + 1 :]
+            collected = tuple(halted)
             return desugared.and_then(
                 lambda value: _collect(remaining, ctx, already + (value,), finish)
+            ).after_discharge(
+                lambda projected, *, prefix=prefix: leave(
+                    projected, prefix=prefix, halted=collected
+                )
             )
         factors = outcome_to_exitset(desugared).factor_completed()
-        completed = None
-        for exit_ in factors.exits:
-            if isinstance(exit_, Halted):
-                halted.append(
-                    Halted(
-                        _and_guards(prefix_guard, exit_.guard),
-                        exit_.effect,
-                        exit_.state,
-                        owed=owed_union(prefix_owed, exit_.owed),
-                    )
-                )
-            else:
-                completed = exit_
-        if completed is None:
+        stepped = prefix.sequence(lambda _last, *, factors=factors: factors)
+        halted.extend(stepped.halts())
+        completed = tuple(
+            exit_ for exit_ in stepped.exits if isinstance(exit_, Completed)
+        )
+        if not completed:
             # Every path through this operand halts: there is no completed
             # continuation to hand to ``finish``, and the halted face is the
             # whole meaning.
             return ExitSet(tuple(halted)).normalize()
-        prefix_guard = _and_guards(prefix_guard, completed.guard)
-        prefix_owed = owed_union(prefix_owed, completed.owed)
-        values.append(completed.value)
+        # ``factor_completed`` left one completed face.
+        prefix = ExitSet(completed)
+        values.append(completed[0].value)
 
-    tail = outcome_to_exitset(finish(tuple(values)))
-    if not _is_true(prefix_guard):
-        tail = tail.guarded(prefix_guard)
-    tail = _owing(tail, prefix_owed)
-    return ExitSet((*halted, *tail.exits)).normalize()
+    return leave(
+        outcome_to_exitset(finish(tuple(values))), prefix=prefix, halted=halted
+    )
 
 
 @dataclass(frozen=True)

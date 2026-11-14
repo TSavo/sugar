@@ -160,3 +160,59 @@ def test_prefix_composition_retains_later_carrier_continuations() -> None:
     )
 
     assert exits.exits == (Completed(guard, TermValue(99)),)
+
+
+class _Desugared:
+    """A spread operand standing for its already-desugared outcome."""
+
+    def __init__(self, outcome) -> None:
+        self.outcome = outcome
+
+    def desugar(self, ctx=None):
+        return self.outcome
+
+
+def test_spread_operands_before_a_carrier_keep_their_halts_guard_and_debts() -> None:
+    """A halt is never dropped: an operand that halts before a deferred one.
+
+    ``[*a, *b]`` where ``a`` completes under one guard owing a debt and halts
+    under another, and ``b`` is a deferred native operation. Once the carrier
+    discharges, the spread still leaves through ``a``'s halt, and its
+    completion lies beneath ``a``'s completed face, owing ``a``'s debt.
+    """
+    from sugar_lift_py_tests.sugar.spread_sugar import _collect
+
+    carrier, left, right = _carrier()
+    completes = atomic("test:spread-first-completes", [])
+    halts = atomic("test:spread-first-halts", [])
+    effect = UndeterminedRaiseEffect(blame="spread-first", occurrence="spread-first")
+    debt = ("test:spread-first-debt",)
+    first = ExitSet(
+        (
+            Completed(completes, TermValue(1), owed=debt),
+            Halted(halts, effect, None),
+        )
+    )
+    finished = []
+
+    def finish(values):
+        finished.append(values)
+        return ExitSet.completed(TermValue(7))
+
+    collected = _collect((_Desugared(first), _Desugared(carrier)), None, (), finish)
+
+    assert isinstance(collected, NativeOperationExitCarrierV1)
+    exits = collected.discharge(
+        {
+            left.coordinate_cid: TermValue(1),
+            right.coordinate_cid: TermValue(2),
+        }
+    )
+
+    assert [arm for arm in exits.exits if isinstance(arm, Halted)] == [
+        Halted(halts, effect, None)
+    ]
+    (completed,) = [arm for arm in exits.exits if isinstance(arm, Completed)]
+    assert completed == Completed(completes, TermValue(7))
+    assert completed.owed == debt
+    assert len(finished) == 1 and finished[0][0] == TermValue(1)

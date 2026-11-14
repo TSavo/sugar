@@ -6,7 +6,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 )
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
-from sugar_lift_py_tests.ir import atomic, make_var, not_, or_
+from sugar_lift_py_tests.ir import and_, atomic, make_var, not_, or_
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
@@ -293,3 +293,31 @@ def test_and_exit_membrane_suppresses_matcher_authority():
         disposition=Suppresses(EffectMatcher(kind="raise", name="KeyError")),
     )
     assert after == ExitSet.completed(None)
+
+
+def test_sequence_consumes_an_owned_halt_beneath_its_guard_and_debts():
+    """A halt the composition owns continues exactly as a completed arm does."""
+    owned = RaiseEffect.for_builtin("StopIteration", occurrence="exit_set.py:2:0")
+    foreign = RaiseEffect.for_builtin("ValueError", occurrence="exit_set.py:3:0")
+    stop_guard = _guard("stop")
+    after_guard = _guard("after")
+    prefix = ExitSet(
+        (
+            Halted(stop_guard, owned, None, owed=("stop-debt",)),
+            Halted(_guard("foreign"), foreign, None, owed=("foreign-debt",)),
+        )
+    )
+    after = ExitSet((Completed(after_guard, "after", owed=("after-debt",)),))
+
+    result = prefix.sequence(
+        ExitSet.completed,
+        consume=lambda halt: after if halt.effect is owned else None,
+    )
+
+    (continued,) = [arm for arm in result.exits if isinstance(arm, Completed)]
+    assert continued.value == "after"
+    assert continued.guard == and_([stop_guard, after_guard])
+    assert continued.owed == ("stop-debt", "after-debt")
+    (stood,) = result.halts()
+    assert stood.effect is foreign
+    assert stood.owed == ("foreign-debt",)

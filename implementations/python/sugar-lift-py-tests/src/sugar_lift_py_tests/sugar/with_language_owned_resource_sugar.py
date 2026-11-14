@@ -31,7 +31,7 @@ class WithLanguageOwnedResourceSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.outcome import outcome_to_exitset
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted, owed_union
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             ExitFaceBinding,
@@ -45,8 +45,6 @@ class WithLanguageOwnedResourceSugar(Sugar):
             reduce_block_to_exitset,
         )
         from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
-            _and,
-            _owing,
             _project_manager_receiver,
             _returned_value,
         )
@@ -65,19 +63,18 @@ class WithLanguageOwnedResourceSugar(Sugar):
             manager_facts = ManagerBinding(
                 self.manager_slot_id, manager_face.value
             ).to_facts(site=self.site)
-            enter_outcome = self.protocol.enter_resource_outcome_for(
-                manager_face.value, ctx
+            # The enter runs beneath its manager face and the body beneath its
+            # enter face (``ExitSet.sequence``): each takes the face's guard
+            # and faces and owes what it owes; the exit routing carries a body
+            # face's debts onto every arm it leaves through.
+            enter_es = ExitSet((manager_face,)).sequence(
+                lambda manager: outcome_to_exitset(
+                    self.protocol.enter_resource_outcome_for(manager, ctx)
+                )
             )
-            enter_es = outcome_to_exitset(enter_outcome)
             for enter_face in enter_es.exits:
-                guard = _and(manager_face.guard, enter_face.guard)
-                # Every arm leaving this path owes what manager and enter
-                # incurred on it.
-                owed = owed_union(manager_face.owed, enter_face.owed)
                 if isinstance(enter_face, Halted):
-                    parts.append(
-                        ExitSet((Halted(guard, enter_face.effect, owed=owed),))
-                    )
+                    parts.append(ExitSet((enter_face,)))
                     continue
                 entered = enter_face.value
                 enter_value = _returned_value(entered.enter_value)
@@ -86,7 +83,9 @@ class WithLanguageOwnedResourceSugar(Sugar):
                     enter_facts = EnterResultBinding(
                         self.enter_slot_id, enter_value
                     ).to_facts(site=self.site)
-                body_es = reduce_block_to_exitset(self.body, ctx).guarded(guard)
+                body_es = ExitSet((enter_face,)).sequence(
+                    lambda _entered: reduce_block_to_exitset(self.body, ctx)
+                )
                 exit_es = outcome_to_exitset(
                     self.protocol.exit_outcome_for(entered, ctx)
                 )
@@ -102,8 +101,7 @@ class WithLanguageOwnedResourceSugar(Sugar):
                     )
                     parts.append(
                         prepend_facts_to_exitset(
-                            _owing(routed, owed),
-                            (*manager_facts, *enter_facts, *face_facts),
+                            routed, (*manager_facts, *enter_facts, *face_facts)
                         )
                     )
         if not parts:
