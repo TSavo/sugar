@@ -35,11 +35,31 @@ if not obj:
 rows = obj.get("rows") or []
 print("rows:")
 for r in rows:
-    print(f"  {r.get('status',''):14s} {str(r.get('property',''))[:100]}")
-statuses = {str(r.get("status", "")) for r in rows}
-if "unsatisfied" not in statuses and not (statuses & {"unsat", "contradictory", "inconsistent"}):
-    print(f"FAIL: expected dual unsatisfied, got {sorted(statuses)}")
+    print(f"  {r.get('status',''):14s} {str(r.get('property',''))[:60]:60s} {str(r.get('reason',''))[:120]}")
+# The dual's call is not bridged: no proof in .sugar/imports answers it, so
+# the call is an undecided member and prove owes it by name (#7836, #7839).
+# Green means decided (#7849): neither half is decided on an owed call, and
+# the verdict is not-decided.
+verdict = obj.get("verdict")
+owed = [r for r in rows if str(r.get("reason", "")).startswith("owed:")]
+halves = {
+    str(r.get("property", "")): str(r.get("status", ""))
+    for r in rows
+    if str(r.get("property", "")) in ("consistency:test_true", "consistency:test_lie")
+}
+fail = []
+if verdict != "not-decided":
+    fail.append(f"verdict {verdict!r}, expected 'not-decided'")
+if not owed or not obj.get("owed"):
+    fail.append("no owed row: the unbridged call must be owed by name")
+for half in ("consistency:test_true", "consistency:test_lie"):
+    status = halves.get(half)
+    if status not in ("refused", "undecidable"):
+        fail.append(f"{half}: {status or 'no row'}, expected not decided (refused or undecidable)")
+if fail:
+    for line in fail:
+        print(f"FAIL: {line}")
     sys.exit(1)
-print("==== hashlib sha256 hexdigest logo: PASS (dual unsatisfied) ====")
+print(f"==== hashlib sha256 hexdigest logo: PASS (not-decided; {len(owed)} owed) ====")
 INNER
 [ -z "${SHOWCASE_SUBJECT_WITNESS:-}" ] || printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "$SHOWCASE_SUBJECT_WITNESS"
