@@ -365,10 +365,30 @@ class CallSiteValue(FloorValue):
             # Only an authenticated exception instance has that field; an
             # ordinary unexecuted call still has no runtime type, so .args
             # stays a named third value rather than inventing a tuple.
+            from sugar_lift_py_tests.floor.object_value import ObjectValue
             from sugar_lift_py_tests.floor.tuple_value import TupleValue
             from sugar_lift_py_tests.outcome import ExitSet
 
-            return ExitSet.completed(TupleValue(elements=self.arg_values))
+            if self.bound_source_actuals is None:
+                return ExitSet.completed(TupleValue(elements=self.arg_values))
+            # A class call that ran its constructor frame: the actuals sit in
+            # the frame's formals, not in call order, so the instance the
+            # call made answers (``ClassConstructorBodySugar`` seats the
+            # positional actuals on it as ``args``).  An instance without
+            # them leaves ``.args`` a named third value.
+            retained = self._retained_source_completion
+            instance = (
+                None
+                if retained is None
+                else _project_authenticated_source_return(retained.value)
+            )
+            if isinstance(instance, ObjectValue):
+                for field in reversed(instance.fields):
+                    if field.name == "args":
+                        return ExitSet.completed(field.value)
+            return self.undecided_attribute(
+                name, site, owner="CallSiteValue.attribute"
+            )
         if self.exception_type_coordinate is not None:
             # An authenticated exception instance has a decided runtime type;
             # its unprojected members (``__context__``) are not opaque-call

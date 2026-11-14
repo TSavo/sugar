@@ -53,6 +53,12 @@ class ClassConstructorBodySugar(Sugar):
     # (``enter``): set on the body a class call binds, so the initializer is
     # entered on that value and the statement is read once per call.
     class_value: object | None = field(default=None, compare=False)
+    # The inherited-exception frame's ``*args`` formal coordinate
+    # (``ClassDef.source_visible_constructor_frame``): a class whose
+    # constructor is BaseException's.  ``BaseException_new`` stores the
+    # call's positional actuals as ``args`` (Objects/exceptions.c), so the
+    # instance the call makes carries them.
+    exception_args_coordinate_cid: str | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.constructed_new_method is None:
@@ -295,6 +301,8 @@ class ClassConstructorBodySugar(Sugar):
                 None, self.receiver_coordinate_cid
             )
             if self.initializer_body is None:
+                if self.exception_args_coordinate_cid is not None:
+                    receiver = self._carrying_exception_args(receiver, ctx)
                 return ExitSet.completed(receiver)
             # Constructor CallSiteValue formals omit ``self`` — they are the
             # class-call arguments. Zero-argument ``super()`` still needs the
@@ -328,6 +336,29 @@ class ClassConstructorBodySugar(Sugar):
             return initialize(value, ctx.with_temporal(temporal))
 
         return self.enter(ctx, lambda value, _body: construct(value))
+
+    def _carrying_exception_args(self, receiver, ctx):
+        """``receiver`` with ``args``: the tuple the frame's ``*args`` formal
+        bound, which is every positional actual of the call.  A formal the
+        call did not bind is refused by name, never read as empty."""
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.floor import ObjectField, ObjectValue, TupleValue
+        from sugar_source_tree.panic import SugarNotWritten
+
+        args = ctx.temporal.value_if_bound(self.exception_args_coordinate_cid)
+        if type(args) is not TupleValue or not isinstance(receiver, ObjectValue):
+            raise SugarNotWritten(
+                blame=self.site,
+                owner="ClassConstructorBodySugar.exception_args",
+                observed=(
+                    f"{type(args).__name__} bound at the *args formal of a "
+                    f"{type(receiver).__name__} receiver"
+                ),
+                requested="the call's positional actuals as one tuple",
+                fix="bind the inherited-exception frame's *args before construction",
+            )
+        return replace(receiver, fields=(*receiver.fields, ObjectField("args", args)))
 
 
 def constructor_defaults(value) -> tuple:
