@@ -1368,17 +1368,6 @@ def test_resource_enter_transitions_carrier_is_refused_by_name():
     _refused(excinfo, "ConstructedManagerProtocolV1.resource_enter_transitions")
 
 
-def test_generator_enter_yield_carrier_is_refused_by_name():
-    from sugar_lift_python_source.manager_protocol_construction import (
-        _floor_enter_value,
-    )
-
-    carrier, _, _ = _carrier()
-    with pytest.raises(ConstructionPanic) as excinfo:
-        _floor_enter_value(_Answer(carrier))
-    _refused(excinfo, "GeneratorBackedManagerProtocolV1.enter_resource_outcome")
-
-
 def _partitioned_protocol(monkeypatch, answer_for):
     """A protocol over a receiver partition whose ``name`` call answers
     ``answer_for(name)``."""

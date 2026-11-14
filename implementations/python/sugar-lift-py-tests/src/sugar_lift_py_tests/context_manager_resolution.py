@@ -796,81 +796,6 @@ class SourceDerivedContextManagerRefV1:
 
 
 @dataclass(frozen=True)
-class SourceDerivedGeneratorResourceRefV1:
-    """Closed source-derived resource contract for generator managers.
-
-    Requires authenticated generator lifecycle (source-visible frame with
-    ``generator_steps``) plus native enter/exit definition coordinates.
-    Coordinates alone cannot construct this ref; a non-generator frame cannot
-    acquire generator semantics. Protocol is generator-backed testimony, never
-    a fabricated ObjectValue receiver.
-
-    ONE typed surface for consumers: :meth:`generator_protocol` (and the
-    definition accessors) expose enter/exit definitions and lifecycle
-    performance without branching on Lifecycle-vs-Manager wrapper classes.
-    """
-
-    use_site: SourceFragmentCoordinateV1
-    summary_cid: str
-    semantics: ContextManagerSemanticsV1
-    import_signature: ImportSignatureV2
-    protocol: object = field(compare=False, repr=False)
-
-    def __post_init__(self) -> None:
-        protocol = self.protocol
-        if protocol is None:
-            raise ValueError(
-                "generator resource ref requires generator-backed protocol testimony"
-            )
-        frame = getattr(protocol, "generator_frame", None)
-        if frame is None or getattr(frame, "generator_steps", None) is None:
-            raise ValueError(
-                "generator resource ref refuses non-generator protocol testimony"
-            )
-        if getattr(protocol, "enter_definition", None) is None:
-            raise ValueError("generator resource ref requires enter definition")
-        if getattr(protocol, "exit_definition", None) is None:
-            raise ValueError("generator resource ref requires exit definition")
-        if protocol.enter_definition == protocol.exit_definition:
-            raise ValueError("generator enter/exit definitions must differ")
-        # Closed performance surface: enter/exit must be methods, not missing.
-        if not callable(getattr(protocol, "enter_resource_outcome", None)):
-            raise ValueError(
-                "generator resource ref requires enter_resource_outcome on protocol"
-            )
-        if not callable(getattr(protocol, "exit_outcome_for", None)):
-            raise ValueError(
-                "generator resource ref requires exit_outcome_for on protocol"
-            )
-
-    @property
-    def generator_protocol(self):
-        """The one closed protocol surface published on this ref.
-
-        Always the generator-backed protocol (base or lifecycle subclass of
-        it). Consumers rebase onto this property — never enumerate wrapper
-        class names for enter/exit definitions or lifecycle performance.
-        """
-        return self.protocol
-
-    @property
-    def enter_definition(self):
-        """Native enter definition coordinate from the closed protocol surface."""
-        return self.protocol.enter_definition
-
-    @property
-    def exit_definition(self):
-        """Native exit definition coordinate from the closed protocol surface."""
-        return self.protocol.exit_definition
-
-    @property
-    def protocol_construction_cid(self) -> str:
-        """Protocol construction CID from the closed protocol surface."""
-        return self.protocol.protocol_construction_cid
-
-
-
-@dataclass(frozen=True)
 class FormalManagerRefV1:
     """A ``with`` whose head is a function's formal parameter, not a source body.
 
@@ -971,7 +896,6 @@ def context_manager_resolution_outcome(resolution: object) -> str:
         resolution,
         (
             SourceDerivedContextManagerRefV1,
-            SourceDerivedGeneratorResourceRefV1,
             ContextManagerContractRefV1,
             FormalManagerRefV1,
         ),

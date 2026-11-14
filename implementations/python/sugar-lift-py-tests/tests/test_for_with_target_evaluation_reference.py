@@ -27,8 +27,6 @@ Temporal choice 1 (#7661), inventory item 7 (#7757), after #7886 (``x += e``),
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 import pytest
 
 from sugar_lift_py_tests.context_manager_contract import ENTER_RESULT
@@ -41,13 +39,6 @@ from sugar_lift_py_tests.temporal.temporal_context import (
     projection_key,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_lift_python_source.manager_protocol_construction import (
-    GeneratorBackedManagerProtocolV1,
-    construct_generator_backed_protocol,
-)
-from sugar_lift_python_source.manager_summary_derivation import (
-    GeneratorBackedLifecycleProtocolV1,
-)
 from sugar_source_tree.nodes import (
     _EVALUATION_OCCURRENCE,
     Assign,
@@ -316,46 +307,6 @@ def test_each_evaluation_describes_exit_over_its_own_face() -> None:
         keyed = With._protocol_at_exit_face(protocol, item)
         assert keyed.exit_face_id == item._exit_face_id()
     assert protocol.exit_face_id == source.items[0]._exit_face_id()
-
-
-class _Definition:
-    def __init__(self, name: str) -> None:
-        self.name = name
-
-    def wire(self) -> dict:
-        return {"definition": self.name}
-
-
-def _generator_protocol():
-    frame = SimpleNamespace(generator_steps=(), frame_cid="generator-frame")
-    protocol = construct_generator_backed_protocol(
-        frame=frame,
-        enter_definition=_Definition("enter"),
-        exit_definition=_Definition("exit"),
-        exit_face_id="face#source",
-        construction_cid="construction",
-    )
-    assert isinstance(protocol, GeneratorBackedManagerProtocolV1)
-    return protocol
-
-
-def test_a_generator_protocol_rekeys_onto_an_evaluations_face() -> None:
-    protocol = _generator_protocol()
-    keyed = protocol.at_exit_face("face#evaluation")
-    assert keyed.exit_face_id == "face#evaluation"
-    assert keyed.protocol_construction_cid != protocol.protocol_construction_cid
-    assert keyed.generator_frame is protocol.generator_frame
-    assert keyed.enter_definition is protocol.enter_definition
-    assert keyed.exit_definition is protocol.exit_definition
-    assert protocol.exit_face_id == "face#source"
-
-
-def test_a_generator_lifecycle_rekeys_its_lifecycle_identity() -> None:
-    lifecycle = GeneratorBackedLifecycleProtocolV1.from_protocol(_generator_protocol())
-    keyed = lifecycle.at_exit_face("face#evaluation")
-    assert isinstance(keyed, GeneratorBackedLifecycleProtocolV1)
-    assert keyed.exit_face_id == "face#evaluation"
-    assert keyed.lifecycle_cid != lifecycle.lifecycle_cid
 
 
 # ---------------------------------------------------------------------------

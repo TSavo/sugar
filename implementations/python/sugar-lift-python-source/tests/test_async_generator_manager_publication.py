@@ -15,7 +15,6 @@ from pathlib import Path
 from sugar_lift_py_tests.canonicalizer import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import (
     ContextManagerResolutionGapV1,
-    SourceDerivedGeneratorResourceRefV1,
     TreeConstructionContextV1,
 )
 from sugar_lift_python_source.manager_summary_derivation import (
@@ -149,5 +148,4 @@ def test_async_generator_without_async_frame_protocol_stays_typed_gap(tmp_path: 
     assert len(context.source_derived_contract_refs) == 1
     ref = next(iter(context.source_derived_contract_refs.values()))
     assert isinstance(ref, ContextManagerResolutionGapV1)
-    assert not isinstance(ref, SourceDerivedGeneratorResourceRefV1)
     assert context.contract_refs.native_definitions == {}

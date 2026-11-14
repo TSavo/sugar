@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, replace
 import json
 from typing import Literal
 
@@ -50,7 +50,6 @@ from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 from .canonical import cid_of_json
 from .manager_protocol_construction import (
     ConstructedManagerProtocolV1,
-    GeneratorBackedManagerProtocolV1,
     ManagerProtocolConstructionGapV1,
 )
 
@@ -92,318 +91,6 @@ class DerivedManagerSummaryGapV1:
     ]
     protocol_construction_cid: str
     detail: str
-
-
-@dataclass(frozen=True)
-class GeneratorEnterHaltFaceV1:
-    """Guarded pre-yield exceptional enter halt of a generator CM.
-
-    Derived from the authenticated generator body before the first yield —
-    never from decorator/provider spelling. ``exception_type_source`` is the
-    sealed source memento of the raise's exception expression; ``occurrence``
-    is the raise statement's sealed fragment. Optional ``guard_source`` is the
-    sealed if-test when the raise sits under a branch.
-    """
-
-    occurrence: dict
-    exception_type_source: dict
-    guard_source: dict | None
-    cid: str
-
-    @property
-    def preimage(self) -> dict:
-        return {
-            "kind": "generator-enter-halt-face",
-            "schemaVersion": "1",
-            "occurrence": self.occurrence,
-            "exceptionTypeSource": self.exception_type_source,
-            "guardSource": self.guard_source,
-        }
-
-    def __post_init__(self) -> None:
-        if cid_of_json(self.preimage) != self.cid:
-            raise ValueError(
-                "generator enter-halt face CID does not match its preimage"
-            )
-
-    @classmethod
-    def mint(
-        cls,
-        *,
-        occurrence: dict,
-        exception_type_source: dict,
-        guard_source: dict | None,
-    ) -> "GeneratorEnterHaltFaceV1":
-        preimage = {
-            "kind": "generator-enter-halt-face",
-            "schemaVersion": "1",
-            "occurrence": occurrence,
-            "exceptionTypeSource": exception_type_source,
-            "guardSource": guard_source,
-        }
-        return cls(
-            occurrence, exception_type_source, guard_source, cid_of_json(preimage)
-        )
-
-
-@dataclass(frozen=True)
-class GeneratorYieldFaceV1:
-    """Complementary yield face of generator enter (resource handoff).
-
-    Distinct from enter-halt: this is the suspension that publishes the
-    generator-backed resource, not an exceptional enter path.
-    """
-
-    occurrence: dict
-    resource_source: dict | None
-    cid: str
-
-    @property
-    def preimage(self) -> dict:
-        return {
-            "kind": "generator-yield-face",
-            "schemaVersion": "1",
-            "occurrence": self.occurrence,
-            "resourceSource": self.resource_source,
-        }
-
-    def __post_init__(self) -> None:
-        if cid_of_json(self.preimage) != self.cid:
-            raise ValueError("generator yield face CID does not match its preimage")
-
-    @classmethod
-    def mint(
-        cls, *, occurrence: dict, resource_source: dict | None
-    ) -> "GeneratorYieldFaceV1":
-        preimage = {
-            "kind": "generator-yield-face",
-            "schemaVersion": "1",
-            "occurrence": occurrence,
-            "resourceSource": resource_source,
-        }
-        return cls(occurrence, resource_source, cid_of_json(preimage))
-
-
-@dataclass(frozen=True)
-class GeneratorExitHaltFaceV1:
-    """Post-yield exceptional exit of a generator CM.
-
-    Distinct from enter-halt: temporal phase is post-yield (after resource
-    handoff). Not a suppression result and not an enter failure. Optional
-    ``guard_source`` distinguishes conditional exit faces without recombining.
-    """
-
-    occurrence: dict
-    exception_type_source: dict
-    guard_source: dict | None
-    temporal_phase: Literal["post-yield"]
-    cid: str
-
-    @property
-    def preimage(self) -> dict:
-        return {
-            "kind": "generator-exit-halt-face",
-            "schemaVersion": "1",
-            "occurrence": self.occurrence,
-            "exceptionTypeSource": self.exception_type_source,
-            "guardSource": self.guard_source,
-            "temporalPhase": self.temporal_phase,
-        }
-
-    def __post_init__(self) -> None:
-        if self.temporal_phase != "post-yield":
-            raise ValueError(
-                "generator exit-halt face temporal phase must be post-yield"
-            )
-        if cid_of_json(self.preimage) != self.cid:
-            raise ValueError("generator exit-halt face CID does not match its preimage")
-
-    @classmethod
-    def mint(
-        cls,
-        *,
-        occurrence: dict,
-        exception_type_source: dict,
-        guard_source: dict | None = None,
-    ) -> "GeneratorExitHaltFaceV1":
-        preimage = {
-            "kind": "generator-exit-halt-face",
-            "schemaVersion": "1",
-            "occurrence": occurrence,
-            "exceptionTypeSource": exception_type_source,
-            "guardSource": guard_source,
-            "temporalPhase": "post-yield",
-        }
-        return cls(
-            occurrence,
-            exception_type_source,
-            guard_source,
-            "post-yield",
-            cid_of_json(preimage),
-        )
-
-
-@dataclass(frozen=True)
-class GeneratorNestedManagerLayerV1:
-    """One nested source-defined manager occurrence inside a generator CM body.
-
-    Distinct occurrence identity from the outer protocol: the With site's sealed
-    fragment CID plus nested protocol/frame construction CIDs. Temporal phase
-    is pre-yield when the With sits before the outer yield (including
-    ``with inner(): yield outer_resource``) and post-yield when it sits after.
-    """
-
-    occurrence: dict
-    nested_protocol_construction_cid: str
-    nested_generator_frame_cid: str
-    temporal_phase: Literal["pre-yield", "post-yield"]
-    cid: str
-    nested_protocol: object = field(compare=False, repr=False, default=None)
-    body_steps: tuple = field(compare=False, repr=False, default=())
-
-    @property
-    def preimage(self) -> dict:
-        return {
-            "kind": "generator-nested-manager-layer",
-            "schemaVersion": "1",
-            "occurrence": self.occurrence,
-            "nestedProtocolConstructionCid": self.nested_protocol_construction_cid,
-            "nestedGeneratorFrameCid": self.nested_generator_frame_cid,
-            "temporalPhase": self.temporal_phase,
-        }
-
-    def __post_init__(self) -> None:
-        if self.temporal_phase not in ("pre-yield", "post-yield"):
-            raise ValueError("nested manager layer temporal phase invalid")
-        if cid_of_json(self.preimage) != self.cid:
-            raise ValueError(
-                "generator nested manager layer CID does not match its preimage"
-            )
-
-    @classmethod
-    def mint(
-        cls,
-        *,
-        occurrence: dict,
-        nested_protocol_construction_cid: str,
-        nested_generator_frame_cid: str,
-        temporal_phase: Literal["pre-yield", "post-yield"],
-        nested_protocol: object = None,
-        body_steps: tuple = (),
-    ) -> "GeneratorNestedManagerLayerV1":
-        preimage = {
-            "kind": "generator-nested-manager-layer",
-            "schemaVersion": "1",
-            "occurrence": occurrence,
-            "nestedProtocolConstructionCid": nested_protocol_construction_cid,
-            "nestedGeneratorFrameCid": nested_generator_frame_cid,
-            "temporalPhase": temporal_phase,
-        }
-        return cls(
-            occurrence,
-            nested_protocol_construction_cid,
-            nested_generator_frame_cid,
-            temporal_phase,
-            cid_of_json(preimage),
-            nested_protocol,
-            body_steps,
-        )
-
-
-@dataclass(frozen=True)
-class GeneratorBackedLifecycleProtocolV1(GeneratorBackedManagerProtocolV1):
-    """Generator-backed protocol plus enter-halt / yield / exit-halt faces.
-
-    **Is-a** :class:`GeneratorBackedManagerProtocolV1` — the closed protocol
-    surface published on ``SourceDerivedGeneratorResourceRefV1``. Consumers
-    read enter/exit definitions and lifecycle performance through that base
-    type; they never branch on Lifecycle-vs-Manager wrapper spelling. Face
-    fields are producer testimony; enter/exit performance inherit from base.
-    Nested manager layers (With of source-defined managers inside the
-    generator body) are additional testimony on the same surface.
-    """
-
-    enter_halt_faces: tuple[GeneratorEnterHaltFaceV1, ...] = ()
-    yield_faces: tuple[GeneratorYieldFaceV1, ...] = ()
-    exit_halt_faces: tuple[GeneratorExitHaltFaceV1, ...] = ()
-    nested_manager_layers: tuple[GeneratorNestedManagerLayerV1, ...] = ()
-    lifecycle_cid: str = ""
-
-    def __post_init__(self) -> None:
-        # Base protocol surface (frame, enter/exit defs, one-shot exit log).
-        super().__post_init__()
-        for face in self.enter_halt_faces:
-            if face.cid != cid_of_json(face.preimage):
-                raise ValueError("enter-halt face CID mismatch")
-        for face in self.yield_faces:
-            if face.cid != cid_of_json(face.preimage):
-                raise ValueError("yield face CID mismatch")
-        for face in self.exit_halt_faces:
-            if face.cid != cid_of_json(face.preimage):
-                raise ValueError("exit-halt face CID mismatch")
-            if face.temporal_phase != "post-yield":
-                raise ValueError("exit-halt face must be post-yield temporal phase")
-        for layer in self.nested_manager_layers:
-            if layer.cid != cid_of_json(layer.preimage):
-                raise ValueError("nested manager layer CID mismatch")
-        enter_cids = {face.cid for face in self.enter_halt_faces}
-        exit_cids = {face.cid for face in self.exit_halt_faces}
-        if enter_cids & exit_cids:
-            raise ValueError("enter-halt and exit-halt faces must not share identity")
-        layer_cids = [layer.cid for layer in self.nested_manager_layers]
-        if len(layer_cids) != len(set(layer_cids)):
-            raise ValueError("nested manager layers must have distinct identities")
-        expected = cid_of_json(self.lifecycle_preimage)
-        if self.lifecycle_cid and self.lifecycle_cid != expected:
-            raise ValueError("generator lifecycle CID does not match its preimage")
-        object.__setattr__(self, "lifecycle_cid", expected)
-
-    def _derived_identity_reset(self) -> dict:
-        """The lifecycle CID names the protocol CID and exit face, so a
-        re-keyed lifecycle recomputes it (``__post_init__``)."""
-        return {"lifecycle_cid": ""}
-
-    @property
-    def lifecycle_preimage(self) -> dict:
-        return {
-            "kind": "generator-backed-lifecycle-protocol",
-            "schemaVersion": "1",
-            "protocolConstructionCid": self.protocol_construction_cid,
-            "generatorFrameCid": self.generator_frame_cid,
-            "enterDefinition": self.enter_definition.wire(),
-            "exitDefinition": self.exit_definition.wire(),
-            "exitFaceId": self.exit_face_id,
-            "enterHaltFaceCids": [face.cid for face in self.enter_halt_faces],
-            "yieldFaceCids": [face.cid for face in self.yield_faces],
-            "exitHaltFaceCids": [face.cid for face in self.exit_halt_faces],
-            "nestedManagerLayerCids": [
-                layer.cid for layer in self.nested_manager_layers
-            ],
-        }
-
-    @classmethod
-    def from_protocol(
-        cls,
-        protocol: GeneratorBackedManagerProtocolV1,
-        *,
-        enter_halt_faces: tuple[GeneratorEnterHaltFaceV1, ...] = (),
-        yield_faces: tuple[GeneratorYieldFaceV1, ...] = (),
-        exit_halt_faces: tuple[GeneratorExitHaltFaceV1, ...] = (),
-        nested_manager_layers: tuple[GeneratorNestedManagerLayerV1, ...] = (),
-    ) -> "GeneratorBackedLifecycleProtocolV1":
-        return cls(
-            protocol.protocol_construction_cid,
-            protocol.generator_frame_cid,
-            protocol.enter_definition,
-            protocol.exit_definition,
-            protocol.exit_face_id,
-            protocol.generator_frame,
-            enter_halt_faces,
-            yield_faces,
-            exit_halt_faces,
-            nested_manager_layers,
-            "",
-        )
 
 
 @dataclass(frozen=True)
@@ -2179,7 +1866,7 @@ def _rewrite_installed_generator_frames(context) -> None:
     for coordinate, frame in list(frames.items()):
         if getattr(frame, "generator_steps", None) is None:
             continue
-        rewritten = _frame_with_nested_manager_steps(frame, ())
+        rewritten = _frame_with_nested_manager_steps(frame)
         frames[coordinate] = _as_rewriting_generator_frame(rewritten)
 
 
@@ -2195,7 +1882,7 @@ def _rewriting_generator_frame_class():
 
         def bind_node_actuals(self, *args, **kwargs):
             bound = super().bind_node_actuals(*args, **kwargs)
-            rewritten = _frame_with_nested_manager_steps(bound, ())
+            rewritten = _frame_with_nested_manager_steps(bound)
             return _as_rewriting_generator_frame(rewritten)
 
     _rewriting_generator_frame_class._cls = _GeneratorFrameWithCitedOpaqueRewriteV1
@@ -3615,18 +3302,15 @@ def _cited_opaque_nested_step_for(statement, *, scope=None):
     )
 
 
-def _frame_with_nested_manager_steps(frame, nested_layers: tuple):
-    """Rewrite Opaque With steps when a nested layer or cited-opaque With resolves.
+def _frame_with_nested_manager_steps(frame):
+    """Rewrite Opaque With steps when a cited-opaque With resolves.
 
     Producer-owned: does not edit nodes.py emission. Leaves the frame unchanged
     when there is nothing to rewrite.
     """
     from types import SimpleNamespace
 
-    from sugar_lift_py_tests.generator_construction import (
-        NestedManagerStepV1,
-        OpaqueStepV1,
-    )
+    from sugar_lift_py_tests.generator_construction import OpaqueStepV1
     from sugar_source_tree.nodes import With
 
     steps = getattr(frame, "generator_steps", None)
@@ -3641,18 +3325,9 @@ def _frame_with_nested_manager_steps(frame, nested_layers: tuple):
         )
         if named is not None:
             cited_by_cid[stmt.fragment.seal().cid] = named
-    src_by_cid = {}
-    src_order = []
-    for layer in nested_layers:
-        occurrence = getattr(layer, "occurrence", None) or {}
-        with_cid = occurrence.get("withCid") if isinstance(occurrence, dict) else None
-        if with_cid:
-            src_by_cid[with_cid] = layer
-        src_order.append(layer)
-    if not cited_by_cid and not nested_layers:
+    if not cited_by_cid:
         return frame
     rewritten = []
-    src_idx = 0
     with_idx = 0
     rewrote = False
     for step in steps:
@@ -3663,29 +3338,10 @@ def _frame_with_nested_manager_steps(frame, nested_layers: tuple):
         with_idx += 1
         cid = stmt.fragment.seal().cid if stmt is not None else None
         cited = cited_by_cid.get(cid)
-        if cited is not None:
-            rewritten.append(cited)
-            rewrote = True
-            continue
-        layer = src_by_cid.get(cid)
-        if layer is None and cid not in src_by_cid and src_idx < len(src_order):
-            layer = src_order[src_idx]
-            src_idx += 1
-        elif layer is not None:
-            src_idx += 1
-        if layer is None or getattr(layer, "nested_protocol", None) is None:
+        if cited is None:
             rewritten.append(step)
             continue
-        occurrence_cid = layer.occurrence.get("cid") or layer.cid
-        body_steps = getattr(layer, "body_steps", ()) or ()
-        rewritten.append(
-            NestedManagerStepV1(
-                nested_protocol=layer.nested_protocol,
-                body_steps=body_steps,
-                fragment_cid=occurrence_cid,
-                occurrence_cid=occurrence_cid,
-            )
-        )
+        rewritten.append(cited)
         rewrote = True
     if not rewrote:
         return frame
@@ -3704,174 +3360,6 @@ def _frame_with_nested_manager_steps(frame, nested_layers: tuple):
         parameters=tuple(getattr(frame, "parameters", ()) or ()),
         definition_site=getattr(frame, "definition_site", None),
         owner=owner,
-    )
-
-
-def _project_generator_lifecycle_faces(
-    generator_target,
-) -> tuple[
-    tuple[GeneratorEnterHaltFaceV1, ...],
-    tuple[GeneratorYieldFaceV1, ...],
-    tuple[GeneratorExitHaltFaceV1, ...],
-]:
-    """Project enter-halt, yield, and post-yield exit-halt faces.
-
-    Walks typed FunctionDef body statements only — never source text scanning
-    or decorator/provider spelling. Pre-yield raises → enter-halt; yields →
-    yield faces; post-yield raises (and try/finally raises) → exit-halt with
-    temporal_phase=post-yield. Faces are never recombined.
-    """
-    from sugar_source_tree.nodes import FunctionDef, If, Raise, Try
-
-    if not isinstance(generator_target, FunctionDef):
-        return (), (), ()
-    enter_halts: list[GeneratorEnterHaltFaceV1] = []
-    yields: list[GeneratorYieldFaceV1] = []
-    exit_halts: list[GeneratorExitHaltFaceV1] = []
-    past_yield = False
-    for statement in generator_target.body:
-        if _is_yield_expression_statement(statement):
-            past_yield = True
-            yields.append(_mint_yield_face(statement))
-            continue
-        if isinstance(statement, Try) and statement.finalbody:
-            # try: yield ... finally: raise — yield first, then exit-halt.
-            for nested in statement.body:
-                if _is_yield_expression_statement(nested):
-                    past_yield = True
-                    yields.append(_mint_yield_face(nested))
-            for nested in statement.finalbody:
-                if isinstance(nested, Raise) and past_yield:
-                    face = _mint_exit_halt_face(nested, guard_source=None)
-                    if face is not None:
-                        exit_halts.append(face)
-            continue
-        if not past_yield:
-            if isinstance(statement, Raise):
-                face = _mint_enter_halt_face(statement, guard_source=None)
-                if face is not None:
-                    enter_halts.append(face)
-                continue
-            if isinstance(statement, If):
-                enter_halts.extend(_if_raise_enter_halts(statement))
-            continue
-        # Post-yield.
-        if isinstance(statement, Raise):
-            face = _mint_exit_halt_face(statement, guard_source=None)
-            if face is not None:
-                exit_halts.append(face)
-            continue
-        if isinstance(statement, If):
-            exit_halts.extend(_if_raise_exit_halts(statement))
-    return tuple(enter_halts), tuple(yields), tuple(exit_halts)
-
-
-def _if_raise_enter_halts(statement) -> list[GeneratorEnterHaltFaceV1]:
-    from sugar_source_tree.nodes import Raise
-
-    faces: list[GeneratorEnterHaltFaceV1] = []
-    guard = statement.test.fragment.seal().to_dict()
-    for nested in statement.body:
-        if isinstance(nested, Raise):
-            face = _mint_enter_halt_face(nested, guard_source=guard)
-            if face is not None:
-                faces.append(face)
-    for nested in statement.orelse:
-        if isinstance(nested, Raise):
-            else_guard = {
-                "kind": "generator-branch-else-guard",
-                "schemaVersion": "1",
-                "ifTest": guard,
-                "branch": "orelse",
-            }
-            face = _mint_enter_halt_face(nested, guard_source=else_guard)
-            if face is not None:
-                faces.append(face)
-    return faces
-
-
-def _if_raise_exit_halts(statement) -> list[GeneratorExitHaltFaceV1]:
-    from sugar_source_tree.nodes import Raise
-
-    faces: list[GeneratorExitHaltFaceV1] = []
-    guard = statement.test.fragment.seal().to_dict()
-    for nested in statement.body:
-        if isinstance(nested, Raise):
-            face = _mint_exit_halt_face(nested, guard_source=guard)
-            if face is not None:
-                faces.append(face)
-    for nested in statement.orelse:
-        if isinstance(nested, Raise):
-            else_guard = {
-                "kind": "generator-branch-else-guard",
-                "schemaVersion": "1",
-                "ifTest": guard,
-                "branch": "orelse",
-            }
-            face = _mint_exit_halt_face(nested, guard_source=else_guard)
-            if face is not None:
-                faces.append(face)
-    return faces
-
-
-def _is_yield_expression_statement(statement) -> bool:
-    from sugar_source_tree.nodes import Expr, Yield
-
-    return isinstance(statement, Expr) and isinstance(statement.value, Yield)
-
-
-def _mint_enter_halt_face(
-    raise_stmt, *, guard_source: dict | None
-) -> GeneratorEnterHaltFaceV1 | None:
-    """Mint one enter-halt face from a typed Raise node.
-
-    Exception type identity is the sealed source of the raise's exception
-    expression — not a spelling of the class name.
-    """
-    from sugar_source_tree.nodes import Raise
-
-    if not isinstance(raise_stmt, Raise):
-        return None
-    exc = getattr(raise_stmt, "exc", None)
-    if exc is None:
-        return None
-    occurrence = raise_stmt.fragment.seal().to_dict()
-    exception_type_source = exc.fragment.seal().to_dict()
-    return GeneratorEnterHaltFaceV1.mint(
-        occurrence=occurrence,
-        exception_type_source=exception_type_source,
-        guard_source=guard_source,
-    )
-
-
-def _mint_exit_halt_face(
-    raise_stmt, *, guard_source: dict | None
-) -> GeneratorExitHaltFaceV1 | None:
-    """Mint one post-yield exit-halt face from a typed Raise node."""
-    from sugar_source_tree.nodes import Raise
-
-    if not isinstance(raise_stmt, Raise):
-        return None
-    exc = getattr(raise_stmt, "exc", None)
-    if exc is None:
-        return None
-    return GeneratorExitHaltFaceV1.mint(
-        occurrence=raise_stmt.fragment.seal().to_dict(),
-        exception_type_source=exc.fragment.seal().to_dict(),
-        guard_source=guard_source,
-    )
-
-
-def _mint_yield_face(statement) -> GeneratorYieldFaceV1:
-    from sugar_source_tree.nodes import Expr, Yield
-
-    assert isinstance(statement, Expr) and isinstance(statement.value, Yield)
-    yield_node = statement.value
-    occurrence = yield_node.fragment.seal().to_dict()
-    resource = yield_node.value
-    resource_source = None if resource is None else resource.fragment.seal().to_dict()
-    return GeneratorYieldFaceV1.mint(
-        occurrence=occurrence, resource_source=resource_source
     )
 
 
