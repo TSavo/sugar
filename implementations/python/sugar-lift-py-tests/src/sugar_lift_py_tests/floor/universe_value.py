@@ -129,35 +129,6 @@ class UniverseValue(FloorValue):
             ),
         )
 
-    def link_unit_projection(self, def_memento):
-        """PRE-POST projection: assemble this function's ParameterContractLinkUnitV1
-        WITHOUT calling post(): its own formals, no owned demand and no
-        candidate. Nothing in the lift owes a parameter contract (inventory item
-        43), so the unit is the callee's structural identity alone; the wire
-        shape is unchanged. The RPC level retains this immutable universe keyed
-        by link_unit_cid so Phase-3 resume reuses it rather than reconstructing.
-        """
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            ParameterContractLinkUnitV1,
-            ParameterOwnedContractV1,
-        )
-
-        coords = tuple(self.formal_coordinates)
-        if not coords:
-            return None
-        owned = ParameterOwnedContractV1.mint(
-            name=self.name,
-            owner_source_identity_cid=coords[0].owner_source_identity_cid,
-            owner_definition_locus=coords[0].owner_definition_locus,
-            formal_coordinates=coords,
-            declared_demand_cids=[],
-        )
-        return ParameterContractLinkUnitV1.mint(
-            source_memento=def_memento,
-            parameter_owned_contract=owned,
-            candidates=(),
-        )
-
 
 def _stated_formal_sorts(formals, formal_coordinates):
     """One sort per formal, or none at all.

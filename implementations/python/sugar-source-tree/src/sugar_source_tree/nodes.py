@@ -11091,8 +11091,8 @@ class FunctionDef(Statement):
 
     def formal_coordinates(self) -> tuple:
         """The ordered formal coordinates for every parameter -- the universe's
-        own structural formals, threaded into UniverseValue so
-        link_unit_projection can assemble the owned contract WITHOUT post()."""
+        own structural formals, threaded into UniverseValue; the link unit
+        (``function_link_unit``) reads them off the def itself."""
         return tuple(
             self._formal_coordinate(parameter, ordinal)
             for ordinal, parameter in enumerate(self.params)

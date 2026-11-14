@@ -865,15 +865,16 @@ fn enumerate_rpc(
     enumerate_rpc_with_extra(conn, level, at, seek, &[])
 }
 
-/// Request the Phase-3 resume level for one continuation, returning its
-/// contract nodes. Reuses the retained universe server-side. The answer is an
-/// ordinary enumeration result, decoded by the one decoder: its term DAG is
-/// closed by its own `termTable` and resolved here (#7843).
-fn resume_rows_rpc(
+/// Request the Phase-3 resume level for one continuation: the kit checks the
+/// resolution set against the link unit it retained. The answer is an
+/// ordinary enumeration result, decoded by the one decoder, and carries no
+/// node: every function's rows come from the universe scan, the one door
+/// (#7757).
+fn resume_rpc(
     conn: &KitConn,
     link_unit_cid: &Value,
     resolution_set: &Value,
-) -> Result<Vec<WireNode>, EnumerateError> {
+) -> Result<(), EnumerateError> {
     let plugin = conn.surface.clone();
     let mut resume_options = json!({
         "linkUnitCid": link_unit_cid,
@@ -901,7 +902,16 @@ fn resume_rows_rpc(
         });
     }
     let (nodes, _gaps) = decode_enumerate_result(&plugin, &result)?;
-    Ok(nodes)
+    if !nodes.is_empty() {
+        return Err(EnumerateError::Malformed {
+            plugin,
+            reason: format!(
+                "resume answered {} rows; a function's rows come from the universe scan",
+                nodes.len()
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn enumerate_rpc_with_extra(
@@ -1307,27 +1317,6 @@ pub fn fold_recovered_audit(
 /// `source_files` → per-file `universe` (all function contracts). Mint and
 /// any other full-tree client must call this (or the typed `Kit::source_files`
 /// API) and must never send JSON-RPC method `"lift"`.
-/// The Phase-1->3 continuation key for a function: its stable source identity
-/// (source_cid + span), matching lift_rpc._memento_continuation_key exactly so a
-/// resolved function is skipped by the universe scan.
-fn continuation_key_from_memento(memento: &Value) -> String {
-    let span = memento.get("span").cloned().unwrap_or(Value::Null);
-    let part = |v: Option<&Value>| match v {
-        Some(Value::String(text)) => text.clone(),
-        Some(Value::Number(number)) => number.to_string(),
-        Some(Value::Null) | None => "None".to_string(),
-        Some(other) => other.to_string(),
-    };
-    [
-        part(memento.get("source_cid")),
-        part(span.get("start_line")),
-        part(span.get("start_col")),
-        part(span.get("end_line")),
-        part(span.get("end_col")),
-    ]
-    .join("|")
-}
-
 pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Value, KitError> {
     let conn = kit.enumerate_conn(workspace_root);
     let (files, source_gaps) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
@@ -1348,10 +1337,9 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
     let mut call_edges = CallEdgeHarvest::default();
 
     // Phase 2/3: over the COMPLETELY enumerated project, discharge every enrolled
-    // parameter-contract link unit (fold), then RESUME each retained universe with
-    // its authenticated resolution set so post() projects. Resolved functions are
-    // then skipped by the universe scan (their contract comes from the resume).
-    let mut resolved_mementos: Vec<Value> = Vec::new();
+    // parameter-contract link unit (fold), then RESUME each retained link unit
+    // with its authenticated resolution set. The resume states no row: every
+    // function's rows come from the universe scan below, the one door (#7757).
     // A link unit records no call: a Python call's only record is its
     // `undecided` member, which the universe scan below routes to `ir`
     // (step 8; PR B on #7766). The unit's caller-side edge list is gone.
@@ -1387,28 +1375,14 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
             };
             let cid_value = serde_json::to_value(&unit.link_unit_cid).unwrap();
             let set_value = serde_json::to_value(&set).unwrap();
-            let nodes = resume_rows_rpc(&conn, &cid_value, &set_value)?;
-            for node in nodes {
-                if let Some(audit) = &node.audit {
-                    call_edges.route_audit(&mut ir, audit);
-                }
-            }
-            resolved_mementos.push(Value::String(continuation_key_from_memento(
-                &unit.source_memento,
-            )));
+            resume_rpc(&conn, &cid_value, &set_value)?;
         }
     }
-    let resolved_option = Value::Array(resolved_mementos);
 
     for file in files {
         source_mementos.push(file.memento.to_json());
-        let (nodes, gaps) = enumerate_rpc_with_extra(
-            &conn,
-            Level::Universe,
-            Some(file.memento.to_json()),
-            false,
-            &[("resolvedContinuationMementos", resolved_option.clone())],
-        )?;
+        let (nodes, gaps) =
+            enumerate_rpc(&conn, Level::Universe, Some(file.memento.to_json()), false)?;
         for gap in gaps {
             let item = gap
                 .memento
