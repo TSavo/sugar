@@ -107,13 +107,15 @@ _EVALUATION_OCCURRENCE = object()
 # under the same iterations, evaluated on two exit paths.  Its evaluation
 # coordinate carries these so the two copies never share one key.
 _EVALUATION_EXIT_PATH = object()
-# Set by a door that threads a module body for what it does AT IMPORT (the
-# export prefix).  A ``def`` statement binds a function object; its body does
-# not run until something calls it.  Under this key a body that cannot thread
-# keeps its source body: the refusal is deferred to whoever calls the
-# function (whose frame substitutes the body again) and is not testimony
-# about the statement that merely defined it.
+# Set by a door that threads a module body for what it does AT IMPORT
+# (``SourceUnit.module_binding_states``).  A ``def`` statement binds a
+# function object; its body does not run until something calls it.  Under
+# this key the body is not substituted: whoever calls the function
+# substitutes it in its own frame, and a refusal there is that caller's, not
+# testimony about the statement that merely defined it.
 DEFER_DEFINITION_BODY_REFUSAL = object()
+# ``SourceUnit.module_binding_states`` while it threads the module body.
+_THREADING_MODULE = object()
 _MISSING = object()
 
 # Names the interpreter binds without a source binding: the module attributes
@@ -1006,6 +1008,16 @@ class SourceUnit:
     _module_name_rows_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
+    # ``(typed module, names an import-time evaluation binds)`` and
+    # ``(typed module, refusal, ModuleBindingStatesV1)``: the module body
+    # threaded once for its readers outside the module block
+    # (``module_binding_states``), rebuilt if the typed root is replaced.
+    _module_evaluation_names_memo: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
+    _module_binding_states_memo: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -1037,6 +1049,8 @@ class SourceUnit:
         object.__setattr__(self, "_function_symtable_index", None)
         object.__setattr__(self, "_function_span_index", None)
         object.__setattr__(self, "_module_name_rows_memo", None)
+        object.__setattr__(self, "_module_evaluation_names_memo", None)
+        object.__setattr__(self, "_module_binding_states_memo", None)
 
     def _published_enrollment_decisions(
         self, occurrence: SourceOccurrenceIdentityV1
@@ -1457,6 +1471,92 @@ class SourceUnit:
         if name in bound or "*" in bound:
             return False
         return not (read & _DYNAMIC_GLOBAL_WRITERS)
+
+    def module_evaluation_bound_names(self) -> frozenset:
+        """The names the module body binds, as it runs at import, through a
+        statement keyed as its own evaluation (``Statement._evaluation_key``)
+        that a frame can read: ``x += e`` and ``a, b = f()``.  (A walrus's
+        reference refuses where its key is unbound, so it is no module
+        binding a frame reads: ``_references_evaluations``.)
+
+        Read off the typed tree, one walk per typed root.  A ``def``,
+        ``lambda`` or ``class`` body is not import-time module code (a class
+        body binds its own names) and is not walked.  A unit with no typed
+        root answers the empty set.
+        """
+        module = self.typed_module
+        if module is None:
+            return frozenset()
+        memo = self._module_evaluation_names_memo
+        if memo is not None and memo[0] is module:
+            return memo[1]
+        names: set[str] = set()
+        stack: list[Node] = list(module.body)
+        while stack:
+            node = stack.pop()
+            if isinstance(node, AugAssign) and isinstance(node.target, Name):
+                names.add(node.target.id)
+            elif isinstance(node, Assign):
+                target = node._dynamic_unpack_target()
+                if target is not None:
+                    names.update(_unpack_target_names(target))
+            if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+                continue
+            stack.extend(child for _name, _index, child in node._child_edges())
+        result = frozenset(names)
+        object.__setattr__(self, "_module_evaluation_names_memo", (module, result))
+        return result
+
+    def module_binding_states(self) -> "Optional[ModuleBindingStatesV1]":
+        """The module body threaded once, the way ``Module.substitute``
+        threads it: the binding of every name before each module statement,
+        and after the last.
+
+        A reader outside the module block takes a module name from here:
+        a function body the module's final binding of a global it reads, a
+        module class body the binding standing when its class statement ran.
+        A ``def`` statement's body is not threaded (it does not run at
+        import).  A refusal threading the body is remembered and raised to
+        every reader that asks.  Asked again while the body is being
+        threaded (a statement's construction reached a reader of this
+        module), there is no answer yet: ``None``.
+        """
+        from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+        module = self._require_typed_module(
+            "SourceUnit.module_binding_states", blame=self.filename
+        )
+        memo = self._module_binding_states_memo
+        if memo is _THREADING_MODULE:
+            return None
+        if memo is not None and memo[0] is module:
+            if memo[1] is not None:
+                raise memo[1]
+            return memo[2]
+        object.__setattr__(self, "_module_binding_states_memo", _THREADING_MODULE)
+        edges: list = []
+        try:
+            _statements, _changed, final = module._substitute_body_tracked(
+                module.body,
+                {DEFER_DEFINITION_BODY_REFUSAL: True},
+                edge_states=edges,
+            )
+        except (SourceTreePanic, ConstructionPanic) as refusal:
+            object.__setattr__(
+                self, "_module_binding_states_memo", (module, refusal, None)
+            )
+            raise
+        except BaseException:
+            object.__setattr__(self, "_module_binding_states_memo", None)
+            raise
+        states = ModuleBindingStatesV1(
+            before={
+                statement.fragment.seal().cid: scope for statement, scope in edges
+            },
+            final=final,
+        )
+        object.__setattr__(self, "_module_binding_states_memo", (module, None, states))
+        return states
 
     def language_callee_at(self, name: str, span) -> Optional["LanguageCallee"]:
         """The language-fixed callee a bare name read at ``span`` is bound to.
@@ -3326,6 +3426,48 @@ def _loop_header_bindings(loop, names, scope) -> dict:
         reference = _evaluation_ref(loop, loop.span, evaluation, name)
         headers[name] = replace(entry, state=reference, sealed_state=None)
     return headers
+
+
+@dataclass(frozen=True)
+class ModuleBindingStatesV1:
+    """The module body threaded once (``SourceUnit.module_binding_states``).
+
+    ``before`` maps each module statement's fragment CID to the binding
+    scope standing when it runs; ``final`` is the scope after the last
+    statement: what a function reads a global as when it is called.
+    """
+
+    before: dict
+    final: dict
+
+
+def _module_reference_state(state) -> "Optional[Node]":
+    """A module binding state as a reader outside the module block takes it:
+    a reference to the evaluation of the module body's write of the name
+    (``EvaluationRef``), or the phi the module block built over such
+    references where the write sits in an arm of an ``if``.  Any other state
+    (an assignment's value, an unbound name) is no evaluation: None, and the
+    reader reads the name as before."""
+    state = unwrap_binding_state(state)
+    if isinstance(state, Node) and _references_evaluations(state):
+        return state
+    return None
+
+
+def _references_evaluations(node) -> bool:
+    if isinstance(node, EvaluationRef):
+        # A statement's evaluation (``x += e``, an unpack's projection), which
+        # a reader whose temporal never received it reads by name.  A
+        # walrus's reference refuses where its key is unbound, and a
+        # comprehension member's is bound only inside its comprehension:
+        # neither is a module binding a frame can read.
+        return not (getattr(node, "walrus", False) or getattr(node, "member", False))
+    if not (isinstance(node, IfExp) and isinstance(node.test, BranchResultRef)):
+        return False
+    arms = (node.body, node.orelse)
+    return all(
+        isinstance(arm, Constant) or _references_evaluations(arm) for arm in arms
+    ) and any(_references_evaluations(arm) for arm in arms)
 
 
 class _Splice:
@@ -5939,16 +6081,12 @@ class FunctionDef(Statement):
             if diff:
                 changed[field] = new
         # body: the enclosing scope with the bound names held out, THREADED --
-        # each assignment binds its name for the statements after it.
+        # each assignment binds its name for the statements after it.  A door
+        # threading the module for what it does at import does not run the
+        # body: the def statement binds the function, and the caller's frame
+        # substitutes the body when (if) it calls it.
         if scope.get(DEFER_DEFINITION_BODY_REFUSAL):
-            from .panic import SugarNotWritten
-
-            try:
-                new_body, body_diff = self._substitute_body(self.body, body_scope)
-            except (SugarNotWritten, TypeError):
-                # The def statement does not run its body; the caller's frame
-                # meets this refusal again when (if) it calls the function.
-                new_body, body_diff = self.body, False
+            new_body, body_diff = self.body, False
         else:
             new_body, body_diff = self._substitute_body(self.body, body_scope)
         if body_diff:
@@ -5957,6 +6095,57 @@ class FunctionDef(Statement):
         if not changed:
             return self
         return rewrite(self, **changed)
+
+    def _substitute_body(self, statements: tuple, scope: BindingMap):
+        """Every door that substitutes this function's body (its own sugar,
+        its call frame, a constructor's initializer, a generator's steps)
+        substitutes it here, so each one reads a module global the same way:
+        as the module's final binding of it (``_module_global_references``),
+        not as the name."""
+        references = self._module_global_references()
+        if references:
+            scope = {**scope, **references}
+        return Node._substitute_body(self, statements, scope)
+
+    def _module_global_references(self) -> dict:
+        """The module's final binding of each global this body reads, where
+        that binding is the evaluation of the module body's last write of it
+        (temporal choice 1, #7661).
+
+        A function runs after the module body has run, so a global it reads
+        holds the module's last write: ``x = 1; x += 1; x += 1`` binds a read
+        of ``x`` in any function of the module to the second ``x += 1``'s
+        evaluation, wherever the ``def`` stands.  A write in an arm of a
+        module-level ``if`` is read through the phi the module block builds
+        over it.  The global is the one CPython names (``symtable``:
+        implicit or declared ``global``, read in this body); a local, a
+        formal or a name an enclosing function binds is not one.  A global
+        whose final binding is no evaluation (``x = 1``) is read by name, as
+        before.
+        """
+        unit = self.unit
+        if unit.typed_module is None:
+            return {}
+        candidates = unit.module_evaluation_bound_names()
+        if not candidates:
+            return {}
+        table = unit.function_symtable(self.name, self.line_col_span().start_line)
+        reads = {
+            symbol.get_name()
+            for symbol in table.get_symbols()
+            if symbol.is_global() and symbol.is_referenced()
+        } & candidates
+        if not reads:
+            return {}
+        states = unit.module_binding_states()
+        if states is None:
+            return {}
+        references = {}
+        for name in sorted(reads):
+            reference = _module_reference_state(states.final.get(name))
+            if reference is not None:
+                references[name] = reference
+        return references
 
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         owner = self._active_initializer_owner()
@@ -6285,6 +6474,14 @@ class AsyncFunctionDef(Statement):
         """Same scope shape as FunctionDef (identical fields)."""
         return FunctionDef.substitute(self, scope)
 
+    def _substitute_body(self, statements, scope):
+        """Same body door as FunctionDef: a global reads the module's final
+        binding of it."""
+        return FunctionDef._substitute_body(self, statements, scope)
+
+    def _module_global_references(self) -> dict:
+        return FunctionDef._module_global_references(self)
+
     def _make_parameter_entry(self, parameter: Param, ordinal: int, scope):
         return FunctionDef._make_parameter_entry(self, parameter, ordinal, scope)
 
@@ -6578,6 +6775,53 @@ class ClassDef(Statement):
                 return bindings[0].sugar()
         return base.sugar()
 
+    def _module_name_references(self) -> dict:
+        """The module's binding of each module name this class body reads,
+        where that binding is the evaluation of a module write of it
+        (temporal choice 1, #7661).
+
+        A module-level class statement runs once, at import, in source
+        order: its body reads a module name as the module holds it when the
+        statement runs (``ModuleBindingStatesV1.before``), whoever calls
+        the class later and in whatever context (the class-call door,
+        #7794).  So ``x = 1; x += 1; class C: y = x; x += 1`` reads ``y`` as
+        the first ``x += 1``'s evaluation.  A name the class body binds
+        itself is not read from the module; a binding that is no evaluation
+        is read by name, as before.  A class that is not a module statement
+        reads its enclosing function's bindings and is not answered here.
+        """
+        unit = self.unit
+        if unit.typed_module is None:
+            return {}
+        candidates = unit.module_evaluation_bound_names()
+        if not candidates:
+            return {}
+        bound_here: set[str] = set()
+        reads: set[str] = set()
+        for statement in self.body:
+            if isinstance(statement, (FunctionDef, AsyncFunctionDef, ClassDef)):
+                bound_here.add(statement.name)
+                continue
+            bound_here |= statement.names_bound_within()
+            reads.update(
+                node.id for node in statement.walk() if isinstance(node, Name)
+            )
+        reads = (reads & candidates) - bound_here
+        if not reads:
+            return {}
+        states = unit.module_binding_states()
+        if states is None:
+            return {}
+        before = states.before.get(self.fragment.seal().cid)
+        if before is None:
+            return {}
+        references = {}
+        for name in sorted(reads):
+            reference = _module_reference_state(before.get(name))
+            if reference is not None:
+                references[name] = reference
+        return references
+
     def _construct_sugar(self):
         """Construct source-visible class structure through body members.
 
@@ -6660,6 +6904,18 @@ class ClassDef(Statement):
             ConstructedClassConditionalFieldsV1,
         )
 
+        references = self._module_name_references()
+
+        def body_read(expression):
+            # A module name this body reads is the module's binding of it
+            # when the class statement ran (``_module_name_references``).
+            if references and any(
+                isinstance(node, Name) and node.id in references
+                for node in expression.walk()
+            ):
+                expression = expression.substitute(references)
+            return expression.sugar()
+
         def conditional_fields(statements):
             def binding_occurrence(target):
                 span = target.line_col_span()
@@ -6678,7 +6934,7 @@ class ClassDef(Statement):
                     and item.targets
                     and all(isinstance(target, Name) for target in item.targets)
                 ):
-                    value_sugar = item.value.sugar()
+                    value_sugar = body_read(item.value)
                     alias_keys = dict(item.alias_evaluations())
                     fields.extend(
                         ConstructedClassFieldV1(
@@ -6698,7 +6954,7 @@ class ClassDef(Statement):
                             ConstructedClassFieldV1(
                                 item.target.id,
                                 item.fragment.seal().cid,
-                                item.value.sugar(),
+                                body_read(item.value),
                                 binding_occurrence(item.target),
                             )
                         )
@@ -6717,7 +6973,7 @@ class ClassDef(Statement):
                     fields.append(
                         ConstructedClassConditionalFieldsV1(
                             condition_fragment_cid=item.test.fragment.seal().cid,
-                            condition_sugar=item.test.sugar(),
+                            condition_sugar=body_read(item.test),
                             when_true=conditional_fields(item.body),
                             when_false=conditional_fields(item.orelse),
                         )
