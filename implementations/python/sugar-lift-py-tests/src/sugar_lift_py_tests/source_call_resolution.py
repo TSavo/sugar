@@ -225,13 +225,14 @@ def _host_ground(value, depth=0, visits=None):
     neither is a list or dict, at any depth, whose contents are not current
     (``object_identity.contents_stale``: it arrived by binding).
 
-    ``visits`` (``id -> (position, object)``), when given, records each
-    object handed over in the order the operands are walked: the order a
-    builtin first meets them (``_ground_floor`` reads a set result's
-    construction order from it)."""
+    ``visits`` (``id -> (position, object, value)``), when given, records
+    each object handed over in the order the operands are walked, with the
+    floor value that denotes it: the order a builtin first meets them
+    (``_ground_floor`` reads a set result's construction order from it), and
+    the value a result that is one of them is (``_handed_over``)."""
     raw = _host_object(value, depth, visits)
     if visits is not None and raw is not _NOT_GROUND and id(raw) not in visits:
-        visits[id(raw)] = (len(visits), raw)
+        visits[id(raw)] = (len(visits), raw, value)
     return raw
 
 
@@ -282,12 +283,20 @@ def _host_object(value, depth, visits):
     return _NOT_GROUND
 
 
-def _ground_floor(raw, site, depth=0, visits=None):
+def _ground_floor(raw, site, depth=0, *, visits):
     """The floor value for a ground result ``raw``, else None.
 
-    The inverse of ``_host_ground`` over the same values, and two results
-    the floor holds by what the operands were:
+    The inverse of ``_host_ground`` over the same values, and three results
+    the floor holds by what the operands were (``visits``, the operands'
+    walk):
 
+    - a ``list`` or ``dict`` an operand handed over (``max(xs, ys)`` is
+      ``xs``, ``d.get(k)`` a member, ``sum([], start)`` is ``start``): a
+      builtin that returns its operand returns that object, so the result is
+      that operand's own floor value, its ``allocation`` and ``arrival``
+      with it (``_handed_over``).  Any other is new here
+      (``object_identity.made_at``: ``'a b'.split()``, ``list(t)``,
+      ``d.copy()``).
     - a ``set`` whose every member is an object handed over in ``visits``:
       CPython keeps the first of equal members, the operand's own object,
       so their order of first appearance in the operands is the set's
@@ -324,6 +333,8 @@ def _ground_floor(raw, site, depth=0, visits=None):
         return TrueBoolLiteralSugar(site=site)
     if raw is False:
         return FalseBoolLiteralSugar(site=site)
+    from .floor.object_identity import made_at
+
     kind = type(raw)
     if kind is int:
         return TermValue(raw)
@@ -333,34 +344,43 @@ def _ground_floor(raw, site, depth=0, visits=None):
         return StringValue(raw)
     if kind is bytes:
         return BytesValue(raw)
+    if kind in (list, dict):
+        handed = _handed_over(raw, visits)
+        if handed is not None:
+            return handed
     if kind in (list, tuple):
-        members = tuple(_ground_floor(e, site, depth + 1, visits) for e in raw)
+        members = tuple(_ground_floor(e, site, depth + 1, visits=visits) for e in raw)
         if any(member is None for member in members):
             return None
         if kind is tuple:
             return TupleValue(members)
-        return ListValue(members, allocation=_made_here(raw, site, visits))
+        return ListValue(members, allocation=made_at(site))
     if kind is dict:
         pairs = tuple(
             (
-                _ground_floor(k, site, depth + 1, visits),
-                _ground_floor(v, site, depth + 1, visits),
+                _ground_floor(k, site, depth + 1, visits=visits),
+                _ground_floor(v, site, depth + 1, visits=visits),
             )
             for k, v in raw.items()
         )
         if any(k is None or v is None for k, v in pairs):
             return None
-        return DictValue(pairs, allocation=_made_here(raw, site, visits))
-    if kind is set and visits is not None:
+        return DictValue(pairs, allocation=made_at(site))
+    if kind is set:
+        # A set is never handed over (``_host_ground``): a set result is new.
         if any(_unvisited(member, visits) for member in raw):
             return None
         ordered = sorted(raw, key=lambda member: visits[id(member)][0])
-        members = tuple(_ground_floor(m, site, depth + 1, visits) for m in ordered)
+        members = tuple(
+            _ground_floor(m, site, depth + 1, visits=visits) for m in ordered
+        )
         if any(member is None for member in members):
             return None
-        return SetValue(members, allocation=_made_here(raw, site, visits))
+        return SetValue(members, allocation=made_at(site))
     if kind is enumerate:
-        members = tuple(_ground_floor(pair, site, depth + 1, visits) for pair in raw)
+        members = tuple(
+            _ground_floor(pair, site, depth + 1, visits=visits) for pair in raw
+        )
         if any(member is None for member in members):
             return None
         return ListIteratorValue(members)
@@ -368,27 +388,27 @@ def _ground_floor(raw, site, depth=0, visits=None):
         # ``d.items()``: the tuple of its ``(key, value)`` pairs, in the dict's
         # order -- the value the floor holds for an items view
         # (``DictValue``/``MappingObjectValue`` ``items``).
-        members = tuple(_ground_floor(pair, site, depth + 1, visits) for pair in raw)
+        members = tuple(
+            _ground_floor(pair, site, depth + 1, visits=visits) for pair in raw
+        )
         if any(member is None for member in members):
             return None
         return TupleValue(members)
     return None
 
 
-def _made_here(raw, site, visits):
-    """The ``allocation`` of a container the call at ``site`` returned.
+def _handed_over(raw, visits):
+    """The floor value of the operand object ``raw`` is, else None.
 
-    A container no operand handed over is one the builtin made at this call
-    (``'a b'.split()``, ``list(t)``, ``d.copy()``): its object is new here
-    (``object_identity.made_at``).  One an operand handed over
-    (``max(xs, ys)`` returns ``xs``) is that operand's object, which this
-    call did not make: None.  So is any result when the operands were not
-    walked (``visits`` is None)."""
-    if visits is None or not _unvisited(raw, visits):
+    A builtin that returns an object an operand handed over returns that
+    object, not a copy of it (``max(xs, ys)`` is ``xs``): the operand's own
+    floor value is the result, so it keeps that object's ``allocation`` --
+    its contents are current exactly when the operand's are -- and its
+    ``arrival``, which names it to an undecided read
+    (``object_identity.identity_term``)."""
+    if _unvisited(raw, visits):
         return None
-    from .floor.object_identity import made_at
-
-    return made_at(site)
+    return visits[id(raw)][2]
 
 
 def _unvisited(member, visits) -> bool:

@@ -505,16 +505,24 @@ def _match_entries(value, entries, site, ctx):
 def _mapping_rest(value, keys, rest_key, site):
     """``**rest``: a ``dict`` of the subject's items whose key is none of the
     pattern's keys -- each decided distinct from them, or refused.  It is a
-    new dict made at the match, current only when the subject's entries are
-    (``object_identity.made_from``): from entries that are not, its
-    contents are not its contents either, no read takes them, and its
-    derivation names it."""
+    new dict made at the match (``object_identity.made_from``).
+
+    A subject whose entries are not its entries now
+    (``object_identity.contents_stale``) is never walked: the rest is still
+    a new dict, but which items it holds is undecided, so it holds none
+    this frame knows -- no read takes its contents
+    (``object_identity.contents_current``), and each takes the read's
+    undecided form, naming it by its derivation from the subject's arrival
+    (``{**}(<arrival>)@<match occurrence>``)."""
     from sugar_lift_py_tests.floor import DictValue
     from sugar_lift_py_tests.floor.dict_value import _key_position
-    from sugar_lift_py_tests.floor.object_identity import made_from
+    from sugar_lift_py_tests.floor.object_identity import contents_stale, made_from
 
     if rest_key is None:
         return _outcome(True)
+    if contents_stale(value):
+        rest = DictValue((), **made_from("{**}", site, value))
+        return _outcome(True, ((rest_key, rest),))
     taken = tuple((key, None) for key in keys)
     kept = []
     for key, item in value.entries:
