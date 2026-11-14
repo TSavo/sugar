@@ -1579,8 +1579,8 @@ def _container_call(
     does not cite; an item store, an item delete and an in-place operator
     have none (their ordinary operation is the floor's own).  ``label``
     names the unknown its receiver is after an ordinary call.
-    ``frame_receiver``: the call is ``super().__init__(...)`` on the frame's
-    receiver formal of that name (``Expr._super_mutation``)."""
+    ``frame_receiver``: the call is ``super().m(...)`` on the frame's
+    receiver formal of that name (``nodes._super_door``)."""
     from .backend import Child, Children, Leaf, MaybeChild
     from .shadow import _handle_of
 
@@ -1870,8 +1870,8 @@ def name_mutation_statement(
     every name that holds it to its value after the call
     (``ReceiverAfterCall``), which the value decides at reduce.
 
-    ``frame_receiver``: ``super().__init__(...)``, a call on the frame's
-    receiver formal ``name`` (``Expr._super_mutation``)."""
+    ``frame_receiver``: ``super().m(...)``, a call on the frame's receiver
+    formal ``name`` (``nodes._super_door``)."""
     from .nodes import Node, _evaluation_ref
     from .shadow import occurrence_tags_of
 

@@ -1452,3 +1452,230 @@ def test_an_unconditional_early_return_leaves_before_the_later_stores(tmp_path):
         "    return C(True).y\n"
     )
     assert _only_return(tmp_path, source) == TermValue(2)
+
+
+# A store through any name holding the receiver stores into the one object:
+# every name bound to it reads the post-state.
+
+
+def test_a_store_through_an_alias_of_self_is_the_objects_store(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        s = self\n"
+        "        s.x = 1\n"
+        "def f():\n"
+        "    return C().x\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(1)
+
+
+def test_every_alias_of_self_reads_the_stores_made_through_another(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        s = self\n"
+        "        self.x = 1\n"
+        "        s.y = s.x + 1\n"
+        "def f():\n"
+        "    c = C()\n"
+        "    return (c.x, c.y)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(_ints(1, 2))
+
+
+# ``type.__call__`` returns the object only when ``__init__`` returned
+# ``None``: any other value is CPython's ``TypeError: __init__() should return
+# None``, raised at the class call.
+
+
+def _type_errors(halts):
+    return [
+        halt for halt in halts if getattr(halt, "exception_name", None) == "TypeError"
+    ]
+
+
+def test_an_initializer_returning_a_value_is_a_type_error(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "        return 1\n"
+        "def f():\n"
+        "    return C()\n"
+    )
+    returns, halts = _returns(tmp_path, source)
+    assert returns == []
+    assert _type_errors(halts)
+
+
+def test_an_initializer_returning_none_returns_the_object(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "        return None\n"
+        "def f():\n"
+        "    return C().x\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(1)
+
+
+def test_an_initializer_returning_an_undecided_value_is_two_faced(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self, v):\n"
+        "        self.x = 1\n"
+        "        return v\n"
+        "def f(v):\n"
+        "    return C(v).x\n"
+    )
+    returns, halts = _returns(tmp_path, source)
+    assert TermValue(1) in returns
+    assert _type_errors(halts)
+
+
+def test_the_type_error_is_the_class_calls_not_the_initializers(tmp_path):
+    # The check runs after the frame is left: a handler in ``__init__`` never
+    # sees it, the caller's does.
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        try:\n"
+        "            return 1\n"
+        "        except TypeError:\n"
+        "            self.x = 2\n"
+        "def f():\n"
+        "    try:\n"
+        "        C()\n"
+        "    except TypeError:\n"
+        "        return 1\n"
+        "    return 2\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(1)
+
+
+# Every ``super().m(...)`` of the initializer is a call on ``self``: what the
+# base method did to it lands on the object, wherever the call's value goes.
+
+
+def test_a_base_method_called_through_super_stores_on_self(tmp_path):
+    source = (
+        "class B:\n"
+        "    def setup(self):\n"
+        "        self.z = 3\n"
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "        super().setup()\n"
+        "def f():\n"
+        "    d = D()\n"
+        "    return (d.x, d.z)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(_ints(1, 3))
+
+
+def test_a_super_call_bound_to_a_name_lands_its_stores_on_self(tmp_path):
+    source = (
+        "class B:\n"
+        "    def setup(self):\n"
+        "        self.z = 3\n"
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "        r = super().setup()\n"
+        "def f():\n"
+        "    d = D()\n"
+        "    return (d.x, d.z)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(_ints(1, 3))
+
+
+def test_a_returned_super_init_lands_the_base_stores_on_self(tmp_path):
+    source = _BASE_STORES_X + (
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.y = 1\n"
+        "        return super().__init__()\n"
+        "def f():\n"
+        "    d = D()\n"
+        "    return (d.x, d.y)\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert TupleValue(_ints(2, 1)) in returns
+
+
+# A ``return`` inside a loop, a ``try`` or a ``with`` leaves with the receiver
+# as it stands there, past the code that runs after it.
+
+
+def test_a_return_inside_a_loop_leaves_with_that_items_receiver(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        self.y = 0\n"
+        "        for i in (1, 2, 3):\n"
+        "            self.y = i\n"
+        "            if i == 2:\n"
+        "                return\n"
+        "def f():\n"
+        "    return C().y\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(2)
+
+
+def test_a_return_inside_a_try_leaves_past_a_finally_that_spares_self(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        self.y = 1\n"
+        "        try:\n"
+        "            self.y = 2\n"
+        "            return\n"
+        "        finally:\n"
+        "            n = 0\n"
+        "        self.y = 3\n"
+        "def f():\n"
+        "    return C().y\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(2)
+
+
+def test_a_finally_that_stores_on_self_after_the_return_is_never_skipped(
+    tmp_path,
+):
+    # The ``finally`` runs after the ``return``'s read: the read there is not
+    # what the frame left, so the object is unknown -- never ``z`` missing.
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        try:\n"
+        "            self.y = 2\n"
+        "            return\n"
+        "        finally:\n"
+        "            self.z = 5\n"
+        "def f():\n"
+        "    return C()\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert returns
+    assert all(_unknown_after_call(value) for value in returns)
+
+
+def test_a_return_inside_a_with_leaves_with_its_receiver(tmp_path):
+    source = (
+        "class M:\n"
+        "    def __enter__(self):\n"
+        "        return self\n"
+        "    def __exit__(self, *exc):\n"
+        "        return False\n"
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        with M():\n"
+        "            self.y = 2\n"
+        "            return\n"
+        "def f():\n"
+        "    return C().y\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert TermValue(2) in returns
