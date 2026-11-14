@@ -1,3 +1,5 @@
+from sugar_source_tree.spans import LineColSpan
+
 from sugar_lift_py_tests.floor import CallSiteValue, StringValue, SymbolicValue
 from sugar_lift_py_tests.ir import atomic
 from sugar_lift_py_tests.outcome import Complete
@@ -7,9 +9,22 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
 
+_SOURCE_CID = "blake3-512:" + "5" * 128
+_COLUMNS: dict[str, int] = {}
+
+
 class _Site:
+    """A source-fragment stand-in that carries a real coordinate.
+
+    An occurrence names its site by its ``SourceFragmentCoordinateV1``
+    (#7808): a source CID plus a line/column span, one span per site name.
+    """
+
     def __init__(self, cid):
         self.cid = cid
+        column = _COLUMNS.setdefault(cid, len(_COLUMNS))
+        self.source_cid = _SOURCE_CID
+        self.line_col_span = LineColSpan(1, column, 1, column + 1)
 
     def seal(self):
         return type(
