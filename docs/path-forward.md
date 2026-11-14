@@ -38,7 +38,7 @@ Confirmed by the project owner, 2026-11-11: "It's a good umbrella, steps one thr
 
 One way means: open once, construct once, reduce once, and every row is read off that one reduction.
 
-Known violations of the way itself, recorded so they are not mistaken for part of it: a node's sugar reads a context table (`TreeConstructionContextV1`) that readers outside the tree fill; a second whole lifter (`lifter.py`) still runs on every mint (#7767); and the emitter emits rows only for a function that is a single completion, so no Python test reaches the solver (#7766).
+Known violations of the way itself, recorded so they are not mistaken for part of it: a node's sugar reads a context table (`TreeConstructionContextV1`) that readers outside the tree fill; a second whole lifter (`lifter.py`) ran on every mint (#7767), resolved by #8071, which deleted the last one (`bind_lifter` and `bind_rpc`); and the emitter emits rows only for a function that is a single completion, so no Python test reaches the solver (#7766).
 
 Every plan row and every open issue below carries the step it belongs to. Anything the code does that belongs to no step is a deletion.
 
