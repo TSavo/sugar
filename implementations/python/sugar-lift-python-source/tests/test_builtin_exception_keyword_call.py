@@ -191,6 +191,47 @@ def test_os_error_over_a_symbolic_errno_is_the_unanswered_call(
     assert not [effect for effect in halts if isinstance(effect, RaiseEffect)]
 
 
+def _group_faces(exits):
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+
+    return [
+        face
+        for face in exits.exits
+        if isinstance(face, Halted) and isinstance(face.effect, GroupedRaiseEffect)
+    ]
+
+
+def test_a_group_member_is_typed_by_its_construction(tmp_path) -> None:
+    # The member ``OSError(2, 'x')`` is constructed as the raised call is: a
+    # ``FileNotFoundError``, never typed ``OSError`` from its callee.
+    exits = _exits(
+        tmp_path, "def f():\n    raise ExceptionGroup('g', [OSError(2, 'x')])\n"
+    )
+    (group_face,) = _group_faces(exits)
+    assert exits.exits == (group_face,)
+    (leaf,) = group_face.effect.children
+    assert isinstance(leaf, RaiseEffect)
+    assert leaf.exception_type_coordinate == _exception_identity("FileNotFoundError")
+
+
+def test_a_group_member_over_a_symbolic_errno_is_undecided(tmp_path) -> None:
+    # ``e`` is known only by its type: the member's construction is the one
+    # unanswered call, so the member is undecided (the group owes the call),
+    # and the call's own raise halts before any group exists.
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+
+    exits = _exits(
+        tmp_path, "def f(e):\n    raise ExceptionGroup('g', [OSError(e, 'x')])\n"
+    )
+    (group_face,) = _group_faces(exits)
+    (leaf,) = group_face.effect.children
+    assert isinstance(leaf, UndeterminedRaiseEffect)
+    assert group_face.owed
+    assert len(owed_calls(exits)) == 1
+    halts = [face.effect for face in exits.exits if isinstance(face, Halted)]
+    assert "UnknownCallee:OSError" in _owners(halts)
+
+
 def test_a_symbolic_actual_to_a_base_exception_law_class_is_stored_as_args(
     tmp_path,
 ) -> None:

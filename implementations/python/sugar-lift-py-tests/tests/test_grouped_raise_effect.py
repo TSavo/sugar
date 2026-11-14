@@ -2,9 +2,15 @@ from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRa
 
 
 def _identity(module: str, name: str):
+    """A source-class identity: one class, so a miss over a closed ancestry
+    is decided (``matches_raise_effect``).  ``module`` keeps two same-spelled
+    classes apart."""
     from sugar_lift_py_tests.ir import ctor, str_const
 
-    return ctor("python:exception_type_identity", [str_const(module), str_const(name)])
+    return ctor(
+        "python:exception_type_identity",
+        [str_const("source-class"), str_const(f"{module}.{name}")],
+    )
 
 
 def _typed_value(identity, *mro):
@@ -95,42 +101,56 @@ def test_equal_spelling_with_lying_identity_does_not_match():
     assert partition.residual.children == (leaf,)
 
 
-def test_except_star_partition_and_issubclass_share_class_value_floor(monkeypatch):
-    from sugar_lift_py_tests.callable_application import CallableApplication
-    from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
-    from sugar_lift_py_tests.floor import BlockValue, ClassValue
-    from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
-        AuthenticatedExceptionTypeValue,
-    )
-    from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
+def test_except_star_partition_asks_the_one_raise_matcher(monkeypatch):
+    """A leaf is matched by the matcher ``except`` and ``with`` ask
+    (``matches_raise_effect``), over the class its raise read off the
+    constructed value (the effect's coordinate and ancestry): never a class
+    floor of the leaf's own."""
+    from sugar_lift_py_tests import authenticated_exception_matching
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
 
-    base_class = ClassValue("RenamedBase", (), BlockValue(()))
-    leaf_class = ClassValue("RenamedLeaf", (base_class,), BlockValue(()))
-    base_identity = _identity("truthful", "Base")
+    base = _identity("truthful", "Base")
     leaf_identity = _identity("truthful", "Leaf")
-    base_type = AuthenticatedExceptionTypeValue(base_class, base_identity)
-    leaf_type = AuthenticatedExceptionTypeValue(leaf_class, leaf_identity)
+    base_type = _typed_value(base)
+    leaf = _leaf(leaf_identity, "leaf:truthful", leaf_identity, base)
     calls = []
-    class_floor = ClassValue.test_python_subtype
+    matcher = authenticated_exception_matching.matches_raise_effect
 
-    def recording_class_floor(self, supertype, site):
-        calls.append((self, supertype))
-        return class_floor(self, supertype, site)
+    def recording_matcher(effect, expected):
+        calls.append((effect, expected))
+        return matcher(effect, expected)
 
-    monkeypatch.setattr(ClassValue, "test_python_subtype", recording_class_floor)
-
-    issubclass = builtin_name_temporal().value_for("issubclass")
-    issubclass.callable_application_with(
-        CallableApplication((leaf_class, base_class), (), "issubclass-site"), None
+    monkeypatch.setattr(
+        authenticated_exception_matching, "matches_raise_effect", recording_matcher
     )
-    leaf = RaiseEffect(
-        exception_type_coordinate=leaf_identity,
-        occurrence=AuthenticatedRaiseLocus.of("leaf:truthful"),
-        raised_value=leaf_type,
-    )
+
     partition = GroupedRaiseEffect("group:root", "root", (leaf,)).partition(
         base_type, "except-star-site"
     )
 
     assert partition.matched.children == (leaf,)
-    assert calls == [(leaf_class, base_class), (leaf_class, base_class)]
+    assert calls == [(leaf, base_type)]
+
+
+def test_an_undetermined_leaf_is_never_partitioned_by_a_guess():
+    """A leaf whose construction carried no class is undecided: only
+    ``except* BaseException`` catches it (every raise is one); any other
+    type is refused by name, never decided a hit or a miss."""
+    import pytest
+
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.ir import ctor, str_const
+    from sugar_source_tree.panic import SugarNotWritten
+
+    undecided = UndeterminedRaiseEffect(blame="leaf:undecided", occurrence="leaf:u")
+    group = GroupedRaiseEffect("group:root", "root", (undecided,))
+    base_exception = ctor(
+        "python:exception_type_identity",
+        [str_const("builtins"), str_const("BaseException")],
+    )
+
+    caught = group.partition(_typed_value(base_exception), "site")
+    assert caught.matched.children == (undecided,)
+    with pytest.raises(SugarNotWritten):
+        group.partition(_typed_value(_identity("truthful", "Base")), "site")

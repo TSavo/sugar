@@ -54,15 +54,90 @@ class RaiseSugar(Sugar):
             wrong_reason_needle="raise KeyError",
         )
 
-    def desugar(self, ctx: object = None) -> ExitSet:
-        # The halt: a halted arm carrying the named raise effect. blame is the
-        # construction locus; source_sha256 pins the text the raise lives in.
+    def _effect(self, raised_value, ctx, cause_value=None):
+        """The effect this raise halts with when it throws ``raised_value``.
+
+        The raised class is read off the constructed value -- the one reader
+        for a raise, ``raise ... from`` and an exception group's member: its
+        ``exception_type_identity`` (or ``exception_type_coordinate``), which
+        the value's construction decided (``OSError(2, 'x')`` constructs a
+        ``FileNotFoundError``).  A value that carries no class (an unanswered
+        construction, an operand nothing typed) is the undetermined raise,
+        never a guess.  blame is the construction locus; source_sha256 pins
+        the text the raise lives in."""
         source = getattr(self.site.unit, "source", None)
         source_sha256 = (
             hashlib.sha256(source.encode()).hexdigest() if source is not None else None
         )
         blame = f"{self.site.filename}:{self.site.line}:{self.site.col}"
+        context_effect = None
+        if self.in_flight_slot is not None:
+            from sugar_lift_py_tests.in_flight_effect import (
+                resolve_in_flight_effect,
+            )
 
+            context_effect = resolve_in_flight_effect(
+                ctx, self.in_flight_slot, blame=self.site
+            )
+        identity_reader = getattr(raised_value, "exception_type_identity", None)
+        mro_reader = getattr(raised_value, "exception_type_mro", None)
+        coordinate = (
+            identity_reader()
+            if identity_reader is not None
+            else getattr(raised_value, "exception_type_coordinate", None)
+        )
+        if coordinate is None:
+            # Do not mint RaiseEffect(None). Throwing is honorable when
+            # identity is unfinished; UndeterminedRaiseEffect is the only
+            # non-throw door that cannot impersonate authentication.
+            return UndeterminedRaiseEffect(
+                exception_name=self.exception_name,
+                blame=blame,
+                source_sha256=source_sha256,
+                occurrence=_occurrence_key(blame),
+                raised_value=raised_value,
+                cause_value=cause_value,
+                context_effect=context_effect,
+                producer_node_owner="RaiseSugar.desugar",
+            )
+        mro = (
+            mro_reader()
+            if callable(mro_reader)
+            else getattr(raised_value, "exception_type_mro", None)
+        )
+        return RaiseEffect(
+            exception_type_coordinate=coordinate,
+            occurrence=AuthenticatedRaiseLocus.of(blame),
+            exception_name=self.exception_name,
+            blame=blame,
+            source_sha256=source_sha256,
+            exception_type_mro=mro,
+            raised_value=raised_value,
+            cause_value=cause_value,
+            context_effect=context_effect,
+        )
+
+    def constructed(self, ctx: object = None) -> ExitSet:
+        """The exception this raise throws, as a member of the exception group
+        an enclosing raise builds (``GroupedRaiseSugar``), without throwing it.
+
+        The member's construction runs first: each halted arm of it (the
+        construction raised, so no group is built) stays a halt; each
+        completed arm answers the effect the member would raise with
+        (``_effect``), carrying the arm's guard, faces and ``owed``.  A
+        member that is itself a raised group instance is that group."""
+        from sugar_lift_py_tests.floor.grouped_exception_value import (
+            GroupedExceptionValue,
+        )
+
+        def member(raised_value):
+            if isinstance(raised_value, GroupedExceptionValue):
+                return ExitSet.completed(raised_value.effect)
+            return ExitSet.completed(self._effect(raised_value, ctx))
+
+        return self.exception.desugar(ctx).and_then(member)
+
+    def desugar(self, ctx: object = None) -> ExitSet:
         if self.exception is None:
             # Bare re-raise: re-emit the authenticated in-flight effect. No new
             # occurrence is minted — identity is the handler-routed RaiseEffect.
@@ -85,60 +160,7 @@ class RaiseSugar(Sugar):
             )
 
         def halt(raised_value, cause_value=None):
-            context_effect = None
-            if self.in_flight_slot is not None:
-                from sugar_lift_py_tests.in_flight_effect import (
-                    resolve_in_flight_effect,
-                )
-
-                context_effect = resolve_in_flight_effect(
-                    ctx, self.in_flight_slot, blame=self.site
-                )
-            identity_reader = getattr(raised_value, "exception_type_identity", None)
-            mro_reader = getattr(raised_value, "exception_type_mro", None)
-            coordinate = (
-                identity_reader()
-                if identity_reader is not None
-                else getattr(raised_value, "exception_type_coordinate", None)
-            )
-            if coordinate is None:
-                # Do not mint RaiseEffect(None). Throwing is honorable when
-                # identity is unfinished; UndeterminedRaiseEffect is the only
-                # non-throw door that cannot impersonate authentication.
-                from sugar_lift_py_tests.effect.raise_effect import (
-                    UndeterminedRaiseEffect,
-                )
-
-                return ExitSet.halted(
-                    UndeterminedRaiseEffect(
-                        exception_name=self.exception_name,
-                        blame=blame,
-                        source_sha256=source_sha256,
-                        occurrence=_occurrence_key(blame),
-                        raised_value=raised_value,
-                        cause_value=cause_value,
-                        context_effect=context_effect,
-                        producer_node_owner="RaiseSugar.desugar",
-                    )
-                )
-            mro = (
-                mro_reader()
-                if callable(mro_reader)
-                else getattr(raised_value, "exception_type_mro", None)
-            )
-            return ExitSet.halted(
-                RaiseEffect(
-                    exception_type_coordinate=coordinate,
-                    occurrence=AuthenticatedRaiseLocus.of(blame),
-                    exception_name=self.exception_name,
-                    blame=blame,
-                    source_sha256=source_sha256,
-                    exception_type_mro=mro,
-                    raised_value=raised_value,
-                    cause_value=cause_value,
-                    context_effect=context_effect,
-                )
-            )
+            return ExitSet.halted(self._effect(raised_value, ctx, cause_value))
 
         def after_exception(raised_value):
             from sugar_lift_py_tests.floor.grouped_exception_value import (

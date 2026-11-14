@@ -15331,13 +15331,14 @@ class Raise(Statement):
         """Binds nothing: recurse into children and reassemble."""
         return self._substitute_children(scope)
 
-    def _exception_name(self):
+    def _exception_name(self, operand=None):
         """The raised exception's name, read structurally off ``exc`` (never
         desugared): ``raise E`` -> ``"E"``, ``raise E(...)`` -> ``"E"``,
         ``raise mod.E`` / ``raise mod.E(...)`` -> ``"mod.E"``. A bare ``raise``
         (re-raise, ``exc is None``) or an exotic raised expression we cannot read
-        is ``None`` -- the halt is no less real, the name is only its label."""
-        node = self.exc
+        is ``None`` -- the halt is no less real, the name is only its label.
+        ``operand`` is a raised group's member, read the same way."""
+        node = self.exc if operand is None else operand
         if node is None:
             return None
         if node.kind == "Call":  # raise E(...) -- the constructor
@@ -15356,10 +15357,67 @@ class Raise(Statement):
             return None
         return ".".join(reversed(parts))
 
+    def _raised_operand_sugar(self, node, where):
+        """The sugar of one raised operand: ``exc`` itself, or a member call
+        of a raised exception group (``raise ExceptionGroup('g', [E(...)])``).
+
+        A call is its own construction, handed the class its callee's binding
+        names (``exception_type_coordinate``); the construction decides the
+        class the value carries (``OSError(2, 'x')`` constructs a
+        ``FileNotFoundError``, ``builtin_exception_cited_fold``; an
+        unanswered construction carries none).  ``RaiseSugar`` reads the
+        raised class off that value, the one reader for a raise and a
+        group's member alike.  A class reference (``raise E``) is that
+        class's value."""
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.engine_log import reduction_span
+        from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+            AuthenticatedExceptionTypeSugar,
+        )
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
+
+        identity = None
+        mro = None
+        type_operand = None
+        if isinstance(node, Call) and isinstance(node.func, (Name, Attribute)):
+            type_operand = node.func
+        elif isinstance(node, (Name, Attribute)):
+            type_operand = node
+        if type_operand is not None:
+            with reduction_span(
+                sugar="Raise.exception_type_identity",
+                role="construction",
+                site=where,
+            ):
+                identity = self.unit.exception_type_identity(type_operand)
+                mro = self.unit.exception_type_mro(type_operand)
+
+        with reduction_span(sugar="Raise.exc.sugar", role="construction", site=where):
+            exception_sugar = node.sugar()
+
+        if identity is not None and isinstance(
+            exception_sugar, (CallSiteSugar, MethodCallSugar)
+        ):
+            return replace(
+                exception_sugar,
+                exception_type_coordinate=identity,
+                exception_type_mro=mro,
+            )
+        if identity is not None:
+            # An imported class's value is the one its identity names
+            # (``AuthenticatedExceptionTypeSugar.desugar``), Name or chain alike.
+            return AuthenticatedExceptionTypeSugar(
+                exception_sugar,
+                identity,
+                mro,
+                node.fragment,
+            )
+        return exception_sugar
+
     def _construct_sugar(self):
         """Build exception and explicit cause children for the halt effect."""
-        from sugar_lift_py_tests.engine_log import reduction_span
-
         where = f"{self.unit.filename}"
         try:
             lc = self.line_col_span()
@@ -15380,12 +15438,6 @@ class Raise(Statement):
                 ),
             )
         from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
-        from dataclasses import replace
-
-        from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
-            AuthenticatedExceptionTypeSugar,
-        )
-        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
         def group_call(node):
             return (
@@ -15395,15 +15447,25 @@ class Raise(Statement):
             )
 
         def leaf_sugar(node):
-            leaf_identity = leaf_mro = leaf_name = None
-            if isinstance(node, Call) and isinstance(node.func, Name):
-                leaf_identity = self.unit.exception_type_identity(node.func)
-                leaf_mro = self.unit.exception_type_mro(node.func)
-                leaf_name = node.func.id
-            elif isinstance(node, Name):
+            if isinstance(node, Call):
+                # A member call is constructed as a raised call is: its class
+                # is the one its construction carries (``OSError(2, 'x')`` a
+                # ``FileNotFoundError``; an unanswered construction none),
+                # read off the value by ``RaiseSugar`` -- never the callee's.
+                return RaiseSugar(
+                    self._raised_operand_sugar(node, where),
+                    None,
+                    self._exception_name(node),
+                    node.fragment,
+                )
+            from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+                AuthenticatedExceptionTypeSugar,
+            )
+
+            leaf_identity = leaf_mro = None
+            if isinstance(node, Name):
                 leaf_identity = self.unit.exception_type_identity(node)
                 leaf_mro = self.unit.exception_type_mro(node)
-                leaf_name = node.id
             if leaf_identity is None:
                 raise SugarNotWritten(
                     blame=node.fragment,
@@ -15412,23 +15474,14 @@ class Raise(Statement):
                     requested="a source-authenticated exception type",
                     fix="keep opaque/native group members loud",
                 )
-            value = node.sugar()
-            if isinstance(value, CallSiteSugar):
-                value = replace(
-                    value,
-                    exception_type_coordinate=leaf_identity,
-                    exception_type_mro=leaf_mro,
-                )
             value = AuthenticatedExceptionTypeSugar(
-                value,
+                node.sugar(),
                 leaf_identity,
                 leaf_mro,
                 node.fragment,
-                class_value=self.unit.exception_class_value(
-                    node.func if isinstance(node, Call) else node
-                ),
+                class_value=self.unit.exception_class_value(node),
             )
-            return RaiseSugar(value, None, leaf_name, node.fragment)
+            return RaiseSugar(value, None, node.id, node.fragment)
 
         def grouped_sugar(call):
             if (
@@ -15468,50 +15521,8 @@ class Raise(Statement):
                 )
             return grouped_sugar(self.exc)
 
-        identity = None
-        mro = None
-        type_operand = None
-        if isinstance(self.exc, Call) and isinstance(self.exc.func, Name):
-            type_operand = self.exc.func
-        elif isinstance(self.exc, Call) and isinstance(self.exc.func, Attribute):
-            type_operand = self.exc.func
-        elif isinstance(self.exc, Name):
-            type_operand = self.exc
-        elif isinstance(self.exc, Attribute):
-            type_operand = self.exc
-        if type_operand is not None:
-            with reduction_span(
-                sugar="Raise.exception_type_identity",
-                role="construction",
-                site=where,
-            ):
-                identity = self.unit.exception_type_identity(type_operand)
-                mro = self.unit.exception_type_mro(type_operand)
-
-        with reduction_span(sugar="Raise.exc.sugar", role="construction", site=where):
-            exception_sugar = self.exc.sugar()
-        from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
-
-        if identity is not None and isinstance(
-            exception_sugar, (CallSiteSugar, MethodCallSugar)
-        ):
-            exception_sugar = replace(
-                exception_sugar,
-                exception_type_coordinate=identity,
-                exception_type_mro=mro,
-            )
-        elif identity is not None:
-            # An imported class's value is the one its identity names
-            # (``AuthenticatedExceptionTypeSugar.desugar``), Name or chain alike.
-            exception_sugar = AuthenticatedExceptionTypeSugar(
-                exception_sugar,
-                identity,
-                mro,
-                self.exc.fragment,
-            )
-
         return RaiseSugar(
-            exception=exception_sugar,
+            exception=self._raised_operand_sugar(self.exc, where),
             cause=self.cause.sugar() if self.cause is not None else None,
             exception_name=self._exception_name(),
             site=self.fragment,
