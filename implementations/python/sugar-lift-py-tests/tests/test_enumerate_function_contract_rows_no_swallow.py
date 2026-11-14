@@ -1,10 +1,11 @@
 """JOIN defect: enumeration door must not swallow function_contract_rows throws.
 
 #6944 (sin cluster 4) rips ``except Exception: continue`` around
-``function_contract_rows`` in the implications target_candidates loop.
-#6946 (sin cluster 6 / enumeration door) rewrote that loop to use
-``resolve_function_for_call`` but KEPT the same Exception swallow — a second
-mechanism inventing absence when body sugar is unfinished.
+``function_contract_rows`` in the (since deleted, #7806) implications
+target_candidates loop. #6946 (sin cluster 6 / enumeration door) rewrote that
+loop to use ``resolve_function_for_call`` but KEPT the same Exception swallow —
+a second mechanism inventing absence when body sugar is unfinished. The tooth
+now guards every remaining ``function_contract_rows`` site in ``lift_rpc``.
 
 Law of One: AST tree shadows → Sugar → meaning. Catch-and-continue is not a
 third path. Throwing is honorable (code not written yet). Rip the handler.
@@ -12,7 +13,7 @@ third path. Throwing is honorable (code not written yet). Rip the handler.
 Shell deleted: soft survival of unfinished Sugar via empty target_candidates.
 No counter, no named refusal at this mouth, no log-and-continue.
 
-Retirement: when the implications path cannot soft-skip any Exception class
+Retirement: when the enumeration door cannot soft-skip any Exception class
 (production types force throws to the transport edge), this tooth becomes a
 pure reintroduction membrane over open Python source.
 """
@@ -211,21 +212,3 @@ def test_production_lift_rpc_has_zero_exception_continue_on_function_contract_ro
         "function_contract_rows swallow still live in lift_rpc; "
         "rip except Exception: continue. Offenders:\n" + "\n".join(offenders)
     )
-
-
-def test_production_implications_call_site_has_no_try_around_contract_rows() -> None:
-    """Local window check on the implications target_candidates site."""
-    source = _LIFT_RPC.read_text(encoding="utf-8")
-    marker = "def_memento, rows = _tree.function_contract_rows(fn, file_rel)"
-    assert marker in source
-    # Every occurrence of this assignment in implications-style loops must not
-    # sit inside an Exception-continue try. Use the AST tooth as authority.
-    offenders = _except_exception_continue_wrappers(
-        source, call_name=_CONTRACT_ROWS_CALL, path=str(_LIFT_RPC)
-    )
-    assert offenders == []
-    # Also: the join-site comment must remain as orientation (deleted => red
-    # only if someone removes the bare call; soft check that bare call exists).
-    idx = source.index(marker)
-    window = source[max(0, idx - 200) : idx + 40]
-    assert "except Exception" not in window

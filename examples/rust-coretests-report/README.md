@@ -1,10 +1,13 @@
 # rust-coretests-report — the honest coverage ledger
 
 This is the **measuring stick** for the Rust assertion-lift kit: it runs
-`sugar lift --report` over the Rust standard library's `coretests` corpus
-(vendored under [`corpus/tests`](corpus/tests), lifted under the pinned
-`nightly-2026-02-07` toolchain the corpus's `#![feature(...)]` prelude assumes)
-and prints how every assertion locus is honestly accounted.
+`sugar mint` (the one driver of a kit) over the Rust standard library's
+`coretests` corpus (vendored under [`corpus/tests`](corpus/tests), lifted under
+the pinned `nightly-2026-02-07` toolchain the corpus's `#![feature(...)]`
+prelude assumes) and tallies the lifter's disposition trace: which shapes are
+`unresolved` and which are deliberately `refused`. The `source audit:` ledger
+below is the output of `sugar lift --report`, which this example no longer
+calls (#7806); the `make coretests-source-audit` target still prints it.
 
 ```sh
 ./run.sh              # full corpus

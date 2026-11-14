@@ -1,12 +1,10 @@
 #!/usr/bin/env bash
 # Honest coverage ledger for the Rust assertion-lift kit over the Rust stdlib
 # `coretests` corpus (vendored under ./corpus/tests). This is the MEASURING STICK:
-# it runs `sugar lift --report` over every coretests file and prints the source
-# audit -- how many assertion loci are `warranted` (lifted to a FOL fact) vs
-# `unresolved` (no sugar yet -- the visible dark) vs `support` (INERT source only:
-# comments, doc-comments, compiler pragmas). `support` is NOT a place to hide
-# "we don't have sugar for that yet"; that is `unresolved`, and progress is
-# measured by driving it down with real Sugar.
+# it runs `sugar mint` (the one driver of a kit, step 1) over every coretests
+# file and tallies the lifter's disposition trace -- which shapes are
+# `unresolved` (no sugar yet -- the visible dark) and which are deliberately
+# `refused`. Progress is measured by driving `unresolved` down with real Sugar.
 #
 # Usage: ./run.sh            # full corpus
 #        SUBDIR=iter ./run.sh  # restrict to corpus/tests/<SUBDIR> (faster)
@@ -38,12 +36,13 @@ sed "s#@BIN_DIR@#$BIN_DIR#g" "$mfin" > "$mf"
 
 OUT="$HERE/coretests-report.out"
 ERR="$HERE/coretests-report.err"
-echo "== lift --report over $(count_rs_files "$CORPUS/tests") coretests files =="
-# ONE lift (not two): stdout carries the human ledger, stderr carries the factory
+echo "== mint over $(count_rs_files "$CORPUS/tests") coretests files =="
+# ONE mint: stdout carries the minted catalog, stderr carries the factory
 # disposition trace we tally below into the target list. Disable ANSI at the source
 # (the lifter's tracing layer emits color escapes even when stderr is redirected to a
 # file) -- belt-and-suspenders with the strip below.
-( cd "$CORPUS" && NO_COLOR=1 RUST_LOG_STYLE=never CLICOLOR=0 TERM=dumb "$SUGAR" lift --report ) > "$OUT" 2>"$ERR" || true
+rm -f "$CORPUS"/blake3-512_*.proof 2>/dev/null || true
+( cd "$CORPUS" && NO_COLOR=1 RUST_LOG_STYLE=never CLICOLOR=0 TERM=dumb "$SUGAR" mint --out . ) > "$OUT" 2>"$ERR" || true
 
 # ANSI-strip BOTH streams before parsing. The lifter writes color escapes into the
 # trace; those escapes sit between/inside the `selected="..."` tokens and silently break
@@ -56,12 +55,12 @@ sed $'s/\x1b\\[[0-9;]*m//g' "$OUT" > "$OUTP"
 sed $'s/\x1b\\[[0-9;]*m//g' "$ERR" > "$ERRP"
 
 echo
-echo "== honest source ledger =="
-grep -E "source audit:|assertion surface accounting:" "$OUTP" || {
-  # INSTRUMENT-NEVER-DARK: no headline means the measurement FAILED -- surface the loud
-  # named reason (the CLI now hard-errors naming an upstream byte-bound refusal) and exit
-  # non-zero. A blind ledger that prints nothing must never read as "clean".
-  echo "MEASUREMENT FAILED: no source-audit headline emitted. Cause (stderr tail):"
+echo "== minted catalog =="
+grep -E "catalog CID:|contractSetCid:|\.proof file:" "$OUTP" || {
+  # INSTRUMENT-NEVER-DARK: no catalog means the measurement FAILED -- surface the loud
+  # named reason and exit non-zero. A blind ledger that prints nothing must never
+  # read as "clean".
+  echo "MEASUREMENT FAILED: mint emitted no catalog. Cause (stderr tail):"
   tail -5 "$ERRP"
   exit 1
 }
@@ -81,7 +80,7 @@ rg -o 'selected="[^"]+" disposition="refused"' "$ERRP" 2>/dev/null \
 
 echo
 echo "stdout ledger: $OUT   |   disposition trace: $ERR   (ANSI-stripped: $OUTP / $ERRP)"
-echo "NOTE: 'unresolved' is the honest dark (no sugar yet). 'support' is inert source ONLY (kit-marked)."
+echo "NOTE: 'unresolved' is the honest dark (no sugar yet)."
 
 # ── TEETHED LEDGER (the proof dial, not just coverage) ───────────────────────
 # The ledger above measures COVERAGE: how many loci `warranted` = lifted to a

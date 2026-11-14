@@ -281,12 +281,6 @@ def remove_direct_proofs(project: Path) -> None:
         proof.unlink()
 
 
-def lift_report(project: Path):
-    report = run([bin_path, "lift", "--report", "--json", project])
-    require_success(report, f"{project.name} wall")
-    return json.loads(report.stdout)
-
-
 def mint_and_prove(project: Path):
     remove_direct_proofs(project)
     mint = run([bin_path, "mint", "--project", project, "--out", project, "--quiet", "--json"])
@@ -308,44 +302,11 @@ def row_for(report, property_contains):
     raise SystemExit(f"row not found property={property_contains!r}: {json.dumps(report, indent=2)}")
 
 
-def edge_for(report, target_symbol):
-    # Join key is the EUF ctor head `call:<callee>` (CallSiteValue), matching
-    # the vendor binding's bridgeSourceSymbol and the load-bearing seat in
-    # cross_proof_imported_implications.rs. Never use method:<name> here —
-    # that was a stale AliasFloor vocabulary that exhausts to StopIteration
-    # when the wall only emits call:sum (see #3752).
-    edges = report.get("callEdges") or []
-    for edge in edges:
-        if edge.get("targetSymbol") == target_symbol:
-            return edge
-    available = sorted({e.get("targetSymbol") for e in edges if e.get("targetSymbol")})
-    raise SystemExit(
-        f"call edge for {target_symbol!r} missing from wall report; "
-        f"available targetSymbols={available!r}. "
-        f"Vendor bridgeSourceSymbol and CallSiteValue both use call:<callee>; "
-        f"do not look up method:<name> (regression #3752). "
-        f"callEdges={json.dumps(edges, indent=2)}"
-    )
-
-
 proof, proof_cid = mint_vendor()
 print(f"vendor proof: {proof.name} ({proof_cid})")
 print("vendor surface: pandas-showcase Series.sum fact; no PRE-bearing pandas contract minted yet")
 
 good = stage_consumer("consumer-good", 6, proof)
-good_wall = lift_report(good)
-# call:sum — not method:sum. Collapse projects the EUF head call:<callee>.
-good_edge = edge_for(good_wall, "call:sum")
-print(
-    "good wall edge:",
-    good_edge["sourceContract"],
-    "->",
-    good_edge["targetSymbol"],
-    "->",
-    good_edge["targetContract"],
-    "origin",
-    good_edge["targetProofCid"],
-)
 good_code, good_prove = mint_and_prove(good)
 good_row = row_for(good_prove, "sum#euf#")
 good_post = good_row["verification"]["linkedPosts"][0]
@@ -354,18 +315,6 @@ print(
 )
 
 bad = stage_consumer("consumer-bad", 7, proof)
-bad_wall = lift_report(bad)
-bad_edge = edge_for(bad_wall, "call:sum")
-print(
-    "bad wall edge:",
-    bad_edge["sourceContract"],
-    "->",
-    bad_edge["targetSymbol"],
-    "->",
-    bad_edge["targetContract"],
-    "origin",
-    bad_edge["targetProofCid"],
-)
 bad_code, bad_prove = mint_and_prove(bad)
 bad_row = row_for(bad_prove, "sum#euf#")
 bad_post = bad_row["verification"]["linkedPosts"][0]
@@ -373,11 +322,6 @@ print(
     f"bad consumer: exit={bad_code} status={bad_row['status']} linked-origin={bad_post['targetProofCid']}"
 )
 
-if good_edge.get("targetProofCid") != proof_cid or bad_edge.get("targetProofCid") != proof_cid:
-    raise SystemExit(
-        f"wall call:sum edge must target imported vendor proof {proof_cid}; "
-        f"good={good_edge.get('targetProofCid')!r} bad={bad_edge.get('targetProofCid')!r}"
-    )
 if good_code != 0 or good_row["status"] != "discharged":
     raise SystemExit(f"good consumer must discharge through imported pandas proof: {good_prove}")
 if bad_code == 0 or bad_row["status"] != "unsatisfied":

@@ -230,8 +230,7 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     ``sf`` given), once per resident unit (#7757, inventory item 28).
 
     Every reader of a function's reduction reads this one: the universe rows,
-    the link-unit enrollment, and the ``facts`` and ``implications`` rows of
-    each assert in it. An assert is therefore reduced once, in context, and
+    the link-unit enrollment, and the ``facts`` row of each assert in it. An assert is therefore reduced once, in context, and
     never alone. A refusal is not kept: it propagates to the reader, named.
     The unanswered calls the reduction recorded reach the reader's open
     collector whether the reduction ran now or earlier.

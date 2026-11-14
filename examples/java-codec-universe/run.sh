@@ -67,46 +67,6 @@ for suite in good bad; do
 done
 
 echo
-echo "== source audit: sugar lift --report Commons Codec Base64.encodeBase64String =="
-LIFT_REPORT_JSON="$HERE/.lift-report.json"
-( cd "$HERE/good" && "$SUGAR" lift --report --json . ) > "$LIFT_REPORT_JSON"
-python3 - "$LIFT_REPORT_JSON" <<'PY'
-import json, sys
-result = json.load(open(sys.argv[1], encoding="utf-8"))
-ledger = result.get("sourceLedger") or {}
-if ledger.get("unclassified_source") != 0:
-    raise SystemExit(f"FAIL: Base64 source audit has unclassified source: {ledger!r}")
-audits = result.get("sourceAudits") or []
-weak = [a for a in audits if a.get("role") == "java.weak-universe"]
-strong = [a for a in audits if a.get("role") == "java.strong-universe"]
-if len(weak) != 1 or len(strong) != 1:
-    raise SystemExit(f"FAIL: expected weak+strong Base64 audits, got roles={[a.get('role') for a in audits]}")
-if weak[0]["totals"]["unclassified_source"] != 0 or strong[0]["totals"]["unclassified_source"] != 0:
-    raise SystemExit(f"FAIL: Base64 audit unclassified totals: weak={weak[0]['totals']} strong={strong[0]['totals']}")
-if not any(locus.get("line") == 780 and locus.get("status") == "warranted" for locus in strong[0]["loci"]):
-    raise SystemExit("FAIL: Base64 full-block extraction line 780 was not warranted")
-mementos = result.get("sourceMementos") or []
-roles = {m.get("role") for m in mementos}
-if not {"java.test-fact", "java.weak-universe", "java.strong-universe"} <= roles:
-    raise SystemExit(f"FAIL: lift report missing source mementos: roles={sorted(str(r) for r in roles)}")
-fact = next(m for m in mementos if m.get("role") == "java.test-fact")
-if not fact.get("claimName", "").endswith("::assertion") or not fact.get("contractName", "").endswith("::assertion"):
-    raise SystemExit(f"FAIL: test fact memento does not link to assertion contract: {fact!r}")
-if "bodyText" in fact or "body_text" in fact or "templateJson" in fact or "ast_template" in fact:
-    raise SystemExit(f"FAIL: test fact memento carried inline source: {fact!r}")
-print(
-    "   source audit:",
-    f"loci={ledger['source_loci']}",
-    f"warranted={ledger['source_warranted']}",
-    f"refused={ledger['source_refused']}",
-    f"inactive={ledger['source_inactive']}",
-    f"unclassified={ledger['unclassified_source']}",
-)
-print("   Base64 full-block line 780 warranted; EOF tail switch accounted inactive")
-PY
-rm -f "$LIFT_REPORT_JSON"
-
-echo
 echo "== clean state =="
 for suite in good bad; do
   for p in "$HERE/$suite"/blake3-512_*.proof; do [ -e "$p" ] && rm -f "$p"; done

@@ -1,8 +1,10 @@
 """Inventory item 28 (#7757): an assert is reduced once, in context.
 
-The universe rows, the ``facts`` row and the ``implications`` row of an assert
-all read what it reduced to inside its owner's one reduction
-(``tree_enumerate.owner_reduction``). None of them reduces the assert alone.
+The universe rows and the ``facts`` row of an assert both read what it reduced
+to inside its owner's one reduction (``tree_enumerate.owner_reduction``), and a
+second read of the same assert reads that same reduction. None of them reduces
+the assert alone. (The ``implications`` level that also read it is deleted,
+#7806.)
 """
 
 from __future__ import annotations
@@ -57,15 +59,13 @@ def test_every_reader_of_an_assert_reads_its_one_reduction(monkeypatch) -> None:
     monkeypatch.setattr(AssertSugar, "desugar", counted)
     monkeypatch.setattr(tree_enumerate, "_OWNER_REDUCTIONS", {})
 
-    # The universe rows' reader, then the `facts` and `implications` readers.
+    # The universe rows' reader, then the `facts` reader, then a second read.
     universe = tree_enumerate.owner_reduction(function).outcome
     fact_source, fact_outcome = tree_enumerate.assert_outcome(tree, span)
-    implication_source, implication_outcome = tree_enumerate.assert_outcome(
-        tree, span
-    )
+    again_source, again_outcome = tree_enumerate.assert_outcome(tree, span)
     tree_enumerate.fact_of(fact_outcome)
 
     assert universe is not None
-    assert fact_source is not None and implication_source is not None
-    assert fact_outcome is implication_outcome
+    assert fact_source is not None and again_source is not None
+    assert fact_outcome is again_outcome
     assert counts[span["start_line"]] == 1

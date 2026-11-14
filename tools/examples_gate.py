@@ -132,10 +132,6 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
         re.compile(r"no JSON report found"),
     ),
     FailurePattern(
-        "audit-missing/pandas-package-audit",
-        re.compile(r"expected one pandas package audit, got 0"),
-    ),
-    FailurePattern(
         "kit-selection/rust-component-unclaimed",
         re.compile(
             r"Rust workspace detected at Cargo\.toml, but no Sugar Rust kit component claimed it"
@@ -205,15 +201,6 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
             r"(?:\['undecidable'(?:,\s*'undecidable')*\]|undecidable)"
         ),
     ),
-    # #3747 residual: source-audit `sugar lift --report` path requires
-    # sugar.enumerate; JavaTestAssertionsRpc does not advertise it.
-    FailurePattern(
-        "factory-gap/java-kit-missing-sugar-enumerate",
-        re.compile(
-            r"unknown method:\s*sugar\.enumerate|"
-            r"enumeration kit `java-test-assertions` unavailable"
-        ),
-    ),
     # The predicted vacuity family: prove discharges the witness-package but
     # durable re-verify recomputes at least one consistency row as refused,
     # so the durable artifact disagrees with the live prove pass.
@@ -233,12 +220,6 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
     FailurePattern(
         "prove-red/bodyguard-claims-failed-or-undecided",
         re.compile(r'"totalClaims":\s*\d+,\s*"failed":\s*[1-9]'),
-    ),
-    # pandas-consumer-demo: the harness script itself raises StopIteration in
-    # edge_for(); a harness bug, not a product consistency verdict.
-    FailurePattern(
-        "harness-bug/edge-for-stopiteration",
-        re.compile(r"in edge_for\b[\s\S]{0,120}StopIteration"),
     ),
     # rust-coretests-report: the rust factory has no Sugar recognizer for a
     # for-loop AST shape it met walking coretests, and the lift plugin then
