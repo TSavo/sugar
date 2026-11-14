@@ -5036,7 +5036,9 @@ def _module_live_loop_publication(loop, carried, scope) -> dict:
     phi ``<post-loop key> if <an item wrote it> else <the binding before
     the loop>``: a name first bound inside the loop is unbound on the arm no
     item wrote it (the read there is a ``NameError`` halt), a carried
-    accumulator keeps its pre-loop binding there.  A name undecided before
+    accumulator keeps its pre-loop binding there.  The loop's reduction
+    decides the slot on each exit, as it binds the post-loop key there
+    (``LoopRecurrenceSugar._post_loop_writes``), so the read takes one arm.  A name undecided before
     the loop stays undecided; a builtin name with no module binding falls
     back to the builtin, so it is not unbound on that arm and is not
     published.  ``scope`` is the binding standing before the loop.

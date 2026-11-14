@@ -43,19 +43,26 @@ from sugar_lift_py_tests.source_call_frame import (
 )
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.binding_projection import UnboundProjection
+from sugar_lift_py_tests.sugar.branch_result_ref_sugar import BranchResultRefSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
     EvaluationRefSugar,
     evaluation_here,
 )
+from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import read_binding
 from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 from sugar_lift_py_tests.sugar.match_sugar import MatchSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
+from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.binding_state import GuardedBinding, UnboundBinding
+from sugar_source_tree.binding_state import (
+    GuardedBinding,
+    UnboundBinding,
+    loop_write_slot,
+)
 from sugar_source_tree.nodes import (
     UNDECIDED_MODULE_BINDING,
     AnnAssign,
@@ -602,6 +609,69 @@ def test_no_item_wrote_it_so_the_post_loop_key_is_refused_by_name() -> None:
     with pytest.raises(ConstructionPanic) as refused:
         _read_last().desugar(after)
     assert POST_KEY in refused.value.info.observed
+
+
+def _publishing(post_key: str):
+    return SimpleNamespace(
+        carried_names=(),
+        carried_evaluations=(),
+        published_evaluations=((post_key, (WRITE_KEY,), ()),),
+    )
+
+
+def _left(runtime, ctx, items: int):
+    left = _module_recurrence()._publish_runtime_bindings(
+        runtime, ctx, entries=(), carried=(), items=items
+    )
+    return left.completed_value().extend_scope(ctx)
+
+
+def test_the_loop_decides_its_write_slot_on_each_exit() -> None:
+    ref = BranchResultRefSugar(slot=loop_write_slot(POST_KEY), site=None)
+    ctx = ReduceContext.root(owner="module-live-loop")
+    unwritten = _after_the_loop(ctx, 0)
+    assert isinstance(ref.desugar(unwritten).completed_value(), FalseBoolLiteralSugar)
+    written = _after_the_loop(_item_wrote(ctx, 0, TermValue(1)), 1)
+    assert isinstance(ref.desugar(written).completed_value(), TrueBoolLiteralSugar)
+    # The decision is the exit's own: the context before the loop holds none.
+    assert loop_write_slot(POST_KEY).slot_id not in ctx.ground_branch_results
+
+
+def test_no_item_wrote_the_accumulator_so_the_read_is_the_pre_loop_binding() -> None:
+    tree = _source(
+        "def g():\n    return (1, 2)\n"
+        "def f():\n    return total\n"
+        "total = 0\n"
+        "for i in g():\n    total += i\n"
+    )
+    (prior,) = _assignment_keys(tree, "total")
+    read = _returned(_function(tree))
+    assert isinstance(read, IfExp), read
+    runtime = _publishing(read.body.evaluation)
+    ctx = ReduceContext.root(owner="module-live-loop")
+    ctx = ctx.with_temporal(ctx.temporal.bind_value(prior, TermValue(0)))
+    # No item: the reader takes the pre-loop arm only, never the unbound
+    # post-loop key.
+    assert read.sugar().desugar(_left(runtime, ctx, 0)) == ExitSet.completed(
+        TermValue(0)
+    )
+    written = _left(runtime, _item_wrote(ctx, 0, TermValue(5)), 1)
+    assert read.sugar().desugar(written) == ExitSet.completed(TermValue(5))
+
+
+def test_no_item_wrote_a_name_first_bound_in_the_loop_so_it_is_a_name_error() -> None:
+    tree = _source(LOOP_FIRST_BOUND)
+    final = _function(tree).unit.module_bindings_at(None, {"last"})["last"]
+    runtime = _publishing(final.when_true.evaluation)
+    read = _returned(_function(tree)).sugar()
+    ctx = ReduceContext.root(owner="module-live-loop")
+    # No item: one exit, the ``NameError`` of the arm no item wrote.
+    exits = read.desugar(_left(runtime, ctx, 0)).exits
+    assert len(exits) == 1 and isinstance(exits[0], Halted), exits
+    assert isinstance(exits[0].effect, NameErrorEffect)
+    assert exits[0].effect.name == "last"
+    written = _left(runtime, _item_wrote(ctx, 0, TermValue(3)), 1)
+    assert read.desugar(written) == ExitSet.completed(TermValue(3))
 
 
 DEF_REBINDS ="X = None\ndef X():\n    pass\ndef f():\n    return X\ny = f()\n"

@@ -136,9 +136,10 @@ def loop_write_slot(post_key: str) -> BranchResultSlot:
     true exactly when an item of the loop wrote the name, so the loop leaves
     it with what its items handed on (``post_key``, the loop's post-loop key
     of the name); false when no item wrote it, so the name keeps the
-    binding it had before the loop (unbound if it had none).  No reducer
-    grounds it: it stays an opaque coordinate, so a read after the loop
-    holds both arms, each under its own guard."""
+    binding it had before the loop (unbound if it had none).  The loop's
+    reduction decides it on every exit it leaves by, true exactly when it
+    bound the post-loop key there (``LoopRecurrenceSugar._post_loop_writes``,
+    ``BranchResultDecision``), so a read after the loop takes one arm."""
     return BranchResultSlot(f"loop-wrote:{post_key}")
 
 

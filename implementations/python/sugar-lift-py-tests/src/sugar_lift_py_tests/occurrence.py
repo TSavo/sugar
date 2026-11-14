@@ -75,6 +75,15 @@ def loop_iteration_segment(target_cid: str, index: int) -> str:
     return f"{_LIVE_ITERATION}{digest}#{index}"
 
 
+def loop_symbolic_item_segment(target_cid: str) -> str:
+    """The segment of a live loop's one symbolic item: the item its
+    recurrence reduces its outward faces in when the iterable is symbolic
+    (``LoopRecurrenceSugar._enter_symbolic_item``).  A live iteration like
+    any other (``live_iterations``), and never one of the numbered items."""
+    digest = target_cid.split(":", 1)[-1][:16]
+    return f"{_LIVE_ITERATION}{digest}#item"
+
+
 def live_iterations(path: tuple[str, ...] | None = None) -> tuple[str, ...]:
     """The live loop iterations the reduction running now is inside, outermost
     first.

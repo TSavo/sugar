@@ -261,13 +261,16 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor import InvValue
         from sugar_lift_py_tests.floor.block_value import BlockValue
 
-        recurrences = []
-        for coordinate_cid in self.binding_coordinate_cids:
-            h = ctor(
+        heads = tuple(
+            ctor(
                 "python:loop.recurrence",
                 [str_const(self.target_cid), str_const(coordinate_cid)],
                 symbol_kind="coordinate",
             )
+            for coordinate_cid in self.binding_coordinate_cids
+        )
+        recurrences = []
+        for h in heads:
             step = ctor(
                 "python:loop.step",
                 [
@@ -300,8 +303,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
         exits = [Completed(completed_guard, recurrence)]
         deferred = []
+        # An outward face is a statement of the body (``return x``, ``raise
+        # E(x)``), reduced in the recurrence's one symbolic item: its reads of
+        # a carried name and of the target are references to their keys
+        # (``For.substitute``), bound here for that item exactly as for a
+        # concrete one (``_enter_symbolic_item``).
+        item_ctx, item = self._enter_symbolic_item(runtime, ctx, iterable, heads)
         for face in self.outward_faces:
-            outcome = face.statement_sugar.desugar(ctx)
+            with item():
+                outcome = face.statement_sugar.desugar(item_ctx)
             if isinstance(outcome, NativeOperationExitCarrierV1):
                 # The face's statement waits for the caller's actuals (a
                 # method call on a formal): it contributes its partition
@@ -655,6 +665,80 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             bindings.append((key, coordinate_cid, value))
         return ctx, tuple(bindings)
 
+    def _enter_symbolic_item(self, runtime, ctx, iterable, heads):
+        """The context the recurrence's one symbolic item reduces its outward
+        faces in, and the item to enter while it does.
+
+        A concrete item binds, inside its own segment, each carried name's
+        header to the value the item begins with (``_enter_header``), then
+        each target leaf's key to the item's projection (``_enter_target``).
+        The symbolic item binds the same keys the same way, inside its own
+        segment (``loop_symbolic_item_segment``): each header to the
+        recurrence's value of the name (``heads``, ``python:loop.recurrence``)
+        and the target to the item of the symbolic iterable
+        (``python:loop.item``).  A read in a face decides through its key;
+        the name is never read.
+
+        A destructuring target's leaves are left unbound, and so are their
+        headers (a carried leaf's header is its key): the item's unpack can
+        halt and the recurrence carries no face for that halt, so a read of
+        a leaf is refused by name (``EvaluationRefSugar._unbound``), never
+        completed past it.  A ``while`` has no runtime and no item: the
+        context is unchanged and nothing is entered."""
+        from contextlib import nullcontext
+        from functools import partial
+
+        from sugar_lift_py_tests.occurrence import entered, loop_symbolic_item_segment
+        from sugar_source_tree.nodes import Name
+
+        if runtime is None or (ctx is not None and not hasattr(ctx, "temporal")):
+            return ctx, nullcontext
+        if ctx is None:
+            from sugar_lift_py_tests.context import ReduceContext
+
+            ctx = ReduceContext.root(owner="LoopRecurrenceSugar.symbolic-item")
+        item = partial(entered, loop_symbolic_item_segment(self.target_cid))
+        pattern = runtime.target_pattern
+        named = isinstance(pattern.target, Name)
+        target_keys = frozenset(self._target_keys(runtime).values())
+        starts = tuple(
+            SymbolicValue(head) if named or header not in target_keys else None
+            for (header, _writes, _else_writes), head in zip(
+                self._carried_evaluations(runtime), heads, strict=True
+            )
+        )
+        with item():
+            ctx = self._enter_header(runtime, ctx, starts)
+            if named:
+                coordinates = {
+                    coordinate.projection_path: coordinate
+                    for coordinate in pattern.target_coordinates
+                }
+                element = ctor(
+                    "python:loop.item",
+                    [
+                        str_const(self.target_cid),
+                        *(
+                            ()
+                            if iterable is None
+                            else (iterable.to_term(owner="LoopRecurrenceSugar"),)
+                        ),
+                    ],
+                    symbol_kind="coordinate",
+                )
+                ctx, _bindings = self._enter_target(
+                    runtime,
+                    ctx,
+                    (
+                        (
+                            pattern.target.id,
+                            coordinates[("target",)].cid,
+                            SymbolicValue(element),
+                        ),
+                    ),
+                )
+        return ctx, item
+
     def _leave_target(self, runtime, ctx, items):
         """Bind, outside every item, each target leaf's key to the last
         item's projection of it (item ``items - 1``): the value the ``else``
@@ -901,8 +985,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         names the loop does not carry (``iterable_writes``) are published
         first, under their keys: the iterable ran before every item.  Each
         name the items write that the loop does not carry is published last,
-        under its post-loop key (``_post_loop_writes``): ``items`` items ran,
-        and the ``else`` suite ran when ``else_ran``."""
+        under its post-loop key, with its write slot decided on this exit
+        (``_post_loop_writes``): ``items`` items ran, and the ``else`` suite
+        ran when ``else_ran``."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 
@@ -939,12 +1024,21 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         the loop reads the name through this key, as a function-level live
         loop's ``else`` reads its target's and header's keys bound after the
         last item (``_leave_target``, ``_enter_header``).  A name no item and
-        no ``else`` wrote binds nothing: the read after the loop is the
-        binding before it (``nodes._module_live_loop_publication``), and
-        never the name."""
+        no ``else`` wrote binds nothing.
+
+        Each name's write slot (``loop_write_slot``) is decided on the exit
+        it is published on (``BranchResultDecision``): true where the
+        post-loop key was bound here, false where it was not.  A read after
+        the loop (``nodes._module_live_loop_publication``) takes exactly
+        that arm: the post-loop key, or the binding before the loop (unbound
+        when there was none), and never the name."""
+        from sugar_lift_py_tests.floor.branch_result_coordinate import (
+            BranchResultDecision,
+        )
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
         from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+        from sugar_source_tree.binding_state import loop_write_slot
 
         posted = []
         for post_key, writes, else_writes in getattr(
@@ -963,6 +1057,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 index -= 1
             if binding is not None:
                 posted.append(ScopeRebind(evaluation_here(post_key), binding.value))
+            posted.append(
+                BranchResultDecision(
+                    loop_write_slot(post_key), binding is not None, self.site
+                )
+            )
         return tuple(posted)
 
 

@@ -96,6 +96,28 @@ def _read_arm(state, *, read_name: str, read_site, ctx) -> ExitSet:
     )
 
 
+def _decided_arm(state: GuardedProjection, ctx):
+    """The arm of ``state`` its slot selects where the reduction decided the
+    slot (``ground_branch_results``, read as ``BranchResultRefSugar`` reads
+    it), or ``None`` where it is undecided."""
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    table = getattr(ctx, "ground_branch_results", None)
+    if not isinstance(table, dict):
+        return None
+    bound = table.get(state.slot.slot_id)
+    if isinstance(bound, TrueBoolLiteralSugar):
+        return state.when_true
+    if isinstance(bound, FalseBoolLiteralSugar):
+        return state.when_false
+    return None
+
+
 def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
     if isinstance(state, Sugar):
         # The whole read: a deferred carrier is handed on as the reaching
@@ -113,6 +135,12 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
 
         _unhandled_projection(state, verb="read", name=read_name, site=read_site)
 
+    decided = _decided_arm(state, ctx)
+    if decided is not None:
+        # The reduction decided the slot on this path (a ground ``if``, a
+        # live loop's write slot: ``BranchResultDecision``): the read is that
+        # arm's, whole; the other arm is not taken here.
+        return read_binding(decided, read_name=read_name, read_site=read_site, ctx=ctx)
     guard = branch_result_guard(state.slot, read_site)
     true_face, false_face = _guarded_projection_faces(state)
     return (
