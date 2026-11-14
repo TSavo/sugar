@@ -547,7 +547,7 @@ def test_an_opaque_with_head_reads_its_assignments_key() -> None:
     head = body[-1].value
     assert isinstance(head, OpaqueObjectStateV1)
     selected = With._formal_head_with_operands(
-        FormalSelectedManagerHeadSugar("p.open", "site"), head
+        FormalSelectedManagerHeadSugar("p.open", "site", None), head
     )
     # ``q`` ran at the assignment: the ``with`` never evaluates it again.
     assert selected.operands == ()

@@ -552,6 +552,8 @@ class ExitSet(Generic[T]):
         raise_effect: Effect,
         *,
         guard: Formula,
+        site,
+        symbol: str | None = None,
         owed: tuple = _NO_OWED,
         state: object | None = None,
     ) -> "ExitSet[T]":
@@ -565,14 +567,25 @@ class ExitSet(Generic[T]):
         site-keyed ``...completes`` atom -- and halts with ``raise_effect`` (an
         ``UndeterminedRaiseEffect``) from ``state`` (none unless the producer
         holds the state the operation began from) under
-        ``complement_guard(guard)``. Both arms carry ``owed``: the debt is
-        incurred whether the operation completes or raises. Nobody assembles
-        this pair by hand.
+        ``complement_guard(guard)``. Nobody assembles this pair by hand.
+
+        What the operation does is not decided here, and the one way to say
+        so is the ``undecided`` member (reason ``unanswered``). So this
+        constructor itself attaches that debt: both arms owe
+        ``unanswered_call(symbol, site)`` -- ``site`` the operation's source
+        fragment (or its coordinate), ``symbol`` the one import table's
+        target symbol when the operation is an import-bound call, else none
+        (Q5) -- after ``owed``, what the path into the operation already
+        owed. Both arms, because the debt is incurred whether the operation
+        completes or raises. No producer can build the pair and forget it.
         """
+        from sugar_lift_py_tests.unanswered_calls import unanswered_call
+
+        debts = _owed_union(owed, (unanswered_call(symbol, site),))
         return cls(
             (
-                Completed(guard, value, owed=owed),
-                Halted(complement_guard(guard), raise_effect, state, owed=owed),
+                Completed(guard, value, owed=debts),
+                Halted(complement_guard(guard), raise_effect, state, owed=debts),
             )
         ).normalize()
 

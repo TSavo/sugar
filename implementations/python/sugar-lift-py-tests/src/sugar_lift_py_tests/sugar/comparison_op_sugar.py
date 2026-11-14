@@ -298,6 +298,7 @@ def undecided_dispatch_faces(predicate, site, op_kind: str):
             producer_node_owner=f"UndecidedCompare:{op_kind}",
         ),
         guard=completes,
+        site=site,
     )
 
 

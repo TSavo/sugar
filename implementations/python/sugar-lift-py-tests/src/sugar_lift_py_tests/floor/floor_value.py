@@ -1243,4 +1243,5 @@ def undecided_binary_faces(left, right, site, operator: str):
             producer_node_owner=f"UndecidedBinary:{operator}",
         ),
         guard=completes,
+        site=site,
     )

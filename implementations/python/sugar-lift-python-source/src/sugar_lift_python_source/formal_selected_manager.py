@@ -32,7 +32,9 @@ def mint_formal_selected_manager_ref(coordinate, head: str):
     """The opaque two-faced manager ref for one formal-rooted With head."""
     site = coordinate.wire()
     site_key = json.dumps(site, sort_keys=True) if not isinstance(site, str) else site
-    protocol = FormalSelectedManagerProtocol(head=head, site=site_key)
+    protocol = FormalSelectedManagerProtocol(
+        head=head, site=site_key, coordinate=coordinate
+    )
     # Each step completes with an opaque result or halts with an
     # UndeterminedRaiseEffect.
     semantics = ProtocolResourceSemanticsV1(

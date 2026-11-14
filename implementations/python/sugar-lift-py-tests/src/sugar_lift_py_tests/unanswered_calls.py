@@ -9,10 +9,14 @@ call with no symbol is still a member). Its ``site`` is the call's
 
 A call is left unanswered where the lifter does not have its callee: the
 two-faced call of ``UnknownCalleeCallV1.faces`` (#7585), which is also the
-call to an authenticated callee cited off the enrolled population. "Not
-bridged" is stated one way: it puts one ``UnansweredCallV1`` on the ``owed``
-slot of BOTH its arms (#7825, H4), since
-the call is incurred whether it then completes or raises. ``owed`` rides every
+call to an authenticated callee cited off the enrolled population. Every
+other operation whose raise is not decided here (an undecided operand's
+dunder, an opaque attribute or subscript, a formal-selected manager step, a
+native operation its caller left without an actual) is the same two-faced
+outcome and owes the same member. "Not decided here" is stated one way: the
+one constructor, ``ExitSet.two_faced``, puts one ``UnansweredCallV1`` on the
+``owed`` slot of BOTH its arms (#7825, H4; #7757 item 13), since the
+operation is incurred whether it then completes or raises. ``owed`` rides every
 arm rebuild by union (``ExitSet.sequence`` for a composition, ``ExitSet.union``
 / ``normalize`` for a merge), so the item reaches
 the reduction's final arms on every path that reached the call. The full scan
@@ -43,12 +47,25 @@ class UnansweredCallV1:
 
 
 def unanswered_call(symbol: str | None, site) -> UnansweredCallV1:
-    """The owed item for one unanswered call at ``site`` (a source fragment)."""
-    if site is None:
-        return UnansweredCallV1(symbol, None)
-    from sugar_lift_py_tests.caller_parameter_contract import source_coordinate
+    """The owed item for one unanswered operation at ``site``: the one mint.
 
-    return UnansweredCallV1(symbol, source_coordinate(site))
+    ``site`` is the operation's source fragment, or the
+    ``SourceFragmentCoordinateV1`` already minted for it. Anything else (no
+    site, a synthetic slot id, prose blame) names no fragment, so the item is
+    siteless: it is carried like any other and refused by name where it
+    would become a member (``tree_enumerate.unanswered_call_rows``).
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+
+    if isinstance(site, SourceFragmentCoordinateV1):
+        return UnansweredCallV1(symbol, site)
+    if hasattr(site, "line_col_span") and hasattr(site, "source_cid"):
+        from sugar_lift_py_tests.caller_parameter_contract import source_coordinate
+
+        return UnansweredCallV1(symbol, source_coordinate(site))
+    return UnansweredCallV1(symbol, None)
 
 
 def owed_calls(outcome) -> tuple[UnansweredCallV1, ...]:

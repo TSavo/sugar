@@ -211,7 +211,9 @@ class PositionalUnpackOperation:
             blame=self.blame,
             demand=demand,
         )
-        return ExitSet.two_faced(self.mint_roster(members), effect, guard=guard)
+        return ExitSet.two_faced(
+            self.mint_roster(members), effect, guard=guard, site=self.blame
+        )
 
     def _arity_mismatch_exit(self, value: Any, members: int, display: str) -> Any:
         """Named ValueError for decidable too-few / too-many (same door as name unpack)."""
