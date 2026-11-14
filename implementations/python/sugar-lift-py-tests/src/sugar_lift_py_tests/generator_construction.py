@@ -152,14 +152,26 @@ class YieldAssignStepV1:
       store the statement's own sugar is: ``store`` is that store with its
       value read through ``store_evaluation``, the statement's evaluation key
       (``KeyedStoreSugar`` for a keyed place), which the resume binds the
-      value under first.
+      value under first;
+    * a statement whose targets include a store beside Names (``a = o.x =
+      ...``, ``a, o.x = ...``) is its own sugar too (``ChainedAssignSugar``,
+      ``DynamicUnpackStoreAssignSugar``) with the value read through
+      ``store_evaluation``; ``targets`` are then the Names that sugar binds,
+      read out of the context its completed face leaves;
+    * ``xs[i] = ...`` on a decided list/dict/set (substitution's
+      ``ContainerMutationStatement``) is the statement's mutation
+      (``ContainerMutationStatementSugar``) with the stored value read through
+      ``store_evaluation``; the ``(post-state, result)`` pair it binds under
+      the statement's key (``store_keeps``) is what every later read of the
+      receiver reads.
 
     ``targets`` is ``(name, evaluation)`` per bound Name: ``evaluation`` is the
     key the assignment's evaluation binds that Name under (``Assign
     .target_evaluations``; a projection of the statement's evaluation for an
     unpack), None only for a body that was never substituted, whose reads are
-    name reads.  ``occurrence`` is the statement's fragment (the unpack's
-    blame).
+    name reads.  ``store_keeps`` are the keys, bound to no Name, that the
+    store binds and a later read reads.  ``occurrence`` is the statement's
+    fragment (the unpack's blame).
 
     After a delegation the value is the delegate's return value
     (``StopIteration.value``): the yield-from step completes with it as the
@@ -174,6 +186,7 @@ class YieldAssignStepV1:
     occurrence: object = field(default=None, compare=False, repr=False)
     store: object = field(default=None, compare=False, repr=False)
     store_evaluation: str | None = None
+    store_keeps: tuple[str, ...] = ()
 
     def resume_step(self) -> "_ResumeAssignStepV1":
         return _ResumeAssignStepV1(
@@ -183,6 +196,7 @@ class YieldAssignStepV1:
             self.occurrence,
             store=self.store,
             store_evaluation=self.store_evaluation,
+            store_keeps=self.store_keeps,
         )
 
 
@@ -198,6 +212,7 @@ class _ResumeAssignStepV1:
     occurrence: object = field(default=None, compare=False, repr=False)
     store: object = field(default=None, compare=False, repr=False)
     store_evaluation: str | None = None
+    store_keeps: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -949,6 +964,8 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
         }
         if step.store_evaluation is not None:
             row["storeEvaluation"] = step.store_evaluation
+        if step.store_keeps:
+            row["storeKeeps"] = list(step.store_keeps)
         return row
     if isinstance(step, _ResumeAssignStepV1):
         row = {
@@ -959,6 +976,8 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
         }
         if step.store_evaluation is not None:
             row["storeEvaluation"] = step.store_evaluation
+        if step.store_keeps:
+            row["storeKeeps"] = list(step.store_keeps)
         return row
     if isinstance(step, YieldFromStepV1):
         return {
@@ -1476,6 +1495,10 @@ class GeneratorConstructionV1:
         require_effect(effect)
         incoming = ExitSet.halted(effect, state=self)
         if self.cursor < len(self.steps) and isinstance(
+            self.steps[self.cursor], _YieldFromIteratorStepV1
+        ):
+            return self._throw_into_delegation(self.steps[self.cursor], effect)
+        if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], ExceptArmsStepV1
         ):
             return self._throw_into_except_arms(self.steps[self.cursor], effect)
@@ -1506,6 +1529,10 @@ class GeneratorConstructionV1:
         return incoming
 
     def close(self):
+        if self.cursor < len(self.steps) and isinstance(
+            self.steps[self.cursor], _YieldFromIteratorStepV1
+        ):
+            return self._close_delegation(self.steps[self.cursor])
         if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], ExceptArmsStepV1
         ):
@@ -1543,6 +1570,105 @@ class GeneratorConstructionV1:
                 )
             )
         return GeneratorTerminationV1(None, self.binding_state)
+
+    def _past_delegation(self) -> "GeneratorConstructionV1":
+        """This frame at the step after its ``yield from``, no longer
+        suspended: where an exception the delegation raises is raised."""
+        return replace(
+            self, cursor=self.cursor + 1, suspended_resume_coordinate=None
+        )
+
+    def _throw_into_delegation(
+        self, step: "_YieldFromIteratorStepV1", effect
+    ) -> ExitSet:
+        """``gen.throw(e)`` at a ``yield from``: Python throws ``e`` into the
+        delegate.
+
+        A source generator delegate is thrown into (its own ``throw``), so its
+        except arms and its ``finally`` run.  Each of its faces is this
+        frame's: a halt (``e`` unhandled, or what its arms or cleanup raised)
+        is raised in this frame at the delegation, so this frame's own
+        ``finally`` still runs; a yield is this frame's yield, still
+        delegating; a return completes the delegation with its value
+        (``_delegation_returned``).  An iterator delegate has no ``throw``:
+        ``e`` is raised in this frame at the delegation.
+        """
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+        from sugar_lift_py_tests.outcome.exit_set import Halted
+        from sugar_source_tree.panic import SugarNotWritten
+
+        after = self._past_delegation()
+        delegate = step.iterator
+        if not isinstance(delegate, GeneratorConstructionV1):
+            return after.throw(effect)
+        resume_coordinate = f"{self.instance_coordinate}:resume:{self.cursor + 1}"
+        routed = []
+        for face in delegate.throw(effect).exits:
+            if isinstance(face, Halted):
+                routed.append(_guard_exits(after.throw(face.effect), face))
+                continue
+            value = face.value
+            if isinstance(value, YieldEffect):
+                runtime = replace(step, iterator=value.machine, started=True)
+                machine = replace(
+                    self._spliced((runtime,)),
+                    suspended_resume_coordinate=resume_coordinate,
+                )
+                onward = YieldEffect(value.value, resume_coordinate, machine)
+            elif isinstance(value, GeneratorTerminationV1):
+                returned = value.return_value
+                onward = self._delegation_returned(
+                    NoneValue() if returned is None else returned, "throw"
+                )
+            else:
+                onward = self._gap(
+                    "throw",
+                    "yield from: the delegate's throw completed as "
+                    f"{type(value).__name__}",
+                )
+            if isinstance(onward, GeneratorTransitionGapV1):
+                raise SugarNotWritten(
+                    owner="GeneratorConstructionV1.throw",
+                    blame=step.occurrence,
+                    observed=onward.observed,
+                    requested=onward.requested,
+                    fix="construct the frame's transition after the delegate's throw",
+                )
+            routed.append(_guard_exits(_as_exit_set(onward), face))
+        return _routed_union(routed)
+
+    def _close_delegation(self, step: "_YieldFromIteratorStepV1"):
+        """``gen.close()`` at a ``yield from``: Python closes the delegate
+        first (its except arms and its ``finally`` run), then raises
+        ``GeneratorExit`` in this frame at the delegation, so this frame's own
+        cleanup runs.  A halt of the delegate's close is raised in this frame
+        there instead.  An iterator delegate has no ``close`` to run."""
+        from sugar_lift_py_tests.outcome.exit_set import Halted
+
+        after = self._past_delegation()
+        delegate = step.iterator
+        if not isinstance(delegate, GeneratorConstructionV1):
+            return after.close()
+        closed = delegate.close()
+        if isinstance(closed, GeneratorTransitionGapV1):
+            return closed
+        if isinstance(closed, GeneratorTerminationV1):
+            return after.close()
+        if not isinstance(closed, ExitSet):
+            return self._gap(
+                "close",
+                f"yield from: the delegate's close returned {type(closed).__name__}",
+            )
+        routed = []
+        for face in closed.exits:
+            if isinstance(face, Halted):
+                onward = after.throw(face.effect)
+            else:
+                onward = after.close()
+            if isinstance(onward, GeneratorTransitionGapV1):
+                return onward
+            routed.append(_guard_exits(_as_exit_set(onward), face))
+        return _routed_union(routed)
 
     def _arms_decided_miss(self, step: "ExceptArmsStepV1", exception_name: str):
         from sugar_lift_py_tests.authenticated_exception_matching import (
@@ -1660,12 +1786,7 @@ class GeneratorConstructionV1:
                     requested="an arm that falls through, raises, or returns",
                     fix="construct the arm's exit or keep the throw loud",
                 )
-        if not routed:
-            return ExitSet(())
-        result = routed[0]
-        for part in routed[1:]:
-            result = result.union(part)
-        return result.normalize()
+        return _routed_union(routed)
 
     def _transition(self, requested: str):
         if self.cursor >= len(self.steps):
@@ -2074,13 +2195,20 @@ class GeneratorConstructionV1:
         A store target (``o.x = yield v``, ``d[k] = yield v``) binds the value
         under the statement's evaluation key and runs the statement's store,
         which reads it there (``YieldAssignStepV1.store``): a keyed place's
-        later read reads that key; the store's halt halts here.
+        later read reads that key; the store's halt halts here.  The store is
+        reduced as the one-statement block it is, and what it bound that a
+        later read reads (the Names of a chain or an unpack beside a store,
+        a container mutation's pair) is read out of the context its completed
+        face leaves (``_kept_store_bindings``).
 
         After a ``yield from`` the value is the delegate's return value, which
         the yield-from step completed with as the frame's resume value
         (``_delegation_returned``); ``_sent_value`` reads both the same way.
         """
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
         from sugar_source_tree.panic import SugarNotWritten
 
         names = ", ".join(name for name, _evaluation in step.targets)
@@ -2093,7 +2221,9 @@ class GeneratorConstructionV1:
             )
             bound = replace(self, binding_state=(*self.binding_state, stored))
             try:
-                outcome = step.store.desugar(bound._guard_evaluation_context())
+                outcome = reduce_block_to_exitset(
+                    (step.store,), bound._guard_evaluation_context()
+                )
             except SugarNotWritten as exc:
                 return self._gap(requested, str(exc.observed))
             if not isinstance(outcome, ExitSet):
@@ -2101,12 +2231,23 @@ class GeneratorConstructionV1:
                     requested,
                     f"store = yield: store returned {type(outcome).__name__}",
                 )
+
+            def keep(machine, value):
+                return machine._kept_store_bindings(step, value, requested)
+
             if outcome.completed_value() is None or outcome.owed_items():
                 # A halt, or an undecided receiver's two store faces: the
                 # halted face leaves the machine here, the completed face
                 # resumes past the statement.
-                return bound._transition_term_exitset(step, outcome, requested)
-            return replace(bound, cursor=self.cursor + 1)._transition(requested)
+                return bound._transition_term_exitset(
+                    step, outcome, requested, keep=keep
+                )
+            kept = keep(
+                replace(bound, cursor=self.cursor + 1), outcome.completed_value()
+            )
+            if isinstance(kept, GeneratorTransitionGapV1):
+                return kept
+            return kept._transition(requested)
         if step.unpack is None:
             members = tuple((name, sent) for name, _evaluation in step.targets)
         else:
@@ -2148,6 +2289,40 @@ class GeneratorConstructionV1:
             binding_state=(*self.binding_state, *bindings),
         )
         return machine._transition(requested)
+
+    def _kept_store_bindings(self, step: _ResumeAssignStepV1, value, requested: str):
+        """This machine with what a yield assignment's store bound that a
+        later read reads: each Name the statement binds (``step.targets``,
+        under its key) and each key bound to no Name (``step.store_keeps``: a
+        container mutation's pair), read out of the context the store's
+        completed face (a ``_ReducedBlock``) leaves, as the next statement of
+        a block reads it.  A key that context does not hold is refused here:
+        the store never bound it, and a later read would read nothing."""
+        keeps = (*step.targets, *((None, key) for key in step.store_keeps))
+        if not keeps:
+            return self
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+
+        temporal = getattr(getattr(value, "context", None), "temporal", None)
+        if temporal is None:
+            return self._gap(
+                requested,
+                "store = yield: the store left no context to read its bindings from",
+            )
+        bindings = []
+        for name, key in keeps:
+            bound = temporal.value_if_bound(
+                name if key is None else evaluation_here(key)
+            )
+            if bound is None:
+                return self._gap(
+                    requested,
+                    f"store = yield: the store did not bind {key or name}",
+                )
+            bindings.append(
+                GeneratorAssignBindingV1(name, bound, step.fragment_cid, evaluation=key)
+            )
+        return replace(self, binding_state=(*self.binding_state, *bindings))
 
     def _transition_yield_from(self, step: YieldFromStepV1, requested: str):
         from sugar_lift_py_tests.operations import IteratorOperation
@@ -2618,7 +2793,7 @@ class GeneratorConstructionV1:
         return result.normalize()
 
 
-    def _transition_term_exitset(self, step, outcome, requested: str):
+    def _transition_term_exitset(self, step, outcome, requested: str, keep=None):
         """An expression statement whose value is two-faced (may complete or raise).
 
         A halted face leaves the machine HERE: its pre-halt state is this
@@ -2627,6 +2802,10 @@ class GeneratorConstructionV1:
         statement under that face's guard. Returning the call's own ExitSet
         would hand its value (a call result) to the consumer as if it were the
         machine's next transition.
+
+        ``keep(machine, value)``, when given, is what the advanced machine
+        keeps of that face's value (a yield assignment's store bindings,
+        ``_kept_store_bindings``): the machine, or a gap that refuses the face.
         """
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
@@ -2648,7 +2827,13 @@ class GeneratorConstructionV1:
             def continue_term(value):
                 # Each completed arm records only the walrus binds it carries.
                 recorded, _presented = machine._recording_walrus_binds(value)
-                result = recorded._transition(requested)
+                if keep is not None:
+                    recorded = keep(recorded, value)
+                result = (
+                    recorded
+                    if isinstance(recorded, GeneratorTransitionGapV1)
+                    else recorded._transition(requested)
+                )
                 if isinstance(result, GeneratorTransitionGapV1):
                     raise SugarNotWritten(
                         owner="GeneratorConstructionV1.transition",
@@ -3272,6 +3457,24 @@ def _guard_exits(exit_set: ExitSet, face) -> ExitSet:
     return ExitSet((face,)).sequence(
         lambda _value: exit_set, consume=lambda _halt: exit_set
     )
+
+
+def _as_exit_set(transition) -> ExitSet:
+    """A machine transition (a yield, a termination, or already its exits)
+    as exits."""
+    return transition if isinstance(transition, ExitSet) else ExitSet.completed(
+        transition
+    )
+
+
+def _routed_union(routed: list) -> ExitSet:
+    """The union of the exits a throw routed, face by face (none: no exit)."""
+    if not routed:
+        return ExitSet(())
+    result = routed[0]
+    for part in routed[1:]:
+        result = result.union(part)
+    return result.normalize()
 
 
 def _halts_with_a_raise(value) -> bool:

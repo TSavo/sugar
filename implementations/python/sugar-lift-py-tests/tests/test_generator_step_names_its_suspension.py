@@ -78,6 +78,9 @@ def test_an_opaque_step_states_whether_it_holds_a_suspension(
         "def g():\n    (a, (b, c)) = yield 1\n    return a\n",
         "def g(o):\n    o.x = yield 1\n    return o\n",
         "def g(d, k):\n    d[k] = yield 1\n    return d\n",
+        "def g(o):\n    a = o.x = yield 1\n    return a\n",
+        "def g(o):\n    a, o.x = yield 1\n    return a\n",
+        "def g():\n    (a, (b, *c)) = yield 1\n    return c\n",
     ),
 )
 def test_a_yield_assignment_is_a_named_step(tmp_path, source) -> None:
