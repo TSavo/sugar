@@ -1571,12 +1571,13 @@ def _graph_is_off_population(
     enrolled distribution that fails authentication is a defect, kept loud by
     the caller).
 
-    ROSTER-ONLY LAW (plan Cut 1). The population is what the measurement
-    DECLARES (``enrolled_population_roster``): the corpus distribution plus
-    any extra authenticated source population -- ``pytest``, ``numpy``, and
-    the stdlib under its own graph name ``cpython-stdlib`` -- optionally one
-    module at a time (``cpython-stdlib:contextlib``). Nothing is refused by
-    kind any more; stdlib used to be refused unconditionally, which is why
+    POPULATION FOLLOWS IMPORTS. The population is the corpus distribution,
+    every top-level module the opened code imports (``session.imported_modules``,
+    read from the one import table), and whatever the measurement declares
+    (``enrolled_population_roster``). No package name is listed in code.
+    An import admits only an authenticated graph's module: ``graph=None``
+    stays cited unless a distribution-level entry names it. Nothing is
+    refused by kind; stdlib used to be refused unconditionally, which is why
     every ``pytest.raises`` / ``nullcontext`` / ``open`` on the 2026-09-05
     board was cited or gapped and ``cmResolutions.constructed`` was 0.
 
@@ -1599,7 +1600,12 @@ def _graph_is_off_population(
     name = getattr(graph, "distribution_name", None)
     if name is None:
         return False
-    return not population_admits(session.enrolled_distributions, name, module_name)
+    return not population_admits(
+        session.enrolled_distributions,
+        name,
+        module_name,
+        session.imported_modules,
+    )
 
 
 def _off_population_materialize_gap(

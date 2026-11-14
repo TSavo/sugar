@@ -116,21 +116,14 @@ ENROLLED_POPULATIONS_ENV = "SUGAR_ENROLLED_POPULATIONS"
 
 _POPULATION_ENTRY = re.compile(r"^[A-Za-z0-9_.\-]+(:[A-Za-z_][A-Za-z0-9_]*)?$")
 
-# Standing extras this lifter always enrolls with the corpus distribution.
-# Declared here, never inferred from imports. Module-scoped so one stdlib
-# module can be admitted without opening the rest. ``SUGAR_ENROLLED_POPULATIONS``
-# may still add further entries.
-STANDING_EXTRA_POPULATIONS: frozenset[str] = frozenset({"cpython-stdlib:contextlib", "numpy"})
-
-
 def declared_extra_populations() -> frozenset[str]:
     """The extra authenticated source populations this measurement enrolls.
 
-    Declared, never inferred. The standing set always includes
-    ``cpython-stdlib:contextlib`` so ``nullcontext`` can be derived from its
-    source, and ``numpy`` so ``errstate`` can be derived from its source plus
-    the language-owned ContextVar floor. ``SUGAR_ENROLLED_POPULATIONS`` is a comma list that may add more
-    entries. An entry is a distribution name as its dependency graph spells
+    No package name is hard-coded here: what the code imports enrolls itself
+    (``SourceUnit.imported_modules``, read from the one import table, and
+    ``population_admits``'s ``imported``). ``SUGAR_ENROLLED_POPULATIONS`` is a
+    comma list that may add more entries. An entry is a distribution name as
+    its dependency graph spells
     it (``pytest``, ``numpy``, ``cpython-stdlib``) or a module-scoped form
     ``<distribution>:<top-level module>`` (``cpython-stdlib:contextlib``)
     that enrolls one module of a distribution so a population can be widened
@@ -144,7 +137,7 @@ def declared_extra_populations() -> frozenset[str]:
                 f"{ENROLLED_POPULATIONS_ENV} entry {entry!r} is not a distribution "
                 "name or '<distribution>:<module>'"
             )
-    return STANDING_EXTRA_POPULATIONS | entries
+    return entries
 
 
 def enrolled_population_roster(distribution: str) -> frozenset[str]:
@@ -154,15 +147,22 @@ def enrolled_population_roster(distribution: str) -> frozenset[str]:
     return frozenset({distribution}) | declared_extra_populations()
 
 
-def population_admits(roster: frozenset[str], name: str, module_name: str | None) -> bool:
+def population_admits(
+    roster: frozenset[str],
+    name: str,
+    module_name: str | None,
+    imported: frozenset[str] = frozenset(),
+) -> bool:
     """True when ``name`` (a graph's distribution name) is enrolled for this
-    module: by distribution, or by a module-scoped entry naming its top-level
-    module. ``None`` module means only a distribution-level entry admits."""
+    module: by distribution, by a module-scoped entry naming its top-level
+    module, or because the code imports that top-level module (``imported``,
+    from the one import table). ``None`` module means only a
+    distribution-level entry admits."""
     if name in roster:
         return True
     if module_name:
         top = module_name.split(".", 1)[0]
-        return f"{name}:{top}" in roster
+        return f"{name}:{top}" in roster or top in imported
     return False
 
 
@@ -316,6 +316,7 @@ class SourceResolutionSession:
     __slots__ = (
         "enabled",
         "enrolled_distributions",
+        "imported_modules",
         "export_resolutions",
         "export_terminals",
         "frame_results",
@@ -347,6 +348,10 @@ class SourceResolutionSession:
         # MaterializeModule. An empty set is authoritative emptiness; there is
         # no unknown/None state that can silently admit every distribution.
         self.enrolled_distributions = enrolled_distributions
+        # Top-level modules the opened code imports, read from the one import
+        # table (``SourceUnit.imported_modules``). Each open contributes its
+        # own; a module the code imports is in the population.
+        self.imported_modules: frozenset[str] = frozenset()
         # (distribution_artifact_cid, module_name, exported_name) -> pure-entry
         # resolution (includes module-structural reexport warrants; no path
         # import_binding_cid).
