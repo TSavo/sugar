@@ -15,7 +15,7 @@ from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralS
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
 from frame_fresh import fresh
-from test_builtin_container_mutation import _only_return
+from test_builtin_container_mutation import _only_return, _returns
 
 
 def _undecided(value):
@@ -87,6 +87,79 @@ def test_two_appended_displays_are_not_one_object(tmp_path):
         "    return r[0] is r[1]\n"
     )
     assert _undecided(_only_return(tmp_path, source))
+
+
+# -- A builtin constructor over a container makes a new object (#7757) ------
+#
+# ``dict(d)`` handed back ``d`` itself: ``e = dict(d)`` named the same object
+# as ``d``, so ``e is d`` could not be decided False.  CPython allocates a
+# new dict and copies the entries (shallow).  ``tuple(t)`` of an exact tuple
+# is the one constructor CPython answers with its operand itself.
+
+_COPIED = "def f(x):\n    d = {'a': x}\n    e = dict(d)\n"
+
+
+def test_a_dict_copy_is_not_the_dict(tmp_path):
+    (value,) = _returns(tmp_path, _COPIED + "    return e is d\n")[0]
+    assert type(value) is FalseBoolLiteralSugar
+
+
+def test_a_store_into_a_dict_copy_leaves_the_dict(tmp_path):
+    from sugar_lift_py_tests.floor import DictValue, StringValue
+
+    (value,) = _returns(tmp_path, _COPIED + "    e['k'] = 1\n    return d\n")[0]
+    assert type(value) is DictValue
+    assert [key for key, _ in value.entries] == [StringValue("a")]
+
+
+def test_a_tuple_of_a_tuple_is_the_tuple(tmp_path):
+    source = "def f(x):\n    t = (x, 1)\n    return tuple(t) is t\n"
+    (value,) = _returns(tmp_path, source)[0]
+    assert type(value) is PredicateValue
+    left, right = value.formula.args
+    assert left == right
+
+
+def _construct(operation_name, source):
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.floor.builtin_semantic_callable import (
+        BuiltinSemanticCallable,
+    )
+
+    callable_ = BuiltinSemanticCallable(operation_name)
+    operation = SimpleNamespace(
+        arguments=(source,), keyword_names=(), site="construct-site"
+    )
+    if operation_name == "python.dict.construct":
+        return callable_._construct_dict(operation)
+    return callable_._construct_tuple(operation)
+
+
+def test_dict_of_a_current_dict_is_a_new_object_made_at_the_call():
+    from sugar_lift_py_tests.floor import DictValue, StringValue, TermValue
+
+    entries = ((StringValue("k"), TermValue(1)),)
+    d = DictValue(entries, allocation="display-site")
+    made = _construct("python.dict.construct", d).completed_value()
+    assert made is not d
+    assert type(made) is DictValue
+    assert made.entries == entries
+    assert made.allocation == "construct-site"
+
+
+def test_dict_of_a_stale_dict_makes_nothing_current():
+    from sugar_lift_py_tests.floor import DictValue, StringValue, TermValue
+
+    stale = DictValue(((StringValue("k"), TermValue(1)),), allocation=None)
+    assert _construct("python.dict.construct", stale) is None
+
+
+def test_tuple_of_an_exact_tuple_is_the_same_object():
+    from sugar_lift_py_tests.floor import TermValue, TupleValue
+
+    t = TupleValue((TermValue(1),))
+    assert _construct("python.tuple.construct", t).completed_value() is t
 
 
 def test_a_formal_after_its_own_mutation_is_itself(tmp_path):

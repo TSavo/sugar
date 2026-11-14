@@ -445,6 +445,8 @@ class BuiltinSemanticCallable(FloorValue):
             # Its members are not its contents now: not iterated here.
             return None
         if isinstance(source, TupleValue):
+            # CPython's ``tuple(t)`` hands back an exact tuple itself
+            # (``PySequence_Tuple``): the same object, not a copy.
             return ExitSet.completed(source)
         if isinstance(source, (ListValue, SetValue)):
             return ExitSet.completed(TupleValue(tuple(source.elements)))
@@ -483,7 +485,12 @@ class BuiltinSemanticCallable(FloorValue):
         unhashable key raises ``TypeError``; a repeated key keeps its first
         position and takes the last value.  Reached only when the operand is
         not ground (a key or value known only by its type): a ground operand
-        is the cited fold's (``_ground_call``)."""
+        is the cited fold's (``_ground_call``).
+
+        ``dict(d)`` over a dict is a new dict, never ``d`` itself: CPython's
+        ``dict_new`` allocates and copies ``d``'s entries (shallow, the same
+        key and value objects, in ``d``'s order).  ``e = dict(d); e['k'] = 1``
+        leaves ``d`` as it was, and ``dict(d) is d`` is False."""
         from sugar_lift_py_tests.floor import (
             BytesValue,
             DictValue,
@@ -500,7 +507,10 @@ class BuiltinSemanticCallable(FloorValue):
             TrueBoolLiteralSugar,
         )
 
-        from sugar_lift_py_tests.floor.object_identity import contents_stale
+        from sugar_lift_py_tests.floor.object_identity import (
+            contents_stale,
+            made_if_current,
+        )
 
         if operation.keyword_names or len(operation.arguments) != 1:
             return None
@@ -509,7 +519,13 @@ class BuiltinSemanticCallable(FloorValue):
             # Its members are not its contents now: not iterated here.
             return None
         if isinstance(source, DictValue):
-            return ExitSet.completed(source)
+            # A new dict made by this call, holding ``source``'s entries.
+            return ExitSet.completed(
+                DictValue(
+                    tuple(source.entries),
+                    allocation=made_if_current(operation.site, source),
+                )
+            )
         if not isinstance(source, (ListValue, TupleValue)):
             return None
         owner = "python.dict.construct"
