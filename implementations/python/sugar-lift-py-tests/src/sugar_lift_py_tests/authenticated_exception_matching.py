@@ -343,7 +343,7 @@ def warning_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
     """
     import re
 
-    from sugar_lift_py_tests.ir import atomic, str_const
+    from sugar_lift_py_tests.ir import and_, atomic, str_const
     from sugar_source_tree.panic import SugarNotWritten
 
     identity_projection = getattr(expected, "exception_type_identity", None)
@@ -357,10 +357,31 @@ def warning_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
             requested="two source-authenticated warning category coordinates",
             fix="construct category identity at the producer; never match warning spelling",
         )
+    retained_identity = None
     if expected_identity != observed_identity:
-        return MatchDecided(False)
+        if _is_canonical_class_identity(
+            expected_identity
+        ) and _is_canonical_class_identity(observed_identity):
+            return MatchDecided(False)
+        # An ``import`` coordinate names a path to a class, and two paths can
+        # reach the same one: whether they do is the defining proof's to
+        # state, so the question is retained, never decided a miss.
+        retained_identity = atomic(
+            "adt.is_python_type", [observed_identity, expected_identity]
+        )
+
+    def _conjoin(verdict):
+        """Fold the open identity half, if any, into the message half."""
+        if retained_identity is None:
+            return verdict
+        if isinstance(verdict, MatchDecided):
+            if not verdict.value:
+                return MatchDecided(False)
+            return MatchRetained(retained_identity)
+        return MatchRetained(and_([retained_identity, verdict.obligation]))
+
     if pattern is None:
-        return MatchDecided(True)
+        return _conjoin(MatchDecided(True))
 
     owner = "authenticated_exception_matching.warning_effect_message_verdict"
     pattern_term = pattern.to_term(owner=owner)
@@ -376,5 +397,9 @@ def warning_effect_message_verdict(effect, expected, pattern) -> MessageVerdict:
     message_term = str_const(message)
     ground_pattern = _ground_string(pattern_term)
     if ground_pattern is not None:
-        return MatchDecided(re.search(ground_pattern, message) is not None)
-    return MatchRetained(atomic("py.re_search", [pattern_term, message_term]))
+        return _conjoin(
+            MatchDecided(re.search(ground_pattern, message) is not None)
+        )
+    return _conjoin(
+        MatchRetained(atomic("py.re_search", [pattern_term, message_term]))
+    )

@@ -154,12 +154,15 @@ def test_exception_type_identity_lying_arms_stay_loud():
     )
     assert _sf.unit.exception_type_identity(name) is None
 
-    # Non-builtins import is not a closed exception identity.
+    # A non-builtins import names its target symbol, never the builtin its
+    # spelling shares (#7757).
     _sf, name = _raise_name(
         "from elsewhere import TypeError\ndef A():\n    raise TypeError\n",
         "TypeError",
     )
-    assert _sf.unit.exception_type_identity(name) is None
+    identity = _sf.unit.exception_type_identity(name)
+    assert identity.args[0].value == "import"
+    assert identity.args[1].value == "elsewhere.TypeError"
 
     # Ambiguous: two module-level bindings for the same name.
     _sf, name = _raise_name(

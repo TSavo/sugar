@@ -804,10 +804,10 @@ class _Pass:
     def _provider_gate(
         self, node: Statement, before: State, body_out: State, joined: State
     ) -> State:
-        """Record the closed optional-provider gate ``try: import m`` /
-        ``except ImportError`` in ``joined``.
+        """Record the closed optional-provider gate ``try: import m`` (or
+        ``try: from m import X``) / ``except ImportError`` in ``joined``.
 
-        A name an ``import`` statement in the try body binds, unbound before
+        A name an ``import`` or ``from ... import`` statement in the try body binds, unbound before
         the ``try``, whose every handler catches ``ImportError`` and leaves
         the name as it found it: after the handlers join, it reaches as that
         import or as unbound because the provider is absent.  That unbound
@@ -821,10 +821,16 @@ class _Pass:
             return joined
         gated = dict(joined)
         for statement in node.body:
-            if statement.kind != "Import":
+            if statement.kind not in ("Import", "ImportFrom"):
                 continue
             for alias in statement.names:
-                local = alias.asname or alias.name.split(".")[0]
+                if alias.name == "*":
+                    continue
+                local = alias.asname or (
+                    alias.name.split(".")[0]
+                    if statement.kind == "Import"
+                    else alias.name
+                )
                 if before.get(local, frozenset({_UNBOUND})) != frozenset({_UNBOUND}):
                     continue
                 bound = body_out.get(local, frozenset())

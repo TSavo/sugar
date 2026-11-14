@@ -242,7 +242,7 @@ def test_reassigned_local_import_head_has_no_exception_identity(tmp_path):
         for node in tree.nodes()
         if node.kind == "Attribute" and node.attr == "ArrowNotImplementedError"
     )
-    assert tree.root.unit.imported_exception_type_identity(expected) is None
+    assert tree.root.unit.exception_type_identity(expected) is None
 
 
 def _pinned_pandas_root() -> Path:

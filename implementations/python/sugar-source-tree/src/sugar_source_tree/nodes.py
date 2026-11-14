@@ -126,6 +126,10 @@ _MODULE_STATEMENT_STATES = object()
 # (``SourceUnit.module_bindings_at``): the reader cites it by name and never
 # reads the name in its place.
 UNDECIDED_MODULE_BINDING = object()
+# An exception class a star import the lifter cannot read may bind
+# (``SourceUnit._exception_type_binding``): its identity is cited undecided
+# by name, never answered.
+UNDECIDED_EXCEPTION_CLASS = object()
 _MISSING = object()
 
 # Names the interpreter binds without a source binding: the module attributes
@@ -1019,8 +1023,8 @@ def exception_type_identity_of_symbol(target_symbol: str):
     """The exception-class coordinate a target symbol names (#7757).
 
     ``python:exception_type_identity("import", "<module>.<name>")``: the one
-    speller of it. A consumer's import door mints it for an import-bound type
-    operand (``SourceUnit.imported_exception_type_identity``), and the module
+    speller of it. A consumer's one exception-class lookup mints it for an
+    import-bound type operand (``SourceUnit.exception_type_identity``), and the module
     that defines the class mints the same coordinate for the facts its proof
     states about that class (``SourceUnit.exception_class_ancestry``), so the
     two meet at prove by the target symbol.
@@ -1045,8 +1049,8 @@ def exception_type_identity_of_import_target(target_symbol: str):
     import alias: qualification does not create a new exception class, and
     only the language's closed exception vocabulary testifies for that
     namespace (an unknown member is not a foreign exception: ``None``). Any
-    other target is ``exception_type_identity_of_symbol``. Read by the import
-    door (``SourceUnit.imported_exception_type_identity``) and by a package
+    other target is ``exception_type_identity_of_symbol``. Read by the one
+    exception-class lookup (``SourceUnit.exception_type_identity``) and by a package
     that re-exports a name (``SourceUnit.exception_class_ancestry``).
     """
     qualified = (
@@ -3399,33 +3403,74 @@ class SourceUnit:
             fix="produce assignment targets from the Python assignment grammar",
         )
 
-    def exception_type_identity(self, node: "Name"):
-        """Return the authenticated exception-class coordinate reaching ``node``.
+    def exception_type_identity(self, node: "Expression"):
+        """The identity of the exception class ``node`` names (#7757).
 
-        This is deliberately lexical and closed: the Python builtin vocabulary,
-        an exact ``from builtins import ...`` binding, or one source class
-        definition.  Ambiguous, reassigned, parameter, and computed bindings
-        have no identity coordinate and therefore stay loud at the consumer.
+        The one lookup every reader of an exception class in ``raise``,
+        ``except``, ``except*``, an expected-exception operand
+        (``pytest.raises``) and a warning category goes through
+        (``_exception_type_binding``): the binding the read reaches at its
+        own position, never its spelling.
 
-        Structural authority is the already-materialized typed Module plus the
-        unit's CPython ``symtable`` (function scope flags). No second parse.
+        - an import-bound ``Name`` or static ``Name.attr...`` chain: the one
+          import table's row (``import_reference_of``), provider-gated rows
+          included (``try: from m import E`` / ``except ImportError``, a
+          ``pytest.importorskip`` head): an exception-type identity is read
+          only where the name is bound.  The identity is the target symbol
+          (``exception_type_identity_of_import_target``): a builtin keeps its
+          builtin identity through ``from builtins import ValueError``;
+          anything else is ``python:exception_type_identity("import",
+          "<module>.<name>")``, answered only from the imported proof (step
+          3), never refused for not being local;
+        - a ``Name`` that falls through to the builtin namespace nothing in
+          the source rebinds (``builtin_reference_at``);
+        - a ``Name`` bound to one module ``class`` statement
+          (``module_definition_at``): its ``source-class`` coordinate.
 
-        Reads the binding at the read (the one import table,
-        ``builtin_reference_at``, ``module_definition_at``: the same door as
-        ``source_allocation_definition_for_call``) and memoizes by name+span — a full ``module.walk()`` per Raise was ~12ms
-        on pandas asserters and dominated Body.If → Raise exclusive heat.
+        A ``Name`` a star import the lifter cannot read may bind is the one
+        undecided citation: refused by name, never answered.  Any other
+        binding (a parameter, a reassigned or computed name, any other
+        expression) names no exception class: ``None``.
         """
-        from sugar_lift_py_tests.ir import ctor, str_const
-        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
-            BUILTIN_EXCEPTION_NAMES,
-        )
+        identity = self._exception_type_binding(node)
+        if identity is UNDECIDED_EXCEPTION_CLASS:
+            raise SugarNotWritten(
+                blame=node.fragment,
+                owner="SourceUnit.exception_type_identity",
+                observed=(
+                    f"exception class `{node.id}` is undecided: a star import "
+                    "the lifter cannot read may bind it"
+                ),
+                requested="the binding the read of the exception class reaches",
+                fix=(
+                    "read the star-imported module's names; never answer the "
+                    "class in its place"
+                ),
+            )
+        return identity
 
+    def _exception_type_binding(self, node: "Expression"):
+        """``exception_type_identity``'s answer, with the star-import case as
+        ``UNDECIDED_EXCEPTION_CLASS`` instead of its citation: a reader that
+        only collects what the source testifies to (an ancestry walk) states
+        nothing for it.  Memoized by the reference's span and spelling -- a
+        full ``module.walk()`` per Raise was ~12ms on pandas asserters."""
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        link = node
+        path: list[str] = []
+        while isinstance(link, Attribute):
+            path.append(link.attr)
+            link = link.value
+        if not isinstance(link, Name):
+            return None
         self._require_typed_module(
             "SourceUnit.exception_type_identity", blame=node.fragment
         )
         span = node.line_col_span()
         cache_key = (
-            node.id,
+            link.id,
+            tuple(path),
             span.start_line,
             span.start_col,
             span.end_line,
@@ -3435,88 +3480,34 @@ class SourceUnit:
         if cache_key in cache:
             return cache[cache_key]
 
-        result = self._compute_exception_type_identity(
-            node, span, BUILTIN_EXCEPTION_NAMES, ctor, str_const
-        )
-        cache[cache_key] = result
-        return result
-
-    def imported_exception_type_identity(self, node: "Expression"):
-        """Return the closed coordinate of an import-bound dotted type operand.
-
-        The context-manager contract authenticates the operand's role as an
-        exception type.  This method authenticates only its source identity:
-        the whole reference, head and static Attribute links, must have its
-        row in the one import reference table (#7837, #7851).  A shadowed,
-        computed, or ambiguous head has no row and stays loud.
-
-        The table records optional-provider bindings with their gate fact
-        (``name = pytest.importorskip("mod")``; ``try: import mod`` /
-        ``except ImportError:`` that leaves ``mod`` unbound on the handler
-        path).  An exception-type identity is read only where the name is
-        bound, so this reader admits the try-import gate.
-
-        Language-owned builtins keep their builtin identity even through an
-        import alias: qualification does not create a new exception class.
-        Other coordinates name the import target path, without inventing MRO
-        or ClassValue ancestry when defining source is absent from the seat.
-        """
-        link = node
-        while isinstance(link, Attribute):
-            link = link.value
-        if not isinstance(link, Name):
-            return None
         # The target symbol is the table's; it is never rebuilt here.
         target = self.import_reference_of(node, admit_provider_gate=True)
-        if target is None:
-            return None
-        return exception_type_identity_of_import_target(target)
-
-    def _compute_exception_type_identity(
-        self, node: "Name", span, builtin_names, ctor, str_const
-    ):
-        """The identity of the binding the read ``node`` reaches at ``span``,
-        never of its spelling: the one import table's row (``from builtins
-        import ValueError as VE``), the builtin namespace nothing in the
-        source rebinds (``builtin_reference_at``), or the one module ``class``
-        statement the read reaches (``module_definition_at``).  Any other
-        binding has no identity."""
-        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
-            canonical_builtin_exception_name,
-        )
-
-        def builtin_identity(name):
-            return ctor(
-                "python:exception_type_identity",
-                [
-                    str_const("builtins"),
-                    str_const(canonical_builtin_exception_name(name)),
-                ],
-            )
-
-        builtins_prefix = "python:builtins."
-        target = self.import_reference_target(
-            (span.start_line, span.start_col, span.end_line, span.end_col)
-        )
-        if target is None:
+        if target is None and isinstance(node, Name):
             target = self.builtin_reference_at(node.id, span)
         if target is not None:
-            if not target.startswith(builtins_prefix):
-                return None
-            member = target[len(builtins_prefix) :]
-            return builtin_identity(member) if member in builtin_names else None
-        definition = self.module_definition_at(node.id, span)
-        if isinstance(definition, ClassDef):
-            lc = definition.line_col_span()
-            coordinate = (
-                f"{self.source_cid}:{lc.start_line}:{lc.start_col}:"
-                f"{lc.end_line}:{lc.end_col}"
-            )
-            return ctor(
-                "python:exception_type_identity",
-                [str_const("source-class"), str_const(coordinate)],
-            )
-        return None
+            result = exception_type_identity_of_import_target(target)
+        elif not isinstance(node, Name):
+            result = None
+        else:
+            definition = self.module_definition_at(node.id, span)
+            if isinstance(definition, ClassDef):
+                lc = definition.line_col_span()
+                coordinate = (
+                    f"{self.source_cid}:{lc.start_line}:{lc.start_col}:"
+                    f"{lc.end_line}:{lc.end_col}"
+                )
+                result = ctor(
+                    "python:exception_type_identity",
+                    [str_const("source-class"), str_const(coordinate)],
+                )
+            elif "*" in self._module_name_rows()[
+                0
+            ] and self._read_falls_through_the_source(node.id, span):
+                result = UNDECIDED_EXCEPTION_CLASS
+            else:
+                result = None
+        cache[cache_key] = result
+        return result
 
     def _builtin_exception_ancestry(self, identity):
         """Python's own ancestry for a ``builtins`` exception identity.
@@ -3553,14 +3544,18 @@ class SourceUnit:
             pending.extend(BUILTIN_EXCEPTION_BASES[name])
         return tuple(ancestry)
 
-    def exception_type_mro(self, node: "Name"):
+    def exception_type_mro(self, node: "Expression"):
         """Return the source-authenticated ancestry known for ``node``.
 
         Builtin identities carry Python's OWN hierarchy, transported from
         ``BUILTIN_EXCEPTION_BASES`` — the language states that ``ValueError``
         is an ``Exception``, so the ancestry is cited, never assumed. Source
-        class identities carry every lexically resolved base coordinate. A
-        computed base or cycle leaves the testimony unavailable, never guessed.
+        class identities carry every base coordinate the class statement the
+        read reaches (``module_definition_at``) testifies to, walked through
+        the one lookup (``_exception_type_binding``). An imported class's
+        ancestry is its defining proof's to state (step 9): ``None`` here, as
+        for a computed, imported, undecided or cyclic base -- the testimony is
+        unavailable, never guessed.
         """
         identity = self.exception_type_identity(node)
         if identity is None:
@@ -3568,40 +3563,26 @@ class SourceUnit:
         builtin_ancestry = self._builtin_exception_ancestry(identity)
         if builtin_ancestry is not None:
             return builtin_ancestry
-        module = self._require_typed_module(
-            "SourceUnit.exception_type_mro", blame=node.fragment
-        )
-        definitions = [
-            statement
-            for statement in module.body
-            if statement.kind == "ClassDef" and statement.name == node.id
-        ]
-        if len(definitions) != 1:
-            # No unique lexical definition: the ancestry is UNKNOWN. The old
-            # ``(identity,)`` was the positive claim "no ancestors", which the
-            # matcher read as a decided miss against every handler but the
-            # class itself.
+        if getattr(identity.args[0], "value", None) != "source-class":
             return None
 
         result = [identity]
-        visiting: set[str] = set()
+        visiting: set[int] = set()
 
         def append_definition(definition) -> bool:
             # The ancestry is testimony only when it is CLOSED: every base is
             # either a builtin exception (whose own ancestry the language
-            # table states) or a unique module-level source class walked in
-            # turn. Anything else -- a dotted or imported base, a computed
-            # base, a base without a unique definition, a cycle -- leaves the
-            # whole ancestry unavailable, never a truncated prefix that a
-            # membership test would read as a decided miss.
-            if definition.name in visiting:
+            # table states) or a module source class walked in turn. Anything
+            # else -- an imported base, a computed base, an undecided base, a
+            # cycle -- leaves the whole ancestry unavailable, never a
+            # truncated prefix that a membership test would read as a decided
+            # miss.
+            if id(definition) in visiting:
                 return False
-            visiting.add(definition.name)
+            visiting.add(id(definition))
             for base in definition.bases:
-                if not isinstance(base, Name):
-                    return False
-                base_identity = self.exception_type_identity(base)
-                if base_identity is None:
+                base_identity = self._exception_type_binding(base)
+                if base_identity is None or base_identity is UNDECIDED_EXCEPTION_CLASS:
                     return False
                 builtin_ancestry = self._builtin_exception_ancestry(base_identity)
                 if builtin_ancestry is not None:
@@ -3609,21 +3590,24 @@ class SourceUnit:
                         if ancestor not in result:
                             result.append(ancestor)
                     continue
+                if getattr(base_identity.args[0], "value", None) != "source-class":
+                    return False
                 if base_identity not in result:
                     result.append(base_identity)
-                base_definitions = [
-                    candidate
-                    for candidate in module.body
-                    if candidate.kind == "ClassDef" and candidate.name == base.id
-                ]
-                if len(base_definitions) != 1 or not append_definition(
-                    base_definitions[0]
+                if not append_definition(
+                    self.module_definition_at(base.id, base.line_col_span())
                 ):
                     return False
-            visiting.remove(definition.name)
+            visiting.remove(id(definition))
             return True
 
-        return tuple(result) if append_definition(definitions[0]) else None
+        return (
+            tuple(result)
+            if append_definition(
+                self.module_definition_at(node.id, node.line_col_span())
+            )
+            else None
+        )
 
     def exception_class_ancestry(self):
         """The exception classes this module defines, with their ancestry (#7757).
@@ -3707,14 +3691,10 @@ class SourceUnit:
                     ancestors.append(identity)
 
             for base in definition.bases:
-                identity = None
-                if isinstance(base, Name):
-                    identity = self.exception_type_identity(base)
-                    if identity is None:
-                        identity = self.imported_exception_type_identity(base)
-                elif isinstance(base, Attribute):
-                    identity = self.imported_exception_type_identity(base)
-                if identity is None:
+                # The one lookup; a base a star import may bind is undecided
+                # and, like any base nothing testifies to, states nothing.
+                identity = self._exception_type_binding(base)
+                if identity is None or identity is UNDECIDED_EXCEPTION_CLASS:
                     continue
                 kind = getattr(identity.args[0], "value", None)
                 if kind == "builtins":
@@ -3802,26 +3782,43 @@ class SourceUnit:
                 )
         return tuple(stated)
 
-    def exception_class_value(self, node: "Name"):
-        """Project one source-authenticated exception identity into one class graph."""
+    def exception_class_value(self, node: "Expression", _visiting=frozenset()):
+        """The class value of the exception class ``node`` names, by its one
+        identity (``exception_type_identity``):
+
+        - a builtin exception class: the language's own class value;
+        - an imported class: the class its target symbol names
+          (``_import_bound_exception_floor``, the one speller of it), whose
+          ancestry its defining proof states (step 9) -- never refused for
+          not being local;
+        - a source class: the class statement the read reaches
+          (``module_definition_at``), with each base's class value in turn.
+
+        A read that names no exception class binding, and a base graph that
+        is computed or cyclic, refuse by name.
+        """
         from sugar_lift_py_tests.floor import BlockValue
         from sugar_lift_py_tests.floor.local_exception_class_value import (
             LocalExceptionClassValue,
         )
-        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
+            _import_bound_exception_floor,
+        )
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
-            BUILTIN_EXCEPTION_NAMES,
             builtin_name_temporal,
         )
 
         identity = self.exception_type_identity(node)
-        mro = self.exception_type_mro(node)
-        if identity is None or mro is None:
+        if identity is None or identity in _visiting:
             raise SugarNotWritten(
                 blame=node.fragment,
                 owner="SourceUnit.exception_class_value",
-                observed="exception class lacks a closed authenticated base graph",
-                requested="source-authenticated ClassValue ancestry",
+                observed=(
+                    "exception class base graph is cyclic"
+                    if identity is not None
+                    else "the read names no exception class binding"
+                ),
+                requested="a builtin, imported or source exception class",
                 fix="keep computed, cyclic, or opaque exception ancestry loud",
             )
         cache = self.exception_class_values
@@ -3829,37 +3826,22 @@ class SourceUnit:
         if cached is not None:
             return cached
 
-        for builtin_name in BUILTIN_EXCEPTION_NAMES:
-            builtin_identity = ctor(
-                "python:exception_type_identity",
-                [str_const("builtins"), str_const(builtin_name)],
+        kind = getattr(identity.args[0], "value", None)
+        if kind == "builtins":
+            value = builtin_name_temporal().value_for(identity.args[1].value)
+        elif kind == "import":
+            value = _import_bound_exception_floor(identity)
+        else:
+            definition = self.module_definition_at(node.id, node.line_col_span())
+            visiting = _visiting | {identity}
+            value = LocalExceptionClassValue(
+                name=definition.name,
+                bases=tuple(
+                    self.exception_class_value(base, visiting)
+                    for base in definition.bases
+                ),
+                record=BlockValue(()),
             )
-            if identity == builtin_identity:
-                value = builtin_name_temporal().value_for(builtin_name)
-                cache[identity] = value
-                return value
-
-        module = self._require_typed_module(
-            "SourceUnit.exception_class_value", blame=node.fragment
-        )
-        definitions = [
-            statement
-            for statement in module.body
-            if statement.kind == "ClassDef" and statement.name == node.id
-        ]
-        if len(definitions) != 1:
-            raise SugarNotWritten(
-                blame=node.fragment,
-                owner="SourceUnit.exception_class_value",
-                observed="authenticated identity has no unique source class",
-                requested="one lexical exception class definition",
-                fix="keep ambiguous exception ancestry loud",
-            )
-        definition = definitions[0]
-        bases = tuple(self.exception_class_value(base) for base in definition.bases)
-        value = LocalExceptionClassValue(
-            name=definition.name, bases=bases, record=BlockValue(())
-        )
         cache[identity] = value
         return value
 
@@ -15040,28 +15022,17 @@ class With(Statement):
                         )
                     ),
                 )
-            if not isinstance(node, (Name, Attribute)):
-                return sugar
-            identity = (
-                self.unit.exception_type_identity(node)
-                if isinstance(node, Name)
-                else self.unit.imported_exception_type_identity(node)
-            )
+            # The one lookup at the operand's position: a local class, a
+            # builtin exception class, or an imported symbol (identified by
+            # its target symbol, never refused for not being local).
+            identity = self.unit.exception_type_identity(node)
             if identity is None:
                 return sugar
-            class_value = None
-            if isinstance(node, Attribute):
-                from sugar_lift_py_tests.floor.exception_class_value import (
-                    ExceptionClassValue,
-                )
-
-                qualified = getattr(identity.args[1], "value", None)
-                if isinstance(qualified, str) and qualified:
-                    class_value = ExceptionClassValue(qualified)
-            elif isinstance(node, Name):
-                class_value = self.unit.exception_class_value(node)
             return AuthenticatedExceptionTypeSugar(
-                sugar, identity, site=node.fragment, class_value=class_value
+                sugar,
+                identity,
+                site=node.fragment,
+                class_value=self.unit.exception_class_value(node),
             )
 
         if actual_location is None:
@@ -15503,18 +15474,8 @@ class Raise(Statement):
                 role="construction",
                 site=where,
             ):
-                if isinstance(type_operand, Name):
-                    identity = self.unit.exception_type_identity(type_operand)
-                    if identity is None:
-                        identity = self.unit.imported_exception_type_identity(
-                            type_operand
-                        )
-                        mro = self.unit._builtin_exception_ancestry(identity)
-                    else:
-                        mro = self.unit.exception_type_mro(type_operand)
-                else:
-                    identity = self.unit.imported_exception_type_identity(type_operand)
-                    mro = self.unit._builtin_exception_ancestry(identity)
+                identity = self.unit.exception_type_identity(type_operand)
+                mro = self.unit.exception_type_mro(type_operand)
 
         with reduction_span(sugar="Raise.exc.sugar", role="construction", site=where):
             exception_sugar = self.exc.sugar()
@@ -15529,21 +15490,13 @@ class Raise(Statement):
                 exception_type_mro=mro,
             )
         elif identity is not None:
-            class_value = None
-            if isinstance(type_operand, Attribute):
-                from sugar_lift_py_tests.floor.exception_class_value import (
-                    ExceptionClassValue,
-                )
-
-                qualified = getattr(identity.args[1], "value", None)
-                if isinstance(qualified, str) and qualified:
-                    class_value = ExceptionClassValue(qualified)
+            # An imported class's value is the one its identity names
+            # (``AuthenticatedExceptionTypeSugar.desugar``), Name or chain alike.
             exception_sugar = AuthenticatedExceptionTypeSugar(
                 exception_sugar,
                 identity,
                 mro,
                 self.exc.fragment,
-                class_value=class_value,
             )
 
         return RaiseSugar(
@@ -15976,7 +15929,7 @@ class Try(Statement):
         node = statement.exc
         if isinstance(node, Call):
             node = node.func
-        if not isinstance(node, Name):
+        if not isinstance(node, (Name, Attribute)):
             return None
         return (
             self.unit.exception_type_identity(node),
@@ -16121,7 +16074,7 @@ class Try(Statement):
             else (handler.type_,)
         )
         for node in nodes:
-            if not isinstance(node, Name):
+            if not isinstance(node, (Name, Attribute)):
                 continue
             handler_identity = self.unit.exception_type_identity(node)
             if handler_identity is None:
@@ -16167,8 +16120,12 @@ class Try(Statement):
             if isinstance(handler.type_, Tuple_)
             else (handler.type_,)
         )
+        from sugar_lift_py_tests.authenticated_exception_matching import (
+            _is_canonical_class_identity,
+        )
+
         for node in nodes:
-            if not isinstance(node, Name):
+            if not isinstance(node, (Name, Attribute)):
                 # An unresolved handler operand may name the raised class.
                 return True
             handler_identity = self.unit.exception_type_identity(node)
@@ -16179,6 +16136,11 @@ class Try(Statement):
                 return True
             if handler_identity in exception_mro:
                 return True
+            if not _is_canonical_class_identity(handler_identity):
+                # An imported class is named by its target symbol, a path
+                # that may alias any class in the raised ancestry; its
+                # defining proof decides (step 9). Not a miss: may match.
+                return True
         return False
 
     def _unconditional_raise_testimony(self, statements):
@@ -16187,7 +16149,7 @@ class Try(Statement):
                 node = statement.exc
                 if isinstance(node, Call):
                     node = node.func
-                if not isinstance(node, Name):
+                if not isinstance(node, (Name, Attribute)):
                     return (None, None)
                 return (
                     self.unit.exception_type_identity(node),
@@ -16362,23 +16324,18 @@ class Try(Statement):
             if not type_nodes:
                 return None  # empty tuple: no honest matcher
             for type_node in type_nodes:
-                # A bare Name authenticates through the lexical builtin/source
-                # vocabulary; a dotted import-bound type (``except re.error``)
-                # authenticates through the same closed import identity used for
-                # ``raise re.error(...)`` operands.  Only a head that is neither
-                # -- a computed, shadowed, or instance-attribute except type --
-                # stays loud.
-                class_value = None
-                if isinstance(type_node, Name):
-                    identity = self.unit.exception_type_identity(type_node)
-                    mro = (
-                        self.unit.exception_type_mro(type_node)
-                        if identity is not None
-                        else None
-                    )
-                else:
-                    identity = self.unit.imported_exception_type_identity(type_node)
-                    mro = None
+                # The one lookup at the arm type's position, the same one
+                # ``raise`` operands go through: a local class, a builtin
+                # exception class, or an imported symbol (``except E`` under
+                # ``from m import E``, ``except re.error``) by its target
+                # symbol.  Only a type that is none of them -- a computed,
+                # shadowed, or instance-attribute except type -- stays loud.
+                identity = self.unit.exception_type_identity(type_node)
+                mro = (
+                    self.unit.exception_type_mro(type_node)
+                    if identity is not None
+                    else None
+                )
                 if identity is None and type_node.kind == "Call":
                     # ``except tuple(types):`` -- a computed arm, read when a
                     # raise reaches it (ComputedExceptionTypeSugar).
@@ -16408,19 +16365,8 @@ class Try(Statement):
                     AuthenticatedExceptionTypeSugar,
                 )
 
-                if not isinstance(type_node, Name):
-                    # Seal the import-bound dotted head as an exception class
-                    # value, exactly as the Raise-operand door does, so the
-                    # handler carries a concrete class rather than a bare
-                    # module-attribute floor.
-                    from sugar_lift_py_tests.floor.exception_class_value import (
-                        ExceptionClassValue,
-                    )
-
-                    qualified = getattr(identity.args[1], "value", None)
-                    if isinstance(qualified, str) and qualified:
-                        class_value = ExceptionClassValue(qualified)
-
+                # An imported class's value is the one its identity names
+                # (``AuthenticatedExceptionTypeSugar.desugar``).
                 handler_specs.append(
                     (
                         AuthenticatedExceptionTypeSugar(
@@ -16428,7 +16374,6 @@ class Try(Statement):
                             identity,
                             mro,
                             type_node.fragment,
-                            class_value=class_value,
                         ),
                         body_sugars,
                         slot_id,
@@ -20461,8 +20406,8 @@ class Call(Expression):
         operand position comes from CPython's own fixed ``warnings.warn``
         signature, not from a vendor convention.
 
-        An operand that is not a bare ``Name``, or a ``Name`` with no closed
-        class identity, is left exactly as constructed: the call then stays an
+        An operand the one lookup (``SourceUnit.exception_type_identity``)
+        names no exception class for is left exactly as constructed: the call then stays an
         ordinary unresolved call site and the consuming boundary reports it as
         an unresolved warning producer. Absent identity is never inferred.
         """
@@ -20484,7 +20429,7 @@ class Call(Expression):
                 if keyword.arg == WARNING_CATEGORY_PARAMETER_NAME:
                     actual, location = keyword.value, ("keyword", keyword.arg)
                     break
-        if not isinstance(actual, Name):
+        if not isinstance(actual, (Name, Attribute)):
             return args_sugar, keyword_sugars
         identity = self.unit.exception_type_identity(actual)
         if identity is None:
