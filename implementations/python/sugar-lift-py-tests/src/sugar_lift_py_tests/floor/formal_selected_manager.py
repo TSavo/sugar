@@ -64,9 +64,11 @@ class FormalSelectedSlotResultValue(FloorValue):
         """Truth is the undecided ``py.truthy`` of this exact opaque result."""
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(PredicateValue(py_truthy(self.to_term(owner="truth")), site))
+        return ExitSet.completed(
+            PredicateValue(py_truthy(self.to_term(owner="truth")), site)
+        )
 
 
 def _sugar_base():
@@ -93,11 +95,11 @@ class FormalSelectedManagerHeadSugar(_sugar_base()):
         return ()
 
     def desugar(self, ctx=None):
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         value = FormalSelectedManagerValue(self.head, self.site)
         if not self.operands:
-            return Complete(value)
+            return ExitSet.completed(value)
         outcome = FormalSelectedManagerProtocol(self.head, self.site)._two_faced(
             "select", None
         )
@@ -105,7 +107,7 @@ class FormalSelectedManagerHeadSugar(_sugar_base()):
             outcome = outcome.and_then(
                 lambda _previous, operand=operand: operand.desugar(ctx)
             )
-        return outcome.and_then(lambda _last: Complete(value))
+        return outcome.and_then(lambda _last: ExitSet.completed(value))
 
 
 @dataclass(frozen=True)

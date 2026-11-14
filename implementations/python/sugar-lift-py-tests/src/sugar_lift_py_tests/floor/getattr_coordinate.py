@@ -19,11 +19,11 @@ from __future__ import annotations
 
 
 def getattr_coordinate(value, name: str, *, owner: str):
-    """``Complete(SymbolicValue(py.getattr(<value term>, "<name>")))``."""
+    """``ExitSet.completed(SymbolicValue(py.getattr(<value term>, "<name>")))``."""
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.ir import ctor, str_const
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    return Complete(
+    return ExitSet.completed(
         SymbolicValue(ctor("py.getattr", [value.to_term(owner=owner), str_const(name)]))
     )

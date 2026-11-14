@@ -36,9 +36,9 @@ class ScopeRebind(FloorValue):
 
     def as_expression_statement(self):
         # The rebind IS the statement outcome -- scope rides; contribution is empty.
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self)
+        return ExitSet.completed(self)
 
     def to_term(self, *, owner: str):
         # Rebind holds the folded result; project that value's nested term.
@@ -67,9 +67,9 @@ class ScopeRebinds(FloorValue):
         return replace(ctx, temporal=temporal)
 
     def as_expression_statement(self):
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self)
+        return ExitSet.completed(self)
 
 
 @dataclass(frozen=True)

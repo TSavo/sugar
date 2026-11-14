@@ -90,7 +90,8 @@ class MutableGlobalValue(FloorValue):
         halted_face, completed_face = partition(
             ("mutable-global-dict-subscript", _occurrence_key(site))
         )
-        completed = self.py_subscript_coordinate(index, site).value
+        coordinate = self.py_subscript_coordinate(index, site)
+        completed = coordinate.completed_value()
         effect = ground_raise_effect(
             exception_name="KeyError",
             site=site,
@@ -103,6 +104,7 @@ class MutableGlobalValue(FloorValue):
                     complement_guard(raises),
                     completed,
                     frozenset({completed_face}),
+                    coordinate.owed_items(),
                 ),
             )
         ).normalize()
@@ -125,9 +127,9 @@ class MutableGlobalValue(FloorValue):
 
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 atomic(
                     "py.in",

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from sugar_lift_py_tests.outcome import Outcome
+    from sugar_lift_py_tests.outcome import ExitSet
 
 
 def _builtin_exception_identity(exception_name: str):
@@ -138,7 +138,7 @@ def ground_raise_effect(*, exception_name: str, site, owner: str, raised_value=N
     )
 
 
-def ground_exceptional_exit(*, exception_name: str, site, owner: str) -> Outcome:
+def ground_exceptional_exit(*, exception_name: str, site, owner: str) -> ExitSet:
     """The whole ground exit: a halt with the cited effect.
 
     A raise is never a completion.  The effect carries the exception value it
@@ -147,9 +147,9 @@ def ground_exceptional_exit(*, exception_name: str, site, owner: str) -> Outcome
     ``Halted`` face, with the state before it.
     """
     from sugar_lift_py_tests.floor import ExceptionValue
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    return Incomplete(
+    return ExitSet.halted(
         ground_raise_effect(
             exception_name=exception_name,
             site=site,
@@ -159,7 +159,7 @@ def ground_exceptional_exit(*, exception_name: str, site, owner: str) -> Outcome
     )
 
 
-def ground_type_error(*, site, owner: str) -> Outcome:
+def ground_type_error(*, site, owner: str) -> ExitSet:
     """Authenticated TypeError partition for a source-decided ground pair.
 
     Ground cross-type operations that Python rejects (``1 < "a"``, ``None + 1``,

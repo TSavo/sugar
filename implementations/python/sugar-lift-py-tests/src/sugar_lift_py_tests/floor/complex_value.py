@@ -28,7 +28,7 @@ class ComplexValue(FloorValue):
         from sugar_lift_py_tests.floor.python_type_coordinate import (
             authenticated_python_type_spelling,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -39,7 +39,7 @@ class ComplexValue(FloorValue):
         authenticated = authenticated_python_type_spelling(
             type_term, owner="ComplexValue.python_isinstance", site=site
         )
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if authenticated == "complex"
             else FalseBoolLiteralSugar(site=site)
@@ -47,7 +47,7 @@ class ComplexValue(FloorValue):
 
     def equals(self, other, site):
         if type(other) is ComplexValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -56,7 +56,7 @@ class ComplexValue(FloorValue):
             )
 
             matches = self.real == other.real and self.imag == other.imag
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if matches
                 else FalseBoolLiteralSugar(site=site)

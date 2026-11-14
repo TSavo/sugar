@@ -17,15 +17,15 @@ class ReceiverOwnedMutationResult(FloorValue):
         return (self,)
 
     def as_expression_statement(self):
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self)
+        return ExitSet.completed(self)
 
     def answer(self, ctx=None):
         del ctx
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self.result)
+        return ExitSet.completed(self.result)
 
     def project_operation_receiver(self, ctx, *, owner):
         del ctx, owner

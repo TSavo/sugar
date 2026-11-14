@@ -271,12 +271,12 @@ class DecoratedClassValue(FloorValue):
             and value.publication_cid == self.publication.publication_cid
             and value.publication is self.publication
         ):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         return super().test_python_type(value, site)
 
 

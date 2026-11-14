@@ -50,17 +50,17 @@ class ComprehensionValue(GuardStableValue):
         if type(self.term) is not _Ctor or self.term.name != "py.listcomp":
             return super().length(site)
 
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if self.finite_elements is not None:
             from sugar_lift_py_tests.floor.term_value import TermValue
 
-            return Complete(TermValue(len(self.finite_elements)))
+            return ExitSet.completed(TermValue(len(self.finite_elements)))
 
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
 
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="len",
                 arg_values=(self,),
@@ -80,11 +80,11 @@ class ComprehensionValue(GuardStableValue):
         testimony) is an undecided RHS -- never ``TypeError``."""
         del ctx
         from sugar_lift_py_tests.ir import _Ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         name = self.term.name if type(self.term) is _Ctor else None
         if self.finite_elements is not None and name in ("py.listcomp", "py.genexp"):
-            return Complete(tuple(self.finite_elements))
+            return ExitSet.completed(tuple(self.finite_elements))
         return _undecided_slice_rhs(operation, self)
 
     def project_sequence_with(self, operation, ctx):
@@ -115,9 +115,9 @@ class ComprehensionValue(GuardStableValue):
             if any(decision is None for decision in decisions):
                 from sugar_lift_py_tests.floor.predicate_value import PredicateValue
                 from sugar_lift_py_tests.ir import atomic
-                from sugar_lift_py_tests.outcome import Complete
+                from sugar_lift_py_tests.outcome import ExitSet
 
-                return Complete(
+                return ExitSet.completed(
                     PredicateValue(
                         atomic(
                             "py.in",
@@ -143,9 +143,9 @@ class ComprehensionValue(GuardStableValue):
             )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 atomic(
                     "py.in",
@@ -169,9 +169,9 @@ class ComprehensionValue(GuardStableValue):
         """
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(py_truthy(self.term), site, operand_callsites=())
         )
 
@@ -184,9 +184,9 @@ class ComprehensionValue(GuardStableValue):
         cardinality.
         """
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             ComprehensionValue(
                 ctor(
                     "py.list_append",
@@ -202,7 +202,7 @@ class ComprehensionValue(GuardStableValue):
     def add(self, other, site):
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if type(other) in (ComprehensionValue, ListValue):
             # Symbolic folds are constructed coordinates. Sequence concat of two
@@ -210,7 +210,7 @@ class ComprehensionValue(GuardStableValue):
             # ctor), not a RuntimeEffect that re-asks for a "genuine runtime
             # operand" while already holding the fold term.
             other_term = other.to_term(owner=str(site))
-            return Complete(
+            return ExitSet.completed(
                 ComprehensionValue(
                     ctor(
                         "+",
@@ -238,9 +238,9 @@ class ComprehensionValue(GuardStableValue):
             and _is_set_coordinate(other.term)
         ):
             from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(
+            return ExitSet.completed(
                 ComprehensionValue(ctor("py.set_difference", [self.term, other.term]))
             )
         if type(other) is CallSiteValue:
@@ -256,9 +256,9 @@ class ComprehensionValue(GuardStableValue):
             and _is_set_coordinate(other.term)
         ):
             from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(
+            return ExitSet.completed(
                 ComprehensionValue(ctor("py.set_union", [self.term, other.term]))
             )
         return super().bitwise_or(other, site)
@@ -291,11 +291,11 @@ class ComprehensionValue(GuardStableValue):
 
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import Term, ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         index_term = index.to_term(owner="ComprehensionValue.setitem index")
         value_term = value.to_term(owner="ComprehensionValue.setitem value")
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="setitem",
                 arg_values=(self, index, value),

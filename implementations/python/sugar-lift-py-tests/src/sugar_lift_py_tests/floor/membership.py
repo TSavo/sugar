@@ -158,7 +158,7 @@ def position(needle, members):
 
 
 def membership(container, item, members, *, kind, member_role, container_role, hashed, site):
-    """``item in container`` over its ``members``: the Outcome, or None when a
+    """``item in container`` over its ``members``: the ExitSet, or None when a
     pair has no floor equality (the caller keeps its own loud refusal)."""
     from sugar_lift_py_tests.floor.set_value import _bool_result
 
@@ -178,9 +178,9 @@ def membership(container, item, members, *, kind, member_role, container_role, h
     if any(decision is None for decision in decisions):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 atomic(
                     f"python.{kind}.contains",

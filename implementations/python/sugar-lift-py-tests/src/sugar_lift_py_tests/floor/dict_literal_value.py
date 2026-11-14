@@ -65,7 +65,7 @@ class DictLiteralValue(FloorValue):
 
     def subscript_with(self, operation: Any, ctx: object) -> Any:
         from sugar_lift_py_tests.floor.call_site_value import force_floor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         key_floor = force_floor(
             operation.index,
@@ -75,7 +75,7 @@ class DictLiteralValue(FloorValue):
         key_term = key_floor.to_term(owner=f"{operation.owner} dict key")
         for stored_key, stored_value in self.entries:
             if stored_key == key_term:
-                return Complete(_term_to_floor(stored_value))
+                return ExitSet.completed(_term_to_floor(stored_value))
         return _subscript_effect(
             site=operation,
             observed="DictLiteralValue[missing-key]",
@@ -87,9 +87,9 @@ def _subscript_effect(
     site,
     observed: str,
 ):
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    return Incomplete(
+    return ExitSet.halted(
         KeyErrorRuntimeEffect(
             "dict subscript runtime boundary: "
             f"{observed} has no statically matching entry. Python dictionary "

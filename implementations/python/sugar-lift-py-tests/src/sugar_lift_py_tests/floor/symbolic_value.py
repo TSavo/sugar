@@ -74,7 +74,7 @@ class SymbolicValue(FloorValue):
         reserved tester atom via the FloorValue default.
         """
         from sugar_lift_py_tests.ir import _Ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -107,7 +107,7 @@ class SymbolicValue(FloorValue):
         term = self.term
         if type(term) is _Ctor and term.name in ground_type_names:
             matches = ground_type_names[term.name] == authenticated
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if matches
                 else FalseBoolLiteralSugar(site=site)
@@ -147,13 +147,13 @@ class SymbolicValue(FloorValue):
             DynamicTypeOperandRuntimeEffect,
             runtime_effect_evidence_from_terms,
         )
-        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         operation = ctor(
             "adt.is_python_type",
             [value.to_term(owner="isinstance value"), term],
         )
-        return Incomplete(
+        return ExitSet.halted(
             DynamicTypeOperandRuntimeEffect(
                 "dynamic isinstance type operand runtime boundary: "
                 f"Python must resolve {term!r} as a type or raise TypeError; "
@@ -169,9 +169,9 @@ class SymbolicValue(FloorValue):
     def test_python_subtype(self, supertype, site):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 atomic(
                     "python.subtype",
@@ -204,9 +204,9 @@ class SymbolicValue(FloorValue):
         # A symbolic value EMITS the Python truth relation; the sort adjudicates later.
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(PredicateValue(py_truthy(self.term), site))
+        return ExitSet.completed(PredicateValue(py_truthy(self.term), site))
 
     def guarded(self, formula):
         """Keep one symbolic value coordinate unchanged beneath control.
@@ -235,7 +235,7 @@ class SymbolicValue(FloorValue):
             and len(right.args) == 1
             and type(right.args[0]) is _ConstStr
         ):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -243,7 +243,7 @@ class SymbolicValue(FloorValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if left.args[0].value == right.args[0].value
                 else FalseBoolLiteralSugar(site=site)
@@ -254,9 +254,9 @@ class SymbolicValue(FloorValue):
         # A symbolic length stays the call:len coordinate -- the vendor's stated address.
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="len",
                 arg_values=(self,),
@@ -276,9 +276,9 @@ class SymbolicValue(FloorValue):
             AppendRuntimeEffect,
             runtime_effect_evidence,
         )
-        from sugar_lift_py_tests.outcome import Incomplete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Incomplete(
+        return ExitSet.halted(
             AppendRuntimeEffect(
                 "append runtime boundary: symbolic receiver has no constructed "
                 f"list post-state; value={value.to_term(owner=str(site))!r}; "
@@ -307,9 +307,9 @@ class SymbolicValue(FloorValue):
     def absolute(self, site):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="abs",
                 arg_values=(self,),
@@ -403,7 +403,8 @@ class SymbolicValue(FloorValue):
         # during MaterializeModule of pandas files (e.g. io/json/_json.py) and
         # returned functionsTotal=0 before any function walk. Mint the same
         # native-operation ExitSet carrier formals already use; coordinates may
-        # be None. Do not invent Complete(SymbolicValue) concat (undecided-law).
+        # be None. Do not invent ExitSet.completed(SymbolicValue) concat
+        # (undecided-law).
         if operator == "+" and type(other) is StringValue:
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
@@ -419,7 +420,7 @@ class SymbolicValue(FloorValue):
             return other.map_from_left(owner, self, site)
         # Undecided native dispatch: the shared law's two faces (completes
         # under python:binary_op.completes, else an UndeterminedRaiseEffect).
-        # Never a sole Complete(SymbolicValue): that claims it cannot raise.
+        # Never a sole ExitSet.completed(SymbolicValue): that claims it cannot raise.
         refused = self._undecided_binary_law(other, site, operator)
         if refused is not None:
             return refused
@@ -499,9 +500,9 @@ class SymbolicValue(FloorValue):
         if name in {"__name__", "__qualname__"}:
             from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
             from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(
+            return ExitSet.completed(
                 CallSiteValue(
                     target_name=name,
                     arg_values=(self,),
@@ -519,7 +520,7 @@ class SymbolicValue(FloorValue):
 
     def contains(self, item, site):
         # Membership on an unknown container is a third value: neither
-        # Complete(py.in) nor TypeError is honest without container-type
+        # ExitSet.completed(py.in) nor TypeError is honest without container-type
         # testimony. Named refusal, not fabrication.
         return self.undecided_contains(item, site, owner="SymbolicValue.contains")
 
@@ -533,9 +534,9 @@ class SymbolicValue(FloorValue):
         del ctx
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="__format__",
                 arg_values=(self, spec),
@@ -569,11 +570,11 @@ class SymbolicValue(FloorValue):
         """
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         index_term = index.to_term(owner="SymbolicValue.setitem index")
         value_term = value.to_term(owner="SymbolicValue.setitem value")
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="setitem",
                 arg_values=(self, index, value),
@@ -597,10 +598,10 @@ class SymbolicValue(FloorValue):
         """
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         index_term = index.to_term(owner="SymbolicValue.delitem index")
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="delitem",
                 arg_values=(self, index),

@@ -26,12 +26,12 @@ class ReMatchValue(FloorValue):
 
     def truth(self, site):
         # A Match object is unconditionally truthy -- the presence IS the type.
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
             TrueBoolLiteralSugar,
         )
 
-        return Complete(TrueBoolLiteralSugar(site=site))
+        return ExitSet.completed(TrueBoolLiteralSugar(site=site))
 
     def group_text(self, index: int) -> str | None:
         """``match.group(index)`` as concrete text: group 0 is the whole match,

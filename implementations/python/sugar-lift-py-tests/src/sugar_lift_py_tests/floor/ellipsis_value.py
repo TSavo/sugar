@@ -19,7 +19,7 @@ class EllipsisValue(FloorValue):
         from sugar_lift_py_tests.floor.python_type_coordinate import (
             authenticated_python_type_spelling,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -30,7 +30,7 @@ class EllipsisValue(FloorValue):
         authenticated = authenticated_python_type_spelling(
             type_term, owner="EllipsisValue.python_isinstance", site=site
         )
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if authenticated == "ellipsis"
             else FalseBoolLiteralSugar(site=site)
@@ -38,32 +38,32 @@ class EllipsisValue(FloorValue):
 
     def truth(self, site):
         # Ellipsis is truthy in Python (bool(...) is True) -- unlike None.
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
             TrueBoolLiteralSugar,
         )
 
-        return Complete(TrueBoolLiteralSugar(site=site))
+        return ExitSet.completed(TrueBoolLiteralSugar(site=site))
 
     def equals(self, other, site):
         if type(other) is EllipsisValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         return super().equals(other, site)
 
     def is_identical(self, other, site):
         # Ellipsis is a singleton: `... is ...` folds True.
         if type(other) is EllipsisValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
     def setattr(self, name, value, site):

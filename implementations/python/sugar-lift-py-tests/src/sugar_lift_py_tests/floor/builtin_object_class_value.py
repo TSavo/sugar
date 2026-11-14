@@ -14,7 +14,9 @@ class BuiltinObjectClassValue(ClassValue):
             from sugar_lift_py_tests.floor.builtin_semantic_callable import (
                 BuiltinSemanticCallable,
             )
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(BuiltinSemanticCallable(operation=f"python.object.{name}"))
+            return ExitSet.completed(
+                BuiltinSemanticCallable(operation=f"python.object.{name}")
+            )
         return super().attribute(name, site)

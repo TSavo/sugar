@@ -19,7 +19,7 @@ class AsyncFunctionCallable(FunctionCallable):
         term=None,
         native_shape=None,
     ):
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         # Match FunctionCallable's proof-bearing callsite protocol so an
         # authenticated native_shape coordinate is never a bare TypeError.
@@ -33,5 +33,5 @@ class AsyncFunctionCallable(FunctionCallable):
                 term=term,
                 native_shape=native_shape,
             )
-            .and_then(lambda call: Complete(replace(call, body=None)))
+            .and_then(lambda call: ExitSet.completed(replace(call, body=None)))
         )

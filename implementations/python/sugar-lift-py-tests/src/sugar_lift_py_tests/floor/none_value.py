@@ -15,12 +15,12 @@ class NoneValue(GuardStableValue):
 
     def truth(self, site):
         # None's truth IS False -- the type again.
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
 
-        return Complete(FalseBoolLiteralSugar(site=site))
+        return ExitSet.completed(FalseBoolLiteralSugar(site=site))
 
     # Closed NoneType member inventory (CPython 3.12 ``dir(None)``).  Names
     # outside this set raise AttributeError at runtime; names inside it are
@@ -186,22 +186,22 @@ class NoneValue(GuardStableValue):
         # None stands on the equals floor only against itself. Cross-type is the
         # honest default gap until a ruling lands.
         if type(other) is NoneValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         if decided_builtin_other_than_none(other):
             # Ground vs ground FOLDS -- an emitted py.eq(None, <ground>) atom has
             # no universe constraining it and would be vacuously SAT-able; Python
             # says None equals none of these, so the fold is False.
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
 
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().equals(other, site)
 
     def _none_arithmetic_type_error(self, other, site, *, owner: str):
@@ -262,12 +262,12 @@ class NoneValue(GuardStableValue):
         # None is a singleton: None is None folds True. Against anything else,
         # emit identity -- the general case (e.g. z is None).
         if type(other) is NoneValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
     def to_term(self, *, owner: str):

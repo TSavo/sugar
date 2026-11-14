@@ -86,9 +86,9 @@ class NativeCallableValue(FloorValue):
         del ctx
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="__format__",
                 arg_values=(self, spec),

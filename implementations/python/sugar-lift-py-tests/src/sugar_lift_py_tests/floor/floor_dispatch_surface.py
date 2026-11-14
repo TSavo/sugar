@@ -14,7 +14,7 @@ if TYPE_CHECKING:
         SequenceProjectionOperation,
     )
     from sugar_lift_py_tests.operations.subscript_operation import SubscriptOperation
-    from sugar_lift_py_tests.outcome import Outcome
+    from sugar_lift_py_tests.outcome import ExitSet
 
 FLOOR_OPERATION_METHOD_NAMES = (
     "callable_application_with",
@@ -31,7 +31,7 @@ class CallableApplicationFloor(Protocol):
         self,
         operation: CallableApplication,
         ctx: ReduceContext | None,
-    ) -> Outcome: ...
+    ) -> ExitSet: ...
 
 
 class InplaceBinaryOperatorFloor(Protocol):
@@ -39,19 +39,19 @@ class InplaceBinaryOperatorFloor(Protocol):
         self,
         operation: InplaceBinaryOperatorOperation,
         ctx: ReduceContext | None,
-    ) -> Outcome: ...
+    ) -> ExitSet: ...
 
 
 class IteratorFloor(Protocol):
     def iter_with(
         self, operation: IteratorOperation, ctx: ReduceContext | None
-    ) -> Outcome: ...
+    ) -> ExitSet: ...
 
 
 class NextFloor(Protocol):
     def next_with(
         self, operation: NextOperation, ctx: ReduceContext | None
-    ) -> Outcome: ...
+    ) -> ExitSet: ...
 
 
 class SequenceProjectionFloor(Protocol):
@@ -59,13 +59,13 @@ class SequenceProjectionFloor(Protocol):
         self,
         operation: SequenceProjectionOperation,
         ctx: ReduceContext | None,
-    ) -> Outcome: ...
+    ) -> ExitSet: ...
 
 
 class SubscriptFloor(Protocol):
     def subscript_with(
         self, operation: SubscriptOperation, ctx: ReduceContext | None
-    ) -> Outcome: ...
+    ) -> ExitSet: ...
 
 
 @runtime_checkable

@@ -47,19 +47,19 @@ class GroupedExceptionValue(FloorValue):
 
         if type(other) is NoneValue:
             # A raised exception instance is never the None singleton.
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
 
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
     def attribute(self, name, site):
         if name == "split":
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(GroupedExceptionSplitMethod(self, site))
+            return ExitSet.completed(GroupedExceptionSplitMethod(self, site))
         return super().attribute(name, site)
 
     def call_method_value(
@@ -80,7 +80,7 @@ class GroupedExceptionValue(FloorValue):
     def split(self, arguments, keyword_names, site):
         from sugar_lift_py_tests.floor.none_value import NoneValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_source_tree.panic import SugarNotWritten
 
         if keyword_names or len(arguments) != 1:
@@ -98,7 +98,7 @@ class GroupedExceptionValue(FloorValue):
                 return NoneValue()
             return GroupedExceptionValue(effect, site)
 
-        return Complete(TupleValue((part(matched), part(residual))))
+        return ExitSet.completed(TupleValue((part(matched), part(residual))))
 
 
 @dataclass(frozen=True)
@@ -155,7 +155,7 @@ def _type_matches(effect, condition, site) -> bool:
     raised-type law decides only builtin exception classes by MRO membership.
     """
     from sugar_lift_py_tests.floor.manager_coordinate import RaisedExitTypeValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
     from sugar_source_tree.panic import SugarNotWritten
@@ -171,15 +171,15 @@ def _type_matches(effect, condition, site) -> bool:
     outcome = RaisedExitTypeValue(
         effect.exception_type_coordinate, effect.exception_type_mro
     ).test_python_subtype(condition, site)
-    if isinstance(outcome, Complete):
-        if isinstance(outcome.value, TrueBoolLiteralSugar):
-            return True
-        if isinstance(outcome.value, FalseBoolLiteralSugar):
-            return False
+    decided = outcome.completed_value() if isinstance(outcome, ExitSet) else None
+    if isinstance(decided, TrueBoolLiteralSugar):
+        return True
+    if isinstance(decided, FalseBoolLiteralSugar):
+        return False
     raise SugarNotWritten(
         blame=site,
         owner="GroupedExceptionValue.split",
-        observed=type(getattr(outcome, "value", outcome)).__name__,
+        observed=type(outcome if decided is None else decided).__name__,
         requested="closed true/false group-type match",
         fix="keep a symbolic split condition loud",
     )

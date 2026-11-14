@@ -64,9 +64,9 @@ class Bv32Value(FloorValue):
 
     def _binary_bitwise(self, other, site, operator):
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             Bv32Value(
                 ctor(
                     operator,

@@ -97,7 +97,7 @@ class SetValue(GuardStableValue):
 
     def truth(self, site):
         # A set's truth is nonempty.
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -105,7 +105,7 @@ class SetValue(GuardStableValue):
             TrueBoolLiteralSugar,
         )
 
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if self.elements
             else FalseBoolLiteralSugar(site=site)
@@ -116,11 +116,11 @@ class SetValue(GuardStableValue):
         # members whose equality is undecided may have collapsed.
         from sugar_lift_py_tests.floor.membership import decided_distinct
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if not decided_distinct(self.elements):
             return undecided_length(self, site)
-        return Complete(TermValue(len(self.elements)))
+        return ExitSet.completed(TermValue(len(self.elements)))
 
     def slice_assign_iterable_with(self, operation, ctx):
         """Keep runtime set iteration order loud; construction order is not it."""
@@ -169,31 +169,31 @@ class SetValue(GuardStableValue):
 
     def subtract(self, other, site):
         if type(other) is SetValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             result = _finite_difference(self.elements, other.elements)
             if result is not None:
-                return Complete(SetValue(result))
+                return ExitSet.completed(SetValue(result))
             return _symbolic_set_operation("python.set.difference", self, other, site)
         return super().subtract(other, site)
 
     def bitwise_or(self, other, site):
         if type(other) is SetValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             result = _finite_union(self.elements, other.elements)
             if result is not None:
-                return Complete(SetValue(result))
+                return ExitSet.completed(SetValue(result))
             return _symbolic_set_operation("python.set.union", self, other, site)
         return super().bitwise_or(other, site)
 
     def bitwise_and(self, other, site):
         if type(other) is SetValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             result = _finite_intersection(self.elements, other.elements)
             if result is not None:
-                return Complete(SetValue(result))
+                return ExitSet.completed(SetValue(result))
             return _symbolic_set_operation("python.set.intersection", self, other, site)
         return super().bitwise_and(other, site)
 
@@ -202,10 +202,10 @@ def undecided_length(container, site):
     """``len(container)`` as the ``call:len`` coordinate: never a count."""
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     owner = str(site)
-    return Complete(
+    return ExitSet.completed(
         CallSiteValue(
             target_name="len",
             arg_values=(container,),
@@ -285,9 +285,9 @@ def _finite_difference(left, right):
 def _symbolic_set_operation(name, left, right, site):
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    return Complete(
+    return ExitSet.completed(
         SymbolicValue(
             ctor(
                 name,
@@ -298,11 +298,11 @@ def _symbolic_set_operation(name, left, right, site):
 
 
 def _bool_result(value, site):
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
-    return Complete(
+    return ExitSet.completed(
         TrueBoolLiteralSugar(site=site) if value else FalseBoolLiteralSugar(site=site)
     )
 

@@ -82,9 +82,9 @@ class OpaqueOpCallsite(FloorValue):
         """Cite Python truth over the already-built operator coordinate."""
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 py_truthy(self.to_term(owner=str(site))),
                 site,
@@ -95,12 +95,12 @@ class OpaqueOpCallsite(FloorValue):
     def equals(self, other, site):
         from sugar_lift_py_tests.floor.equality_atom import resolve_equality_atom
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         companion = self.companion_formula(owner=str(site))
         companions = (companion,) if companion is not None else ()
         formula, bridges = resolve_equality_atom(self, other, owner=str(site))
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 formula,
                 site,
@@ -182,9 +182,9 @@ class OpaqueOpCallsite(FloorValue):
         if self.computed is not None:
             return self.computed.next_with(operation, ctx)
         del ctx, operation
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             OpaqueOpCallsite(
                 callee="next",
                 arg=self,

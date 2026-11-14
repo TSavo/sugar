@@ -75,7 +75,7 @@ class FunctionCallable(FloorValue):
         from sugar_lift_py_tests.gap.info import GapKind, GapLocus
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete, complete_value
+        from sugar_lift_py_tests.outcome import ExitSet, complete_value
 
         if source_arg_values is None:
             source_arg_values = arg_values
@@ -426,7 +426,7 @@ class FunctionCallable(FloorValue):
         # raised ModuleNotFoundError: not a panic, not a refusal, not a family the
         # census buckets. The dead branch is deleted; carrying the callable binding
         # into a dug body is a LOST capability, filed, not silently re-plumbed.
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name=self.name,
                 arg_values=bound_values,
@@ -448,7 +448,7 @@ class FunctionCallable(FloorValue):
             _reduce_callsite_body,
             force_floor,
         )
-        from sugar_lift_py_tests.outcome import Incomplete, complete_value
+        from sugar_lift_py_tests.outcome import ExitSet, complete_value
 
         def decorator_value_preserves_implementation(decorator) -> bool:
             # Recognition-era native_shape / decorator_contracts tables are gone.
@@ -543,13 +543,18 @@ class FunctionCallable(FloorValue):
                 _ctx_with_curried_args(None, applied.parameters, applied.arg_values),
                 blame=applied.target_name,
             )
-            if isinstance(result_outcome, Incomplete):
+            if (
+                isinstance(result_outcome, ExitSet)
+                and result_outcome.halts() == result_outcome.exits
+            ):
                 construction_panic_gap(
                     owner=(
                         "FunctionCallable decorator result:" f"{applied.target_name}"
                     ),
                     blame=str(site),
-                    observed=type(result_outcome.effect).__name__,
+                    observed=", ".join(
+                        type(halt.effect).__name__ for halt in result_outcome.halts()
+                    ),
                     requested="completed decorator result substitution",
                     fix=(
                         "construct the decorator body's runtime-dependent result "

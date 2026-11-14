@@ -71,7 +71,7 @@ class TupleValue(GuardStableValue):
 
     def truth(self, site):
         # A tuple's truth is nonempty.
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -79,7 +79,7 @@ class TupleValue(GuardStableValue):
             TrueBoolLiteralSugar,
         )
 
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if self.elements
             else FalseBoolLiteralSugar(site=site)
@@ -94,7 +94,7 @@ class TupleValue(GuardStableValue):
         from sugar_lift_py_tests.floor.python_type_coordinate import (
             authenticated_python_type_spelling,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -107,7 +107,7 @@ class TupleValue(GuardStableValue):
             type_term, owner="TupleValue.python_isinstance", site=site
         )
         if authenticated in {"tuple", "object"}:
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         if authenticated in {
             "list",
             "dict",
@@ -121,28 +121,28 @@ class TupleValue(GuardStableValue):
             "type",
             "NoneType",
         }:
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().python_isinstance(authenticated, type_term, site)
 
     def is_identical(self, other, site):
         from sugar_lift_py_tests.floor.none_value import NoneValue
 
         if type(other) is NoneValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
 
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
     def length(self, site):
         # A tuple knows its length: the count of reduced elements.
         del site
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(TermValue(len(self.elements)))
+        return ExitSet.completed(TermValue(len(self.elements)))
 
     def project_sequence_with(self, operation, ctx):
         """Unpack against authenticated reduced members already in hand.
@@ -156,16 +156,16 @@ class TupleValue(GuardStableValue):
         """``iter(tuple)`` → authenticated ``TupleIteratorValue`` over members."""
         del operation, ctx
         from sugar_lift_py_tests.floor.iterator_value import TupleIteratorValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(TupleIteratorValue(self.elements, index=0))
+        return ExitSet.completed(TupleIteratorValue(self.elements, index=0))
 
     def slice_assign_iterable_with(self, operation, ctx):
         """Authenticated finite members for list slice-assignment RHS."""
         del operation, ctx
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self.elements)
+        return ExitSet.completed(self.elements)
 
     @property
     def items(self) -> tuple:
@@ -208,9 +208,9 @@ class TupleValue(GuardStableValue):
 
     def add(self, other, site):
         if type(other) is TupleValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(TupleValue((*self.elements, *other.elements)))
+            return ExitSet.completed(TupleValue((*self.elements, *other.elements)))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
@@ -230,19 +230,19 @@ class TupleValue(GuardStableValue):
 
     def _collect_subtype_tests(self, subtype, site, index, predicates):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
 
         if index >= len(self.elements):
             if not predicates:
-                return Complete(FalseBoolLiteralSugar(site=site))
+                return ExitSet.completed(FalseBoolLiteralSugar(site=site))
             if len(predicates) == 1:
-                return Complete(predicates[0])
+                return ExitSet.completed(predicates[0])
             from sugar_lift_py_tests.ir import or_
 
-            return Complete(
+            return ExitSet.completed(
                 PredicateValue(
                     or_([predicate.formula for predicate in predicates]), site
                 )
@@ -255,7 +255,7 @@ class TupleValue(GuardStableValue):
 
     def _continue_subtype_test(self, subtype, site, index, predicates, result):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -264,7 +264,7 @@ class TupleValue(GuardStableValue):
         )
 
         if type(result) is TrueBoolLiteralSugar:
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         if type(result) is FalseBoolLiteralSugar:
             return self._collect_subtype_tests(subtype, site, index + 1, predicates)
         if type(result) is PredicateValue:
@@ -283,19 +283,19 @@ class TupleValue(GuardStableValue):
 
     def _collect_type_tests(self, value, site, index, predicates):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
 
         if index >= len(self.elements):
             if not predicates:
-                return Complete(FalseBoolLiteralSugar(site=site))
+                return ExitSet.completed(FalseBoolLiteralSugar(site=site))
             if len(predicates) == 1:
-                return Complete(predicates[0])
+                return ExitSet.completed(predicates[0])
             from sugar_lift_py_tests.ir import or_
 
-            return Complete(
+            return ExitSet.completed(
                 PredicateValue(
                     or_([predicate.formula for predicate in predicates]),
                     site,
@@ -319,7 +319,7 @@ class TupleValue(GuardStableValue):
 
     def _continue_type_test(self, value, site, index, predicates, result):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -328,7 +328,7 @@ class TupleValue(GuardStableValue):
         )
 
         if type(result) is TrueBoolLiteralSugar:
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         if type(result) is FalseBoolLiteralSugar:
             return self._collect_type_tests(value, site, index + 1, predicates)
         if type(result) is PredicateValue:
@@ -359,7 +359,7 @@ class TupleValue(GuardStableValue):
         # non-index is TypeError; undecided runtime semantics stay loud.
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if type(index) is SliceValue:
             bounds = (index.lower, index.upper, index.step)
@@ -381,7 +381,7 @@ class TupleValue(GuardStableValue):
                         site=site,
                         owner="TupleValue.subscript",
                     )
-                return Complete(
+                return ExitSet.completed(
                     TupleValue(tuple(self.elements[slice(lower, upper, step)]))
                 )
             return self.undecided_subscript(index, site, owner="TupleValue.subscript")
@@ -390,7 +390,7 @@ class TupleValue(GuardStableValue):
             i = index.value
             n = len(self.elements)
             if -n <= i < n:
-                return Complete(self.elements[i])
+                return ExitSet.completed(self.elements[i])
             from sugar_lift_py_tests.floor.ground_index_error import (
                 ground_index_error,
             )

@@ -3,9 +3,10 @@
 `GuardedValue._map` / `_predicate` and `PredicateValue`'s binding-join paths all
 do the same thing: take one operation, apply it to each arm of a value that is
 already split by a guard, and rejoin the per-arm answers under that guard. Every
-one of them handled `Complete` and `Incomplete` and then wrote
+one of them handled the completed and the halted arm and then asserted the
+completed one bare:
 
-    assert isinstance(true_outcome, Complete)
+    assert true_outcome.completed_value() is not None
 
 which is a bare assertion. A bare assert names no law: when it fired, the census
 recorded `AssertionError: ` with an empty message, and there was nothing in the
@@ -25,20 +26,21 @@ from __future__ import annotations
 
 SINGLE_OUTCOME_LAW = (
     "an operation distributed into a guarded arm answers with exactly one "
-    "outcome: one value (Complete) or one effect (Incomplete)"
+    "outcome: one value (one unconditional completed arm) or one effect (every "
+    "arm halts)"
 )
 
 
 def require_single_value(outcome, *, owner, blame, arm: str):
     """The arm's answer as one value, or a NAMED construction gap.
 
-    Callers must already have handled the ``Incomplete`` face (an effect IS one
-    lawful outcome). What is left that is not ``Complete`` is a partition, and it
-    is a gap.
+    Callers must already have handled the all-halted face (an effect IS one
+    lawful outcome). What is left that is not one unconditional completed arm
+    is a partition, and it is a gap.
     """
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    if isinstance(outcome, Complete):
+    if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
         return outcome
     from sugar_lift_py_tests.gap.info import GapKind
     from sugar_lift_py_tests.gap.panic import construction_panic_gap

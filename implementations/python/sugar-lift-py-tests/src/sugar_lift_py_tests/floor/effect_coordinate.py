@@ -71,9 +71,9 @@ class ExceptionInfoCoordinate(FloorValue):
 
     def attribute(self, name, site):
         if name == "value":
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(EffectCoordinate(slot_id=self.slot_id, site=site))
+            return ExitSet.completed(EffectCoordinate(slot_id=self.slot_id, site=site))
         return super().attribute(name, site)
 
 
@@ -87,12 +87,12 @@ class ObservedEffectValue(EffectCoordinate):
         if name != "__context__":
             return super().attribute(name, site)
         from sugar_lift_py_tests.effect import RaiseEffect
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         context = getattr(self.effect, "context_effect", None)
         value = getattr(context, "raised_value", None)
         if isinstance(context, RaiseEffect) and isinstance(value, FloorValue):
-            return Complete(value)
+            return ExitSet.completed(value)
         return super().attribute(name, site)
 
 
@@ -135,18 +135,18 @@ class ObservedExceptionInfoValue(ExceptionInfoCoordinate):
     def attribute(self, name, site):
         if name == "value":
             from sugar_lift_py_tests.floor.floor_value import FloorValue
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             raised = getattr(self.effect, "raised_value", None)
             if isinstance(raised, FloorValue):
-                return Complete(raised)
+                return ExitSet.completed(raised)
             return FloorValue.attribute(self, name, site)
         if name == "type":
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             typ = _language_exception_class_for_coordinate(
                 getattr(self.effect, "exception_type_coordinate", None)
             )
             if typ is not None:
-                return Complete(typ)
+                return ExitSet.completed(typ)
         return super().attribute(name, site)

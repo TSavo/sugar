@@ -268,11 +268,11 @@ class CallSiteValue(FloorValue):
         """
         del ctx
         from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_source_tree.panic import SugarNotWritten
 
         if self.body is None:
-            return Complete(self)
+            return ExitSet.completed(self)
         retained = self._retained_source_completion
         if retained is None:
             raise SugarNotWritten(
@@ -296,8 +296,8 @@ class CallSiteValue(FloorValue):
             )
         projected = _project_authenticated_source_return(retained.value)
         if isinstance(projected, BlockValue):
-            return Complete(self)
-        return Complete(projected)
+            return ExitSet.completed(self)
+        return ExitSet.completed(projected)
 
     def runtime_type_is_decided(self) -> bool:
         """Undecided: no citation fixes an unexecuted call's result type.
@@ -326,9 +326,9 @@ class CallSiteValue(FloorValue):
         """
         if name in {"__name__", "__qualname__"}:
             from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(
+            return ExitSet.completed(
                 CallSiteValue(
                     target_name=name,
                     arg_values=(self,),
@@ -348,9 +348,9 @@ class CallSiteValue(FloorValue):
             # ordinary unexecuted call still has no runtime type, so .args
             # stays a named third value rather than inventing a tuple.
             from sugar_lift_py_tests.floor.tuple_value import TupleValue
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(TupleValue(elements=self.arg_values))
+            return ExitSet.completed(TupleValue(elements=self.arg_values))
         if self.exception_type_coordinate is not None:
             # An authenticated exception instance has a decided runtime type;
             # its unprojected members (``__context__``) are not opaque-call
@@ -520,7 +520,7 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import py_truthy
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if is_lift_time_decidable(self.term):
             constructed = self._construct_decidable_truth(site)
@@ -536,7 +536,7 @@ class CallSiteValue(FloorValue):
                     "truth(); a ground coordinate cannot mint RuntimeEffect authority"
                 ),
             )
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 py_truthy(self.result_term()), site, operand_callsites=(self,)
             )
@@ -556,13 +556,13 @@ class CallSiteValue(FloorValue):
     def is_identical(self, other, site):
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.floor.none_value import NoneValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
 
         if self.target_name == "except" and isinstance(other, NoneValue):
-            return Complete(FalseBoolLiteralSugar(site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site))
         return super().is_identical(other, site)
 
     def bitwise_invert(self, site):
@@ -609,7 +609,7 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.floor.python_type_coordinate import (
             authenticated_python_type_spelling,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -622,9 +622,9 @@ class CallSiteValue(FloorValue):
             type_term, owner="CallSiteValue.python_isinstance", site=site
         )
         if authenticated in {"type", "object"}:
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         if authenticated in _CLASS_OBJECT_DISJOINT_TYPES:
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().python_isinstance(authenticated, type_term, site)
 
     def test_python_type(self, value, site):
@@ -636,9 +636,9 @@ class CallSiteValue(FloorValue):
                 CallResultTypeRuntimeEffect,
                 runtime_effect_evidence,
             )
-            from sugar_lift_py_tests.outcome import Incomplete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Incomplete(
+            return ExitSet.halted(
                 CallResultTypeRuntimeEffect(
                     "call-result type runtime boundary: "
                     f"`{self.target_name}(...)` has no cited return-type/native "
@@ -680,9 +680,9 @@ class CallSiteValue(FloorValue):
             )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             PredicateValue(
                 atomic(
                     "python.subtype",
@@ -699,9 +699,9 @@ class CallSiteValue(FloorValue):
     def length(self, site):
         # A callsite length stays the call:len coordinate over this value's term.
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="len",
                 arg_values=(self,),
@@ -719,7 +719,7 @@ class CallSiteValue(FloorValue):
     def contains(self, item, site):
         # Dig a concrete container when the body yields one; otherwise the call
         # result's container type is undecided — named refusal, never
-        # Complete(py.in) fabrication.
+        # ExitSet.completed(py.in) fabrication.
         dug = self._dig_floor_or_none(None, owner="CallSiteValue.contains")
         if dug is not None and dug is not self:
             return dug.contains(item, site)
@@ -769,16 +769,16 @@ class CallSiteValue(FloorValue):
 
         Concrete containers fold post-state. A callsite receiver has no element
         history, but the store still rebinds the name: carry prior coordinate,
-        index, and value on ``py.setitem``. Non-name receivers stay Incomplete
+        index, and value on ``py.setitem``. Non-name receivers stay halted
         at the sugar layer (``SubscriptAssignSugar._cite_update``) because no
         name exists to rebind. Do not invent members.
         """
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         index_term = index.to_term(owner="CallSiteValue.setitem index")
         value_term = value.to_term(owner="CallSiteValue.setitem value")
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="setitem",
                 arg_values=(self, index, value),
@@ -820,7 +820,7 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
-        from sugar_lift_py_tests.outcome import Complete, Incomplete, complete_value
+        from sugar_lift_py_tests.outcome import ExitSet, complete_value
 
         def is_list_floor(floor) -> bool:
             return isinstance(floor, (ListValue, ComprehensionValue))
@@ -871,7 +871,7 @@ class CallSiteValue(FloorValue):
             from sugar_lift_py_tests.ir import ctor
 
             value_term = value.to_term(owner="CallSiteValue.append_with value")
-            return Complete(
+            return ExitSet.completed(
                 CallSiteValue(
                     target_name="list.append",
                     arg_values=(prior, value),
@@ -960,7 +960,7 @@ class CallSiteValue(FloorValue):
                             floor_base = dug_base
                     if isinstance(floor_base, (ListValue, TupleValue)):
                         projected = floor_base.subscript(index, site)
-                        if isinstance(projected, Incomplete):
+                        if projected.halts() == projected.exits:
                             return None
                         element = complete_value(
                             projected, owner="CallSiteValue.append_with subscript"
@@ -1006,10 +1006,10 @@ class CallSiteValue(FloorValue):
         Do not invent members; do not hide the gap — silence stays illegal.
         """
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         index_term = index.to_term(owner="CallSiteValue.delitem index")
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="delitem",
                 arg_values=(self, index),
@@ -1113,13 +1113,15 @@ class CallSiteValue(FloorValue):
                 owner="FormatDunderCallSugar callsite receiver",
             )
             if floor is None:
-                from sugar_lift_py_tests.outcome import Complete
+                from sugar_lift_py_tests.outcome import ExitSet
 
-                return Complete(self.linear_method_call("__format__", (spec,), site))
+                return ExitSet.completed(
+                    self.linear_method_call("__format__", (spec,), site)
+                )
             return floor.format_data_model(spec, site, ctx)
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(self.linear_method_call("__format__", (spec,), site))
+        return ExitSet.completed(self.linear_method_call("__format__", (spec,), site))
 
     def names_a_string(self) -> bool:
         """Whether this callsite is known to produce a ``str`` if it completes.
@@ -1178,9 +1180,9 @@ class CallSiteValue(FloorValue):
     def named_string_concat(left, right, site):
         """Name ``str + named-string-coordinate`` without inventing the string."""
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name="__add__",
                 arg_values=(left, right),
@@ -1388,7 +1390,7 @@ class CallSiteValue(FloorValue):
     ) -> FloorValue | None:
         """Return a concrete floor when dig succeeds; None when the receiver is opaque.
 
-        Opaque (missing body, Incomplete reduce) is an EUF-join residual — not a
+        Opaque (missing body, all-halted reduce) is an EUF-join residual — not a
         panic and not a soft DigBoundary row. Budget / recursive demand still
         panics: those are non-composable, not joinable coordinates.
         """
@@ -1417,7 +1419,7 @@ class CallSiteValue(FloorValue):
             return self if preserve_opaque_leaf else None
         if len(self.parameters) != len(self.arg_values):
             return None
-        from sugar_lift_py_tests.outcome import ExitSet, Incomplete, complete_value
+        from sugar_lift_py_tests.outcome import ExitSet, complete_value
 
         reduce_ctx = _ctx_with_curried_args(
             ctx,
@@ -1471,16 +1473,19 @@ class CallSiteValue(FloorValue):
                     outcome = self.bound_source_actuals.project_native_carrier(outcome)
                 if actuals is not None:
                     outcome = outcome.discharge(actuals)
-            if isinstance(outcome, Incomplete):
+            if isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits:
                 if incomplete_outcome is not None:
                     incomplete_outcome.append(outcome)
                 return None
-            if isinstance(outcome, ExitSet):
+            if isinstance(outcome, ExitSet) and (
+                outcome.completed_value() is None or outcome.owed_items()
+            ):
                 # complete_value's written law: multi-arm store/control
                 # outcomes cannot force_floor to a single value; leave the
                 # projection absent. ``not self.matches(...)`` then stands on
                 # CallSiteValue.truth (py.truthy of the call) instead of
-                # inventing one bool for two completed predicate returns.
+                # inventing one bool for two completed predicate returns. An
+                # owing arm keeps its debt as an arm, never a bare value.
                 return None
             if isinstance(outcome, NativeOperationExitCarrierV1):
                 # An undischarged lookup is not a completed floor value.
@@ -1562,7 +1567,8 @@ class CallSiteValue(FloorValue):
                     "its body; add argument binding sugar or leave the bridge axiomatic"
                 ),
             )
-        from sugar_lift_py_tests.outcome import Incomplete, complete_value
+        from sugar_lift_py_tests.effect import effect_reason
+        from sugar_lift_py_tests.outcome import ExitSet, complete_value
 
         reduce_ctx = _ctx_with_curried_args(
             ctx,
@@ -1589,14 +1595,17 @@ class CallSiteValue(FloorValue):
             outcome = _reduce_callsite_body(
                 body, reduce_ctx, blame=self.target_name, frame=self
             )
-            if isinstance(outcome, Incomplete):
+            if isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits:
+                reason = "; ".join(
+                    effect_reason(halt.effect) for halt in outcome.halts()
+                )
                 _force_floor_gap(
                     owner=owner,
                     target_name=self.target_name,
-                    observed="Incomplete",
+                    observed="every arm halts",
                     fix=(
                         f"callsite `{self.target_name}` reduced to a runtime effect: "
-                        f"{outcome.reason}; leave the floor absent and record a DigBoundary"
+                        f"{reason}; leave the floor absent and record a DigBoundary"
                     ),
                 )
             value = complete_value(outcome, owner=owner)
@@ -1627,7 +1636,7 @@ class CallSiteValue(FloorValue):
         that body (a statement-position call splicing its field stores) reads
         it; reducing it again would replay the producer.
         """
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         retained = self._retained_source_completion
         if retained is None:
@@ -1640,7 +1649,7 @@ class CallSiteValue(FloorValue):
                 callsite=self,
                 observed="retained source completion has wrong exact type",
             )
-        return Complete(retained.value)
+        return ExitSet.completed(retained.value)
 
     def reduce_source_outcome(self, ctx: Any = None):
         """Reduce this already-constructed source body without floor projection.
@@ -1700,9 +1709,9 @@ class CallSiteValue(FloorValue):
                 observed="retained source completion already seated",
             )
         if self.body is None:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(self)
+            return ExitSet.completed(self)
 
         outcome = self.reduce_source_outcome(ctx)
         return self.project_producer_outcome(outcome, carrier_actuals=carrier_actuals)
@@ -1720,8 +1729,7 @@ class CallSiteValue(FloorValue):
         from dataclasses import replace
 
         from sugar_lift_py_tests.effect import RaiseEffect
-        from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
-        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
+        from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
         def retaining(value):
             if not isinstance(value, FloorValue):
@@ -1743,11 +1751,11 @@ class CallSiteValue(FloorValue):
                 return replace(effect, producer_node_owner="Call")
             return effect
 
-        if isinstance(outcome, Complete):
+        if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
             # A completed body seats its value on the Call.  A raise is never
             # a completion (#7821): it arrives as a halt and takes the arm
             # below, where it becomes the Call's own halted face.
-            return outcome.and_then(lambda value: Complete(retaining(value)))
+            return outcome.and_then(lambda value: ExitSet.completed(retaining(value)))
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
@@ -1764,7 +1772,7 @@ class CallSiteValue(FloorValue):
                 # and cannot discharge as a formal.
                 return outcome
             outcome = outcome.discharge(actuals)
-        exits = outcome_to_exitset(outcome)
+        exits = outcome
         return ExitSet(
             tuple(
                 (
@@ -2042,7 +2050,6 @@ def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.outcome.exit_set import (
         Completed,
         ExitSet,
@@ -2052,9 +2059,11 @@ def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"
 
     from sugar_lift_py_tests.occurrence import occurrence_key
 
-    if not isinstance(outcome, Complete):
+    value = outcome.completed_value() if isinstance(outcome, ExitSet) else None
+    if value is None:
         return outcome
-    value = outcome.value
+    # Both faces are rebuilt from the one completed arm: each owes its debts.
+    owed = outcome.owed_items()
     key = occurrence_key(site)
     subscript = ctor(
         "python:subscript",
@@ -2066,7 +2075,7 @@ def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"
     completes = atomic("python:subscript.completes", [subscript])
     return ExitSet(
         (
-            Completed(completes, value),
+            Completed(completes, value, owed=owed),
             Halted(
                 complement_guard(completes),
                 UndeterminedRaiseEffect(
@@ -2075,6 +2084,7 @@ def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"
                     producer_node_owner=producer,
                 ),
                 None,
+                owed=owed,
             ),
         )
     ).normalize()

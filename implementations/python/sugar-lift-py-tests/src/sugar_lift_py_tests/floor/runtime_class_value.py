@@ -19,13 +19,13 @@ class RuntimeClassValue(ClassValue):
     def attribute(self, name, site):
         from sugar_lift_py_tests.floor.dict_value import DictValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if name == "__dict__":
-            return Complete(DictValue(self._namespace_entries()))
+            return ExitSet.completed(DictValue(self._namespace_entries()))
         if name == "__mro__":
-            return Complete(TupleValue((self, *self.bases)))
+            return ExitSet.completed(TupleValue((self, *self.bases)))
         for key, value in reversed(self._namespace_entries()):
             if getattr(key, "value", object()) == name:
-                return Complete(value)
+                return ExitSet.completed(value)
         return super().attribute(name, site)

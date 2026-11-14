@@ -64,7 +64,7 @@ class BuiltinSemanticCallable(FloorValue):
             if operation.arguments or operation.keyword_names:
                 return super().callable_application_with(operation, None)
             from sugar_lift_py_tests.floor.builtin_super_value import BuiltinSuperValue
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             current_class = ctx.temporal.value_if_bound("__class__")
             receiver = next(
@@ -85,7 +85,7 @@ class BuiltinSemanticCallable(FloorValue):
                     requested="authenticated zero-argument super context",
                     fix="carry the defining class and bound first formal into the method body",
                 )
-            return Complete(
+            return ExitSet.completed(
                 BuiltinSuperValue(current_class=current_class, receiver=receiver)
             )
         if self.operation != "python.issubclass":
@@ -132,11 +132,11 @@ class BuiltinSemanticCallable(FloorValue):
         from sugar_lift_py_tests.call_symbol import call_symbol
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         args = operation.arguments
         owner = str(operation.site)
-        return Complete(
+        return ExitSet.completed(
             CallSiteValue(
                 target_name=name,
                 arg_values=args,
@@ -188,7 +188,7 @@ class BuiltinSemanticCallable(FloorValue):
             TermValue,
             TupleValue,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         source = operation.arguments[0]
         if isinstance(source, (ListValue, TupleValue)):
@@ -200,7 +200,7 @@ class BuiltinSemanticCallable(FloorValue):
             elements = source.finite_elements
         else:
             return super().callable_application_with(operation, None)
-        return Complete(
+        return ExitSet.completed(
             ListIteratorValue(
                 tuple(
                     TupleValue((TermValue(index), value))
@@ -230,7 +230,7 @@ class BuiltinSemanticCallable(FloorValue):
         )
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         owner = f"BuiltinSemanticCallable.{self.operation}"
         if operation.keyword_names or len(operation.arguments) != 2:
@@ -271,8 +271,8 @@ class BuiltinSemanticCallable(FloorValue):
                 fix="keep the call loud until the subset covers this pattern",
             )
         if span is None:
-            return Complete(NoneValue())
-        return Complete(ReMatchValue(subject=subject_v.value, span=span))
+            return ExitSet.completed(NoneValue())
+        return ExitSet.completed(ReMatchValue(subject=subject_v.value, span=span))
 
     def _isinstance(self, operation):
         """Exact ``isinstance(obj, classinfo)`` over authenticated floors.
@@ -334,17 +334,17 @@ class BuiltinSemanticCallable(FloorValue):
         the first unhashable one.  A member whose hash or equality the floor
         does not decide leaves the construction a dig cue."""
         from sugar_lift_py_tests.floor import DictValue, ListValue, SetValue, TupleValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if operation.keyword_names or len(operation.arguments) > 1:
             return None
         if not operation.arguments:
-            return Complete(SetValue(()))
+            return ExitSet.completed(SetValue(()))
         source = operation.arguments[0]
         if isinstance(source, DictValue):
-            return Complete(SetValue(tuple(key for key, _ in source.entries)))
+            return ExitSet.completed(SetValue(tuple(key for key, _ in source.entries)))
         if isinstance(source, SetValue):
-            return Complete(SetValue(tuple(source.elements)))
+            return ExitSet.completed(SetValue(tuple(source.elements)))
         if not isinstance(source, (ListValue, TupleValue)):
             return None
         kept = []
@@ -359,7 +359,7 @@ class BuiltinSemanticCallable(FloorValue):
                 return None
             if found < 0:
                 kept.append(member)
-        return Complete(SetValue(tuple(kept)))
+        return ExitSet.completed(SetValue(tuple(kept)))
 
     def _construct_tuple(self, operation):
         """Exact ``tuple(iterable)`` over finite authenticated containers.
@@ -376,24 +376,26 @@ class BuiltinSemanticCallable(FloorValue):
             SetValue,
             TupleValue,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if operation.keyword_names or len(operation.arguments) > 1:
             return None
         if not operation.arguments:
-            return Complete(TupleValue(()))
+            return ExitSet.completed(TupleValue(()))
         source = operation.arguments[0]
         if isinstance(source, TupleValue):
-            return Complete(source)
+            return ExitSet.completed(source)
         if isinstance(source, (ListValue, SetValue)):
-            return Complete(TupleValue(tuple(source.elements)))
+            return ExitSet.completed(TupleValue(tuple(source.elements)))
         if isinstance(source, DictValue):
-            return Complete(TupleValue(tuple(key for key, _ in source.entries)))
+            return ExitSet.completed(
+                TupleValue(tuple(key for key, _ in source.entries))
+            )
         if (
             isinstance(source, ComprehensionValue)
             and source.finite_elements is not None
         ):
-            return Complete(TupleValue(tuple(source.finite_elements)))
+            return ExitSet.completed(TupleValue(tuple(source.finite_elements)))
         if isinstance(source, ComprehensionValue):
             from sugar_lift_py_tests.context_manager_resolution import (
                 SourceFragmentCoordinateV1,
@@ -403,7 +405,7 @@ class BuiltinSemanticCallable(FloorValue):
             )
 
             if type(operation.call_occurrence) is SourceFragmentCoordinateV1:
-                return Complete(
+                return ExitSet.completed(
                     TupleCoordinateValue._from_builtin_construct(
                         source=source,
                         call_occurrence=operation.call_occurrence,
@@ -427,7 +429,7 @@ class BuiltinSemanticCallable(FloorValue):
             TermValue,
             TupleValue,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -438,10 +440,10 @@ class BuiltinSemanticCallable(FloorValue):
         if operation.keyword_names or len(operation.arguments) > 1:
             return None
         if not operation.arguments:
-            return Complete(DictValue(()))
+            return ExitSet.completed(DictValue(()))
         source = operation.arguments[0]
         if isinstance(source, DictValue):
-            return Complete(source)
+            return ExitSet.completed(source)
         if not isinstance(source, (ListValue, TupleValue)):
             return None
         owner = "python.dict.construct"
@@ -475,7 +477,7 @@ class BuiltinSemanticCallable(FloorValue):
                 values.append(value)
             else:
                 values[found] = value
-        return Complete(DictValue(tuple(zip(keys, values))))
+        return ExitSet.completed(DictValue(tuple(zip(keys, values))))
 
     def test_python_type(self, value, site):
         """Constructor builtins that are also types answer isinstance tests.

@@ -26,7 +26,7 @@ class TermValue(GuardStableValue):
         third value forces both branches and panics the multi-name join arm.
         """
         if type(other) is TermValue and type(self.value) is type(other.value):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -34,7 +34,7 @@ class TermValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if self.value == other.value
                 else FalseBoolLiteralSugar(site=site)
@@ -46,7 +46,7 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.python_type_coordinate import (
             authenticated_python_type_spelling,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -60,7 +60,7 @@ class TermValue(GuardStableValue):
         matches = (type(self.value) is int and authenticated == "int") or (
             type(self.value) is float and authenticated == "float"
         )
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if matches
             else FalseBoolLiteralSugar(site=site)
@@ -69,7 +69,7 @@ class TermValue(GuardStableValue):
     def truth(self, site):
         # Python-faithful: nonzero is True. bool(nan) is True and nan != 0 IS
         # True in Python, so the same expression is correct.
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -77,7 +77,7 @@ class TermValue(GuardStableValue):
             TrueBoolLiteralSugar,
         )
 
-        return Complete(
+        return ExitSet.completed(
             TrueBoolLiteralSugar(site=site)
             if self.value != 0
             else FalseBoolLiteralSugar(site=site)
@@ -96,12 +96,12 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.none_value import NoneValue
 
         if type(other) is NoneValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
 
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
     def _unorderable_ground_peer(self, other) -> bool:
@@ -141,9 +141,9 @@ class TermValue(GuardStableValue):
     def less_than(self, other, site):
         # A number stands on the ordering floor: two numbers fold to True/False
         # Sugar. Ground cross-type is authenticated TypeError. Undecided peers
-        # refuse named (LAW_OF_ONE — no Complete(PredicateValue) invent).
+        # refuse named (LAW_OF_ONE — no ExitSet.completed(PredicateValue) invent).
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -151,7 +151,7 @@ class TermValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if self.value < other.value
                 else FalseBoolLiteralSugar(site=site)
@@ -163,7 +163,7 @@ class TermValue(GuardStableValue):
     def less_than_from_left(self, left, site):
         """``left < self`` when the RHS is a number — Sugar fold or TypeError."""
         if type(left) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -171,7 +171,7 @@ class TermValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if left.value < self.value
                 else FalseBoolLiteralSugar(site=site)
@@ -184,7 +184,7 @@ class TermValue(GuardStableValue):
 
     def less_equal(self, other, site):
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -192,7 +192,7 @@ class TermValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if self.value <= other.value
                 else FalseBoolLiteralSugar(site=site)
@@ -203,7 +203,7 @@ class TermValue(GuardStableValue):
 
     def greater_than(self, other, site):
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -211,7 +211,7 @@ class TermValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if self.value > other.value
                 else FalseBoolLiteralSugar(site=site)
@@ -224,7 +224,7 @@ class TermValue(GuardStableValue):
 
     def greater_equal(self, other, site):
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
             )
@@ -232,7 +232,7 @@ class TermValue(GuardStableValue):
                 TrueBoolLiteralSugar,
             )
 
-            return Complete(
+            return ExitSet.completed(
                 TrueBoolLiteralSugar(site=site)
                 if self.value >= other.value
                 else FalseBoolLiteralSugar(site=site)
@@ -247,9 +247,9 @@ class TermValue(GuardStableValue):
         # Python int/float arithmetic folds while retaining the result's concrete
         # Python type; ProofIR projection later preserves Int versus Real.
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(TermValue(self.value + other.value))
+            return ExitSet.completed(TermValue(self.value + other.value))
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -258,9 +258,9 @@ class TermValue(GuardStableValue):
         )
 
         if type(other) in (TrueBoolLiteralSugar, FalseBoolLiteralSugar):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(
+            return ExitSet.completed(
                 TermValue(
                     self.value + (1 if type(other) is TrueBoolLiteralSugar else 0)
                 )
@@ -299,9 +299,9 @@ class TermValue(GuardStableValue):
     def subtract(self, other, site):
         # A number stands on the subtraction floor: two numbers subtract to a number.
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(TermValue(self.value - other.value))
+            return ExitSet.completed(TermValue(self.value - other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
@@ -326,9 +326,9 @@ class TermValue(GuardStableValue):
         # A number stands on the multiplication floor: two numbers multiply, and the
         # The product retains Python's concrete int/float result type.
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(TermValue(self.value * other.value))
+            return ExitSet.completed(TermValue(self.value * other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.list_value import ListValue
@@ -363,9 +363,9 @@ class TermValue(GuardStableValue):
 
     def power(self, other, site):
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(TermValue(self.value**other.value))
+            return ExitSet.completed(TermValue(self.value**other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
@@ -409,7 +409,7 @@ class TermValue(GuardStableValue):
                 runtime_effect_evidence,
             )
             from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.outcome import Incomplete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             operand = ctor(
                 "**",
@@ -418,7 +418,7 @@ class TermValue(GuardStableValue):
                     other.to_term(owner=str(site)),
                 ],
             )
-            return Incomplete(
+            return ExitSet.halted(
                 PowerRuntimeEffect(
                     "power dispatch depends on the runtime call exponent's "
                     f"__rpow__; owner=TermValue.power site={site}",
@@ -431,7 +431,7 @@ class TermValue(GuardStableValue):
         # A number stands on the division floor: true division. A concrete zero
         # divisor is a runtime effect (the program halts), not a lift-side gap.
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete, Incomplete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             if other.value == 0:
                 from sugar_lift_py_tests.floor.ground_exception_exit import (
@@ -442,7 +442,7 @@ class TermValue(GuardStableValue):
                     exception_name="ZeroDivisionError",
                     site=site,
                 )
-            return Complete(TermValue(self.value / other.value))
+            return ExitSet.completed(TermValue(self.value / other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
@@ -455,7 +455,7 @@ class TermValue(GuardStableValue):
         # divisor is decidable at lift time, so it cannot mint runtime-effect
         # evidence. Keep the missing exact exception construction loud.
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             if other.value == 0:
                 from sugar_lift_py_tests.floor.ground_zero_division_error import (
@@ -463,7 +463,7 @@ class TermValue(GuardStableValue):
                 )
 
                 return ground_zero_division_error(site=site)
-            return Complete(TermValue(self.value % other.value))
+            return ExitSet.completed(TermValue(self.value % other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
         if type(other) is CallSiteValue and other.body is None:
@@ -474,7 +474,7 @@ class TermValue(GuardStableValue):
 
     def floor_divide(self, other, site):
         if type(other) is TermValue:
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             if other.value == 0:
                 from sugar_lift_py_tests.floor.ground_zero_division_error import (
@@ -482,7 +482,7 @@ class TermValue(GuardStableValue):
                 )
 
                 return ground_zero_division_error(site=site)
-            return Complete(TermValue(self.value // other.value))
+            return ExitSet.completed(TermValue(self.value // other.value))
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
@@ -523,9 +523,9 @@ class TermValue(GuardStableValue):
         if float_error is not None:
             return float_error
         if self._bitwise_int_pair(other):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(TermValue(self.value & other.value))
+            return ExitSet.completed(TermValue(self.value & other.value))
         return self._symbolic_or_bv32_bitwise(other, site, "&", "bv32.and")
 
     def bitwise_xor(self, other, site):
@@ -535,9 +535,9 @@ class TermValue(GuardStableValue):
         if float_error is not None:
             return float_error
         if self._bitwise_int_pair(other):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(TermValue(self.value ^ other.value))
+            return ExitSet.completed(TermValue(self.value ^ other.value))
         return self._symbolic_or_bv32_bitwise(other, site, "^", "bv32.xor")
 
     def bitwise_or(self, other, site):
@@ -547,9 +547,9 @@ class TermValue(GuardStableValue):
         if float_error is not None:
             return float_error
         if self._bitwise_int_pair(other):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(TermValue(self.value | other.value))
+            return ExitSet.completed(TermValue(self.value | other.value))
         return self._symbolic_or_bv32_bitwise(other, site, "|", "bv32.or")
 
     def left_shift(self, other, site):
@@ -559,9 +559,9 @@ class TermValue(GuardStableValue):
         if float_error is not None:
             return float_error
         if self._bitwise_int_pair(other):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(TermValue(self.value << other.value))
+            return ExitSet.completed(TermValue(self.value << other.value))
         return self._symbolic_or_bv32_bitwise(other, site, "<<", "bv32.shl")
 
     def right_shift(self, other, site):
@@ -575,9 +575,9 @@ class TermValue(GuardStableValue):
             and type(self.value) is int
             and type(other.value) is int
         ):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(TermValue(self.value >> other.value))
+            return ExitSet.completed(TermValue(self.value >> other.value))
         return self._symbolic_or_bv32_bitwise(other, site, ">>", "bv32.lshr")
 
     def _symbolic_or_bv32_bitwise(self, other, site, operator, bv32_operator):
@@ -597,9 +597,9 @@ class TermValue(GuardStableValue):
             )(other, site)
         if type(other) is Bv32Value:
             from sugar_lift_py_tests.ir import ctor
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(
+            return ExitSet.completed(
                 Bv32Value(
                     ctor(
                         bv32_operator,
@@ -647,33 +647,33 @@ class TermValue(GuardStableValue):
     def unary_minus(self, site):
         # Arithmetic negation: fold to -value.
         del site
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(TermValue(-self.value))
+        return ExitSet.completed(TermValue(-self.value))
 
     def absolute(self, site):
         del site
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(TermValue(abs(self.value)))
+        return ExitSet.completed(TermValue(abs(self.value)))
 
     def unary_plus(self, site):
         # Unary plus: fold to +value (identity for numbers).
         del site
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(TermValue(+self.value))
+        return ExitSet.completed(TermValue(+self.value))
 
     def bitwise_invert(self, site):
         # Bitwise NOT: fold ints; a known float has a ground TypeError exit.
         if isinstance(self.value, int):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
             # ``bool`` is an int subtype and Python 3.14 still defines its
             # inversion through the underlying integer.  Convert explicitly
             # so construction does not emit CPython's runtime deprecation
             # warning while calculating a source-decided result.
-            return Complete(TermValue(~int(self.value)))
+            return ExitSet.completed(TermValue(~int(self.value)))
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
