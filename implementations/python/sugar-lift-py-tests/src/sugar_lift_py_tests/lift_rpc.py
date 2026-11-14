@@ -686,7 +686,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
                 # The one reduction a resumed function gets: its unanswered
                 # calls are retained with the unit (see the resume rows).
                 with _unanswered.collecting() as calls:
-                    outcome = _tree.function_universe_outcome(fn)
+                    outcome = _tree.owner_reduction(fn).outcome
             except SugarNotWritten:
                 # Typed tree frontier: no link unit to enroll. Gap remains
                 # visible on the universe/audit scan; never catch
@@ -2774,8 +2774,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     return
                 sf = _open_enumerated_file(full_path, root=root, locus_root=locus_root)
                 span = at.get("span") if isinstance(at, dict) else None
-                source_assert, assert_node = _tree.temporally_rewritten_assert(sf, span)
-                if source_assert is None or assert_node is None:
+                # What the assert reduced to in its owner's one reduction; the
+                # assert is never reduced alone here (item 28, #7757).
+                source_assert, caller_outcome = _tree.assert_outcome(sf, span)
+                if source_assert is None:
                     _send_enumerate_result(
                         msg_id,
                         [],
@@ -2792,7 +2794,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 caller_memento = _tree.assert_memento(source_assert, file_rel)
                 caller_cid = caller_memento["source_cid"]
                 caller_post = None
-                caller_outcome = assert_node.sugar().desugar(None)
                 if isinstance(caller_outcome, Complete):
                     formula = getattr(caller_outcome.value, "formula", None)
                     if formula is not None:
@@ -3226,16 +3227,17 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                     )
                     return
 
-                # facts: at is an assertion memento — desugar THAT assert.
-                source_node, node = _tree.temporally_rewritten_assert(
+                # facts: at is an assertion memento — read what THAT assert
+                # reduced to in its owner's one reduction (item 28, #7757).
+                source_node, outcome = _tree.assert_outcome(
                     sf, at.get("span") if isinstance(at, dict) else None
                 )
-                if source_node is None or node is None:
+                if source_node is None:
                     _send_enumerate_result(
                         msg_id, [], [{"memento": at, "reason": "no assertion here"}]
                     )
                     return
-                formula = _tree.fact_of(node)
+                formula = _tree.fact_of(outcome)
                 if formula is None:
                     _send_enumerate_result(
                         msg_id,

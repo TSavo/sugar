@@ -46,5 +46,13 @@ class AssertSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # Desugar the test, and the result states itself.
-        return self.test.desugar(ctx).and_then(lambda value: value.stated(self.site))
+        # Desugar the test, and the result states itself. The outcome is
+        # recorded for the readers of this assert (item 28, #7757): they read
+        # it off the owner's one reduction and never reduce the assert alone.
+        from sugar_lift_py_tests import assert_reductions
+
+        outcome = self.test.desugar(ctx).and_then(
+            lambda value: value.stated(self.site)
+        )
+        assert_reductions.record(self.site, outcome)
+        return outcome
