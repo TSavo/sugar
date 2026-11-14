@@ -208,15 +208,47 @@ def apply(kind, method, receiver, args, site, ctx):
     """``(post-state, result)`` of ``receiver.<method>(*args)``, or None.
 
     ``ctx`` is the calling statement's context: a store (``__setitem__`` /
-    ``__delitem__``) applies under it."""
+    ``__delitem__``) applies under it.
+
+    A mutator with a value (``list.pop``, ``dict.pop``/``popitem``/
+    ``setdefault``) on a ground receiver with ground arguments takes its
+    value, or its one halt, from the pinned interpreter
+    (``container_mutator_result_fold``, #7757); the receiver's post-state is
+    this law's.  The law's own read of the member (and its halt) is kept
+    only for a receiver or argument known only by its type."""
+    from sugar_lift_py_tests.source_call_resolution import (
+        container_mutator_result_fold,
+    )
+
     owner = f"builtins.{kind}.{method}"
+    if kind not in ("list", "dict", "set"):
+        return UNDECIDED
+    cited = container_mutator_result_fold(receiver, method, tuple(args), site)
+    if cited is not None and cited.halts() == cited.exits:
+        # The call raises: its one halt, and no post-state.
+        return cited
     if kind == "list":
-        return _list(method, receiver, args, site, owner, ctx)
-    if kind == "dict":
-        return _dict(method, receiver, args, site, owner)
-    if kind == "set":
-        return _set(method, receiver, args, site, owner)
-    return UNDECIDED
+        decided = _list(method, receiver, args, site, owner, ctx)
+    elif kind == "dict":
+        decided = _dict(method, receiver, args, site, owner)
+    else:
+        decided = _set(method, receiver, args, site, owner)
+    if cited is None or decided is UNDECIDED:
+        return decided
+    value = cited.completed_value()
+    if value is None:
+        return decided
+    return decided.and_then(lambda pair: _with_value(pair, value))
+
+
+def _with_value(pair, value):
+    """The law's ``(post-state, result)`` with the cited fold's ``value``."""
+    from .tuple_value import TupleValue
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    if type(pair) is not TupleValue or len(pair.elements) != 2:
+        return ExitSet.completed(pair)
+    return _pair(pair.elements[0], value)
 
 
 def _list(method, receiver, args, site, owner, ctx):

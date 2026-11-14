@@ -187,6 +187,92 @@ def test_a_str_method_over_a_ground_non_string_is_the_one_halt(tmp_path):
     assert [getattr(halt, "exception_name", None) for halt in halts] == ["TypeError"]
 
 
+def _recording_host_applied(monkeypatch):
+    from sugar_lift_py_tests import source_call_resolution
+
+    applied = []
+    host_applied = source_call_resolution._host_applied
+
+    def recording(function, operands, site, **kwargs):
+        applied.append(kwargs["owner"])
+        return host_applied(function, operands, site, **kwargs)
+
+    monkeypatch.setattr(source_call_resolution, "_host_applied", recording)
+    return applied
+
+
+# One answerer (#7757): a method of a ground ``list``/``tuple``/``dict``
+# receiver that does not change it, with ground arguments, is decided by the
+# pinned interpreter through the cited fold.  These were two-faced (the
+# container's opaque ``python:builtin_method`` pair, or the unknown callee).
+
+
+def test_index_of_a_missing_member_of_a_ground_list_is_the_one_value_error(
+    tmp_path, monkeypatch
+):
+    applied = _recording_host_applied(monkeypatch)
+    returns, halts = _returns(tmp_path, "def f():\n    return [1, 2].index(3)\n")
+    assert returns == []
+    assert _halt_names(halts) == ["ValueError"]
+    assert "cpython_cited_fold:list.index" in applied
+
+
+def test_get_of_a_missing_key_of_a_ground_dict_is_none(tmp_path, monkeypatch):
+    from sugar_lift_py_tests.floor.none_value import NoneValue
+
+    applied = _recording_host_applied(monkeypatch)
+    returns, halts = _returns(tmp_path, "def f():\n    return {'a': 1}.get('b')\n")
+    assert returns == [NoneValue()]
+    assert halts == []
+    assert "cpython_cited_fold:dict.get" in applied
+
+
+@pytest.mark.parametrize(
+    "expression, value, owner",
+    [
+        ("[1, 2, 1].count(1)", TermValue(2), "list.count"),
+        ("(1, 2).index(2)", TermValue(1), "tuple.index"),
+        ("{'a': 1}.get('a')", TermValue(1), "dict.get"),
+        ("[1, 2].copy()", ListValue((TermValue(1), TermValue(2))), "list.copy"),
+    ],
+)
+def test_a_reading_method_of_a_ground_container_is_answered_by_the_one_fold(
+    tmp_path, monkeypatch, expression, value, owner
+):
+    applied = _recording_host_applied(monkeypatch)
+    returns, halts = _returns(
+        tmp_path, f"def f():\n    answer = {expression}\n    return answer\n"
+    )
+    assert returns == [value]
+    assert halts == []
+    assert f"cpython_cited_fold:{owner}" in applied
+
+
+def test_pop_of_a_ground_list_takes_its_value_from_the_fold(tmp_path, monkeypatch):
+    applied = _recording_host_applied(monkeypatch)
+    returns, halts = _returns(
+        tmp_path,
+        "def f():\n    xs = [1, 2]\n    y = xs.pop()\n    return y\n",
+    )
+    assert returns == [TermValue(2)]
+    assert halts == []
+    assert "cpython_cited_fold:list.pop" in applied
+
+
+def test_contents_not_testified_at_the_call_are_not_folded():
+    # A list or dict reached by binding may have been changed since it was
+    # built (#7618): only a testified receiver, or an immutable tuple, folds.
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.source_call_resolution import cited_container_method
+
+    xs = ListValue((TermValue(1),))
+    assert cited_container_method(xs, "index", testified=True)
+    assert not cited_container_method(xs, "index", testified=False)
+    assert not cited_container_method(xs, "pop", testified=True)
+    assert cited_container_method(TupleValue((TermValue(1),)), "index", testified=False)
+    assert not cited_container_method(TupleValue((xs,)), "index", testified=False)
+
+
 def test_a_str_method_over_an_opaque_argument_keeps_its_marker():
     from types import SimpleNamespace
 

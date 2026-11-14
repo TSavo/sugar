@@ -154,7 +154,12 @@ class DictValue(GuardStableValue):
         keywords=(),
         required_frame=None,
     ):
-        """Execute closed dict methods whose result is fixed by this value."""
+        """Execute closed dict methods whose result is fixed by this value.
+
+        A ground dict whose contents the tree testified at the call never
+        reaches here: the cited fold answers its ``items()``
+        (``container_method_cited_fold``, #7757).  This is ``items()`` of a
+        dict with a member known only by its type, or one reached by binding."""
         del owner, ctx
         if (
             name == "items"
