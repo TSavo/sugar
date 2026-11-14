@@ -984,14 +984,12 @@ def source_frame_body(frame, *, owner: str, blame: object):
             module_execution_site, owner_node.source_visible_constructor_frame
         ).body
     if owner_node is not None and hasattr(owner_node, "source_visible_call_frame"):
-        bound_class = getattr(frame, "bound_receiver_class", None)
-        declaration_frame = construct_at_module_execution_site(
-            module_execution_site,
-            (
-                owner_node.source_visible_call_frame
-                if bound_class is None
-                else lambda: owner_node.bound_classmethod_call_frame(bound_class)
-            ),
+        from sugar_lift_py_tests.source_call_frame import (
+            frame_read_at_module_execution_site,
+        )
+
+        declaration_frame = frame_read_at_module_execution_site(
+            frame, module_execution_site
         )
         if declaration_frame.frame_cid != frame.declaration_frame_cid:
             from sugar_source_tree.panic import BackendDefect

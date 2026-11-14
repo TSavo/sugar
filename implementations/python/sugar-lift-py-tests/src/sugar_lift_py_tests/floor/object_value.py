@@ -736,6 +736,25 @@ def bind_method_call(
             fix=f"add method binding sugar for `{target_name}`",
         )
     selected_frame = required_frame or method.source_call_frame
+    body = method.body
+    frame_cid = method.source_call_frame_cid
+    formal_coordinate_cids = method.formal_coordinate_cids
+    if required_frame is None and selected_frame is not None:
+        # The method runs where this call stands while the module body runs
+        # (an implicit dunder call included): its frame is read at that
+        # module execution site, not the class statement's (#7757 item 7).
+        from sugar_lift_py_tests.source_call_frame import (
+            frame_at_current_module_execution_site,
+        )
+
+        at_site = frame_at_current_module_execution_site(selected_frame)
+        if at_site is not selected_frame:
+            selected_frame = at_site
+            body = at_site.body
+            frame_cid = at_site.frame_cid
+            formal_coordinate_cids = tuple(
+                coordinate.cid for coordinate in at_site.formal_coordinates
+            )
     if selected_frame is None and (
         keywords or len(arguments) != len(method.parameters) - 1
     ):
@@ -752,9 +771,9 @@ def bind_method_call(
         keywords,
         frame=selected_frame,
         parameters=method.parameters,
-        body=method.body,
-        frame_cid=method.source_call_frame_cid,
-        formal_coordinate_cids=method.formal_coordinate_cids,
+        body=body,
+        frame_cid=frame_cid,
+        formal_coordinate_cids=formal_coordinate_cids,
         lexical_defining_class=method.defining_class,
         ctx=ctx,
         owner=owner,

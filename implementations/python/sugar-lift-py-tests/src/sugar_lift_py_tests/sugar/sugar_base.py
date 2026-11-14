@@ -10,6 +10,18 @@ from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnesses
 from sugar_lift_py_tests.sugar_body import SugarBody
 
+_STAMPED_REDUCE: list = []
+
+
+def _reduce_at_stamped_module_execution_site():
+    """``sugar_source_tree.nodes.reduce_at_stamped_module_execution_site``,
+    imported once (the tree package imports this one lazily)."""
+    if not _STAMPED_REDUCE:
+        from sugar_source_tree.nodes import reduce_at_stamped_module_execution_site
+
+        _STAMPED_REDUCE.append(reduce_at_stamped_module_execution_site)
+    return _STAMPED_REDUCE[0]
+
 
 class Sugar(ABC):
     """One sugar is one class, with exactly two behaviors.
@@ -84,7 +96,13 @@ class Sugar(ABC):
                 value = recorded_value(ctx, self)
                 if value is not _MISS:
                     return ExitSet.completed(value)
-            return own(self, ctx, *args, **kwargs)
+            # A sugar stamped with where the module body runs its node
+            # reduces there: an implicit call it makes (``__add__``,
+            # ``__getitem__``, a property getter) reads a module global as
+            # the module binds it at that point (#7757 item 7).
+            return _reduce_at_stamped_module_execution_site()(
+                self, lambda: own(self, ctx, *args, **kwargs)
+            )
 
         desugar._answers_assigned_value = True
         cls.desugar = desugar

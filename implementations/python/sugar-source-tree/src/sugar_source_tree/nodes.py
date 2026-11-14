@@ -1683,7 +1683,9 @@ class SourceUnit:
         a class body ends the chain at that class statement.  A node in a
         generator expression's element, conditions or later iterables runs
         when the generator is consumed, which the module body does not
-        decide (``lazy``).  Read off the typed tree by source span.
+        decide (``lazy``).  A ``for`` or ``with`` statement asked for its own
+        site (its implicit ``__next__`` or ``__exit__``) runs after its body
+        too (``after_body``).  Read off the typed tree by source span.
         """
         module = self.typed_module
         if module is None:
@@ -1710,6 +1712,19 @@ class SourceUnit:
         lazy = False
         first_generator = False
         while True:
+            if isinstance(current, (FunctionDef, AsyncFunctionDef, Lambda)):
+                # In its body: answered without scanning the body's statements
+                # for the one that holds ``node`` (every statement and implicit
+                # call site asks, ``_at_module_execution_site``).
+                body = current.body
+                if not isinstance(body, (tuple, list)):
+                    body = (body,)
+                if (
+                    body
+                    and body[0].span.start <= span.start
+                    and span.end <= body[-1].span.end
+                ):
+                    return None
             entered = None
             for field_name, index, child in current._child_edges():
                 if child.span.start <= span.start and span.end <= child.span.end:
@@ -1735,7 +1750,14 @@ class SourceUnit:
             if isinstance(child, Statement) and not in_class:
                 chain.append(child)
             current = child
-        return ModuleExecutionSiteV1(self, tuple(chain), lazy)
+        return ModuleExecutionSiteV1(
+            self,
+            tuple(chain),
+            lazy,
+            after_body=(
+                not in_class and isinstance(node, (For, AsyncFor, With, AsyncWith))
+            ),
+        )
 
     def module_bindings_at(self, site, names) -> dict:
         """The module's binding of each of ``names`` where ``site`` runs
@@ -1759,9 +1781,11 @@ class SourceUnit:
           run before or after the read);
         - for a name the innermost recorded statement binds when that
           statement is not the site's own (a statement the threading did
-          not record runs somewhere inside it), or when the site's own
+          not record runs somewhere inside it), when the site's own
           statement is a ``while`` whose test holds the read (the test runs
-          again after the body);
+          again after the body), or when the site is a ``for`` or ``with``
+          statement's own implicit call (``after_body``: ``__next__`` and
+          ``__exit__`` run after the body);
         - for a name whose binding differs between two threadings of the
           site's statement (an unrolled loop's iterations, a ``finally``'s
           two exit paths);
@@ -1804,7 +1828,7 @@ class SourceUnit:
         for statement in chain:
             undecided |= _walrus_targets(statement)
         anchor = chain[depth]
-        if anchor is not chain[-1] or isinstance(anchor, While):
+        if anchor is not chain[-1] or isinstance(anchor, While) or site.after_body:
             undecided |= anchor.names_bound_within()
         answers = {}
         for name in names:
@@ -3978,17 +4002,25 @@ class _ModuleStatementRecord:
 class ModuleExecutionSiteV1:
     """Where a node runs while the module body runs at import
     (``SourceUnit.module_execution_site``): the statements it runs in,
-    outermost first, and whether it sits in a generator's lazily evaluated
-    part.  Two sites are equal when they name the same statements of the
-    same unit: a remembered frame built at one is served at the other."""
+    outermost first, whether it sits in a generator's lazily evaluated
+    part, and whether it is a ``for`` or ``with`` statement's own implicit
+    call (``__next__``, ``__exit__``), which also runs after its body
+    (``after_body``).  Two sites are equal when they name the same
+    statements of the same unit: a remembered frame built at one is served
+    at the other."""
 
-    __slots__ = ("unit", "chain", "lazy", "_key")
+    __slots__ = ("unit", "chain", "lazy", "after_body", "_key")
 
-    def __init__(self, unit, chain: tuple, lazy: bool) -> None:
+    def __init__(self, unit, chain: tuple, lazy: bool, after_body: bool = False):
         self.unit = unit
         self.chain = chain
         self.lazy = lazy
-        self._key = (tuple(_source_position(statement) for statement in chain), lazy)
+        self.after_body = after_body
+        self._key = (
+            tuple(_source_position(statement) for statement in chain),
+            lazy,
+            after_body,
+        )
 
     def __eq__(self, other: object) -> bool:
         return (
@@ -4030,8 +4062,9 @@ def current_module_execution_site():
 
 def construct_at_module_execution_site(site, construct):
     """``construct()`` under the module execution ``site``: a call the
-    module body runs (``Call._construct_sugar``), or a frame read again at
-    reduce at the site it was constructed at."""
+    module body runs (``Call._construct_sugar``), a frame read again at
+    reduce at the site it was constructed at, or the reduction of a sugar
+    stamped with its site (``_at_module_execution_site``)."""
     if site == _MODULE_EXECUTION_SITE.now(None):
         return construct()
     token = _MODULE_EXECUTION_SITE.set(site)
@@ -4039,6 +4072,94 @@ def construct_at_module_execution_site(site, construct):
         return construct()
     finally:
         _MODULE_EXECUTION_SITE.reset(token)
+
+
+# The attribute ``_at_module_execution_site`` stamps a sugar copy with.
+_MODULE_EXECUTION_SITE_STAMP = "_module_execution_site"
+_UNSTAMPED = object()
+
+
+def _at_module_execution_site(node, sugar):
+    """``node``'s sugar, stamped with where ``node`` runs while the module
+    body runs at import (``SourceUnit.module_execution_site``, the one
+    recorder ``Call._construct_sugar`` reads too).
+
+    A ``Call`` constructs its callee's frame under its site.  Every other
+    call site is implicit: an operator (``__add__``, a comparison, ``in``,
+    ``not``), a subscript (``__getitem__``), an attribute read (a property
+    getter), a truth test (``__bool__``), an iteration (``__iter__``,
+    ``__next__``), a ``with`` (``__enter__``, ``__exit__``), a store or a
+    delete through a target.  Its dunder runs only when it reduces, so the
+    reducer reduces this copy under the stamped site
+    (``reduce_at_stamped_module_execution_site``), and the dunder's frame is
+    read again there (``frame_at_current_module_execution_site``): its body
+    reads a module global as the module binds it at this point.  A ``Call``
+    is stamped too: the callee body it reduces runs at its site, and so do
+    the dunders that body reaches.
+
+    Every statement is stamped, so a statement in a compound statement's
+    body reduces at its own site, not its parent's.  A ``def`` statement is
+    stamped with no site: its body runs when it is called, at its caller's
+    site.  A node with no site (in a ``def`` or ``lambda`` body) is not
+    stamped: it runs at the site of the call it was reached from.  A shallow
+    copy, as ``_as_evaluation_of`` makes.
+    """
+    if sugar is None or not isinstance(
+        node,
+        (
+            Statement,
+            Call,
+            BinOp,
+            UnaryOp,
+            BoolOp,
+            Compare,
+            IfExp,
+            Subscript,
+            Attribute,
+            Starred,
+            Dict,
+            FormattedValue,
+            ListComp,
+            SetComp,
+            DictComp,
+            GeneratorExp,
+            Await,
+        ),
+    ):
+        return sugar
+    unit = node.unit
+    if not unit.module_threaded_names():
+        return sugar
+    site = unit.module_execution_site(node)
+    if site is None:
+        return sugar
+    if isinstance(node, (FunctionDef, AsyncFunctionDef)):
+        site = None
+    import copy
+
+    try:
+        stamped = copy.copy(sugar)
+        object.__setattr__(stamped, _MODULE_EXECUTION_SITE_STAMP, site)
+    except (AttributeError, TypeError):
+        return sugar
+    return stamped
+
+
+def stamped_module_execution_site(sugar):
+    """The module execution site ``sugar`` was stamped with
+    (``_at_module_execution_site``), or ``_UNSTAMPED``."""
+    return getattr(sugar, "__dict__", {}).get(_MODULE_EXECUTION_SITE_STAMP, _UNSTAMPED)
+
+
+def reduce_at_stamped_module_execution_site(sugar, reduce):
+    """``reduce()`` -- the reduction of ``sugar`` -- under the module
+    execution site ``sugar`` was stamped with, so every implicit call it
+    makes runs there; an unstamped sugar reduces under the site it was
+    reached from (``Sugar.desugar``)."""
+    site = stamped_module_execution_site(sugar)
+    if site is _UNSTAMPED:
+        return reduce()
+    return construct_at_module_execution_site(site, reduce)
 
 
 def _walrus_targets(statement) -> frozenset:
@@ -5027,7 +5148,11 @@ class Node(Typed):
         ):
             computation = open_row()
             try:
-                result = _as_evaluation_of(self, self._construct_sugar())
+                # Stamped with where the module body runs this node, so an
+                # implicit call it makes reads globals there.
+                result = _as_evaluation_of(
+                    self, _at_module_execution_site(self, self._construct_sugar())
+                )
                 # A constructed value whose testimony cannot be content-addressed
                 # raises ConstructedValueTestimonyNotWritten here, so the
                 # coordinate records the ABSENT answer (memoized panic, gap
