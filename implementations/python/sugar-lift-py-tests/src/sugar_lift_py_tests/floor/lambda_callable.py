@@ -21,6 +21,12 @@ class LambdaCallable(FloorValue):
     The body is reduced after the comprehension, so the call binds these
     (``CallSiteValue.closure``); ``to_term`` names them, since two lambdas
     built at one site over different finals are different callables.
+
+    The enclosing function's locals the body reads are not in ``closure``:
+    Python reads them when the lambda is called, so a call binds each from
+    its own scope (``Lambda._captured_bindings``, ``Call._closure_cells``,
+    ``ComputedCallSugar.captured``).  ``apply`` (the lambda passed on) knows
+    no such binding and refuses them by name.
     """
 
     parameters: tuple[str, ...]
@@ -110,6 +116,25 @@ class LambdaCallable(FloorValue):
                 observed="lambda has no single-actual source frame",
                 requested="the ordinary SourceCallFrameV1 call door",
                 fix="carry a source-visible frame or keep the callback loud",
+            )
+        captured = tuple(getattr(frame, "captured_names", ()) or ())
+        if captured:
+            # The lambda reads enclosing locals (``Lambda._captured_bindings``):
+            # Python reads their cells when the callback runs, and nothing
+            # here knows what the enclosing scope binds then.  Never the
+            # bindings it was made under.
+            raise SugarNotWritten(
+                blame=self.construction_identity,
+                owner="LambdaCallable.apply",
+                observed=(
+                    "lambda passed on reads enclosing locals whose binding at "
+                    f"the call is not known: {captured!r}"
+                ),
+                requested="the enclosing scope's binding of each name at the call",
+                fix=(
+                    "call the lambda where its enclosing scope binds each "
+                    "captured name, or keep the callback loud"
+                ),
             )
         return CallSiteValue(
             target_name="py.call",

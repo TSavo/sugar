@@ -15027,6 +15027,54 @@ class UnaryOp(Expression):
         )
 
 
+def _encloses(outer, inner) -> bool:
+    """Whether source span ``outer`` contains span ``inner``."""
+    return outer.start <= inner.start and inner.end <= outer.end
+
+
+def _nearer_bound_names(owner, span) -> set:
+    """The names a scope nearer than function ``owner`` binds around source
+    span ``span``: the formals of each lambda and the targets of each
+    comprehension in ``owner`` that encloses ``span`` (not the node at
+    ``span`` itself).  A read of such a name there is that scope's, not a
+    local of ``owner``."""
+    nearer: set = set()
+    for node in owner.walk():
+        if not _encloses(node.span, span) or (
+            node.span.start == span.start and node.span.end == span.end
+        ):
+            continue
+        if isinstance(node, Lambda):
+            nearer.update(param.name for param in node.params)
+        elif isinstance(node, (ListComp, SetComp, DictComp, GeneratorExp)):
+            for generator in node.generators:
+                nearer.update(_unpack_target_names(generator.target))
+    return nearer
+
+
+def _coordinates_read(body, captured) -> tuple:
+    """The ``(name, coordinate)`` pairs of ``captured`` whose coordinate
+    ``body`` reads: a ``BindingCoordinateRef`` to it, or the cell a call in
+    ``body`` carries for its own callee (``Call._closure_cells``, a leaf, not
+    a child).  A name an inner scope rebinds is not read through it."""
+    if not captured:
+        return ()
+    wanted = {coordinate.cid: (name, coordinate) for name, coordinate in captured}
+    found: set = set()
+    pending = [body]
+    while pending:
+        for node in pending.pop().walk():
+            if isinstance(node, BindingCoordinateRef):
+                cid = getattr(node.coordinate, "cid", None)
+                if cid in wanted:
+                    found.add(cid)
+            elif isinstance(node, Call):
+                for _name, binding in getattr(node, "closure_cells", None) or ():
+                    if isinstance(binding, Node):
+                        pending.append(binding)
+    return tuple(pair for cid, pair in wanted.items() if cid in found)
+
+
 class Lambda(Expression):
     params: Tuple[Param, ...]
     body: Expression
@@ -15048,8 +15096,16 @@ class Lambda(Expression):
         (``[[lambda: x for _ in ys] for x in xs]`` reads the outer's final
         ``x``); an inner comprehension's cell masks an outer one's.  The
         formals' defaults are evaluated when the lambda is built and read the
-        current member."""
-        from .shadow import rewrite
+        current member.
+
+        Every other enclosing function's local the body reads is read the
+        same way a nested ``def`` reads one: through a captured coordinate
+        (``_captured_bindings``, carried as the ``captured_bindings`` leaf),
+        which each call binds from the binding the calling scope holds at
+        the call (``Call._closure_cells``).  Python reads the cell when the
+        lambda runs, so ``x = 1; f = lambda: x; x = 2; f()`` is 2; the
+        binding the lambda was made under is never read."""
+        from .shadow import rewrite, rewrite_with_leaves
 
         layers = scope.get(_CLOSURE_CELLS)
         if layers is not None:
@@ -15057,19 +15113,119 @@ class Lambda(Expression):
         bound = {p.name for p in self.params}
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         position = _source_position(self)
-        for stored, held in layers or ():
+        held: set = set()
+        for stored, cells in layers or ():
             if position in stored:
                 cell_reads = {
-                    name: cell for name, cell in held.items() if name not in bound
+                    name: cell for name, cell in cells.items() if name not in bound
                 }
+                held.update(cell_reads)
                 bs = {**bs, **cell_reads}
+        prior = tuple(getattr(self, "captured_bindings", None) or ())
+        fresh = tuple(
+            (name, self._captured_coordinate(name))
+            for name in self._enclosing_locals_read(
+                bound | held | {name for name, _ in prior}
+            )
+        )
+        if fresh:
+            bs = {
+                **bs,
+                **{
+                    name: self._make_coordinate_ref(self, coordinate)
+                    for name, coordinate in fresh
+                },
+            }
         new_params, d = self._substitute_field(self.params, scope)
         del d
         new_body, d = self._substitute_field(self.body, bs)
         del d
+        captured = prior + _coordinates_read(new_body, fresh)
         # Always rewrite, even when the children are identical.  A ShadowNode
         # is the construction-time testimony that capture substitution ran.
-        return rewrite(self, params=new_params, body=new_body)
+        if not captured:
+            return rewrite(self, params=new_params, body=new_body)
+        return rewrite_with_leaves(
+            self,
+            {"captured_bindings": captured},
+            params=new_params,
+            body=new_body,
+        )
+
+    def _captured_coordinate(self, name: str):
+        """The coordinate this lambda's body reads enclosing local ``name``
+        through, as ``FunctionDef._captured_bindings`` mints a def's."""
+        from sugar_source_tree.binding_provenance import BindingCoordinateV1
+
+        return BindingCoordinateV1.mint(
+            self.fragment.seal().cid, self.fragment, ("captured", name)
+        )
+
+    def _enclosing_locals_read(self, excluded) -> tuple:
+        """The names the body reads (other than ``excluded``: the formals,
+        the comprehension cells it reads, the names already captured) that
+        are locals of the function the lambda stands in -- a parameter, a
+        local, or a name that function itself captures (CPython's symtable
+        of that function).
+
+        Not captured: a name the lambda reads from an enclosing
+        comprehension (its member or its cell, ``_closure_cell_scope``) or
+        from an enclosing lambda's formals -- the nearer scope binds it --
+        and every name of a lambda that stands in no function body (module
+        level, a ``def``'s defaults or decorators), which reads a global."""
+        names = sorted(
+            {node.id for node in self.body.walk() if isinstance(node, Name)}
+            - set(excluded)
+            - {
+                node.target.id
+                for node in self.body.walk()
+                if isinstance(node, NamedExpr) and isinstance(node.target, Name)
+            }
+        )
+        if not names:
+            return ()
+        owner = self.unit.innermost_function_containing(self.line_col_span())
+        if owner is None:
+            return ()
+        span = self.span
+        if not any(_encloses(statement.span, span) for statement in owner.body):
+            return ()
+        table = self.unit.function_symtable(
+            owner.name, owner.line_col_span().start_line
+        )
+        locals_read = []
+        for name in names:
+            if name == "__class__":
+                continue
+            try:
+                symbol = table.lookup(name)
+            except KeyError:
+                continue
+            if symbol.is_parameter() or symbol.is_local() or symbol.is_free():
+                locals_read.append(name)
+        if not locals_read:
+            return ()
+        nearer = _nearer_bound_names(owner, span)
+        return tuple(name for name in locals_read if name not in nearer)
+
+    def _captured_bindings(self) -> tuple:
+        """``(names, coordinates)``: each enclosing function's local this
+        body reads and the coordinate it reads it through (the
+        ``captured_bindings`` leaf ``substitute`` set), the same answer
+        ``FunctionDef._captured_bindings`` gives for a nested ``def``: a call
+        binds each from its own scope (``Call._closure_cells``)."""
+        captured = tuple(getattr(self, "captured_bindings", None) or ())
+        return (
+            tuple(name for name, _coordinate in captured),
+            tuple(coordinate for _name, coordinate in captured),
+        )
+
+    def lacks_captured_binding_testimony(self, covered=frozenset()) -> bool:
+        """Whether a captured name is not bound by the call (``covered``),
+        as ``FunctionDef.lacks_captured_binding_testimony`` asks.  A lambda
+        declares no ``nonlocal``."""
+        names, _coordinates = self._captured_bindings()
+        return any(name not in covered for name in names)
 
     def source_visible_call_frame(self):
         """Project the lambda through the ordinary source-call-frame door."""
@@ -15096,6 +15252,7 @@ class Lambda(Expression):
             param.name: self._make_coordinate_ref(param, coordinate)
             for param, coordinate in zip(self.params, coordinates, strict=True)
         }
+        captured_names, captured_coordinates = self._captured_bindings()
         return SourceVisibleCallFrameV1(
             source_identity_cid=self.unit.source_cid,
             definition_site=site,
@@ -15124,6 +15281,8 @@ class Lambda(Expression):
             ),
             body=self._source_visible_body(formal_scope),
             owner=self,
+            captured_names=captured_names,
+            captured_coordinates=captured_coordinates,
         )
 
     def _source_visible_body(self, scope):
@@ -16444,7 +16603,7 @@ class Call(Expression):
         if snapshot is not None:
             return snapshot
         rewritten = self._substitute_children(scope)
-        cells = self._closure_cells(scope)
+        cells = self._closure_cells(scope, rewritten)
         if cells:
             from .shadow import rewrite_with_leaves
 
@@ -16464,34 +16623,48 @@ class Call(Expression):
     keywords: Tuple[Keyword, ...]
     _child_fields = ("func", "args", "keywords")
 
-    def _closure_cells(self, scope) -> tuple:
-        """``((name, binding), ...)``: what a call of a local ``def`` reads
-        for each enclosing local the function's body reads
-        (``FunctionDef._captured_bindings``) -- the binding this scope holds
-        for the name here, at the call, as every other read of the name here
-        is (``Name.substitute``).  Python reads the enclosing cell when the
-        function runs, so ``y = 1; def g(): return y; y = 2; g()`` reads
-        ``y``'s binding of ``y = 2``.  The call binds each value under the
-        frame's captured coordinate (``CallSiteSugar``); the name is never
-        read in the callee.
+    def _closure_cells(self, scope, rewritten) -> tuple:
+        """``((name, binding), ...)``: what a call of a local ``def`` or of a
+        lambda reads for each enclosing local the function's body reads
+        (``FunctionDef._captured_bindings``, ``Lambda._captured_bindings``)
+        -- the binding this scope holds for the name here, at the call, as
+        every other read of the name here is (``Name.substitute``).  Python
+        reads the enclosing cell when the function runs, so ``y = 1; def g():
+        return y; y = 2; g()`` reads ``y``'s binding of ``y = 2``, and so
+        does ``y = 1; g = lambda: y; y = 2; g()``.  The call binds each value
+        under the frame's captured coordinate (``CallSiteSugar``,
+        ``ComputedCallSugar``); the name is never read in the callee, nor
+        the binding the function was made under.
 
-        Empty when the callee is not a local ``def`` this scope binds, when a
-        read name is ``nonlocal`` (the body writes the cell), or when a read
-        name has no value binding here (unbound, or bound to a definition or
-        an import): the call then stays refused by name
-        (``CallSiteSugar``)."""
-        func = self.func
-        if not isinstance(func, Name) or func.id not in scope:
-            return ()
-        from .binding_state import unwrap_binding_state
-
-        definition = unwrap_binding_state(scope[func.id])
-        if not isinstance(definition, FunctionDef):
+        Empty when the callee is neither a local ``def`` this scope binds
+        nor a lambda (``(lambda: y)()``, or a name bound to one,
+        ``rewritten``'s callee through ``of``), when a read name is
+        ``nonlocal`` (the body writes the cell), or when a read name has no
+        value binding here (unbound, or bound to a definition or an import):
+        the call then stays refused by name (``CallSiteSugar``,
+        ``ComputedCallSugar``).  Empty, too, when this scope's binding of a
+        read name is not the cell's: a lambda reached in another function (a
+        formal specialized to it, ``bind_node_actuals``), or a name a
+        comprehension or lambda around this call rebinds
+        (``_nearer_bound_names``)."""
+        definition = self._closure_definition(scope, rewritten)
+        if definition is None:
             return ()
         names, _coordinates = definition._captured_bindings()
         if not names or definition.lacks_captured_binding_testimony(
             covered=frozenset(names)
         ):
+            return ()
+        owner = self.unit.innermost_function_containing(self.line_col_span())
+        if isinstance(definition, Lambda) and (
+            owner is None
+            or owner
+            is not self.unit.innermost_function_containing(
+                definition.line_col_span()
+            )
+        ):
+            return ()
+        if owner is not None and _nearer_bound_names(owner, self.span) & set(names):
             return ()
         cells = []
         for name in names:
@@ -16507,6 +16680,26 @@ class Call(Expression):
                 return ()
             cells.append((name, binding))
         return tuple(cells)
+
+    def _closure_definition(self, scope, rewritten):
+        """The function this call runs whose captured names it binds: the
+        local ``def`` the callee name is bound to here, or the lambda the
+        substituted callee denotes (the lambda itself, or the object a
+        name's reference denotes, ``of``, as ``_construct_sugar`` follows
+        it); otherwise None."""
+        from .binding_state import unwrap_binding_state
+
+        func = self.func
+        if isinstance(func, Name) and func.id in scope:
+            definition = unwrap_binding_state(scope[func.id])
+            if isinstance(definition, FunctionDef):
+                return definition
+        callee = rewritten.func if isinstance(rewritten, Call) else None
+        while isinstance(callee, EvaluationRef) and isinstance(
+            getattr(callee, "of", None), Node
+        ):
+            callee = callee.of
+        return callee if isinstance(callee, Lambda) else None
 
     def _captured_cells(self, frame) -> tuple:
         """``((name, coordinate cid, sugar), ...)`` for ``frame``'s captured
@@ -17148,6 +17341,7 @@ class Call(Expression):
             site=self.fragment,
             keywords=keyword_sugars,
             source_call_frame=source_call_frame,
+            captured=self._captured_cells(source_call_frame),
         )
 
     def language_callee(self) -> Optional[LanguageCallee]:

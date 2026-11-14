@@ -577,66 +577,15 @@ class CallSiteSugar(ConstructedTermSugar):
 
     def _captured_values(self, ctx) -> tuple:
         """``((name, coordinate cid, value), ...)``: each carried enclosing
-        binding (``captured``) read here, at the call, in the caller's
-        context -- the enclosing scope's binding of the name at the point of
-        the call.  A read that does not complete with one plain value is
-        refused by name: the callee's body never reads the name instead."""
-        if not self.captured:
-            return ()
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            plain_completed_value,
-        )
-        from sugar_source_tree.panic import SugarNotWritten
-
-        actual_ctx = _actual_reduce_context(ctx)
-        values = []
-        for name, cid, sugar in self.captured:
-            value = plain_completed_value(sugar.desugar(actual_ctx))
-            if value is None:
-                raise SugarNotWritten(
-                    owner="CallSiteSugar.captured",
-                    blame=self.site,
-                    observed=(
-                        f"enclosing binding of `{name}` read at the call did not "
-                        "complete with one value"
-                    ),
-                    requested="the enclosing scope's value of the name at the call",
-                    fix="read the captured binding as one completed value",
-                )
-            values.append((name, cid, value))
-        return tuple(values)
+        binding (``captured``) read here, at the call
+        (``read_captured_values``)."""
+        return read_captured_values(self.captured, ctx, site=self.site)
 
     def _with_captured_values(self, ctx, frame, captured_values):
         """``ctx`` with each captured value bound under ``frame``'s captured
-        coordinate for its name (``FunctionDef._captured_bindings``), as a
-        formal's actual is bound under its coordinate."""
-        if not captured_values:
-            return ctx
-        from sugar_lift_py_tests.temporal import curry_temporal
-        from sugar_source_tree.panic import SugarNotWritten
-
-        coordinates = {
-            name: coordinate.cid
-            for name, coordinate in zip(
-                getattr(frame, "captured_names", ()),
-                getattr(frame, "captured_coordinates", ()),
-                strict=True,
-            )
-        }
-        if any(coordinates.get(name) != cid for name, cid, _value in captured_values):
-            raise SugarNotWritten(
-                owner="CallSiteSugar.captured",
-                blame=self.site,
-                observed="captured binding coordinate is not the frame's",
-                requested="the frame's own captured coordinate for each name",
-                fix="carry the captured cells minted for this exact frame",
-            )
-        return curry_temporal(
-            _actual_reduce_context(ctx),
-            tuple(cid for _name, cid, _value in captured_values),
-            tuple(value for _name, _cid, value in captured_values),
-            owner="CallSiteSugar captured bindings",
-            blame=self.target_name,
+        coordinate for its name (``with_captured_values``)."""
+        return with_captured_values(
+            ctx, frame, captured_values, site=self.site, blame=self.target_name
         )
 
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> ExitSet:
@@ -902,6 +851,108 @@ class CallSiteSugar(ConstructedTermSugar):
             if unprojected is not None:
                 return unprojected.faces(callsite, self.site)
         return callsite.producer_outcome(ctx)
+
+
+def read_captured_values(captured, ctx, *, site) -> tuple:
+    """``((name, coordinate cid, value), ...)``: each enclosing binding a
+    call carries for its callee's captured names (``captured``: ``(name,
+    coordinate cid, sugar)``, ``Call._captured_cells``) read here, at the
+    call, in the caller's context -- the enclosing scope's binding of the
+    name at the point of the call, as Python reads the cell when the
+    function runs.  The one reader for a local ``def``'s call
+    (``CallSiteSugar``) and a lambda's (``ComputedCallSugar``).  A read that
+    does not complete with one plain value is refused by name: the callee's
+    body never reads the name instead, nor the binding it had where the
+    function was made."""
+    if not captured:
+        return ()
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    actual_ctx = _actual_reduce_context(ctx)
+    values = []
+    for name, cid, sugar in captured:
+        value = plain_completed_value(sugar.desugar(actual_ctx))
+        if value is None:
+            raise SugarNotWritten(
+                owner="CallSiteSugar.captured",
+                blame=site,
+                observed=(
+                    f"enclosing binding of `{name}` read at the call did not "
+                    "complete with one value"
+                ),
+                requested="the enclosing scope's value of the name at the call",
+                fix="read the captured binding as one completed value",
+            )
+        values.append((name, cid, value))
+    return tuple(values)
+
+
+def with_captured_values(ctx, frame, captured_values, *, site, blame):
+    """``ctx`` with each captured value (``read_captured_values``) bound
+    under ``frame``'s captured coordinate for its name
+    (``FunctionDef._captured_bindings``, ``Lambda._captured_bindings``), as a
+    formal's actual is bound under its coordinate: the one way a call of a
+    local ``def`` (``CallSiteSugar``) or of a lambda (``ComputedCallSugar``)
+    binds what its body reads from the enclosing scope.  Refused by name
+    unless every captured name is carried (``require_frame_captures``)."""
+    require_frame_captures(frame, captured_values, site=site)
+    if not captured_values:
+        return ctx
+    from sugar_lift_py_tests.temporal import curry_temporal
+
+    return curry_temporal(
+        _actual_reduce_context(ctx),
+        tuple(cid for _name, cid, _value in captured_values),
+        tuple(value for _name, _cid, value in captured_values),
+        owner="CallSiteSugar captured bindings",
+        blame=blame,
+    )
+
+
+def require_frame_captures(frame, captured_values, *, site) -> None:
+    """Refuse by name unless the call carries a value for every captured
+    name of ``frame`` (``captured_names``), each under the frame's own
+    coordinate for it.  A captured name the call does not carry is a
+    function called where its enclosing binding at the call is not known
+    (returned, passed on, stored): it is never read at the binding it had
+    where the function was made."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    coordinates = {
+        name: coordinate.cid
+        for name, coordinate in zip(
+            getattr(frame, "captured_names", ()),
+            getattr(frame, "captured_coordinates", ()),
+            strict=True,
+        )
+    }
+    if any(coordinates.get(name) != cid for name, cid, _value in captured_values):
+        raise SugarNotWritten(
+            owner="CallSiteSugar.captured",
+            blame=site,
+            observed="captured binding coordinate is not the frame's",
+            requested="the frame's own captured coordinate for each name",
+            fix="carry the captured cells minted for this exact frame",
+        )
+    carried = {name for name, _cid, _value in captured_values}
+    uncarried = tuple(name for name in coordinates if name not in carried)
+    if uncarried:
+        raise SugarNotWritten(
+            owner="CallSiteSugar.captured",
+            blame=site,
+            observed=(
+                "enclosing binding at the call is not known for captured "
+                f"names {uncarried!r}"
+            ),
+            requested="the enclosing scope's binding of each name at the call",
+            fix=(
+                "call the function where its enclosing scope binds each "
+                "captured name, or keep the call loud"
+            ),
+        )
 
 
 def _actual_reduce_context(ctx):
