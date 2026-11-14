@@ -1,5 +1,6 @@
 name: Datetime Claim Twins
 
+# CI runs on main only: PRs merge at once and are tested there (owner rule: merge first, CI on main).
 on:
   workflow_dispatch:
   schedule:

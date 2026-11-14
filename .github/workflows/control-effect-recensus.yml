@@ -47,6 +47,7 @@ name: Control-effect recensus (authoritative scoreboard)
 # Full-corpus recensus over pandas — heavy class. Same cadence as walls;
 # workflow_dispatch for tip boards before/after drain campaigns.
 
+# CI runs on main only: PRs merge at once and are tested there (owner rule: merge first, CI on main).
 on:
   schedule:
     # After the walls (37/53 past 10).

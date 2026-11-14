@@ -20,11 +20,11 @@
 
 name: Recensus path smoke
 
+# CI runs on main only: PRs merge at once and are tested there (owner rule: merge first, CI on main).
 on:
   push:
     branches:
       - main
-  pull_request:
   workflow_dispatch:
 
 concurrency:

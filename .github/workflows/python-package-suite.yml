@@ -26,6 +26,7 @@ name: Python package suite (authoritative)
 # Shard count lives in tools/python_package_suite_shards.py (SHARD_COUNT=8)
 # and is mirrored as the static matrix + SUITE_SHARD_COUNT env below.
 
+# CI runs on main only: PRs merge at once and are tested there (owner rule: merge first, CI on main).
 on:
   push:
     branches: [main]

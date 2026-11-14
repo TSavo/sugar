@@ -4,6 +4,7 @@ name: Bare exception zero tolerance (discrimination)
 # factory-zero-tolerance.yml process-floor matrix.
 #
 # SILENCE CONCEALS: named phases + PYTHONUNBUFFERED so stall vs work is visible.
+# CI runs on main only: PRs merge at once and are tested there (owner rule: merge first, CI on main).
 on:
   push:
     branches: [main]

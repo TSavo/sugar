@@ -19,6 +19,7 @@ name: Restored Suite Scoreboard
 # Until then: when these two disagree, the authoritative job is the measurement
 # and this one is prior art.
 
+# CI runs on main only: PRs merge at once and are tested there (owner rule: merge first, CI on main).
 on:
   workflow_dispatch:
   schedule:

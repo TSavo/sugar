@@ -30,6 +30,7 @@ name: Heavy measurement attendance (roll call)
 # never runs never flips to present, so its silence stays loud forever rather
 # than being papered over by a single early reading.
 
+# CI runs on main only: PRs merge at once and are tested there (owner rule: merge first, CI on main).
 on:
   workflow_run:
     workflows:
