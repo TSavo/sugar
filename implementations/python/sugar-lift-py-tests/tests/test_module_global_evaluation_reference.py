@@ -24,6 +24,7 @@ at it (``frame_at_current_module_execution_site``).
 
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, replace
 
 import pytest
@@ -39,6 +40,7 @@ from sugar_lift_py_tests.source_call_frame import (
 )
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
+from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
@@ -54,6 +56,7 @@ from sugar_source_tree.nodes import (
     BranchResultRef,
     Call,
     ClassDef,
+    EffectRef,
     EvaluationRef,
     For,
     FunctionDef,
@@ -64,6 +67,7 @@ from sugar_source_tree.nodes import (
     Name,
     Return,
     Subscript,
+    TypeAlias,
     With,
     _at_module_execution_site,
     _module_reference_state,
@@ -251,6 +255,101 @@ def test_an_import_after_an_assignment_reads_the_import_table() -> None:
     final = unit.module_bindings_at(None, {"json"})["json"]
     assert isinstance(final, ImportBindingRef)
     assert final.target_symbol == "python:json"
+
+
+def test_the_import_arm_constructs_as_an_ordinary_read_of_the_name() -> None:
+    # The import table's row is the read: it constructs exactly as a read of
+    # ``json`` does (``_name_read_sugar``), and reduces, never refused.
+    read = _returned(_function(_source(TRY_IMPORT_FALLBACK)))
+    arm = read.orelse.sugar()
+    plain = _source("import json\ndef f():\n    return json\n")
+    ordinary = _returned(_function(plain))
+    assert isinstance(ordinary, Name)
+    assert type(arm) is type(ordinary.sugar()) is NameSugar
+    assert arm.name == ordinary.sugar().name == "json"
+    exits = arm.desugar(None).exits
+    assert len(exits) == 1 and isinstance(exits[0], Completed), exits
+
+
+def test_a_from_import_arm_reduces_too() -> None:
+    tree = _source(
+        "try:\n    from re import Pattern\nexcept ImportError:\n    Pattern = None\n"
+        "def f():\n    return Pattern\n"
+    )
+    read = _returned(_function(tree))
+    assert isinstance(read, IfExp)
+    assert isinstance(read.orelse, ImportBindingRef)
+    assert read.orelse.target_symbol == "python:re.Pattern"
+    exits = read.orelse.sugar().desugar(None).exits
+    assert len(exits) == 1 and isinstance(exits[0], Completed), exits
+
+
+# -- a deleted target list, a type alias, an except* name (#7757 item 7) ------
+
+
+@pytest.mark.parametrize("target", ["(X, Y)", "[X, Y]", "X, (Y,)"])
+def test_a_deleted_target_list_unbinds_each_name(target: str) -> None:
+    tree = _source(
+        f"X = 1\nY = 2\ndel {target}\n"
+        "def f():\n    return X\ndef g():\n    return Y\n"
+    )
+    unit = _function(tree).unit
+    finals = unit.module_bindings_at(None, {"X", "Y"})
+    assert isinstance(finals["X"], UnboundBinding)
+    assert isinstance(finals["Y"], UnboundBinding)
+    read = _returned(_function(tree))
+    assert isinstance(read, GuardedBindingRead)
+    assert isinstance(read.state, UnboundBinding)
+    exits = _function(tree).sugar().desugar(None).exits
+    halted = [e for e in exits if isinstance(e, Halted)]
+    assert not [e for e in exits if isinstance(e, Completed)], exits
+    assert len(halted) == 1 and isinstance(halted[0].effect, NameErrorEffect)
+    assert halted[0].effect.name == "X"
+
+
+@pytest.mark.skipif(not hasattr(ast, "TypeAlias"), reason="needs type aliases")
+def test_a_type_alias_binds_its_name_as_a_definition_does() -> None:
+    tree = _source("X = 1\ntype X = int\ndef f():\n    return X\n")
+    final = _function(tree).unit.module_bindings_at(None, {"X"})["X"]
+    assert isinstance(final, TypeAlias)
+    # The read is the alias statement's own binding of the name, as a def's
+    # is: never ``X = 1``'s evaluation, never undecided.
+    read = _returned(_function(tree))
+    assert isinstance(read, Name)
+    assert read.id == "X"
+
+
+TRY_STAR_AS = (
+    "eg = None\ndel eg\n"
+    "def f():\n    return eg\n"
+    "try:\n    pass\nexcept* ValueError as eg:\n    y = f()\n"
+)
+
+
+def test_an_except_star_name_is_its_handlers_slot_inside_the_handler() -> None:
+    tree = _source(TRY_STAR_AS)
+    (call,) = _calls(tree)
+    assert isinstance(_returned_at(call, _function(tree)), EffectRef)
+
+
+def test_an_except_star_name_is_unbound_after_the_statement() -> None:
+    tree = _source(TRY_STAR_AS)
+    final = _function(tree).unit.module_bindings_at(None, {"eg"})["eg"]
+    assert isinstance(final, UnboundBinding)
+    read = _returned(_function(tree))
+    assert isinstance(read, GuardedBindingRead)
+    assert isinstance(read.state, UnboundBinding)
+
+
+def test_an_except_star_name_bound_before_stays_undecided() -> None:
+    # The route no handler took keeps ``eg = None``; no route slot of
+    # ``except*`` decides which route left the statement.
+    tree = _source(
+        "eg = None\ndef f():\n    return eg\n"
+        "try:\n    pass\nexcept* ValueError as eg:\n    pass\n"
+    )
+    with pytest.raises(SugarNotWritten, match="undecided module binding of `eg`"):
+        _returned(_function(tree))
 
 
 DEF_REBINDS = "X = None\ndef X():\n    pass\ndef f():\n    return X\ny = f()\n"
