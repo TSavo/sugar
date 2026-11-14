@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.outcome import Complete, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
@@ -242,7 +243,7 @@ def dispatch_method_call(
         for key, value in kw_values
     ]
     term = ctor(
-        f"call:{name}",
+        call_symbol(name),
         [receiver.to_term(owner=owner)]
         + [value.to_term(owner=owner) for value in positional]
         + kwarg_terms,

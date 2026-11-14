@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Generic, Mapping, NoReturn, TypeVar
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.ir import (
     Term as IrTerm,
     _ConstBool,
@@ -103,7 +104,7 @@ class CallTerm(Term[S]):
             self,
             "ir_term",
             ctor(
-                f"call:{callee_name}",
+                call_symbol(callee_name),
                 [arg.ir_term for arg in args],
                 symbol_kind="coordinate",
             ),

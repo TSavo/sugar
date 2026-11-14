@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.gap.info import GapKind, GapLocus
 from sugar_lift_py_tests.ir import Term
 
@@ -262,7 +263,7 @@ class SymbolicValue(FloorValue):
                 arg_values=(self,),
                 parameters=(),
                 term=ctor(
-                    "call:len",
+                    call_symbol("len"),
                     [self.to_term(owner=str(site))],
                     symbol_kind="builtin",
                 ),
@@ -315,7 +316,7 @@ class SymbolicValue(FloorValue):
                 arg_values=(self,),
                 parameters=(),
                 term=ctor(
-                    "call:abs",
+                    call_symbol("abs"),
                     [self.to_term(owner=str(site))],
                     symbol_kind="builtin",
                 ),
@@ -541,7 +542,7 @@ class SymbolicValue(FloorValue):
                 arg_values=(self, spec),
                 parameters=(),
                 term=ctor(
-                    "call:__format__",
+                    call_symbol("__format__"),
                     [
                         self.to_term(owner=str(site)),
                         spec.to_term(owner=str(site)),
@@ -580,7 +581,7 @@ class SymbolicValue(FloorValue):
             # for the int path). call:format coordinates keep the same rule.
             if isinstance(self.term, _Ctor) and self.term.name in {
                 "py.format",
-                "call:format",
+                call_symbol("format"),
             }:
                 if len(self.term.args) >= 2:
                     from sugar_lift_py_tests.ir import _ConstStr

@@ -4,6 +4,7 @@ import weakref
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, NoReturn
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.ir import Term, TermTableBuilder
 from sugar_source_tree.construction_cache import AmbientVar
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
@@ -701,7 +702,7 @@ class CallSiteValue(FloorValue):
                 arg_values=(self,),
                 parameters=(),
                 term=ctor(
-                    "call:len",
+                    call_symbol("len"),
                     [self.to_term(owner=str(site))],
                     symbol_kind="builtin",
                 ),
@@ -1084,7 +1085,7 @@ class CallSiteValue(FloorValue):
             arg_values=(self, *args),
             parameters=(),
             term=ctor(
-                f"call:{method_name}",
+                call_symbol(method_name),
                 [
                     self.to_term(owner=str(site)),
                     *(arg.to_term(owner=str(site)) for arg in args),
@@ -1134,7 +1135,10 @@ class CallSiteValue(FloorValue):
         from sugar_lift_py_tests.ir import _Ctor
 
         term = self.term
-        if type(term) is _Ctor and term.name in {"call:__add__", "python:fstring"}:
+        if type(term) is _Ctor and term.name in {
+            call_symbol("__add__"),
+            "python:fstring",
+        }:
             return True
         return self._retained_completion_names_a_string()
 
@@ -1179,7 +1183,7 @@ class CallSiteValue(FloorValue):
                 arg_values=(left, right),
                 parameters=(),
                 term=ctor(
-                    "call:__add__",
+                    call_symbol("__add__"),
                     [
                         left.to_term(owner="CallSiteValue.named_string_concat"),
                         right.to_term(owner="CallSiteValue.named_string_concat"),

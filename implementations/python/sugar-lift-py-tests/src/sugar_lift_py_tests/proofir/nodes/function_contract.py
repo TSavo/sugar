@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Iterable, Mapping
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.ir import (
     Formula as IrFormula,
     Sort as IrSort,
@@ -479,7 +480,7 @@ def _fold_numeric_ctor(name: str, args: list[IrTerm | None]) -> IrTerm | None:
             return args[0].args[index]
         return None
     if (
-        name in {"divmod", "call:divmod"}
+        name in {"divmod", call_symbol("divmod")}
         and len(args) == 2
         and all(isinstance(arg, _ConstInt) for arg in args)
     ):

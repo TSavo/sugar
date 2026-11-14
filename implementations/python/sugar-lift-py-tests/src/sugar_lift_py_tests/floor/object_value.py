@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from sugar_lift_py_tests.call_symbol import call_symbol
+
 from .floor_value import FloorValue
 from .object_field import ObjectField
 from .object_method_value import ObjectMethodValue
@@ -910,7 +912,7 @@ def bind_call(
         arg_values=arg_values,
         parameters=parameters,
         term=ctor(
-            f"call:{target_name}",
+            call_symbol(target_name),
             [value.to_term(owner=f"{owner} call argument") for value in arg_values],
             symbol_kind="contract-target",
         ),

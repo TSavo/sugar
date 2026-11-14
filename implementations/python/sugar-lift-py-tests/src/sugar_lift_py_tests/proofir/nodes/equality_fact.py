@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
+from sugar_lift_py_tests.call_symbol import call_symbol, call_target
 from sugar_lift_py_tests.ir import Formula, Term, TermTableBuilder, _Ctor
 from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
 from sugar_lift_py_tests.proofir._errors import proofir_construction_gap
@@ -144,7 +145,7 @@ class EqualityFact(ProofIRNode):
                 name="equality-truthful-collapse",
                 expected="sat",
                 formulas=(truthful.denotation(),),
-                declarations={"call:A": _INT_SORT},
+                declarations={call_symbol("A"): _INT_SORT},
                 source=_truthful_source(),
                 node_class=cls.node_class,
                 expected_sugar="python.literal-call-sugar",
@@ -153,7 +154,7 @@ class EqualityFact(ProofIRNode):
                 name="equality-stated-derived-disagreement",
                 expected="unsat",
                 formulas=(stated_lie.denotation(), derived.denotation()),
-                declarations={"call:A": _INT_SORT},
+                declarations={call_symbol("A"): _INT_SORT},
                 source=_lying_source(),
                 node_class=cls.node_class,
                 expected_sugar="python.literal-call-sugar",
@@ -188,12 +189,14 @@ def canonical_euf_callsite_name(
     suffix: str = "::assertion",
 ) -> str:
     ir_call_term = call_term.ir_term if isinstance(call_term, CallTerm) else call_term
-    if not isinstance(ir_call_term, _Ctor) or not ir_call_term.name.startswith("call:"):
+    callee = (
+        call_target(ir_call_term.name) if isinstance(ir_call_term, _Ctor) else None
+    )
+    if callee is None:
         _proofir_gap(
             owner="EqualityFact",
             observed=repr(ir_call_term),
             requested="call:<callee> ctor term",
             fix="derive #euf# keys only from euf_call_term outputs",
         )
-    callee = ir_call_term.name.removeprefix("call:")
     return f"{callee}#euf#{_canonical_term_sig(ir_call_term)}{suffix}"

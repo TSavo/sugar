@@ -29,6 +29,7 @@ for _sibling in ("sugar-lift-python-source", "sugar-source-tree"):
     if _src.is_dir() and str(_src) not in sys.path:
         sys.path.insert(0, str(_src))
 
+from sugar_lift_py_tests.call_symbol import call_target
 from sugar_lift_py_tests.effect import SourceOracleEffect, effect_reason, effect_status
 from sugar_lift_py_tests.filename import cid_from_proof_stem
 from sugar_lift_py_tests.idd.lift_coverage_accounting import (
@@ -1741,7 +1742,7 @@ def _first_bridge_ctor_name(
     if (
         node.get("kind") == "ctor"
         and isinstance(name, str)
-        and (name.startswith("call:") or name.startswith("method:"))
+        and (call_target(name) is not None or name.startswith("method:"))
     ):
         return name
     for value in node.values():

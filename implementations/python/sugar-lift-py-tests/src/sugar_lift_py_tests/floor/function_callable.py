@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field, replace
 from typing import Any
 
+from sugar_lift_py_tests.call_symbol import call_symbol
+
 from .floor_value import FloorValue
 from .term_value import TermValue
 
@@ -411,7 +413,7 @@ class FunctionCallable(FloorValue):
         assert bound_values is not None
         if term is None:
             term = ctor(
-                f"call:{self.name}",
+                call_symbol(self.name),
                 [value.to_term(owner=str(site)) for value in source_arg_values],
                 symbol_kind="contract-target",
             )

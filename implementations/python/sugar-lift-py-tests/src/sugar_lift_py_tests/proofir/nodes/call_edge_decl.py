@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, cast
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.ir import Locus
 from sugar_lift_py_tests.kit_rpc import CallEdgeDto
 from sugar_lift_py_tests.proofir.scope import ClaimFormula
@@ -133,7 +134,7 @@ class CallEdgeDecl(ProofIRNode):
                 construct=lambda: cls(
                     bridge=BridgeAtom(
                         source_contract="module::source::assertion",
-                        target_symbol="call:A",
+                        target_symbol=call_symbol("A"),
                         call_site_locus=Locus("witness.py", 1, 0),
                     ),
                     provenance=_witness_provenance(

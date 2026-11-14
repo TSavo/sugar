@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from sugar_lift_py_tests.call_symbol import call_symbol
+
 from .floor_value import FloorValue
 
 
@@ -92,7 +94,7 @@ class NativeCallableValue(FloorValue):
                 arg_values=(self, spec),
                 parameters=(),
                 term=ctor(
-                    "call:__format__",
+                    call_symbol("__format__"),
                     [
                         self.to_term(owner=str(site)),
                         spec.to_term(owner=str(site)),

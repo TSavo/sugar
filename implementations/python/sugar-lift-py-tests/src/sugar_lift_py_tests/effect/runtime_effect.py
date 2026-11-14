@@ -4,6 +4,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Protocol, TypedDict, cast, runtime_checkable
 
+from sugar_lift_py_tests.call_symbol import call_target
 from sugar_lift_py_tests.ir import Term
 
 
@@ -162,7 +163,7 @@ def is_lift_time_decidable(term: Term) -> bool:
             )
         # A call coordinate denotes a result that does not exist until the
         # call executes, even when every argument to that call is ground.
-        if current.name.startswith("call:"):
+        if call_target(current.name) is not None:
             decisions[identity] = False
             continue
         # Handler selection records whether Python raised this exception while
