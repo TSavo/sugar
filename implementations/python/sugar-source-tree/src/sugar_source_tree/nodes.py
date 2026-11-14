@@ -592,6 +592,34 @@ _ENCLOSING_SCOPE = "<enclosing function>"
 # spelled so.
 _RETURNED_VALUE = "<returned value>"
 
+
+@dataclass(frozen=True)
+class _ClassCallResult:
+    """What a name bound to a call of the source class ``statement`` may
+    hold, as ``class_namespace_stores`` keys it: an instance, never a class,
+    when the class's own ``__new__`` lookup decides one
+    (``ClassDef.call_yields_an_instance``); else any class the module hands
+    on.  Keyed by the class statement's occurrence."""
+
+    occurrence: object
+    statement: object = field(compare=False, hash=False, repr=False)
+
+
+def _class_stores(statement, own, receiver_rows) -> frozenset:
+    """The names stored on, or deleted from, the class object ``statement``
+    binds: ``own`` (the stores through a name that may be it) with each
+    method's stores through the class it runs on (``receiver_rows``) when
+    ``statement`` may be that class or a subclass of it (``mro_holds`` is
+    not False; ``__init_subclass__``'s only on a subclass)."""
+    occurrence = SourceOccurrenceIdentityV1.of(statement)
+    names = set(own)
+    for owner, stored, subclasses_only in receiver_rows:
+        if subclasses_only and SourceOccurrenceIdentityV1.of(owner) == occurrence:
+            continue
+        if statement.mro_holds(owner) is not False:
+            names |= stored
+    return frozenset(names)
+
 # The builtins (by binding, ``Call.language_callee``) whose call returns a
 # value of a builtin type the language fixes, never a class: the
 # constructors of a builtin container, string or number (each dunder they
@@ -3163,16 +3191,9 @@ class SourceUnit:
         occurrence = SourceOccurrenceIdentityV1.of(statement)
         key = ("stores", occurrence)
         if key not in answers:
-            names = set(rows.get(occurrence, ()))
-            for owner, stored, subclasses_only in receiver_rows:
-                if (
-                    subclasses_only
-                    and SourceOccurrenceIdentityV1.of(owner) == occurrence
-                ):
-                    continue
-                if statement.mro_holds(owner) is not False:
-                    names |= stored
-            answers[key] = frozenset(names)
+            answers[key] = _class_stores(
+                statement, rows.get(occurrence, ()), receiver_rows
+            )
         return answers[key]
 
     def class_namespace_answer(self, statement: "ClassDef", name: str, compute):
@@ -3193,14 +3214,15 @@ class SourceUnit:
         be the class, and ``(class statement, names, subclasses only)`` for
         each method that stores through the class it runs on.
 
-        A call of a source class is read by the class's own ``__new__``
-        lookup (``ClassDef.call_yields_an_instance``), which reads the
-        module's stores on the class itself.  So the rows are read twice:
-        first with every such call any class the module hands on, a superset
-        of every store; then, with those rows standing as the stores the
-        lookup reads, with each call that lookup decides an instance read as
-        no class.  Fewer stores never undecide a lookup the superset
-        decided."""
+        The binding tables are filled once.  A name bound to a call of a
+        source class holds that call's result (``_ClassCallResult``); a store
+        through it is read once the class's own ``__new__`` lookup is
+        (``ClassDef.call_yields_an_instance``): no class when it decides an
+        instance, else any class the module hands on.  That lookup reads the
+        module's stores on the classes of the order, which a call's result
+        may reach; it reads them off the same tables with every call's result
+        any class handed on -- a superset of the stores the rows end with,
+        and fewer stores never undecide a lookup the superset decided."""
         occurrence_of = SourceOccurrenceIdentityV1.of
         classes: list = []
         functions: list = []
@@ -3378,7 +3400,8 @@ class SourceUnit:
 
         def classes_of(node) -> frozenset:
             """The occurrences of the classes the name ``node`` may read by
-            binding -- a class statement, an alias of one -- and
+            binding -- a class statement, an alias of one -- the result of a
+            source class call it may hold (``_ClassCallResult``), and
             ``_ESCAPED_CLASS`` when it may be any class the module hands on
             (a parameter, a lambda's or a comprehension's own variable, a
             name bound to a value that may be a class)."""
@@ -3408,15 +3431,12 @@ class SourceUnit:
             return (found | _ESCAPED) if parameter else found
 
         # A call's callee as its value decides it, read once per call:
-        # ``("none",)`` a builtin whose result is never a class, a generator
-        # or coroutine function; ``("class", occurrence)`` a source class;
+        # ``("none",)`` a builtin (by its binding, ``Call.language_callee``)
+        # whose result is never a class, a generator or coroutine function;
+        # ``("class", result)`` a source class (``_ClassCallResult``);
         # ``("returns", key)`` a module ``def``'s returned values; ``None``
         # anything else.
         callees: dict = {}
-        # The source classes a call of which is read, and those whose call
-        # is decided an instance (``ClassDef.call_yields_an_instance``).
-        called_classes: dict = {}
-        instances: set = set()
 
         def callee_of(call):
             if id(call) in callees:
@@ -3429,8 +3449,10 @@ class SourceUnit:
                     call.func.id, call.line_col_span()
                 )
                 if isinstance(definition, ClassDef):
-                    callee = ("class", occurrence_of(definition))
-                    called_classes[callee[1]] = definition
+                    callee = (
+                        "class",
+                        _ClassCallResult(occurrence_of(definition), definition),
+                    )
                 elif isinstance(
                     definition, (FunctionDef, AsyncFunctionDef)
                 ) and call_applies_own_frame(definition):
@@ -3450,7 +3472,8 @@ class SourceUnit:
             """The classes the value a name binds may be: what a name reads
             (``classes_of``), either arm of ``a if c else b`` and each
             operand of ``a or b``, what a call's callee decides
-            (``callee_of``), nothing for a value that is never a class
+            (``callee_of``; a source class's call its result,
+            ``_ClassCallResult``), nothing for a value that is never a class
             (``_value_may_be_a_class``), and ``_ESCAPED_CLASS`` for any other
             -- an undecided call, an attribute, a subscript, a member of an
             unpack whose sides do not pair up (None)."""
@@ -3471,7 +3494,7 @@ class SourceUnit:
                 if callee[0] == "none":
                     return frozenset()
                 if callee[0] == "class":
-                    return frozenset() if callee[1] in instances else _ESCAPED
+                    return frozenset({callee[1]})
                 return tables.get(callee[1], frozenset())
             return _ESCAPED if _value_may_be_a_class(value) else frozenset()
 
@@ -3486,31 +3509,27 @@ class SourceUnit:
                     ((occurrence_of(owner), _RETURNED_VALUE), statement.value)
                 )
 
-        def fill_tables() -> None:
-            """The classes each binding table may hold: every ``class``
-            statement under its name, then aliases of aliases and returned
-            values, read again until none reaches a new class."""
-            tables.clear()
-            for klass in classes:
-                target = klass.binding_target
-                key = (
-                    read_of(target)[0]
-                    if isinstance(target, Name)
-                    else (None, klass.name)
-                )
-                tables[key] = tables.get(key, frozenset()) | {occurrence_of(klass)}
-            changed = True
-            while changed:
-                changed = False
-                for binder, value in bound_values:
-                    reached = value_classes(value)
-                    if not reached:
-                        continue
-                    key = read_of(binder)[0] if isinstance(binder, Name) else binder
-                    held = tables.get(key, frozenset())
-                    if not reached <= held:
-                        tables[key] = held | reached
-                        changed = True
+        # The classes each binding table may hold: every ``class`` statement
+        # under its name, then aliases of aliases and returned values, read
+        # again until none reaches a new class.  Filled once.
+        for klass in classes:
+            target = klass.binding_target
+            key = (
+                read_of(target)[0] if isinstance(target, Name) else (None, klass.name)
+            )
+            tables[key] = tables.get(key, frozenset()) | {occurrence_of(klass)}
+        changed = True
+        while changed:
+            changed = False
+            for binder, value in bound_values:
+                reached = value_classes(value)
+                if not reached:
+                    continue
+                key = read_of(binder)[0] if isinstance(binder, Name) else binder
+                held = tables.get(key, frozenset())
+                if not reached <= held:
+                    tables[key] = held | reached
+                    changed = True
 
         alias_values = frozenset(
             id(value) for _target, value in pairs if value is not None
@@ -3591,36 +3610,43 @@ class SourceUnit:
                     )
             return found
 
-        # Every store through a name: which class it lands on is read per
-        # pass (``store_rows``).
-        named_stores = stores(module, lambda node: isinstance(node, Name))
+        # Every store through a name, by what the name may hold: a class
+        # statement (``named``), any class the module hands on (``handed``),
+        # a source class call's result (``through_calls``, by the call's
+        # ``_ClassCallResult``).
+        named: dict = {}
+        handed: set = set()
+        through_calls: dict = {}
+        for reference, name in stores(module, lambda node: isinstance(node, Name)):
+            for held in classes_of(reference):
+                if held is _ESCAPED_CLASS:
+                    handed.add(name)
+                elif isinstance(held, _ClassCallResult):
+                    through_calls.setdefault(held, set()).add(name)
+                else:
+                    named.setdefault(held, set()).add(name)
+        # The classes the module hands on.
+        escaping: set = set()
+        for read in handing_reads:
+            escaping.update(
+                held
+                for held in classes_of(read)
+                if isinstance(held, SourceOccurrenceIdentityV1)
+            )
 
-        def store_rows() -> dict:
-            """The names stored on each class occurrence, read off the
-            binding tables as ``instances`` stands."""
-            fill_tables()
-            escaping: set = set()
-            for read in handing_reads:
-                escaping |= classes_of(read) - _ESCAPED
-            rows: dict = {}
-            handed: set = set()
-            for reference, name in named_stores:
-                for occurrence in classes_of(reference):
-                    if occurrence is _ESCAPED_CLASS:
-                        handed.add(name)
-                    else:
-                        rows.setdefault(occurrence, set()).add(name)
-            # A store through a reference that may be any class the module
-            # hands on is a store on each of them.
-            if handed:
-                for klass in classes:
-                    if every_class or occurrence_of(klass) in escaping:
-                        rows.setdefault(occurrence_of(klass), set()).update(handed)
-            # ``exec``/``eval`` may store any name on any class.
+        def stores_on(klass, through_any) -> frozenset:
+            """The names stored on ``klass`` through a name: those through a
+            name that may be it; ``through_any`` -- the names stored through
+            one that may be any class the module hands on -- when the module
+            hands it on, or every class; ``"*"`` when the module reaches
+            ``exec``/``eval``, which may store any name on any class."""
+            occurrence = occurrence_of(klass)
+            names = set(named.get(occurrence, ()))
+            if through_any and (every_class or occurrence in escaping):
+                names |= through_any
             if runs_code:
-                for klass in classes:
-                    rows.setdefault(occurrence_of(klass), set()).add("*")
-            return {key: frozenset(names) for key, names in rows.items()}
+                names.add("*")
+            return frozenset(names)
 
         receiver_rows = []
         for klass, method, first, kind in methods:
@@ -3640,25 +3666,34 @@ class SourceUnit:
                 )
         receiver_rows = tuple(receiver_rows)
 
-        # Every call of a source class any class it may be: a superset of
-        # every store.  With those rows standing, each called class's own
-        # ``__new__`` lookup decides whether its call is an instance; the
-        # rows are read again when one is.
-        rows = store_rows()
-        if called_classes:
-            object.__setattr__(
-                self, "_class_namespace_stores_memo", (module, rows, receiver_rows, {})
+        # A store through a source class call's result lands on what the
+        # call returns: no class when the class's own ``__new__`` lookup
+        # decides an instance, else any class the module hands on.  The
+        # lookup reads the stores on each class of its order with every
+        # call's result any class handed on: a superset of the stores below,
+        # and fewer stores never undecide a lookup the superset decided.
+        through_every_call = frozenset().union(handed, *through_calls.values())
+
+        def stores_with_every_call_a_class(statement) -> frozenset:
+            return _class_stores(
+                statement, stores_on(statement, through_every_call), receiver_rows
             )
-            try:
-                instances.update(
-                    occurrence
-                    for occurrence, klass in called_classes.items()
-                    if klass.call_yields_an_instance()
+
+        through_any = frozenset().union(
+            handed,
+            *(
+                names
+                for result, names in through_calls.items()
+                if not result.statement.call_yields_an_instance(
+                    stores_with_every_call_a_class
                 )
-            finally:
-                object.__setattr__(self, "_class_namespace_stores_memo", None)
-            if instances:
-                rows = store_rows()
+            ),
+        )
+        rows = {}
+        for klass in classes:
+            names = stores_on(klass, through_any)
+            if names:
+                rows[occurrence_of(klass)] = names
         return rows, receiver_rows
 
     def module_threaded_names(self) -> frozenset:
@@ -11924,7 +11959,14 @@ class ClassDef(Statement):
         ``source_visible_constructor_frame``)."""
         if self.method_resolution_order() is not None:
             return self.new_entry()
-        stored = self.unit.class_namespace_stores(self)
+        return self._generic_dataclass_new_entry(self.unit.class_namespace_stores)
+
+    def _generic_dataclass_new_entry(self, stores) -> "tuple[bool, None]":
+        """``dataclass_new_entry`` when the base walk does not read the
+        order: ``typing.Generic`` holds no ``__new__``, so ``(True, None)``
+        unless this class's namespace may hold one -- its body's binding, or
+        a store ``stores(self)`` names (``"__new__"``, or ``"*"``)."""
+        stored = stores(self)
         if (
             "__new__" in stored
             or "*" in stored
@@ -11933,10 +11975,16 @@ class ClassDef(Statement):
             return False, None
         return True, None
 
-    def call_yields_an_instance(self) -> bool:
+    def call_yields_an_instance(self, stores) -> bool:
         """Whether a call of the name this statement binds is decided to
         return an instance, never a class (``SourceUnit.class_namespace_stores``
         reads a name bound to such a call as holding no class).
+
+        ``stores(statement)`` answers the names the module stores on a class
+        statement of the order: ``SourceUnit.class_namespace_stores`` once
+        the table stands; while it is built, the same stores with every class
+        call's result read as any class handed on (a superset).  Nothing
+        here reads the table the answer feeds.
 
         The name holds the class itself: no keyword (a ``metaclass=``, whose
         ``__call__`` runs the call) and no decorator but the bare
@@ -11954,14 +12002,22 @@ class ClassDef(Statement):
             return False
         order = self.construction_order()
         if order is None:
-            if self._dataclass_generated_init_fields() is None:
+            # A ``Generic[...]`` dataclass: its order is not read.
+            if (
+                self._dataclass_generated_init_fields() is None
+                or self.method_resolution_order() is not None
+            ):
                 return False
-            decided, own = self.dataclass_new_entry()
+            decided, own = self._generic_dataclass_new_entry(stores)
             return decided and own is None
         if any(isinstance(entry, ClassDef) and entry.keywords for entry in order):
             return False
-        decided, own = self.new_entry()
-        return decided and own is None
+        # ``new_entry``'s ``(True, None)``: the one lookup of ``__new__``
+        # meets a builtin class's (or none), never a class statement's.
+        decided, owner = self._namespace_owner(
+            "__new__", lambda entry: entry._namespace_binds("__new__", stores)
+        )
+        return decided and (owner is None or isinstance(owner, str))
 
     def method_resolution_head(self) -> tuple:
         """What every MRO Python builds for this class starts with, read when
@@ -12051,12 +12107,14 @@ class ClassDef(Statement):
             for decorator in self.decorators
         )
 
-    def _creation_writes(self) -> "tuple[frozenset, frozenset, bool]":
+    def _creation_writes(self, stores) -> "tuple[frozenset, frozenset, bool]":
         """``(writes, may_write, open)``: the names the class value this
         statement binds holds beyond its body once it is created and its
         decorators applied (the one decorator application's, innermost
         first): ``writes`` decided, ``may_write`` not decided either way,
-        ``open`` when any name may be written.
+        ``open`` when any name may be written.  ``stores(statement)`` names
+        the module's stores on a class of the order
+        (``SourceUnit.class_namespace_stores``; ``call_yields_an_instance``).
 
         - Type creation may write ``_TYPE_CREATION_NAMES``.
         - The bare ``@dataclasses.dataclass`` writes ``_DATACLASS_WRITES`` and
@@ -12086,7 +12144,7 @@ class ClassDef(Statement):
             for entry in order[1:]:
                 if not isinstance(entry, ClassDef):
                     continue
-                stored = self.unit.class_namespace_stores(entry)
+                stored = stores(entry)
                 if (
                     entry.keywords
                     or entry._creation_opens_namespace()
@@ -12117,12 +12175,15 @@ class ClassDef(Statement):
         (``SourceUnit.class_namespace_answer``).
         """
         return self.unit.class_namespace_answer(
-            self, name, lambda: self._namespace_binds(name)
+            self,
+            name,
+            lambda: self._namespace_binds(name, self.unit.class_namespace_stores),
         )
 
-    def _namespace_binds(self, name: str) -> "bool | None":
-        """``namespace_binds``, read off the tree."""
-        stored = self.unit.class_namespace_stores(self)
+    def _namespace_binds(self, name: str, stores) -> "bool | None":
+        """``namespace_binds``, read off the tree, with ``stores(statement)``
+        the module's stores on a class statement (``_creation_writes``)."""
+        stored = stores(self)
         if name in stored or "*" in stored:
             return None
         own = self._body_binding(name)
@@ -12130,7 +12191,7 @@ class ClassDef(Statement):
             return None
         if own is not False:
             return own
-        writes, may_write, open_ = self._creation_writes()
+        writes, may_write, open_ = self._creation_writes(stores)
         if name in writes:
             return True
         if name == "__hash__":
@@ -12152,7 +12213,9 @@ class ClassDef(Statement):
             or self._body_binding(name) is not True
         ):
             return False
-        writes, may_write, open_ = self._creation_writes()
+        writes, may_write, open_ = self._creation_writes(
+            self.unit.class_namespace_stores
+        )
         overwritten = name in writes and name not in _DATACLASS_KEEPS_BOUND
         return not open_ and not overwritten and name not in may_write
 
@@ -12204,6 +12267,16 @@ class ClassDef(Statement):
         otherwise a class after the head may bind it, and the answer is
         undecided -- ``(False, None)``, never assumed absent.
         """
+        return self._namespace_owner(
+            name, lambda entry: entry.namespace_binds(name), after=after
+        )
+
+    def _namespace_owner(
+        self, name: str, binds, *, after: "ClassDef | None" = None
+    ) -> "tuple[bool, object]":
+        """``namespace_owner``, with ``binds(entry)`` whether a class
+        statement of the order binds ``name``: ``namespace_binds``, or its
+        read over the stores ``call_yields_an_instance`` is handed."""
         import builtins as _python_builtins
 
         order = self.method_resolution_order()
@@ -12217,7 +12290,7 @@ class ClassDef(Statement):
             order = order[position + 1 :]
         for entry in order:
             if isinstance(entry, ClassDef):
-                held = entry.namespace_binds(name)
+                held = binds(entry)
                 if held is None:
                     return False, None
                 if held:
@@ -12556,6 +12629,7 @@ class ClassDef(Statement):
                 ),
                 owner=self,
                 constructed_new_method=constructed_new_method,
+                exception_args_coordinate_cid=args_coordinate.cid,
             )
         params = () if constructor is None else constructor.params[1:]
         coordinates = tuple(
