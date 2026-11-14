@@ -35,6 +35,13 @@ is read at the call (#7757 item 7, residue of #7975).
    (``GeneratorExp.substitute``, ``_escaping_at_the_call``): ``fs =
    list(lambda: x for x in [1, 2]); fs[0]()`` is 2, and a stored
    generator's yielded lambda called after the run is refused by name.
+6. Every lambda in a comprehension or generator expression is read so,
+   whatever route it takes out: returned by a call in the element (``(g(lambda:
+   x) for x in xs)``), held by an inner generator (``((y for y in [lambda:
+   x]) for x in xs)``), stored by a call (``[keep(lambda: x) for x in xs]``),
+   called in place (``sorted(vs, key=lambda v: v + x)``).  The escape route
+   is never guessed from the lambda's shape (``_escaping_at_the_call``); the
+   call decides the member.
 """
 
 from __future__ import annotations
@@ -388,16 +395,41 @@ def test_a_walrus_in_a_condition_lets_its_lambda_escape() -> None:
     _assert_reads_the_cell_at_the_call(lam, coordinate)
 
 
-def test_a_lambda_called_in_place_still_reads_the_current_member() -> None:
-    comp = _comprehension(
-        "def f(xs):\n    ys = [(lambda: x)() for x in xs]\n    return ys\n"
-    )
+CALLED_IN_PLACE = "def f(xs):\n    ys = [(lambda: x)() for x in xs]\n    return ys\n"
+SORTED_KEY_IN_PLACE = (
+    "def f(xs, vs):\n    ys = [sorted(vs, key=lambda v: v + x) for x in xs]\n"
+    "    return ys\n"
+)
+
+
+@pytest.mark.parametrize("source", [CALLED_IN_PLACE, SORTED_KEY_IN_PLACE])
+def test_a_lambda_called_in_place_reads_the_cell_at_the_call(source: str) -> None:
+    # Its shape is not asked: the body reads the cell at the call, as every
+    # lambda in a comprehension does (``_escaping_at_the_call``).
+    comp = _comprehension(source)
     coordinate = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
     (lam,) = _lambdas([comp.elt])
-    assert isinstance(lam.body, EvaluationRef)
-    assert lam.body.evaluation == coordinate
-    assert getattr(lam.body, "cell", False) is not True
-    assert getattr(lam.body, "current", None) is None
+    _assert_reads_the_cell_at_the_call(lam, coordinate)
+
+
+@pytest.mark.parametrize("source", [CALLED_IN_PLACE, SORTED_KEY_IN_PLACE])
+def test_a_lambda_called_in_place_reads_the_member_current_at_the_call(
+    source: str,
+) -> None:
+    # Called where it is made (``(lambda: x)()``, ``sorted``'s ``key``): the
+    # call runs inside the evaluation that made the lambda, so the cell holds
+    # the member current at the call -- never the final member.
+    comp = _comprehension(source)
+    sugar = comp.sugar()
+    assert isinstance(sugar, ComprehensionSugar)
+    generator = sugar.generators[0]
+    (lam,) = _lambdas([comp.elt])
+    (read,) = [node for node in lam.body.walk() if isinstance(node, EvaluationRef)]
+    evaluation = _evaluation(sugar, generator, TermValue(3))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.sugar().desugar(made).completed_value()
+    called = _called(callable_, made)
+    assert read.sugar().desugar(called) == ExitSet.completed(TermValue(1))
 
 
 # -- 3. the call places the read ----------------------------------------------
@@ -724,3 +756,128 @@ def test_a_stored_generators_yielded_lambda_called_later_is_refused(
     after = ReduceContext.root(owner="after-the-generator")
     with pytest.raises(SugarNotWritten, match="not consumed whole in place"):
         lam.body.desugar(_called(callable_, after))
+
+
+# -- 6. every lambda, whatever route it escapes by ----------------------------
+
+
+RETURNED_BY_A_CALL = (
+    "def f(xs, g):\n"
+    "    gen = (g(lambda: x) for x in xs)\n"
+    "    h = next(gen)\n"
+    "    return h()\n"
+)
+RETURNED_BY_A_CALL_CONSUMED_IN_PLACE = (
+    "def f(xs, g):\n    fs = list(g(lambda: x) for x in xs)\n    return fs[0]()\n"
+)
+HELD_BY_AN_INNER_GENERATOR = (
+    "def f(xs):\n"
+    "    gen = ((y for y in [lambda: x]) for x in xs)\n"
+    "    h = next(next(gen))\n"
+    "    return h()\n"
+)
+STORED_BY_A_CALL = (
+    "def f(xs, keep):\n    ys = [keep(lambda: x) for x in xs]\n    return ys\n"
+)
+
+
+def _outer_generator(source: str) -> GeneratorExp:
+    """The generator expression of ``f``'s substituted body whose element is
+    a generator expression."""
+    body = _function(_source(source)).substitute({}).body
+    (gen,) = [
+        node
+        for statement in body
+        for node in statement.walk()
+        if isinstance(node, GeneratorExp) and isinstance(node.elt, GeneratorExp)
+    ]
+    return gen
+
+
+@pytest.mark.parametrize(
+    "source", [RETURNED_BY_A_CALL, RETURNED_BY_A_CALL_CONSUMED_IN_PLACE]
+)
+def test_a_lambda_a_call_returns_reads_the_cell_at_the_call(source: str) -> None:
+    gen = _generator(source)
+    coordinate = ListComp._generator_binding_coordinate(gen, 0, gen.generators[0])
+    (lam,) = _lambdas([gen.elt])
+    _assert_reads_the_cell_at_the_call(lam, coordinate)
+
+
+def test_a_lambda_an_inner_generator_holds_reads_the_outer_cell_at_the_call() -> (
+    None
+):
+    gen = _outer_generator(HELD_BY_AN_INNER_GENERATOR)
+    coordinate = ListComp._generator_binding_coordinate(gen, 0, gen.generators[0])
+    (lam,) = _lambdas([gen.elt])
+    _assert_reads_the_cell_at_the_call(lam, coordinate)
+
+
+def test_a_lambda_a_call_stores_reads_the_cell_at_the_call() -> None:
+    comp = _comprehension(STORED_BY_A_CALL)
+    coordinate = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
+    (lam,) = _lambdas([comp.elt])
+    _assert_reads_the_cell_at_the_call(lam, coordinate)
+
+
+def test_a_returned_lambda_of_a_stored_generator_called_later_is_refused() -> None:
+    # ``h = next(gen); h()``: how far ``gen`` was consumed at the call is not
+    # decided here, so the read is refused by name -- never the member
+    # current where the lambda was made.
+    assert _generator(RETURNED_BY_A_CALL).sugar().final_member is False
+    sugar, generator, lam = _escaping_generator(RETURNED_BY_A_CALL)
+    evaluation = _evaluation(sugar, generator, TermValue(3))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.desugar(made).completed_value()
+    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    read = lam.body.desugar(_called(callable_, later))
+    assert read == ExitSet.completed(TermValue(2))
+    after = ReduceContext.root(owner="after-the-generator")
+    with pytest.raises(SugarNotWritten, match="not consumed whole in place"):
+        lam.body.desugar(_called(callable_, after))
+
+
+def test_a_returned_lambda_list_drains_reads_the_final_member() -> None:
+    assert _generator(RETURNED_BY_A_CALL_CONSUMED_IN_PLACE).sugar().final_member
+    sugar, generator, lam = _escaping_generator(RETURNED_BY_A_CALL_CONSUMED_IN_PLACE)
+    evaluation = _evaluation(sugar, generator, TermValue(2))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.desugar(made).completed_value()
+    after = ReduceContext.root(owner="after-the-generator")
+    read = lam.body.desugar(_called(callable_, after))
+    assert read == ExitSet.completed(TermValue(2))
+
+
+def test_a_lambda_an_inner_generator_holds_called_later_is_refused() -> None:
+    gen = _outer_generator(HELD_BY_AN_INNER_GENERATOR)
+    sugar = gen.sugar()
+    assert isinstance(sugar, ComprehensionSugar)
+    assert sugar.final_member is False
+    generator = sugar.generators[0]
+    (lam,) = _lambdas([gen.elt])
+    lam_sugar = lam.sugar()
+    assert isinstance(lam_sugar, LambdaSugar)
+    evaluation = _evaluation(sugar, generator, TermValue(3))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam_sugar.desugar(made).completed_value()
+    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    read = lam_sugar.body.desugar(_called(callable_, later))
+    assert read == ExitSet.completed(TermValue(2))
+    after = ReduceContext.root(owner="after-the-generator")
+    with pytest.raises(SugarNotWritten, match="not consumed whole in place"):
+        lam_sugar.body.desugar(_called(callable_, after))
+
+
+def test_a_lambda_a_call_stores_reads_the_final_member_after_the_run() -> None:
+    # An eager comprehension runs whole where it is made: a call after it
+    # reads the final member; a call inside it, the member current then.
+    sugar, generator, lam = _escaping(STORED_BY_A_CALL)
+    evaluation = _evaluation(sugar, generator, TermValue(3))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.desugar(made).completed_value()
+    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    read = lam.body.desugar(_called(callable_, later))
+    assert read == ExitSet.completed(TermValue(2))
+    after = ReduceContext.root(owner="after-the-comprehension")
+    read = lam.body.desugar(_called(callable_, after))
+    assert read == ExitSet.completed(TermValue(3))

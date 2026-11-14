@@ -150,8 +150,7 @@ class ComprehensionSugar(ConstructedTermSugar):
     # no running value: its reads are refused by name.
     walrus_recurrence: tuple = dataclass_field(compare=False, default=())
     # Whether the comprehension's final member is placed after it: what a
-    # lambda that escapes it (through a walrus, or yielded by a generator
-    # expression) reads at a call outside every run of it
+    # lambda made in it reads at a call outside every run of it
     # (``_final_member_ctx``, ``_symbolic_final_ctx``).  An eager
     # comprehension runs whole where it is made.  A generator expression
     # runs when it is consumed: only where it is consumed whole in place
@@ -221,7 +220,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         this evaluation, so two evaluations are never the same one.  Every
         member, condition and element reduces on it.
 
-        A lambda a walrus lets escape the comprehension carries the evaluation
+        A lambda made in the comprehension carries the evaluation
         it was made in (``LambdaSugar.evaluation_coordinates``); a call of it
         reads the member current at the call only while that same evaluation
         runs, the final member once none runs, and is refused by name while
@@ -698,15 +697,16 @@ class ComprehensionSugar(ConstructedTermSugar):
         comprehension's cell holds once it is done, the ``last`` finite
         member, under each member coordinate's final coordinate
         (``final_member_coordinate``) -- the generator's, and each leaf's
-        projection of it for a destructuring target. A lambda the
-        comprehension stores reads these (``_closure_cell_scope``), and so
-        does a lambda an inner comprehension in the element stores: they are
-        bound on the context every member's element, and so every inner
-        comprehension, reduces in. The lambda value carries each binding it
-        reads (``LambdaCallable.closure``), so its body reduces after the
+        projection of it for a destructuring target. Every lambda in the
+        comprehension reads these at a call after it
+        (``Lambda._cells_read_at_the_call``), and so does every lambda in an
+        inner comprehension in the element: they are bound on the context
+        every member's element, and so every inner comprehension, reduces
+        in. The lambda value carries each binding it reads
+        (``LambdaCallable.closure``), so its body reduces after the
         comprehension is done. ``ctx`` unchanged when ``last`` does not
         destructure into the target: the comprehension halts on it, and no
-        stored lambda outlives it.  ``ctx`` unchanged, too, where the final
+        lambda made in it outlives it.  ``ctx`` unchanged, too, where the final
         member is not placed (``final_member``: a generator expression not
         consumed whole in place).
         """

@@ -39,23 +39,18 @@ walrus's key instead (``nodes._scope_after``), bound in the member only by
 the consumer that evaluates the read after the walrus
 (``named_expression_value.written_by``); unbound, it is refused by name.
 
-A lambda the comprehension stores in what it produces (``fs = [lambda: x for
-x in xs]; fs[0]()``) is called after the comprehension, and Python reads the
-comprehension's cell at call time: the final member. Its body's read is a
-member reference to the final member coordinate
-(``sugar_source_tree.nodes.final_member_coordinate``), carried in the lambda
-by substitution as every other enclosing binding it reads
-(``nodes._closure_cell_scope``). The comprehension binds that coordinate
-before the element is reduced (``ComprehensionSugar._final_member_ctx``, the
-last finite member; ``ComprehensionSugar._symbolic_final_ctx``, the final
-member of a symbolic iterable), and the reference reads it as it reads any
-member coordinate. A comprehension that dissolves at substitution carries the
-last member's projection itself.
-
-A lambda a walrus lets escape the comprehension (``[(g := lambda: x) for x in
-xs if g()]; g()``) may be called while the comprehension runs or after it.
+Every lambda in a comprehension -- stored (``fs = [lambda: x for x in xs];
+fs[0]()``), called in place (``sorted(ys, key=lambda v: v + x)``), handed to
+a call, bound by a walrus (``[(g := lambda: x) for x in xs if g()]; g()``) --
+may be called while the comprehension runs or after it, and Python reads the
+comprehension's cell at call time.  Its shape does not say when it is
+called, so every one is read the same way (``nodes._escaping_at_the_call``).
 Its body's read names both coordinates (``current``: the member's; the
-evaluation: its final one), and the cell is read at each call: inside the
+evaluation: its final one, ``sugar_source_tree.nodes.final_member_coordinate``,
+which the comprehension binds before the element is reduced:
+``ComprehensionSugar._final_member_ctx``, the last finite member;
+``ComprehensionSugar._symbolic_final_ctx``, the final member of a symbolic
+iterable), and the cell is read at each call: inside the
 evaluation of the comprehension that made the lambda -- the evaluation the
 lambda carries is the one running (``ComprehensionSugar._evaluation_ctx``) --
 the member current at the call; with no evaluation of the comprehension
@@ -193,8 +188,9 @@ class EvaluationRefSugar(ConstructedTermSugar):
     # the lambda reads.  Read here, where the argument is evaluated, and
     # carried on the lambda value (``carry_captured_values``).
     captured: tuple = dataclass_field(default=(), compare=False)
-    # A comprehension cell read at the call by a lambda a walrus lets escape:
-    # the member coordinate; ``evaluation`` is its final coordinate.
+    # A comprehension cell read at the call by a lambda made in the
+    # comprehension: the member coordinate; ``evaluation`` is its final
+    # coordinate.
     current: str | None = None
 
     @classmethod
@@ -390,8 +386,8 @@ class EvaluationRefSugar(ConstructedTermSugar):
         return ExitSet.completed(bound)
 
     def _cell_at_the_call(self, temporal) -> ExitSet:
-        """The comprehension cell a lambda a walrus lets escape reads, as it
-        is at this call.  The call is placed by the evaluation of the
+        """The comprehension cell a lambda made in the comprehension reads,
+        as it is at this call.  The call is placed by the evaluation of the
         comprehension running at it (``comprehension_evaluation_coordinate``)
         and the one the lambda carries (``lambda_evaluation_coordinate``):
 

@@ -33,6 +33,7 @@ from sugar_source_tree.nodes import (
     Return,
     final_member_coordinate,
 )
+from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -248,9 +249,11 @@ def test_leaf_projections_nest_as_the_source_nests() -> None:
     assert _leaf_projections(leaf, element) == (element,)
 
 
-# #7757 item 7, after #7932: a lambda the comprehension stores in what it
-# produces is called after the comprehension, and Python reads the cell at
-# call time -- the final member, never the member that built the lambda.
+# #7757 item 7, after #7932: a lambda made in a comprehension may be called
+# after the comprehension or inside it, and Python reads the cell at call
+# time -- never the member that built the lambda.  Its shape does not say
+# when it is called, so every one reads the cell at the call: the final
+# member after the comprehension, the member current at a call inside it.
 
 
 def _returned(source: str):
@@ -259,25 +262,27 @@ def _returned(source: str):
     return ret.value
 
 
-def test_a_stored_lambda_in_a_dissolved_comprehension_reads_the_last_member() -> None:
-    display = _returned("def f():\n    return [lambda: x for x in [1, 2]]\n")
-    assert display.kind == "List"
-    assert [element.kind for element in display.elts] == ["Lambda", "Lambda"]
-    # fs[0]() and fs[1]() both return 2.
-    assert [element.body.kind for element in display.elts] == ["Constant"] * 2
-    assert [element.body.value for element in display.elts] == [2, 2]
-
-
-def test_a_lambda_called_in_place_reads_the_current_member() -> None:
-    display = _returned("def f():\n    return [(lambda: x)() for x in [1, 2]]\n")
-    assert [element.func.body.value for element in display.elts] == [1, 2]
-
-
-def test_only_the_stored_lambda_reads_the_last_member() -> None:
-    display = _returned("def f():\n    return [(x, lambda: x) for x in [1, 2]]\n")
-    assert [
-        (pair.elts[0].value, pair.elts[1].body.value) for pair in display.elts
-    ] == [(1, 2), (2, 2)]
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f():\n    return [lambda: x for x in [1, 2]]\n",
+        "def f():\n    return [(lambda: x)() for x in [1, 2]]\n",
+        "def f():\n    return [(x, lambda: x) for x in [1, 2]]\n",
+    ],
+)
+def test_a_comprehension_holding_a_lambda_does_not_dissolve(source: str) -> None:
+    # A display has no run of the comprehension to place the lambda's call
+    # in, so neither the last member nor the member that built the lambda is
+    # substituted into its body.
+    comp = _returned(source)
+    assert isinstance(comp, ListComp)
+    coordinate = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
+    (lam,) = [node for node in comp.elt.walk() if node.kind == "Lambda"]
+    read = lam.body
+    assert isinstance(read, EvaluationRef)
+    assert read.cell is True
+    assert read.evaluation == final_member_coordinate(coordinate)
+    assert read.current == coordinate
 
 
 def test_a_stored_lambda_reads_the_final_member_coordinate() -> None:
@@ -291,12 +296,13 @@ def test_a_stored_lambda_reads_the_final_member_coordinate() -> None:
     assert read.evaluation != coordinate
 
 
-def test_a_lambda_called_in_place_reads_the_member_coordinate() -> None:
+def test_a_lambda_called_in_place_reads_the_cell_at_the_call() -> None:
     comp = _comprehension("def f(xs):\n    return [(lambda: x)() for x in xs]\n")
     coordinate = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
     read = comp.elt.func.body
     assert isinstance(read, EvaluationRef)
-    assert read.evaluation == coordinate
+    assert read.evaluation == final_member_coordinate(coordinate)
+    assert read.current == coordinate
 
 
 def test_a_finite_final_member_is_what_a_stored_lambda_reads() -> None:
@@ -365,17 +371,21 @@ def test_an_inner_comprehension_rebinding_the_name_masks_the_outer_cell() -> Non
     assert read.evaluation != final_member_coordinate(outer)
 
 
-def test_an_inner_result_the_outer_does_not_store_reads_the_current_member() -> None:
-    # The inner list is consumed while the outer runs: its lambda reads the
-    # outer's current member, never the outer's final one.
+def test_an_inner_result_the_outer_does_not_store_reads_the_cell_at_the_call() -> (
+    None
+):
+    # The inner list is consumed while the outer runs, but whether its
+    # lambda is called is not read off its shape: it reads the outer's cell
+    # at the call, the outer's current member at a call inside the outer.
     comp = _comprehension(
         "def f(xs, ys):\n    return [len([lambda: x for _ in ys]) for x in xs]\n"
     )
     outer = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
     read = _first(comp.elt, "Lambda").body
     assert isinstance(read, EvaluationRef)
-    assert read.evaluation == outer
-    assert getattr(read, "cell", False) is not True
+    assert read.cell is True
+    assert read.evaluation == final_member_coordinate(outer)
+    assert read.current == outer
 
 
 def test_the_lambda_names_the_cells_its_body_reads() -> None:
@@ -399,9 +409,10 @@ def test_a_finite_stored_lambda_carries_the_outer_final_in_its_closure() -> None
     callable_ = lam.desugar(ctx).completed_value()
     assert callable_.closure == ((cell, TermValue(2)),)
     # Outside the comprehension the context binds no final member: the body
-    # alone refuses, and reads 2 through the closure the value carries.
+    # alone is refused by name, and reads 2 through the closure the value
+    # carries.
     after = ReduceContext.root(owner="after-the-comprehension")
-    with pytest.raises(ConstructionPanic):
+    with pytest.raises(SugarNotWritten, match="no final member"):
         lam.body.desugar(after)
     called = _ctx_with_curried_args(after, (), (), (), callable_.closure)
     assert lam.body.desugar(called) == ExitSet.completed(TermValue(2))

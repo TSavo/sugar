@@ -21,9 +21,9 @@ class LambdaSugar(ConstructedTermSugar):
     is done, when the context no longer binds them.
 
     ``evaluation_coordinates`` are ``(lambda's coordinate, comprehension's
-    coordinate)`` for each comprehension cell the body reads at the call (a
-    lambda a walrus lets escape or a generator expression yields,
-    ``Lambda._evaluation_coordinates``): the
+    coordinate)`` for each comprehension cell the body reads at the call
+    (every lambda made in a comprehension, ``Lambda._evaluation_coordinates``):
+    the
     value carries, under the lambda's coordinate, the evaluation of the
     comprehension it was made in, so a call compares it with the evaluation
     running at the call (``EvaluationRefSugar``).  A generator expression
