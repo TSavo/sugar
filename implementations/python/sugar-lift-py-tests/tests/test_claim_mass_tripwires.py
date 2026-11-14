@@ -6,10 +6,16 @@ These are source-accounting pins, not wall-scale correctness gates. Each case:
 - pins total assertion mass (lifted + refused)
 - pins the complete current lifted-locus list
 
-Post-factory measurement path: ``SourceFile`` + ``Assert.sugar()``.
+Measurement path: the one opener (``open_source_file_for_construction``,
+rooted at the corpus root, whose file list is the roster) + ``Assert.sugar()``.
 Construction success is *lifted*; a loud panic (``SourceTreePanic``,
 ``ConstructionPanic``, or any other exception) is *refused*. There is no
 third arm — soft-skip is silent loss and fails the tripwire.
+
+``BareConstructionDoor`` is not a refusal. It says the tree was opened without
+its construction context, a fact about this instrument, not about the corpus.
+It escapes and fails the test by name; counting it as refused is what zeroed
+these pins while every Call and Subscript hit the bare door.
 
 Stated count cannot fall unexplained. Known lifted loci cannot disappear.
 Improvements are allowed only as more-lifted-with-zero-silent plus a loud pin
@@ -25,10 +31,9 @@ import pytest
 
 from claim_mass_corpus import ClaimMassPin, DATETIME_PIN
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_python_source.source_oracle import path_source
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_source_tree.nodes import Assert
-from sugar_source_tree.panic import SourceTreePanic
-from sugar_source_tree.tree import SourceFile
+from sugar_source_tree.panic import BareConstructionDoor, SourceTreePanic
 
 VENDOR = Path(__file__).parent / "vendor"
 
@@ -166,9 +171,15 @@ def _measure_files(path: Path, pin: ClaimMassPin, files: list[Path]) -> list[Pat
 
 
 def _classify_assert(assert_node: Assert) -> str:
-    """Return ``lifted`` or ``refused``. Never soft-skip."""
+    """Return ``lifted`` or ``refused``. Never soft-skip.
+
+    ``BareConstructionDoor`` propagates: an instrument defect is never counted
+    as a refusal of the corpus.
+    """
     try:
         assert_node.sugar()
+    except BareConstructionDoor:
+        raise
     except (SourceTreePanic, ConstructionPanic):
         return "refused"
     except BaseException:
@@ -186,11 +197,16 @@ def test_claim_mass_corpus_never_silently_shrinks(pin: ClaimMassPin) -> None:
         "and lifted loci in the same PR"
     )
 
+    # The corpus root: the package directory for a multi-file pin, the
+    # file's own directory for a single-file pin. Its file list is the roster.
+    corpus_root = path if path.is_dir() else path.parent
     silent = lifted = refused = 0
     lifted_loci: list[int | tuple[str, int]] = []
     for source_path in _measure_files(path, pin, files):
         try:
-            source_file = SourceFile(path_source(str(source_path)))
+            source_file = open_source_file_for_construction(
+                source_path, root=corpus_root
+            )
         except BaseException as panic:
             raise AssertionError(
                 f"{pin.name} failed to parse {source_path} for claim accounting: "
