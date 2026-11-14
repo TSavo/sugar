@@ -174,13 +174,23 @@ def _stated_formal_sorts(formals, formal_coordinates):
 
 
 def function_contract_row(
-    *, name, formals, bridge_source_symbol, formal_coordinates, post, def_memento
+    *,
+    name,
+    formals,
+    bridge_source_symbol,
+    formal_coordinates,
+    post,
+    def_memento,
+    panic_loci=(),
 ):
     """The one function-contract row: the post, the def's sealed warrant.
 
     ``formalSorts`` states one sort per formal, the sort its authenticated
     formal coordinate carries (the same statement ``ParameterOwnedContractV1``
     makes). The linker's catalog reads a contract's signature from it.
+
+    ``panic_loci`` states the reduction's halted arms, one entry each, in the
+    existing ``panicLoci`` shape (#7766).
 
     ``bridge_source_symbol`` is stated only by a row that has one: a
     definition's ``python:<module>.<name>``. A contract dug at a call site has
@@ -219,6 +229,7 @@ def function_contract_row(
         formal_sorts=_stated_formal_sorts(formals, formal_coordinates),
         kind="function-contract",
         bridge_source_symbol=bridge_source_symbol,
+        panic_loci=tuple(panic_loci),
     )
 
 
@@ -267,6 +278,7 @@ def exit_arms_payload_rows(
     formal_coordinates,
     arms,
     halted_assertion_sites,
+    halt_loci,
     def_memento,
 ):
     """Every arm of one reduction, projected to the wire (#7766).
@@ -274,9 +286,14 @@ def exit_arms_payload_rows(
     ``arms`` are the completed arms ``(guard, UniverseValue)``.
     ``halted_assertion_sites`` are the ``assert`` statements at which a halted
     arm of the SAME reduction left: the reduction reached the assertion and
-    control halted there.
+    control halted there. ``halt_loci`` are the reduction's halted arms, one
+    ``PanicLocusDto`` each, wherever they left.
 
-    * post: the conjunction over completed arms of ``g_i -> post_i``.
+    * post: the conjunction over completed arms of ``g_i -> post_i``, and
+      nothing else. A halted arm adds nothing to it, so a function that only
+      halts states the empty conjunction: no claim about any result.
+    * every halted arm: one ``panicLoci`` entry on the function-contract row,
+      the existing panic-locus shape. A halt is never dropped.
     * one contract row per assertion SITE the reduction evaluated: the OR over
       the completed arms that hold the site of ``g_i AND fact_i``. The claim of
       an assertion is that an execution reaches it and it holds there; a guard
@@ -306,6 +323,7 @@ def exit_arms_payload_rows(
                 formal_coordinates=formal_coordinates,
                 post=value.post(),
                 def_memento=def_memento,
+                panic_loci=halt_loci,
             )
         ]
         rows.extend(mint_rows(name, formals, value.record.statements))
@@ -324,6 +342,7 @@ def exit_arms_payload_rows(
                 formal_coordinates=formal_coordinates,
                 post=post,
                 def_memento=def_memento,
+                panic_loci=halt_loci,
             )
         ]
         by_site: dict = {}

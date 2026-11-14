@@ -1,6 +1,6 @@
 from .assertion_fact_dto import AssertionFactDto
 from .assertion_surface_audit_dto import AssertionSurfaceAuditDto
-from .body_universe_dto import BodyUniverseDto
+from .body_universe_dto import BodyUniverseDto, PanicLocusDto
 from .callsite_fact_dto import CallsiteFactDto
 from .compiler_selection_dto import CompilerSelectionDto
 from .component_plan_memento_dto import ComponentPlanMementoDto
@@ -63,6 +63,7 @@ __all__ = [
     "FactoryWalkRowDto",
     "ImplicationDto",
     "LiftReportPayloadDto",
+    "PanicLocusDto",
     "ContextManagerEdgeDtoV1",
     "ContextManagerEdgeTransportError",
     "PlanAtomDto",

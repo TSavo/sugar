@@ -8,8 +8,64 @@ from .rpc_value import to_rpc_value
 from .source_memento_dto import SourceMementoDto
 
 if TYPE_CHECKING:
-    from sugar_lift_py_tests.ir import TermTableBuilder
+    from sugar_lift_py_tests.ir import Term, TermTableBuilder
     from sugar_lift_py_tests.proofir.scope import ClaimFormula
+
+
+# The panic-freedom leaf a Python halt is stated under: a runtime failure with
+# no static guard (``sugar_ir_types::panic_freedom::RUNTIME_FAILURE_SITE``).
+RUNTIME_FAILURE_SITE = "concept:panic-freedom.leaf.runtime-failure-site"
+
+
+@dataclass(frozen=True)
+class PanicLocusDto:
+    """One halted arm of a reduction, in the existing panic-locus row shape.
+
+    No new row shape (#7766, ruling 3): a ``panicLoci`` entry on the
+    function's contract row, filled with exactly the fields the verifier's one
+    panic-locus reader reads (``enumerate_callsites::callsite_from_panic_locus``):
+
+    * ``callee``: the runtime-failure-site leaf;
+    * ``file`` / ``line``: the fragment the halt left at, when its halt record
+      states one; absent otherwise, never borrowed from somewhere else;
+    * ``argTerm``: what the halt is about: the raised type's coordinate for a
+      raise, the failing operation for a runtime effect; absent when the halt
+      states neither.
+
+    That reader takes no path condition from a locus (a locus's guard facts
+    come only from walking a formula's ``cf_ite`` branches), so the arm's guard
+    has no field here. Nothing in a proof links a Python halt to a bridge, so
+    the row the verifier makes of it stays ``undecidable``.
+    """
+
+    file: str | None = None
+    line: int | None = None
+    arg_term: Term | None = None
+
+    def to_rpc_with_term_table(self, term_table: TermTableBuilder) -> dict[str, Any]:
+        out = self._site()
+        if self.arg_term is not None:
+            out["argTerm"] = term_table.reference(self.arg_term)
+        return out
+
+    def to_semantic_rpc(self) -> dict[str, Any]:
+        import json
+
+        from sugar_lift_py_tests.canonicalizer import encode_jcs
+        from sugar_lift_py_tests.ir import term_to_value
+
+        out = self._site()
+        if self.arg_term is not None:
+            out["argTerm"] = json.loads(encode_jcs(term_to_value(self.arg_term)))
+        return out
+
+    def _site(self) -> dict[str, Any]:
+        out: dict[str, Any] = {"callee": RUNTIME_FAILURE_SITE}
+        if self.file is not None:
+            out["file"] = self.file
+        if self.line is not None:
+            out["line"] = self.line
+        return out
 
 
 @dataclass(frozen=True)
@@ -42,6 +98,9 @@ class BodyUniverseDto:
     # deleted with the join by `target_symbol`.)
     kind: str = "contract"
     bridge_source_symbol: str | None = None
+    # One entry per halted arm of the function's one reduction (#7766): a
+    # halt is never dropped. Stated on the function's contract row only.
+    panic_loci: tuple[PanicLocusDto, ...] = ()
 
     def __post_init__(self) -> None:
         for slot in ("pre", "post", "inv"):
@@ -63,6 +122,10 @@ class BodyUniverseDto:
             out["post"] = term_table.formula(self.post.ir_formula)
         if self.inv is not None:
             out["inv"] = term_table.formula(self.inv.ir_formula)
+        if self.panic_loci:
+            out["panicLoci"] = [
+                locus.to_rpc_with_term_table(term_table) for locus in self.panic_loci
+            ]
         self._attach_sidecars(out)
         return out
 
@@ -80,6 +143,8 @@ class BodyUniverseDto:
             out["post"] = to_rpc_value(self.post)
         if self.inv is not None:
             out["inv"] = to_rpc_value(self.inv)
+        if self.panic_loci:
+            out["panicLoci"] = [locus.to_semantic_rpc() for locus in self.panic_loci]
         self._attach_sidecars(out)
         return out
 
