@@ -1,9 +1,13 @@
-"""The floor value for a successful ``re`` match over the decidable subset.
+"""The floor value for a successful ``re`` match.
 
-Plan Cut 2. A ``re.Match`` is always truthy (an empty match still matches);
-no match is ``None`` (falsy). This floor carries the bounded span testimony
-from ``re_subset_matcher`` plus the concrete subject, so truthiness is
-decided now and ``.group(n)`` is decidable later without a live re.Match.
+A ``re.Match`` is always truthy (an empty match still matches); no match is
+``None`` (falsy).  Over a ground pattern and subject the pinned interpreter's
+own ``re`` decides the match (``source_call_resolution.re_cited_fold``) and
+this floor carries the subject and the spans its ``re.Match`` held, so
+``.group(n)`` is decidable without a live ``re.Match``.  Over a subject known
+only to be a ``str`` the match is the one the call returned on the face where
+its predicate holds: its term is that call's occurrence result and its spans
+are not decided.
 """
 
 from __future__ import annotations
@@ -11,15 +15,50 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from .floor_value import FloorValue
-from .re_subset_matcher import RegexMatchSpanV1
+
+
+@dataclass(frozen=True)
+class RegexMatchSpanV1:
+    """A bounded match: the whole span and each group's span (None if unset)."""
+
+    start: int
+    end: int
+    group_spans: tuple[tuple[int, int] | None, ...]
+
+    @classmethod
+    def of(cls, match) -> "RegexMatchSpanV1":
+        """The spans the pinned interpreter's ``re.Match`` holds."""
+        group_spans = tuple(
+            None if match.span(index) == (-1, -1) else match.span(index)
+            for index in range(1, match.re.groups + 1)
+        )
+        start, end = match.span(0)
+        return cls(start, end, group_spans)
 
 
 @dataclass(frozen=True)
 class ReMatchValue(FloorValue):
-    """A successful regex match: subject + bounded spans. Always truthy."""
+    """A successful regex match. Always truthy.
 
-    subject: str
-    span: RegexMatchSpanV1
+    ``subject`` and ``span`` are the ground match's (``of_host``);
+    ``call_result`` is the term of a match whose subject is not ground
+    (``undecided``), whose spans nothing here decides."""
+
+    subject: str | None
+    span: RegexMatchSpanV1 | None
+    call_result: object | None = None
+
+    @classmethod
+    def of_host(cls, match) -> "ReMatchValue":
+        """The match the pinned interpreter's ``re`` returned over ground
+        operands: its subject and spans."""
+        return cls(subject=match.string, span=RegexMatchSpanV1.of(match))
+
+    @classmethod
+    def undecided(cls, call_result) -> "ReMatchValue":
+        """The match a call over a non-ground subject returned, named by that
+        call's occurrence result ``call_result``."""
+        return cls(subject=None, span=None, call_result=call_result)
 
     def denotes_value(self) -> bool:
         return True
@@ -36,6 +75,8 @@ class ReMatchValue(FloorValue):
     def group_text(self, index: int) -> str | None:
         """``match.group(index)`` as concrete text: group 0 is the whole match,
         1.. are captured groups; an unset optional group is ``None``."""
+        if self.span is None or self.subject is None:
+            raise LookupError("the match's spans are not decided")
         if index == 0:
             return self.subject[self.span.start : self.span.end]
         spans = self.span.group_spans
@@ -46,6 +87,8 @@ class ReMatchValue(FloorValue):
 
     def to_term(self, *, owner: str):
         del owner
+        if self.call_result is not None:
+            return self.call_result
         from sugar_lift_py_tests.ir import ctor, num, str_const
 
         return ctor(

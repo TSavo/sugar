@@ -3,8 +3,9 @@
 The matcher core and the BuiltinSemanticCallable arm are proven elsewhere.
 Here the recognition seam in ImportMemberValue is exercised through a REAL
 authenticated value-use receipt (target ``python:re.search``): a concrete
-call decides to a truthy ReMatchValue / None; a symbolic operand falls
-through to the ordinary undecided import-member boundary -- never a guess,
+call decides to a truthy ReMatchValue / None; a subject known only to be a
+``str`` completes on its predicate's two faces; a subject of undecided type
+is the one unanswered call owed under ``python:re.search`` -- never a guess,
 never keyed on spelling.
 """
 
@@ -75,15 +76,38 @@ def test_concrete_re_search_decides_truthful_and_lying(tmp_path) -> None:
     assert isinstance(miss.value, NoneValue)
 
 
-def test_symbolic_subject_stays_the_undecided_boundary(tmp_path) -> None:
-    """A symbolic operand is genuinely undecided: the import-member runtime
-    effect boundary, NOT a decided match and NOT our missing floor."""
+def test_symbolic_subject_is_the_one_unanswered_call(tmp_path) -> None:
+    """A subject whose type is undecided: the one two-faced unanswered call,
+    owing one debt under the import table's target symbol -- NOT a decided
+    match, NOT a panic, NOT a halt-only boundary (#7757)."""
     member, site = _re_search_member(tmp_path)
     out = member.callable_application_with(
         _Op([StringValue("nee"), SymbolicValue(make_var("s"))], site), None
     )
-    value = getattr(out, "value", out)
-    assert not isinstance(value, (ReMatchValue, NoneValue))
+    owed = out.owed_items()
+    assert len(owed) == 1 and owed[0].symbol == "python:re.search"
+    assert len(out.halts()) == 1
+    completed = [e for e in out.exits if e not in out.halts()]
+    assert len(completed) == 1
+    assert not isinstance(completed[0].value, (ReMatchValue, NoneValue))
+
+
+def test_str_subject_completes_on_its_predicate(tmp_path) -> None:
+    """A subject known only to be a ``str`` completes on the two faces of
+    ``py.re_search(pattern, subject)``, owing nothing."""
+    member, site = _re_search_member(tmp_path)
+    subject = (
+        SymbolicValue(make_var("t"))
+        .attribute("__name__", "name-attr", None)
+        .completed_value()
+    )
+    out = member.callable_application_with(
+        _Op([StringValue("nee"), subject], site), None
+    )
+    assert out.halts() == ()
+    assert out.owed_items() == ()
+    assert {type(e.value) for e in out.exits} == {ReMatchValue, NoneValue}
+    assert all("py.re_search" in str(e.guard) for e in out.exits)
 
 
 def test_recognition_is_keyed_on_the_authenticated_target_not_spelling(tmp_path) -> None:

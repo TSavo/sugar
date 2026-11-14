@@ -67,7 +67,7 @@ class BuiltinSemanticCallable(FloorValue):
             "python.re.match",
             "python.re.fullmatch",
         ):
-            return self._re_match(operation)
+            return self.re_application(operation)
         if self.operation == "python.isinstance":
             return self._isinstance(operation)
         if self.operation == "python.len":
@@ -262,70 +262,34 @@ class BuiltinSemanticCallable(FloorValue):
             )
         )
 
-    def _re_match(self, operation):
-        """``re.search``/``re.match``/``re.fullmatch`` over the decidable subset.
+    def re_application(self, operation, *, target_symbol=None):
+        """``re.search``/``re.match``/``re.fullmatch`` applied, decided or not.
 
-        Plan Cut 2: language-owned C-floor semantics. Both operands must be
-        concrete ``str`` floors; the pattern must be in the decidable subset
-        (validate_pattern is the authority). A successful match is a truthy
-        ``ReMatchValue``; no match is ``NoneValue``. Symbolic operands or a
-        pattern outside the subset keep the call loud -- never a guessed
-        match or non-match.
+        ``re_cited_fold`` is the call's one answerer: ground operands are the
+        pinned interpreter's own ``re`` (a truthy ``ReMatchValue``,
+        ``NoneValue``, or a builtin raise's one halt); a ground ``str``
+        pattern over a subject known only to be a ``str`` completes on the two
+        faces of ``py.re_<name>(pattern, subject)``, owing nothing.  What it
+        does not decide (a subject whose type is undecided, a keyword actual,
+        a pattern that does not compile) is the one unanswered call: two-faced,
+        owing one debt, its symbol ``target_symbol`` when the callee is
+        import-bound (#7757).
         """
-        from sugar_lift_py_tests.floor.none_value import NoneValue
-        from sugar_lift_py_tests.floor.re_match_value import ReMatchValue
-        from sugar_lift_py_tests.floor.re_subset_matcher import (
-            UnsupportedRegexInput,
-            UnsupportedRegexPattern,
-            re_fullmatch,
-            re_match,
-            re_search,
+        from sugar_lift_py_tests.source_call_resolution import (
+            UnknownCalleeCallV1,
+            re_cited_fold,
         )
-        from sugar_lift_py_tests.floor.string_value import StringValue
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import ExitSet
 
-        owner = f"BuiltinSemanticCallable.{self.operation}"
-        if operation.keyword_names or len(operation.arguments) != 2:
-            construction_panic_gap(
-                owner=owner,
-                blame=str(operation.site),
-                observed=(len(operation.arguments), operation.keyword_names),
-                requested="exactly two positional authenticated re operands",
-                fix="construct re.search/match/fullmatch arity exactly or keep it loud",
-            )
-        pattern_v, subject_v = operation.arguments
-        if not isinstance(pattern_v, StringValue) or not isinstance(
-            subject_v, StringValue
-        ):
-            construction_panic_gap(
-                owner=owner,
-                blame=str(operation.site),
-                observed=(type(pattern_v).__name__, type(subject_v).__name__),
-                requested="concrete str pattern and subject",
-                fix=(
-                    "keep re over a symbolic pattern/subject loud; only concrete "
-                    "operands are decided by the subset matcher"
-                ),
-            )
-        matcher = {
-            "python.re.search": re_search,
-            "python.re.match": re_match,
-            "python.re.fullmatch": re_fullmatch,
-        }[self.operation]
-        try:
-            span = matcher(pattern_v.value, subject_v.value)
-        except (UnsupportedRegexPattern, UnsupportedRegexInput) as exc:
-            construction_panic_gap(
-                owner=owner,
-                blame=str(operation.site),
-                observed=str(exc),
-                requested="a pattern in the decidable re subset",
-                fix="keep the call loud until the subset covers this pattern",
-            )
-        if span is None:
-            return ExitSet.completed(NoneValue())
-        return ExitSet.completed(ReMatchValue(subject=subject_v.value, span=span))
+        name, language_callee = _re_functions()[self.operation]
+        if not operation.keyword_names:
+            decided = re_cited_fold(name, operation.arguments, operation.site)
+            if decided is not None:
+                return decided
+        qualified = f"re.{name}"
+        callsite = _builtin_callsite(
+            operation, qualified, language_callee, target_symbol=target_symbol
+        )
+        return UnknownCalleeCallV1(qualified).faces(callsite, operation.site)
 
     def _isinstance(self, operation):
         """Exact ``isinstance(obj, classinfo)`` over authenticated floors.
@@ -621,10 +585,25 @@ def _cited_builtins():
     }
 
 
-def _builtin_callsite(operation, name, language_callee):
+@lru_cache(maxsize=1)
+def _re_functions():
+    """``operation -> (re function name, LanguageCallee)``: the ``re``
+    functions whose call ``re_cited_fold`` answers
+    (``BuiltinSemanticCallable.re_application``)."""
+    from sugar_source_tree.nodes import LanguageCallee
+
+    return {
+        "python.re.search": ("search", LanguageCallee.RE_SEARCH),
+        "python.re.match": ("match", LanguageCallee.RE_MATCH),
+        "python.re.fullmatch": ("fullmatch", LanguageCallee.RE_FULLMATCH),
+    }
+
+
+def _builtin_callsite(operation, name, language_callee, *, target_symbol=None):
     """The bodiless call coordinate of this builtin's application: it carries
     the ``LanguageCallee`` the binding is, so a reader asks the binding,
-    never the spelling ``name`` (#7757)."""
+    never the spelling ``name`` (#7757), and the one import table's target
+    symbol when the callee is import-bound (``target_symbol``)."""
     from sugar_lift_py_tests.call_symbol import call_symbol
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor
@@ -643,6 +622,7 @@ def _builtin_callsite(operation, name, language_callee):
         body=None,
         site=operation.site,
         language_callee=language_callee,
+        authenticated_target_symbol=target_symbol,
     )
 
 
