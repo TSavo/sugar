@@ -129,23 +129,13 @@ def _context_manager_rows_for_paths(paths, *, root: Path) -> List[Dict[str, Any]
     context: these rows are what the context's table is built from.
     """
     from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
-    from sugar_lift_python_source.source_oracle import (
-        SourceUnavailable,
-        install_root_for,
-    )
+    from sugar_lift_python_source.source_oracle import SourceUnavailable
     from sugar_source_tree.nodes import AsyncWith, With
 
     rows: List[Dict[str, Any]] = []
     for path in paths:
-        install_root = install_root_for(str(path))
         try:
-            source_file = _source_file_at_seat(
-                path,
-                root=Path(root),
-                source_workspace_root=(
-                    None if install_root is None else Path(install_root)
-                ),
-            )
+            source_file = _source_file_at_own_seat(path, root=Path(root))
         except SourceUnavailable:
             continue
         for node in source_file.nodes():
@@ -410,7 +400,8 @@ def _source_file_at_seat(
 
     Every open on the lift path comes through here: the one opener
     (``open_source_file_for_construction``) with its construction context, and
-    the step-3 With reader with none, because its rows are what that context's
+    the two step-3 readers (``_source_file_at_own_seat``: the With rows and the
+    lexical import pass) with none, because their rows are what that context's
     table is built from. The files are step 2's file list; no dependency module
     is opened anywhere. ``reporter=None`` leaves a resident file's reporter as
     it is.
@@ -441,6 +432,24 @@ def _source_file_at_seat(
     )
 
 
+def _source_file_at_own_seat(path: Path, *, root: Path):
+    """Step 3's read of one listed file: its seat, with no construction context.
+
+    The two step-3 readers -- the With rows and the lexical import pass -- both
+    read here, because their rows are what the construction context's table is
+    built from. The seat is stated against the install root the file's
+    distribution records, else ``root``: the seat the one opener reads.
+    """
+    from sugar_lift_python_source.source_oracle import install_root_for
+
+    install_root = install_root_for(str(path))
+    return _source_file_at_seat(
+        path,
+        root=Path(root),
+        source_workspace_root=None if install_root is None else Path(install_root),
+    )
+
+
 def open_source_file_for_construction(
     path: Path,
     *,
@@ -451,13 +460,20 @@ def open_source_file_for_construction(
     resolution_session=None,
     source_workspace_root: Path | None = None,
 ):
-    """Open a SourceFile the way production enumerate does — never bare context.
+    """THE one way a Python file is opened for construction (#7757 item 5).
 
-    Injects ``TreeConstructionContextV1`` (bound or provisional) and freezes
-    source-derived manager refs at exact use-sites. Every open populates: there
-    is no open that skips it, so every level reads the same tree. Callers that
-    already hold a frozen context (shared demand table across a census) may
-    pass it.
+    Every unit is seated (``_source_file_at_seat``), carries a construction
+    context, and is populated with source-derived manager refs at exact
+    use-sites. There is no open that skips any of the three, so every reader
+    -- every ``sugar.enumerate`` level, the audit leaf, the console census,
+    the caller-parameter contract, the attribution instruments, the scripts --
+    reads the same tree.
+
+    The context, when the caller names none, is ``enumerate_construction_context``:
+    the Rust prebind's bound refs when installed, otherwise the provisional
+    demand table for ``root``. ``contract_refs`` names a table already derived
+    for this root (a census shares one); ``construction_context`` a frozen
+    context the caller already holds.
 
     ``resolution_session`` owns every source-resolution memo for this open. When
     omitted, this door uses the walk-scoped session for ``root``, whose roster is
@@ -482,9 +498,13 @@ def open_source_file_for_construction(
     if reporter is None:
         reporter = NULL_REPORTER
     if construction_context is None:
-        construction_context = tree_construction_context_for_workspace(
-            root,
-            contract_refs=contract_refs,
+        construction_context = (
+            enumerate_construction_context(root)
+            if contract_refs is None
+            else tree_construction_context_for_workspace(
+                root,
+                contract_refs=contract_refs,
+            )
         )
     source_file = _source_file_at_seat(
         path,
@@ -693,6 +713,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
     from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
     from sugar_source_tree.panic import SugarNotWritten
+    from sugar_source_tree.reporter import CollectingReporter
 
     global _RETAINED_LINK_UNITS, _RETAINED_BY_MEMENTO
     _RETAINED_LINK_UNITS = {}
@@ -706,7 +727,9 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
         # bare door has no construction context and every Call refuses
         # (BareConstructionDoor), which failed every mint that reached a call.
         # Same door as the `functions` level, populated the same way.
-        sf = _open_enumerated_file(source_path, root=root, locus_root=None)
+        sf = open_source_file_for_construction(
+            source_path, root=root, reporter=CollectingReporter()
+        )
         for fn in sf.functions():
             try:
                 # The one reduction a resumed function gets: the unanswered
@@ -1988,21 +2011,6 @@ def enumerate_construction_context(root: Path):
     return tree_construction_context_for_workspace(root)
 
 
-def _open_enumerated_file(full_path: Path, *, root: Path, locus_root: Path | None):
-    """How every ``sugar.enumerate`` level opens its file: the one opener, the one
-    authority, a seated registration channel, and the one population (step 2's
-    file list), so every level reads the same populated tree."""
-    from sugar_source_tree.reporter import CollectingReporter
-
-    return open_source_file_for_construction(
-        full_path,
-        root=root,
-        reporter=CollectingReporter(),
-        construction_context=enumerate_construction_context(root),
-        source_workspace_root=locus_root,
-    )
-
-
 def _roll_call_audit_leaf(
     full_path: Path,
     file_rel: str,
@@ -2044,7 +2052,6 @@ def _roll_call_audit_leaf(
             full_path,
             root=root,
             reporter=reporter,
-            construction_context=enumerate_construction_context(root),
             source_workspace_root=locus_root,
         )
         report = discharge(source_file)
@@ -2462,15 +2469,20 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # for it.
                 from sugar_lift_py_tests import tree_enumerate as _tree
                 from sugar_lift_python_source.source_oracle import SourceUnavailable
+                from sugar_source_tree.reporter import CollectingReporter
+
                 # SEAT THE REGISTRATION CHANNEL (#7171 class, second costume):
                 # this door CONSTRUCTS sugar (the opener's
                 # `populate_source_derived_resource_refs` reaches
                 # `ClassDef.sugar()`), so the tree must be opened
-                # on a reporter that can hold a registration. The one enumerate
-                # opener seats it.
+                # on a reporter that can hold a registration. The one opener
+                # seats it.
                 try:
-                    tree_file = _open_enumerated_file(
-                        full_path, root=root, locus_root=locus_root
+                    tree_file = open_source_file_for_construction(
+                        full_path,
+                        root=root,
+                        reporter=CollectingReporter(),
+                        source_workspace_root=locus_root,
                     )
                 except SourceUnavailable as unavailable:
                     _send_enumerate_result(
@@ -2662,8 +2674,14 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_py_tests.ir import TermTableBuilder
                 from sugar_lift_py_tests.proofir._errors import FreeVariableRefusal
                 from sugar_source_tree.panic import SugarNotWritten
+                from sugar_source_tree.reporter import CollectingReporter
 
-                sf = _open_enumerated_file(full_path, root=root, locus_root=locus_root)
+                sf = open_source_file_for_construction(
+                    full_path,
+                    root=root,
+                    reporter=CollectingReporter(),
+                    source_workspace_root=locus_root,
+                )
                 term_table = TermTableBuilder()
                 universes = []  # (name, memento_dict, contract_dto)
                 # Every row of every function's one reduction (#7766): the
@@ -2874,8 +2892,14 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
 
             if level in ("call_sites", "assertions", "facts"):
                 from sugar_lift_py_tests import tree_enumerate as _tree
+                from sugar_source_tree.reporter import CollectingReporter
 
-                sf = _open_enumerated_file(full_path, root=root, locus_root=locus_root)
+                sf = open_source_file_for_construction(
+                    full_path,
+                    root=root,
+                    reporter=CollectingReporter(),
+                    source_workspace_root=locus_root,
+                )
 
                 if level in ("call_sites", "assertions"):
                     if seek:

@@ -50,10 +50,11 @@ class SourceFile:
     """One source file, parsed through a backend into a typed tree.
 
     Constructed from the SourceOracle's identity triple ``(source,
-    filename, content CID)`` — the ONE currency exchange. Use
-    ``SourceFile.from_path`` / ``SourceFile.from_module`` to go through
-    the oracle's doors; there is no raw-string constructor and no
-    filesystem read here.
+    filename, content CID)`` — the ONE currency exchange; there is no
+    raw-string constructor and no filesystem read here. A workspace file is
+    opened for construction one way only:
+    ``sugar_lift_py_tests.lift_rpc.open_source_file_for_construction``, which
+    seats, contextualizes and populates the unit (#7757 item 5).
 
     Parsing happens at construction: a ``SourceFile`` you hold is always
     a parsed file, never a promise of one. ``root`` is the ``Module``;
@@ -167,26 +168,6 @@ class SourceFile:
             construction_context=construction_context,
         )
 
-    @classmethod
-    def from_module(
-        cls,
-        module_name: str,
-        backend: Optional[Backend] = None,
-        reporter: AuditReporter = NULL_REPORTER,
-    ) -> "SourceFile":
-        """Through the oracle's installed-module door."""
-        from sugar_lift_python_source.source_oracle import (
-            SourceUnavailable,
-            installed_module_source,
-        )
-
-        identity = installed_module_source(module_name)
-        if identity is None:
-            raise SourceUnavailable(
-                f"oracle has no installed source for module `{module_name}`"
-            )
-        return cls(identity, backend=backend, reporter=reporter)
-
     @property
     def filename(self) -> str:
         return self.unit.filename
@@ -238,12 +219,12 @@ class SourceFile:
 
 
 class SourceTree:
-    """A directory of Python sources, enumerated as ``SourceFile``s.
+    """A directory of Python sources: step 2's file list.
 
-    ``files()`` is a generator: each yielded ``SourceFile`` is parsed on
-    the way out and retained by nobody but the caller. The tree holds the
-    root path and the backend — never the parsed files. That is what
-    keeps peak RSS flat across a corpus of any size.
+    ``paths()`` is the list; the tree never opens a file. Each listed path is
+    opened by the one opener (``open_source_file_for_construction``), so the
+    tree holds the root path and the backend — never the parsed files. That
+    is what keeps peak RSS flat across a corpus of any size.
 
     Enumerating NAMES (globbing) is the tree's job; reading TEXT is the
     oracle's: every path found here enters as the oracle's path-addressed
@@ -291,20 +272,6 @@ class SourceTree:
         """
         for path in self.paths():
             yield self.fragment_of(path)
-
-    def files(self) -> Iterator[SourceFile]:
-        """Enumerate ``SourceFile``s, each through the oracle's identity.
-        Parse failures propagate loudly — a caller that wants
-        record-and-continue catches the three contract types plus
-        ``SourceUnavailable`` per file (see corpus.py); nothing here
-        swallows."""
-        from sugar_lift_python_source.source_oracle import path_source
-
-        for path in self.paths():
-            yield SourceFile(path_source(str(path)), backend=self.backend)
-
-    def __iter__(self) -> Iterator[SourceFile]:
-        return self.files()
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<SourceTree {str(self.root)!r} backend={self.backend.name}>"

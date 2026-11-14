@@ -22,7 +22,11 @@ from sugar_lift_py_tests.proofir._errors import FreeVariableRefusal
 def _functions(tmp_path: Path, source: str) -> dict:
     path = tmp_path / "m.py"
     path.write_text(source, encoding="utf-8")
-    tree = lift_rpc._open_enumerated_file(path, root=tmp_path, locus_root=tmp_path)
+    from sugar_source_tree.reporter import CollectingReporter
+
+    tree = lift_rpc.open_source_file_for_construction(
+        path, root=tmp_path, reporter=CollectingReporter()
+    )
     return {fn.name: fn for fn in tree.functions()}
 
 

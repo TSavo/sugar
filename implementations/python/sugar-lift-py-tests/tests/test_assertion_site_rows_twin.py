@@ -114,8 +114,10 @@ def _assertion_rows(tmp_path: Path, source: str) -> list[tuple[int, dict]]:
     from sugar_lift_py_tests.tree_enumerate import function_contract_rows
 
     (tmp_path / "m.py").write_text(source, encoding="utf-8")
-    tree = lift_rpc._open_enumerated_file(
-        tmp_path / "m.py", root=tmp_path, locus_root=tmp_path
+    from sugar_source_tree.reporter import CollectingReporter
+
+    tree = lift_rpc.open_source_file_for_construction(
+        tmp_path / "m.py", root=tmp_path, reporter=CollectingReporter()
     )
     (function,) = tuple(tree.functions())
     _memento, rows = function_contract_rows(function, "m.py")

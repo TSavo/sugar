@@ -22,7 +22,7 @@ from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.backend import BackendCouldNotParse
 from sugar_source_tree.nodes import AsyncFunctionDef, FormattedValue, FunctionDef
 from sugar_source_tree.panic import SourceTreePanic, SugarNotWritten
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 
 
 def _installed_package_root(package: str) -> Path:
@@ -58,7 +58,7 @@ def measure(root: Path) -> dict[str, object]:
     for path in paths:
         counts["files_total"] += 1
         try:
-            source, filename, source_cid = path_source(path)
+            source, _filename, _source_cid = path_source(path)
             parsed = ast.parse(source, filename=str(path))
             native_nodes = [
                 node
@@ -70,8 +70,9 @@ def measure(root: Path) -> dict[str, object]:
                 counts["files_completed"] += 1
                 continue
             counts["files_with_formatted_value"] += 1
-            # The one door: the unit is read with its typed tree bound.
-            source_file = SourceFile((source, filename, source_cid))
+            # The one opener: the unit is seated, contextualized and populated
+            # the way the board reads it.
+            source_file = open_source_file_for_construction(path, root=root)
             formatted_values = [
                 node for node in source_file.nodes() if isinstance(node, FormattedValue)
             ]

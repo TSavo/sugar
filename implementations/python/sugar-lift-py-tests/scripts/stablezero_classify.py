@@ -116,12 +116,14 @@ def _testimony(error: BaseException) -> dict:
 def classify(path: Path, deadline: float) -> dict:
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.outcome.exit_set import ExitSetFactoringGap
-    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
     from sugar_source_tree.panic import SugarNotWritten
-    from sugar_source_tree.tree import SourceFile
 
     wall_started = time.time()
-    functions = list(SourceFile(path_source(str(path))).functions())
+    # The one opener, rooted at the isolated copy's own directory.
+    functions = list(
+        open_source_file_for_construction(path, root=path.parent).functions()
+    )
 
     rows: list[dict] = []
     desugar_seconds = 0.0

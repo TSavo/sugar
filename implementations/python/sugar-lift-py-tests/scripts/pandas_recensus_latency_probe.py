@@ -3,7 +3,7 @@
 
 Enum path only:
 
-    path_source → SourceFile → functions() → function.sugar()
+    open_source_file_for_construction → functions() → function.sugar()
 
 Engine log (JSONL) is optional via SUGAR_ENGINE_LOG / --engine-log.
 After run, prints top spans by elapsed_ms from the JSONL.
@@ -122,11 +122,10 @@ def main() -> int:
         engine_log._LIVE_HANDLER = None  # type: ignore[attr-defined]
         engine_log.configure_live_log(str(args.engine_log.resolve()))
 
-    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
     from sugar_source_tree.nodes import With
     from sugar_source_tree.panic import SourceTreePanic, SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.tree import SourceFile
 
     if args.corpus is None:
         import pandas
@@ -141,7 +140,9 @@ def main() -> int:
     phases: dict[str, float] = {}
     t0 = time.perf_counter()
     reporter = CollectingReporter()
-    source_file = SourceFile(path_source(str(path)), reporter=reporter)
+    source_file = open_source_file_for_construction(
+        path, root=args.corpus.resolve(), reporter=reporter
+    )
     phases["source_file_s"] = time.perf_counter() - t0
 
     t = time.perf_counter()

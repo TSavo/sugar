@@ -16,6 +16,7 @@ import tempfile
 from pathlib import Path
 
 from sugar_source_tree.tree import SourceTree
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_source_tree.nodes import Assert, FunctionDef, AsyncFunctionDef
 from sugar_lift_py_tests.sugar.assert_sugar import AssertSugar
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
@@ -36,8 +37,9 @@ def test_lift_a_single_assertion_all_the_way_to_sugar():
 
         tree = SourceTree(Path(root))
 
-        # source_files: exactly the one file, as a whole-file fragment
-        (source_file,) = list(tree.files())
+        # source_files: exactly the one file, opened the one way a file opens
+        (path,) = list(tree.paths())
+        source_file = open_source_file_for_construction(path, root=Path(root))
 
         # functions: exactly the one test function
         functions = list(source_file.functions())
