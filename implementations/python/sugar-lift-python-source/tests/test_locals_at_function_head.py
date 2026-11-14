@@ -62,12 +62,26 @@ def test_after_another_local_is_bound_the_call_stays_ordinary(tmp_path):
     assert halts
 
 
+def _unit(source: str):
+    """The typed unit of ``source``: the snapshot reader walks its tree."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.tree import SourceFile
+
+    return SourceFile(
+        (source, "locals_head.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).unit
+
+
 def test_a_rebound_locals_is_not_the_builtin():
     from sugar_source_tree.locals_snapshot import locals_snapshot_shape
 
     source = "def locals():\n    return {}\ndef g(p):\n    return locals()\n"
-    assert locals_snapshot_shape(source, 4, 11) is None
+    assert locals_snapshot_shape(_unit(source), 4, 11) is None
     nested = "def g(p):\n    return (lambda: locals())()\n"
-    assert locals_snapshot_shape(nested, 2, 20) is None
+    assert locals_snapshot_shape(_unit(nested), 2, 20) is None
     plain = "def g(p, *, q):\n    return locals()\n"
-    assert locals_snapshot_shape(plain, 2, 11).parameters == ("p", "q")
+    assert locals_snapshot_shape(_unit(plain), 2, 11).parameters == ("p", "q")

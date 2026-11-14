@@ -67,11 +67,10 @@ class NameSugar(ConstructedTermSugar):
         # A name nothing binds -- not local, not a parameter, not module-level,
         # not imported, not a builtin -- is no free variable: reading it raises
         # NameError, and that halt is its meaning.
-        source = getattr(getattr(self.site, "unit", None), "source", None)
-        if isinstance(source, str):
-            from sugar_source_tree.builtin_reference import module_name_unbound
-
-            if module_name_unbound(source, self.name):
+        unit = getattr(self.site, "unit", None)
+        name_bound_nowhere = getattr(unit, "name_bound_nowhere", None)
+        if name_bound_nowhere is not None:
+            if name_bound_nowhere(self.name):
                 from sugar_lift_py_tests.effect import NameErrorEffect
                 from sugar_lift_py_tests.outcome import ExitSet
 

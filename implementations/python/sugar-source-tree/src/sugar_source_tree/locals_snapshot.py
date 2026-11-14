@@ -9,21 +9,18 @@ exactly ``{name: value}`` over the parameters, in that order.
 
 This module answers the static half: which parameters, in which order, and
 which other names the function can bind (to check none is bound yet).  It
-answers only for the builtin ``locals`` (the name bound nowhere in the module)
-called with no arguments directly in a module-level function's body.  A call
-inside a nested function, lambda, class body, or comprehension element is
-another frame.  The first iterable of a comprehension is evaluated in the
-enclosing frame, so a call there is allowed.
+answers only for the builtin ``locals`` (the read the unit resolves to
+``builtins.locals``) called with no arguments directly in a module-level
+function's body.  A call inside a nested function, lambda, class body, or
+comprehension element is another frame.  The first iterable of a
+comprehension is evaluated in the enclosing frame, so a call there is allowed.
+
+Everything is read off the unit's typed tree; the source is never parsed here.
 """
 
 from __future__ import annotations
 
-import ast
 from dataclasses import dataclass
-
-from .builtin_reference import name_bound_anywhere
-
-_PARSED: dict = {}
 
 
 @dataclass(frozen=True)
@@ -32,15 +29,15 @@ class LocalsSnapshotShapeV1:
     other_locals: frozenset[str]
 
 
-def locals_snapshot_shape(source: str, line: int, col: int):
-    """The shape of ``locals()`` at (``line``, ``col``) in ``source``, or None."""
-    if "locals" not in source:
+def locals_snapshot_shape(unit, line: int, col: int):
+    """The shape of ``locals()`` at (``line``, ``col``) in ``unit``, or None."""
+    from .nodes import AsyncFunctionDef, FunctionDef
+
+    module = unit.typed_module
+    if module is None:
         return None
-    tree = _parse(source)
-    if tree is None or name_bound_anywhere(tree, "locals"):
-        return None
-    for function in tree.body:
-        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    for function in module.body:
+        if not isinstance(function, (FunctionDef, AsyncFunctionDef)):
             continue
         for statement in function.body:
             path = _path_to_call(statement, line, col)
@@ -48,106 +45,121 @@ def locals_snapshot_shape(source: str, line: int, col: int):
                 continue
             if not _same_frame(path):
                 return None
+            call = path[-1]
+            if unit.builtin_reference_at("locals", call.func.line_col_span()) is None:
+                return None
+            parameters = _parameters(function)
             return LocalsSnapshotShapeV1(
-                parameters=_parameters(function.args),
+                parameters=parameters,
                 other_locals=frozenset(_bound_in_frame(function))
-                - frozenset(_parameters(function.args)),
+                - frozenset(parameters),
             )
     return None
 
 
-def _parse(source):
-    if source in _PARSED:
-        return _PARSED[source]
-    try:
-        tree = ast.parse(source)
-    except SyntaxError:
-        tree = None
-    if len(_PARSED) > 16:
-        _PARSED.clear()
-    _PARSED[source] = tree
-    return tree
-
-
 def _path_to_call(root, line, col):
     """Ancestors from ``root`` down to the bare ``locals()`` call at the site."""
+    from .nodes import Call, Name
+
     stack = [(root, (root,))]
     while stack:
         node, path = stack.pop()
         if (
-            isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
+            isinstance(node, Call)
+            and isinstance(node.func, Name)
             and node.func.id == "locals"
             and not node.args
             and not node.keywords
-            and (node.lineno, node.col_offset) == (line, col)
         ):
-            return path
-        for child in ast.iter_child_nodes(node):
+            span = node.line_col_span()
+            if (span.start_line, span.start_col) == (line, col):
+                return path
+        for _name, _index, child in node.children():
             stack.append((child, (*path, child)))
     return None
 
 
-_COMPREHENSIONS = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+def _edge(parent, child):
+    """``(field, index)`` of the edge from ``parent`` to ``child``."""
+    for name, index, candidate in parent.children():
+        if candidate is child:
+            return name, index
+    return None
 
 
 def _same_frame(path) -> bool:
+    from .nodes import (
+        AsyncFunctionDef,
+        ClassDef,
+        DictComp,
+        FunctionDef,
+        GeneratorExp,
+        Lambda,
+        ListComp,
+        SetComp,
+    )
+
     for index, node in enumerate(path[:-1]):
-        if isinstance(
-            node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
-        ):
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
             return False
-        if isinstance(node, _COMPREHENSIONS):
+        if isinstance(node, (ListComp, SetComp, DictComp, GeneratorExp)):
             # Only the first generator's iterable runs in the enclosing frame.
-            child = path[index + 1]
-            if child is not node.generators[0]:
+            generator = path[index + 1]
+            if _edge(node, generator) != ("generators", 0):
                 return False
             inner = path[index + 2] if index + 2 < len(path) else None
-            if inner is not node.generators[0].iter:
+            if inner is None or _edge(generator, inner) != ("iter", None):
                 return False
     return True
 
 
-def _parameters(arguments) -> tuple[str, ...]:
-    names = [a.arg for a in (*arguments.posonlyargs, *arguments.args)]
-    names.extend(a.arg for a in arguments.kwonlyargs)
+def _parameters(function) -> tuple[str, ...]:
+    arguments = function.args
+    names = [p.name for p in (*arguments.posonlyargs, *arguments.args)]
+    names.extend(p.name for p in arguments.kwonlyargs)
     if arguments.vararg is not None:
-        names.append(arguments.vararg.arg)
+        names.append(arguments.vararg.name)
     if arguments.kwarg is not None:
-        names.append(arguments.kwarg.arg)
+        names.append(arguments.kwarg.name)
     return tuple(names)
 
 
 def _bound_in_frame(function):
     """Every name ``function``'s own frame may bind (not nested frames)."""
+    from .nodes import (
+        AsyncFunctionDef,
+        ClassDef,
+        DictComp,
+        FunctionDef,
+        GeneratorExp,
+        Global,
+        Lambda,
+        ListComp,
+        NamedExpr,
+        Nonlocal,
+        SetComp,
+    )
+
     bound = set()
     stack = list(function.body)
     while stack:
         node = stack.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef)):
             bound.add(node.name)
-            stack.extend(node.decorator_list)
+            stack.extend(node.decorators)
             continue
-        if isinstance(node, ast.Lambda):
+        if isinstance(node, Lambda):
             continue
-        if isinstance(node, _COMPREHENSIONS):
+        if isinstance(node, (ListComp, SetComp, DictComp, GeneratorExp)):
             # Comprehension targets are the comprehension's own; a walrus in
             # it binds here, and its first iterable runs here.
             stack.append(node.generators[0].iter)
-            for sub in ast.walk(node):
-                if isinstance(sub, ast.NamedExpr):
-                    bound.add(sub.target.id)
+            for sub in node.walk():
+                if isinstance(sub, NamedExpr):
+                    bound.update(sub.names_bound_here())
             continue
-        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
-            bound.add(node.id)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                bound.add(alias.asname or alias.name.split(".")[0])
-        elif isinstance(node, ast.ExceptHandler) and node.name:
-            bound.add(node.name)
-        elif isinstance(node, (ast.MatchAs, ast.MatchStar)) and node.name:
-            bound.add(node.name)
-        elif isinstance(node, ast.MatchMapping) and node.rest:
-            bound.add(node.rest)
-        stack.extend(ast.iter_child_nodes(node))
+        if not isinstance(node, (Global, Nonlocal)):
+            # A declaration routes a name elsewhere; it binds no local.
+            bound.update(node.names_bound_here())
+        stack.extend(child for _name, _index, child in node.children())
     return bound

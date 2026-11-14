@@ -2062,7 +2062,6 @@ class _WithReader:
             self._read_item_head(coordinate, entry[1])
 
     def _read_call_head(self, call_key, coordinate, call, exit_face_id) -> None:
-        from sugar_source_tree.builtin_reference import module_reads_builtin
         from sugar_source_tree.nodes import (
             AsyncFunctionDef,
             Call,
@@ -2080,7 +2079,10 @@ class _WithReader:
             return
         if not isinstance(call, Call) or not isinstance(call.func, Name):
             return
-        if module_reads_builtin(call.unit.source, call.func.id):
+        if (
+            call.unit.builtin_reference_at(call.func.id, call.func.line_col_span())
+            is not None
+        ):
             _read_builtin_name_head(context, coordinate, call, session=self.session)
             return
         if _read_assigned_partition_head(
@@ -2153,13 +2155,13 @@ class _WithReader:
             return
         unit = self.scope.unit
         start_line, start_col, _end_line, _end_col = item._manager_use_site_span()
-        head = formal_manager_head(unit.source, start_line, start_col)
+        head = formal_manager_head(unit, start_line, start_col)
         if head is not None:
             _read_formal_selected_head(context, coordinate, head)
             return
         if coordinate in context.opaque_source_call_obligations:
             return
-        head = call_bound_local_manager_head(unit.source, start_line, start_col)
+        head = call_bound_local_manager_head(unit, start_line, start_col)
         if head is not None and _read_call_bound_module_head(
             context,
             coordinate,
@@ -3292,8 +3294,9 @@ def _read_same_module_generator_head(
 def _read_builtin_name_head(context, coordinate, call, *, session) -> None:
     """``with open(...)``: a head calling a builtin name is not bridged.
 
-    Import receipts never fire for a builtin name.  When the head calls a name
-    the module binds nowhere, the callee is ``builtins.<name>``.  No artifact
+    Import receipts never fire for a builtin name.  When the unit resolves the
+    head's callee name to the builtin namespace (``builtin_reference_at``),
+    the callee is ``builtins.<name>``.  No artifact
     authenticates ``builtins``, so the lifter does not have it: the manager is
     cited naming ``python:builtins.<name>``, exactly as any other callee the
     lifter does not have.  What it is implemented in is never asked.
