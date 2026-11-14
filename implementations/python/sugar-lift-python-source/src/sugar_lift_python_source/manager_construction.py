@@ -1369,10 +1369,12 @@ def _graph_is_off_population(
     The roster (``session.enrolled_distributions``) is step 2's file list
     (``project_file_roster``): the content CID of every file the lift lists,
     and nothing else. No distribution is enrolled by name and no module by a
-    module-scoped entry. A module is enrolled when the source its artifact
-    seats for it is one of those files, or when the opened code imports its
-    top-level module (``session.imported_modules``, read from the one import
-    table). Without ``module_name`` only a listed file of the graph admits.
+    module-scoped entry. A module is enrolled only when the source its
+    artifact seats for it is one of those files. An installed module outside
+    the file list is not population, even when the opened code imports it:
+    an imported call is a coordinate plus an edge, answered by an imported
+    proof, and its body is never lifted (#7796). Without ``module_name`` only
+    a listed file of the graph admits.
     """
     if session is None:
         raise TypeError(
@@ -1389,9 +1391,7 @@ def _graph_is_off_population(
         # (an extension file, or a module it never ships): the lifter does
         # not have it, enrolled or not.
         return True
-    if source_cid in roster:
-        return False
-    return module_name.split(".", 1)[0] not in session.imported_modules
+    return source_cid not in roster
 
 
 def _absent_module_is_off_population(

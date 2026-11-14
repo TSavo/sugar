@@ -29,7 +29,6 @@ def test_supplied_enrolled_roster_is_accepted_and_never_widened(
 ) -> None:
     source_file = SimpleNamespace(
         root=SimpleNamespace(unit=SimpleNamespace(construction_context=None)),
-        unit=SimpleNamespace(imported_modules=lambda: frozenset()),
     )
     roster = frozenset({"blake3-512:listed"})
     session = SourceResolutionSession(enrolled_distributions=roster)

@@ -127,7 +127,6 @@ def main(argv: list[str] | None = None) -> int:
                 workspace_root=corpus,
                 file_rel=seat,
                 contract_refs=contract_refs,
-                distribution="pandas",
                 source_workspace_root=locus_root,
             )
             panics = row.get("constructionPanics") or []

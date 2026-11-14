@@ -119,7 +119,6 @@ audit, gaps = consumer.demand_construction_residual(
     workspace_root=root,
     file_rel="test_witness.py",
     source_cid=cid,
-    distribution="tiny-corpus",
     source_workspace_root=root,
 )
 core = (audit or {}).get("semanticCore") or (audit or {})

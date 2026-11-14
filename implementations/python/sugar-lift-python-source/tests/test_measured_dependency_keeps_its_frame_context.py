@@ -91,7 +91,6 @@ for seat in SEATS:
         workspace_root=corpus,
         file_rel=seat,
         contract_refs=None,
-        distribution="pandas",
         source_workspace_root=corpus if installed is None else Path(installed),
     )
     rows.append({

@@ -103,7 +103,6 @@ def _walk_one(install_root: Path) -> dict:
     return CONSUMER.measure_file_via_enumerate(
         workspace_root=install_root,
         file_rel=FILE_REL,
-        distribution="widget",
         source_workspace_root=install_root,
     )
 
@@ -324,7 +323,6 @@ def test_two_byte_identical_seats_are_two_populations_not_one(
                 CONSUMER.measure_file_via_enumerate(
                     workspace_root=install_root,
                     file_rel=seat,
-                    distribution="widget",
                     source_workspace_root=install_root,
                 ),
             )

@@ -91,7 +91,6 @@ def _measure_seat(seat: str) -> dict[str, Any]:
         workspace_root=corpus,
         file_rel=seat,
         contract_refs=None,
-        distribution="pandas",
         source_workspace_root=locus_root,
     )
 
