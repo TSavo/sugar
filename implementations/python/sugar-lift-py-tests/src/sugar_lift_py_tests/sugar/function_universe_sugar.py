@@ -54,16 +54,32 @@ class _ReducedBlock:
     )
 
 
-def _extend_receiver_store_scope(value, ctx):
-    """Thread statement-owned rebinds: Floor ``extend_scope`` only.
+def statement_record(value, ctx) -> _ReducedBlock:
+    """The record a statement that completed with ``value``, run in ``ctx``,
+    leaves: ``value`` itself where it is a block's record; otherwise what the
+    value owns -- its contribution (the entries), its follow (whether the
+    block goes on, and the guard and transform it goes on under) and its
+    scope (``extend_scope`` of ``ctx``: the context the next statement reads).
 
-    The reducer does not probe capability, ladder rebind kinds, or mint root
-    contexts.  Default FloorValue.extend_scope is identity; Floors that rebind
-    (ScopeRebind, ReceiverFieldStoreValue, …) own their own root-context mint
-    when ``ctx`` is absent.  ``value`` is the completed arm's FloorValue, which
-    owns ``extend_scope``.
-    """
-    return value.extend_scope(ctx)
+    The one projection of a statement's completed value: the block reducer
+    continues after every statement through it (``reduce_block_to_exitset``),
+    and a statement that ran in a context other than the one the block
+    handed it -- the rest of a statement after its header's writes
+    (``header_ran``) -- leaves its record in the context it ran in, never the
+    block's.  The reducer does not probe capability, ladder rebind kinds, or
+    mint root contexts: default ``FloorValue.extend_scope`` is identity, and
+    the Floors that rebind (``ScopeRebind``, ``ReceiverFieldStoreValue``, ...)
+    own their own root-context mint when ``ctx`` is absent."""
+    if isinstance(value, _ReducedBlock):
+        return value
+    follow = value.follow_rest()
+    return _ReducedBlock(
+        value.contribution(),
+        follow.continues,
+        () if follow.continuation_guard is None else (follow.continuation_guard,),
+        () if follow.transform is None else (follow.transform,),
+        context=value.extend_scope(ctx),
+    )
 
 
 def plain_completed_value(outcome):
@@ -176,10 +192,10 @@ def _require_recorded_halts(outcome, statement) -> None:
     (``x, y = (a := 1), f()``, ``raise E((m := msg))``): such a halt's
     record is built where it halted, from the binds already made
     (``halts_at_operand_head``: every operand's evaluation,
-    ``sugar_base._recorded_at_its_head``; every consumer's step, an
-    ``assert``'s failure after its test bound one included,
+    ``sugar_base._recorded_at_its_head``; every consumer's step,
     ``consume_operands``; a statement's header, a ``raise`` of a walrus's
-    value included, ``header_applied``). One that still offers no record
+    value and an ``assert``'s failure after its test bound one included,
+    ``header_applied``). One that still offers no record
     from a statement holding a walrus (an ``assert``'s failure after its
     message's walrus, whose value is never reduced) is refused here like
     any other: the prefix would drop the bind.
@@ -399,7 +415,7 @@ def laid_in_record(entries, outcome, *, halts_only: bool = False):
     ran in a statement before the part of it that made ``outcome`` -- the
     stores a callee made on objects this frame sees, carried by an
     assignment's values (``assigned_value.evaluate_assignment_values``) or
-    by a statement's header (``header_applied``, ``header_record``).
+    by a statement's header (``header_ran``).
 
     The one way a statement lays what it carried before its own record, as a
     statement alone lays the stores its call carried
@@ -410,7 +426,10 @@ def laid_in_record(entries, outcome, *, halts_only: bool = False):
     value -- a block's record (``_ReducedBlock``), a ``BlockValue``'s
     statements, a symbolic ``if``'s faces (``GuardedFaces``: before every
     face, with the condition's own testimony), a class body's
-    (``class_definition_sugar._ClassBodyV1``); a halted arm's is its state.
+    (``class_definition_sugar._ClassBodyV1``), a live ``while``'s test at one
+    item (``loop_recurrence_sugar._WhileTest``: before the item's body, and
+    before the loop's exit where the test is false); a halted arm's is its
+    state.
     A halted arm with no record of its own is left as it is: its producer
     records it where it halted (``halts_recorded``) before it is laid here.
     A completed value that holds no record is refused by name, never handed
@@ -422,11 +441,12 @@ def laid_in_record(entries, outcome, *, halts_only: bool = False):
         return outcome
     from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
     from sugar_lift_py_tests.sugar.class_definition_sugar import _ClassBodyV1
+    from sugar_lift_py_tests.sugar.loop_recurrence_sugar import _WhileTest
 
     entries = tuple(entries)
 
     def lay(value):
-        if isinstance(value, (_ReducedBlock, _ClassBodyV1)):
+        if isinstance(value, (_ReducedBlock, _ClassBodyV1, _WhileTest)):
             return ExitSet.completed(
                 replace(value, entries=(*entries, *value.entries))
             )
@@ -452,8 +472,8 @@ def laid_in_record(entries, outcome, *, halts_only: bool = False):
             ),
             requested=(
                 "a completed record (a block's record, a BlockValue, a "
-                "symbolic if's faces, a class body) for what the statement "
-                "carried before it"
+                "symbolic if's faces, a class body, a while test's item) for "
+                "what the statement carried before it"
             ),
             fix=(
                 "complete the statement with its record; never hand on a value "
@@ -478,55 +498,24 @@ def laid_in_record(entries, outcome, *, halts_only: bool = False):
     return outcome.and_then(lay)
 
 
-def header_record(value, ctx):
-    """``(presented, record)`` for the value of a statement's header -- an
-    expression the statement evaluates before the rest of it reads what that
-    expression did: an ``if`` test, a ``with`` item's manager, a ``match``
-    subject, a ``raise`` operand.
-
-    ``presented`` is the value beneath the writes the header made; ``record``
-    is the record the rest of the statement continues after: its context is
-    ``ctx`` with every walrus bind and every callee store the header carried
-    applied by the one operand rule (``named_expression_value.written_by``),
-    its entries the callee stores (``CallerStoreValue``), laid by
-    ``laid_in_record``.  ``record`` is None where the header carried no
-    write: the rest runs in ``ctx`` as it is."""
-    from sugar_lift_py_tests.floor.named_expression_value import (
-        caller_stores_of,
-        peel_walrus_binds,
-        written_by,
-    )
-
-    binds, presented = peel_walrus_binds(value)
-    if not binds:
-        return value, None
-    _walrus, stores = caller_stores_of(binds)
-    return presented, _ReducedBlock(
-        stores, True, (), context=written_by(value, ctx)
-    )
-
-
 def header_applied(statement, field: str, ctx):
     """``(headed, outcome)``: THE one way a statement's header -- the sugar
-    in ``statement``'s ``field``: a ``with`` item's manager, a ``match``
-    subject, a ``raise`` operand -- reaches the rest of the statement.
+    in ``statement``'s ``field``, an expression the statement evaluates
+    before the rest of it reads what that expression did: an ``if`` test, an
+    ``assert`` test, a live ``while``'s test at each item, a ``with`` item's
+    manager, a ``match`` subject, a ``raise`` operand -- reaches the rest of
+    the statement.
 
     ``outcome`` is the header evaluated once, in ``ctx``.  Where no completed
     face of it carries a write (a walrus bind, a callee store), ``headed`` is
     None and the statement runs as it is, from ``outcome``.  Otherwise
     ``headed`` is the statement: each halted face of the header halted at
-    the statement's head (``halt_record(ctx)``); on each completed face the
-    statement runs again with the header fixed to the value it presents, in
-    the context its writes leave (``header_record``), every halt of that
-    run that offers no record recorded there, and the callee stores the
-    header carried first in every record it makes (``laid_in_record``) --
-    the same mechanism an operand's walrus binds reach a later operand by
-    (``written_by``, ``halts_at_operand_head``), wherever the header sits.
-    Each run keeps its face's guard, faces and ``owed`` (``ExitSet.sequence``)."""
+    the statement's head (``halt_record(ctx)``), and on each completed face
+    the rest of the statement runs (``header_ran``).  Each run keeps its
+    face's guard, faces and ``owed`` (``ExitSet.sequence``)."""
     from sugar_lift_py_tests.floor.named_expression_value import (
         peel_walrus_binds,
     )
-    from sugar_lift_py_tests.sugar.match_sugar import _CompleteValueSugar
 
     header = getattr(statement, field)
     outcome = header.desugar(ctx)
@@ -535,20 +524,61 @@ def header_applied(statement, field: str, ctx):
         for exit_ in outcome.exits
     ):
         return None, outcome
-    site = getattr(statement, "site", None)
+    return (
+        halts_recorded(outcome, halt_record(ctx)).sequence(
+            lambda value: header_ran(statement, field, value, ctx)
+        ),
+        outcome,
+    )
 
-    def run(value):
-        presented, record = header_record(value, ctx)
-        fixed = replace(statement, **{field: _CompleteValueSugar(presented, site)})
-        if record is None:
-            return fixed.desugar(ctx)
-        ran = halts_recorded(
-            fixed.desugar(record.context),
-            replace(record, entries=(), can_fall_through=False),
+
+def header_ran(statement, field: str, value, ctx):
+    """The rest of ``statement`` after its header (``field``) completed with
+    ``value`` in ``ctx``: the statement run again with the header fixed to
+    the value ``value`` presents beneath its writes (``_CompleteValueSugar``).
+
+    Where ``value`` carries no write, the rest runs in ``ctx``.  Otherwise it
+    runs in the context the writes leave -- ``ctx`` with every walrus bind
+    and every callee store applied by the one operand rule
+    (``named_expression_value.written_by``) -- every halt of it that offers
+    no record recorded there, and the callee stores (``CallerStoreValue``)
+    first in every record it makes (``laid_in_record``): the same mechanism
+    an operand's walrus binds reach a later operand by (``written_by``,
+    ``halts_at_operand_head``), wherever the header sits.  A completed value
+    of the rest that is no record (a symbolic ``if``'s faces, an
+    ``assert``'s stated fact) leaves the record it makes in that context
+    (``statement_record``): what follows the statement reads the header's
+    writes, never the context from before the header.
+
+    The step ``header_applied`` takes on each completed face of the header;
+    a statement whose header's completion waits on its caller's actuals (an
+    ``if`` test deferred on a native operation) takes it on the discharged
+    value."""
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        caller_stores_of,
+        peel_walrus_binds,
+        written_by,
+    )
+    from sugar_lift_py_tests.sugar.match_sugar import _CompleteValueSugar
+
+    binds, presented = peel_walrus_binds(value)
+    fixed = replace(
+        statement,
+        **{field: _CompleteValueSugar(presented, getattr(statement, "site", None))},
+    )
+    if not binds:
+        return fixed.desugar(ctx)
+    _walrus, stores = caller_stores_of(binds)
+    headed = written_by(value, ctx)
+    ran = halts_recorded(fixed.desugar(headed), halt_record(headed)).and_then(
+        lambda completed: ExitSet.completed(
+            statement_record(completed, headed)
+            if isinstance(completed, FloorValue)
+            else completed
         )
-        return laid_in_record(record.entries, ran)
-
-    return halts_recorded(outcome, halt_record(ctx)).sequence(run), outcome
+    )
+    return laid_in_record(stores, ran)
 
 
 def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
@@ -795,28 +825,16 @@ def reduce_block_to_exitset(
             outcome = statement.desugar(statement_ctx)
 
             def project(value):
-                if isinstance(value, _ReducedBlock):
-                    contribution = value.entries
-                    continues = value.can_fall_through
-                    nested_fall_through = value.fall_through
-                    nested_transforms = value.transforms
-                    next_context = (
-                        value.context if value.context is not None else active_ctx
-                    )
-                else:
-                    # The value owns its contribution, its follow and its scope.
-                    contribution = value.contribution()
-                    follow = value.follow_rest()
-                    continues = follow.continues
-                    nested_fall_through = (
-                        ()
-                        if follow.continuation_guard is None
-                        else (follow.continuation_guard,)
-                    )
-                    nested_transforms = (
-                        () if follow.transform is None else (follow.transform,)
-                    )
-                    next_context = _extend_receiver_store_scope(value, active_ctx)
+                # The value owns its contribution, its follow and its scope
+                # (``statement_record``); a block's record is its own.
+                record = statement_record(value, active_ctx)
+                contribution = record.entries
+                continues = record.can_fall_through
+                nested_fall_through = record.fall_through
+                nested_transforms = record.transforms
+                next_context = (
+                    record.context if record.context is not None else active_ctx
+                )
                 for transform in reversed(state.transforms):
                     contribution = transform(contribution)
                 entries = (*state.entries, *contribution)

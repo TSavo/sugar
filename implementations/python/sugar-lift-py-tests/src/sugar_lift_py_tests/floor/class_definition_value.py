@@ -92,8 +92,10 @@ class ClassDefinitionValue(GuardStableValue):
     # the class statement lays them in its block's record before the class
     # (``contribution``), as an assignment lays the stores its value carried
     # (``function_universe_sugar.laid_in_record``), so the frame's exit hands
-    # them to its caller (``caller_visible_stores``).  What ran is no part of
-    # the class's identity.
+    # them to its caller (``caller_visible_stores``), and publishes them to
+    # its block (``extend_scope``), so the statement after it reads the
+    # objects as the body left them.  What ran is no part of the class's
+    # identity.
     body_stores: tuple = field(default=(), compare=False)
 
     def __post_init__(self):
@@ -107,8 +109,22 @@ class ClassDefinitionValue(GuardStableValue):
         # The class statement's record: what its body's callees stored, then
         # the class.  A class read elsewhere contributes as any value does:
         # a record splices a statement's value, never the values it holds
-        # (``BlockValue.contribution``).
-        return (*self.body_stores, self)
+        # (``BlockValue.contribution``).  The class the record holds has its
+        # stores laid ahead of it, so it holds none of its own: a record's
+        # entries publish each store once (``extend_scope``).
+        if not self.body_stores:
+            return (self,)
+        from dataclasses import replace
+
+        return (*self.body_stores, replace(self, body_stores=()))
+
+    def extend_scope(self, ctx):
+        # The class statement publishes to its block what its body's callees
+        # stored, in order, as any statement publishes the stores its values
+        # carried (``BlockValue.extend_scope`` over a statement's record).
+        for store in self.body_stores:
+            ctx = store.extend_scope(ctx)
+        return ctx
 
     def callable_application_with(self, operation, ctx):
         """``Cls(*args, **kw)`` reached as a value: the same call as by name.

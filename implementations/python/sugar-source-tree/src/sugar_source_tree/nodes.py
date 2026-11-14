@@ -14852,29 +14852,70 @@ class For(Statement):
         still reads its own key, so moving the store changes no read.
 
         A store that unpacks a non-display element into several targets
-        after the first item stays at its iteration: its unpack (a
-        ``ValueError`` on the wrong arity) runs as that item is taken, never
-        before an earlier item's body.  ``unpacks`` holds None where the
-        store was moved."""
+        after the first item is parted (``_item_evaluated_apart``): the
+        element's evaluation moves before the first item, whatever the
+        item's shape, and the unpack of that evaluation (a ``ValueError`` on
+        the wrong arity) stays where that item is taken, never before an
+        earlier item's body.  ``unpacks`` holds None where the store was
+        moved, and the unpack alone where it was parted."""
         hoisted = []
         kept = []
         for index, (element, unpack) in enumerate(
             zip(elements, unpacks, strict=True)
         ):
-            movable = (
-                index == 0
-                or self.target.kind == "Name"
-                or element.kind in ("Tuple", "List")
-            )
             calls = any(
                 node.kind in ("Call", "FormattedValue") for node in element.walk()
             )
-            if unpack is not None and movable and calls:
+            if unpack is None or not calls:
+                kept.append(unpack)
+            elif (
+                index == 0
+                or self.target.kind == "Name"
+                or element.kind in ("Tuple", "List")
+            ):
                 hoisted.extend(_iteration_copies(self, index, (unpack,)))
                 kept.append(None)
             else:
-                kept.append(unpack)
+                evaluated, unpacked = self._item_evaluated_apart(unpack, element, index)
+                hoisted.extend(_iteration_copies(self, index, (evaluated,)))
+                kept.append(unpacked)
         return tuple(hoisted), tuple(kept)
+
+    def _item_evaluated_apart(self, unpack, element, index):
+        """``(evaluated, unpacked)``: iteration ``index``'s keyed unpack of
+        its item (``unpack``: ``<target> = <element>``) parted in two.
+        ``evaluated`` evaluates ``element`` once and binds it under its own
+        key (a store to a label no source name can spell, ``for-item:<i>``,
+        keyed as an evaluation of the unpack's own); ``unpacked`` is the
+        unpack with ``element`` read through that key -- the statement's
+        own key kept, so every read of a target is unchanged.  The iterable
+        is evaluated before the first item and each item is unpacked as it
+        is taken: ``evaluated`` runs there, ``unpacked`` here, and the
+        element is never evaluated twice."""
+        from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+        from .shadow import rewrite_with_leaves
+
+        label = f"for-item:{index}"
+        evaluation = projection_key(unpack.evaluation, label)
+        exit_path = getattr(unpack, "evaluation_exit_path", None)
+        exit_path = exit_path if isinstance(exit_path, tuple) else ()
+        evaluated = rewrite_with_leaves(
+            self._make_assign(self._make_name(label), element),
+            {"evaluation": evaluation, "evaluation_exit_path": exit_path},
+        )
+        read = _evaluation_ref(
+            self,
+            element.span,
+            projection_key(evaluation, label),
+            label,
+            of=element,
+        )
+        unpacked = rewrite_with_leaves(
+            self._make_assign(self.target, read),
+            {"evaluation": unpack.evaluation, "evaluation_exit_path": exit_path},
+        )
+        return evaluated, unpacked
 
     def _unroll_concrete_controlled(self, bindings, scope, unpacks=None):
         """Exact AST-local execution of bounded jump-bearing loop structure.

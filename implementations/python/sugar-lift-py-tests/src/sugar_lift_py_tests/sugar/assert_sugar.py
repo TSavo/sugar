@@ -63,22 +63,21 @@ class AssertSugar(Sugar):
         # Desugar the test, and the result states itself. The outcome is
         # recorded for the readers of this assert (item 28, #7757): they read
         # it off the owner's one reduction and never reduce the assert alone.
+        #
+        # The test is this statement's header: a walrus bind or callee store
+        # its value carried reaches what follows the assert, and a failure
+        # after it, by the one header rule (``header_applied``), the stores
+        # laid in the record.  There the assert runs again on the value the
+        # test presents (``header_ran``), and that run records its own
+        # outcome: the stated fact, in the context the test's writes left.
         from sugar_lift_py_tests import assert_reductions
-        from sugar_lift_py_tests.floor.named_expression_value import (
-            consume_operands,
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            header_applied,
         )
 
-        # The assert's own step (the test stated, ``AssertionError`` where
-        # it fails) runs after its test: it consumes the test through the
-        # one operand door, so it states the value the test presents, and
-        # its failure after a walrus in the test bound (``assert (a :=
-        # f())``) carries the record of this statement's context with the
-        # bind applied (``consume_operands``), never the block's prefix,
-        # which holds none of it.
-        outcome = self.test.desugar(ctx).and_then(
-            lambda value: consume_operands(
-                lambda presented: presented.stated(self.site), value
-            )
-        )
+        headed, tested = header_applied(self, "test", ctx)
+        if headed is not None:
+            return headed
+        outcome = tested.and_then(lambda value: value.stated(self.site))
         assert_reductions.record(self.site, outcome)
         return outcome
