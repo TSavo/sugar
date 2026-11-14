@@ -24,7 +24,7 @@ def test_symbolic_name_attribute_is_a_coordinate_not_an_invented_string() -> Non
 
     value = SymbolicValue(make_var("expected"))
     site = "symbolic-name-attr"
-    outcome = value.attribute("__name__", site)
+    outcome = value.attribute("__name__", site, None)
 
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), CallSiteValue)
@@ -41,7 +41,7 @@ def test_symbolic_unknown_attribute_stays_undecided() -> None:
 
     value = SymbolicValue(make_var("expected"))
     try:
-        value.attribute("not_a_data_model_name", "symbolic-unknown-attr")
+        value.attribute("not_a_data_model_name", "symbolic-unknown-attr", None)
     except SugarNotWritten as exc:
         assert exc.owner == "SymbolicValue.attribute"
         assert "not_a_data_model_name" in (exc.observed or "")
@@ -66,7 +66,7 @@ def test_call_site_name_attribute_is_a_coordinate_not_an_invented_string() -> No
         site="callsite-name",
     )
     site = "callsite-name-attr"
-    outcome = receiver.attribute("__name__", site)
+    outcome = receiver.attribute("__name__", site, None)
 
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), CallSiteValue)

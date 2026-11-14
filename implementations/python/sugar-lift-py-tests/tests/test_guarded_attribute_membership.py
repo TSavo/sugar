@@ -23,7 +23,7 @@ def test_guarded_attribute_keeps_symbolic_face_refusal_loud():
     false_face = SymbolicValue(make_var("f"))
     guarded = GuardedValue(_guard(), true_face, false_face)
     try:
-        guarded.attribute("x", "site")
+        guarded.attribute("x", "site", None)
     except SugarNotWritten as refusal:
         assert refusal.owner == "SymbolicValue.attribute"
         assert refusal.observed.endswith("SymbolicValue.x")

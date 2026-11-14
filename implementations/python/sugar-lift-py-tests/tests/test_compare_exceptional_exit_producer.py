@@ -492,16 +492,18 @@ def test_formal_ordering_survives_until_authenticated_caller_discharge() -> None
     )
 
     completed = carrier.discharge(
+        None,
         {
             left_coordinate.coordinate_cid: TermValue(1),
             right_coordinate.coordinate_cid: TermValue(2),
-        }
+        },
     )
     halted = carrier.discharge(
+        None,
         {
             left_coordinate.coordinate_cid: NoneValue(),
             right_coordinate.coordinate_cid: TermValue(2),
-        }
+        },
     )
     assert len(completed.exits) == 1
     assert isinstance(completed.exits[0], Completed)
@@ -539,7 +541,7 @@ def test_formal_ordering_rejects_a_lying_exception_identity() -> None:
         _ValueSugar(TermValue(2)),
         node.fragment,
     ).desugar(None)
-    exits = carrier.discharge({left_coordinate.coordinate_cid: NoneValue()})
+    exits = carrier.discharge(None, {left_coordinate.coordinate_cid: NoneValue()})
     projected = exits.and_exit(
         ExitSet.completed(object()),
         disposition=EffectBoundaryDisposition(
@@ -598,7 +600,7 @@ def test_formal_equality_keeps_py_eq_solver_work_until_discharge() -> None:
 
     assert isinstance(carrier, NativeOperationExitCarrierV1)
     assert carrier.demand.operator == "equals"
-    exits = carrier.discharge({left_coordinate.coordinate_cid: TermValue(1)})
+    exits = carrier.discharge(None, {left_coordinate.coordinate_cid: TermValue(1)})
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
     assert isinstance(exits.exits[0].value, FalseBoolLiteralSugar)

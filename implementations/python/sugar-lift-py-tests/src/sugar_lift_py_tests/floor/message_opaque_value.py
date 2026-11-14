@@ -34,8 +34,8 @@ class MessageOpaqueValue(SymbolicValue):
         return ExitSet.completed(self)
 
     # --- surfaces SymbolicValue refuses: yield another message opacity --------
-    def attribute(self, name, site):
-        del name, site
+    def attribute(self, name, site, ctx):
+        del name, site, ctx
         return self._opaque()
 
     def callable_application_with(self, operation, ctx):

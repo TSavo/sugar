@@ -144,7 +144,7 @@ def test_star_values_reach_declared_stored_value() -> None:
     obj_cid, name_cid, values_cid = pending.demand.operand_coordinate_cids
     assert name_cid is None
     pack = TupleValue((TermValue(1), TermValue(2)))
-    exits = pending.discharge({obj_cid: receiver, values_cid: pack})
+    exits = pending.discharge(None, {obj_cid: receiver, values_cid: pack})
     assert isinstance(exits, ExitSet)
     assert isinstance(exits.exits[0], Completed)
     stored = exits.exits[0].value
@@ -165,7 +165,7 @@ def test_kw_values_reach_declared_stored_value() -> None:
     obj_cid, name_cid, values_cid = pending.demand.operand_coordinate_cids
     assert name_cid is None
     mapping = DictValue(((StringValue("a"), TermValue(1)),))
-    exits = pending.discharge({obj_cid: receiver, values_cid: mapping})
+    exits = pending.discharge(None, {obj_cid: receiver, values_cid: mapping})
     assert isinstance(exits.exits[0], Completed)
     record = exits.exits[0].value.record
     assert any(
@@ -181,7 +181,7 @@ def test_kw_values_reach_declared_stored_value() -> None:
 def test_empty_star_stores_honest_empty_tuple() -> None:
     _, pending, receiver = _source_class_and_helper("    pass\n", HELPER_STAR)
     obj_cid, _, values_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, values_cid: TupleValue(())})
+    exits = pending.discharge(None, {obj_cid: receiver, values_cid: TupleValue(())})
     assert isinstance(exits.exits[0], Completed)
     record = exits.exits[0].value.record
     assert any(
@@ -254,7 +254,8 @@ def test_getter_only_property_named_attributeerror_with_star_pack() -> None:
     assert name_cid is None
     assert pending.pre_effect_state is not None
     exits = pending.discharge(
-        {obj_cid: receiver, values_cid: TupleValue((TermValue(9),))}
+        None,
+        {obj_cid: receiver, values_cid: TupleValue((TermValue(9),))},
     )
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
@@ -278,10 +279,11 @@ def test_getter_only_discrimination_not_completed() -> None:
     )
     obj_cid, _, values_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: receiver,
             values_cid: DictValue(((StringValue("a"), TermValue(1)),)),
-        }
+        },
     )
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed)

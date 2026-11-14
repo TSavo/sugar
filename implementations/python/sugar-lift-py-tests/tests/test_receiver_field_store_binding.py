@@ -53,7 +53,7 @@ class _ReadReceiverField(Sugar):
         return ()
 
     def desugar(self, ctx=None):
-        return ctx.temporal.value_for("self").attribute("payload", "test")
+        return ctx.temporal.value_for("self").attribute("payload", "test", ctx)
 
 
 @dataclass(frozen=True)
@@ -197,7 +197,8 @@ def test_returned_alias_observes_updated_mapping_receiver_identity():
     assert isinstance(returned, MappingObjectValue)
     assert returned.identity == receiver.identity
     assert returned.entries == receiver.entries
-    assert returned.attribute("payload", "test") == ExitSet.completed(TermValue(17))
+    read_back = returned.attribute("payload", "test", None)
+    assert read_back == ExitSet.completed(TermValue(17))
 
 
 def test_same_class_different_receiver_identity_is_not_rewritten():
@@ -284,7 +285,8 @@ def test_receiver_field_post_state_preserves_mapping_identity_and_entries() -> N
     assert isinstance(outcome.completed_value(), MappingObjectValue)
     assert outcome.completed_value().identity == receiver.identity
     assert outcome.completed_value().entries == receiver.entries
-    assert outcome.completed_value().attribute("owner", "test") == ExitSet.completed(TermValue(7))
+    read_back = outcome.completed_value().attribute("owner", "test", None)
+    assert read_back == ExitSet.completed(TermValue(7))
 
 
 def test_receiver_field_post_state_preserves_defining_class_authority() -> None:
@@ -378,7 +380,7 @@ class _ReadStoredPayload(Sugar):
 
     def desugar(self, ctx=None):
         return self.receiver.desugar(ctx).and_then(
-            lambda receiver: receiver.attribute("payload", "test")
+            lambda receiver: receiver.attribute("payload", "test", ctx)
         )
 
 

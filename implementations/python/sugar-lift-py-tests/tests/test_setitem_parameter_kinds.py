@@ -103,7 +103,7 @@ def test_helper_alone_is_undischarged_setitem_with_parameter_kinds() -> None:
     parameters = tuple(
         inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
     )
-    assert parameters == ("receiver", "index", "value", "site")
+    assert parameters == ("receiver", "index", "value", "site", "ctx")
 
 
 def test_helper_alone_is_not_completed_discrimination() -> None:
@@ -163,11 +163,12 @@ def test_callers_bind_to_exact_native_operation_coordinates() -> None:
     assert formals[1].parameter_kind == "positional-or-keyword"
     assert formals[2].parameter_kind == "keyword-only"
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0), TermValue(1))),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
-        }
+        },
     )
     assert isinstance(exits.exits[0], Completed)
     assert _stored_list(exits.exits[0]) == ListValue((TermValue(9), TermValue(1)))
@@ -182,11 +183,12 @@ def test_mutable_store_completes_via_kinds() -> None:
     _, pending = _helper()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
-        }
+        },
     )
     assert isinstance(exits, ExitSet)
     assert isinstance(exits.exits[0], Completed)
@@ -198,11 +200,12 @@ def test_invalid_index_named_indexerror_with_exact_pre_effect_state() -> None:
     assert pending.pre_effect_state is not None
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(1),
             value_cid: TermValue(9),
-        }
+        },
     )
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
@@ -233,11 +236,12 @@ def test_invalid_index_discrimination_not_completed() -> None:
     _, pending = _helper()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(1),
             value_cid: TermValue(9),
-        }
+        },
     )
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed)
@@ -313,8 +317,8 @@ def test_swapped_key_value_coordinates_rejected() -> None:
         key_c.coordinate_cid: TermValue(1),
         value_c.coordinate_cid: TermValue(99),
     }
-    t_face = truthful.discharge(actuals).exits[0]
-    l_face = lying.discharge(actuals).exits[0]
+    t_face = truthful.discharge(None, actuals).exits[0]
+    l_face = lying.discharge(None, actuals).exits[0]
     assert isinstance(t_face, Completed)
     t_list = _stored_list(t_face)
     assert t_list == ListValue((TermValue(0), TermValue(99), TermValue(2)))

@@ -156,7 +156,7 @@ def test_isomorph_helper_retains_setitem_discharge_order() -> None:
     parameters = tuple(
         inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
     )
-    assert parameters == ("receiver", "index", "value", "site")
+    assert parameters == ("receiver", "index", "value", "site", "ctx")
     # Source eval order for the store half is value → receiver → index.
     source_eval = ("rhs_store", "codes", "i")
     assert names != source_eval
@@ -181,11 +181,12 @@ def test_isomorph_mutable_completes_and_invalid_index_halts_with_earlier_state()
     codes_cid, i_cid, rhs_cid = pending.demand.operand_coordinate_cids
 
     ok = pending.discharge(
+        None,
         {
             codes_cid: ListValue((TermValue(0), TermValue(1))),
             i_cid: TermValue(0),
             rhs_cid: TermValue(99),
-        }
+        },
     )
     assert isinstance(ok, ExitSet)
     assert isinstance(ok.exits[0], Completed)
@@ -195,11 +196,12 @@ def test_isomorph_mutable_completes_and_invalid_index_halts_with_earlier_state()
     assert lists and lists[0] == ListValue((TermValue(99), TermValue(1)))
 
     bad = pending.discharge(
+        None,
         {
             codes_cid: ListValue((TermValue(0),)),
             i_cid: TermValue(5),
             rhs_cid: TermValue(99),
-        }
+        },
     )
     halted = bad.exits[0]
     assert isinstance(halted, Halted)
@@ -216,11 +218,12 @@ def test_isomorph_later_halt_discrimination_not_completed() -> None:
     _, pending = _isomorph_helper()
     codes_cid, i_cid, rhs_cid = pending.demand.operand_coordinate_cids
     bad = pending.discharge(
+        None,
         {
             codes_cid: ListValue((TermValue(0),)),
             i_cid: TermValue(5),
             rhs_cid: TermValue(99),
-        }
+        },
     )
     with pytest.raises(AssertionError):
         assert isinstance(bad.exits[0], Completed)
@@ -248,8 +251,8 @@ def test_isomorph_lying_swapped_index_value_mint_differs() -> None:
         key_c.coordinate_cid: TermValue(1),
         value_c.coordinate_cid: TermValue(99),
     }
-    truthful_face = truthful.discharge(actuals).exits[0]
-    lying_face = lying.discharge(actuals).exits[0]
+    truthful_face = truthful.discharge(None, actuals).exits[0]
+    lying_face = lying.discharge(None, actuals).exits[0]
     assert isinstance(truthful_face, Completed)
     # Truthful post-state stores 99 at index 1.
     t_lists = [

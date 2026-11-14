@@ -55,12 +55,12 @@ class GroupedExceptionValue(FloorValue):
             return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         if name == "split":
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(GroupedExceptionSplitMethod(self, site))
-        return super().attribute(name, site)
+        return super().attribute(name, site, ctx)
 
     def call_method_value(
         self, name, arguments, *, owner, blame, ctx=None, keywords=(), required_frame=None

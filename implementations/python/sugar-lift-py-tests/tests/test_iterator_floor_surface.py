@@ -101,7 +101,7 @@ def test_tuple_iter_with_yields_tuple_iterator() -> None:
 def test_project_iter_is_the_production_edge_for_list() -> None:
     site = _site()
     members = (TermValue(7),)
-    outcome = project_iter(ListValue(members), site)
+    outcome = project_iter(ListValue(members), site, None)
     assert outcome.completed_value() is not None
     assert outcome.completed_value() == ListIteratorValue(members, index=0)
 
@@ -157,7 +157,7 @@ def test_project_next_matches_operation_submit() -> None:
     members = (TermValue(4), TermValue(5))
     it = ListIteratorValue(members, index=0)
     via_op = _next_op(owner="project_next", site=site).submit(it, None)
-    via_proj = project_next(it, site)
+    via_proj = project_next(it, site, None)
     assert via_op == via_proj
     assert via_proj.completed_value().value == TermValue(4)
     assert via_proj.completed_value().advanced == ListIteratorValue(members, index=1)
@@ -193,7 +193,7 @@ def test_stop_iteration_is_not_type_error() -> None:
 def test_string_site_cannot_mint_stop_iteration() -> None:
     """Missing-authority twin: prose blame cannot fabricate exception identity."""
     with pytest.raises(ConstructionPanic) as caught:
-        project_next(ListIteratorValue((), index=0), "iterator-surface-site")
+        project_next(ListIteratorValue((), index=0), "iterator-surface-site", None)
     text = str(caught.value)
     assert (
         "fragment" in text.lower()
@@ -203,14 +203,16 @@ def test_string_site_cannot_mint_stop_iteration() -> None:
     assert "StopIteration" not in text or "no source fragment" in text
     # Lying twin: claiming string blame yields a greened StopIteration halt.
     with pytest.raises(ConstructionPanic):
-        out = project_next(ListIteratorValue((), index=0), "iterator-surface-site")
+        out = project_next(
+            ListIteratorValue((), index=0), "iterator-surface-site", None
+        )
         assert _only_halt(out).effect.exception_name == "StopIteration"
 
 
 def test_same_name_foreign_coordinate_is_not_truthful_stop() -> None:
     """Spelling 'StopIteration' under a foreign coordinate is not the exit."""
     site = _site()
-    truthful = project_next(ListIteratorValue((), index=0), site)
+    truthful = project_next(ListIteratorValue((), index=0), site, None)
     effect = _only_halt(truthful).effect
     assert effect.exception_name == "StopIteration"
     assert effect.exception_type_coordinate == _stopiteration_type_identity()
@@ -294,16 +296,16 @@ def test_next_does_not_mutate_prior_iterator() -> None:
 def test_full_list_walk_via_projectors() -> None:
     site = _site()
     members = (TermValue(1), TermValue(2), TermValue(3))
-    it_out = project_iter(ListValue(members), site)
+    it_out = project_iter(ListValue(members), site, None)
     assert it_out.completed_value() is not None
     cursor = it_out.completed_value()
     seen: list[object] = []
     for _ in range(3):
-        step = project_next(cursor, site)
+        step = project_next(cursor, site, None)
         assert step.completed_value() is not None
         seen.append(step.completed_value().value)
         cursor = step.completed_value().advanced
-    stop = project_next(cursor, site)
+    stop = project_next(cursor, site, None)
     stop_effect = _only_halt(stop).effect
     assert stop_effect.exception_name == "StopIteration"
     assert stop_effect.exception_type_coordinate == _stopiteration_type_identity()
@@ -343,7 +345,7 @@ def test_renamed_method_is_not_the_iterator_surface() -> None:
 def test_wrong_definition_stop_is_not_type_error() -> None:
     """Exhaustion must not be redefinable as TypeError or an empty completion."""
     site = _site()
-    outcome = project_next(ListIteratorValue((), index=0), site)
+    outcome = project_next(ListIteratorValue((), index=0), site, None)
     effect = _only_halt(outcome).effect
     assert effect.exception_name == "StopIteration"
     with pytest.raises(AssertionError):
@@ -355,7 +357,7 @@ def test_wrong_definition_stop_is_not_type_error() -> None:
 def test_wrong_occurrence_stop_is_not_truthful() -> None:
     """Same exception name under a foreign occurrence is not the operation exit."""
     site = _site()
-    truthful = project_next(ListIteratorValue((), index=0), site)
+    truthful = project_next(ListIteratorValue((), index=0), site, None)
     effect = _only_halt(truthful).effect
     assert effect.exception_name == "StopIteration"
     foreign = replace(
@@ -377,14 +379,14 @@ def test_cross_wired_list_iterator_is_not_tuple_iterator() -> None:
     """List and tuple iterators are distinct authenticated Floors."""
     site = _site()
     members = (TermValue(1), TermValue(2))
-    list_it = project_iter(ListValue(members), site).completed_value()
-    tuple_it = project_iter(TupleValue(members), site).completed_value()
+    list_it = project_iter(ListValue(members), site, None).completed_value()
+    tuple_it = project_iter(TupleValue(members), site, None).completed_value()
     assert isinstance(list_it, ListIteratorValue)
     assert isinstance(tuple_it, TupleIteratorValue)
     assert list_it != tuple_it
     with pytest.raises(AssertionError):
         assert list_it == tuple_it
-    step = project_next(list_it, site)
+    step = project_next(list_it, site, None)
     assert isinstance(step.completed_value().advanced, ListIteratorValue)
     assert not isinstance(step.completed_value().advanced, TupleIteratorValue)
 
@@ -395,13 +397,14 @@ def test_cross_wired_iter_and_next_methods_are_distinct() -> None:
     assert IteratorOperation.method_name == "iter_with"
     assert NextOperation.method_name == "next_with"
     assert IteratorOperation.method_name != NextOperation.method_name
-    assert project_iter(ListValue((TermValue(1),)), site).completed_value() is not None
+    started = project_iter(ListValue((TermValue(1),)), site, None)
+    assert started.completed_value() is not None
     with pytest.raises(ConstructionPanic):
-        project_next(ListValue((TermValue(1),)), site)
-    stop = project_next(ListIteratorValue((), index=0), site)
+        project_next(ListValue((TermValue(1),)), site, None)
+    stop = project_next(ListIteratorValue((), index=0), site, None)
     _only_halt(stop)
     with pytest.raises(ConstructionPanic):
-        project_iter(ListIteratorValue((), index=0), site)
+        project_iter(ListIteratorValue((), index=0), site, None)
 
 
 # ---------------------------------------------------------------------------

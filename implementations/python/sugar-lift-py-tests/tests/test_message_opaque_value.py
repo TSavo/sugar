@@ -19,7 +19,7 @@ def test_is_a_symbolic_value_so_arithmetic_string_machinery_applies() -> None:
 
 
 def test_attribute_yields_message_opacity() -> None:
-    out = _opaque().attribute("get_verbosity", site="s")
+    out = _opaque().attribute("get_verbosity", site="s", ctx=None)
     assert out.completed_value() is not None
     assert isinstance(out.completed_value(), MessageOpaqueValue)
 

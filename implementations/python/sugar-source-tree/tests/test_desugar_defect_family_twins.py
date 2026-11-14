@@ -77,7 +77,7 @@ def _discharged_dict_method(out):
     for index, cid in enumerate(operands):
         if cid is not None:
             actuals[cid] = TermValue(index)
-    return outcome_to_exitset(out.discharge(actuals))
+    return outcome_to_exitset(out.discharge(None, actuals))
 
 
 @dataclass(frozen=True)

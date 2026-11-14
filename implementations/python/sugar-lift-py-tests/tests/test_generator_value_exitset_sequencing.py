@@ -467,7 +467,7 @@ def test_native_exit_carrier_preserves_identity_and_appends_one_continuation(
     assert existing_calls == []
     assert continuation_calls == []
 
-    discharged = outcome.discharge({})
+    discharged = outcome.discharge(None, {})
     assert isinstance(discharged, ExitSet)
     assert len(existing_calls) == 1
     assert existing_calls[0] is completed_value
@@ -537,7 +537,7 @@ def test_native_exit_carrier_gap_callback_raises_exact_transition_refusal(
     assert reductions == ["value"]
     assert isinstance(deferred, NativeOperationExitCarrierV1)
     with pytest.raises(SugarNotWritten) as raised:
-        deferred.discharge({})
+        deferred.discharge(None, {})
     assert raised.value.owner == "GeneratorConstructionV1.transition"
     assert raised.value.blame is blamed_step
     assert raised.value.observed == "carrier-tail-gap"

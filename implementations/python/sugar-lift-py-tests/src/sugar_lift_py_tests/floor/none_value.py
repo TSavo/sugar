@@ -55,11 +55,12 @@ class NoneValue(GuardStableValue):
         }
     )
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         # NoneType's member set is closed and source-decided.  A name outside
         # that set is the authenticated AttributeError partition; a name inside
         # it stays the py.getattr coordinate until its body is constructed
         # (so ``None.__class__`` / ``None.__doc__`` are never mis-exited).
+        del ctx
         if name not in self._NONETYPE_MEMBERS:
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 

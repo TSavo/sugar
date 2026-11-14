@@ -26,7 +26,7 @@ class EffectCoordinate(FloorValue):
 
         return ctor("python:effect_slot", [str_const(self.slot_id)])
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         if self.slot_id.endswith("#enter_result") and type(self) is EffectCoordinate:
             # ``with m as r: r.x`` read through the body's enter-result slot:
             # the value ``__enter__`` returned at that one entry, whose runtime
@@ -39,7 +39,7 @@ class EffectCoordinate(FloorValue):
 
             return _opaque_attribute_faces(self, name, site)
         if name != "__context__":
-            return super().attribute(name, site)
+            return super().attribute(name, site, ctx)
         from sugar_lift_py_tests.gap.info import GapKind
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -69,12 +69,12 @@ class ExceptionInfoCoordinate(FloorValue):
 
         return ctor("python:exception_info", [str_const(self.slot_id)])
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         if name == "value":
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(EffectCoordinate(slot_id=self.slot_id, site=site))
-        return super().attribute(name, site)
+        return super().attribute(name, site, ctx)
 
 
 @dataclass(frozen=True)
@@ -83,9 +83,9 @@ class ObservedEffectValue(EffectCoordinate):
 
     effect: object = dataclass_field(compare=False, default=None)
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         if name != "__context__":
-            return super().attribute(name, site)
+            return super().attribute(name, site, ctx)
         from sugar_lift_py_tests.effect import RaiseEffect
         from sugar_lift_py_tests.outcome import ExitSet
 
@@ -93,7 +93,7 @@ class ObservedEffectValue(EffectCoordinate):
         value = getattr(context, "raised_value", None)
         if isinstance(context, RaiseEffect) and isinstance(value, FloorValue):
             return ExitSet.completed(value)
-        return super().attribute(name, site)
+        return super().attribute(name, site, ctx)
 
 
 def _language_exception_class_for_coordinate(coordinate):
@@ -132,7 +132,7 @@ class ObservedExceptionInfoValue(ExceptionInfoCoordinate):
 
     effect: object = dataclass_field(compare=False, default=None)
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         if name == "value":
             from sugar_lift_py_tests.floor.floor_value import FloorValue
             from sugar_lift_py_tests.outcome import ExitSet
@@ -140,7 +140,7 @@ class ObservedExceptionInfoValue(ExceptionInfoCoordinate):
             raised = getattr(self.effect, "raised_value", None)
             if isinstance(raised, FloorValue):
                 return ExitSet.completed(raised)
-            return FloorValue.attribute(self, name, site)
+            return FloorValue.attribute(self, name, site, ctx)
         if name == "type":
             from sugar_lift_py_tests.outcome import ExitSet
 
@@ -149,4 +149,4 @@ class ObservedExceptionInfoValue(ExceptionInfoCoordinate):
             )
             if typ is not None:
                 return ExitSet.completed(typ)
-        return super().attribute(name, site)
+        return super().attribute(name, site, ctx)

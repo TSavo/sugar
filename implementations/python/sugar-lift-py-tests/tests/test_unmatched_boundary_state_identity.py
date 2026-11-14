@@ -93,11 +93,12 @@ def _unpack_store_halt() -> tuple[NativeOperationExitCarrierV1, Halted]:
     assert pending.pre_effect_state is not None
     a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             a_cid: ListValue((TermValue(0),)),
             i_cid: TermValue(5),
             q_cid: TermValue(9),
-        }
+        },
     )
     halted = exits.exits[0]
     assert isinstance(halted, Halted)

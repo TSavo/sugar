@@ -336,7 +336,7 @@ def test_incompatible_ordering_typeerror_with_exact_pre_effect_state() -> None:
     left_cid, right_cid = _left_right_cids(pending)
     from sugar_lift_py_tests.floor import NoneValue
 
-    exits = pending.discharge({left_cid: NoneValue(), right_cid: TermValue(2)})
+    exits = pending.discharge(None, {left_cid: NoneValue(), right_cid: TermValue(2)})
     halted = _only_halted(exits, require_pre_effect_state=True)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
     assert halted.state is testimony.state

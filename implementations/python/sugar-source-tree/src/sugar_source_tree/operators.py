@@ -63,13 +63,14 @@ class BinaryOperator(Operator):
 
     inplace_operator: str = ""
 
-    def project_inplace(self, left, right, site):
-        """Surface operator → Floor ``inplace_binary_operator_with`` + NotImplemented law."""
+    def project_inplace(self, left, right, site, ctx):
+        """Surface operator → Floor ``inplace_binary_operator_with`` + NotImplemented law,
+        under the caller's context (the ``__i*__`` body and its binary fallback)."""
         from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
             discharge_inplace,
         )
 
-        return discharge_inplace(left, right, site, None, surface=self.symbol)
+        return discharge_inplace(left, right, site, ctx, surface=self.symbol)
 
 
 class UnaryOperator(Operator):

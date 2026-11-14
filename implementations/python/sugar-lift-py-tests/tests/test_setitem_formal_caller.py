@@ -129,7 +129,7 @@ def test_missing_caller_actual_is_undischarged_not_completed() -> None:
     """Missing authenticated actuals remain undischarged — never fabricate green."""
     _, pending = _helper_definition()
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge({})
+        pending.discharge(None, {})
 
 
 def test_partial_caller_actual_is_undischarged_discrimination() -> None:
@@ -137,21 +137,23 @@ def test_partial_caller_actual_is_undischarged_discrimination() -> None:
     _, pending = _helper_definition()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     completed = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
-        }
+        },
     )
     assert isinstance(completed.exits[0], Completed)
 
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
         pending.discharge(
+            None,
             {
                 obj_cid: ListValue((TermValue(0),)),
                 key_cid: TermValue(0),
                 # value_cid deliberately omitted
-            }
+            },
         )
 
 
@@ -169,7 +171,7 @@ def test_setitem_mint_operand_order_matches_projector() -> None:
     parameters = tuple(
         inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
     )
-    assert parameters == ("receiver", "index", "value", "site")
+    assert parameters == ("receiver", "index", "value", "site", "ctx")
     assert tuple(value.term.name for value in pending.operands) == (
         "obj",
         "key",
@@ -244,11 +246,12 @@ def test_mutable_receiver_completes_store_via_setitem() -> None:
     _, pending = _helper_definition()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0), TermValue(1))),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
-        }
+        },
     )
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
@@ -280,10 +283,10 @@ def test_discrimination_wrong_cell_is_not_the_completed_store() -> None:
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     base = ListValue((TermValue(0), TermValue(1)))
     positive = pending.discharge(
-        {obj_cid: base, key_cid: TermValue(0), value_cid: TermValue(9)}
+        None, {obj_cid: base, key_cid: TermValue(0), value_cid: TermValue(9)}
     )
     other = pending.discharge(
-        {obj_cid: base, key_cid: TermValue(1), value_cid: TermValue(9)}
+        None, {obj_cid: base, key_cid: TermValue(1), value_cid: TermValue(9)}
     )
     assert isinstance(positive.exits[0], Completed)
     assert isinstance(other.exits[0], Completed)
@@ -303,11 +306,12 @@ def test_invalid_index_halts_with_named_indexerror() -> None:
     _, pending = _helper_definition()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(4),
             value_cid: TermValue(9),
-        }
+        },
     )
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
@@ -326,11 +330,12 @@ def test_discrimination_valid_index_is_not_indexerror() -> None:
     _, pending = _helper_definition()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
-        }
+        },
     )
     assert isinstance(exits.exits[0], Completed)
     assert not isinstance(exits.exits[0], Halted)
@@ -391,8 +396,8 @@ def test_swapped_key_value_coordinates_rejected_against_truthful_store() -> None
         key_c.coordinate_cid: TermValue(1),
         value_c.coordinate_cid: TermValue(99),
     }
-    truthful_exits = truthful.discharge(actuals)
-    lying_exits = lying.discharge(actuals)
+    truthful_exits = truthful.discharge(None, actuals)
+    lying_exits = lying.discharge(None, actuals)
 
     assert isinstance(truthful_exits.exits[0], Completed)
     truthful_list = _stored_list(truthful_exits.exits[0])
@@ -415,11 +420,12 @@ def test_discrimination_truthful_order_completes_at_correct_cell() -> None:
     _, truthful = _helper_definition()
     obj_c, key_c, value_c = truthful.coordinates
     exits = truthful.discharge(
+        None,
         {
             obj_c.coordinate_cid: ListValue((TermValue(0), TermValue(1), TermValue(2))),
             key_c.coordinate_cid: TermValue(1),
             value_c.coordinate_cid: TermValue(99),
-        }
+        },
     )
     assert isinstance(exits.exits[0], Completed)
     assert _stored_list(exits.exits[0]) == ListValue(
@@ -472,7 +478,7 @@ def test_source_evaluation_order_independent_of_discharge_order() -> None:
     parameters = tuple(
         inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
     )
-    assert parameters == ("receiver", "index", "value", "site")
+    assert parameters == ("receiver", "index", "value", "site", "ctx")
     assert parameters[:3] != ("value", "receiver", "index")
 
 

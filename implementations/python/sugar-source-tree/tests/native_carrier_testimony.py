@@ -34,7 +34,7 @@ def authenticated_function_value(function, *, operator, actuals=None):
     if actuals is None:
         actuals = tuple(SymbolicValue(make_var(name)) for name in frame.parameters)
     bound = frame.bind_actuals(tuple(actuals), ())
-    projected = bound.project_native_carrier(carrier)
+    projected = bound.project_native_carrier(carrier, None)
     assert isinstance(projected, ExitSet), projected
     completed = tuple(
         exit_ for exit_ in projected.exits if isinstance(exit_, Completed)

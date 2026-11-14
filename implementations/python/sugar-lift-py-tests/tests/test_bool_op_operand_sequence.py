@@ -290,7 +290,7 @@ def test_formal_boolop_defers_truth_to_existing_unary_carrier() -> None:
 def test_false_caller_actual_returns_that_actual_and_never_reaches_right() -> None:
     carrier, formal, evaluations, _ = _formal_carrier()
     actual = TermValue(0)
-    exits = carrier.discharge({formal.coordinate_cid: actual})
+    exits = carrier.discharge(None, {formal.coordinate_cid: actual})
     assert evaluations == ["left"]
     assert len(exits.exits) == 1
     assert not isinstance(exits.exits[0], Halted)
@@ -299,7 +299,7 @@ def test_false_caller_actual_returns_that_actual_and_never_reaches_right() -> No
 
 def test_true_caller_actual_reaches_and_returns_right_operand() -> None:
     carrier, formal, evaluations, right = _formal_carrier()
-    exits = carrier.discharge({formal.coordinate_cid: TermValue(1)})
+    exits = carrier.discharge(None, {formal.coordinate_cid: TermValue(1)})
     assert evaluations == ["left", "right"]
     assert len(exits.exits) == 1
     assert exits.exits[0].value is right
@@ -307,7 +307,7 @@ def test_true_caller_actual_reaches_and_returns_right_operand() -> None:
 
 def test_halted_caller_truth_propagates_and_never_reaches_right() -> None:
     carrier, formal, evaluations, _ = _formal_carrier()
-    exits = carrier.discharge({formal.coordinate_cid: _ExceptionalTruth()})
+    exits = carrier.discharge(None, {formal.coordinate_cid: _ExceptionalTruth()})
     assert evaluations == ["left"]
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Halted)
@@ -317,7 +317,7 @@ def test_halted_caller_truth_propagates_and_never_reaches_right() -> None:
 def test_wrong_boundary_type_does_not_consume_caller_truth_halt() -> None:
     """The assertion expectation verifies; it never creates the producer type."""
     carrier, formal, _, _ = _formal_carrier()
-    produced = carrier.discharge({formal.coordinate_cid: _ExceptionalTruth()})
+    produced = carrier.discharge(None, {formal.coordinate_cid: _ExceptionalTruth()})
     original = produced.exits[0]
     assert isinstance(original, Halted)
 
@@ -339,7 +339,8 @@ def test_undecided_caller_actual_remains_named_refusal() -> None:
     carrier, formal, _, _ = _formal_carrier()
     with pytest.raises(SugarNotWritten) as caught:
         carrier.discharge(
-            {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))}
+            None,
+            {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))},
         )
     assert caught.value.owner == "boolean_operation_exception_floor"
 
@@ -347,7 +348,7 @@ def test_undecided_caller_actual_remains_named_refusal() -> None:
 def test_lying_bool_coercion_cannot_replace_selected_operand() -> None:
     carrier, formal, evaluations, _ = _formal_carrier()
     actual = TermValue(0)
-    selected = carrier.discharge({formal.coordinate_cid: actual}).exits[0].value
+    selected = carrier.discharge(None, {formal.coordinate_cid: actual}).exits[0].value
     assert selected is actual
     assert not isinstance(selected, FalseBoolLiteralSugar)
     assert evaluations == ["left"]

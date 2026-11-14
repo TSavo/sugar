@@ -334,7 +334,7 @@ def test_writable_receiver_completes_via_method_discharge() -> None:
     target = _construct_class(TARGET_CLASS, "Target")
     assert target.methods == ()
     obj_cid, value_cid = _obj_value_cids(pending)
-    exits = pending.discharge({obj_cid: target, value_cid: TermValue(7)})
+    exits = pending.discharge(None, {obj_cid: target, value_cid: TermValue(7)})
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
@@ -381,7 +381,7 @@ def test_getter_only_property_named_attribute_error_with_pre_effect_state() -> N
     )
 
     obj_cid, value_cid = _obj_value_cids(pending)
-    exits = pending.discharge({obj_cid: target, value_cid: TermValue(7)})
+    exits = pending.discharge(None, {obj_cid: target, value_cid: TermValue(7)})
     halted = _assert_named_halt(exits, require_pre_effect_state=True)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
@@ -472,7 +472,7 @@ def test_read_does_not_authorize_completed_store_on_getter_only_property() -> No
         m.name == "field" and m.descriptor_kind == "property" for m in target.methods
     )
     obj_cid, value_cid = _obj_value_cids(pending)
-    exits = pending.discharge({obj_cid: target, value_cid: TermValue(99)})
+    exits = pending.discharge(None, {obj_cid: target, value_cid: TermValue(99)})
     assert isinstance(exits.exits[0], Halted)
     assert not isinstance(exits.exits[0], Completed)
     assert exits.exits[0].effect.exception_type_coordinate == _identity(
@@ -485,6 +485,6 @@ def test_discrimination_writable_store_is_not_read_authorized_halt() -> None:
     _, _method, pending = _method_definition()
     target = _construct_class(TARGET_CLASS, "Target")
     obj_cid, value_cid = _obj_value_cids(pending)
-    exits = pending.discharge({obj_cid: target, value_cid: TermValue(99)})
+    exits = pending.discharge(None, {obj_cid: target, value_cid: TermValue(99)})
     assert isinstance(exits.exits[0], Completed)
     assert not isinstance(exits.exits[0], Halted)

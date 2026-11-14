@@ -77,7 +77,7 @@ class ClassValue(FloorValue):
             return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().is_identical(other, site)
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         """Class objects expose ``__name__`` as their authenticated type name.
 
         RaisesExc's absent-effect diagnostic formats
@@ -90,7 +90,7 @@ class ClassValue(FloorValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(StringValue(self.name))
-        return super().attribute(name, site)
+        return super().attribute(name, site, ctx)
 
     def test_python_type(self, value, site):
         return value.python_isinstance(self.name, self.to_term(owner=self.name), site)

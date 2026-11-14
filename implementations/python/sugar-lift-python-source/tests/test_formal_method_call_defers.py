@@ -49,7 +49,7 @@ def _carrier(tmp_path, source):
 
 def _discharge(carrier, actual):
     (cid, *_rest) = carrier.demand.operand_coordinate_cids
-    return outcome_to_exitset(carrier.discharge({cid: actual}))
+    return outcome_to_exitset(carrier.discharge(None, {cid: actual}))
 
 
 def _faces(exits):

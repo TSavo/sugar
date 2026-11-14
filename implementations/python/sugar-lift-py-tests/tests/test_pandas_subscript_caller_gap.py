@@ -298,17 +298,18 @@ def test_helper_alone_stays_named_undischarged() -> None:
     carrier, _, _ = _synthetic_carrier()
 
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        carrier.discharge({})
+        carrier.discharge(None, {})
 
 
 def test_caller_actuals_can_complete_the_original_subscript() -> None:
     carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
 
     exits = carrier.discharge(
+        None,
         {
             obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
             key_coordinate.coordinate_cid: TermValue(0),
-        }
+        },
     )
 
     assert exits.exits == (Completed(exits.exits[0].guard, TermValue(7)),)
@@ -318,10 +319,11 @@ def test_caller_actuals_can_name_an_exception_at_the_original_subscript() -> Non
     carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
 
     exits = carrier.discharge(
+        None,
         {
             obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
             key_coordinate.coordinate_cid: TermValue(1),
-        }
+        },
     )
 
     assert len(exits.exits) == 1
@@ -347,10 +349,11 @@ class _Expected:
 def test_lying_boundary_exception_type_leaves_operation_halted_and_unconsumed() -> None:
     carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
     exits = carrier.discharge(
+        None,
         {
             obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
             key_coordinate.coordinate_cid: TermValue(1),
-        }
+        },
     )
 
     routed = exits.and_exit(
@@ -375,10 +378,11 @@ def test_undecided_caller_receiver_stays_loud() -> None:
 
     with pytest.raises(SugarNotWritten) as raised:
         carrier.discharge(
+            None,
             {
                 obj_coordinate.coordinate_cid: SymbolicValue(make_var("actual_obj")),
                 key_coordinate.coordinate_cid: TermValue(0),
-            }
+            },
         )
 
     assert raised.value.owner == "SymbolicValue.subscript"
@@ -390,10 +394,11 @@ def test_undecided_caller_key_stays_loud() -> None:
 
     with pytest.raises(SugarNotWritten) as raised:
         carrier.discharge(
+            None,
             {
                 obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
                 key_coordinate.coordinate_cid: SymbolicValue(make_var("actual_key")),
-            }
+            },
         )
 
     assert raised.value.owner == "ListValue.subscript"

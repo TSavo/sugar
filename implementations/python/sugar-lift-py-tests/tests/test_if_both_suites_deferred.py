@@ -70,7 +70,7 @@ def test_one_discharge_resolves_both_suites_under_opposite_polarity() -> None:
     pending = _helper_outcome(HELPER)
     (formal,) = [cid for cid in pending.demand.operand_coordinate_cids if cid]
 
-    returns = _guarded_returns(pending.discharge({formal: TermValue(3)}))
+    returns = _guarded_returns(pending.discharge(None, {formal: TermValue(3)}))
 
     assert sorted(entry.value.value for entry in returns) == [-4, -3]
     by_value = {entry.value.value: entry.guards for entry in returns}
@@ -85,8 +85,8 @@ def test_each_discharge_is_its_own_resolution() -> None:
     pending = _helper_outcome(HELPER)
     (formal,) = [cid for cid in pending.demand.operand_coordinate_cids if cid]
 
-    first = _guarded_returns(pending.discharge({formal: TermValue(3)}))
-    second = _guarded_returns(pending.discharge({formal: TermValue(5)}))
+    first = _guarded_returns(pending.discharge(None, {formal: TermValue(3)}))
+    second = _guarded_returns(pending.discharge(None, {formal: TermValue(5)}))
 
     assert sorted(entry.value.value for entry in first) == [-4, -3]
     assert sorted(entry.value.value for entry in second) == [-6, -5]

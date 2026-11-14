@@ -88,13 +88,14 @@ def _carrier() -> tuple[NativeOperationExitCarrierV1, FormalParameterCoordinateV
 def test_formal_attribute_completes_or_halts_from_authenticated_actual() -> None:
     carrier, formal = _carrier()
     completed = carrier.discharge(
+        None,
         {
             formal.coordinate_cid: ObjectValue(
                 "Receiver", (ObjectField("value", TermValue(7)),)
             )
-        }
+        },
     )
-    halted = carrier.discharge({formal.coordinate_cid: NoneValue()})
+    halted = carrier.discharge(None, {formal.coordinate_cid: NoneValue()})
 
     from sugar_lift_py_tests.ir import ctor, str_const
 
@@ -125,7 +126,8 @@ def test_undecidable_attribute_actual_remains_named_loud() -> None:
 
     with pytest.raises(SugarNotWritten, match="undecided receiver runtime type"):
         carrier.discharge(
-            {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))}
+            None,
+            {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))},
         )
 
 
@@ -145,7 +147,7 @@ def test_lying_exception_type_cannot_consume_attribute_halt() -> None:
             )
 
     carrier, formal = _carrier()
-    exits = carrier.discharge({formal.coordinate_cid: NoneValue()})
+    exits = carrier.discharge(None, {formal.coordinate_cid: NoneValue()})
     routed = exits.and_exit(
         ExitSet.completed(object()),
         disposition=EffectBoundaryDisposition(
@@ -165,11 +167,12 @@ def test_lying_exception_type_cannot_consume_attribute_halt() -> None:
 def test_total_attribute_actual_never_acquires_exceptional_edge() -> None:
     carrier, formal = _carrier()
     exits = carrier.discharge(
+        None,
         {
             formal.coordinate_cid: ObjectValue(
                 "Receiver", (ObjectField("value", TermValue(7)),)
             )
-        }
+        },
     )
 
     assert all(isinstance(face, Completed) for face in exits.exits)

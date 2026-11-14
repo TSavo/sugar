@@ -184,10 +184,11 @@ def test_symbolic_if_branches_keep_complementary_guards() -> None:
     from sugar_lift_py_tests.ir import make_var
 
     exits = pending.discharge(
+        None,
         {
             left.coordinate_cid: SymbolicValue(make_var("actual_left")),
             right.coordinate_cid: SymbolicValue(make_var("actual_right")),
-        }
+        },
     )
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1

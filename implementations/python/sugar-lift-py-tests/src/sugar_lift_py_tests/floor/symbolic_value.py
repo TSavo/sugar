@@ -486,7 +486,7 @@ class SymbolicValue(FloorValue):
             owner="SymbolicValue.subscript",
         )
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         """Name ``__name__`` / ``__qualname__`` as a coordinate, without inventing the string.
 
         RaisesExc's absent-effect diagnostic formats

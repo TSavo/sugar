@@ -116,7 +116,7 @@ def test_helper_star_alone_is_undischarged_setitem_with_variadic_positional() ->
     parameters = tuple(
         inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
     )
-    assert parameters == ("receiver", "index", "value", "site")
+    assert parameters == ("receiver", "index", "value", "site", "ctx")
 
 
 def test_helper_kw_alone_is_undischarged_setitem_with_variadic_keyword() -> None:
@@ -161,11 +161,12 @@ def test_star_values_discharge_stores_tuple_at_index() -> None:
     _, pending = _helper(HELPER_STAR)
     obj_cid, key_cid, values_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(0),
             values_cid: TupleValue((TermValue(1), TermValue(2))),
-        }
+        },
     )
     assert isinstance(exits, ExitSet)
     assert isinstance(exits.exits[0], Completed)
@@ -201,11 +202,12 @@ def test_kw_values_discharge_stores_dict_at_index() -> None:
     obj_cid, key_cid, values_cid = pending.demand.operand_coordinate_cids
     mapping = DictValue(((StringValue("a"), TermValue(1)),))
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(0),
             values_cid: mapping,
-        }
+        },
     )
     assert isinstance(exits.exits[0], Completed)
     assert _stored_list(exits.exits[0]) == ListValue((mapping,))
@@ -236,11 +238,12 @@ def test_empty_star_discharge_stores_empty_tuple() -> None:
     _, pending = _helper(HELPER_STAR)
     obj_cid, key_cid, values_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(0),
             values_cid: TupleValue(()),
-        }
+        },
     )
     assert isinstance(exits.exits[0], Completed)
     assert _stored_list(exits.exits[0]) == ListValue((TupleValue(()),))
@@ -256,11 +259,12 @@ def test_invalid_index_named_indexerror_with_exact_pre_effect_state() -> None:
     assert pending.pre_effect_state is not None
     obj_cid, key_cid, values_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(1),
             values_cid: TupleValue((TermValue(9),)),
-        }
+        },
     )
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
@@ -291,11 +295,12 @@ def test_invalid_index_discrimination_not_completed() -> None:
     _, pending = _helper(HELPER_STAR)
     obj_cid, key_cid, values_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(1),
             values_cid: TupleValue((TermValue(9),)),
-        }
+        },
     )
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed)
@@ -316,11 +321,12 @@ def test_dropped_variadic_value_coordinate_is_undischarged() -> None:
 
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
         pending.discharge(
+            None,
             {
                 obj_cid: ListValue((TermValue(0),)),
                 key_cid: TermValue(0),
                 # values_cid deliberately omitted
-            }
+            },
         )
 
 
@@ -352,12 +358,12 @@ def test_reordered_variadic_twin_fails() -> None:
         key_c.coordinate_cid: TermValue(1),
         values_c.coordinate_cid: pack,
     }
-    t_face = truthful.discharge(actuals).exits[0]
+    t_face = truthful.discharge(None, actuals).exits[0]
     assert isinstance(t_face, Completed)
     t_list = _stored_list(t_face)
     assert t_list == ListValue((TermValue(0), pack, TermValue(2)))
     try:
-        l_face = lying.discharge(actuals).exits[0]
+        l_face = lying.discharge(None, actuals).exits[0]
     except ConstructionPanic:
         return  # lying index is the packed tuple — not a lawful setitem index
     if isinstance(l_face, Completed) and isinstance(l_face.value, UniverseValue):

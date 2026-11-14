@@ -349,7 +349,9 @@ def test_non_container_receiver_yields_named_typeerror_with_pre_effect() -> None
         "formal contains carrier"
     )
     container_cid, item_cid = _container_item_cids(pending)
-    exits = pending.discharge({container_cid: NoneValue(), item_cid: TermValue(1)})
+    exits = pending.discharge(
+        None, {container_cid: NoneValue(), item_cid: TermValue(1)}
+    )
     halted = _only_halted(exits, require_pre_effect_state=True)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
     assert halted.state is testimony.state
@@ -458,12 +460,12 @@ def test_swapped_container_item_twins_fail_against_truthful_membership() -> None
     container = ListValue((TermValue(1), TermValue(2)))
     item = TermValue(1)
 
-    truthful = pending.discharge({container_cid: container, item_cid: item})
+    truthful = pending.discharge(None, {container_cid: container, item_cid: item})
     assert isinstance(truthful.exits[0], Completed)
 
     # Swapped: container slot gets item (TermValue), item slot gets list.
     # Non-container receiver → TypeError halt, not present-member True.
-    lying = pending.discharge({container_cid: item, item_cid: container})
+    lying = pending.discharge(None, {container_cid: item, item_cid: container})
     lying_face = lying.exits[0]
     if isinstance(lying_face, Completed):
         # Must not claim the same completed membership as truthful.
@@ -479,9 +481,10 @@ def test_discrimination_truthful_container_item_order_completes_present() -> Non
     _, _method, pending = _method_definition()
     container_cid, item_cid = _container_item_cids(pending)
     exits = pending.discharge(
+        None,
         {
             container_cid: ListValue((TermValue(1), TermValue(2))),
             item_cid: TermValue(1),
-        }
+        },
     )
     assert isinstance(exits.exits[0], Completed)

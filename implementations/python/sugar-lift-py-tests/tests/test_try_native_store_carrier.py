@@ -100,11 +100,12 @@ def test_exitset_consumer_observes_authentic_store_occurrence_and_state() -> Non
         return exits
 
     retained = pending.after_discharge(observe).discharge(
+        None,
         {
             a_cid: ListValue((TermValue(0),)),
             i_cid: TermValue(4),
             q_cid: TermValue(9),
-        }
+        },
     )
 
     assert any(isinstance(exit_, Halted) for exit_ in retained.exits), retained
@@ -125,11 +126,12 @@ def test_exitset_consumer_observes_authentic_store_occurrence_and_state() -> Non
     foreign_halt = next(
         exit_
         for exit_ in foreign.discharge(
+            None,
             {
                 foreign_a: ListValue((TermValue(0),)),
                 foreign_i: TermValue(4),
                 foreign_q: TermValue(9),
-            }
+            },
         ).exits
         if isinstance(exit_, Halted)
     )

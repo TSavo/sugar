@@ -241,7 +241,8 @@ def test_source_visible_new_constructor_retains_exact_instance_field() -> None:
     )
 
     assert receiver.class_name == "RenamedToken"
-    assert receiver.attribute("label", call.fragment).value == StringValue("seven")
+    label = receiver.attribute("label", call.fragment, None)
+    assert label.value == StringValue("seven")
     assert class_node.source_visible_constructor_frame().owner is class_node
 
 

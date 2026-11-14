@@ -159,7 +159,7 @@ def test_helper_alone_is_undischarged_unary_carrier(source: str, operator: str) 
     assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
     assert pending.demand.operator == operator
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge({})
+        pending.discharge(None, {})
 
 
 def test_discrimination_helper_alone_is_not_completed() -> None:
@@ -243,7 +243,7 @@ def test_wrong_coordinate_actual_cannot_discharge_pending_unary() -> None:
     assert isinstance(pending, NativeOperationExitCarrierV1)
     (coord,) = function.formal_coordinates()
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge({f"wrong:{coord.coordinate_cid}": TermValue(3)})
+        pending.discharge(None, {f"wrong:{coord.coordinate_cid}": TermValue(3)})
 
 
 def test_missing_actual_does_not_fabricate_completed_neg() -> None:
@@ -251,7 +251,7 @@ def test_missing_actual_does_not_fabricate_completed_neg() -> None:
     _, pending = _helper("def helper(x):\n    return -x\n")
     assert isinstance(pending, NativeOperationExitCarrierV1)
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        fabricated = pending.discharge({})
+        fabricated = pending.discharge(None, {})
         # If discharge ever went soft, a lying complete would look like this:
         assert isinstance(fabricated, ExitSet) and isinstance(
             fabricated.exits[0], Completed
@@ -295,23 +295,22 @@ def test_unary_projectors_enrolled_and_equal_production() -> None:
 
 
 def test_unary_projectors_call_floor_methods_not_binary_standin() -> None:
-    """Discharge projectors are unary Floor methods — arity 1 + site."""
+    """Discharge projectors are unary Floor methods — arity 1 + site + ctx."""
     import inspect
 
     for name in ("unary_minus", "unary_plus", "bitwise_invert"):
         projector = _NATIVE_OPERATION_PROJECTORS[name]
-        # site is last; one operand.
-        assert len(inspect.signature(projector).parameters) == 2
-    assert _NATIVE_OPERATION_PROJECTORS["unary_minus"](TermValue(4), "s").value == (
-        TermValue(-4)
-    )
+        # site, then the caller's ctx, are last; one operand.
+        assert len(inspect.signature(projector).parameters) == 3
+    negated = _NATIVE_OPERATION_PROJECTORS["unary_minus"](TermValue(4), "s", None)
+    assert negated.value == TermValue(-4)
     with pytest.raises(AssertionError):
-        # Lying: unary_minus is not add-shaped (2 operands + site).
+        # Lying: unary_minus is not add-shaped (2 operands + site + ctx).
         assert (
             len(
                 inspect.signature(
                     _NATIVE_OPERATION_PROJECTORS["unary_minus"]
                 ).parameters
             )
-            == 3
+            == 4
         )

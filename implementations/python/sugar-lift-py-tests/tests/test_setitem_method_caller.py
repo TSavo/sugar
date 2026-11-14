@@ -282,11 +282,12 @@ def test_mutable_method_store_completes() -> None:
     obj_cid, key_cid, value_cid = _obj_key_value_cids(pending)
     # Direct discharge with bound-style actuals: only obj/key/value (no self).
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0), TermValue(1))),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
-        }
+        },
     )
     assert isinstance(exits.exits[0], Completed)
     assert _stored_list(exits.exits[0]) == ListValue((TermValue(9), TermValue(1)))
@@ -338,11 +339,12 @@ def test_invalid_index_discharge_shares_reducer_pre_effect_state() -> None:
 
     obj_cid, key_cid, value_cid = _obj_key_value_cids(pending)
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0),)),
             key_cid: TermValue(4),
             value_cid: TermValue(9),
-        }
+        },
     )
     halted = _assert_named_halt(exits)
     assert halted.effect.exception_type_coordinate == _identity("IndexError")
@@ -407,7 +409,7 @@ def test_off_by_one_binding_twin_fails_against_truthful_store() -> None:
     obj_cid, key_cid, value_cid = _obj_key_value_cids(pending)
     base = ListValue((TermValue(0), TermValue(1)))
     truthful = pending.discharge(
-        {obj_cid: base, key_cid: TermValue(0), value_cid: TermValue(9)}
+        None, {obj_cid: base, key_cid: TermValue(0), value_cid: TermValue(9)}
     )
     assert isinstance(truthful.exits[0], Completed)
     assert _stored_list(truthful.exits[0]) == ListValue((TermValue(9), TermValue(1)))
@@ -417,11 +419,12 @@ def test_off_by_one_binding_twin_fails_against_truthful_store() -> None:
     # (Putting a TermValue in the receiver slot is a Floor gap, not a binding
     # twin — keep the receiver a ListValue so the bite is the binding shift.)
     lying = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0), TermValue(1), TermValue(2))),
             key_cid: TermValue(1),  # shifted: was value slot in a self-steal map
             value_cid: TermValue(0),  # shifted index
-        }
+        },
     )
     lying_face = lying.exits[0]
     if isinstance(lying_face, Completed):

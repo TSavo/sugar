@@ -162,8 +162,8 @@ class NamedExpressionValue(FloorValue):
     def delitem(self, index, site):
         return self.presented_value.delitem(index, site).and_then(self._carry)
 
-    def attribute(self, name, site):
-        return self.presented_value.attribute(name, site).and_then(self._carry)
+    def attribute(self, name, site, ctx):
+        return self.presented_value.attribute(name, site, ctx).and_then(self._carry)
 
     def _carry(self, presented: FloorValue):
         from sugar_lift_py_tests.outcome import ExitSet

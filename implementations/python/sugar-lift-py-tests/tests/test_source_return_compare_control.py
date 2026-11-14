@@ -167,9 +167,10 @@ def test_symbolic_source_return_control_preserves_complementary_guards() -> None
     from sugar_lift_py_tests.ir import make_var
 
     exits = pending.discharge(
+        None,
         {
             right.coordinate_cid: SymbolicValue(make_var("actual_value")),
-        }
+        },
     )
     completed = _only_exit(exits, Completed)
     returns = tuple(

@@ -433,9 +433,9 @@ def test_production_getitem_before_rhs_order() -> None:
         def witnesses(cls):
             return ()
 
-    def _project_order(left, right, site_):
+    def _project_order(left, right, site_, ctx):
         order.append("op")
-        return project_iadd(left, right, site_)
+        return project_iadd(left, right, site_, ctx)
 
     sugar = SubscriptAugAssignSugar(
         receiver=_FloorSugar(_OrderList((TermValue(3),))),
@@ -480,14 +480,14 @@ def test_operator_owned_project_inplace_uses_inplace_binary_edge() -> None:
     bound = Add.instance().project_inplace
     assert bound.__func__ is BinaryOperator.project_inplace
     assert Add.inplace_operator == "iadd"
-    out = bound(TermValue(1), TermValue(2), _production_sites()[1])
+    out = bound(TermValue(1), TermValue(2), _production_sites()[1], None)
     assert out.completed_value() is not None
     assert out.completed_value() == TermValue(3)
 
 
 def test_production_projector_default_floor_is_ordinary_binary() -> None:
     """FloorValue.inplace_default → add when species has no inplace override."""
-    out = project_iadd(TermValue(1), TermValue(2), _production_sites()[1])
+    out = project_iadd(TermValue(1), TermValue(2), _production_sites()[1], None)
     assert out.completed_value() is not None
     assert out.completed_value() == TermValue(3)
 
@@ -511,7 +511,7 @@ def test_production_projector_raw_notimplemented_falls_through_to_binary() -> No
             calls.append("add")
             return ExitSet.completed(TermValue(7))
 
-    out = project_iadd(_RawNotImpl(), TermValue(1), "op")
+    out = project_iadd(_RawNotImpl(), TermValue(1), "op", None)
     assert out.completed_value() is not None
     assert out.completed_value() == TermValue(7)
     assert calls == ["inplace", "add"]
@@ -535,7 +535,7 @@ def test_production_projector_completed_notimplemented_falls_through_to_binary()
             calls.append("add")
             return ExitSet.completed(TermValue(9))
 
-    out = project_iadd(_CompleteNotImpl(), TermValue(1), "op")
+    out = project_iadd(_CompleteNotImpl(), TermValue(1), "op", None)
     assert out.completed_value() is not None
     assert out.completed_value() == TermValue(9)
     assert calls == ["inplace", "add"]
@@ -559,7 +559,7 @@ def test_production_projector_incomplete_does_not_fall_through_to_binary() -> No
             del other, site, ctx
             return ExitSet.completed(TermValue(0))
 
-    out = project_iadd(_IncompleteInplace(), TermValue(1), "op")
+    out = project_iadd(_IncompleteInplace(), TermValue(1), "op", None)
     assert out is incomplete_face
 
 
@@ -592,7 +592,7 @@ def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
     left = SymbolicValue(make_var("cell"), _coord("cell", 0))
     right = SymbolicValue(make_var("rhs"), _coord("rhs", 1))
     out = project_augmented(
-        left, right, operator="iadd", projector=project_iadd, site=site
+        left, right, operator="iadd", projector=project_iadd, site=site, ctx=None
     )
     assert isinstance(out, NativeOperationExitCarrierV1)
     assert out.demand.operator == "iadd"
@@ -604,7 +604,7 @@ def test_formal_iadd_projector_is_enrolled_with_authenticated_signature() -> Non
     assert "iadd" in _NATIVE_OPERATION_PROJECTORS
     assert _NATIVE_OPERATION_PROJECTORS["iadd"] is project_iadd
     parameters = tuple(__import__("inspect").signature(project_iadd).parameters)
-    assert parameters == ("left", "right", "site")
+    assert parameters == ("left", "right", "site", "ctx")
 
 
 def test_discrimination_projector_absence_must_not_mint_add() -> None:
@@ -623,7 +623,7 @@ def test_formal_subscript_get_carrier_missing_actuals_undischarged() -> None:
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "subscript"
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge({})
+        pending.discharge(None, {})
 
 
 def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> None:
@@ -632,11 +632,12 @@ def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> N
         c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
     }
     exits = pending.discharge(
+        None,
         {
             coords["obj"]: ListValue((TermValue(1), TermValue(2))),
             coords["key"]: TermValue(0),
             coords["rhs"]: TermValue(10),
-        }
+        },
     )
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
@@ -650,11 +651,12 @@ def test_authenticated_get_halt_blocks_store_on_formal_discharge() -> None:
         c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
     }
     exits = pending.discharge(
+        None,
         {
             coords["obj"]: ListValue((TermValue(1),)),
             coords["key"]: TermValue(4),
             coords["rhs"]: TermValue(10),
-        }
+        },
     )
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1

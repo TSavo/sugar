@@ -41,6 +41,7 @@ class IteratorOperation:
         return receiver.iter_with(self, ctx)
 
 
-def discharge_iter(receiver, site, *, owner: str = "project_iter"):
-    """Production projector body: established ``iter_with`` floor edge."""
-    return IteratorOperation(owner=owner, blame=site).submit(receiver, None)
+def discharge_iter(receiver, site, ctx, *, owner: str = "project_iter"):
+    """Production projector body: established ``iter_with`` floor edge, under
+    the caller's context."""
+    return IteratorOperation(owner=owner, blame=site).submit(receiver, ctx)

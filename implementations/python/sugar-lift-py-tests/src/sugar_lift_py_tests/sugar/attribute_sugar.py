@@ -55,14 +55,15 @@ class AttributeSugar(ConstructedTermSugar):
         )
 
     @staticmethod
-    def project_attribute(receiver, name: str, site, ctx: object = None) -> Outcome:
+    def project_attribute(receiver, name: str, site, ctx: object) -> Outcome:
         """Producer-owned attribute **read** projection (one door).
 
         The law shared by ordinary AttributeSugar and Attribute AugAssign:
 
         1. Formal receiver → undischarged ``attribute_named`` carrier
         2. Authenticated CallSiteValue body → ``force_floor`` then attribute
-        3. Else Floor ``receiver.attribute(name, site)``
+        3. Else Floor ``receiver.attribute(name, site, ctx)`` (a property
+           getter applies under the reading caller's ``ctx``)
         Callers that already hold a reduced receiver (AugAssign) enter here
         without re-evaluating the receiver expression.
         """
@@ -216,7 +217,7 @@ class AttributeSugar(ConstructedTermSugar):
         unknown = _unknown_receiver_attribute(receiver, name, site)
         if unknown is not None:
             return unknown
-        return receiver.attribute(name, site)
+        return receiver.attribute(name, site, ctx)
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.receiver.desugar(ctx).and_then(

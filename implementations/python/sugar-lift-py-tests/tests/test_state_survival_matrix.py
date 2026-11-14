@@ -138,11 +138,12 @@ def _unpack_store_halt() -> tuple[NativeOperationExitCarrierV1, Halted]:
     assert pending.pre_effect_state is not None
     a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             a_cid: ListValue((TermValue(0),)),
             i_cid: TermValue(5),
             q_cid: TermValue(9),
-        }
+        },
     )
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
@@ -417,11 +418,12 @@ def test_d_unpack_name_binding_survives_later_store_halt() -> None:
     # Success twin: when store completes, return carries formal p (x survived).
     a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
     success = pending.discharge(
+        None,
         {
             a_cid: ListValue((TermValue(0),)),
             i_cid: TermValue(0),
             q_cid: TermValue(9),
-        }
+        },
     ).exits[0]
     assert isinstance(success, Completed)
     assert isinstance(success.value, UniverseValue)

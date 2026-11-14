@@ -862,10 +862,11 @@ class CallSiteSugar(ConstructedTermSugar):
         )
         if native_operation_actuals is not None:
             pending = source_call_frame.pending_native_operation.discharge(
-                native_operation_actuals.by_formal_coordinate
+                ctx, native_operation_actuals.by_formal_coordinate
             )
             return callsite.project_producer_outcome(
                 pending,
+                ctx,
                 carrier_actuals=callsite.bound_native_actuals_by_coordinate,
             )
         if self.formal_function_sugar is not None and self.source_call_frame is None:
@@ -883,9 +884,10 @@ class CallSiteSugar(ConstructedTermSugar):
                 if actuals is None and bound_source_actuals is not None:
                     actuals = bound_source_actuals.by_native_formal_coordinate
                 if actuals is not None:
-                    pending = pending.discharge(actuals)
+                    pending = pending.discharge(ctx, actuals)
             return callsite.project_producer_outcome(
                 pending,
+                ctx,
                 carrier_actuals=callsite.bound_native_actuals_by_coordinate,
             )
         from sugar_lift_py_tests.context.reduce_context import ReduceContext

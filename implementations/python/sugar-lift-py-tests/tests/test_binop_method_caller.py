@@ -340,7 +340,7 @@ def test_discrimination_default_is_not_keyword_override() -> None:
 def test_compatible_operands_complete_with_correct_value() -> None:
     _, _method, pending = _method_definition()
     left_cid, right_cid = _left_right_cids(pending)
-    exits = pending.discharge({left_cid: TermValue(10), right_cid: TermValue(5)})
+    exits = pending.discharge(None, {left_cid: TermValue(10), right_cid: TermValue(5)})
     assert isinstance(exits.exits[0], Completed)
     assert _returned_term(exits).value == 15
 
@@ -371,7 +371,7 @@ def test_incompatible_operands_typeerror_with_exact_pre_effect_state() -> None:
         "formal add carrier"
     )
     left_cid, right_cid = _left_right_cids(pending)
-    exits = pending.discharge({left_cid: NoneValue(), right_cid: TermValue(2)})
+    exits = pending.discharge(None, {left_cid: NoneValue(), right_cid: TermValue(2)})
     halted = _only_halted(exits, require_pre_effect_state=True)
     assert halted.effect.exception_type_coordinate == _identity("TypeError")
     assert halted.state is testimony.state
@@ -486,14 +486,16 @@ def test_swapped_operand_twins_fail_against_truthful_sum() -> None:
     _, _method, pending = _method_definition()
     left_cid, right_cid = _left_right_cids(pending)
 
-    truthful = pending.discharge({left_cid: TermValue(10), right_cid: TermValue(5)})
+    truthful = pending.discharge(
+        None, {left_cid: TermValue(10), right_cid: TermValue(5)}
+    )
     assert isinstance(truthful.exits[0], Completed)
     assert _returned_term(truthful).value == 15
 
     # Swapped numeric still sums (commutative) — use asymmetric TypeError twin:
     # left=None right=2 vs left=2 right=None may both TypeError but wrong
     # completion is the bite for a lying map that claims sum 15 from None.
-    lying = pending.discharge({left_cid: NoneValue(), right_cid: TermValue(2)})
+    lying = pending.discharge(None, {left_cid: NoneValue(), right_cid: TermValue(2)})
     lying_face = lying.exits[0]
     if isinstance(lying_face, Completed):
         assert _returned_term(lying).value != 15

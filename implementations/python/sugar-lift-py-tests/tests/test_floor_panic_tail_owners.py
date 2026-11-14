@@ -47,7 +47,7 @@ def _container(kind):
 
 @pytest.mark.parametrize("kind", [DictValue, ListValue, TupleValue, SetValue])
 def test_container_attribute_is_the_py_getattr_coordinate(kind) -> None:
-    outcome = _container(kind).attribute("renamed_member", "site")
+    outcome = _container(kind).attribute("renamed_member", "site", None)
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), SymbolicValue)
     assert outcome.completed_value().term.name == "py.getattr"
@@ -56,22 +56,22 @@ def test_container_attribute_is_the_py_getattr_coordinate(kind) -> None:
 @pytest.mark.parametrize("kind", [DictValue, ListValue, TupleValue, SetValue])
 def test_the_coordinate_names_the_attribute_that_was_asked_for(kind) -> None:
     """Not one shape for every name -- the name is an argument of the symbol."""
-    first = _container(kind).attribute("renamed_alpha", "site").completed_value().term
-    second = _container(kind).attribute("renamed_beta", "site").completed_value().term
-    assert first != second
+    first = _container(kind).attribute("renamed_alpha", "site", None)
+    second = _container(kind).attribute("renamed_beta", "site", None)
+    assert first.completed_value().term != second.completed_value().term
 
 
 def test_the_coordinate_carries_the_receivers_own_term() -> None:
     """Two receivers of one attribute do not collapse into one coordinate."""
     short = (
         ListValue((TermValue(1),))
-        .attribute("renamed_member", "site")
+        .attribute("renamed_member", "site", None)
         .completed_value()
         .term
     )
     long = (
         ListValue((TermValue(1), TermValue(2)))
-        .attribute("renamed_member", "site")
+        .attribute("renamed_member", "site", None)
         .completed_value()
         .term
     )
@@ -86,7 +86,7 @@ def test_a_value_with_no_attribute_arm_stays_loud() -> None:
         pass
 
     with pytest.raises(ConstructionPanic) as excinfo:
-        RenamedFieldlessValue().attribute("renamed_member", "site")
+        RenamedFieldlessValue().attribute("renamed_member", "site", None)
     assert excinfo.value.info.owner == "attribute"
     assert excinfo.value.info.observed == "RenamedFieldlessValue"
 

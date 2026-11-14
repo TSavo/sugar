@@ -348,8 +348,9 @@ class BoundSourceCallActualsV1:
             )
         }
 
-    def project_native_carrier(self, carrier):
-        """Discharge a late carrier using this frame's retained bind result."""
+    def project_native_carrier(self, carrier, ctx):
+        """Discharge a late carrier using this frame's retained bind result,
+        under ``ctx``, the context of the caller that supplied the actuals."""
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
@@ -417,7 +418,7 @@ class BoundSourceCallActualsV1:
                     "native carrier demand is cross-wired to a source formal slot"
                 )
             projected[demanded_cid] = pair.actual
-        return carrier.discharge(projected)
+        return carrier.discharge(ctx, projected)
 
 
 @dataclass(frozen=True)

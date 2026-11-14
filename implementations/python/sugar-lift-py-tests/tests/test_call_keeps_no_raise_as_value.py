@@ -159,7 +159,7 @@ def test_the_projection_seats_an_ordinary_value(callsite) -> None:
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.outcome import ExitSet
 
-    projected = callsite.project_producer_outcome(ExitSet.completed(TermValue(1)))
+    projected = callsite.project_producer_outcome(ExitSet.completed(TermValue(1)), None)
 
     assert projected.completed_value() is not None
     assert isinstance(projected.completed_value(), CallSiteValue)
@@ -180,7 +180,7 @@ def test_the_projection_makes_a_callee_raise_the_calls_halt(callsite) -> None:
     )
     assert len(raised.exits) == 1 and raised.halts() == raised.exits
 
-    projected = callsite.project_producer_outcome(raised)
+    projected = callsite.project_producer_outcome(raised, None)
 
     assert isinstance(projected, ExitSet)
     (face,) = projected.exits

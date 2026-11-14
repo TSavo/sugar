@@ -312,7 +312,7 @@ class CallSiteValue(FloorValue):
     def exception_type_identity(self) -> Term | None:
         return self.exception_type_coordinate
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         """Name ``__name__`` / ``__qualname__`` as a coordinate, without inventing the string.
 
         An unexecuted call authenticates which call produced the receiver, not
@@ -1484,11 +1484,15 @@ class CallSiteValue(FloorValue):
             )
 
             if isinstance(outcome, NativeOperationExitCarrierV1):
+                # The caller's actuals fill the deferred operation's
+                # placeholders; it discharges under the caller's context.
                 actuals = self.bound_native_actuals_by_coordinate
                 if actuals is None and self.bound_source_actuals is not None:
-                    outcome = self.bound_source_actuals.project_native_carrier(outcome)
+                    outcome = self.bound_source_actuals.project_native_carrier(
+                        outcome, ctx
+                    )
                 if actuals is not None:
-                    outcome = outcome.discharge(actuals)
+                    outcome = outcome.discharge(ctx, actuals)
             if isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits:
                 if incomplete_outcome is not None:
                     incomplete_outcome.append(outcome)
@@ -1730,10 +1734,17 @@ class CallSiteValue(FloorValue):
             return ExitSet.completed(self)
 
         outcome = self.reduce_source_outcome(ctx)
-        return self.project_producer_outcome(outcome, carrier_actuals=carrier_actuals)
+        return self.project_producer_outcome(
+            outcome, ctx, carrier_actuals=carrier_actuals
+        )
 
-    def project_producer_outcome(self, outcome, *, carrier_actuals: dict | None = None):
-        """Project a source-authenticated callee outcome onto this Call node."""
+    def project_producer_outcome(
+        self, outcome, ctx, *, carrier_actuals: dict | None = None
+    ):
+        """Project a source-authenticated callee outcome onto this Call node.
+
+        A deferred native operation in ``outcome`` discharges under ``ctx``,
+        the context of the caller whose actuals fill its placeholders."""
 
         if self._retained_source_completion is not None:
             _retained_completion_invariant(
@@ -1778,7 +1789,9 @@ class CallSiteValue(FloorValue):
 
         if isinstance(outcome, NativeOperationExitCarrierV1):
             if self.bound_source_actuals is not None:
-                outcome = self.bound_source_actuals.project_native_carrier(outcome)
+                outcome = self.bound_source_actuals.project_native_carrier(
+                    outcome, ctx
+                )
                 actuals = None
             else:
                 actuals = self.bound_native_actuals_by_coordinate
@@ -1787,7 +1800,7 @@ class CallSiteValue(FloorValue):
                 # names an outer exit value this frame already substituted
                 # and cannot discharge as a formal.
                 return outcome
-            outcome = outcome.discharge(actuals)
+            outcome = outcome.discharge(ctx, actuals)
         exits = outcome
         return ExitSet(
             tuple(

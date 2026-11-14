@@ -48,8 +48,9 @@ class MutableGlobalValue(FloorValue):
         """Only dict pins decide membership/lookup structure; other kinds stay undecided."""
         return self.kind == "dict"
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         """Mutable pin has no field layout at lift — undecided, not missing Floor.attribute."""
+        del ctx
         return self.undecided_attribute(
             name, site, owner="MutableGlobalValue.attribute"
         )

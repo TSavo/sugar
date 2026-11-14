@@ -503,19 +503,19 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     with pytest.raises(
         SugarNotWritten, match="authenticated caller actual absent"
     ) as missing:
-        projected.discharge({})
+        projected.discharge(None, {})
     assert "cid:a" in str(missing.value)
     # Lying twin: claiming missing actuals greened a Complete is impossible.
     with pytest.raises(SugarNotWritten, match="authenticated caller actual absent"):
-        out = projected.discharge({})
+        out = projected.discharge(None, {})
         assert out.completed_value() is not None
     with pytest.raises(
         SugarNotWritten, match="authenticated caller actual absent"
     ) as partial:
-        projected.discharge({"cid:a": ListValue((TermValue(0),))})
+        projected.discharge(None, {"cid:a": ListValue((TermValue(0),))})
     assert "cid:i" in str(partial.value)
     with pytest.raises(SugarNotWritten, match="authenticated caller actual absent"):
-        out = projected.discharge({"cid:a": ListValue((TermValue(0),))})
+        out = projected.discharge(None, {"cid:a": ListValue((TermValue(0),))})
         assert out.completed_value() is not None
 
 

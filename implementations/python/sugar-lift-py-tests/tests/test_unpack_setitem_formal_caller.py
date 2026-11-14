@@ -87,7 +87,7 @@ def _identity(name: str):
 
 
 def _completed_universe(pending, actuals) -> UniverseValue:
-    exits = pending.discharge(actuals)
+    exits = pending.discharge(None, actuals)
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     face = exits.exits[0]
@@ -131,7 +131,7 @@ def test_helper_alone_retains_setitem_demand_in_discharge_order() -> None:
     parameters = tuple(
         inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
     )
-    assert parameters == ("receiver", "index", "value", "site")
+    assert parameters == ("receiver", "index", "value", "site", "ctx")
 
 
 def test_helper_alone_is_not_a_completed_face_discrimination() -> None:
@@ -221,11 +221,12 @@ def test_invalid_index_named_indexerror_no_statement_completion() -> None:
     assert pending.pre_effect_state is not None
     a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             a_cid: ListValue((TermValue(0),)),
             i_cid: TermValue(5),
             q_cid: TermValue(9),
-        }
+        },
     )
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
@@ -273,11 +274,12 @@ def test_invalid_index_discrimination_is_not_completed() -> None:
     _, pending = _helper()
     a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             a_cid: ListValue((TermValue(0),)),
             i_cid: TermValue(5),
             q_cid: TermValue(9),
-        }
+        },
     )
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed), "halted store completed the body"
@@ -374,7 +376,7 @@ def test_lying_swapped_index_value_mint_is_not_truthful_store() -> None:
     truthful_list = _stored_list(truthful_universe)
     assert truthful_list == ListValue((TermValue(0), TermValue(99), TermValue(2)))
 
-    lying_exits = lying.discharge(actuals)
+    lying_exits = lying.discharge(None, actuals)
     lying_face = lying_exits.exits[0]
     if isinstance(lying_face, Completed) and isinstance(lying_face.value, ListValue):
         lying_list = lying_face.value
@@ -395,4 +397,4 @@ def test_lying_swapped_index_value_mint_is_not_truthful_store() -> None:
 def test_missing_actuals_stay_undischarged() -> None:
     _, pending = _helper()
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge({})
+        pending.discharge(None, {})

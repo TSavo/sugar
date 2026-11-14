@@ -63,7 +63,7 @@ def _pending_and_receiver():
 def _attribute_error_discharge():
     pending, receiver = _pending_and_receiver()
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})
+    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     halted = exits.exits[0]
