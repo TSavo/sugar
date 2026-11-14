@@ -46,6 +46,10 @@ from sugar_source_tree.tree import SourceFile
 class _Fixed(Sugar):
     """A sugar whose reduction is handed in."""
 
+    # A canned statement binds nothing before its halts: the block's prefix
+    # is their record.
+    halts_at_statement_head = True
+
     def __init__(self, build):
         self.build = build
 

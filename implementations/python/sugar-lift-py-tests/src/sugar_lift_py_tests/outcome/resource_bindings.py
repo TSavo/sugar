@@ -174,7 +174,10 @@ def prepend_facts_to_exitset(exits, facts: tuple):
     from dataclasses import replace
 
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
-    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _ReducedBlock,
+        face_record,
+    )
 
     if not facts:
         return exits
@@ -184,15 +187,15 @@ def prepend_facts_to_exitset(exits, facts: tuple):
         # the slots were bound before control left with this effect, so a
         # handler (or the function's halt row) reads them there.  A
         # companion ``Completed`` under the halt's guard would claim the
-        # statement also completes on the path where it raises.
-        state = halt.state
-        if isinstance(state, _ReducedBlock):
-            state = replace(state, entries=(*facts, *state.entries))
-        elif state is None:
-            state = _ReducedBlock(
-                entries=facts, can_fall_through=False, fall_through=()
-            )
-        return ExitSet.halted(halt.effect, state=state)
+        # statement also completes on the path where it raises.  Every halt
+        # of a ``with`` carries the record its producer gave it (the head's
+        # ``halt_record``, the body's block, the exit's ``face_record``); one
+        # with none is refused by name, never given a record made up with no
+        # context.
+        state = face_record(halt, owner="prepend_facts_to_exitset", blame=None)
+        return ExitSet.halted(
+            halt.effect, state=replace(state, entries=(*facts, *state.entries))
+        )
 
     def on_completion(value):
         if isinstance(value, _ReducedBlock):

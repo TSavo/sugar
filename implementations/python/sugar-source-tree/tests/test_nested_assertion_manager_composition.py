@@ -386,6 +386,10 @@ def test_pinned_three_deep_chain_cannot_move_the_assertion_inside_cleanup():
 class _FixedOutcomeSugar(Sugar):
     """One test seam for exercising the routers built from the pinned source."""
 
+    # A canned statement binds nothing before its halts: the block's prefix
+    # is their record.
+    halts_at_statement_head = True
+
     def __init__(self, outcome, *, probe=None):
         self.outcome = outcome
         self.probe = probe

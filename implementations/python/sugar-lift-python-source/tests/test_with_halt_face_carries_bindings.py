@@ -95,7 +95,7 @@ def test_the_halt_face_keeps_the_with_bindings_on_its_state(tmp_path):
 
 
 def test_prepend_rides_on_halt_state_and_keeps_completed_fields():
-    from sugar_lift_py_tests.ir import atomic, not_
+    from sugar_lift_py_tests.ir import atomic
 
     fact = object()
     prior = object()
@@ -105,20 +105,28 @@ def test_prepend_rides_on_halt_state_and_keeps_completed_fields():
         UndeterminedRaiseEffect(blame="b", occurrence="b"),
         _ReducedBlock(entries=(prior,), can_fall_through=False, fall_through=()),
     )
-    stateless = Halted(
-        not_(guard), UndeterminedRaiseEffect(blame="c", occurrence="c")
-    )
     done = Completed(
         atomic("h", ()),
         _ReducedBlock(entries=(), can_fall_through=True, fall_through=()),
         frozenset(),
     )
-    out = prepend_facts_to_exitset(
-        ExitSet((halted, stateless, done)), (fact,)
-    ).exits
+    out = prepend_facts_to_exitset(ExitSet((halted, done)), (fact,)).exits
     halts = [face for face in out if isinstance(face, Halted)]
     dones = [face for face in out if isinstance(face, Completed)]
-    assert len(halts) == 2 and len(dones) == 1
-    states = sorted((face.state.entries for face in halts), key=len)
-    assert states == [(fact,), (fact, prior)]
+    assert len(halts) == 1 and len(dones) == 1
+    assert halts[0].state.entries == (fact, prior)
     assert dones[0].value.entries == (fact,)
+
+
+def test_prepend_refuses_a_halt_with_no_record():
+    # #7757: a ``with`` halt face with no record is a producer's defect: it
+    # is stopped by name, never given a record made up with no context.
+    from sugar_lift_py_tests.outcome import true_guard
+    from sugar_source_tree.panic import SugarNotWritten
+
+    stateless = Halted(
+        true_guard(), UndeterminedRaiseEffect(blame="c", occurrence="c")
+    )
+    with pytest.raises(SugarNotWritten) as refused:
+        prepend_facts_to_exitset(ExitSet((stateless,)), (object(),))
+    assert refused.value.owner == "prepend_facts_to_exitset"

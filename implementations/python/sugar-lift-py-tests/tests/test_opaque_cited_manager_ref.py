@@ -72,6 +72,10 @@ class ManagerSugar(Sugar):
 class RaisingBody(Sugar):
     """A body statement that halts with an authenticated ValueError."""
 
+    # A raise statement binds nothing before its halt: the block's prefix is
+    # its record.
+    halts_at_statement_head = True
+
     @classmethod
     def witnesses(cls):
         return None

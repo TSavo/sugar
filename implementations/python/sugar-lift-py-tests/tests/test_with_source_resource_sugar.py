@@ -36,6 +36,10 @@ from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
 
 
 class _FixedSugar(Sugar):
+    # A canned statement binds nothing before its halts: the block's prefix
+    # is their record.
+    halts_at_statement_head = True
+
     def __init__(self, outcome):
         self.outcome = outcome
 

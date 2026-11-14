@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import ClassVar
 
 from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.floor.block_value import BlockValue
@@ -90,6 +91,9 @@ class DeleteNameSugar(Sugar):
     name: str
     prior: object
     site: object = dataclass_field(compare=False)
+    # ``del x`` of an unbound name halts before anything is unbound: its
+    # pre-halt record is the block's prefix.
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):

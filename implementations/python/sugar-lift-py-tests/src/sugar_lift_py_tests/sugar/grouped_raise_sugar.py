@@ -15,6 +15,7 @@ Group occurrence identity is the sealed ``SourceMemento`` from the typed
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import ClassVar
 
 from sugar_lift_py_tests.effect import GroupedRaiseEffect
 from sugar_lift_py_tests.outcome import ExitSet
@@ -39,6 +40,10 @@ class GroupedRaiseSugar(Sugar):
     # ``BaseExceptionGroup``): what the constructor is asked to build, not
     # the class it builds (``_group``).
     exception_type_coordinate: object | None = None
+    # A raise statement binds nothing before any of its halts (a member's
+    # construction, the group's raise): its pre-halt record is the block's
+    # prefix, as ``RaiseSugar``'s.
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):
