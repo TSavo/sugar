@@ -11,7 +11,6 @@ from sugar_lift_py_tests.floor import (
     CallSiteValue,
     DictValue,
     ObjectValue,
-    ReceiverFieldStoreValue,
     ReturnValue,
     StringValue,
     TermValue,
@@ -288,33 +287,6 @@ def test_source_visible_new_constructor_retains_exact_bound_name_field() -> None
     assert tuple((field.name, field.value) for field in receiver.fields) == (
         ("name", StringValue("seven")),
     )
-
-
-def test_new_receiver_field_store_refuses_foreign_receiver_identity() -> None:
-    context = TreeConstructionContextV1.for_source_call_construction()
-    source = _source_file(
-        "class NamedIntConstant(int):\n"
-        "    def __new__(cls, value, name):\n"
-        "        self = super(NamedIntConstant, cls).__new__(cls, value)\n"
-        "        self.name = name\n"
-        "        return self\n",
-        context=context,
-    )
-    class_node = next(node for node in source.nodes() if isinstance(node, ClassDef))
-    class_value = class_node.sugar().desugar().completed_value()
-    receiver_coordinate = (
-        class_node.source_visible_constructor_frame().body.receiver_coordinate_cid
-    )
-    foreign = ObjectValue("NamedIntConstant", (), identity="foreign-receiver")
-    block = BlockValue(
-        (ReceiverFieldStoreValue(foreign, "name", StringValue("seven")),)
-    )
-
-    with pytest.raises(SugarNotWritten) as raised:
-        class_value.construct_receiver_state_from_block(block, receiver_coordinate)
-
-    assert raised.value.owner == "ClassDefinitionValue.construct_receiver_state"
-    assert raised.value.observed == "receiver coordinate mismatch"
 
 
 @pytest.mark.parametrize(

@@ -29,9 +29,7 @@ def _source_receiver(source: str):
     context = ReduceContext.root(owner="test_enum_setitem_lineage")
     class_outcome = definition.sugar().desugar(context)
     assert class_outcome.completed_value() is not None
-    receiver = class_outcome.completed_value().construct_receiver_state_from_block(
-        None, "namespace-coordinate"
-    )
+    receiver = class_outcome.completed_value().fresh_receiver("namespace-coordinate")
     assert isinstance(receiver, MappingObjectValue)
     return receiver, context
 

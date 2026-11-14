@@ -108,7 +108,7 @@ def _super_m(classes, context, receiver):
 
 def test_super_in_b_on_a_d_reaches_c_not_bs_own_base() -> None:
     _tree, context, classes = _parsed(_DIAMOND, "diamond.py")
-    receiver = classes["D"].construct_receiver_state_from_block(None, "receiver")
+    receiver = classes["D"].fresh_receiver("receiver")
 
     call = _super_m(classes, context, receiver)
 
@@ -120,7 +120,7 @@ def test_super_in_b_on_a_d_reaches_c_not_bs_own_base() -> None:
 
 def test_super_in_b_on_a_b_reaches_a() -> None:
     _tree, context, classes = _parsed(_DIAMOND, "diamond.py")
-    receiver = classes["B"].construct_receiver_state_from_block(None, "receiver")
+    receiver = classes["B"].fresh_receiver("receiver")
 
     call = _super_m(classes, context, receiver)
 
@@ -173,7 +173,7 @@ _FREE_FUNCTION = (
 def test_a_function_with_no_cell_of_its_own_is_the_runtime_error() -> None:
     tree, context, classes = _parsed(_FREE_FUNCTION, "free_function.py")
     site = _super_site(tree)
-    receiver = classes["B"].construct_receiver_state_from_block(None, "receiver")
+    receiver = classes["B"].fresh_receiver("receiver")
 
     # ``helper`` reads ``super`` outside any class body: no free ``__class__``.
     assert zero_argument_super_class_cell(site) == (True, None)
@@ -212,7 +212,7 @@ def test_a_lambda_in_a_method_carries_the_methods_class_cell() -> None:
 
 def test_a_callers_class_binding_is_never_the_frames_cell() -> None:
     tree, context, classes = _parsed(_DIAMOND, "diamond.py")
-    receiver = classes["D"].construct_receiver_state_from_block(None, "receiver")
+    receiver = classes["D"].fresh_receiver("receiver")
 
     # ``super()`` in B.m with ``__class__`` bound to C: some caller's binding,
     # not the cell B's class statement makes.
@@ -236,7 +236,7 @@ _UNRELATED = (
 
 def test_super_on_an_instance_of_the_class_completes() -> None:
     tree, context, classes = _parsed(_UNRELATED, "unrelated.py")
-    receiver = classes["A"].construct_receiver_state_from_block(None, "receiver")
+    receiver = classes["A"].fresh_receiver("receiver")
 
     outcome = zero_argument_super(
         _super_site(tree), _frame(context, classes["A"], receiver)
@@ -251,7 +251,7 @@ def test_super_on_an_instance_of_an_unrelated_class_is_the_type_error() -> None:
     # ``A.m(Other())``: Other's MRO (Other, object) holds no A, and
     # ``obj.__class__`` is object's own: CPython's TypeError.
     tree, context, classes = _parsed(_UNRELATED, "unrelated.py")
-    receiver = classes["Other"].construct_receiver_state_from_block(None, "receiver")
+    receiver = classes["Other"].fresh_receiver("receiver")
 
     outcome = zero_argument_super(
         _super_site(tree), _frame(context, classes["A"], receiver)
@@ -290,7 +290,7 @@ def test_super_in_a_generator_expression_is_the_type_error() -> None:
         "        return list(super().m() for _ in [1])\n"
     )
     tree, context, classes = _parsed(source, "generator_check.py")
-    receiver = classes["Derived"].construct_receiver_state_from_block(None, "receiver")
+    receiver = classes["Derived"].fresh_receiver("receiver")
 
     outcome = zero_argument_super(
         _super_site(tree), _frame(context, classes["Derived"], receiver)

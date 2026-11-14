@@ -100,9 +100,7 @@ def _construct_class(source: str, class_name: str) -> ObjectValue:
     class_outcome = class_def.sugar().desugar(None)
     class_value = class_outcome.completed_value()
     assert isinstance(class_value, ClassDefinitionValue)
-    receiver = class_value.construct_receiver_state_from_block(
-        None, class_value.class_definition_cid
-    )
+    receiver = class_value.fresh_receiver(class_value.class_definition_cid)
     assert isinstance(receiver, ObjectValue)
     return receiver
 
