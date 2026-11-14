@@ -166,11 +166,14 @@ def test_outside_a_live_loop_only_the_evaluation_is_bound() -> None:
     assert after.temporal.value_if_bound("x") is None
 
 
-def test_a_name_a_live_loop_carries_is_bound_too() -> None:
+def test_a_name_a_live_loop_carries_binds_only_the_evaluation_too() -> None:
+    # The recurrence reads a carried name's writes by their keys, so the
+    # name is never written inside a live loop either.
     ctx = replace(
         ReduceContext.root(owner="module-global-evaluation"),
         live_loop_names=frozenset({"x"}),
     )
     rebind = _aug(KEY).desugar(ctx).completed_value()
     assert isinstance(rebind, ScopeRebinds)
-    assert rebind.bindings == (("x", TermValue(5)), (KEY, TermValue(5)))
+    assert rebind.bindings == ((KEY, TermValue(5)),)
+    assert rebind.extend_scope(ctx).temporal.value_if_bound("x") is None

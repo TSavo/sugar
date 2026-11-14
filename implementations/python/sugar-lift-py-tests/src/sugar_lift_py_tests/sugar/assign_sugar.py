@@ -64,6 +64,7 @@ class AssignSugar(Sugar):
             ctx,
             bind=bind,
             evaluations=_evaluation_indices(self.evaluations, bind),
+            site=self.site,
         )
 
 
@@ -116,6 +117,7 @@ class MultiAssignSugar(Sugar):
             ctx,
             bind=bind,
             evaluations=_evaluation_indices(self.evaluations, bind),
+            site=self.site,
         )
 
 
@@ -149,7 +151,11 @@ class ChainedAssignSugar(Sugar):
         evaluations = _evaluation_indices(self.evaluations, bind)
         if not self.stores:
             return evaluate_assignment_values(
-                (self.value,), ctx, bind=bind, evaluations=evaluations
+                (self.value,),
+                ctx,
+                bind=bind,
+                evaluations=evaluations,
+                site=self.site,
             )
 
         def stores(active, completed):

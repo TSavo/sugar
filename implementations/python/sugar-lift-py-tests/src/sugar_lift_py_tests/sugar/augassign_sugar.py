@@ -30,9 +30,9 @@ class AugAssignSugar(Sugar):
          read of a module global (``FunctionDef._module_global_references``)
          and a module class body's read of a module name
          (``ClassDef._module_name_references``) are all ``EvaluationRef``.
-         Inside a live loop a name the loop carries is also bound under the
-         name, as every assignment there is (``assigned_value._bind_names``):
-         the recurrence reads its body through the temporal.
+         The name is never written, inside a live loop either: the
+         recurrence reads a carried name's latest write by its key, this
+         evaluation among them (``live_loop_construction._carried_writes``).
       5. On halt: no rebind (a halted arm bypasses and_then) — prior binding stands
 
     Substitute does **not** thread ``_make_binop`` (__add__) as the rebind.
@@ -70,11 +70,11 @@ class AugAssignSugar(Sugar):
                     projector=self.operation,
                     site=self.op_site,
                     ctx=ctx,
-                ).and_then(lambda result: self._rebind(result, ctx))
+                ).and_then(self._rebind)
             )
         )
 
-    def _rebind(self, result, ctx) -> Outcome:
+    def _rebind(self, result) -> Outcome:
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind, ScopeRebinds
         from sugar_lift_py_tests.outcome import ExitSet
 
@@ -83,12 +83,9 @@ class AugAssignSugar(Sugar):
         if self.evaluation is None:
             return ExitSet.completed(ScopeRebind(self.name, result))
         # In a live loop each item's evaluation is its own key.
-        evaluation = (evaluation_here(self.evaluation), result)
-        if self.name not in getattr(ctx, "live_loop_names", frozenset()):
-            return ExitSet.completed(ScopeRebinds((evaluation,)))
-        # The name first, the evaluation last: a read of the evaluation is the
-        # latest of the two until something rebinds the name.
-        return ExitSet.completed(ScopeRebinds(((self.name, result), evaluation)))
+        return ExitSet.completed(
+            ScopeRebinds(((evaluation_here(self.evaluation), result),))
+        )
 
 
 def project_augmented(

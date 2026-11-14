@@ -106,6 +106,58 @@ def test_live_pair_target_unpacks_by_floor_order_and_threads_each_iteration() ->
     assert post.args[1].value == 3
 
 
+def test_live_assignment_hands_on_its_write_without_writing_the_name() -> None:
+    # ``total = total + left`` binds its carried write of ``total``; the next
+    # item's header and the publication read that write, never the name.
+    source = (
+        "def helper():\n"
+        "    total = 0\n"
+        "    for left, right in [(1, 2), (3, 4)]:\n"
+        "        total = total + left\n"
+        "    return total\n"
+    )
+
+    post = _completed_post(_function(source).sugar().desugar())
+
+    assert post.args[1].value == 4
+
+
+def test_live_else_reads_the_carried_augmented_value_and_publishes_its_own() -> None:
+    # The else reads ``total`` through the header (1 + 3 after the last
+    # item), and the read after the loop sees the else's ``+= 10``.
+    source = (
+        "def helper():\n"
+        "    total = 0\n"
+        "    for left, right in [(1, 2), (3, 4)]:\n"
+        "        total += left\n"
+        "    else:\n"
+        "        total += 10\n"
+        "    return total\n"
+    )
+
+    post = _completed_post(_function(source).sugar().desugar())
+
+    assert post.args[1].value == 14
+
+
+def test_live_post_loop_read_after_else_sees_the_elses_assignment() -> None:
+    # ``seen`` is written only by the else, from the carried ``total``.
+    source = (
+        "def helper():\n"
+        "    total = 0\n"
+        "    seen = 0\n"
+        "    for left, right in [(1, 2), (3, 4)]:\n"
+        "        total += left\n"
+        "    else:\n"
+        "        seen = total\n"
+        "    return seen\n"
+    )
+
+    post = _completed_post(_function(source).sugar().desugar())
+
+    assert post.args[1].value == 4
+
+
 def test_live_pair_target_arity_halt_retains_exact_pre_assignment_state() -> None:
     recurrence = _loop_sugar(_PAIR_LOOP)
     result = TermValue(7)
