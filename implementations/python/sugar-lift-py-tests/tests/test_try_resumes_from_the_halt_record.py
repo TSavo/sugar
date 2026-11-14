@@ -573,6 +573,68 @@ def test_exec_of_a_constant_string_runs_code_then_a_module_list_is_not_stale() -
     assert _read_after(source) != ListValue(())
 
 
+def test_exec_in_a_function_reaches_the_object_a_local_list_is() -> None:
+    # ``exec`` handed no globals mapping runs in the frame's namespaces: its
+    # code reads ``xs`` from the frame's ``locals()`` snapshot, the very list
+    # the local is bound to, and appends to it.  The read after it is the
+    # list's value after the call (``_frame_targets``), never the ``[]`` the
+    # local was bound to.
+    read = _substituted_return_read(
+        "def f():\n"
+        "    xs = []\n"
+        "    exec('xs.append(1)')\n"
+        "    return xs\n"
+    )
+    assert read.kind == "ReceiverAfterCall"
+
+
+def test_exec_in_a_function_never_rebinds_a_local_int() -> None:
+    # CPython 3.13 (PEP 667): in a function ``exec`` writes the frame's
+    # ``locals()`` snapshot, never its fast locals, so ``exec('x = 2')``
+    # leaves ``x`` bound to ``1``; an ``int`` is no object a call changes.
+    read = _substituted_return_read(
+        "def f():\n"
+        "    x = 1\n"
+        "    exec('x = 2')\n"
+        "    return x\n"
+    )
+    assert read.kind == "Constant"
+    assert read.value == 1
+
+
+def test_a_locals_mapping_handed_to_a_call_reaches_the_local_list() -> None:
+    # ``g`` is handed the frame's ``locals()`` snapshot, which holds the list
+    # ``xs`` is bound to: whatever ``g`` does through it reaches that list,
+    # so the read after the call is its value after it, never ``[]``.
+    read = _substituted_return_read(
+        "def f():\n"
+        "    xs = []\n"
+        "    g(locals())\n"
+        "    return xs\n"
+        "def g(d):\n"
+        "    for _ in (1,):\n"
+        "        d['xs'].append(1)\n"
+    )
+    assert read.kind == "ReceiverAfterCall"
+
+
+def test_exec_at_module_scope_rebinds_a_module_name() -> None:
+    # At module scope ``locals()`` is the module's namespace itself, so
+    # ``exec('x = 2')`` rebinds ``x``: the module threading's binding of
+    # ``x`` after it is unknown (``_frame_targets``), never the ``1`` bound
+    # before.
+    from sugar_source_tree.container_mutation import _state
+
+    unit = _function(
+        "x = 1\n"
+        "exec('x = 2')\n"
+        "def f():\n"
+        "    return x\n"
+    ).unit
+    after = _state(unit.module_binding_states().final["x"])
+    assert after.kind == "ReceiverAfterCall"
+
+
 def test_a_callable_handed_out_reaches_the_cell() -> None:
     # ``inner`` is handed to code the caller does not follow (a builtin that
     # calls it): the cell it appends to is exposed to that call, never read
