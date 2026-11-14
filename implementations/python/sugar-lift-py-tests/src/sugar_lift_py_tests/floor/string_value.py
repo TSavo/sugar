@@ -231,13 +231,13 @@ class StringValue(GuardStableValue):
             tuple(StringValue(character) for character in self.value)
         )
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         # Bound methods and fields on a constructed string (``"{:.2f}".format``,
         # ``"%.5f".__mod__``, …) stay the py.getattr coordinate — same EUF
         # vocabulary as SymbolicValue / CallSiteValue. Never invent a method
         # body; call_named_method still owns static folds when the call site
         # is known.
-        del site
+        del site, ctx
         from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
 
         return getattr_coordinate(self, name, owner="StringValue.attribute")

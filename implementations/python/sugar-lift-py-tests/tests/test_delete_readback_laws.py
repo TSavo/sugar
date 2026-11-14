@@ -184,7 +184,7 @@ def test_completed_delitem_readback_yields_named_keyerror_with_delete_lineage() 
             (StringValue("b"), TermValue(2)),
         )
     )
-    exits = pending.discharge({obj_cid: original, key_cid: StringValue("a")})
+    exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
     assert isinstance(exits.exits[0], Completed)
     post = _post_dict(exits.exits[0])
     assert not any(k.value == "a" for k, _ in post.entries)
@@ -208,7 +208,7 @@ def test_discrimination_completed_delitem_does_not_fabricate_deleted_value() -> 
     site = function.body[0].fragment
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = DictValue(((StringValue("a"), TermValue(1)),))
-    exits = pending.discharge({obj_cid: original, key_cid: StringValue("a")})
+    exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), site)
     with pytest.raises(AssertionError):
@@ -237,13 +237,13 @@ def test_completed_delattr_removes_field_and_read_is_attributeerror_or_named_gap
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
     )
-    exits = pending.discharge({obj_cid: receiver})
+    exits = pending.discharge(None, {obj_cid: receiver})
     assert isinstance(exits.exits[0], Completed)
     post = _post_object(exits.exits[0])
     assert not any(f.name == "field" for f in post.fields), post.fields
 
     try:
-        read = post.attribute("field", delete_site)
+        read = post.attribute("field", delete_site, None)
     except SugarNotWritten as err:
         raise AssertionError(f"{FLOOR_ATTR}: {err}") from err
     except ConstructionPanic as err:
@@ -274,7 +274,7 @@ def test_discrimination_delattr_does_not_leave_readable_old_value() -> None:
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
     )
-    exits = pending.discharge({obj_cid: receiver})
+    exits = pending.discharge(None, {obj_cid: receiver})
     post = _post_object(exits.exits[0])
     with pytest.raises(AssertionError):
         assert any(f.name == "field" and f.value == TermValue(7) for f in post.fields)
@@ -291,7 +291,7 @@ def test_delete_then_restore_setitem_reads_new_value() -> None:
     site = function.body[0].fragment
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = DictValue(((StringValue("a"), TermValue(1)),))
-    deleted = pending.discharge({obj_cid: original, key_cid: StringValue("a")})
+    deleted = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(deleted.exits[0])
     restored = post.setitem(StringValue("a"), TermValue(99), site)
     assert restored.completed_value() is not None
@@ -313,7 +313,7 @@ def test_delete_then_restore_setattr_reads_new_value() -> None:
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
     )
-    deleted = pending.discharge({obj_cid: receiver})
+    deleted = pending.discharge(None, {obj_cid: receiver})
     post = _post_object(deleted.exits[0])
     restored = post.setattr("field", TermValue(99), site)
     assert restored.completed_value() is not None
@@ -341,7 +341,9 @@ def test_readback_after_halted_delete_still_sees_original() -> None:
             (StringValue("b"), TermValue(2)),
         )
     )
-    exits = pending.discharge({obj_cid: original, key_cid: StringValue("missing")})
+    exits = pending.discharge(
+        None, {obj_cid: original, key_cid: StringValue("missing")}
+    )
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("KeyError")
@@ -361,7 +363,9 @@ def test_discrimination_halted_delete_is_not_a_completed_empty_dict() -> None:
     function, pending = _delitem_pending()
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = DictValue(((StringValue("a"), TermValue(1)),))
-    exits = pending.discharge({obj_cid: original, key_cid: StringValue("missing")})
+    exits = pending.discharge(
+        None, {obj_cid: original, key_cid: StringValue("missing")}
+    )
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     with pytest.raises(AssertionError):
@@ -381,7 +385,7 @@ def test_lying_keyerror_wrong_occurrence_refuses() -> None:
     delete_site = function.body[0].fragment
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = DictValue(((StringValue("a"), TermValue(1)),))
-    exits = pending.discharge({obj_cid: original, key_cid: StringValue("a")})
+    exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), delete_site)
     raise_value = _keyerror_raise(missing, site=delete_site)
@@ -398,7 +402,7 @@ def test_lying_fabricated_deleted_value_refuses_against_keyerror() -> None:
     site = function.body[0].fragment
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     original = DictValue(((StringValue("a"), TermValue(1)),))
-    exits = pending.discharge({obj_cid: original, key_cid: StringValue("a")})
+    exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), site)
     assert not (
@@ -414,10 +418,11 @@ def test_list_delitem_readback_indexerror_after_completed_delete() -> None:
     site = function.body[0].fragment
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0), TermValue(1))),
             key_cid: TermValue(0),
-        }
+        },
     )
     assert isinstance(exits.exits[0], Completed)
     value = exits.exits[0].value

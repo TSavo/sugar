@@ -93,7 +93,7 @@ class OpaqueManagerProtocolCoordinate(FloorValue):
             PredicateValue(py_truthy(self.to_term(owner=str(site))), site)
         )
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         """``with cited() as r: r.x`` -- a read on what ``__enter__`` returned.
 
         Only the enter-result coordinate denotes a Python value; nothing
@@ -103,7 +103,7 @@ class OpaqueManagerProtocolCoordinate(FloorValue):
         not values, and keep the default floor.
         """
         if self.symbol != "python:cm_enter_result":
-            return super().attribute(name, site)
+            return super().attribute(name, site, ctx)
         from sugar_lift_py_tests.floor.call_site_value import _opaque_attribute_faces
 
         return _opaque_attribute_faces(self, name, site)

@@ -74,8 +74,9 @@ class GuardedValue(FloorValue):
     def _map(self, method: str, *args, **keywords):
         """Distribute ``method`` over both arms.
 
-        ``keywords`` carries a binary operator's ``ctx`` to each arm, so an arm
-        that applies a body applies it under the caller's context.
+        ``keywords`` carries a binary operator's or an attribute read's ``ctx``
+        to each arm, so an arm that applies a body applies it under the
+        caller's context.
         """
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
         from sugar_lift_py_tests.ir import not_
@@ -342,15 +343,15 @@ class GuardedValue(FloorValue):
         """Distribute one authenticated Subscript occurrence to both arms."""
         return self._map("subscript_with_occurrence", index, site, occurrence)
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         """Distribute attribute projection over both branch faces.
 
         Pass-3 / full-dump desugar panics rank ``attribute`` second only to
         ``contains``; observed receiver is almost always GuardedValue (197 of
         229). The arms own what ``.name`` means; this face only threads the
-        existing guard.
+        existing guard and the reading caller's context.
         """
-        return self._map("attribute", name, site)
+        return self._map("attribute", name, site, ctx=ctx)
 
     def contains(self, item, site):
         """Distribute membership over both branch faces as a joined predicate."""

@@ -647,7 +647,7 @@ def test_formal_subscript_unpack_desugar_stays_undischarged(tmp_path: Path) -> N
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "setitem"
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        outcome.discharge({})
+        outcome.discharge(None, {})
 
 
 def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:

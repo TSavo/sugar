@@ -50,7 +50,7 @@ def test_type_new_result_carries_the_exact_namespace_as_class_dict() -> None:
     assert made is not None
     assert isinstance(made, RuntimeClassValue)
     assert made.name == "Made"
-    projected = made.attribute("__dict__", "dict-site")
+    projected = made.attribute("__dict__", "dict-site", None)
     assert projected.completed_value() is not None
     assert projected.completed_value().entries == namespace.entries
 

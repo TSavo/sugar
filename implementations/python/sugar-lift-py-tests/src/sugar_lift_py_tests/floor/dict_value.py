@@ -134,11 +134,11 @@ class DictValue(GuardStableValue):
 
         return ExitSet.completed(DictValue(tuple(entries)))
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         # Bound methods and fields on a constructed dict (``{{}}.get``, ``mapping.items``) stay the
         # py.getattr coordinate -- one law, shared with StringValue and the
         # other constructed containers. Never invent a method body or a field.
-        del site
+        del site, ctx
         from sugar_lift_py_tests.floor.getattr_coordinate import getattr_coordinate
 
         return getattr_coordinate(self, name, owner="DictValue.attribute")

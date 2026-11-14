@@ -106,10 +106,11 @@ def test_short_circuit_truthful_second_leg_joins_untouched_stopping_face():
         continuing_face=continuing_face,
         stopped_face=stopped_face,
     ).discharge(
+        None,
         {
             left.coordinate_cid: TermValue(1),
             right.coordinate_cid: TermValue(2),
-        }
+        },
     )
 
     assert len(exits.exits) == 2
@@ -137,10 +138,11 @@ def test_short_circuit_lying_second_leg_retains_its_authentic_halt_occurrence():
     stopped = ExitSet.completed(TermValue(42), complement_guard(continuing_guard))
 
     raw = carrier.discharge(
+        None,
         {
             left.coordinate_cid: NoneValue(),
             right.coordinate_cid: TermValue(2),
-        }
+        },
     )
     authentic = next(exit_ for exit_ in raw.exits if isinstance(exit_, Halted))
     exits = carrier.short_circuit(
@@ -149,10 +151,11 @@ def test_short_circuit_lying_second_leg_retains_its_authentic_halt_occurrence():
         continuing_face=continuing_face,
         stopped_face=stopped_face,
     ).discharge(
+        None,
         {
             left.coordinate_cid: NoneValue(),
             right.coordinate_cid: TermValue(2),
-        }
+        },
     )
 
     halted = next(exit_ for exit_ in exits.exits if isinstance(exit_, Halted))
@@ -170,10 +173,11 @@ def test_short_circuit_preserves_first_leg_halt_without_stopping_face():
     """The first comparison's halt bypasses both truth-value partition arms."""
     first, first_left, first_right = _carrier(operator="less_than")
     first_result = first.discharge(
+        None,
         {
             first_left.coordinate_cid: NoneValue(),
             first_right.coordinate_cid: TermValue(2),
-        }
+        },
     )
     first_halt = next(
         exit_ for exit_ in first_result.exits if isinstance(exit_, Halted)
@@ -198,10 +202,11 @@ def test_short_circuit_preserves_first_leg_halt_without_stopping_face():
         continuing_face=continuing_face,
         stopped_face=stopped_face,
     ).discharge(
+        None,
         {
             second_left.coordinate_cid: TermValue(1),
             second_right.coordinate_cid: TermValue(2),
-        }
+        },
     )
 
     retained = next(exit_ for exit_ in exits.exits if isinstance(exit_, Halted))
@@ -235,7 +240,7 @@ def test_short_circuit_exception_keeps_actual_map_and_exact_temporal_state():
         stopped=ExitSet.completed(TermValue(0), complement_guard(continuing_guard)),
         continuing_face=continuing_face,
         stopped_face=stopped_face,
-    ).discharge(actuals)
+    ).discharge(None, actuals)
 
     halted = next(exit_ for exit_ in exits.exits if isinstance(exit_, Halted))
     assert halted.state is state
@@ -258,7 +263,7 @@ def test_short_circuit_missing_second_leg_actual_remains_explicitly_undischarged
     )
 
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        composed.discharge({left.coordinate_cid: TermValue(1)})
+        composed.discharge(None, {left.coordinate_cid: TermValue(1)})
 
 
 def test_continuation_carrier_inherits_enclosing_reducer_pre_effect_state():
@@ -282,12 +287,13 @@ def test_continuation_carrier_inherits_enclosing_reducer_pre_effect_state():
     )
 
     exits = chained.discharge(
+        None,
         {
             left.coordinate_cid: TermValue(1),
             right.coordinate_cid: TermValue(2),
             second_left.coordinate_cid: NoneValue(),
             second_right.coordinate_cid: TermValue(2),
-        }
+        },
     )
 
     halted = next(exit_ for exit_ in exits.exits if isinstance(exit_, Halted))
@@ -324,12 +330,13 @@ def test_continuation_carrier_preserves_newer_reducer_pre_effect_state():
     )
 
     exits = chained.discharge(
+        None,
         {
             left.coordinate_cid: TermValue(1),
             right.coordinate_cid: TermValue(2),
             second_left.coordinate_cid: NoneValue(),
             second_right.coordinate_cid: TermValue(2),
-        }
+        },
     )
 
     halted = next(exit_ for exit_ in exits.exits if isinstance(exit_, Halted))
@@ -451,10 +458,11 @@ def test_same_native_operation_demand_can_complete_for_authenticated_actuals():
     carrier, left, right = _carrier()
 
     exits = carrier.discharge(
+        None,
         {
             left.coordinate_cid: TermValue(1),
             right.coordinate_cid: TermValue(2),
-        }
+        },
     )
 
     assert exits.exits == (Completed(exits.exits[0].guard, TermValue(3)),)
@@ -466,7 +474,8 @@ def test_guard_preserves_carrier_demand_until_authenticated_discharge():
     assert isinstance(guarded, NativeOperationExitCarrierV1)
     assert guarded.demand == carrier.demand
     exits = guarded.discharge(
-        {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+        None,
+        {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)},
     )
     assert isinstance(exits.exits[0], Completed)
     assert exits.exits[0].guard is not None
@@ -476,7 +485,8 @@ def test_guarded_exceptional_face_retains_guard():
     carrier, left, right = _carrier()
     guarded = carrier.guarded(atomic("test.guard", []))
     exits = guarded.discharge(
-        {left.coordinate_cid: NoneValue(), right.coordinate_cid: TermValue(2)}
+        None,
+        {left.coordinate_cid: NoneValue(), right.coordinate_cid: TermValue(2)},
     )
     assert isinstance(exits.exits[0], Halted)
     assert exits.exits[0].guard is not None
@@ -491,8 +501,8 @@ def test_same_demand_under_complementary_guards_keeps_distinct_carriers():
     assert left_carrier.demand.demand_cid == right_carrier.demand.demand_cid
     assert left_carrier != right_carrier
     actuals = {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
-    discharged_left = left_carrier.discharge(actuals)
-    discharged_right = right_carrier.discharge(actuals)
+    discharged_left = left_carrier.discharge(None, actuals)
+    discharged_right = right_carrier.discharge(None, actuals)
     assert discharged_left.exits[0].guard == positive
     assert discharged_right.exits[0].guard == negative
     assert actuals == {
@@ -507,7 +517,7 @@ def test_complementary_guard_tooth_rejects_same_guard_mutation():
     negative = atomic("test.not_guard", [])
     lying = carrier.guarded(positive)
     actuals = {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
-    assert lying.discharge(actuals).exits[0].guard != negative
+    assert lying.discharge(None, actuals).exits[0].guard != negative
 
 
 def test_multiple_guards_are_explicitly_conjoined():
@@ -516,7 +526,8 @@ def test_multiple_guards_are_explicitly_conjoined():
         carrier.guarded(atomic("outer", []))
         .guarded(atomic("inner", []))
         .discharge(
-            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+            None,
+            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)},
         )
     )
     assert exits.exits[0].guard.kind == "and"
@@ -528,12 +539,13 @@ def test_nested_carrier_continuation_reuses_original_actual_map():
     inner, inner_left, inner_right = _carrier()
     chained = outer.and_then(lambda _value: inner)
     exits = chained.discharge(
+        None,
         {
             left.coordinate_cid: TermValue(1),
             right.coordinate_cid: TermValue(2),
             inner_left.coordinate_cid: TermValue(3),
             inner_right.coordinate_cid: TermValue(4),
-        }
+        },
     )
     assert exits.exits[0].value == TermValue(7)
 
@@ -553,7 +565,8 @@ def test_nested_carrier_missing_its_formal_actual_stays_undischarged():
     )
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
         outer.and_then(lambda _value: inner).discharge(
-            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+            None,
+            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)},
         )
 
 
@@ -567,10 +580,11 @@ def test_same_native_operation_demand_can_halt_for_authenticated_actuals():
     carrier, left, right = _carrier()
 
     exits = carrier.discharge(
+        None,
         {
             left.coordinate_cid: NoneValue(),
             right.coordinate_cid: TermValue(2),
-        }
+        },
     )
 
     assert len(exits.exits) == 1
@@ -597,14 +611,15 @@ def test_missing_authenticated_actual_is_undischarged_not_a_construction_panic()
     carrier, left, _ = _carrier()
 
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        carrier.discharge({left.coordinate_cid: TermValue(1)})
+        carrier.discharge(None, {left.coordinate_cid: TermValue(1)})
 
 
 def test_unavailable_native_operation_is_undischarged_not_a_construction_panic():
     carrier, left, right = _carrier(operator="not_a_floor_operation")
     with pytest.raises(SugarNotWritten, match="projector unavailable"):
         carrier.discharge(
-            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+            None,
+            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)},
         )
 
 
@@ -622,7 +637,8 @@ def test_unsupported_native_arity_is_undischarged_not_a_construction_panic():
     )
     with pytest.raises(SugarNotWritten, match="arity is unavailable"):
         three.discharge(
-            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+            None,
+            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)},
         )
 
     # Length mismatch is independently loud at construction (#6613).
@@ -678,10 +694,11 @@ class _Expected:
 def test_lying_exception_type_is_rejected_without_inventing_identity():
     carrier, left, right = _carrier()
     exits = carrier.discharge(
+        None,
         {
             left.coordinate_cid: NoneValue(),
             right.coordinate_cid: TermValue(2),
-        }
+        },
     )
     routed = exits.and_exit(
         type(exits).completed(object()),
@@ -704,10 +721,11 @@ def test_identity_operation_never_acquires_a_fabricated_exceptional_edge():
     carrier, left, right = _carrier("equals")
 
     exits = carrier.discharge(
+        None,
         {
             left.coordinate_cid: TermValue(1),
             right.coordinate_cid: TermValue(1),
-        }
+        },
     )
 
     assert len(exits.exits) == 1
@@ -856,11 +874,12 @@ def test_setitem_discharges_in_receiver_index_value_order_and_completes():
     carrier, receiver, index, value = _setitem_carrier()
 
     exits = carrier.discharge(
+        None,
         {
             receiver.coordinate_cid: ListValue((TermValue(0), TermValue(1))),
             index.coordinate_cid: TermValue(0),
             value.coordinate_cid: TermValue(9),
-        }
+        },
     )
 
     assert len(exits.exits) == 1
@@ -874,11 +893,12 @@ def test_setitem_discharges_and_halts_with_named_exception_identity():
     carrier, receiver, index, value = _setitem_carrier()
 
     exits = carrier.discharge(
+        None,
         {
             receiver.coordinate_cid: ListValue((TermValue(0),)),
             index.coordinate_cid: TermValue(4),
             value.coordinate_cid: TermValue(9),
-        }
+        },
     )
 
     assert len(exits.exits) == 1
@@ -909,10 +929,11 @@ def test_setattr_named_unwraps_string_value_and_discharges():
     )
 
     exits = carrier.discharge(
+        None,
         {
             receiver.coordinate_cid: _AttrStoreReceiver(),
             value.coordinate_cid: TermValue(7),
-        }
+        },
     )
 
     assert len(exits.exits) == 1
@@ -965,7 +986,7 @@ def test_source_evaluation_order_rhs_receiver_index_is_independent_of_discharge(
     parameters = tuple(
         inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
     )
-    assert parameters == ("receiver", "index", "value", "site")
+    assert parameters == ("receiver", "index", "value", "site", "ctx")
     assert parameters[:3] != ("value", "receiver", "index")
 
 
@@ -1007,8 +1028,8 @@ def test_lying_swapped_index_and_value_must_fail_to_match_correct_store():
         index.coordinate_cid: TermValue(1),
         value.coordinate_cid: TermValue(99),
     }
-    truthful_exits = truthful.discharge(actuals)
-    lying_exits = lying.discharge(actuals)
+    truthful_exits = truthful.discharge(None, actuals)
+    lying_exits = lying.discharge(None, actuals)
 
     assert isinstance(truthful_exits.exits[0], Completed)
     assert truthful_exits.exits[0].value == ListValue(
@@ -1029,7 +1050,8 @@ def test_lying_operator_absent_from_projector_table_is_undischarged_not_panic():
 
     with pytest.raises(SugarNotWritten, match="projector unavailable"):
         carrier.discharge(
-            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
+            None,
+            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)},
         )
 
 
@@ -1094,9 +1116,10 @@ def test_symbolic_formal_subscript_discharges_completed_through_projector():
     )
 
     exits = outcome.discharge(
+        None,
         {
             receiver_coordinate.coordinate_cid: ListValue((TermValue(7), TermValue(8))),
-        }
+        },
     )
     assert len(exits.exits) == 1
     completed = exits.exits[0]
@@ -1117,7 +1140,7 @@ def test_symbolic_formal_subscript_discharges_authenticated_exceptional_through_
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "subscript"
 
-    exits = outcome.discharge({receiver_coordinate.coordinate_cid: NoneValue()})
+    exits = outcome.discharge(None, {receiver_coordinate.coordinate_cid: NoneValue()})
     assert len(exits.exits) == 1
     halted = exits.exits[0]
     assert isinstance(halted, Halted)

@@ -18,8 +18,8 @@ class BuiltinSuperValue(FloorValue):
     current_class: object
     receiver: object
 
-    def attribute(self, name, site):
-        del site
+    def attribute(self, name, site, ctx):
+        del site, ctx
         from sugar_lift_py_tests.outcome import ExitSet
 
         return ExitSet.completed(BuiltinSuperMethodValue(self, name))

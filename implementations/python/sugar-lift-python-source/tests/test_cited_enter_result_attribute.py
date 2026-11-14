@@ -29,7 +29,7 @@ from test_contextmanager_generator_protocol import _function_rows, _imported
 
 def test_enter_result_slot_attribute_is_two_faced() -> None:
     slot = EffectCoordinate(slot_id="with@1:4#0#enter_result")
-    faces = outcome_to_exitset(slot.attribute("headers", "site.py:3:8")).exits
+    faces = outcome_to_exitset(slot.attribute("headers", "site.py:3:8", None)).exits
     completed = [face for face in faces if isinstance(face, Completed)]
     halted = [face for face in faces if isinstance(face, Halted)]
     assert len(completed) == 1 and len(halted) == 1
@@ -45,7 +45,7 @@ def test_other_effect_slots_keep_their_floor() -> None:
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
     with pytest.raises(ConstructionPanic):
-        slot.attribute("headers", "site.py:3:8")
+        slot.attribute("headers", "site.py:3:8", None)
 
 
 def test_dependency_frame_reads_cited_enter_result(tmp_path: Path) -> None:

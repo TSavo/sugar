@@ -16,7 +16,7 @@ class RuntimeClassValue(ClassValue):
             return self.namespace.mapping_entries()
         return self.namespace.entries
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         from sugar_lift_py_tests.floor.dict_value import DictValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.outcome import ExitSet
@@ -28,4 +28,4 @@ class RuntimeClassValue(ClassValue):
         for key, value in reversed(self._namespace_entries()):
             if getattr(key, "value", object()) == name:
                 return ExitSet.completed(value)
-        return super().attribute(name, site)
+        return super().attribute(name, site, ctx)

@@ -114,6 +114,6 @@ def test_ground_term_value_equality_folds():
 def test_class_object_exposes_dunder_name():
     temporal = builtin_name_temporal()
     exc = temporal.value_if_bound("Exception")
-    result = exc.attribute("__name__", "site")
+    result = exc.attribute("__name__", "site", None)
     assert result.completed_value() is not None
     assert result.completed_value().value == "Exception"

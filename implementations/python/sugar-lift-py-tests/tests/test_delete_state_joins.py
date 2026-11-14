@@ -139,10 +139,11 @@ def _delitem_keyerror_halt(
     ), f"{CODEX1}: reducer did not enroll pre_effect_state on delitem carrier"
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: DictValue(((StringValue("a"), TermValue(1)),)),
             key_cid: StringValue("missing"),
-        }
+        },
     )
     assert isinstance(exits, ExitSet) and len(exits.exits) == 1
     halted = exits.exits[0]
@@ -248,10 +249,11 @@ def test_discrimination_completed_return_is_not_the_delete_keyerror_halt() -> No
     assert isinstance(pending, NativeOperationExitCarrierV1)
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: DictValue(((StringValue("a"), TermValue(1)),)),
             key_cid: StringValue("a"),
-        }
+        },
     )
     assert isinstance(exits.exits[0], Completed)
     assert not isinstance(exits.exits[0], Halted)

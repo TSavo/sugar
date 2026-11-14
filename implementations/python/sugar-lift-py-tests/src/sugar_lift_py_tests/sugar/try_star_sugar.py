@@ -154,7 +154,9 @@ class TryStarSugar(Sugar):
                         # Shared typed ReduceContext surface.
                         handler_ctx = handler_ctx.with_observed_effect(slot_id, matched)
                     seed = replace(face.state, context=handler_ctx)
-                    handler_exits = _reduce_block_from_state(handler_body, seed)
+                    handler_exits = _reduce_block_from_state(
+                        handler_body, seed, handler_ctx
+                    )
                     # The handler runs beneath this face's path: ``sequence``
                     # conjoins the face's guard, faces and ``owed`` onto every
                     # handler arm. One next face per composed arm.
@@ -280,8 +282,10 @@ def _seed_temporal(state, ctx):
     )
 
 
-def _reduce_block_from_state(statements, state):
-    """Reduce ``statements`` continuing from an existing temporal ``state``."""
+def _reduce_block_from_state(statements, state, ctx):
+    """Reduce ``statements`` continuing from an existing temporal ``state``;
+    a state that is no reduced block reduces the handler under ``ctx``, the
+    handler's context."""
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         _ReducedBlock,
@@ -289,7 +293,7 @@ def _reduce_block_from_state(statements, state):
     )
 
     if not isinstance(state, _ReducedBlock):
-        return reduce_block_to_exitset(statements, None)
+        return reduce_block_to_exitset(statements, ctx)
 
     exits = ExitSet.completed(state)
     for statement in statements:

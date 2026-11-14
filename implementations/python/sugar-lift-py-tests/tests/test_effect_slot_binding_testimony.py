@@ -120,12 +120,12 @@ def test_observed_effect_projects_only_an_authenticated_context_preimage() -> No
     )
 
     projected = ObservedEffectValue(slot_id="S", effect=outer).attribute(
-        "__context__", site=None
+        "__context__", site=None, ctx=None
     )
     assert projected.completed_value() is inner_value
 
     with pytest.raises(ConstructionPanic) as caught:
-        EffectCoordinate(slot_id="S").attribute("__context__", site=None)
+        EffectCoordinate(slot_id="S").attribute("__context__", site=None, ctx=None)
     assert caught.value.info.owner == "EffectCoordinate.attribute.__context__"
     assert "no authenticated context preimage" in caught.value.info.observed
 
@@ -170,7 +170,7 @@ def test_effect_ref_observes_the_same_effect_the_route_deposited() -> None:
     assert observed.effect is not other
     assert observed.effect.occurrence_id == "outer.py:2:4"
     # Same occurrence the boundary routed: context preimage is authentic.
-    projected = observed.attribute("__context__", site=None)
+    projected = observed.attribute("__context__", site=None, ctx=None)
     assert projected.completed_value() is inner_value
 
     # Unauthenticated twin: pure coordinate stays loud on the same projection.
@@ -178,7 +178,7 @@ def test_effect_ref_observes_the_same_effect_the_route_deposited() -> None:
     assert bare.completed_value() is not None
     assert type(bare.completed_value()) is EffectCoordinate
     with pytest.raises(ConstructionPanic) as caught:
-        bare.completed_value().attribute("__context__", site=None)
+        bare.completed_value().attribute("__context__", site=None, ctx=None)
     assert "no authenticated context preimage" in caught.value.info.observed
 
 
@@ -263,7 +263,7 @@ def test_observed_exception_info_type_is_the_language_class() -> None:
 
     routed = RaiseEffect.for_builtin("ValueError", occurrence="route.py:3:0")
     observed = ObservedExceptionInfoValue(slot_id="S", effect=routed)
-    projected = observed.attribute("type", site=None)
+    projected = observed.attribute("type", site=None, ctx=None)
     typ = projected.completed_value()
     assert typ is not None
     assert isinstance(typ, BuiltinExceptionClassValue)
@@ -273,7 +273,7 @@ def test_observed_exception_info_type_is_the_language_class() -> None:
     # Without a raised instance, .value stays loud rather than substituting
     # the observation wrapper for the exception.
     with pytest.raises(ConstructionPanic) as caught:
-        observed.attribute("value", site=None)
+        observed.attribute("value", site=None, ctx=None)
     assert caught.value.info.observed == "ObservedExceptionInfoValue"
 
     from sugar_lift_py_tests.floor.string_value import StringValue
@@ -285,12 +285,12 @@ def test_observed_exception_info_type_is_the_language_class() -> None:
             "ValueError", occurrence="route.py:3:0", raised_value=instance
         ),
     )
-    value = with_instance.attribute("value", site=None)
+    value = with_instance.attribute("value", site=None, ctx=None)
     assert value.completed_value() is not None
     assert value.completed_value() is instance
 
     with pytest.raises(ConstructionPanic) as caught:
-        ExceptionInfoCoordinate(slot_id="S").attribute("type", site=None)
+        ExceptionInfoCoordinate(slot_id="S").attribute("type", site=None, ctx=None)
     assert caught.value.info.observed == "ExceptionInfoCoordinate"
 
     foreign = RaiseEffect(
@@ -303,7 +303,7 @@ def test_observed_exception_info_type_is_the_language_class() -> None:
     )
     with pytest.raises(ConstructionPanic) as caught:
         ObservedExceptionInfoValue(slot_id="S", effect=foreign).attribute(
-            "type", site=None
+            "type", site=None, ctx=None
         )
     assert caught.value.info.observed == "ObservedExceptionInfoValue"
 
@@ -329,7 +329,7 @@ def test_exception_callsite_args_are_the_constructor_arguments() -> None:
         body=None,
         exception_type_coordinate=identity,
     )
-    projected = instance.attribute("args", site=None)
+    projected = instance.attribute("args", site=None, ctx=None)
     assert projected.completed_value() is not None
     assert projected.completed_value() == TupleValue(elements=(boom,))
 
@@ -349,7 +349,7 @@ def test_exception_callsite_args_are_the_constructor_arguments() -> None:
     # #7585 two-faced lookup of the coordinate ``attr:args``, never a tuple.
     from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
-    faces = ordinary.attribute("args", site=site)
+    faces = ordinary.attribute("args", site=site, ctx=None)
     assert isinstance(faces, ExitSet)
     (completed,) = [f for f in faces.exits if isinstance(f, Completed)]
     assert [f for f in faces.exits if isinstance(f, Halted)]

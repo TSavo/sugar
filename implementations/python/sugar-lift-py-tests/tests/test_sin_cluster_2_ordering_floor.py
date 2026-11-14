@@ -408,7 +408,7 @@ def test_undecided_callsite_contains_is_two_faced() -> None:
 def test_undecided_attribute_remains_named_refusal() -> None:
     """Attribute over undecided receiver stays SugarNotWritten (already correct)."""
     with pytest.raises(SugarNotWritten) as raised:
-        _symbolic().attribute("x", SITE)
+        _symbolic().attribute("x", SITE, None)
     assert raised.value.owner == "SymbolicValue.attribute"
     assert "undecided" in raised.value.observed
 

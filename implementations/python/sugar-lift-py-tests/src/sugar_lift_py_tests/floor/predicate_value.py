@@ -53,10 +53,10 @@ class PredicateValue(FloorValue):
             )
         return super().to_term(owner=owner)
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         # A boolean formula is not a field-bearing object; attribute projection
         # stays py.getattr over the predicate term (never invent a field).
-        del site
+        del site, ctx
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.outcome import ExitSet

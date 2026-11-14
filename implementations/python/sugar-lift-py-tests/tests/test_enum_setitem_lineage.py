@@ -96,7 +96,7 @@ def test_source_setitem_runs_then_super_returns_none_with_updated_receiver() -> 
 
     assert updated.identity == receiver.identity
     assert updated.entries == ((StringValue("member"), TermValue(7)),)
-    seen = updated.attribute("seen", "seen-site")
+    seen = updated.attribute("seen", "seen-site", None)
     assert seen.completed_value() is not None
     assert seen.completed_value() == StringValue("member")
 
@@ -161,7 +161,7 @@ def test_type_new_consumes_the_post_setitem_namespace_not_its_pre_state() -> Non
 
     assert created.completed_value() is not None
     assert isinstance(created.completed_value(), RuntimeClassValue)
-    class_dict = created.completed_value().attribute("__dict__", "dict-site")
+    class_dict = created.completed_value().attribute("__dict__", "dict-site", None)
     assert class_dict.completed_value() is not None
     assert class_dict.completed_value().entries == (
         (StringValue("_member_map_"), TermValue(7)),

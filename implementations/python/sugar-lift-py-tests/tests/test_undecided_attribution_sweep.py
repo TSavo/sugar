@@ -80,7 +80,7 @@ def test_mutable_global_attribute_is_undecided_not_write_more_floor() -> None:
     v = _mutable(kind="dict")
     site = _Site()
     with pytest.raises(SugarNotWritten, match="MutableGlobalValue.attribute") as caught:
-        v.attribute("keys", site)
+        v.attribute("keys", site, None)
     assert "write more Floor" not in str(caught.value)
 
 

@@ -37,11 +37,11 @@ def test_missing_field_panics_but_written_twin_projects(tmp_path, class_name, me
     site = _site(tmp_path, member)
     receiver = ObjectValue(class_name, (ObjectField("marker", TermValue(3)),))
     written = receiver.with_field_store(member, TermValue(7))
-    assert written.attribute(member, site) == ExitSet.completed(TermValue(7))
+    assert written.attribute(member, site, None) == ExitSet.completed(TermValue(7))
 
     # The write belongs to its own state, not to the original/other guard face.
     with pytest.raises(ConstructionPanic) as caught:
-        receiver.attribute(member, site)
+        receiver.attribute(member, site, None)
     assert not isinstance(caught.value, Exception)
     info = caught.value.info
     assert info.owner == "ObjectValue.attribute"
@@ -58,7 +58,7 @@ def test_deleted_field_keeps_authenticated_attribute_error(tmp_path):
     deleted = receiver.delattr("payload", site)
     deleted_value = deleted.completed_value()
     assert deleted_value is not None
-    outcome = deleted_value.attribute("payload", site)
+    outcome = deleted_value.attribute("payload", site, None)
     assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
     assert isinstance(halt.effect, RaiseEffect)
@@ -69,7 +69,7 @@ def test_deleted_field_keeps_authenticated_attribute_error(tmp_path):
 def test_deferred_helper_field_keeps_its_coordinate_not_a_missing_field_panic(tmp_path):
     site = _site(tmp_path, "payload")
     receiver = ObjectValue("Renamed", (), deferred_helper_fields=("payload",))
-    outcome = receiver.attribute("payload", site)
+    outcome = receiver.attribute("payload", site, None)
     value = outcome.completed_value()
     assert value is not None
     assert value.to_term(owner="test") == ctor(
@@ -81,5 +81,5 @@ def test_unknown_receiver_type_keeps_its_distinct_named_refusal(tmp_path):
     site = _site(tmp_path, "payload")
     receiver = SymbolicValue(make_var("unknown_receiver"))
     with pytest.raises(SugarNotWritten) as caught:
-        receiver.attribute("payload", site)
+        receiver.attribute("payload", site, None)
     assert caught.value.owner == "SymbolicValue.attribute"

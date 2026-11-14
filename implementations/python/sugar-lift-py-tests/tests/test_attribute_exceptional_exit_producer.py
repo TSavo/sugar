@@ -178,7 +178,7 @@ def test_symbolic_receiver_attribute_is_the_same_named_third_value() -> None:
 
 
 def test_lying_known_member_does_not_license_blanket_attribute_error() -> None:
-    outcome = NoneValue().attribute("__class__", "lying-none-class")
+    outcome = NoneValue().attribute("__class__", "lying-none-class", None)
 
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), SymbolicValue)

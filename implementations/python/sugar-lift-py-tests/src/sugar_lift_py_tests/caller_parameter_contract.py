@@ -406,132 +406,94 @@ def production_native_operation_operators() -> frozenset[str]:
     )
 
 
-def _project_delitem(receiver, index, site):
+def _project_delitem(receiver, index, site, ctx):
     """Python protocol ``__delitem__(self, key)`` — discharge order (receiver, index).
 
     Ordered operands and formal coordinates match this signature exactly.
     Name deletion (``del name``) is out of scope for this projector.
     """
+    del ctx
     return receiver.delitem(index, site)
 
 
-def _project_delattr_named(receiver, name, site):
+def _project_delattr_named(receiver, name, site, ctx):
     """Python protocol ``__delattr__(self, name)`` — (receiver, StringValue name).
 
     ``name`` arrives as StringValue from the mint; unwrap with ``.value``.
     Readability never authorizes deletion: Floor ``delattr`` refuses
     getter-only properties without consulting the read path.
     """
+    del ctx
     return receiver.delattr(name.value, site)
 
 
-def project_iadd(left, right, site):
+def _project_inplace(left, right, site, ctx, *, surface):
+    """In-place ``OP=`` through the established floor edge, under the
+    caller's context: the ``__i*__`` method, and the ordinary binary it
+    falls back to, apply under ``ctx``."""
+    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
+        discharge_inplace,
+    )
+
+    return discharge_inplace(left, right, site, ctx, surface=surface)
+
+
+def project_iadd(left, right, site, ctx):
     """Discharge ``iadd`` via established ``inplace_binary_operator_with`` edge."""
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="+")
+    return _project_inplace(left, right, site, ctx, surface="+")
 
 
-def project_isub(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="-")
+def project_isub(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface="-")
 
 
-def project_imul(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="*")
+def project_imul(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface="*")
 
 
-def project_itruediv(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="/")
+def project_itruediv(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface="/")
 
 
-def project_ifloordiv(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="//")
+def project_ifloordiv(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface="//")
 
 
-def project_imod(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="%")
+def project_imod(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface="%")
 
 
-def project_ipow(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="**")
+def project_ipow(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface="**")
 
 
-def project_iand(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="&")
+def project_iand(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface="&")
 
 
-def project_ior(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="|")
+def project_ior(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface="|")
 
 
-def project_ixor(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="^")
+def project_ixor(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface="^")
 
 
-def project_ilshift(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="<<")
+def project_ilshift(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface="<<")
 
 
-def project_irshift(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface=">>")
+def project_irshift(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface=">>")
 
 
-def project_imatmul(left, right, site):
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        discharge_inplace,
-    )
-
-    return discharge_inplace(left, right, site, None, surface="@")
+def project_imatmul(left, right, site, ctx):
+    return _project_inplace(left, right, site, ctx, surface="@")
 
 
-def project_iter(receiver, site):
-    """``iter(receiver)`` — established ``iter_with`` floor edge.
+def project_iter(receiver, site, ctx):
+    """``iter(receiver)`` — established ``iter_with`` floor edge, under the
+    caller's context.
 
     Not yet enrolled in ``_NATIVE_OPERATION_PROJECTORS``: production has no
     carrier mint for ``iter`` until loop/comprehension demand lands. Callers
@@ -540,18 +502,19 @@ def project_iter(receiver, site):
     """
     from sugar_lift_py_tests.operations.iterator_operation import discharge_iter
 
-    return discharge_iter(receiver, site, owner="project_iter")
+    return discharge_iter(receiver, site, ctx, owner="project_iter")
 
 
-def project_next(receiver, site):
-    """``next(receiver)`` — established ``next_with`` floor edge.
+def project_next(receiver, site, ctx):
+    """``next(receiver)`` — established ``next_with`` floor edge, under the
+    caller's context.
 
     Same enrollment deferral as :func:`project_iter`: surface is live; the
     native-operation table stays closed until a production mint exists.
     """
     from sugar_lift_py_tests.operations.next_operation import discharge_next
 
-    return discharge_next(receiver, site, owner="project_next")
+    return discharge_next(receiver, site, ctx, owner="project_next")
 
 
 # Enrolled i* projectors — keys must equal production_augassign_inplace_operators().
@@ -600,93 +563,102 @@ _INPLACE_NATIVE_OPERATION_PROJECTORS = {
 #   ordinary ``add``.
 #
 # Key set must equal :func:`production_native_operation_operators` exactly.
-def _project_unary_minus(value, site):
+#
+# Every projector ends ``(..., site, ctx)``: ``ctx`` is the context of the
+# caller whose actuals filled the placeholder operands, and every floor method
+# that applies a body (a dunder, a property, a method) applies under it.
+def _project_unary_minus(value, site, ctx):
     """Python ``-x`` — unary Floor method; discharge arity 1."""
+    del ctx
     return value.unary_minus(site)
 
 
-def _project_unary_plus(value, site):
+def _project_unary_plus(value, site, ctx):
     """Python ``+x`` — unary Floor method; discharge arity 1."""
+    del ctx
     return value.unary_plus(site)
 
 
-def _project_bitwise_invert(value, site):
+def _project_bitwise_invert(value, site, ctx):
     """Python ``~x`` — unary Floor method; discharge arity 1."""
+    del ctx
     return value.bitwise_invert(site)
 
 
-def _project_method_call(receiver, name, keyword_names, *operands_and_site):
+def _project_method_call(receiver, name, keyword_names, *operands_site_and_ctx):
     """``receiver.<name>(*args, **kwargs)`` re-dispatched on resolved actuals.
 
     ``name`` is a StringValue; ``keyword_names`` a TupleValue of StringValues
     naming the trailing operands that are keyword actuals.  The receiver's
     actual selects the method exactly as MethodCallSugar does (a floor's
     method body, the container law, or the #7616 two faces); an actual that
-    is still a formal defers again to its own caller."""
+    is still a formal defers again to its own caller.  The selected method
+    applies under the caller's context."""
     from sugar_lift_py_tests.sugar.method_call_sugar import dispatch_method_call
 
-    *operands, site = operands_and_site
+    *operands, site, ctx = operands_site_and_ctx
     names = tuple(element.value for element in keyword_names.elements)
     split = len(operands) - len(names)
     positional = tuple(operands[:split])
     kw_values = tuple(zip(names, operands[split:]))
-    return dispatch_method_call(name.value, receiver, positional, kw_values, site, None)
+    return dispatch_method_call(name.value, receiver, positional, kw_values, site, ctx)
 
 
 _NATIVE_OPERATION_PROJECTORS = {
     # Receiver-selected method call (formal receiver or operand).
     "method_call": _project_method_call,
     # Unary / adapter Floor methods.
-    "truth": lambda value, site: value.truth(site),
-    "boolop_truth": lambda value, site: value.boolop_truth(site),
-    "unary_truth": lambda value, unit, site: value.unary_truth(unit, site),
+    "truth": lambda value, site, ctx: value.truth(site),
+    "boolop_truth": lambda value, site, ctx: value.boolop_truth(site),
+    "unary_truth": lambda value, unit, site, ctx: value.unary_truth(unit, site),
     # Formal arithmetic / bitwise unary (``-x`` / ``+x`` / ``~x``).
     # Production mints from SymbolicValue when formal_coordinate is present;
     # ground TermValue folds on the free Floor methods these projectors call.
     "unary_minus": _project_unary_minus,
     "unary_plus": _project_unary_plus,
     "bitwise_invert": _project_bitwise_invert,
-    "attribute_named": lambda receiver, name, site: receiver.attribute_named(
-        name, site
+    "attribute_named": lambda receiver, name, site, ctx: receiver.attribute_named(
+        name, site, ctx
     ),
     # Formal subscript load (#6611): receiver[index] — binary, not the store.
-    "subscript": lambda receiver, index, site: receiver.subscript(index, site),
-    # Binary arithmetic / bitwise (_BINARY_OPERATOR_COORDINATE keys).
-    # Carrier discharge carries no reduction context yet (#7757): a binary
-    # floor reached from here applies under None, named at this one door.
-    "add": lambda left, right, site: left.add(right, site, None),
-    "subtract": lambda left, right, site: left.subtract(right, site, None),
-    "multiply": lambda left, right, site: left.multiply(right, site, None),
-    "divide": lambda left, right, site: left.divide(right, site, None),
-    "floor_divide": lambda left, right, site: left.floor_divide(right, site, None),
-    "modulo": lambda left, right, site: left.modulo(right, site, None),
-    "power": lambda left, right, site: left.power(right, site, None),
-    "matrix_multiply": lambda left, right, site: left.matrix_multiply(
-        right, site, None
+    "subscript": lambda receiver, index, site, ctx: receiver.subscript(index, site),
+    # Binary arithmetic / bitwise (_BINARY_OPERATOR_COORDINATE keys), applied
+    # under the caller's context.
+    "add": lambda left, right, site, ctx: left.add(right, site, ctx),
+    "subtract": lambda left, right, site, ctx: left.subtract(right, site, ctx),
+    "multiply": lambda left, right, site, ctx: left.multiply(right, site, ctx),
+    "divide": lambda left, right, site, ctx: left.divide(right, site, ctx),
+    "floor_divide": lambda left, right, site, ctx: left.floor_divide(right, site, ctx),
+    "modulo": lambda left, right, site, ctx: left.modulo(right, site, ctx),
+    "power": lambda left, right, site, ctx: left.power(right, site, ctx),
+    "matrix_multiply": lambda left, right, site, ctx: left.matrix_multiply(
+        right, site, ctx
     ),
-    "bitwise_and": lambda left, right, site: left.bitwise_and(right, site, None),
-    "bitwise_or": lambda left, right, site: left.bitwise_or(right, site, None),
-    "bitwise_xor": lambda left, right, site: left.bitwise_xor(right, site, None),
-    "left_shift": lambda left, right, site: left.left_shift(right, site, None),
-    "right_shift": lambda left, right, site: left.right_shift(right, site, None),
+    "bitwise_and": lambda left, right, site, ctx: left.bitwise_and(right, site, ctx),
+    "bitwise_or": lambda left, right, site, ctx: left.bitwise_or(right, site, ctx),
+    "bitwise_xor": lambda left, right, site, ctx: left.bitwise_xor(right, site, ctx),
+    "left_shift": lambda left, right, site, ctx: left.left_shift(right, site, ctx),
+    "right_shift": lambda left, right, site, ctx: left.right_shift(right, site, ctx),
     # Authenticated in-place (AugAssign); binary fallback is inside each projector.
     **_INPLACE_NATIVE_OPERATION_PROJECTORS,
     # Equality, ordering, membership (compare / equality sugars).
-    "equals": lambda left, right, site: left.equals(right, site, None),
-    "less_than": lambda left, right, site: left.less_than(right, site, None),
-    "less_equal": lambda left, right, site: left.less_equal(right, site, None),
-    "greater_than": lambda left, right, site: left.greater_than(right, site, None),
-    "greater_equal": lambda left, right, site: left.greater_equal(right, site, None),
-    "contains": lambda container, item, site: container.contains(item, site),
+    "equals": lambda left, right, site, ctx: left.equals(right, site, ctx),
+    "less_than": lambda left, right, site, ctx: left.less_than(right, site, ctx),
+    "less_equal": lambda left, right, site, ctx: left.less_equal(right, site, ctx),
+    "greater_than": lambda left, right, site, ctx: left.greater_than(right, site, ctx),
+    "greater_equal": lambda left, right, site, ctx: left.greater_equal(
+        right, site, ctx
+    ),
+    "contains": lambda container, item, site, ctx: container.contains(item, site),
     # Ternary store protocol (receiver, index|name, value + site).
     # Discharge order: receiver, index, value — never RHS-first.
-    "setitem": lambda receiver, index, value, site: receiver.setitem(
+    "setitem": lambda receiver, index, value, site, ctx: receiver.setitem(
         index, value, site
     ),
     # Attribute store: name arrives as StringValue; unwrap with .value.
     # Window 17534 mints operator="setattr_named" with operands
     # (receiver, StringValue(name), value).
-    "setattr_named": lambda receiver, name, value, site: receiver.setattr(
+    "setattr_named": lambda receiver, name, value, site, ctx: receiver.setattr(
         name.value, value, site
     ),
     # Binary delete protocol — explicit projectors (Python protocol signatures).
@@ -696,13 +668,17 @@ _NATIVE_OPERATION_PROJECTORS = {
 
 
 def _native_operation_projector_arity(projector) -> int:
-    """Operand count named by an explicit projector (site is always last).
+    """Operand count named by an explicit projector (``site, ctx`` always last).
 
     A projector whose trailing parameter is variadic (``method_call``'s
-    arguments, then the site) names its minimum: the fixed operands."""
+    arguments, then the site and the context) names its minimum: the fixed
+    operands."""
     import inspect
 
-    return len(inspect.signature(projector).parameters) - 1
+    parameters = len(inspect.signature(projector).parameters)
+    if _native_operation_projector_is_variadic(projector):
+        return parameters - 1
+    return parameters - 2
 
 
 def _native_operation_projector_is_variadic(projector) -> bool:
@@ -966,8 +942,13 @@ class NativeOperationExitCarrierV1:
         known = tuple(self.short_circuit_positions)
         return known + (end,) * (len(self.short_circuits) - len(known))
 
-    def discharge(self, actuals_by_formal_coordinate):
+    def discharge(self, ctx, actuals_by_formal_coordinate):
         """Evaluate against authenticated actual operands and project exits.
+
+        ``ctx`` is the context of the caller whose actuals fill the
+        placeholder operands: the operation, and every carrier its
+        continuations mint, discharges under it (a body the operation applies
+        keeps that caller's temporal and halts).
 
         Coordinate-length and coordinate-identity invariants are owned by
         :meth:`__post_init__` (#6613).  Missing authenticated evidence, an
@@ -989,7 +970,7 @@ class NativeOperationExitCarrierV1:
         def apply_exitset_step(projected, step):
             projected = step(projected)
             if isinstance(projected, NativeOperationExitCarrierV1):
-                projected = projected.discharge(actuals_by_formal_coordinate)
+                projected = projected.discharge(ctx, actuals_by_formal_coordinate)
             if not isinstance(projected, ExitSet):
                 projected = outcome_to_exitset(projected)
             return projected
@@ -1011,7 +992,7 @@ class NativeOperationExitCarrierV1:
             ) = self.prefix_composition
             exits = list(resolved)
             for prefix_exit, carrier in deferred:
-                following = carrier.discharge(actuals_by_formal_coordinate)
+                following = carrier.discharge(ctx, actuals_by_formal_coordinate)
                 sequenced = ExitSet((prefix_exit,)).sequence(
                     lambda _value, *, result=following: result
                 )
@@ -1022,7 +1003,7 @@ class NativeOperationExitCarrierV1:
             for continuation in self.continuations[continuation_count:]:
                 projected = type(self).compose_prefix(projected, continuation)
                 if isinstance(projected, NativeOperationExitCarrierV1):
-                    projected = projected.discharge(actuals_by_formal_coordinate)
+                    projected = projected.discharge(ctx, actuals_by_formal_coordinate)
             guard = _conjoin_guards(self.guards[guard_count:])
             if guard is not None:
                 projected = projected.guarded(guard)
@@ -1070,11 +1051,12 @@ class NativeOperationExitCarrierV1:
             )
 
         # Bind by the projector's declared parameter order.  Each lambda names
-        # its Floor signature; this is not a generic method splat.
+        # its Floor signature; this is not a generic method splat.  The site
+        # and the caller's context close every projector's parameters.
         # Every Outcome variant passes the exit algebra's loud door (a linear
         # one from a producer not yet converted lifts there).  In particular,
         # never reinterpret an unresolved carrier as a normal completion.
-        exits = outcome_to_exitset(projector(*actual_operands, self.site))
+        exits = outcome_to_exitset(projector(*actual_operands, self.site, ctx))
         # One arm that halts: the shape a projector's own effect takes.
         sole_halt = (
             exits.exits[0]
@@ -1207,7 +1189,7 @@ class NativeOperationExitCarrierV1:
                         next_outcome = next_outcome._enroll_pre_effect_state(
                             self.pre_effect_state
                         )
-                    return next_outcome.discharge(actuals_by_formal_coordinate)
+                    return next_outcome.discharge(ctx, actuals_by_formal_coordinate)
                 return next_outcome
 
             exits = exits.and_then(resume)

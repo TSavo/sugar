@@ -25,7 +25,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 
 
 def test_string_attribute_is_py_getattr_coordinate():
-    outcome = StringValue("{:.2f}").attribute("format", "site")
+    outcome = StringValue("{:.2f}").attribute("format", "site", None)
     value = outcome.completed_value()
     assert isinstance(value, SymbolicValue)
     assert value.term.name == "py.getattr"
@@ -33,7 +33,7 @@ def test_string_attribute_is_py_getattr_coordinate():
 
 def test_predicate_attribute_is_py_getattr_coordinate():
     pred = PredicateValue(atomic("choose", []), "site")
-    outcome = pred.attribute("dtype", "site")
+    outcome = pred.attribute("dtype", "site", None)
     value = outcome.completed_value()
     assert isinstance(value, SymbolicValue)
     assert value.term.name == "py.getattr"

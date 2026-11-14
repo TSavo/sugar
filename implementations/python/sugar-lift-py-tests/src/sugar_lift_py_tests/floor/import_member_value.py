@@ -151,7 +151,8 @@ class ImportMemberValue(FloorValue):
             producer="ImportMemberValue.subscript",
         )
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
+        del ctx
         return self.undecided_attribute(name, site, owner="ImportMemberValue.attribute")
 
     def truth(self, site):

@@ -375,12 +375,13 @@ class FloorValue:
         """
         return None
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         # Default: this value does not stand on the attribute floor -- it cannot
         # answer what it yields at `.name`. A symbolic receiver stays the
         # py.getattr coordinate; a value that owns a field folds; absence here is
-        # the honest "no".
-        del name
+        # the honest "no".  ``ctx`` is the reading caller's context: a member
+        # that applies a body (a property getter) applies under it.
+        del name, ctx
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
@@ -396,12 +397,13 @@ class FloorValue:
         )
         construction_panic(info)
 
-    def attribute_named(self, name_value, site):
+    def attribute_named(self, name_value, site, ctx):
         """Carrier adapter for ``receiver.<static name>`` after discharge.
 
         ``NativeOperationDemandV1`` records ordered Floor values.  Attribute's
         second operand is the source-written static identifier, represented as
-        a ground StringValue; it is never runtime spelling authority.
+        a ground StringValue; it is never runtime spelling authority.  The read
+        applies under ``ctx``, the discharging caller's context.
         """
         from sugar_lift_py_tests.floor.string_value import StringValue
         from sugar_source_tree.panic import SugarNotWritten
@@ -414,7 +416,7 @@ class FloorValue:
                 requested="source-written static attribute identifier",
                 fix="preserve the Attribute node's identifier as StringValue",
             )
-        return self.attribute(name_value.value, site)
+        return self.attribute(name_value.value, site, ctx)
 
     def unary_truth(self, unit, site):
         """Carrier adapter for ``bool(operand)`` under UnaryOp ``not`` after discharge.

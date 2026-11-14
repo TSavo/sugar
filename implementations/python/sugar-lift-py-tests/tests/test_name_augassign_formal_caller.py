@@ -415,7 +415,7 @@ def test_helper_alone_is_undischarged_iadd_carrier() -> None:
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "iadd"
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge({})
+        pending.discharge(None, {})
 
 
 def test_authenticated_formal_discharge_updates_binding() -> None:
@@ -425,7 +425,9 @@ def test_authenticated_formal_discharge_updates_binding() -> None:
     coords = {
         c.declared_name: c.coordinate_cid for c in function.sugar().formal_coordinates
     }
-    exits = pending.discharge({coords["x"]: TermValue(3), coords["rhs"]: TermValue(4)})
+    exits = pending.discharge(
+        None, {coords["x"]: TermValue(3), coords["rhs"]: TermValue(4)}
+    )
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
@@ -506,7 +508,7 @@ def test_project_augmented_formal_mints_iadd_not_add() -> None:
     left = SymbolicValue(make_var("x"), _coord("x", 0))
     right = SymbolicValue(make_var("rhs"), _coord("rhs", 1))
     out = project_augmented(
-        left, right, operator="iadd", projector=project_iadd, site=site
+        left, right, operator="iadd", projector=project_iadd, site=site, ctx=None
     )
     assert isinstance(out, NativeOperationExitCarrierV1)
     assert out.demand.operator == "iadd"

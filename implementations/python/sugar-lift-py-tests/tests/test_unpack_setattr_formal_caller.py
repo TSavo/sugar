@@ -111,7 +111,7 @@ def _source_class_receiver(class_body: str):
 
 
 def _completed_universe(pending, actuals) -> UniverseValue:
-    exits = pending.discharge(actuals)
+    exits = pending.discharge(None, actuals)
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     face = exits.exits[0]
@@ -141,7 +141,7 @@ def test_helper_alone_retains_setattr_named_demand_in_discharge_order() -> None:
     parameters = tuple(
         inspect.signature(_NATIVE_OPERATION_PROJECTORS["setattr_named"]).parameters
     )
-    assert parameters == ("receiver", "name", "value", "site")
+    assert parameters == ("receiver", "name", "value", "site", "ctx")
     assert pending.pre_effect_state is not None
 
 
@@ -182,7 +182,7 @@ def test_writable_source_defined_receiver_completes_x_and_field_store() -> None:
 def test_writable_source_defined_receiver_completes_discrimination() -> None:
     _, pending, receiver = _source_class_receiver("    pass\n")
     obj_cid, _, q_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, q_cid: TermValue(7)})
+    exits = pending.discharge(None, {obj_cid: receiver, q_cid: TermValue(7)})
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Halted), "writable field must complete"
 
@@ -211,7 +211,7 @@ def test_property_without_setter_named_attribute_error_preserves_x_state() -> No
 
     assert pending.pre_effect_state is not None
     obj_cid, _, q_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, q_cid: TermValue(7)})
+    exits = pending.discharge(None, {obj_cid: receiver, q_cid: TermValue(7)})
     assert len(exits.exits) == 1
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
@@ -230,7 +230,7 @@ def test_property_without_setter_discrimination_not_completed() -> None:
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
     obj_cid, _, q_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, q_cid: TermValue(99)})
+    exits = pending.discharge(None, {obj_cid: receiver, q_cid: TermValue(99)})
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed), "read path licensed a store"
     with pytest.raises(AssertionError):
@@ -245,7 +245,7 @@ def test_read_authorizes_write_twin_fails() -> None:
     # Property is readable via the enrollment of the getter.
     assert any(m.descriptor_kind == "property" for m in receiver.methods)
     obj_cid, _, q_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, q_cid: TermValue(1)})
+    exits = pending.discharge(None, {obj_cid: receiver, q_cid: TermValue(1)})
     assert isinstance(exits.exits[0], Halted)
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed), "read authorized write"
@@ -295,7 +295,7 @@ def test_swapped_receiver_value_coordinates_twin_fails() -> None:
         obj_c.coordinate_cid: writable,
         value_c.coordinate_cid: TermValue(9),
     }
-    truthful_exits = truthful.discharge(actuals)
+    truthful_exits = truthful.discharge(None, actuals)
     assert isinstance(truthful_exits.exits[0], Completed)
     t_univ = truthful_exits.exits[0].value
     t_fields = [
@@ -305,7 +305,7 @@ def test_swapped_receiver_value_coordinates_twin_fails() -> None:
 
     # Lying maps value formal to ObjectValue and receiver formal to 9 —
     # either fails or stores differently.
-    lying_exits = lying.discharge(actuals)
+    lying_exits = lying.discharge(None, actuals)
     lying_face = lying_exits.exits[0]
     if isinstance(lying_face, Completed) and isinstance(
         lying_face.value, UniverseValue

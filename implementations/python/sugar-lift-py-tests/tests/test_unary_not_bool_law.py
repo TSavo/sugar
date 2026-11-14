@@ -327,18 +327,18 @@ def test_formal_not_defers_to_native_operation_carrier() -> None:
 def test_formal_not_completes_to_bool_after_discharge() -> None:
     carrier, formal = _carrier()
     # Continuations include negate from UnaryOpSugar.desugar.
-    exits = carrier.discharge({formal.coordinate_cid: TermValue(0)})
+    exits = carrier.discharge(None, {formal.coordinate_cid: TermValue(0)})
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
     assert isinstance(exits.exits[0].value, TrueBoolLiteralSugar)
 
-    exits = carrier.discharge({formal.coordinate_cid: TermValue(7)})
+    exits = carrier.discharge(None, {formal.coordinate_cid: TermValue(7)})
     assert isinstance(exits.exits[0].value, FalseBoolLiteralSugar)
 
 
 def test_formal_not_halt_bypasses_negate_continuation() -> None:
     carrier, formal = _carrier()
-    exits = carrier.discharge({formal.coordinate_cid: _AmbiguousTruth()})
+    exits = carrier.discharge(None, {formal.coordinate_cid: _AmbiguousTruth()})
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Halted)
     # Resolution.project keeps the authenticated type coordinate; name may be
@@ -361,7 +361,8 @@ def test_undecided_actual_stays_named_refusal_on_discharge() -> None:
     carrier, formal = _carrier()
     with pytest.raises(SugarNotWritten) as caught:
         carrier.discharge(
-            {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))}
+            None,
+            {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))},
         )
     # Undecided actual has no unary_truth / truth completion — loud, not Halted.
     assert caught.value.owner == "unary_operation_exception_floor"

@@ -233,7 +233,7 @@ def test_delitem_projector_is_enrolled_or_named_missing() -> None:
     projector = _NATIVE_OPERATION_PROJECTORS["delitem"]
     assert projector is _project_delitem
     parameters = tuple(inspect.signature(projector).parameters)
-    assert parameters == ("receiver", "index", "site")
+    assert parameters == ("receiver", "index", "site", "ctx")
 
 
 def test_delattr_projector_is_enrolled_or_named_missing() -> None:
@@ -244,7 +244,7 @@ def test_delattr_projector_is_enrolled_or_named_missing() -> None:
     projector = _NATIVE_OPERATION_PROJECTORS["delattr_named"]
     assert projector is _project_delattr_named
     parameters = tuple(inspect.signature(projector).parameters)
-    assert parameters == ("receiver", "name", "site")
+    assert parameters == ("receiver", "name", "site", "ctx")
 
 
 def test_production_minted_operators_equal_projector_keys_including_delete() -> None:
@@ -269,6 +269,7 @@ def test_ordered_operands_and_formals_match_protocol_signatures() -> None:
         "receiver",
         "index",
         "site",
+        "ctx",
     ]
 
     _, delattr_c = _delattr_helper()
@@ -283,6 +284,7 @@ def test_ordered_operands_and_formals_match_protocol_signatures() -> None:
         "receiver",
         "name",
         "site",
+        "ctx",
     ]
 
 
@@ -358,7 +360,7 @@ def test_missing_caller_actual_is_undischarged_not_completed() -> None:
     _, pending = _delitem_helper()
     pending = _require_delitem_carrier(pending)
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge({})
+        pending.discharge(None, {})
 
 
 def test_partial_caller_actual_is_undischarged_discrimination() -> None:
@@ -366,11 +368,12 @@ def test_partial_caller_actual_is_undischarged_discrimination() -> None:
     pending = _require_delitem_carrier(pending)
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     completed = pending.discharge(
-        {obj_cid: ListValue((TermValue(0),)), key_cid: TermValue(0)}
+        None,
+        {obj_cid: ListValue((TermValue(0),)), key_cid: TermValue(0)},
     )
     assert isinstance(completed.exits[0], Completed)
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge({obj_cid: ListValue((TermValue(0),))})
+        pending.discharge(None, {obj_cid: ListValue((TermValue(0),))})
 
 
 # ===========================================================================
@@ -384,10 +387,11 @@ def test_mutable_list_receiver_completes_delete_with_element_gone() -> None:
     pending = _require_delitem_carrier(pending)
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: ListValue((TermValue(0), TermValue(1))),
             key_cid: TermValue(0),
-        }
+        },
     )
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
@@ -401,10 +405,11 @@ def test_mutable_dict_receiver_completes_delete_with_key_gone() -> None:
     pending = _require_delitem_carrier(pending)
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: DictValue(((StringValue("a"), TermValue(1)),)),
             key_cid: StringValue("a"),
-        }
+        },
     )
     assert isinstance(exits.exits[0], Completed)
     value = exits.exits[0].value
@@ -427,7 +432,7 @@ def test_writable_field_delete_completes_with_attribute_gone() -> None:
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
     )
-    exits = pending.discharge({obj_cid: receiver})
+    exits = pending.discharge(None, {obj_cid: receiver})
     assert isinstance(exits.exits[0], Completed)
     stored = exits.exits[0].value
     record = getattr(stored, "record", None)
@@ -445,7 +450,8 @@ def test_discrimination_completed_delete_is_not_halted() -> None:
     pending = _require_delitem_carrier(pending)
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
-        {obj_cid: ListValue((TermValue(0),)), key_cid: TermValue(0)}
+        None,
+        {obj_cid: ListValue((TermValue(0),)), key_cid: TermValue(0)},
     )
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Halted)
@@ -466,10 +472,11 @@ def test_missing_dict_key_halts_with_named_keyerror_and_pre_effect_state() -> No
     )
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: DictValue(((StringValue("a"), TermValue(1)),)),
             key_cid: StringValue("missing"),
-        }
+        },
     )
     halted = _assert_named_halt(exits, "KeyError")
     assert halted.state is testimony.state
@@ -480,7 +487,8 @@ def test_missing_list_index_halts_with_named_indexerror_and_pre_effect_state() -
     pending = _require_delitem_carrier(pending)
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
-        {obj_cid: ListValue((TermValue(0),)), key_cid: TermValue(4)}
+        None,
+        {obj_cid: ListValue((TermValue(0),)), key_cid: TermValue(4)},
     )
     halted = _assert_named_halt(exits, "IndexError")
     assert halted.state is not None
@@ -495,7 +503,7 @@ def test_missing_attribute_halts_with_named_attributeerror_and_pre_effect() -> N
     ), "reducer did not enroll ReducerPreEffectStateV1 on formal delattr_named"
     obj_cid, _ = pending.demand.operand_coordinate_cids
     receiver = ObjectValue(class_name="Widget", fields=(), methods=())
-    exits = pending.discharge({obj_cid: receiver})
+    exits = pending.discharge(None, {obj_cid: receiver})
     halted = _assert_named_halt(exits, "AttributeError")
     assert halted.state is testimony.state
 
@@ -505,10 +513,11 @@ def test_discrimination_present_key_is_not_keyerror() -> None:
     pending = _require_delitem_carrier(pending)
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: DictValue(((StringValue("a"), TermValue(1)),)),
             key_cid: StringValue("a"),
-        }
+        },
     )
     assert isinstance(exits.exits[0], Completed)
     assert not isinstance(exits.exits[0], Halted)
@@ -531,10 +540,11 @@ def test_deletion_does_not_roll_back_earlier_bindings_on_keyerror() -> None:
     assert pending.pre_effect_state is not None
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             obj_cid: DictValue(((StringValue("kept"), TermValue(1)),)),
             key_cid: StringValue("missing"),
-        }
+        },
     )
     halted = _assert_named_halt(exits, "KeyError")
     # Pre-effect state object identity — not a fabricated empty block.
@@ -570,12 +580,12 @@ def test_swapped_receiver_index_coordinates_rejected_against_truthful_delete() -
         obj_c.coordinate_cid: ListValue((TermValue(0), TermValue(1))),
         key_c.coordinate_cid: TermValue(0),
     }
-    truthful_exits = truthful.discharge(actuals)
+    truthful_exits = truthful.discharge(None, actuals)
     assert isinstance(truthful_exits.exits[0], Completed)
     truthful_list = _deleted_list(truthful_exits.exits[0])
     assert truthful_list == ListValue((TermValue(1),))
     try:
-        lying_exits = lying.discharge(actuals)
+        lying_exits = lying.discharge(None, actuals)
     except ConstructionPanic:
         # Receiver slot received TermValue — Floor refuses delitem. Discrimination holds.
         return
@@ -624,7 +634,7 @@ def test_read_does_not_authorize_delete_on_getter_only_property() -> None:
     assert any(
         m.name == "field" and m.descriptor_kind == "property" for m in receiver.methods
     )
-    exits = pending.discharge({obj_cid: receiver})
+    exits = pending.discharge(None, {obj_cid: receiver})
     halted = exits.exits[0]
     assert isinstance(
         halted, Halted
@@ -641,7 +651,7 @@ def test_discrimination_writable_field_is_not_attributeerror_delete() -> None:
         fields=(ObjectField("field", TermValue(1)),),
         methods=(),
     )
-    exits = pending.discharge({obj_cid: receiver})
+    exits = pending.discharge(None, {obj_cid: receiver})
     assert isinstance(exits.exits[0], Completed)
     assert not isinstance(exits.exits[0], Halted)
 

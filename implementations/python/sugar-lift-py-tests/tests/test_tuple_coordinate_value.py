@@ -262,7 +262,7 @@ def test_tuple_coordinate_member_name_is_a_coordinate_not_an_invented_string(
     site = subscript.fragment
     member = _value(constructed.subscript(index, site))
 
-    outcome = member.attribute("__name__", site)
+    outcome = member.attribute("__name__", site, None)
 
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), CallSiteValue)

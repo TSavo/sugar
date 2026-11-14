@@ -72,7 +72,7 @@ def _identity(name: str):
 
 
 def _completed_universe(pending, actuals) -> UniverseValue:
-    exits = pending.discharge(actuals)
+    exits = pending.discharge(None, actuals)
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     face = exits.exits[0]
@@ -123,7 +123,7 @@ def test_helper_alone_retains_setitem_with_variadic_value() -> None:
     parameters = tuple(
         inspect.signature(_NATIVE_OPERATION_PROJECTORS["setitem"]).parameters
     )
-    assert parameters == ("receiver", "index", "value", "site")
+    assert parameters == ("receiver", "index", "value", "site", "ctx")
 
 
 def test_helper_alone_is_not_completed_discrimination() -> None:
@@ -203,11 +203,12 @@ def test_variadic_store_halt_preserves_earlier_name_binding_state() -> None:
     assert pending.pre_effect_state is not None
     a_cid, i_cid, values_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             a_cid: ListValue((TermValue(0),)),
             i_cid: TermValue(5),
             values_cid: TupleValue((TermValue(9),)),
-        }
+        },
     )
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
@@ -244,11 +245,12 @@ def test_halt_discrimination_is_not_completed_return_of_x() -> None:
     _, pending = _helper()
     a_cid, i_cid, values_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
+        None,
         {
             a_cid: ListValue((TermValue(0),)),
             i_cid: TermValue(5),
             values_cid: TupleValue((TermValue(9),)),
-        }
+        },
     )
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed), "halted store completed the body"
@@ -278,8 +280,9 @@ def test_dropped_variadic_pack_is_undischarged() -> None:
     a_cid, i_cid, _values_cid = pending.demand.operand_coordinate_cids
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
         pending.discharge(
+            None,
             {
                 a_cid: ListValue((TermValue(0),)),
                 i_cid: TermValue(0),
-            }
+            },
         )

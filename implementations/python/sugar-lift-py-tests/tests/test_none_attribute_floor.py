@@ -43,7 +43,7 @@ def _coordinate(outcome):
 
 
 def test_none_attribute_is_the_getattr_coordinate() -> None:
-    term = _coordinate(NoneValue().attribute("foo", SITE))
+    term = _coordinate(NoneValue().attribute("foo", SITE, None))
 
     assert term.args[0] == NoneValue().to_term(owner="NoneValue.attribute")
     assert term.args[1] == str_const("foo")
@@ -68,7 +68,7 @@ def test_the_coordinate_makes_no_claim_that_the_attribute_exists(name) -> None:
     outcome, so it is exact for both without a NoneType member table. Deciding
     between them would mean reading a name off its spelling.
     """
-    term = _coordinate(NoneValue().attribute(name, SITE))
+    term = _coordinate(NoneValue().attribute(name, SITE, None))
 
     assert term.args[1] == str_const(name)
 
@@ -149,6 +149,6 @@ def test_the_sibling_ground_exit_is_not_stolen() -> None:
 def test_the_arm_invents_no_field_and_no_exit() -> None:
     """Nothing is fabricated: not a field value, not a sentinel, not an exit."""
 
-    outcome = NoneValue().attribute("foo", SITE)
+    outcome = NoneValue().attribute("foo", SITE, None)
 
     assert type(outcome.completed_value()) is SymbolicValue

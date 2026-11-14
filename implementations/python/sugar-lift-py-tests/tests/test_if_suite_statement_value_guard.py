@@ -105,7 +105,7 @@ def _discharged_returns(source: str, actual: int):
     """``(guard, returned value)`` of every completed face after discharge."""
     pending = _helper_outcome(source)
     (formal,) = [cid for cid in pending.demand.operand_coordinate_cids if cid]
-    exits = pending.discharge({formal: TermValue(actual)})
+    exits = pending.discharge(None, {formal: TermValue(actual)})
     returns = []
     for face in exits.exits:
         if not isinstance(face, Completed):

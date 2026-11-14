@@ -52,5 +52,5 @@ def test_formal_truth_is_a_deferred_native_operation_with_unary_discharge():
     )
     outcome = SymbolicValue(make_var("receiver"), formal).truth(site)
     assert isinstance(outcome, NativeOperationExitCarrierV1)
-    exits = outcome.discharge({formal.coordinate_cid: TermValue(1)})
+    exits = outcome.discharge(None, {formal.coordinate_cid: TermValue(1)})
     assert isinstance(exits.exits[0], Completed)

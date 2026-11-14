@@ -59,10 +59,10 @@ class BuiltinSemanticCallable(FloorValue):
         if self.operation == "python.len":
             return self._len(operation)
         if self.operation == "python.enumerate.construct":
-            return self._enumerate(operation)
+            return self._enumerate(operation, ctx)
         if self.operation == "python.super.construct":
             if operation.arguments or operation.keyword_names:
-                return super().callable_application_with(operation, None)
+                return super().callable_application_with(operation, ctx)
             from sugar_lift_py_tests.floor.builtin_super_value import BuiltinSuperValue
             from sugar_lift_py_tests.outcome import ExitSet
 
@@ -89,7 +89,7 @@ class BuiltinSemanticCallable(FloorValue):
                 BuiltinSuperValue(current_class=current_class, receiver=receiver)
             )
         if self.operation != "python.issubclass":
-            return super().callable_application_with(operation, None)
+            return super().callable_application_with(operation, ctx)
         if len(operation.arguments) != 2 or operation.keyword_names:
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -177,10 +177,10 @@ class BuiltinSemanticCallable(FloorValue):
             )
         return length(operation.site)
 
-    def _enumerate(self, operation):
+    def _enumerate(self, operation, ctx):
         """Construct the exact finite iterator for an authenticated sequence."""
         if operation.keyword_names or len(operation.arguments) != 1:
-            return super().callable_application_with(operation, None)
+            return super().callable_application_with(operation, ctx)
         from sugar_lift_py_tests.floor import (
             ComprehensionValue,
             ListIteratorValue,
@@ -199,7 +199,7 @@ class BuiltinSemanticCallable(FloorValue):
         ):
             elements = source.finite_elements
         else:
-            return super().callable_application_with(operation, None)
+            return super().callable_application_with(operation, ctx)
         return ExitSet.completed(
             ListIteratorValue(
                 tuple(

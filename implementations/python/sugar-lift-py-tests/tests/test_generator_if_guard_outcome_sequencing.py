@@ -332,7 +332,7 @@ def test_guard_carrier_composes_prefix_and_runs_projection_and_transition_once(
     assert deferred.demand is carrier.demand
     assert truth_calls == []
     assert transition_calls == []
-    outcome = deferred.discharge({})
+    outcome = deferred.discharge(None, {})
     assert truth_calls == [machine.instance_coordinate]
     assert truth_calls[0] is machine.instance_coordinate
     assert len(transition_calls) == 1
@@ -397,7 +397,7 @@ def test_projected_truth_exitset_composes_a_branch_carrier_without_duplication(
     assert projection_calls == [machine.instance_coordinate]
     assert projection_calls[0] is machine.instance_coordinate
     assert transition_calls == [projected_truth.exits[1].value]
-    outcome = deferred.discharge({})
+    outcome = deferred.discharge(None, {})
     assert projection_calls == [machine.instance_coordinate]
     assert transition_calls == [projected_truth.exits[1].value]
     assert isinstance(outcome, ExitSet)

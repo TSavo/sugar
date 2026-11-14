@@ -289,7 +289,7 @@ def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> Non
     assert not (isinstance(outcome, ExitSet) and outcome.completed_value() is not None)
     # Missing actuals stay undischarged.
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        outcome.discharge({})
+        outcome.discharge(None, {})
 
 
 # ---------------------------------------------------------------------------

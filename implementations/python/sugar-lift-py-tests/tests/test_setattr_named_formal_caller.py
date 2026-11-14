@@ -184,7 +184,7 @@ def test_source_defined_writable_field_completes_via_setattr_named() -> None:
     # Empty class: no property descriptor; setattr is ordinary field store.
     assert receiver.methods == ()
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})
+    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
@@ -205,7 +205,7 @@ def test_source_defined_writable_field_completes_discrimination() -> None:
     """Bite: a completed store is not a Halted face."""
     _, pending, receiver = _source_class_and_helper("    pass\n")
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})
+    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Halted), "writable field must complete"
 
@@ -229,7 +229,7 @@ def test_source_defined_property_without_setter_named_attribute_error() -> None:
     assert direct_halt.effect.producer_node_owner == "ObjectValue.setattr"
 
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})
+    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect.exception_type_coordinate == _identity("AttributeError")
@@ -243,7 +243,7 @@ def test_source_defined_property_without_setter_discrimination() -> None:
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(99)})
+    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(99)})
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Completed), "read path licensed a store"
 
@@ -263,7 +263,7 @@ def test_source_defined_wrong_boundary_type_leaves_halt_unconsumed() -> None:
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    produced = pending.discharge({obj_cid: receiver, value_cid: TermValue(1)})
+    produced = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(1)})
     original = produced.exits[0]
     assert isinstance(original, Halted)
     assert "AttributeError" in repr(original.effect.exception_type_coordinate)
@@ -316,7 +316,7 @@ def test_source_defined_wrong_boundary_type_discrimination() -> None:
         "    @property\n" "    def field(self):\n" "        return 1\n"
     )
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    produced = pending.discharge({obj_cid: receiver, value_cid: TermValue(1)})
+    produced = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(1)})
     original = produced.exits[0]
     assert isinstance(original, Halted)
 
@@ -358,7 +358,7 @@ def test_positional_caller_completes_field_store_via_setattr() -> None:
     assert isinstance(pending, NativeOperationExitCarrierV1)
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
     receiver = ObjectValue("R", (ObjectField("field", TermValue(0)),))
-    exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})
+    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
@@ -397,7 +397,8 @@ def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
     function, pending = _helper_definition()
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
-        {obj_cid: TupleValue((TermValue(1),)), value_cid: TermValue(9)}
+        None,
+        {obj_cid: TupleValue((TermValue(1),)), value_cid: TermValue(9)},
     )
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
@@ -482,7 +483,7 @@ def test_property_without_setter_reads_fine_and_halts_on_store_after_discharge()
     assert store_halt.effect.producer_node_owner == "ObjectValue.setattr"
 
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})
+    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     assert "AttributeError" in repr(halted.effect.exception_type_coordinate)
@@ -516,7 +517,7 @@ def test_lying_read_path_does_not_authorize_completed_store() -> None:
     )
     _, pending = _helper_definition()
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(99)})
+    exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(99)})
     assert isinstance(exits.exits[0], Halted)
     assert not isinstance(exits.exits[0], Completed)
 
@@ -536,7 +537,7 @@ def test_wrong_expected_type_leaves_exceptional_edge_unconsumed() -> None:
 
     function, pending = _helper_definition()
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    exits = pending.discharge({obj_cid: NoneValue(), value_cid: TermValue(1)})
+    exits = pending.discharge(None, {obj_cid: NoneValue(), value_cid: TermValue(1)})
     halted = exits.exits[0]
     assert isinstance(halted, Halted)
     produced_type = halted.effect.exception_type_coordinate

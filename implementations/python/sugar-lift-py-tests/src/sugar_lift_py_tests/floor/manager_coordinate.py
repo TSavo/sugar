@@ -101,13 +101,15 @@ class ExitValueCoordinate(FloorValue):
 
         return _term_content_cid(self.to_term(owner="exit value coordinate"))
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         """Defer lookup and its consumers until the real exit value is known.
 
         An exit slot does not authenticate a field's existence, runtime type,
         descriptor effects, or rich comparison dispatch. Preserve the native
-        lookup occurrence rather than minting a completed getattr term.
+        lookup occurrence rather than minting a completed getattr term; the
+        lookup discharges later under the context of the caller that fills it.
         """
+        del ctx
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )

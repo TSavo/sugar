@@ -9,7 +9,7 @@ from .class_value import ClassValue
 class BuiltinObjectClassValue(ClassValue):
     """Language-owned ``object`` class with its closed callable member floor."""
 
-    def attribute(self, name, site):
+    def attribute(self, name, site, ctx):
         if name in {"__str__", "__new__"}:
             from sugar_lift_py_tests.floor.builtin_semantic_callable import (
                 BuiltinSemanticCallable,
@@ -19,4 +19,4 @@ class BuiltinObjectClassValue(ClassValue):
             return ExitSet.completed(
                 BuiltinSemanticCallable(operation=f"python.object.{name}")
             )
-        return super().attribute(name, site)
+        return super().attribute(name, site, ctx)

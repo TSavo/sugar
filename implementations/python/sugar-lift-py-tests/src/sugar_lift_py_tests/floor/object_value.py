@@ -255,8 +255,11 @@ class ObjectValue(FloorValue):
             [str_const(self.class_name), str_const(self.identity)],
         )
 
-    def attribute(self, name, site):
-        """Project an exact field from this constructed receiver state."""
+    def attribute(self, name, site, ctx):
+        """Project an exact field from this constructed receiver state.
+
+        A property getter is a body: it applies under ``ctx``, the reading
+        caller's context, keeping that caller's temporal and halts."""
         for field in reversed(self.fields):
             if field.name == name:
                 from sugar_lift_py_tests.outcome import ExitSet
@@ -308,6 +311,7 @@ class ObjectValue(FloorValue):
                     (),
                     owner="ObjectValue.attribute.property",
                     blame=site,
+                    ctx=ctx,
                 )
             )
         class_value = self._resolved_class_field(name)

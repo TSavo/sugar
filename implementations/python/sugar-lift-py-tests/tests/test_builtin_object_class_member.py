@@ -35,7 +35,7 @@ def test_builtin_object_is_static_and_owns_only_its_closed_callable_member(
     member_site, missing_site = _sites()
 
     assert type(receiver) is BuiltinObjectClassValue
-    outcome = receiver.attribute("__str__", member_site)
+    outcome = receiver.attribute("__str__", member_site, None)
     member = outcome.completed_value()
     assert member is not None
     assert type(member) is BuiltinSemanticCallable
@@ -44,12 +44,12 @@ def test_builtin_object_is_static_and_owns_only_its_closed_callable_member(
         operation="python.object.__str__"
     ).to_term(owner="test")
     with pytest.raises(ConstructionPanic):
-        receiver.attribute("missing", missing_site)
+        receiver.attribute("missing", missing_site, None)
 
     ordinary = ClassValue(name="object", bases=(), record=BlockValue(()))
     with pytest.raises(ConstructionPanic):
-        ordinary.attribute("__str__", member_site)
-    name = receiver.attribute("__name__", member_site)
-    qualname = receiver.attribute("__qualname__", member_site)
+        ordinary.attribute("__str__", member_site, None)
+    name = receiver.attribute("__name__", member_site, None)
+    qualname = receiver.attribute("__qualname__", member_site, None)
     assert name == ExitSet.completed(StringValue("object"))
     assert qualname == ExitSet.completed(StringValue("object"))

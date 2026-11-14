@@ -82,7 +82,7 @@ def test_retained_source_completion_refuses_different_producer_replay(
     )
 
     with pytest.raises(BackendDefect, match="retained|replay|producer"):
-        retained.project_producer_outcome(replay)
+        retained.project_producer_outcome(replay, None)
 
     assert body.reductions == 1
     assert retained._retained_source_completion is retained_testimony
@@ -206,7 +206,7 @@ def test_non_floor_completion_is_a_producer_defect() -> None:
     )
 
     with pytest.raises(BackendDefect, match="Floor|completion|producer"):
-        source_call.project_producer_outcome(ExitSet.completed(object()))
+        source_call.project_producer_outcome(ExitSet.completed(object()), None)
     assert body.reductions == 0
 
 

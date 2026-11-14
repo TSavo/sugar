@@ -505,7 +505,7 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
     assert receiver_cid is not None
 
     writable = ObjectValue("WritableIndex", (ObjectField("name", NoneValue()),))
-    completed = pending.discharge({receiver_cid: writable})
+    completed = pending.discharge(None, {receiver_cid: writable})
     assert len(completed.exits) == 1
     assert isinstance(completed.exits[0], Completed)
 
@@ -535,9 +535,9 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
             ),
         ),
     )
-    getter_halt = pending.discharge({receiver_cid: getter_only}).exits[0]
+    getter_halt = pending.discharge(None, {receiver_cid: getter_only}).exits[0]
     immutable_halt = pending.discharge(
-        {receiver_cid: TupleValue((TermValue(1),))}
+        None, {receiver_cid: TupleValue((TermValue(1),))}
     ).exits[0]
     for halt, owner in (
         (getter_halt, "ObjectValue.setattr"),
@@ -568,7 +568,7 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
     # A getter spelling is neither store authority nor permission to invent a
     # readable value: its deliberately unconstructed body remains loud.
     with pytest.raises(ConstructionPanic, match="CallSiteValue.force_floor"):
-        getter_only.attribute("name", store.site)
+        getter_only.attribute("name", store.site, None)
     assert isinstance(getter_halt, Halted)
     assert not isinstance(getter_halt, Completed)
 
@@ -615,9 +615,10 @@ def test_same_spelled_foreign_provider_cannot_discharge_real_store() -> None:
 
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
         pending.discharge(
+            None,
             {
                 foreign_formal.coordinate_cid: ObjectValue(
                     "ForeignIndex", (ObjectField("name", NoneValue()),)
                 )
-            }
+            },
         )

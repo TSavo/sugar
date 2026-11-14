@@ -99,10 +99,11 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
 
     assert isinstance(composed, NativeOperationExitCarrierV1)
     exits = composed.discharge(
+        None,
         {
             left.coordinate_cid: NoneValue(),
             right.coordinate_cid: TermValue(2),
-        }
+        },
     )
 
     assert len(exits.exits) == 3
@@ -153,10 +154,11 @@ def test_prefix_composition_retains_later_carrier_continuations() -> None:
     ).and_then(lambda _predicate: ExitSet.completed(TermValue(99)))
 
     exits = composed.discharge(
+        None,
         {
             left.coordinate_cid: TermValue(1),
             right.coordinate_cid: TermValue(2),
-        }
+        },
     )
 
     assert exits.exits == (Completed(guard, TermValue(99)),)

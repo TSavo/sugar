@@ -162,8 +162,9 @@ def test_wrong_coordinate_actual_cannot_discharge_pending_operation() -> None:
 
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
         pending.discharge(
+            None,
             {
                 f"wrong:{left.coordinate_cid}": TermValue(1),
                 right.coordinate_cid: TermValue(2),
-            }
+            },
         )

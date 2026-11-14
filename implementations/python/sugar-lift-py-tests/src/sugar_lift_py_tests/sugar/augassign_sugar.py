@@ -69,6 +69,7 @@ class AugAssignSugar(Sugar):
                     operator=self.operator,
                     projector=self.operation,
                     site=self.op_site,
+                    ctx=ctx,
                 ).and_then(lambda result: self._rebind(result, ctx))
             )
         )
@@ -97,12 +98,15 @@ def project_augmented(
     operator: str,
     projector: Callable,
     site,
+    ctx,
 ) -> Outcome:
     """Mint formal i* demand, or project ground through the explicit projector.
 
     ``operator`` is the carrier name from ``BinaryOperator.inplace_operator``
     (e.g. ``iadd``).  ``projector`` is the explicit ``project_iadd`` function.
     Projector absence is an honorable red — never mint ordinary binary.
+    A ground projection applies under ``ctx``, the statement's context; a
+    minted demand discharges later under its own caller's.
     """
     left_coord = getattr(left, "formal_coordinate", None)
     right_coord = getattr(right, "formal_coordinate", None)
@@ -134,7 +138,7 @@ def project_augmented(
             operands=(left, right),
             coordinates=(left_coord, right_coord),
         )
-    return projector(left, right, site)
+    return projector(left, right, site, ctx)
 
 
 @dataclass(frozen=True)
@@ -175,6 +179,7 @@ class SubscriptAugAssignSugar(Sugar):
                             operator=self.operator,
                             projector=self.operation,
                             site=self.op_site,
+                            ctx=ctx,
                         ).and_then(lambda result: self._store(receiver, index, result))
                     )
                 )
@@ -267,6 +272,7 @@ class AttributeAugAssignSugar(Sugar):
                         operator=self.operator,
                         projector=self.operation,
                         site=self.op_site,
+                        ctx=ctx,
                     ).and_then(
                         lambda result: AttributeStoreEffectSugar.project_setattr(
                             receiver, self.attr, result, self.set_site

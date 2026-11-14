@@ -84,7 +84,7 @@ def test_helper_alone_is_named_undischarged_without_caller_actuals() -> None:
     carrier = _carrier("def helper(obj, key=1):\n    return obj[key]\n")
 
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        carrier.discharge({})
+        carrier.discharge(None, {})
 
 
 def test_positional_keyword_and_default_callers_reach_the_same_demand() -> None:

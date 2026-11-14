@@ -156,9 +156,9 @@ def test_production_receiver_evaluated_once_for_get_and_set() -> None:
     box = {"get": 0, "set": 0}
 
     class _CountingObject(ObjectValue):
-        def attribute(self, name, site):
+        def attribute(self, name, site, ctx):
             box["get"] += 1
-            return super().attribute(name, site)
+            return super().attribute(name, site, ctx)
 
         def setattr(self, name, value, site):
             box["set"] += 1
@@ -183,13 +183,13 @@ def test_discrimination_duplicated_get_is_detected() -> None:
     box = {"get": 0}
 
     class _CountingObject(ObjectValue):
-        def attribute(self, name, site):
+        def attribute(self, name, site, ctx):
             box["get"] += 1
-            return super().attribute(name, site)
+            return super().attribute(name, site, ctx)
 
     r = _CountingObject("Widget", (ObjectField("field", TermValue(1)),), (), (), "d0")
-    r.attribute("field", "g1")
-    r.attribute("field", "g2")
+    r.attribute("field", "g1", None)
+    r.attribute("field", "g2", None)
     assert box["get"] == 2
     with pytest.raises(AssertionError):
         assert box["get"] == 1
@@ -200,9 +200,9 @@ def test_production_getattr_before_rhs_order() -> None:
     get_site, op_site, set_site, site = _production_sites()
 
     class _OrderObject(ObjectValue):
-        def attribute(self, name, site_):
+        def attribute(self, name, site_, ctx):
             order.append("get")
-            return super().attribute(name, site_)
+            return super().attribute(name, site_, ctx)
 
         def setattr(self, name, value, site_):
             order.append("set")
@@ -219,9 +219,9 @@ def test_production_getattr_before_rhs_order() -> None:
         def witnesses(cls):
             return ()
 
-    def _project_order(left, right, site_):
+    def _project_order(left, right, site_, ctx):
         order.append("op")
-        return project_iadd(left, right, site_)
+        return project_iadd(left, right, site_, ctx)
 
     sugar = AttributeAugAssignSugar(
         receiver=_FloorSugar(
@@ -364,7 +364,7 @@ def test_helper_alone_is_undischarged_attribute_named_get_carrier() -> None:
     # First demand is the get leg (attribute_named), not setattr.
     assert pending.demand.operator == "attribute_named"
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge({})
+        pending.discharge(None, {})
 
 
 def test_authenticated_discharge_get_iadd_setattr_updates_field() -> None:
@@ -375,10 +375,11 @@ def test_authenticated_discharge_get_iadd_setattr_updates_field() -> None:
     }
     receiver = _obj_with_field(1)
     exits = pending.discharge(
+        None,
         {
             coords["obj"]: receiver,
             coords["rhs"]: TermValue(10),
-        }
+        },
     )
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
@@ -431,12 +432,12 @@ def test_enum_attribute_augassign_uses_one_authenticated_read_op_store(
     def at_target(site) -> bool:
         return site.line_col_span().start_line == 292
 
-    def read(receiver, member, site, ctx=None):
+    def read(receiver, member, site, ctx):
         if at_target(site):
             events.append(("read", receiver, member, site))
         return original_read(receiver, member, site, ctx)
 
-    def operate(left, right, *, operator, projector, site):
+    def operate(left, right, *, operator, projector, site, ctx):
         if at_target(site):
             events.append(("operate", left, operator, site))
         return original_op(
@@ -445,6 +446,7 @@ def test_enum_attribute_augassign_uses_one_authenticated_read_op_store(
             operator=operator,
             projector=projector,
             site=site,
+            ctx=ctx,
         )
 
     def store(receiver, member, value, site):
@@ -488,10 +490,11 @@ def test_unrelated_source_attribute_augassign_uses_the_same_projection() -> None
     )
 
     result = pending.discharge(
+        None,
         {
             coordinates["receiver"]: receiver,
             coordinates["increment"]: TermValue(3),
-        }
+        },
     )
 
     assert isinstance(result, ExitSet)
@@ -528,7 +531,7 @@ def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
     left = SymbolicValue(make_var("cell"), _coord("cell", 0))
     right = SymbolicValue(make_var("rhs"), _coord("rhs", 1))
     out = project_augmented(
-        left, right, operator="iadd", projector=project_iadd, site=site
+        left, right, operator="iadd", projector=project_iadd, site=site, ctx=None
     )
     assert isinstance(out, NativeOperationExitCarrierV1)
     assert out.demand.operator == "iadd"
@@ -552,7 +555,8 @@ def test_notimplemented_fallback_twins_via_production_projector() -> None:
             calls.append("add")
             return ExitSet.completed(TermValue(3))
 
-    assert project_iadd(_RawNI(), TermValue(1), "op").completed_value() == TermValue(3)
+    out = project_iadd(_RawNI(), TermValue(1), "op", None)
+    assert out.completed_value() == TermValue(3)
     assert calls == ["inplace", "add"]
     calls.clear()
 
@@ -566,9 +570,8 @@ def test_notimplemented_fallback_twins_via_production_projector() -> None:
             calls.append("add")
             return ExitSet.completed(TermValue(4))
 
-    assert project_iadd(_CompleteNI(), TermValue(1), "op").completed_value() == TermValue(
-        4
-    )
+    out = project_iadd(_CompleteNI(), TermValue(1), "op", None)
+    assert out.completed_value() == TermValue(4)
     assert calls == ["inplace", "add"]
 
 
@@ -588,4 +591,4 @@ def test_discrimination_incomplete_does_not_fall_through() -> None:
         def add(self, other, site, ctx):
             return ExitSet.completed(TermValue(0))
 
-    assert project_iadd(_Inc(), TermValue(1), "op") is face
+    assert project_iadd(_Inc(), TermValue(1), "op", None) is face
