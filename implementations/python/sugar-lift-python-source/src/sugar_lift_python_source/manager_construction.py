@@ -249,7 +249,6 @@ def _floor_object_tuple_fields(
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.class_value import ClassValue
     from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
-    from sugar_lift_py_tests.floor.none_value import NoneValue
     from sugar_lift_py_tests.floor.object_value import ObjectField
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
@@ -263,15 +262,6 @@ def _floor_object_tuple_fields(
         if floored is not None:
             fields_by_name[name] = floored
             changed = True
-    # AbstractRaises stores match/check in super().__init__. When that super
-    # call remains bodyless, written match=None / check=None still need field
-    # testimony so _check_match and NoMessagePattern can floor on the exit face.
-    method_names = {method.name for method in obj.methods}
-    if "matches" in method_names and "expected_exceptions" in fields_by_name:
-        for optional in ("match", "check"):
-            if optional not in fields_by_name:
-                fields_by_name[optional] = NoneValue()
-                changed = True
     if not changed:
         return obj
     return ObjectValue(
