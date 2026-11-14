@@ -10,8 +10,9 @@ class NamedExpressionValue(FloorValue):
     """The inseparable value and temporal-bind faces of ``(name := value)``.
 
     Comparison is Floor-owned through the **presented** face: this value only
-    contributes its temporal bind via ``_carry``. Left-hand ops dispatch to
-    ``presented_value.<op>(other)``; right-hand routing is operator-owned typed
+    contributes its temporal bind, through the one operand door
+    (``consume_operands``). Left-hand ops dispatch to the presented value's
+    ``<op>(other)``; right-hand routing is operator-owned typed
     double-dispatch (``less_than_from_left``, …). No ``predicate_from_left(str)``.
     """
 
@@ -120,59 +121,90 @@ class NamedExpressionValue(FloorValue):
     def callsites(self):
         return self.presented_value.callsites()
 
+    # Every operation on the value the walrus presents runs where the walrus
+    # was used, after it bound: inside the sugar that consumes it (an ``if``
+    # test's truth, a comparison, a subscript of it).  Each runs through the
+    # one operand door (``consume_operands``): on the value presented
+    # beneath every bind it carries, each completed result carrying the
+    # binds on, and a halt of the operation that offers no record carrying
+    # the record of the consuming sugar's context with the binds applied
+    # (``_halted_after``) -- never one without them.
+
     def truth(self, site):
-        return self.presented_value.truth(site).and_then(self._carry)
+        return consume_operands(lambda presented: presented.truth(site), self)
 
     def negate(self):
-        return self.presented_value.negate().and_then(self._carry)
+        return consume_operands(lambda presented: presented.negate(), self)
 
     # --- left-hand: presented floor owns the comparison ---
 
     def is_identical(self, other, site):
-        return self.presented_value.is_identical(other, site).and_then(self._carry)
+        return consume_operands(
+            lambda presented: presented.is_identical(other, site), self
+        )
 
     def equals(self, other, site, ctx):
-        return self.presented_value.equals(other, site, ctx).and_then(self._carry)
+        return consume_operands(
+            lambda presented: presented.equals(other, site, ctx), self
+        )
 
     def less_than(self, other, site, ctx):
-        return self.presented_value.less_than(other, site, ctx).and_then(self._carry)
+        return consume_operands(
+            lambda presented: presented.less_than(other, site, ctx), self
+        )
 
     def less_equal(self, other, site, ctx):
-        return self.presented_value.less_equal(other, site, ctx).and_then(self._carry)
+        return consume_operands(
+            lambda presented: presented.less_equal(other, site, ctx), self
+        )
 
     def greater_than(self, other, site, ctx):
-        return self.presented_value.greater_than(other, site, ctx).and_then(self._carry)
+        return consume_operands(
+            lambda presented: presented.greater_than(other, site, ctx), self
+        )
 
     def greater_equal(self, other, site, ctx):
-        return self.presented_value.greater_equal(other, site, ctx).and_then(
-            self._carry
+        return consume_operands(
+            lambda presented: presented.greater_equal(other, site, ctx), self
         )
 
     # --- right-hand: operator-owned typed double-dispatch (no string door) ---
 
     def less_than_from_left(self, left, site, ctx):
         """``left < (n := e)`` — presented is the RHS; carry the walrus bind."""
-        return left.less_than(self.presented_value, site, ctx).and_then(self._carry)
+        return consume_operands(
+            lambda presented: left.less_than(presented, site, ctx), self
+        )
 
     def less_equal_from_left(self, left, site, ctx):
         """``left <= (n := e)`` — typed RHS door; not string-admitted."""
-        return left.less_equal(self.presented_value, site, ctx).and_then(self._carry)
+        return consume_operands(
+            lambda presented: left.less_equal(presented, site, ctx), self
+        )
 
     def greater_than_from_left(self, left, site, ctx):
         """``left > (n := e)`` — typed RHS door; not string-admitted."""
-        return left.greater_than(self.presented_value, site, ctx).and_then(self._carry)
+        return consume_operands(
+            lambda presented: left.greater_than(presented, site, ctx), self
+        )
 
     def greater_equal_from_left(self, left, site, ctx):
         """``left >= (n := e)`` — typed RHS door; not string-admitted."""
-        return left.greater_equal(self.presented_value, site, ctx).and_then(self._carry)
+        return consume_operands(
+            lambda presented: left.greater_equal(presented, site, ctx), self
+        )
 
     def equals_from_left(self, left, site, ctx):
         """``left == (n := e)`` — typed RHS door; not string-admitted."""
-        return left.equals(self.presented_value, site, ctx).and_then(self._carry)
+        return consume_operands(
+            lambda presented: left.equals(presented, site, ctx), self
+        )
 
     def is_identical_from_left(self, left, site):
         """``left is (n := e)`` — typed RHS door; not string-admitted."""
-        return left.is_identical(self.presented_value, site).and_then(self._carry)
+        return consume_operands(
+            lambda presented: left.is_identical(presented, site), self
+        )
 
     def subscript(self, index, site):
         # The presented value is read through the one subscript door
@@ -182,29 +214,31 @@ class NamedExpressionValue(FloorValue):
             discharge_subscript,
         )
 
-        return discharge_subscript(
-            self.presented_value,
-            index,
-            site,
-            None,
-            owner="NamedExpressionValue.subscript",
-        ).and_then(self._carry)
+        return consume_operands(
+            lambda presented: discharge_subscript(
+                presented,
+                index,
+                site,
+                None,
+                owner="NamedExpressionValue.subscript",
+            ),
+            self,
+        )
 
     def setitem(self, index, value, site, ctx):
-        return self.presented_value.setitem(index, value, site, ctx).and_then(
-            self._carry
+        return consume_operands(
+            lambda presented: presented.setitem(index, value, site, ctx), self
         )
 
     def delitem(self, index, site, ctx):
-        return self.presented_value.delitem(index, site, ctx).and_then(self._carry)
+        return consume_operands(
+            lambda presented: presented.delitem(index, site, ctx), self
+        )
 
     def attribute(self, name, site, ctx):
-        return self.presented_value.attribute(name, site, ctx).and_then(self._carry)
-
-    def _carry(self, presented: FloorValue):
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(carry_walrus_binds((self,), presented))
+        return consume_operands(
+            lambda presented: presented.attribute(name, site, ctx), self
+        )
 
 
 # A walrus nested in a larger expression (``y = (x := 5)``, ``f((x := 5))``,
@@ -404,8 +438,9 @@ def consume_operands(step, *operands):
     carries the record of the context the consumer was evaluated in with
     every bind applied (``halts_at_operand_head``; ``x = (a := 1) + 'x'``'s
     ``TypeError`` carries ``a``), never the statement's head, which holds
-    none of them.  With no bind among the operands this is
-    ``step(*operands)`` exactly.
+    none of them; and a callee's store an operand carried is first in every
+    halted arm's record's entries (``_halted_after``).  With no bind among
+    the operands this is ``step(*operands)`` exactly.
 
     The operands were reduced left to right, each under the state after the
     ones before it (``written_by``, ``reduce_operands``): a later
@@ -428,6 +463,22 @@ def consume_operands(step, *operands):
 
 
 def _halted_after(binds, outcome):
+    """``outcome`` -- a consumer's step, run after its operands -- with every
+    halt that offers no record recorded where the step halted, after
+    ``binds``, its operands' writes (``_recorded_after``), and the stores
+    among them (callees' stores the operands carried, ``CallerStoreValue``)
+    first in every halt's record's entries (``laid_in_record``, the halts
+    alone: the completed results carry the stores on): they were made
+    before the step ran, and a record's entries are what its caller reads
+    of it (``caller_visible_stores``), not the context it halted in
+    alone."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import laid_in_record
+
+    _walrus, stores = caller_stores_of(binds)
+    return laid_in_record(stores, _recorded_after(binds, outcome), halts_only=True)
+
+
+def _recorded_after(binds, outcome):
     """``outcome`` -- a consumer's step, run after its operands -- with every
     halt that offers no record carrying the record of the context the
     consumer was evaluated in (``sugar_base.evaluating``) with ``binds``, its

@@ -176,11 +176,13 @@ def _require_recorded_halts(outcome, statement) -> None:
     (``x, y = (a := 1), f()``, ``raise E((m := msg))``): such a halt's
     record is built where it halted, from the binds already made
     (``halts_at_operand_head``: every operand's evaluation,
-    ``sugar_base._recorded_at_its_head``; every consumer's step,
-    ``consume_operands``). One that still offers no record from a statement
-    holding a walrus (the statement's own step after it: an ``assert``'s
-    failure after its message's walrus, a ``raise`` of a walrus's value) is
-    refused here like any other: the prefix would drop the bind.
+    ``sugar_base._recorded_at_its_head``; every consumer's step, an
+    ``assert``'s failure after its test bound one included,
+    ``consume_operands``; a statement's header, a ``raise`` of a walrus's
+    value included, ``header_applied``). One that still offers no record
+    from a statement holding a walrus (an ``assert``'s failure after its
+    message's walrus, whose value is never reduced) is refused here like
+    any other: the prefix would drop the bind.
     """
     if not any(
         isinstance(exit_, Halted) and exit_.state is None for exit_ in outcome.exits
