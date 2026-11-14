@@ -323,6 +323,25 @@ fn canonical_object_path(parent: &str, key: &str) -> String {
     }
 }
 
+/// True when `value` holds a `{kind: "term-ref", cid}` node anywhere (#7843).
+///
+/// A term reference is the kit's wire form: a DAG edge into the response's
+/// `termTable`, resolved at the boundary that decodes the response. A proof
+/// states every term inline, so a term reference past that boundary has
+/// nothing to resolve against. This is the one test of that law: the
+/// enumeration decoder requires a table for it, mint refuses to write it, and
+/// the verifier refuses a proof that holds it.
+pub fn contains_term_ref(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Array(values) => values.iter().any(contains_term_ref),
+        serde_json::Value::Object(values) => {
+            values.get("kind").and_then(serde_json::Value::as_str) == Some("term-ref")
+                || values.values().any(contains_term_ref)
+        }
+        _ => false,
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct FlatAtom {
     value: Arc<Value>,

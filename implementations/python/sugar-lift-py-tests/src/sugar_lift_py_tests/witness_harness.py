@@ -381,7 +381,7 @@ def run_sugar_cli(
     project.mkdir(parents=True, exist_ok=True)
     (project / ".sugar").mkdir(parents=True, exist_ok=True)
     env = hermetic_sugar_env(project)
-    return subprocess.run(
+    completed = subprocess.run(
         [str(sugar), *args],
         cwd=project,
         text=True,
@@ -391,6 +391,30 @@ def run_sugar_cli(
         env=env,
         input=input_text,
     )
+    if args[:1] == ["mint"] and completed.returncode == 0:
+        out = args[args.index("--out") + 1] if "--out" in args else "."
+        assert_proofs_state_terms_inline(project / out)
+    return completed
+
+
+TERM_REF_BYTES = b'"kind":"term-ref"'
+
+
+def assert_proofs_state_terms_inline(directory: Path) -> None:
+    """Every proof mint wrote states every term inline (#7843).
+
+    A ``{kind: term-ref}`` node is the kit's wire form, resolved through the
+    answer's ``termTable`` at the boundary that decodes it; in a proof it names
+    a term the proof does not state. Atoms are JCS JSON inside the CBOR
+    catalog, where an unescaped ``"kind":"term-ref"`` can only be that node (a
+    string that spells it is escaped). Every mint through the one door is
+    checked, so every twin is a test of the law.
+    """
+    for proof in sorted(Path(directory).glob("*.proof")):
+        if TERM_REF_BYTES in proof.read_bytes():
+            raise WitnessPipelineError(
+                f"{proof} states a term by reference (term-ref), not inline (#7843)"
+            )
 
 
 def mint_project(

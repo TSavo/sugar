@@ -464,6 +464,27 @@ fn load_catalog_bytes(
     // hold a `ProofGraph` directly breaks that Sync bound; fixing it (e.g.
     // swapping the cache to a `Sync`-safe cell) is a real design change, not
     // a lift-and-shift, so it is out of scope for this seam.
+    // A proof states every term inline (#7843). An atom holding a
+    // `{kind: term-ref}` node names a term the proof does not state, so the
+    // whole catalog is refused by name, as for a CID mismatch above.
+    for atom in graph.atoms() {
+        // Byte prefilter (no parse for the atoms that cannot hold one), then
+        // the structural test decides.
+        let by_reference = atom.bytes().windows(8).any(|w| w == b"term-ref")
+            && serde_json::from_slice::<Json>(atom.bytes())
+                .is_ok_and(|value| sugar_proof_envelope::contains_term_ref(&value));
+        if by_reference {
+            pool.load_errors.push(LoadError {
+                proof_path: source_label,
+                reason: format!(
+                    "atom {}: a term stated by reference (term-ref), not inline; \
+                     a proof states every term inline",
+                    atom.cid().as_str()
+                ),
+            });
+            return Ok(());
+        }
+    }
     for atom in graph.atoms() {
         let atom_cid = computed_atom_cid(atom.cid().as_str().to_string());
         pool.atoms
@@ -941,6 +962,104 @@ mod tests {
         assert!(
             err.contains("invalid expected proof CID") && err.contains("blake3-512:not-hex"),
             "unexpected parse error: {err}"
+        );
+    }
+
+    /// One contract whose post is `=(<first>, <second>)`, as a loadable proof.
+    fn contract_proof(first: std::sync::Arc<sugar_canonicalizer::Value>) -> ProofBytes {
+        use sugar_canonicalizer::Value as C;
+        use sugar_proof_envelope::{ContractBody, ContractMemento, FlatAtom};
+        let mut graph = ProofGraph::new();
+        let post = graph.register_atom(FlatAtom::new(C::object([
+            ("kind", C::string("atomic")),
+            ("name", C::string("=")),
+            (
+                "args",
+                C::array(vec![
+                    first,
+                    C::object([("kind", C::string("var")), ("name", C::string("x"))]),
+                ]),
+            ),
+        ])));
+        let metadata = graph.register_atom(FlatAtom::empty_metadata());
+        let body = graph.register_body(ContractBody::new(&post));
+        graph.register_contract(ContractMemento::new_with_metadata_at(
+            "python:idn.ident",
+            &body,
+            &metadata,
+            [0x42; 32],
+            "2026-06-01T00:00:00.000Z",
+        ));
+        let proof = build_proof_envelope(&ProofEnvelopeInput {
+            name: "term-ref-test".to_string(),
+            version: "1.0.0".to_string(),
+            binary_cid: None,
+            metadata: None,
+            graph,
+            signer_cid: "test-signer".to_string(),
+            signer_seed: [0x24; 32],
+            declared_at: "2026-06-01T00:00:00Z".to_string(),
+            manifest: None,
+        });
+        ProofBytes::try_from_parts(
+            "term-ref-test.proof".to_string(),
+            proof.cid,
+            proof.bytes,
+            Speaker::consumer("term-ref-test.proof"),
+        )
+        .expect("built proof CID must parse")
+    }
+
+    fn term_ref_refusals(pool: &MementoPool) -> Vec<&LoadError> {
+        pool.load_errors
+            .iter()
+            .filter(|error| error.reason.contains("a term stated by reference"))
+            .collect()
+    }
+
+    /// #7843: a proof states every term inline. A post that names a term by
+    /// reference (the kit's wire form) is refused by name, whole catalog; the
+    /// same post stated inline loads.
+    #[test]
+    fn a_proof_that_states_a_term_by_reference_is_refused_by_name() {
+        use sugar_canonicalizer::Value as C;
+        let reference = C::object([
+            ("cid", C::string("blake3-512:0000")),
+            ("kind", C::string("term-ref")),
+        ]);
+        let mut pool = MementoPool::default();
+        load_proof_bytes_into_pool(&[contract_proof(reference)], &mut pool);
+        assert_eq!(term_ref_refusals(&pool).len(), 1, "{:#?}", pool.load_errors);
+        assert!(
+            pool.contract_members_with_bodies().next().is_none(),
+            "a refused catalog contributes no contract"
+        );
+
+        let inline = C::object([("kind", C::string("var")), ("name", C::string("out"))]);
+        let mut pool = MementoPool::default();
+        load_proof_bytes_into_pool(&[contract_proof(inline)], &mut pool);
+        assert!(
+            term_ref_refusals(&pool).is_empty(),
+            "{:#?}",
+            pool.load_errors
+        );
+        assert!(pool.contract_members_with_bodies().next().is_some());
+    }
+
+    /// A string that merely spells `term-ref` is data, not a reference.
+    #[test]
+    fn a_string_spelling_term_ref_is_not_a_reference() {
+        use sugar_canonicalizer::Value as C;
+        let constant = C::object([
+            ("kind", C::string("const")),
+            ("value", C::string("{\"kind\":\"term-ref\"} term-ref")),
+        ]);
+        let mut pool = MementoPool::default();
+        load_proof_bytes_into_pool(&[contract_proof(constant)], &mut pool);
+        assert!(
+            term_ref_refusals(&pool).is_empty(),
+            "{:#?}",
+            pool.load_errors
         );
     }
 

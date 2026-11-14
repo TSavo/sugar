@@ -573,7 +573,9 @@ def _memento_continuation_key(memento: Dict[str, Any]) -> str:
     )
 
 
-def _parameter_contract_resume_rows(options: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _parameter_contract_resume_rows(
+    options: Dict[str, Any],
+) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
     """Phase-3 resume: reuse the RETAINED universe for this linkUnitCid
     (materialize-once, NEVER reconstruct), verify the presented resolution set is
     bound to THIS continuation and forms the exact-complete bijection, attach the
@@ -639,7 +641,9 @@ def _parameter_contract_resume_rows(options: Dict[str, Any]) -> List[Dict[str, A
         }
         for dto in rows
     ]
-    return nodes
+    # The audits state their terms by reference into THIS table; the answer
+    # carries it, so the reader resolves every term inline (#7843).
+    return nodes, term_table.nodes
 
 
 def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
@@ -2319,13 +2323,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             )
             return
         if level == "parameter-contract-resume":
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg_id,
-                    "result": {"rows": _parameter_contract_resume_rows(options)},
-                }
-            )
+            nodes, term_table = _parameter_contract_resume_rows(options)
+            _send_enumerate_result(msg_id, nodes, [], term_tables=[term_table])
             return
         if level == "source_files":
             # The source_files level IS SourceTree.fragments(): whole-file
