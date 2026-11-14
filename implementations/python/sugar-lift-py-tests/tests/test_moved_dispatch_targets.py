@@ -358,19 +358,9 @@ def test_the_dunder_frontier_can_run_and_names_only_live_owners() -> None:
     assert "BuiltinDunderCallSugar" not in set(owners.values())
 
 
-# -- lift_rpc.lift_file_payload: LOST -- deliberately NOT pinned here -------
+# -- lift_rpc.lift_file_payload: LOST -- the axis is retired ----------------
 #
-# `live_per_file_isolation_conservation` measures the production lift one file
+# `live_per_file_isolation_conservation` measured the production lift one file
 # at a time through a path deleted in 9d3b5c304. There is no successor, so
-# `R_live_construction_panic_files` has no denominator (#6395).
-#
-# It now refuses by name (`MeasurementCapabilityLost`) instead of raising the
-# ImportError the census cannot bucket, and that refusal is NOT re-raised into
-# a residual row. There is deliberately no twin here asserting it raises.
-#
-# A passing test around a broken instrument would make its brokenness a green,
-# protected fact and hide the work. The loud signal is the real gate going red:
-# `test_lift_coverage_harness.py::
-# test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero` now
-# fails with a named refusal that says what is missing and why. That red belongs
-# to #6395 and stays visible until the axis is rebuilt or retired.
+# `R_live_construction_panic_files` had no denominator (#6395). The instrument,
+# its script and its gate are deleted (#7757); nothing is pinned here.

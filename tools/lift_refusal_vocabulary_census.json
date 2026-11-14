@@ -2265,26 +2265,6 @@
       "wire_marker": "not-lift-output"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/live_construction_panic_isolation.py:385d8be55ed310d3:1",
-      "line": 56,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/live_construction_panic_isolation.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "This stands in for the deleted name so the break is a NAMED refusal instead",
-      "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/live_construction_panic_isolation.py:8870af50dcd4f070:1",
-      "line": 58,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/idd/live_construction_panic_isolation.py",
-      "reason": "IDD instrument code names an existing frontier or vocabulary row",
-      "replacement": "keep until the named frontier row is retired by its owning migration",
-      "speaker": "instrument-prose",
-      "text": "refusal, and not a family the census buckets. It is deliberately not caught",
-      "wire_marker": "not-lift-output"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/import_binding.py:09961c171f1219e0:1",
       "line": 1360,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/import_binding.py",
@@ -22898,11 +22878,11 @@
   "schema": 1,
   "speaker_counts": {
     "emitter-provenance-guard": 3,
-    "instrument-prose": 10,
+    "instrument-prose": 8,
     "lift-output-backlog": 2190,
     "provenance-oracle-guard": 57,
     "vendor-language-identifier": 2,
     "verifier-verdict-quote": 32
   },
-  "total_occurrences": 2294
+  "total_occurrences": 2292
 }

@@ -102,16 +102,8 @@ class InstrumentScanScope:
                 if resolved == root_r:
                     return True
                 continue
-            try:
-                if resolved.is_relative_to(root_r):
-                    return True
-            except (OSError, ValueError, AttributeError):
-                # is_relative_to absent on very old Python; fall back.
-                try:
-                    resolved.relative_to(root_r)
-                    return True
-                except ValueError:
-                    continue
+            if resolved.is_relative_to(root_r):
+                return True
         return False
 
     def iter_python_files(self) -> Iterator[Path]:

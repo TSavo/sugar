@@ -137,10 +137,7 @@ def project_unclassified_locus(row: Any) -> dict[str, Any] | None:
             getattr(row, "resolution_kind", None) or extra.get("resolution_kind") or ""
         )
 
-    try:
-        line_int = int(line) if line is not None and line != "" else 0
-    except (TypeError, ValueError):
-        line_int = 0
+    line_int = int(line) if line is not None and line != "" else 0
 
     # Keep internal "unclassified" as the canonical product status; wire
     # "unresolved" is accepted on input and normalized the same way law does.
@@ -170,11 +167,8 @@ def locus_is_addressable(locus: Mapping[str, Any]) -> bool:
     """True when a locus has enough fields for offline shape-split drain."""
     file = str(locus.get("file") or locus.get("path") or "").strip()
     line = locus.get("line")
-    try:
-        line_ok = isinstance(line, int) or (line is not None and str(line).isdigit())
-        line_int = int(line) if line_ok else 0
-    except (TypeError, ValueError):
-        line_int = 0
+    line_ok = isinstance(line, int) or (line is not None and str(line).isdigit())
+    line_int = int(line) if line_ok else 0
     ast_kind = str(locus.get("ast_kind") or locus.get("astKind") or "").strip()
     role = str(
         locus.get("role") or locus.get("requested_role") or locus.get("selected") or ""

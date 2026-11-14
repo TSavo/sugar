@@ -11,8 +11,6 @@ Headline after #4017 (total assertion-surface enumeration):
 
 from __future__ import annotations
 
-import ast
-import os
 import sys
 from pathlib import Path
 
@@ -29,15 +27,8 @@ from sugar_lift_py_tests.idd.lift_coverage_census import (
     census_paths,
     census_source,
 )
-from sugar_lift_py_tests.idd.live_construction_panic_isolation import (
-    assert_bearing_py_files as _assert_bearing_py_files,
-    live_per_file_isolation_conservation as _live_per_file_isolation_conservation,
-    maybe_write_isolation_receipt_from_env,
-)
 
 from declared_corpus import (
-    HEAVY_OPT_IN,
-    optional_law_skip,
     require_declared_corpus,
 )
 
@@ -286,21 +277,6 @@ _HEAVY_CONSERVATION_VENDORS = (
     "pandas",
 )
 
-# Live production isolation residual after #4760. Multi-file sugar lift
-# --report still dies on first ConstructionPanic; --audit-frontier cannot pair with
-# --report. Per assert-bearing file isolation measures live conservation and
-# names R_live_construction_panic_files. numpy first (full assert-file set);
-# pandas is the same residual class (heavier; opt-in via env).
-#
-# Re-measure at 9fe134453 (wave-6, after #4808 ranking + intervening floors):
-#   assert_files=142 completed=69 R_live_construction_panic_files=71 R_other=2
-#   onDisk=3208 accounted=3208 delta=0
-#   prior #4791 baseline R_panic=74 → Delta R = -3
-#   top owners: TemporalContext 21, RuntimeEffect 10, CallSugar 5, ...
-# Re-run: scripts/live_construction_panic_isolation.py --package numpy --out PATH
-# or pytest + SUGAR_4013_ISOLATION_OUT=PATH (writes ranked receipt).
-_HEAVY_LIVE_ISOLATION_VENDORS = ("numpy",)
-
 
 def test_conservation_triple_emitted_and_conserves() -> None:
     """--report schema: onDisk / accounted / delta first-class; delta == 0."""
@@ -541,108 +517,3 @@ def test_heavy_vendor_full_tree_conservation_delta_is_zero(package: str) -> None
     # Per-file conservation rows cover every assert-bearing file.
     assert body["perFile"], f"{package}: empty perFile on full-tree"
     assert len(body["perFile"]) <= len(files)
-
-
-@pytest.mark.parametrize("package", list(_HEAVY_LIVE_ISOLATION_VENDORS))
-def test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero(
-    package: str,
-) -> None:
-    """#4013 residual after #4760: live production path via per-file isolation.
-
-    Full-tree multi-file ``sugar lift --report`` still ConstructionPanics (cannot
-    pair ``--audit-frontier`` with ``--report``). Isolate every assert-bearing
-    file on the production file-lift path:
-
-    * completed → real payload into conservation accounting
-    * ConstructionPanic → gap for that file's on-disk asserts
-
-    Gate: aggregate conservation delta==0 on the live path.
-    Residual axis (named, leave #4013 open): ``R_live_construction_panic_files``
-    must go to 0 via production floors before multi-file live report can gate.
-    Opt-in pandas: set ``SUGAR_4013_HEAVY_PANDAS=1`` (same class, ~1h).
-    """
-    path = _resolve_installed_package_path(package)
-    if not path.exists():
-        require_declared_corpus(
-            f"{package} is not installed",
-            path,
-            "sugar-build.toml (numpy = 2.5.1, pandas = 3.0.3) and the "
-            "sugar-lift-py-tests [test] extra, THE SOLE DEPENDENCY AUTHORITY",
-            "install the package extra: pip install -e "
-            "'implementations/python/sugar-lift-py-tests[test]'",
-        )
-    if path.is_file():
-        files = [path] if _file_has_assert(path) else []
-        root = path.parent
-    else:
-        root = path
-        files = _assert_bearing_py_files(root)
-    if not files:
-        require_declared_corpus(
-            f"{package}: no assert-bearing .py files",
-            path,
-            "_HEAVY_LIVE_ISOLATION_VENDORS, which asserts assert_files > 40 "
-            "below -- so an empty set contradicts the law's own floor",
-            "reinstall the pinned vendor; the live isolation gate has no "
-            "subject without assert-bearing files",
-        )
-
-    result = _live_per_file_isolation_conservation(files, root=root, package=package)
-    # Optional durable receipt for recensus / wave re-measure (env path).
-    maybe_write_isolation_receipt_from_env(result)
-    assert (
-        result["delta"] == 0
-    ), f"{package} live isolation conservation delta must be 0; R={result}"
-    assert (
-        result["R_live_construction_panic_files"] == result["construction_panic_files"]
-    )
-    assert result["onDisk"] == result["accounted"]
-    assert result["onDisk"] > 0, f"{package}: vacuous live isolation (no asserts)"
-    assert result["assert_files"] == len(files)
-    # Non-vacuous: isolation must exercise more than the stdlib 40-file sample.
-    assert result["assert_files"] > 40, (
-        f"{package} live isolation must exceed stdlib sample; "
-        f"got assert_files={result['assert_files']}"
-    )
-    # Every per-file row conserved (completed or gap after panic).
-    for row in result["perFile"]:
-        assert int(row["delta"]) == 0, row
-    # Residual is measured, not hidden. Multi-file live report stays open
-    # while R_live_construction_panic_files > 0 (production floors).
-    assert "construction_panic_files" in result
-    assert result["construction_panic_files"] >= 0
-    # Structured owner ranking feeds fatal recensus (same fingerprint axes).
-    assert "owner_families" in result
-    assert "exact_fronts" in result
-    assert result["owner_family_count"] == len(result["owner_families"])
-    assert result["exact_front_count"] == len(result["exact_fronts"])
-    assert (
-        sum(row["count"] for row in result["owner_families"])
-        == result["construction_panic_files"]
-    )
-    assert (
-        sum(row["count"] for row in result["exact_fronts"])
-        == result["construction_panic_files"]
-    )
-    for row in result["panic_rows"]:
-        assert "gap" in row and "fingerprint" in row and "front" in row
-        assert len(row["fingerprint"]) == 5
-
-
-def test_heavy_vendor_live_isolation_opt_in_pandas() -> None:
-    """Same live isolation residual class as numpy; opt-in (heavy)."""
-    if os.environ.get("SUGAR_4013_HEAVY_PANDAS") != "1":
-        optional_law_skip(
-            HEAVY_OPT_IN,
-            "set SUGAR_4013_HEAVY_PANDAS=1 for full pandas live isolation "
-            "(~1h, same residual class as the numpy gate that DOES run)",
-        )
-    test_heavy_vendor_live_per_file_isolation_conservation_delta_is_zero("pandas")
-
-
-def _file_has_assert(path: Path) -> bool:
-    try:
-        tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
-    except SyntaxError:
-        return False
-    return any(isinstance(node, ast.Assert) for node in ast.walk(tree))

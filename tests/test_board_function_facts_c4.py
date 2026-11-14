@@ -128,7 +128,7 @@ def test_three_meanings_are_distinct_types_and_cids() -> None:
     assert pop.fact_cid != enum.fact_cid
     assert pop.fact_cid != clean.fact_cid
     assert enum.fact_cid != clean.fact_cid
-    assert pop.fact_cid.startswith(("blake3-512:", "sha256:"))
+    assert pop.fact_cid.startswith("blake3-512:")
 
 
 def test_board_fields_from_sealed_facts_wires_three_numbers() -> None:
