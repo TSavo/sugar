@@ -16,7 +16,10 @@ complement.
 from __future__ import annotations
 
 from sugar_lift_py_tests.floor import TermValue, TupleValue
+from sugar_lift_py_tests.unanswered_calls import owed_calls
 
+from test_assignment_evaluates_rhs import _rows
+from test_undetermined_raise_except_matching import _exits
 from test_unprojected_method_call_faces import _owners, _split
 
 
@@ -97,6 +100,37 @@ def test_a_source_function_is_not_this_law(tmp_path):
     source = "def g():\n    return 1\ndef f():\n    return g()\n"
     returns, halts = _split(tmp_path, source)
     assert not any(owner.startswith("UnknownCallee:") for owner in _owners(halts))
+
+
+def _two_faced_and_owed(tmp_path, source):
+    """The function's returns and the owners of its undetermined halts, after
+    checking the call completes on one face and is owed as ``undecided``."""
+    exits = _exits(tmp_path, source)
+    rows = _rows(exits)
+    returns = [payload for kind, payload, _guard in rows if kind == "return"]
+    halts = [payload for kind, payload, _guard in rows if kind == "halt"]
+    assert len(returns) == 1
+    assert len(owed_calls(exits)) == 1
+    return returns, _owners(halts)
+
+
+def test_a_name_bound_to_a_value_is_no_builtin_and_its_call_may_raise(tmp_path):
+    # #7757 (found by #8034): ``len`` rebound to ``5`` has no body the lifter
+    # applies and no builtin binding; ``len('ab')`` raises ``TypeError``.  It
+    # is the one unanswered call, two-faced and owed, never a completion.
+    source = "def f():\n    len = 5\n    return len('ab')\n"
+    _returns, owners = _two_faced_and_owed(tmp_path, source)
+    assert len(owners) == 1
+    assert owners[0].startswith("UnknownCallee:")
+
+
+def test_a_builtin_name_a_star_import_may_rebind_is_two_faced(tmp_path):
+    # ``from m import *`` may bind ``int``: the read has no builtin binding, so
+    # ``int('x')`` is the one unanswered call, never a total completion.
+    source = "from m import *\ndef f():\n    return int('x')\n"
+    _returns, owners = _two_faced_and_owed(tmp_path, source)
+    assert len(owners) == 1
+    assert owners[0].startswith("UnknownCallee:")
 
 
 def test_an_if_on_an_unknown_call_keeps_both_suites(tmp_path):

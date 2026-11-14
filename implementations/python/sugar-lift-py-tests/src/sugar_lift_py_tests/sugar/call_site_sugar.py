@@ -100,14 +100,6 @@ def _off_population_unanswered_call(sugar):
     return UnknownCalleeCallV1(sugar.spelled_target)
 
 
-def _lexically_unknown_callee(sugar) -> bool:
-    """The callee's head name is bound nowhere in its module, or only by an
-    import (a module member the import door did not cite).  A name a ``def``,
-    ``class`` or assignment in the module binds is source the lift holds, not
-    an unknown callee."""
-    return _lexically_unknown_head(sugar.site, sugar.target_name.split(".", 1)[0])
-
-
 def _lexically_unknown_head(site, head: str) -> bool:
     """``head`` is bound nowhere in ``site``'s module, or only by an import.
 
@@ -168,20 +160,22 @@ def _resolved_manager_construction(sugar) -> bool:
     )
 
 
-def _unknown_callee_call(sugar, ctx):
-    """The may-raise testimony for a call whose callee nothing resolved.
+def _unknown_callee_call(sugar, source_call_frame):
+    """The may-raise testimony for a bodiless call nothing answered.
 
-    The callee name has no binding in this reduction's scope (an undefined
-    name, or a dotted module member the import door did not cite), and no
-    contract, gap or source frame speaks for it."""
-    if sugar.contract_resolution_gap is not None:
+    Reached once every answer has declined: no source frame (so no body the
+    lifter applies) and no builtin binding -- the callee's binding
+    (``_builtin_reference``, the ``LanguageCallee`` the Call node bound) is not
+    the builtin namespace.  Whatever the name is otherwise bound to -- nothing,
+    a value (``len = 5; len(x)``), a class whose constructor frame was not
+    built, any name a star import may rebind (``from m import *; int('x')``)
+    -- what runs was not looked at, so the call is the one unanswered
+    citation, two-faced and owed, never a completion (#7757: a raise is never
+    a completion; a halt is never dropped).  A ``with`` item's resolved
+    manager keeps its resolution's faces."""
+    if source_call_frame is not None:
         return None
-    if sugar.site is None or sugar.formal_function_sugar is not None:
-        return None
-    temporal = getattr(ctx, "temporal", None)
-    if temporal is None or temporal.value_if_bound(sugar.target_name) is not None:
-        return None
-    if not _lexically_unknown_callee(sugar):
+    if sugar.language_callee is not None or sugar._builtin_reference() is not None:
         return None
     if _resolved_manager_construction(sugar):
         return None
@@ -856,7 +850,7 @@ class CallSiteSugar(ConstructedTermSugar):
                     if constructed is not None:
                         return constructed
             if unprojected is None:
-                unprojected = _unknown_callee_call(self, ctx)
+                unprojected = _unknown_callee_call(self, source_call_frame)
             if unprojected is not None:
                 return unprojected.faces(callsite, self.site)
         return callsite.producer_outcome(ctx)

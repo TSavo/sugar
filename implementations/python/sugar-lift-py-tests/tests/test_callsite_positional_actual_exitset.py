@@ -8,6 +8,7 @@ import pytest
 
 from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import (
     BlockValue,
     CallSiteValue,
@@ -21,7 +22,18 @@ from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
+from sugar_source_tree.nodes import LanguageCallee
 from sugar_source_tree.panic import SugarNotWritten
+
+
+class _Site:
+    """A fragment's two coordinates: its unit's source CID and its span."""
+
+    class _Span:
+        start_line, start_col, end_line, end_col = 10, 11, 10, 24
+
+    source_cid = "blake3-512:" + "a" * 128
+    line_col_span = _Span()
 
 
 @dataclass
@@ -123,10 +135,13 @@ def test_outer_call_sequences_retained_three_arm_source_actual_once() -> None:
     assert isinstance(produced_completed[0].value, CallSiteValue)
     assert produced_completed[0].value is not inner
 
+    # ``len`` bound to the builtin (its binding's ``LanguageCallee``), over a
+    # list the builtin never refuses: the call adds no face of its own.
     outer = CallSiteSugar(
         target_name="len",
         args=(_ProducedCallArgument(produced, inner.term),),
         site="consumer.py:9:11",
+        language_callee=LanguageCallee.BUILTIN_LEN,
     ).desugar(None)
 
     assert body.reductions == 1
@@ -158,16 +173,21 @@ def test_outer_call_sequences_retained_keyword_source_actual_symmetrically() -> 
         target_name="consume",
         args=(),
         keywords=(("value", _ProducedCallArgument(produced, inner.term)),),
-        site="consumer.py:10:11",
+        site=_Site(),
     ).desugar(None)
 
     assert body.reductions == 1
     assert isinstance(outer, ExitSet)
     outer_halts = tuple(face for face in outer.exits if isinstance(face, Halted))
-    assert len(outer_halts) == 2
-    assert all(after is before for after, before in zip(outer_halts, produced_halts))
+    # The actual's two halts pass through untouched; ``consume`` is bound to
+    # nothing, so the call adds its own may-raise face (#7757).
+    passed = [h for h in outer_halts if any(h is before for before in produced_halts)]
+    own = [h for h in outer_halts if not any(h is before for before in produced_halts)]
+    assert len(passed) == 2
+    (unanswered,) = own
+    assert isinstance(unanswered.effect, UndeterminedRaiseEffect)
+    assert unanswered.effect.producer_node_owner == "UnknownCallee:consume"
     completed = next(face for face in outer.exits if isinstance(face, Completed))
-    assert completed.guard == produced_completed.guard
     assert completed.faces == produced_completed.faces
     projected_call = completed.value
     assert isinstance(projected_call, CallSiteValue)
