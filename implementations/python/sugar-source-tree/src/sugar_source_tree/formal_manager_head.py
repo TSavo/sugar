@@ -109,9 +109,9 @@ def _with_item_expr(unit, line, col):
     """``(innermost function, context_expr)`` for the With item at the site."""
     from .nodes import AsyncFunctionDef, ClassDef, FunctionDef, Lambda, With
 
-    module = unit.typed_module
-    if module is None:
-        return None
+    module = unit._require_typed_module(
+        "formal_manager_head._with_item_expr", blame=f"{unit.filename}:{line}:{col}"
+    )
     stack = [(module, None)]
     while stack:
         node, function = stack.pop()

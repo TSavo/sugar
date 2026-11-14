@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
     def _wrapped(self, call):
         result = original(self, call)
         try:
-            if isinstance(call.func, Name) and self.typed_module is not None:
+            if isinstance(call.func, Name):
                 bindings = (self.module_direct_bindings or {}).get(call.func.id, ())
                 if len(bindings) == 1 and isinstance(bindings[0], ClassDef):
                     definition = bindings[0]

@@ -33,9 +33,9 @@ def locals_snapshot_shape(unit, line: int, col: int):
     """The shape of ``locals()`` at (``line``, ``col``) in ``unit``, or None."""
     from .nodes import AsyncFunctionDef, FunctionDef
 
-    module = unit.typed_module
-    if module is None:
-        return None
+    module = unit._require_typed_module(
+        "locals_snapshot.locals_snapshot_shape", blame=f"{unit.filename}:{line}:{col}"
+    )
     for function in module.body:
         if not isinstance(function, (FunctionDef, AsyncFunctionDef)):
             continue
