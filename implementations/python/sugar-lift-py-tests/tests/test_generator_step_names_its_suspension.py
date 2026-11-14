@@ -22,6 +22,7 @@ from sugar_lift_py_tests.generator_construction import (
     GeneratorTransitionGapV1,
     IfStepV1,
     OpaqueStepV1,
+    YieldAssignStepV1,
     YieldEffect,
     YieldStepV1,
 )
@@ -47,8 +48,10 @@ def _first_opaque(steps):
     ("source", "kind", "carries"),
     (
         # Residual opaque shapes still discriminate suspension ownership.
-        ("def g():\n    x = yield 1\n    return x\n", "Assign", True),
-        ("def g(c):\n    if c:\n        x = yield 1\n", "If", True),
+        # (``x = yield 1`` is YieldAssignStepV1 now; ``x = yield from xs``
+        # still owes the delegation's return value.)
+        ("def g(xs):\n    x = yield from xs\n    return x\n", "Assign", True),
+        ("def g(c, xs):\n    if c:\n        x = yield from xs\n", "If", True),
         # Multi-target assign stays opaque without suspension.
         ("def g():\n    a, b = 1, 2\n    yield 3\n", "Assign", False),
         # Every bare `yield from` -- where the delegation debt actually lives.
@@ -62,6 +65,13 @@ def test_an_opaque_step_states_whether_it_holds_a_suspension(
 
     assert step.observed == kind
     assert step.carries_suspension is carries
+
+
+def test_a_yield_assignment_is_a_named_step(tmp_path) -> None:
+    """``x = yield 1`` yields, then binds the sent value: no opaque row."""
+    steps = _steps(tmp_path, "def g():\n    x = yield 1\n    return x\n")
+    assert isinstance(steps[0], YieldAssignStepV1)
+    assert not any(isinstance(step, OpaqueStepV1) for step in steps)
 
 
 def test_ordinary_assign_and_nameable_if_are_no_longer_opaque(tmp_path) -> None:
@@ -78,8 +88,14 @@ def test_ordinary_assign_and_nameable_if_are_no_longer_opaque(tmp_path) -> None:
 @pytest.mark.parametrize(
     ("source", "observed"),
     (
-        ("def g():\n    x = yield 1\n    return x\n", "Assign carrying a suspension"),
-        ("def g(c):\n    if c:\n        x = yield 1\n", "If carrying a suspension"),
+        (
+            "def g(xs):\n    x = yield from xs\n    return x\n",
+            "Assign carrying a suspension",
+        ),
+        (
+            "def g(c, xs):\n    if c:\n        x = yield from xs\n",
+            "If carrying a suspension",
+        ),
         ("def g(xs):\n    yield from xs\n", "Expr carrying a suspension"),
     ),
 )
@@ -122,8 +138,8 @@ def test_an_opaque_step_without_a_suspension_is_named_unchanged(tmp_path) -> Non
 @pytest.mark.parametrize(
     "source",
     (
-        "def g():\n    x = yield 1\n    return x\n",
-        "def g(c):\n    if c:\n        x = yield 1\n",
+        "def g(xs):\n    x = yield from xs\n    return x\n",
+        "def g(c, xs):\n    if c:\n        x = yield from xs\n",
         "def g(xs):\n    yield from xs\n",
     ),
 )

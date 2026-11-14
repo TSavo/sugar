@@ -87,6 +87,35 @@ class YieldStepV1:
 
 
 @dataclass(frozen=True)
+class YieldAssignStepV1:
+    """``y = yield v``: a yield whose resumed value is assigned to one name.
+
+    The yield is ``yield_step`` (it yields ``v``, recording any walrus bind the
+    value carries, as every yield does).  The assignment is the step the yield
+    resumes at (``_ResumeAssignStepV1``): it binds ``name`` to the value the
+    resume sent (``send``'s argument; ``None`` on a plain ``next``) in the
+    frame's binding state, keyed like any assignment (``evaluation``: the
+    target's projection of the statement's evaluation, ``Assign
+    .target_evaluations``).  ``evaluation`` is None only for a body that was
+    never substituted, whose reads of ``name`` are name reads.
+    """
+
+    yield_step: YieldStepV1
+    name: str
+    fragment_cid: str
+    evaluation: str | None = None
+
+
+@dataclass(frozen=True)
+class _ResumeAssignStepV1:
+    """Where a ``YieldAssignStepV1`` suspends: the assignment of the sent value."""
+
+    name: str
+    fragment_cid: str
+    evaluation: str | None = None
+
+
+@dataclass(frozen=True)
 class YieldFromStepV1:
     """Authenticated delegated-iteration suspension.
 
@@ -535,9 +564,9 @@ class IfStepV1:
     Admitted by the producer only when EVERY step in both branches is one the
     vocabulary can already execute — including pre-yield guarded setup
     (``if cond: x = …`` before yield) and suspension-owning branches
-    (``if c: yield 1``). A branch holding a shape we cannot resume or perform
-    -- ``x = yield v``, ``raise``, ``for``, etc. -- keeps the whole `If` an
-    `OpaqueStepV1` and loud. Naming a step we cannot perform is worse than an
+    (``if c: yield 1``, ``if c: x = yield 1``). A branch holding a shape we
+    cannot resume or perform -- ``x = yield from xs``, etc. -- keeps the
+    whole `If` an `OpaqueStepV1` and loud. Naming a step we cannot perform is worse than an
     honest opaque one.
     """
 
@@ -632,6 +661,8 @@ class NestedCitedOpaqueExitStepV1:
 # are deliberately absent: a halt does not skip past them to a later exit.
 _BODY_REMAINDER_STEPS = (
     YieldStepV1,
+    YieldAssignStepV1,
+    _ResumeAssignStepV1,
     YieldFromStepV1,
     TermStepV1,
     AssignStepV1,
@@ -650,6 +681,8 @@ _BODY_REMAINDER_STEPS = (
 
 GeneratorStepV1 = (
     YieldStepV1
+    | YieldAssignStepV1
+    | _ResumeAssignStepV1
     | YieldFromStepV1
     | ReturnStepV1
     | OpaqueStepV1
@@ -685,12 +718,15 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
             "value": _generator_value_testimony(value.resume_value, owner=owner),
         }
     if isinstance(value, GeneratorAssignBindingV1):
-        return {
+        payload = {
             "kind": "assign-binding",
             "name": value.name,
             "fragmentCid": value.fragment_cid,
             "value": _generator_value_testimony(value.value, owner=owner),
         }
+        if value.evaluation is not None:
+            payload["evaluation"] = value.evaluation
+        return payload
     if isinstance(value, GeneratorWalrusBindingV1):
         return {
             "kind": "walrus-binding",
@@ -783,6 +819,25 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "kind": "yield",
             "value": _generator_value_testimony(step.value, owner=owner),
         }
+    if isinstance(step, YieldAssignStepV1):
+        payload = {
+            "kind": "yield-assign",
+            "name": step.name,
+            "fragmentCid": step.fragment_cid,
+            "yield": _generator_step_testimony(step.yield_step, owner=owner),
+        }
+        if step.evaluation is not None:
+            payload["evaluation"] = step.evaluation
+        return payload
+    if isinstance(step, _ResumeAssignStepV1):
+        payload = {
+            "kind": "resume-assign",
+            "name": step.name,
+            "fragmentCid": step.fragment_cid,
+        }
+        if step.evaluation is not None:
+            payload["evaluation"] = step.evaluation
+        return payload
     if isinstance(step, YieldFromStepV1):
         return {
             "kind": "yield-from",
@@ -984,16 +1039,22 @@ class GeneratorAssignBindingV1:
     # completed value of: a later step whose substituted sugar inlines that
     # RHS answers with this value instead of evaluating the call again.
     rhs_key: object = field(default=None, compare=False, repr=False)
+    # The key the assignment's evaluation binds the value under, as any
+    # assignment's sugar binds it (``Assign.target_evaluations``,
+    # ``_bind_evaluations``): ``y = yield v`` binds the sent value here, so a
+    # later read of ``y`` (an ``EvaluationRef`` to the key) reads it.
+    evaluation: str | None = None
 
 
 @dataclass(frozen=True)
 class GeneratorWalrusBindingV1:
-    """One walrus bind a yielded value carried out of its step.
+    """One walrus bind a step's value carried out of its step.
 
-    ``yield (x := v)``: the walrus completes inside the yield's operand and
-    its bind rides the value (``NamedExpressionValue``).  The step peels it
-    (``peel_walrus_binds``) and records it here, in evaluation order among
-    the frame's other writes; ``_guard_evaluation_context`` applies it with
+    ``yield (x := v)``, ``y = (x := v)`` and a bare ``(x := v)`` statement:
+    the walrus completes inside the step's operand and its bind rides the
+    value (``NamedExpressionValue``).  The step peels it
+    (``peel_walrus_binds``, ``_recording_walrus_binds``) and records it
+    here, in evaluation order among the frame's other writes; ``_guard_evaluation_context`` applies it with
     ``NamedExpressionValue.bind``, the one place a walrus writes the temporal,
     so a later step's read of ``x`` (an ``EvaluationRef`` to the walrus's key)
     resolves to ``v``.
@@ -1501,16 +1562,20 @@ class GeneratorConstructionV1:
             def transition_assign(resolved_value):
                 from sugar_lift_py_tests.sugar.assigned_value import assigned_key
 
+                # ``y = (x := v)``: the walrus wrote before the assignment
+                # does.  Its bind is recorded first and ``y`` is bound to the
+                # value the walrus presents.
+                recorded, presented = self._recording_walrus_binds(resolved_value)
                 binding = GeneratorAssignBindingV1(
                     step.name,
-                    resolved_value,
+                    presented,
                     step.fragment_cid,
                     assigned_key(step.value),
                 )
                 machine = replace(
-                    self,
+                    recorded,
                     cursor=self.cursor + 1,
-                    binding_state=(*self.binding_state, binding),
+                    binding_state=(*recorded.binding_state, binding),
                 )
                 return machine._transition(requested)
 
@@ -1643,7 +1708,11 @@ class GeneratorConstructionV1:
                 # A halt leaves the machine here (with any written cited
                 # exit folded over it); a two-faced value splits it.
                 return self._transition_term_exitset(step, outcome, requested)
-            machine = replace(self, cursor=self.cursor + 1)
+            # The value is discarded; a walrus it carries (``(x := v)``) wrote.
+            recorded, _presented = self._recording_walrus_binds(
+                outcome.completed_value()
+            )
+            machine = replace(recorded, cursor=self.cursor + 1)
             return machine._transition(requested)
         if isinstance(step, ForStepV1):
             return self._transition_for(step, requested)
@@ -1706,6 +1775,26 @@ class GeneratorConstructionV1:
                 )
             arms = ExceptArmsStepV1(step.handlers, step.fragment_cid, step.site)
             return self._spliced((step.yield_step, arms))._transition(requested)
+        if isinstance(step, YieldAssignStepV1):
+            # ``y = yield v``: the yield suspends here; the assignment of the
+            # sent value is the step it resumes at.
+            receive = _ResumeAssignStepV1(
+                step.name, step.fragment_cid, step.evaluation
+            )
+            return self._spliced((step.yield_step, receive))._transition(requested)
+        if isinstance(step, _ResumeAssignStepV1):
+            sent = self._sent_value(requested)
+            if isinstance(sent, GeneratorTransitionGapV1):
+                return sent
+            binding = GeneratorAssignBindingV1(
+                step.name, sent, step.fragment_cid, evaluation=step.evaluation
+            )
+            machine = replace(
+                self,
+                cursor=self.cursor + 1,
+                binding_state=(*self.binding_state, binding),
+            )
+            return machine._transition(requested)
         if isinstance(step, IfStepV1):
             return self._transition_branch(step, requested)
         if isinstance(step, ReturnStepV1):
@@ -1766,20 +1855,7 @@ class GeneratorConstructionV1:
             # they present, and the suspended frame records them, so a step
             # after the resume reads ``x`` from its own state.  Each arm of a
             # split value carries only its own binds.
-            from sugar_lift_py_tests.floor.named_expression_value import (
-                peel_walrus_binds,
-            )
-
-            binds, presented = peel_walrus_binds(resolved_value)
-            if not binds:
-                return YieldEffect(resolved_value, resume_coordinate, machine)
-            bound = replace(
-                machine,
-                binding_state=(
-                    *machine.binding_state,
-                    *(GeneratorWalrusBindingV1(bind) for bind in binds),
-                ),
-            )
+            bound, presented = machine._recording_walrus_binds(resolved_value)
             return YieldEffect(presented, resume_coordinate, bound)
 
         def continue_yield(resolved_value):
@@ -2212,8 +2288,10 @@ class GeneratorConstructionV1:
         if completed:
             machine = replace(self, cursor=self.cursor + 1)
 
-            def continue_term(_value):
-                result = machine._transition(requested)
+            def continue_term(value):
+                # Each completed arm records only the walrus binds it carries.
+                recorded, _presented = machine._recording_walrus_binds(value)
+                result = recorded._transition(requested)
                 if isinstance(result, GeneratorTransitionGapV1):
                     raise SugarNotWritten(
                         owner="GeneratorConstructionV1.transition",
@@ -2587,9 +2665,16 @@ class GeneratorConstructionV1:
         # yielded value carried writes through ``NamedExpressionValue.bind``
         # (its name and its evaluation key), the same write a statement
         # applies.
+        from sugar_lift_py_tests.sugar.assigned_value import _bind_evaluations
+
         for item in self.binding_state:
             if isinstance(item, GeneratorAssignBindingV1) and item.value is not None:
                 ctx = ctx.with_temporal(ctx.temporal.bind_value(item.name, item.value))
+                if item.evaluation is not None:
+                    # Keyed as any assignment's sugar keys it.
+                    ctx = _bind_evaluations(
+                        ctx, ((item.evaluation, 0),), 0, item.value
+                    )
             if isinstance(item, GeneratorLoopBindingV1):
                 ctx = ctx.with_temporal(
                     ctx.temporal.bind_value(item.coordinate.cid, item.value)
@@ -2749,6 +2834,56 @@ class GeneratorConstructionV1:
             )
         return reduce_block_to_exitset(
             step.statements, self._guard_evaluation_context()
+        )
+
+    def _recording_walrus_binds(self, value):
+        """``(machine, presented)``: this machine with every walrus bind
+        ``value`` carries recorded in its binding state
+        (``GeneratorWalrusBindingV1``, in evaluation order), and the value the
+        binds present.  A value with no bind is itself, on this machine.
+
+        The one place a generator step records the walrus binds its value
+        carried out of the operand: a yield, an assignment and an expression
+        statement each peel through here."""
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            peel_walrus_binds,
+        )
+
+        binds, presented = peel_walrus_binds(value)
+        if not binds:
+            return self, value
+        recorded = replace(
+            self,
+            binding_state=(
+                *self.binding_state,
+                *(GeneratorWalrusBindingV1(bind) for bind in binds),
+            ),
+        )
+        return recorded, presented
+
+    def _sent_value(self, requested: str):
+        """The value the resume at this cursor sent into the yield before it.
+
+        The yield suspended with ``<instance>:resume:<this cursor>``.  A plain
+        resume (``next``) leaves that coordinate suspended and sends ``None``.
+        ``send`` clears it and records ``ResumeBindingV1`` at that coordinate
+        as the frame's last write; ``send(None)`` is ``next``.  Any other
+        arrival at this step has no authenticated sent value and is refused.
+        """
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+
+        coordinate = f"{self.instance_coordinate}:resume:{self.cursor}"
+        if self.suspended_resume_coordinate == coordinate:
+            return NoneValue()
+        last = self.binding_state[-1] if self.binding_state else None
+        if (
+            self.suspended_resume_coordinate is None
+            and isinstance(last, ResumeBindingV1)
+            and last.resume_coordinate == coordinate
+        ):
+            return NoneValue() if last.resume_value is None else last.resume_value
+        return self._gap(
+            requested, "yield assignment resumed without its yield's resume"
         )
 
     def _halts_here(self, outcome: ExitSet) -> ExitSet:
