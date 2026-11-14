@@ -3,6 +3,9 @@
 Laws (owned here; ExitSet/carrier untouched):
 
 - Partition each body ``GroupedRaiseEffect`` by authenticated handler type.
+  A leaf whose match the one matcher retains splits the face two ways
+  (matched under the obligation, residual under its complement), as ordinary
+  ``except`` routes an undecided match: never a refusal.
 - Matching subgroup reaches its handler once (type-tuple = one body run).
 - Unmatched residual continues to subsequent handlers in source order.
 - Temporal state is an ExitSet of **per-face** handler states — never a single
@@ -139,8 +142,13 @@ class TryStarSugar(Sugar):
                     matchers = (matchers,)
                 next_frontier: list[_StarFace] = []
                 for face in frontier:
-                    handler_residual = face.residual
-                    matched_parts = []
+                    # One alternative per split of this face by the handler's
+                    # types: ``(path, residual, matched parts)``.  A leaf whose
+                    # match the one matcher retained splits the face two ways
+                    # (``GroupedRaiseEffect.partition``), each path guarded by
+                    # its obligation or complement and carrying its face, as
+                    # ordinary ``except`` routes an undecided match.
+                    alternatives = [(face.path, face.residual, ())]
                     for matcher in matchers:
                         expected = _matcher_value(matcher, face.state.context)
                         if expected is None:
@@ -151,87 +159,87 @@ class TryStarSugar(Sugar):
                                 requested="authenticated subtype partition operand",
                                 fix="keep symbolic subtype partition typed loud",
                             )
-                        routed = route_except_star(
-                            handler_residual,
-                            expected,
-                            slot_id=slot_id,
-                            site=self.site,
-                        )
-                        if routed is None:
+                        split_alternatives = []
+                        for path, residual, parts in alternatives:
+                            routed = route_except_star(
+                                residual,
+                                expected,
+                                slot_id=slot_id,
+                                site=self.site,
+                            )
+                            if routed is None:
+                                split_alternatives.append((path, residual, parts))
+                                continue
+                            for outcome in routed:
+                                split_path = path
+                                for formula, split_face in outcome.conditions:
+                                    split_path = split_path.guarded(formula, split_face)
+                                if not split_path.exits:
+                                    continue
+                                split_alternatives.append(
+                                    (
+                                        split_path,
+                                        outcome.residual,
+                                        (
+                                            (*parts, outcome.matched)
+                                            if outcome.matched.children
+                                            else parts
+                                        ),
+                                    )
+                                )
+                        alternatives = split_alternatives
+                    for path, handler_residual, matched_parts in alternatives:
+                        if not matched_parts:
+                            # This path does not match this handler — residual
+                            # continues.
+                            next_frontier.append(
+                                _StarFace(
+                                    path=path,
+                                    residual=handler_residual,
+                                    exceptional=face.exceptional,
+                                )
+                            )
                             continue
-                        if routed.matched.children:
-                            matched_parts.append(routed.matched)
-                        handler_residual = routed.residual
-                    if not matched_parts:
-                        # This face does not match this handler — residual continues.
-                        next_frontier.append(face)
-                        continue
-                    matched = regroup_except_star(face.residual, matched_parts)
-                    # The handler resumes from the face's record: the halt's,
-                    # then what every earlier handler on this path left.
-                    record = resumed(
-                        face.state, ctx, owner="TryStarSugar.handler", blame=self.site
-                    )
-                    handler_ctx = bind_in_flight_effect(
-                        record.context, slot_id, matched, blame=self.site
-                    )
-                    if slot_id is not None:
-                        # Shared typed ReduceContext surface.
-                        handler_ctx = handler_ctx.with_observed_effect(slot_id, matched)
-                    handler_exits = reduce_block_to_exitset(
-                        handler_body,
-                        handler_ctx,
-                        after=replace(record, context=handler_ctx),
-                    )
-                    # The handler runs beneath this face's path: ``sequence``
-                    # conjoins the face's guard, faces and ``owed`` onto every
-                    # handler arm. One next face per composed arm.
-                    # The frontier is built from the handler's arms now: a
-                    # handler still waiting on its caller's actuals, whose
-                    # carrier ``sequence`` composed, is refused by name here.
-                    composed = _require_exit_set(
-                        face.path.sequence(lambda _state, exits=handler_exits: exits),
-                        owner="TryStarSugar.handler",
-                    )
-                    for arm in composed.exits:
-                        if isinstance(arm, Halted):
-                            exceptional = face.exceptional
-                            if _is_exceptional_raise(arm.effect):
-                                exceptional = (*exceptional, arm.effect)
-                            else:
-                                # Non-raise halt leaves the residual walk as
-                                # an exit.
-                                retained.append(ExitSet((arm,)))
-                            next_state = (
-                                arm.state
-                                if isinstance(arm.state, _ReducedBlock)
-                                else face.state
+                        matched = regroup_except_star(face.residual, matched_parts)
+                        # The handler resumes from the face's record: the
+                        # halt's, then what every earlier handler on this
+                        # path left.
+                        record = resumed(
+                            face.state,
+                            ctx,
+                            owner="TryStarSugar.handler",
+                            blame=self.site,
+                        )
+                        handler_ctx = bind_in_flight_effect(
+                            record.context, slot_id, matched, blame=self.site
+                        )
+                        if slot_id is not None:
+                            # Shared typed ReduceContext surface.
+                            handler_ctx = handler_ctx.with_observed_effect(
+                                slot_id, matched
                             )
-                        else:
-                            # Handler fall-through is NOT a try* completed edge
-                            # while an unmatched residual remains — Python has
-                            # no completed edge there. Only advance temporal
-                            # state on the residual/exceptional frontier.
-                            exceptional = face.exceptional
-                            next_state = (
-                                arm.value
-                                if isinstance(arm.value, _ReducedBlock)
-                                else face.state
-                            )
-                        # The next face's path is this arm continuing as its
-                        # temporal state (``sequence``; ``consume=`` for a
-                        # halted arm): the arm's guard, faces and ``owed``.
-                        def walk_on(_reached, state=next_state):
-                            return ExitSet.completed(state)
-
-                        next_frontier.append(
-                            _StarFace(
-                                path=ExitSet((arm,)).sequence(
-                                    walk_on, consume=walk_on
-                                ),
-                                residual=handler_residual,
-                                exceptional=exceptional,
-                            )
+                        handler_exits = reduce_block_to_exitset(
+                            handler_body,
+                            handler_ctx,
+                            after=replace(record, context=handler_ctx),
+                        )
+                        # The handler runs beneath this split's path:
+                        # ``sequence`` conjoins the path's guard, faces and
+                        # ``owed`` onto every handler arm. One next face per
+                        # composed arm.  The frontier is built from the
+                        # handler's arms now: a handler still waiting on its
+                        # caller's actuals, whose carrier ``sequence``
+                        # composed, is refused by name here.
+                        composed = _require_exit_set(
+                            path.sequence(lambda _state, exits=handler_exits: exits),
+                            owner="TryStarSugar.handler",
+                        )
+                        _walk_handler_arms(
+                            composed,
+                            face,
+                            handler_residual,
+                            next_frontier,
+                            retained,
                         )
                 frontier = next_frontier
 
@@ -262,6 +270,49 @@ class TryStarSugar(Sugar):
             # is exactly the empty set ``sequence`` composed. A raise is never
             # a completion (#7825). The leaving faces are siblings: one join.
             return ExitSet(()).union(*retained)
+
+        def _walk_handler_arms(
+            composed, face, handler_residual, next_frontier, retained
+        ):
+            """One next face per arm a handler composed beneath its path."""
+            for arm in composed.exits:
+                if isinstance(arm, Halted):
+                    exceptional = face.exceptional
+                    if _is_exceptional_raise(arm.effect):
+                        exceptional = (*exceptional, arm.effect)
+                    else:
+                        # Non-raise halt leaves the residual walk as an exit.
+                        retained.append(ExitSet((arm,)))
+                    next_state = (
+                        arm.state
+                        if isinstance(arm.state, _ReducedBlock)
+                        else face.state
+                    )
+                else:
+                    # Handler fall-through is NOT a try* completed edge while
+                    # an unmatched residual remains — Python has no completed
+                    # edge there. Only advance temporal state on the
+                    # residual/exceptional frontier.
+                    exceptional = face.exceptional
+                    next_state = (
+                        arm.value
+                        if isinstance(arm.value, _ReducedBlock)
+                        else face.state
+                    )
+
+                # The next face's path is this arm continuing as its temporal
+                # state (``sequence``; ``consume=`` for a halted arm): the
+                # arm's guard, faces and ``owed``.
+                def walk_on(_reached, state=next_state):
+                    return ExitSet.completed(state)
+
+                next_frontier.append(
+                    _StarFace(
+                        path=ExitSet((arm,)).sequence(walk_on, consume=walk_on),
+                        residual=handler_residual,
+                        exceptional=exceptional,
+                    )
+                )
 
         def close(result):
             """The ``finally`` over every arm the try* composed, then its own

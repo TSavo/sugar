@@ -54,8 +54,9 @@ def test_nested_group_partition_preserves_tree_and_leaf_identities():
     nested = GroupedRaiseEffect("group:nested", "nested", (matched_leaf, residual_leaf))
     incoming = GroupedRaiseEffect("group:root", "root", (nested,))
 
-    partition = incoming.partition(base_type, "site")
+    (partition,) = incoming.partition(base_type, "site")
 
+    assert partition.conditions == ()
     assert partition.matched.group_identity == "group:root"
     assert partition.residual.group_identity == "group:root"
     assert partition.matched.children[0].group_identity == "group:nested"
@@ -78,8 +79,8 @@ def test_partition_keeps_both_empty_faces_explicit():
         (_leaf(wanted, "leaf:wanted", raised_value=wanted_type),),
     )
 
-    all_matched = incoming.partition(wanted_type, "site")
-    none_matched = incoming.partition(_typed_value(other), "site")
+    (all_matched,) = incoming.partition(wanted_type, "site")
+    (none_matched,) = incoming.partition(_typed_value(other), "site")
 
     assert all_matched.residual.children == ()
     assert all_matched.residual.group_identity == "group:root"
@@ -95,7 +96,7 @@ def test_equal_spelling_with_lying_identity_does_not_match():
     leaf = _leaf(truthful, "leaf:truthful")
     incoming = GroupedRaiseEffect("group:root", "root", (leaf,))
 
-    partition = incoming.partition(_typed_value(lying), "site")
+    (partition,) = incoming.partition(_typed_value(lying), "site")
 
     assert partition.matched.children == ()
     assert partition.residual.children == (leaf,)
@@ -124,7 +125,7 @@ def test_except_star_partition_asks_the_one_raise_matcher(monkeypatch):
         authenticated_exception_matching, "matches_raise_effect", recording_matcher
     )
 
-    partition = GroupedRaiseEffect("group:root", "root", (leaf,)).partition(
+    (partition,) = GroupedRaiseEffect("group:root", "root", (leaf,)).partition(
         base_type, "except-star-site"
     )
 
@@ -134,23 +135,42 @@ def test_except_star_partition_asks_the_one_raise_matcher(monkeypatch):
 
 def test_an_undetermined_leaf_is_never_partitioned_by_a_guess():
     """A leaf whose construction carried no class is undecided: only
-    ``except* BaseException`` catches it (every raise is one); any other
-    type is refused by name, never decided a hit or a miss."""
-    import pytest
-
+    ``except* BaseException`` decides it (every raise is one).  Any other
+    type is the two-way split ordinary ``except`` owns for an undecided
+    match: matched under the retained type test, residual under its
+    complement, each with its face -- never a refusal, never a guess."""
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchRetained,
+        matches_raise_effect,
+    )
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.ir import ctor, str_const
-    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_lift_py_tests.ir import ctor, not_, str_const
 
-    undecided = UndeterminedRaiseEffect(blame="leaf:undecided", occurrence="leaf:u")
-    group = GroupedRaiseEffect("group:root", "root", (undecided,))
     base_exception = ctor(
         "python:exception_type_identity",
         [str_const("builtins"), str_const("BaseException")],
     )
+    other = _identity("truthful", "Other")
+    undecided = UndeterminedRaiseEffect(blame="leaf:undecided", occurrence="leaf:u")
+    decided = _leaf(other, "leaf:other", other, base_exception)
+    group = GroupedRaiseEffect("group:root", "root", (undecided, decided))
 
-    caught = group.partition(_typed_value(base_exception), "site")
-    assert caught.matched.children == (undecided,)
-    with pytest.raises(SugarNotWritten):
-        group.partition(_typed_value(_identity("truthful", "Base")), "site")
+    (caught,) = group.partition(_typed_value(base_exception), "site")
+    assert caught.matched.children == (undecided, decided)
+    assert caught.conditions == ()
+
+    handler = _typed_value(_identity("truthful", "Base"))
+    verdict = matches_raise_effect(undecided, handler)
+    assert isinstance(verdict, MatchRetained)
+    matched, missed = group.partition(handler, "site")
+    assert matched.matched.children == (undecided,)
+    assert matched.residual.children == (decided,)
+    assert missed.matched.children == ()
+    assert missed.residual.children == (undecided, decided)
+    ((held, caught_face),) = matched.conditions
+    ((complement, missed_face),) = missed.conditions
+    assert held == verdict.obligation
+    assert complement == not_(verdict.obligation)
+    assert caught_face.partition == missed_face.partition
+    assert caught_face.side != missed_face.side

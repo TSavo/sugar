@@ -15465,47 +15465,27 @@ class Raise(Statement):
             )
 
         def leaf_sugar(node):
-            if isinstance(node, Call):
-                # A member call is constructed as a raised call is: its class
-                # is the one its construction carries (``OSError(2, 'x')`` a
-                # ``FileNotFoundError``; an unanswered construction none),
-                # read off the value by ``RaiseSugar`` -- never the callee's.
-                return RaiseSugar(
-                    self._raised_operand_sugar(node, where),
-                    None,
-                    self._exception_name(node),
-                    node.fragment,
-                )
-            from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
-                AuthenticatedExceptionTypeSugar,
-            )
-
-            leaf_identity = leaf_mro = None
-            if isinstance(node, Name):
-                leaf_identity = self.unit.exception_type_identity(node)
-                leaf_mro = self.unit.exception_type_mro(node)
-            if leaf_identity is None:
-                raise SugarNotWritten(
-                    blame=node.fragment,
-                    owner="Raise._construct_sugar",
-                    observed="exception-group leaf lacks authenticated exception identity",
-                    requested="a source-authenticated exception type",
-                    fix="keep opaque/native group members loud",
-                )
-            value = AuthenticatedExceptionTypeSugar(
-                node.sugar(),
-                leaf_identity,
-                leaf_mro,
+            # A member is constructed as a raised operand is: a call's class
+            # is the one its construction carries (``OSError(2, 'x')`` a
+            # ``FileNotFoundError``; an unanswered construction none), and a
+            # class named without calling it is that class's value -- which
+            # the group's construction refuses as a member that is not an
+            # exception instance (``GroupedRaiseSugar._group``).  ``RaiseSugar``
+            # reads the class off the value, never the callee's name.
+            return RaiseSugar(
+                self._raised_operand_sugar(node, where),
+                None,
+                self._exception_name(node),
                 node.fragment,
-                class_value=self.unit.exception_class_value(node),
             )
-            return RaiseSugar(value, None, node.id, node.fragment)
 
         def grouped_sugar(call):
             if (
                 len(call.args) != 2
                 or call.keywords
                 or not isinstance(call.args[1], (List, Tuple))
+                # A starred member is any number of members: not one each.
+                or any(isinstance(member, Starred) for member in call.args[1].elts)
             ):
                 raise SugarNotWritten(
                     blame=call.fragment,
@@ -15524,8 +15504,10 @@ class Raise(Statement):
                     for member in call.args[1].elts
                 ),
                 site=call.fragment,
+                # The class the callee's binding names: what the constructor
+                # is asked for.  The class it builds is decided by its
+                # members (``GroupedRaiseSugar._group``).
                 exception_type_coordinate=self.unit.exception_type_identity(call.func),
-                exception_type_mro=self.unit.exception_type_mro(call.func),
             )
 
         if group_call(self.exc):
