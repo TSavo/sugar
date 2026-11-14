@@ -571,10 +571,13 @@ def function_universe_outcome(fn):
 
     Ordinary functions reduce with symbolic formals.  The active ``__init__``
     of a source class is different: its first parameter is the receiver that
-    the class constructor itself creates.  The backend's exact lexical-owner
-    relation selects that existing class door, and this seam seats the same
-    receiver coordinate before reducing the universe.  No spelling or inferred
-    parent walk is used.
+    the class call itself creates.  The backend's exact lexical-owner relation
+    selects the class, and its one constructor
+    (``ClassDef.source_visible_constructor_frame().body``, the
+    ``ClassConstructorBodySugar`` every class call applies) makes that
+    receiver and runs this universe on it (``enter_initializer``).  So the
+    class statement's halts (#7794) are this universe's halts, an unrun
+    source ``__new__`` refuses it by name, and no receiver is made here.
     """
     sugar = fn.sugar()
     owner = fn._active_initializer_owner()
@@ -582,12 +585,6 @@ def function_universe_outcome(fn):
         return sugar.desugar(None)
 
     from sugar_lift_py_tests.context import ReduceContext
-    from sugar_lift_py_tests.floor import ClassDefinitionValue
-    from sugar_lift_py_tests.outcome import (
-        ExitSet,
-        NativeOperationExitCarrierV1,
-        outcome_to_exitset,
-    )
     from sugar_source_tree.panic import SugarNotWritten
 
     if not fn.params:
@@ -599,36 +596,19 @@ def function_universe_outcome(fn):
             fix="preserve the parsed receiver parameter on __init__",
         )
     receiver_coordinate = fn._constructed_receiver_coordinate(owner, fn.params[0])
-    definition_outcome = owner.sugar().desugar(None)
-    definition = (
-        None
-        if isinstance(definition_outcome, NativeOperationExitCarrierV1)
-        else outcome_to_exitset(definition_outcome)
-    )
-    if (
-        not isinstance(definition, ExitSet)
-        or definition.owed_items()
-        or not isinstance(definition.completed_value(), ClassDefinitionValue)
-    ):
+    constructor = owner.source_visible_constructor_frame().body
+    if constructor.receiver_coordinate_cid != receiver_coordinate.cid:
         raise SugarNotWritten(
             owner="function_universe_outcome",
-            blame=owner.fragment,
-            observed=type(definition_outcome).__name__,
-            requested="the authenticated source class definition",
+            blame=fn.fragment,
+            observed="the class call seats its initializer receiver elsewhere",
+            requested="the receiver the class call makes for this initializer",
             fix="construct the initializer through its lexical class owner",
         )
-    receiver = definition.completed_value().construct_receiver_state_from_block(
-        None, receiver_coordinate.cid
+    return constructor.enter_initializer(
+        ReduceContext.root(owner="function_universe_outcome"),
+        lambda _definition, initializer_ctx: sugar.desugar(initializer_ctx),
     )
-    root = ReduceContext.root(owner="function_universe_outcome")
-    context = root.with_temporal(
-        root.temporal.bind_value(
-            receiver_coordinate.cid,
-            receiver,
-            blame=fn.fragment,
-        )
-    )
-    return sugar.desugar(context)
 
 
 def reduction_rows(outcome, *, owner, blame, def_memento):
