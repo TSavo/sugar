@@ -5,13 +5,12 @@ from typing import NoReturn
 
 from sugar_lift_py_tests.floor import FloorValue
 
-from .temporal_binding import GuardedTemporalBinding, TemporalBinding
+from .temporal_binding import TemporalBinding
 
 
 @dataclass(frozen=True)
 class TemporalContext:
     bindings: tuple[TemporalBinding, ...] = ()
-    guarded_bindings: tuple[GuardedTemporalBinding, ...] = ()
 
     @classmethod
     def empty(cls) -> "TemporalContext":
@@ -40,56 +39,9 @@ class TemporalContext:
     def bind_value(
         self, name: str, value: FloorValue, *, blame: str | None = None
     ) -> "TemporalContext":
-        return self._bind_value(name, value, blame=blame)
-
-    def bind_guarded(
-        self,
-        guard,
-        name: str,
-        value: FloorValue,
-        *,
-        blame: str | None = None,
-    ) -> "TemporalContext":
-        remaining = tuple(
-            candidate
-            for candidate in self.guarded_bindings
-            if not (candidate.guard == guard and candidate.binding.name == name)
-        )
-        return TemporalContext(
-            self.bindings,
-            remaining
-            + (GuardedTemporalBinding(guard, TemporalBinding(name, value, blame)),),
-        )
-
-    def activate_guard(self, guard) -> "TemporalContext":
-        """Expose exactly the bindings warranted by this branch condition."""
-        active = self
-        for candidate in self.guarded_bindings:
-            if candidate.guard == guard:
-                active = active._bind_value(
-                    candidate.binding.name,
-                    candidate.binding.value,
-                    blame=candidate.binding.blame,
-                )
-        return active
-
-    def _bind_value(
-        self, name: str, value: FloorValue, *, blame: str | None = None
-    ) -> "TemporalContext":
+        """The one way a binding enters the temporal: a rebind shadows the old."""
         remaining = tuple(binding for binding in self.bindings if binding.name != name)
-        guarded = tuple(
-            binding for binding in self.guarded_bindings if binding.binding.name != name
-        )
-        return TemporalContext(
-            remaining + (TemporalBinding(name, value, blame),),
-            guarded,
-        )
-
-    def bind_with(self, operation, ctx):
-        return operation.bind_context(self, ctx)
-
-    def curry_with(self, operation, ctx):
-        return operation.curry_context(self, ctx)
+        return TemporalContext(remaining + (TemporalBinding(name, value, blame),))
 
     def _gap(
         self,
