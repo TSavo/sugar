@@ -1036,7 +1036,7 @@ def test_factory_nested_same_module_with_derives_before_frame_projection(tmp_pat
 
     detail = getattr(result, "detail", None) or ""
     assert "no context-manager derivation" not in detail, result
-    assert getattr(result, "kind", None) != "source-body-gap", result
+    assert getattr(result, "kind", None) != "undecided", result
     assert isinstance(result, ConstructedManagerBehaviorV1), (
         f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
         f" kind={getattr(result, 'kind', None)} detail={detail!r}"
@@ -1083,7 +1083,7 @@ def test_factory_nested_formal_singleton_tuple_derives_installed_like_exit(tmp_p
 
     detail = getattr(result, "detail", None) or ""
     assert "no context-manager derivation" not in detail, result
-    assert getattr(result, "kind", None) != "source-body-gap", result
+    assert getattr(result, "kind", None) != "undecided", result
     assert isinstance(result, ConstructedManagerBehaviorV1), (
         f"expected ConstructedManagerBehaviorV1, got {type(result).__name__}"
         f" kind={getattr(result, 'kind', None)} detail={detail!r}"
@@ -3092,13 +3092,13 @@ def test_installed_pytest_raises_lying_legacy_callable_route_stays_typed_loud(
     assert len(context.source_derived_contract_refs) == 1
     reference = next(iter(context.source_derived_contract_refs.values()))
     assert isinstance(reference, ContextManagerResolutionGapV1)
-    assert reference.kind == "source-body-contract-error"
+    assert reference.kind == "undecided"
     assert "does not fit authenticated signature" in reference.detail
     with_node = next(node for node in tree.nodes() if node.kind == "With")
     with pytest.raises(ContextManagerResolutionConstructionGap) as caught:
         with_node.sugar()
 
-    assert caught.value.kind == "source-body-contract-error"
+    assert caught.value.kind == "undecided"
     assert "does not fit authenticated signature" in caught.value.observed
     site = caught.value.args[0]
     assert (site.start_line, site.start_col, site.end_line, site.end_col) == (

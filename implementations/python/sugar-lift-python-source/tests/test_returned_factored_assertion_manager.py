@@ -293,7 +293,7 @@ def test_direct_imported_name_manager_with_keyword_uses_source_contract(
 
     assert isinstance(reference, ContextManagerResolutionGapV1), reference
     assert reference.target_symbol == "python:arbitrary.boundary"
-    assert reference.kind == "source-body-gap"
+    assert reference.kind == "undecided"
     assert "CallSiteSugar at arbitrary/manager.py:18:11" in reference.detail
     assert (
         "source call definition is not this call's exact typed occurrence"
@@ -320,7 +320,7 @@ def test_direct_imported_name_manager_with_double_star_stays_loud(
     # The provider body fails before actual binding, so the prospective
     # ``incomplete-call-actuals`` terminal is not observable yet.  Pin the
     # earlier owner rather than pretending the **kwargs layer executed.
-    assert reference.kind == "source-body-gap"
+    assert reference.kind == "undecided"
     assert "CallSiteSugar at arbitrary/manager.py:18:11" in reference.detail
     assert (
         "source call definition is not this call's exact typed occurrence"

@@ -241,7 +241,7 @@ def _external_error_attributions():
                 row["authenticatedImportUse"]["cid"],
                 site,
                 row["targetSymbol"],
-                row.get("gapKind") or "runtime-selected",
+                "undecided",
                 (),
             )
         context = TreeConstructionContextV1(

@@ -134,6 +134,7 @@ def _context_manager_rows_for_paths(paths) -> List[Dict[str, Any]]:
     per-source door below both come through here, so a one-file question and
     a whole-corpus question cannot disagree about a row.
     """
+    from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
     from sugar_lift_python_source.source_oracle import SourceUnavailable
     from sugar_source_tree.nodes import AsyncWith, With
     from sugar_source_tree.tree import SourceFile
@@ -165,7 +166,7 @@ def _context_manager_rows_for_paths(paths) -> List[Dict[str, Any]]:
                         "targetSymbol": None,
                         "importSignature": {"parameters": []},
                         "expectedKind": "context-manager-contract",
-                        "gapKind": "runtime-selected",
+                        "gapKind": UNDECIDED_GAP_KIND,
                     }
                 )
     return rows
@@ -204,6 +205,7 @@ def _context_manager_resolutions_from_demand_rows(rows):
     door and the per-source door both use it.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
+        UNDECIDED_GAP_KIND,
         ContextManagerResolutionGapV1,
         SourceFragmentCoordinateV1,
         _hash_json,
@@ -220,11 +222,14 @@ def _context_manager_resolutions_from_demand_rows(rows):
             key: row[key]
             for key in ("useSite", "targetSymbol", "importSignature", "expectedKind")
         }
+        # A demand row's resolution is undecided until derivation answers it:
+        # one statement, never a label read from the row or a default
+        # (#7757 item 4).
         resolutions[site] = ContextManagerResolutionGapV1(
             _hash_json(preimage),
             site,
             row.get("targetSymbol"),
-            row.get("gapKind") or "runtime-selected",
+            UNDECIDED_GAP_KIND,
             (),
         )
     return resolutions, cm_rows
@@ -324,8 +329,8 @@ def provisional_contract_refs_from_demands(root: Path):
     ``With._prebound_manager_resolution`` does not treat missing context as
     unconditional ``RuntimeSelectedContextManager`` (false red).
 
-    Each demand lands as ``ContextManagerResolutionGapV1`` with the demand's
-    ``gapKind`` (default ``runtime-selected``). Source-derived managers may still
+    Each demand lands as ``ContextManagerResolutionGapV1`` of the one kind
+    ``undecided`` (#7757 item 4). Source-derived managers may still
     win via ``populate_source_derived_resource_refs`` after the context is
     installed — derived takes precedence over this provisional gap table.
 
@@ -739,6 +744,8 @@ def _join_call_identity_into_with_demands(
     call_rows: List[Dict[str, Any]], cm_rows: List[Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
     """The join itself, over whichever files the two row lists cover."""
+    from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
+
     calls_by_site = {
         json.dumps(row["useSite"], sort_keys=True): row
         for row in call_rows
@@ -751,7 +758,7 @@ def _join_call_identity_into_with_demands(
         call = calls_by_site.get(site)
         if call is None:
             row["targetSymbol"] = None
-            row["gapKind"] = "runtime-selected"
+            row["gapKind"] = UNDECIDED_GAP_KIND
             continue
         target = call["targetSymbol"]
         row["targetSymbol"] = target.removeprefix("python:")

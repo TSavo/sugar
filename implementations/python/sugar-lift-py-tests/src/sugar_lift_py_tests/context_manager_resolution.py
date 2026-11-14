@@ -367,6 +367,12 @@ class ContextManagerContractRefV1:
     semantics: ContextManagerSemanticsV1
 
 
+#: The one statement for a gap nothing here decides (#7757 item 4): which
+#: exception was caught, or which default a row carried, never chooses a label.
+#: What was observed rides in the gap's detail.
+UNDECIDED_GAP_KIND = "undecided"
+
+
 #: Why a manager is cited, when it is.  The callee kinds name the callee the
 #: import door authenticated; ``head-runtime-selected`` has no callee to name
 #: (the head's value is chosen at run time), so its citation names only the

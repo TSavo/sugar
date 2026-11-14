@@ -121,14 +121,19 @@ def populate_source_visible_call_frames(
             )
         except (SugarNotWritten, TypeError) as exc:
             # TypeError is the second costume of populate-path roster erasure
-            # (#7062 SNW arm only). Cite, continue; never abort the open.
-            kind = (
-                "source-body-gap"
-                if isinstance(exc, SugarNotWritten)
-                else "source-body-type-error"
+            # (#7062 SNW arm only). Cite, continue; never abort the open. The
+            # body is undecided: one statement, whichever class was caught
+            # (#7757 item 4); what was observed rides in the detail.
+            from sugar_lift_py_tests.context_manager_resolution import (
+                UNDECIDED_GAP_KIND,
             )
+
             context.source_call_resolutions[coordinate] = (
-                SourceCallPreconstructionGapV1(kind, coordinate, str(exc))
+                SourceCallPreconstructionGapV1(
+                    UNDECIDED_GAP_KIND,
+                    coordinate,
+                    f"{type(exc).__name__}: {exc}",
+                )
             )
             continue
         if isinstance(frame_result, ManagerConstructionGapV1):

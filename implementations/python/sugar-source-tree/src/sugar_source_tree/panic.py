@@ -277,7 +277,7 @@ class ContextManagerResolutionConstructionGap(SugarNotWritten):
         self.use_site = use_site
         self.target_symbol = target_symbol
         self.demand_cid = demand_cid
-        # Optional detail from the resolution row (e.g. "runtime-selected").
+        # Optional detail from the resolution row (e.g. "undecided").
         # Not a closed WithConstructionGapKind vocabulary — deleted.
         self.kind = resolution_kind
 

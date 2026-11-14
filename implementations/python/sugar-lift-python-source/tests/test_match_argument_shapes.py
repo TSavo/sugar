@@ -379,7 +379,7 @@ HISTORICAL_PATH_SHAPE_DIGEST = (
 #: The whole ``gapKind`` vocabulary the table is capable of carrying, read off
 #: the published artifact. ``value-call-target`` is deliberately not in it --
 #: see ``test_table_cannot_testify_about_a_frame_bound_callee``.
-DEMAND_TABLE_GAP_KINDS = frozenset({None, "runtime-selected"})
+DEMAND_TABLE_GAP_KINDS = frozenset({None, "undecided"})
 
 _TABLE_CACHE: dict[str, object] = {}
 
