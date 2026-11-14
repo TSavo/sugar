@@ -877,6 +877,11 @@ class ExitSet(Generic[T]):
                     and isinstance(prior, Halted)
                     and exit_.effect == prior.effect
                     and exit_.state == prior.state
+                    # A halt's record (a ``break``/``continue``'s included,
+                    # whose context the loop reads its latch from) is the
+                    # same path only where its context holds every statement
+                    # evaluation at one value: the rule completed arms keep.
+                    and _same_evaluations(exit_.state, prior.state)
                 )
                 # Same destination under a DISJOINED guard. Only a split BOTH
                 # contributors spoke about survives -- a partition one of them

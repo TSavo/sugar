@@ -819,6 +819,7 @@ def test_loop_symbolic_item_carrier_composes_through_after_discharge():
         body,
         lambda entries=(): ExitSet.completed(("recurrence", *entries)),
         atomic("test.item", []),
+        target_bindings=(),
     )
 
     assert isinstance(left_by, NativeOperationExitCarrierV1)
