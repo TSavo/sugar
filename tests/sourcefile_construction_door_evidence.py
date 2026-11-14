@@ -154,7 +154,9 @@ class SourceFileConstructionDoorEvidence:
         assert owner.constructor_calls
         assert owner.canonical_call in owner.constructor_calls
         assert owner.dynamic_calls == ()
-        assert owner.forwarders
+        # The one entry is the residency door's only caller (#8102): a
+        # forwarder into the door is a second way in, so there are none.
+        assert owner.forwarders == ()
         assert owner.forwarders == owner.audited_forwarders
         assert owner.unauthorized_source_constructors == ()
         assert owner.adapter_overrides == ()

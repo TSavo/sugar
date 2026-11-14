@@ -30,7 +30,7 @@ from sugar_lift_py_tests.lift_rpc import (
     tree_construction_context_for_workspace,
 )
 from sugar_source_tree.reporter import CollectingReporter
-from sugar_source_tree.tree import SourceFile
+import sugar_source_tree.process_resident_file as residency
 
 
 def _enum_seat(filename: str) -> bool:
@@ -79,20 +79,28 @@ def _stdlib_seat(filename: str, *, stdlib_root: Path) -> bool:
 
 
 def _count_sourcefiles_during(open_fn) -> tuple[Counter[str], object]:
-    """Patch SourceFile.__init__, run open_fn, restore. Returns seat counter."""
-    seats: Counter[str] = Counter()
-    orig = SourceFile.__init__
+    """Count seats at the residency door, run open_fn, restore.
 
-    def counting_init(self, identity, *args, **kwargs):  # type: ignore[no-untyped-def]
+    Every open walks the one entry (``lift_rpc._open_at_seat``) into
+    ``process_resident_file._source_file_from_identity``; the counter sits
+    there. The open's own target is one count, so an empty counter means the
+    counter is off the path (the entry moved), and that is red, not a green
+    zero.
+    """
+    seats: Counter[str] = Counter()
+    orig = residency._source_file_from_identity
+
+    def counting_open(identity, *args, **kwargs):  # type: ignore[no-untyped-def]
         _source, filename, _cid = identity
         seats[str(filename).replace("\\", "/")] += 1
-        return orig(self, identity, *args, **kwargs)
+        return orig(identity, *args, **kwargs)
 
-    SourceFile.__init__ = counting_init  # type: ignore[method-assign]
+    residency._source_file_from_identity = counting_open
     try:
         result = open_fn()
     finally:
-        SourceFile.__init__ = orig  # type: ignore[method-assign]
+        residency._source_file_from_identity = orig
+    assert sum(seats.values()) > 0, "the residency door never fired on this open"
     return seats, result
 
 

@@ -109,15 +109,17 @@ def test_open_path_failure_before_sourcefile_still_raises(
     """An open that never builds its SourceFile raises, before any populate."""
     from sugar_lift_py_tests.lift_rpc import _open_at_seat
     from sugar_source_tree.panic import SugarNotWritten
-    import sugar_source_tree.tree as tree_mod
+    import sugar_source_tree.process_resident_file as residency
 
     path = tmp_path / "broken.py"
     path.write_text("def a():\n    return 1\n", encoding="utf-8")
     seed = tmp_path / "seed.py"
     seed.write_text("x = 1\n", encoding="utf-8")
     blame = _open_at_seat(seed, root=tmp_path).root.fragment
+    fired = {"n": 0}
 
-    def boom_init(self, *_a, **_k):
+    def boom_open(*_a, **_k):
+        fired["n"] += 1
         raise SugarNotWritten(
             blame=blame,
             owner="open-path-gap",
@@ -126,9 +128,13 @@ def test_open_path_failure_before_sourcefile_still_raises(
             fix="repair open",
         )
 
-    monkeypatch.setattr(tree_mod.SourceFile, "__init__", boom_init)
-    with pytest.raises(SugarNotWritten):
+    # The residency door every open walks (``_open_at_seat`` ->
+    # ``_source_file_from_identity``).
+    monkeypatch.setattr(residency, "_source_file_from_identity", boom_open)
+    with pytest.raises(SugarNotWritten) as refusal:
         _open(tmp_path, path)
+    assert fired["n"] > 0
+    assert refusal.value.owner == "open-path-gap"
 
 
 def test_successful_open_returns_the_file_with_its_functions(

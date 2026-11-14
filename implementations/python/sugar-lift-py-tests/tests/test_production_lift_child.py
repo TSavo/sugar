@@ -5,6 +5,9 @@ Planted twins proving the outcome taxonomy the floors depend on:
   - an intentional typed source-tree gap -> ``typed-gap`` (non-failure),
   - a genuinely bare-excepting construction -> the exception PROPAGATES
     (the child never swallows it, so the parent sees a bare exception),
+  - the open-path plants sit on the residency door every open walks
+    (``lift_rpc._open_at_seat`` -> ``_source_file_from_identity``) and each
+    asserts it fired,
   - the bootstrap check returns None when the enum door is importable.
 """
 
@@ -102,9 +105,12 @@ def test_source_file_construction_panic_is_typed_gap(
 ) -> None:
     from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    import sugar_source_tree.tree as tree_mod
+    import sugar_source_tree.process_resident_file as residency
+
+    fired = {"n": 0}
 
     def _typed_gap(*_args, **_kwargs):
+        fired["n"] += 1
         raise ConstructionPanic(
             ConstructionGap(
                 owner="enum-door",
@@ -117,10 +123,11 @@ def test_source_file_construction_panic_is_typed_gap(
             )
         )
 
-    monkeypatch.setattr(tree_mod.SourceFile, "__init__", _typed_gap)
+    monkeypatch.setattr(residency, "_source_file_from_identity", _typed_gap)
     path = _write(tmp_path, "def a():\n    return 1\n")
 
     assert _run(path, "arbitrary.py") == 0
+    assert fired["n"] > 0
     assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
 
 
@@ -128,9 +135,12 @@ def test_source_file_unwritten_is_typed_gap(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
     from sugar_source_tree.panic import SugarNotWritten
-    import sugar_source_tree.tree as tree_mod
+    import sugar_source_tree.process_resident_file as residency
+
+    fired = {"n": 0}
 
     def _typed_gap(*_args, **_kwargs):
+        fired["n"] += 1
         raise SugarNotWritten(
             blame=tmp_path / "fixture.py",
             owner="RenamedNode.sugar",
@@ -139,23 +149,28 @@ def test_source_file_unwritten_is_typed_gap(
             fix="write its construction",
         )
 
-    monkeypatch.setattr(tree_mod.SourceFile, "__init__", _typed_gap)
+    monkeypatch.setattr(residency, "_source_file_from_identity", _typed_gap)
     path = _write(tmp_path, "def a():\n    return 1\n")
 
     assert _run(path, "arbitrary.py") == 0
+    assert fired["n"] > 0
     assert _CHILD.terminal_outcome(capsys.readouterr().out) == _CHILD.OUTCOME_TYPED_GAP
 
 
 def test_bare_exception_propagates_never_swallowed(tmp_path: Path, monkeypatch) -> None:
-    import sugar_source_tree.tree as tree_mod
+    import sugar_source_tree.process_resident_file as residency
+
+    fired = {"n": 0}
 
     def _boom(*a, **k):
+        fired["n"] += 1
         raise RuntimeError("planted bare exception in construction")
 
-    monkeypatch.setattr(tree_mod.SourceFile, "__init__", _boom)
+    monkeypatch.setattr(residency, "_source_file_from_identity", _boom)
     path = _write(tmp_path, "def a():\n    return 1\n")
     with pytest.raises(RuntimeError, match="planted bare exception"):
         _run(path, "mod.py")
+    assert fired["n"] > 0
 
 
 def test_bootstrap_check_is_green_when_door_present() -> None:

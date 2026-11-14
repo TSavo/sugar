@@ -22,7 +22,7 @@ from pathlib import Path
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
+import sugar_source_tree.process_resident_file as residency
 
 
 def _locus_root_for_corpus(corpus: Path) -> Path:
@@ -55,15 +55,17 @@ def test_pandas_test_open_never_materializes_pytest() -> None:
 
         pytest.skip(f"missing {path}")
 
+    # Every open walks the one entry (``_open_at_seat``) into the residency
+    # door; count the seats it is asked for there.
     seats: Counter[str] = Counter()
-    orig = SourceFile.__init__
+    orig = residency._source_file_from_identity
 
-    def counting_init(self, identity, *args, **kwargs):  # type: ignore[no-untyped-def]
+    def counting_open(identity, *args, **kwargs):  # type: ignore[no-untyped-def]
         _source, filename, _cid = identity
         seats[str(filename).replace("\\", "/")] += 1
-        return orig(self, identity, *args, **kwargs)
+        return orig(identity, *args, **kwargs)
 
-    SourceFile.__init__ = counting_init  # type: ignore[method-assign]
+    residency._source_file_from_identity = counting_open
     try:
         open_source_file_for_construction(
             path,
@@ -72,7 +74,11 @@ def test_pandas_test_open_never_materializes_pytest() -> None:
             source_workspace_root=corpus,
         )
     finally:
-        SourceFile.__init__ = orig  # type: ignore[method-assign]
+        residency._source_file_from_identity = orig
+
+    # The counter sits on the path the open walks: the target itself is one
+    # count. A move of the entry turns this red instead of a vacuous green.
+    assert sum(seats.values()) > 0, "the residency door never fired on this open"
 
     offenders = {
         seat: n

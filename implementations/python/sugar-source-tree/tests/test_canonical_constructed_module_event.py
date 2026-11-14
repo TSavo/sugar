@@ -1,8 +1,9 @@
 """Focused canonical SourceFile -> Backend materialization event contract.
 
 This is deliberately not a repository census.  It pins one real source file,
-one oracle intake, one SourceFile construction, and the one backend-owned
-constructed-module event that is still missing.
+one oracle intake, one pass through the residency door the one entry walks
+(``lift_rpc._open_at_seat`` -> ``process_resident_file._source_file_from_identity``),
+and the one backend-owned constructed-module event.
 """
 
 from __future__ import annotations
@@ -12,26 +13,27 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.lift_rpc import _open_at_seat
+import sugar_source_tree.process_resident_file as residency
 from sugar_source_tree.backend import Backend
 from sugar_source_tree.reporter import CollectingReporter
-from sugar_source_tree.tree import SourceFile
 
 
-def test_the_opener_enters_source_file_constructor_exactly_once(
+def test_the_opener_enters_the_residency_door_exactly_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The one entry walks the residency door once, with the identity it read."""
     source = "VALUE = 1\n"
     path = tmp_path / "canonical-entry.py"
     path.write_text(source, encoding="utf-8")
     captured = []
-    original_init = SourceFile.__init__
+    original_door = residency._source_file_from_identity
 
-    def observe_init(self, identity, *args, **kwargs):
+    def observe_door(identity, *args, **kwargs):
         captured.append(identity)
-        return original_init(self, identity, *args, **kwargs)
+        return original_door(identity, *args, **kwargs)
 
-    monkeypatch.setattr(SourceFile, "__init__", observe_init)
+    monkeypatch.setattr(residency, "_source_file_from_identity", observe_door)
     _open_at_seat(path, root=tmp_path)
 
     assert len(captured) == 1
