@@ -1025,11 +1025,12 @@ class SourceUnit:
     _module_name_rows_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
-    # ``(typed module, names an import-time evaluation binds)`` and
-    # ``(typed module, refusal, ModuleBindingStatesV1)``: the module body
-    # threaded once for its readers outside the module block
-    # (``module_binding_states``), rebuilt if the typed root is replaced.
-    _module_evaluation_names_memo: object = field(
+    # ``(typed module, threaded names, unthreaded names)``
+    # (``module_threaded_names``) and ``(typed module, refusal,
+    # ModuleBindingStatesV1)``: the module body threaded once for its readers
+    # outside the module block (``module_binding_states``), rebuilt if the
+    # typed root is replaced.
+    _module_global_rows_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
     _module_binding_states_memo: object = field(
@@ -1071,7 +1072,7 @@ class SourceUnit:
         object.__setattr__(self, "_function_symtable_index", None)
         object.__setattr__(self, "_function_span_index", None)
         object.__setattr__(self, "_module_name_rows_memo", None)
-        object.__setattr__(self, "_module_evaluation_names_memo", None)
+        object.__setattr__(self, "_module_global_rows_memo", None)
         object.__setattr__(self, "_module_binding_states_memo", None)
         object.__setattr__(self, "_module_statement_starts_memo", None)
 
@@ -1495,41 +1496,109 @@ class SourceUnit:
             return False
         return not (read & _DYNAMIC_GLOBAL_WRITERS)
 
-    def module_evaluation_bound_names(self) -> frozenset:
-        """The names the module body binds, as it runs at import, through an
-        evaluation a frame reads by its key (``Statement._evaluation_key``):
-        ``x += e``, ``a, b = f()`` and ``(x := e)`` (a walrus in a
-        comprehension binds the module's name too).
+    def module_threaded_names(self) -> frozenset:
+        """The module names a reader outside the module block takes from the
+        module threading (``module_bindings_at``): every name the module body
+        binds, as it runs at import, through a statement the threading
+        rebinds it at -- ``y = e`` (any target shape), ``y: T = e``, ``x +=
+        e``, ``(x := e)`` (in a comprehension too), a ``for`` target, a
+        ``with ... as`` target -- that some function, lambda or class body
+        reads as a global (CPython's ``symtable``).  A name no such body
+        reads is never threaded for a reader: the threading records only
+        these (``module_binding_states``).
 
-        Read off the typed tree, one walk per typed root.  A ``def``,
-        ``lambda`` or ``class`` body is not import-time module code (a class
-        body binds its own names) and is not walked.  A unit with no typed
-        root answers the empty set.
+        A name bound only by a ``def``, ``class`` or ``import`` statement
+        (which bind no key) is not one: its reader resolves the definition
+        or the import.  Read off the typed tree, one walk per typed root.  A
+        unit with no typed root answers the empty set.
         """
+        return self._module_global_rows()[0]
+
+    def module_unthreaded_names(self) -> frozenset:
+        """The ``module_threaded_names`` the threading does not decide for a
+        reader anywhere: one a ``def``, ``class``, ``import`` (a star import
+        may bind every name), ``except ... as``, ``match`` capture, ``del``
+        or ``type`` statement also binds (none binds through a key, so the
+        threading's binding of it can be stale); one a ``for`` or ``with``
+        target binds beside any other binding (a live loop does not rebind
+        its target after the loop); and one a function or class body writes
+        through a ``global`` declaration (it changes whenever that body
+        runs).  Every reader cites these ``undecided`` by name."""
+        return self._module_global_rows()[1]
+
+    def _module_global_rows(self) -> Tuple[frozenset, frozenset]:
         module = self.typed_module
         if module is None:
-            return frozenset()
-        memo = self._module_evaluation_names_memo
+            return frozenset(), frozenset()
+        memo = self._module_global_rows_memo
         if memo is not None and memo[0] is module:
-            return memo[1]
-        names: set[str] = set()
+            return memo[1], memo[2]
+        keyed: set[str] = set()
+        loop_bound: set[str] = set()
+        unkeyed: set[str] = set()
+        binders: dict[str, int] = {}
         stack: list[Node] = list(module.body)
         while stack:
             node = stack.pop()
-            if isinstance(node, AugAssign) and isinstance(node.target, Name):
-                names.add(node.target.id)
-            elif isinstance(node, Assign):
-                target = node._dynamic_unpack_target()
-                if target is not None:
-                    names.update(_unpack_target_names(target))
-            elif isinstance(node, NamedExpr) and isinstance(node.target, Name):
-                names.add(node.target.id)
+            if isinstance(node, (Assign, AugAssign, NamedExpr)) or (
+                isinstance(node, AnnAssign) and node.value is not None
+            ):
+                names = node.names_bound_here()
+                keyed.update(names)
+            elif isinstance(node, (For, AsyncFor, WithItem)):
+                names = node.names_bound_here()
+                loop_bound.update(names)
+            elif isinstance(node, (AnnAssign, Comprehension, Global, Nonlocal)):
+                # A bare annotation binds nothing; a comprehension target
+                # binds in the comprehension's scope; ``global`` at module
+                # level declares nothing new.
+                names = ()
+            else:
+                names = node.names_bound_here()
+                unkeyed.update(names)
+            for name in names:
+                binders[name] = binders.get(name, 0) + 1
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
                 continue
             stack.extend(child for _name, _index, child in node._child_edges())
-        result = frozenset(names)
-        object.__setattr__(self, "_module_evaluation_names_memo", (module, result))
-        return result
+        reads, writes = self._nested_scope_global_rows()
+        threaded = frozenset((keyed | loop_bound) & reads)
+        if "*" in unkeyed:
+            unthreaded = threaded
+        else:
+            unthreaded = frozenset(
+                name
+                for name in threaded
+                if name in unkeyed
+                or name in writes
+                or (name in loop_bound and binders[name] > 1)
+            )
+        object.__setattr__(
+            self, "_module_global_rows_memo", (module, threaded, unthreaded)
+        )
+        return threaded, unthreaded
+
+    def _nested_scope_global_rows(self) -> Tuple[frozenset, frozenset]:
+        """``(globals some nested scope reads, globals some nested scope
+        writes through a ``global`` declaration)``, read off CPython's
+        ``symtable``: every function, lambda, class and comprehension scope
+        below the module."""
+        reads: set[str] = set()
+        writes: set[str] = set()
+        pending = list(self.module_symtable.get_children())
+        while pending:
+            table = pending.pop()
+            for symbol in table.get_symbols():
+                if not symbol.is_global():
+                    continue
+                if symbol.is_referenced():
+                    reads.add(symbol.get_name())
+                if symbol.is_declared_global() and (
+                    symbol.is_assigned() or symbol.is_imported()
+                ):
+                    writes.add(symbol.get_name())
+            pending.extend(table.get_children())
+        return frozenset(reads), frozenset(writes)
 
     def module_binding_states(self) -> "ModuleBindingStatesV1":
         """The module body threaded once, the way ``Module.substitute``
@@ -1539,8 +1608,10 @@ class SourceUnit:
 
         A reader outside the module block takes a module name from here,
         through ``module_bindings_at``.  A ``def`` statement's body is not
-        threaded (it does not run at import).  A refusal threading the body
-        is remembered and raised to every reader that asks.
+        threaded (it does not run at import).  Only the names such a reader
+        reads (``module_threaded_names``) are recorded, at every statement
+        and after the last.  A refusal threading the body is remembered and
+        raised to every reader that asks.
 
         Asked again while the body is being threaded (a statement's
         construction reached a reader of this module: a module-level live
@@ -1562,7 +1633,8 @@ class SourceUnit:
             if memo[1] is not None:
                 raise memo[1]
             return memo[2]
-        record = _ModuleStatementRecord()
+        names = self.module_threaded_names()
+        record = _ModuleStatementRecord(names)
         object.__setattr__(
             self,
             "_module_binding_states_memo",
@@ -1591,7 +1663,10 @@ class SourceUnit:
             record.open = False
             _MODULE_THREADING.reset(threading_token)
             _MODULE_EXECUTION_SITE.reset(site_token)
-        states = ModuleBindingStatesV1(at=record.at, final=final)
+        states = ModuleBindingStatesV1(
+            at=record.at,
+            final={name: final[name] for name in names if name in final},
+        )
         object.__setattr__(self, "_module_binding_states_memo", (module, None, states))
         return states
 
@@ -1669,11 +1744,16 @@ class SourceUnit:
         final binding.
 
         Each answer is the reference to the evaluation that binds the name
-        there (``_module_reference_state``), None where that binding is no
-        evaluation (the name is read by name, as it always was), or
-        ``UNDECIDED_MODULE_BINDING`` where the module body does not decide
-        it.  It does not decide it
+        there (``_module_reference_state``), or ``UNDECIDED_MODULE_BINDING``
+        where the module body does not decide it through a key.  The name
+        is never read by name in its place.  It does not decide it
 
+        - for a name the threading does not decide anywhere
+          (``module_unthreaded_names``), nor one no reader is threaded for
+          (``module_threaded_names``);
+        - for a name whose binding there is no evaluation's key (unbound
+          there, a container's mutated state, a ``with`` observation, a live
+          loop's post-binding);
         - for a site in a generator's lazily evaluated part;
         - for a name a walrus in the site's own statements binds (it may
           run before or after the read);
@@ -1692,12 +1772,23 @@ class SourceUnit:
           at a site the threading has not reached.
         """
         _MODULE_THREADING.get()
+        unthreaded = self.module_unthreaded_names() | (
+            frozenset(names) - self.module_threaded_names()
+        )
+        if all(name in unthreaded for name in names):
+            # Nothing to read from the threading: it is not run for these.
+            return {name: UNDECIDED_MODULE_BINDING for name in names}
         states = self.module_binding_states()
         if site is None:
             if states.final is None:
                 return {name: UNDECIDED_MODULE_BINDING for name in names}
             return {
-                name: _module_reference_state(states.final.get(name)) for name in names
+                name: (
+                    UNDECIDED_MODULE_BINDING
+                    if name in unthreaded
+                    else _module_reference_state(states.final.get(name))
+                )
+                for name in names
             }
         chain = site.chain
         recorded = None
@@ -1709,7 +1800,7 @@ class SourceUnit:
             depth -= 1
         if site.lazy or not recorded:
             return {name: UNDECIDED_MODULE_BINDING for name in names}
-        undecided: set = set()
+        undecided: set = set(unthreaded)
         for statement in chain:
             undecided |= _walrus_targets(statement)
         anchor = chain[depth]
@@ -3854,7 +3945,8 @@ class ModuleBindingStatesV1:
     standing when it began, once per time it was threaded (an unrolled
     loop's iterations, a ``finally``'s exit paths); ``final`` is the scope
     after the last statement: what a function called after the module body
-    reads a global as.  While the body is still being threaded ``at`` holds
+    reads a global as.  Both hold only the names a reader outside the
+    module block reads (``SourceUnit.module_threaded_names``).  While the body is still being threaded ``at`` holds
     the statements threaded so far and ``final`` is None.
     """
 
@@ -3865,13 +3957,22 @@ class ModuleBindingStatesV1:
 class _ModuleStatementRecord:
     """The table ``SourceUnit.module_binding_states`` threads a module body
     with (``_MODULE_STATEMENT_STATES``): ``at`` as ``ModuleBindingStatesV1``
-    holds it, open while that threading runs."""
+    holds it, open while that threading runs.  Each recorded scope holds
+    only ``names`` (``SourceUnit.module_threaded_names``): the names some
+    reader outside the module block reads, never every name at every
+    statement."""
 
-    __slots__ = ("at", "open")
+    __slots__ = ("at", "names", "open")
 
-    def __init__(self) -> None:
+    def __init__(self, names: frozenset) -> None:
         self.at: dict = {}
+        self.names = names
         self.open = True
+
+    def record(self, statement, scope: dict) -> None:
+        self.at.setdefault(_source_position(statement), []).append(
+            {name: scope[name] for name in self.names if name in scope}
+        )
 
 
 class ModuleExecutionSiteV1:
@@ -3972,15 +4073,14 @@ def _module_reference_state(state):
     sits in an arm of an ``if``.  A comprehension member's coordinate is
     bound only inside its comprehension, so a binding to one is
     ``UNDECIDED_MODULE_BINDING`` wherever a reader outside it reads the
-    name.  Any other state (an assignment's value, an unbound name) is no
-    evaluation: None, and the reader reads the name as before."""
+    name.  Any other state (an unbound name, a container's mutated state, a
+    ``with`` observation, a live loop's post-binding) is no evaluation's
+    key: ``UNDECIDED_MODULE_BINDING`` too, never the name read."""
     state = unwrap_binding_state(state)
     if not isinstance(state, Node):
-        return None
+        return UNDECIDED_MODULE_BINDING
     kind = _evaluation_reference_kind(state)
-    if kind is None:
-        return None
-    if kind == "member":
+    if kind is None or kind == "member":
         return UNDECIDED_MODULE_BINDING
     return state
 
@@ -4007,10 +4107,9 @@ def _evaluation_reference_kind(node) -> Optional[str]:
 def _bound_module_references(reader, bindings: dict, *, owner: str) -> dict:
     """``bindings`` (``SourceUnit.module_bindings_at``) as the scope a
     reader of module names substitutes its body in: each name bound to the
-    reference to the evaluation that binds it where the reader runs.  A name
-    whose binding is no evaluation is left out (it is read by name).  A
-    name the module body does not decide there is cited ``undecided`` by
-    name; it is never read by name in its place."""
+    reference to the evaluation that binds it where the reader runs.  A
+    name the module body does not decide there through a key is cited
+    ``undecided`` by name; it is never read by name in its place."""
     references = {}
     for name in sorted(bindings):
         binding = bindings[name]
@@ -4031,8 +4130,7 @@ def _bound_module_references(reader, bindings: dict, *, owner: str) -> dict:
                     "body; never read the name in its place"
                 ),
             )
-        if binding is not None:
-            references[name] = binding
+        references[name] = binding
     return references
 
 
@@ -4728,9 +4826,7 @@ class Node(Typed):
                 edge_states.append((stmt, pre_statement_scope))
             record = scope.get(_MODULE_STATEMENT_STATES)
             if record is not None and record.open:
-                record.at.setdefault(_source_position(stmt), []).append(
-                    pre_statement_scope
-                )
+                record.record(stmt, pre_statement_scope)
                 _MODULE_THREADING.set(object())
             lc = stmt.line_col_span()
             with reduction_span(
@@ -6791,31 +6887,35 @@ class FunctionDef(Statement):
 
     def _module_global_references(self) -> dict:
         """The module's binding of each global this body reads, where the
-        function is called, when that binding is the evaluation of a module
-        write of it (temporal choice 1, #7661).
+        function is called: the evaluation of the module write of it
+        standing there (temporal choice 1, #7661).
 
         A function reads a global when it runs.  Called from outside the
         module's execution (after import), it reads the module's last
         write: ``x = 1; x += 1; x += 1`` binds a read of ``x`` to the second
-        ``x += 1``'s evaluation, wherever the ``def`` stands.  Called while
-        the module body runs (a call in the module body or in a class body,
-        or a call reached from one: ``_MODULE_EXECUTION_SITE``), it reads
-        the binding standing at that call: ``x = 1; x += 1; y = f(); x += 1``
-        binds the read to the first ``x += 1``'s evaluation.  A write in an
-        arm of a module-level ``if`` is read through the phi the module
-        block builds over it; a walrus's write through its evaluation.
+        ``x += 1``'s evaluation, and ``X = 1; X = 2`` to ``X = 2``'s,
+        wherever the ``def`` stands.  Called while the module body runs (a
+        call in the module body or in a class body, or a call reached from
+        one: ``_MODULE_EXECUTION_SITE``), it reads the binding standing at
+        that call: ``x = 1; x += 1; y = f(); x += 1`` binds the read to the
+        first ``x += 1``'s evaluation.  A write in an arm of a module-level
+        ``if`` is read through the phi the module block builds over it; a
+        walrus's write through its evaluation.
 
         The global is the one CPython names (``symtable``: implicit or
         declared ``global``, read in this body); a local, a formal or a name
-        an enclosing function binds is not one.  A global whose binding
-        there is no evaluation (``x = 1``) is read by name, as before.  One
-        the module body does not decide there is cited ``undecided`` by
-        name (``SourceUnit.module_bindings_at``).
+        an enclosing function binds is not one.  Every global the module
+        body binds through a key (``SourceUnit.module_threaded_names``) is
+        read through it; none is read by name.  One the module body does not
+        decide there through a key is cited ``undecided`` by name
+        (``SourceUnit.module_bindings_at``).  A global bound only by a
+        ``def``, ``class`` or ``import`` statement is not the module
+        threading's: its read resolves the definition or the import.
         """
         unit = self.unit
         if unit.typed_module is None:
             return {}
-        candidates = unit.module_evaluation_bound_names()
+        candidates = unit.module_threaded_names()
         if not candidates:
             return {}
         table = unit.function_symtable(self.name, self.line_col_span().start_line)
@@ -7485,15 +7585,15 @@ class ClassDef(Statement):
         later and in whatever context (the class-call door, #7794).  So
         ``x = 1; x += 1; class C: y = x; x += 1`` reads ``y`` as the first
         ``x += 1``'s evaluation.  A name the class body binds itself is not
-        read from the module; a binding that is no evaluation is read by
-        name, as before; one the module body does not decide there is cited
-        ``undecided`` by name.  A class in a function body reads its
-        enclosing function's bindings and is not answered here.
+        read from the module; one the module body does not decide there
+        through a key is cited ``undecided`` by name, never read by name.  A
+        class in a function body reads its enclosing function's bindings and
+        is not answered here.
         """
         unit = self.unit
         if unit.typed_module is None:
             return {}
-        candidates = unit.module_evaluation_bound_names()
+        candidates = unit.module_threaded_names()
         if not candidates:
             return {}
         bound_here: set[str] = set()
@@ -16063,7 +16163,7 @@ class Call(Expression):
         none: called from outside the module's execution.  The call itself
         constructs in ``_construct_call_sugar``."""
         unit = self.unit
-        if not unit.module_evaluation_bound_names():
+        if not unit.module_threaded_names():
             return self._construct_call_sugar()
         site = unit.module_execution_site(self)
         if site is None:
