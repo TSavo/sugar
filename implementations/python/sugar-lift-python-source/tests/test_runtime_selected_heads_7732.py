@@ -11,12 +11,14 @@ Three causes, each with its twins:
 * Population projected a frame for its manager calls before any reader had
   seated a contract, and a ``with ... as`` in that frame demanded its contract
   then (``tests/io/parser/common/test_file_buffer_url.py:429``,
-  ``io/xml.py:537``).  The projection now exports no ``as`` binding for an
-  unseated item; the With still constructs (or refuses) later through the
-  require door.
+  ``io/xml.py:537``).  A ``with ... as name`` binds ``name`` without demanding
+  a row nobody seated (``With.substitution_binding``), in the projection as
+  everywhere; the With still constructs (or refuses) through the require door.
 * A same-module ``@contextmanager`` whose body runs ``with open(...)``
   (``io/formats/format.py:1052``) built its frame before ``open`` was seated.
-  The builtin C manager is now seated first.
+  The one ``with`` reader reads a definition's own ``with`` nodes before the
+  definition (``_WithReader.read_within``); ``open`` is the builtin name
+  (``SourceUnit.builtin_reference_at``), cited.
 """
 
 from __future__ import annotations
@@ -165,7 +167,7 @@ def test_projection_seats_an_outer_with_as_before_its_readers(tmp_path):
 
 
 def test_projection_does_not_construct_an_unseated_with(tmp_path):
-    # The lying twin: the projection's leniency is the projection's only.  A
+    # The lying twin: binding ``as`` never constructs the With.  A
     # ``with ... as`` no reader can seat still refuses when it is constructed.
     source = (
         "def f():\n"

@@ -53,6 +53,11 @@ class _DuckWith:
         del item
         return None
 
+    def _seated_manager_resolution(self, item):
+        # A seated row: the door is asked, and its panic must rise.
+        del item
+        return None, object()
+
     def _require_narrow_cm_ref(self, item):
         del item
         raise self._panic

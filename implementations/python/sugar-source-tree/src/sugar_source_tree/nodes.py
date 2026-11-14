@@ -59,7 +59,6 @@ from .panic import (
 from .reporter import NULL_REPORTER, AuditReporter
 from .construction_cache import (
     AmbientSet,
-    AmbientVar,
     abandon_row,
     close_row,
     open_row,
@@ -10503,29 +10502,6 @@ class If(Statement):
         )
 
 
-import contextlib as _contextlib_for_projection
-
-# True while population projects a frame only to collect its manager calls
-# (#7732).  That projection runs BEFORE any reader has seated a contract, so a
-# ``with ... as name`` in the projected frame has none yet: it exports no
-# ``as`` binding instead of demanding the contract now.  The projection is
-# read for its manager calls and then discarded; the With itself constructs
-# later through the same require door, loudly, once every reader has run.
-_IN_MANAGER_USE_PROJECTION: AmbientVar = AmbientVar(
-    "sugar_in_manager_use_projection", default=False
-)
-
-
-@_contextlib_for_projection.contextmanager
-def manager_use_projection():
-    """Mark a substitution as population's manager-call projection."""
-    token = _IN_MANAGER_USE_PROJECTION.set(True)
-    try:
-        yield
-    finally:
-        _IN_MANAGER_USE_PROJECTION.reset(token)
-
-
 def selected_manager_calls(expr):
     """The arms' manager calls of a branch-selected ``with`` head, else None.
 
@@ -10548,28 +10524,51 @@ def selected_manager_calls(expr):
     return (*body, *orelse)
 
 
+# What ``With._seated_manager_resolution`` answers for an occurrence nobody
+# seated a row for.  A sentinel, not None: a seated row is read as it is.
+_UNSEATED_MANAGER_ROW = object()
+
+
 class With(Statement):
     items: Tuple[WithItem, ...]
     body: Tuple[Statement, ...]
     _child_fields = ("items", "body")
 
-    def _manager_contract_populated(self, item: WithItem) -> bool:
-        """Whether population has seated a row (ref, citation or gap) for ``item``."""
-        from sugar_lift_py_tests.context_manager_resolution import (
-            SourceFragmentCoordinateV1,
-        )
-
-        context = self.unit.construction_context
-        refs = getattr(context, "source_derived_contract_refs", None)
-        if refs is None:
-            return True  # the door itself reports the missing context
-        coordinate = SourceFragmentCoordinateV1(
-            self.unit.source_cid, *item._manager_use_site_span()
-        )
-        return coordinate in refs
-
     def _prebound_manager_resolution(self, item: WithItem):
-        """Read the sole preconstruction contract resolution for this occurrence."""
+        """Read the sole preconstruction contract resolution for this occurrence.
+
+        The require door: a row nobody seated refuses by name, here.
+        """
+        coordinate, resolution = self._seated_manager_resolution(item)
+        if resolution is not _UNSEATED_MANAGER_ROW:
+            return resolution
+        # Construct or panic: no contract ref means construction is unwritten.
+        from .panic import ContextManagerResolutionConstructionGap
+
+        panic = ContextManagerResolutionConstructionGap(
+            blame=self.fragment,
+            owner="With._construct_sugar",
+            observed=(
+                "no context-manager derivation for source coordinate "
+                f"{coordinate}"
+            ),
+            requested="one resolved authenticated ContextManagerContractRefV1",
+            fix=(
+                "publish or derive the exact typed CM contract before construction; "
+                "With constructs only through the require door"
+            ),
+            use_site=coordinate,
+        )
+        testify(self.reporter, "report_gap", self, panic)
+        raise panic
+
+    def _seated_manager_resolution(self, item: WithItem):
+        """``(coordinate, row)`` for this occurrence; ``row`` is
+        ``_UNSEATED_MANAGER_ROW`` when nobody seated one.
+
+        The one lookup the require door reads.  It never refuses for absence:
+        only the door (``_prebound_manager_resolution``) does.
+        """
         context = self._require_construction_context(
             owner="With._prebound_manager_resolution"
         )
@@ -10597,7 +10596,7 @@ class With(Statement):
         )
         derived = context.source_derived_contract_refs.get(coordinate)
         if derived is not None:
-            return derived
+            return coordinate, derived
         if hasattr(item, "selected_arm_of_start_line"):
             # One arm of a branch-selected head (``_selected_manager_sugar``):
             # its resolution rides inside the With item's selected ref.
@@ -10617,29 +10616,11 @@ class With(Statement):
             if isinstance(selected, SelectedContextManagerRefV1):
                 arm = selected.arm(coordinate)
                 if arm is not None:
-                    return arm
+                    return coordinate, arm
         try:
-            return context.contract_refs.require(coordinate)
+            return coordinate, context.contract_refs.require(coordinate)
         except ContractRefProtocolError:
-            # Construct or panic: no contract ref means construction is unwritten.
-            from .panic import ContextManagerResolutionConstructionGap
-
-            panic = ContextManagerResolutionConstructionGap(
-                blame=self.fragment,
-                owner="With._construct_sugar",
-                observed=(
-                    "no context-manager derivation for source coordinate "
-                    f"{coordinate}"
-                ),
-                requested="one resolved authenticated ContextManagerContractRefV1",
-                fix=(
-                    "publish or derive the exact typed CM contract before construction; "
-                    "With constructs only through the require door"
-                ),
-                use_site=coordinate,
-            )
-            testify(self.reporter, "report_gap", self, panic)
-            raise panic
+            return coordinate, _UNSEATED_MANAGER_ROW
 
     def _published_generator_resource_testimony(self, item: WithItem):
         """Return the producer's one closed generator-resource surface."""
@@ -11925,15 +11906,21 @@ class With(Statement):
                 if not self._already_bound_store(enter_slot):
                     return None
                 return self.body[0].substitution_binding(scope)
+            # The ``as`` name is the with's enter result, as it is inside the
+            # body (``With.substitute``), unless the item's seated row says
+            # otherwise: an effect boundary hands out its observation slot, a
+            # gap or an unadmitted contract refuses through the door here.  A
+            # row nobody seated is construction's question, not this
+            # binding's: ``_construct_sugar`` asks the same require door and
+            # refuses by name.  So no caller (population's manager-call
+            # projection included) needs every row seated before it binds.
             # SourceTreePanic from the door propagates — no Exception swallow.
             resolved_ref = None
-            if self._generator_manager_frame(item) is None:
-                if (
-                    _IN_MANAGER_USE_PROJECTION.get()
-                    and not self._manager_contract_populated(item)
-                ):
-                    # No reader has run yet; constructed (or refused) later.
-                    return None
+            if (
+                self._generator_manager_frame(item) is None
+                and self._seated_manager_resolution(item)[1]
+                is not _UNSEATED_MANAGER_ROW
+            ):
                 resolved_ref = self._require_narrow_cm_ref(item)
             from sugar_lift_py_tests.context_manager_contract import (
                 EffectBoundarySemanticsV1,
