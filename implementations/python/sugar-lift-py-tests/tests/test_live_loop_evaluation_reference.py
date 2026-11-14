@@ -1304,17 +1304,39 @@ def test_a_symbolic_items_append_leaves_the_loop_with_it() -> None:
     assert any(len(record) > shortest for record in records), records
 
 
-def _left_by_the_item(body):
-    """The loop's exits from the symbolic item's ``body``, the recurrence
-    standing as ``TermValue(0)`` after what the item left."""
+def _recurrence_standing_as(stand: TermValue):
+    """A stand-in for the loop leaving as its recurrence (``_left_with``):
+    ``stand`` after what the item left; a halt leaves by itself, ``stand``
+    after what its record holds."""
+    from dataclasses import replace
+
     from sugar_lift_py_tests.floor.block_value import BlockValue
 
+    def leave(entries=(), *, halt=None, can_fall_through=True):
+        if halt is not None:
+            return ExitSet.halted(
+                halt.effect,
+                state=replace(
+                    halt.state, entries=(*entries, *halt.state.entries, stand)
+                ),
+            )
+        return ExitSet.completed(
+            BlockValue((*entries, stand), can_fall_through=can_fall_through)
+        )
+
+    return leave
+
+
+def _left_by_the_item(body, *, exhausted=None):
+    """The loop's exits from the symbolic item's ``body``, the recurrence
+    standing as ``TermValue(0)`` after what the item left."""
     return LoopRecurrenceSugar._leave_symbolic_item(
         SimpleNamespace(target_cid=LOOP),
         body,
-        lambda entries=(): ExitSet.completed(BlockValue((*entries, TermValue(0)))),
+        _recurrence_standing_as(TermValue(0)),
         atomic("test.item", []),
         target_bindings=(),
+        exhausted=exhausted,
     )
 
 
@@ -1628,6 +1650,345 @@ def test_two_halts_whose_contexts_hold_an_evaluation_apart_stay_two_arms() -> No
         )
     ).normalize()
     assert len(exits.exits) == 2, exits
+
+
+# -- every halt leaving a loop carries what the items did (#7757 item 7) ------
+
+OUTER = "blake3-512:test-outer-loop"
+
+
+def _outer_break(state) -> Halted:
+    """An enclosing loop's ``break`` from ``state``: a halt leaving this
+    loop that is not its own control."""
+    from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+
+    (halt,) = ExitSet.halted(
+        LoopControlEffect("break", OUTER, "blake3-512:test-outer-break"),
+        state=state,
+    ).exits
+    return halt
+
+
+def _halt_records(outcome) -> list:
+    """The record of every halted exit of ``outcome``."""
+    return [
+        tuple(getattr(exit_.state, "entries", ()))
+        for exit_ in outcome.exits
+        if isinstance(exit_, Halted)
+    ]
+
+
+def test_a_halt_leaving_a_concrete_item_carries_the_earlier_items_entries() -> None:
+    # The items before it left ``TermValue(0)``; the item left
+    # ``TermValue(1)`` before the halt.  The halt leaves the loop by itself,
+    # its record holding both, from its own context.
+    record = _control_record(TermValue(1))
+    halt = _outer_break(record)
+    outcome = _recurrence()._after_loop_control(
+        halt,
+        SimpleNamespace(carried_names=()),
+        (),
+        None,
+        entries=(TermValue(0),),
+        index=1,
+    )
+    (left,) = outcome.exits
+    assert isinstance(left, Halted)
+    assert left.effect == halt.effect
+    assert left.state.entries == (TermValue(0), TermValue(1))
+    assert left.state.context is record.context
+
+
+def test_a_halt_with_nothing_to_carry_leaves_as_it_is() -> None:
+    record = _control_record(TermValue(1))
+    (left,) = _recurrence()._left_with((), (), halt=_outer_break(record)).exits
+    assert left.state is record
+
+
+@pytest.mark.parametrize("bare", ["none", "context"])
+def test_a_halt_without_a_record_is_given_one_with_what_the_items_did(
+    bare: str,
+) -> None:
+    context = (
+        None if bare == "none" else ReduceContext.root(owner="live-loop-bare-halt")
+    )
+    (left,) = _recurrence()._left_with(
+        (TermValue(0),), (), halt=_outer_break(context)
+    ).exits
+    assert left.state.entries == (TermValue(0),)
+    assert left.state.context is context
+
+
+def test_a_halt_whose_state_is_no_record_is_refused_by_name() -> None:
+    from sugar_source_tree.panic import SugarNotWritten
+
+    # Nothing to carry the items' entries beside: refused, never dropped.
+    with pytest.raises(SugarNotWritten):
+        _recurrence()._left_with((TermValue(0),), (), halt=_outer_break("payload"))
+
+
+def test_a_halt_leaving_the_else_carries_the_loops_publication() -> None:
+    # The ``else`` suite left ``TermValue(1)`` and halted; the items left
+    # ``TermValue(0)``.  The halt leaves with both and the loop's
+    # publication, bound in its context too, where an enclosing loop reads
+    # its latch.
+    recurrence = LoopRecurrenceSugar(
+        target_cid=LOOP,
+        loop_construction_cid="blake3-512:test-construction",
+        binding_coordinate_cids=("blake3-512:test-binding",),
+        post_binding_keys=(POST,),
+        outward_faces=(),
+        construction=None,
+        site="live-loop-evaluation",
+    )
+    record = _control_record(TermValue(1))
+    (left,) = recurrence._publish_runtime_bindings(
+        _RUNTIME,
+        record.context,
+        entries=(TermValue(0),),
+        carried=(TermValue(4),),
+        items=1,
+        else_ran=True,
+        halt=_outer_break(record),
+    ).exits
+    assert isinstance(left, Halted)
+    assert left.state.entries == (
+        TermValue(0),
+        TermValue(1),
+        ScopeRebind(POST, TermValue(4)),
+    )
+    assert left.state.context.temporal.value_if_bound(POST) == TermValue(4)
+
+
+def test_a_halt_leaving_an_else_that_writes_is_read_where_it_halted() -> None:
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+    from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
+        _else_left_from,
+        _else_witnesses,
+    )
+    from sugar_lift_py_tests.temporal import bind_temporal
+    from sugar_source_tree.panic import SugarNotWritten
+
+    # The suite writes the carried name: the loop's publication is read
+    # where the suite halted, a context holding the header the loop bound
+    # for the suite.  A halt from another frame's context (a callee's
+    # record) does not hold what the suite wrote: refused by name.
+    runtime = SimpleNamespace(carried_evaluations=((HEADER, (), (ELSE_WRITE,)),))
+    began = bind_temporal(
+        ReduceContext.root(owner="live-else-began"),
+        HEADER,
+        TermValue(1),
+        owner="test",
+        blame="test",
+    )
+    witnesses = _else_witnesses(runtime, began)
+    assert witnesses == ((HEADER, TermValue(1)),)
+    halted_in = bind_temporal(
+        began, ELSE_WRITE, TermValue(2), owner="test", blame="test"
+    )
+    halt = _outer_break(_ReducedBlock((), False, (), context=halted_in))
+    assert _else_left_from(runtime, began, witnesses, halt, site=None) is halted_in
+    callee = ReduceContext.root(owner="live-else-callee")
+    foreign = _outer_break(_ReducedBlock((), False, (), context=callee))
+    with pytest.raises(SugarNotWritten):
+        _else_left_from(runtime, began, witnesses, foreign, site=None)
+    # A suite that writes nothing leaves every name as it began.
+    quiet = SimpleNamespace(carried_evaluations=((HEADER, (), ()),))
+    assert _else_left_from(quiet, began, witnesses, foreign, site=None) is began
+
+
+def test_a_halt_leaving_the_symbolic_item_carries_what_the_items_did() -> None:
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    # ``x`` decides the item: it left ``TermValue(1)`` and an enclosing
+    # loop's ``break`` left it, or it left ``TermValue(2)`` and fell
+    # through.  The halt leaves by itself with what the item did and the
+    # recurrence (what the items before it did), under the item's guard.
+    test = atomic("test.x", [])
+    record = _control_record(TermValue(1))
+    body = ExitSet(
+        (
+            Halted(test, _outer_break(record).effect, record),
+            Completed(not_(test), _ReducedBlock((TermValue(2),), True, ())),
+        )
+    )
+    (left,) = [
+        exit_ for exit_ in _left_by_the_item(body).exits if isinstance(exit_, Halted)
+    ]
+    assert left.state.entries == (TermValue(1), TermValue(0))
+    assert "test.x" in str(left.guard)
+    assert "test.item" in str(left.guard)
+
+
+@pytest.mark.parametrize(("action", "stand"), [("break", 0), ("continue", 9)])
+def test_the_symbolic_items_continue_is_exhausted_and_its_break_is_not(
+    action: str, stand: int
+) -> None:
+    from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+
+    # Exhausted (``TermValue(9)``: through the ``else`` suite), the loop
+    # leaves after a ``continue`` and where no item ran; after a ``break``
+    # it leaves as the recurrence (``TermValue(0)``), the ``else`` not run.
+    body = ExitSet.halted(
+        LoopControlEffect(action, LOOP, "blake3-512:test-control"),
+        state=_control_record(TermValue(1)),
+    )
+    left = _left_by_the_item(body, exhausted=_recurrence_standing_as(TermValue(9)))
+    values = [exit_.value for exit_ in left.exits]
+    assert BlockValue((TermValue(1), TermValue(stand))) in values
+    assert BlockValue((TermValue(9),)) in values
+
+
+_RAISE_IN_AN_ITEM = (
+    "def f(xs):\n"
+    "    acc = []\n"
+    "    for x in {iterable}:\n"
+    "        acc.append(x)\n"
+    "        if x == 2:\n"
+    "            raise ValueError()\n"
+    "    return acc\n"
+    "def g():\n"
+    "    return (1, 2)\n"
+)
+
+
+def test_a_raise_leaving_a_concrete_item_carries_the_earlier_items_appends() -> None:
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # Item 0 appended 1 and went on; item 1 appended 2 and raised.  The
+    # raise leaves the loop with item 0's append as well as its own.
+    outcome = function_universe_outcome(
+        _function(_RAISE_IN_AN_ITEM.format(iterable="g()"))
+    )
+    records = _halt_records(outcome)
+    assert records, outcome
+    assert _holds(records, ListValue((TermValue(1),))), records
+    assert _holds(records, ListValue((TermValue(1), TermValue(2)))), records
+
+
+def _recurrence_facts(records, head) -> list:
+    """Every recurrence fact (``head = python:loop.step(head, ...)``) the
+    records hold for ``head``."""
+    from sugar_lift_py_tests.floor import InvValue
+
+    facts = []
+    for record in records:
+        for entry in record:
+            if not isinstance(entry, InvValue):
+                continue
+            if tuple(getattr(entry.formula, "args", ()))[:1] == (head,):
+                facts.append(entry)
+    return facts
+
+
+def _publishes(records, value) -> bool:
+    """Whether some record holds a publication (``ScopeRebind``) of
+    ``value``."""
+    for record in records:
+        for entry in record:
+            if isinstance(entry, ScopeRebind) and entry.value == value:
+                return True
+    return False
+
+
+def test_a_raise_leaving_the_symbolic_item_carries_the_recurrence() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``xs`` is symbolic: where the item raises, it leaves the loop with what
+    # it did and the recurrence, which is what the items before it did.
+    function = _function(_RAISE_IN_AN_ITEM.format(iterable="xs"))
+    outcome = function_universe_outcome(function)
+    head = _recurrence_value(function, "x").term
+    assert _recurrence_facts(_halt_records(outcome), head), outcome
+
+
+_RAISE_IN_THE_ELSE = (
+    "def f(xs):\n"
+    "    acc = []\n"
+    "    for x in {iterable}:\n"
+    "        acc.append(x)\n"
+    "    else:\n"
+    "        raise ValueError()\n"
+    "    return acc\n"
+    "def g():\n"
+    "    return (1, 2)\n"
+)
+
+
+def test_a_raise_leaving_a_concrete_else_carries_the_items_and_publication() -> None:
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # Both items appended, then the ``else`` raised: the raise leaves with
+    # both appends and the loop's publication of the target's last value.
+    outcome = function_universe_outcome(
+        _function(_RAISE_IN_THE_ELSE.format(iterable="g()"))
+    )
+    records = _halt_records(outcome)
+    assert _holds(records, ListValue((TermValue(1),))), records
+    assert _holds(records, ListValue((TermValue(1), TermValue(2)))), records
+    assert _publishes(records, TermValue(2)), records
+
+
+def test_a_raise_leaving_a_symbolic_loops_else_carries_the_publication() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``xs`` is symbolic: the loop is exhausted where an item ran and where
+    # none did, and its ``else`` runs there and raises.  The raise leaves
+    # with the recurrence and the loop's publication of the target.
+    function = _function(_RAISE_IN_THE_ELSE.format(iterable="xs"))
+    outcome = function_universe_outcome(function)
+    records = _halt_records(outcome)
+    head = _recurrence_value(function, "x")
+    assert _recurrence_facts(records, head.term), outcome
+    assert _publishes(records, head), records
+
+
+_BREAK_IN_THE_ELSE = (
+    "def f(xs):\n"
+    "    acc = []\n"
+    "    for y in g():\n"
+    "        for x in {iterable}:\n"
+    "            acc.append(x)\n"
+    "        else:\n"
+    "            break\n"
+    "        return 0\n"
+    "    return acc\n"
+    "def g():\n"
+    "    return (1, 2)\n"
+)
+
+
+def test_an_outer_break_in_a_concrete_loops_else_carries_the_items() -> None:
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # The inner loop appended 1 and 2, then its ``else`` broke the outer
+    # loop: the outer loop leaves with the inner items' appends.
+    outcome = function_universe_outcome(
+        _function(_BREAK_IN_THE_ELSE.format(iterable="g()"))
+    )
+    records = _records(outcome)
+    assert records, outcome
+    assert _holds(records, ListValue((TermValue(1),))), records
+    assert _holds(records, ListValue((TermValue(1), TermValue(2)))), records
+    assert TermValue(0) not in _flattened(_returned_values(outcome))
+
+
+def test_an_outer_break_in_a_symbolic_loops_else_leaves_the_outer_loop() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``xs`` is symbolic: the inner loop is exhausted where an item ran and
+    # where none did, and its ``else`` breaks the outer loop there, so the
+    # outer item never reaches ``return 0``.
+    outcome = function_universe_outcome(
+        _function(_BREAK_IN_THE_ELSE.format(iterable="xs"))
+    )
+    returned = _flattened(_returned_values(outcome))
+    assert returned, outcome
+    assert TermValue(0) not in returned, returned
 
 
 def test_each_read_of_an_evaluation_is_spanned_at_its_use() -> None:

@@ -685,7 +685,8 @@ def test_loop_exhaustion_carrier_composes_beneath_the_stop_iteration(monkeypatch
 
 def _finish_with_else(monkeypatch, otherwise):
     """Finish a loop whose ``else`` suite reduced to ``otherwise``; each
-    publication answers ``("published", entries)``."""
+    publication answers ``("published", entries)``, and a halt of the suite
+    leaves by itself from ``("published", entries, its own state)``."""
     from sugar_lift_py_tests.sugar import function_universe_sugar
     from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 
@@ -705,10 +706,16 @@ def _finish_with_else(monkeypatch, otherwise):
         can_fall_through=True,
         items=0,
         else_ran=False,
+        halt=None,
     ):
+        if halt is not None:
+            return ExitSet.halted(
+                halt.effect, state=("published", entries, halt.state)
+            )
         return ExitSet.completed(("published", entries))
 
     loop = SimpleNamespace(
+        site=None,
         _enter_header=lambda runtime, ctx, carried: ctx,
         _leave_target=lambda runtime, ctx, items: ctx,
         _after_else=lambda runtime, ctx: (),
@@ -724,9 +731,10 @@ def _finish_with_else(monkeypatch, otherwise):
 
 
 def test_loop_else_with_several_faces_publishes_beneath_each(monkeypatch):
-    # Every completed face of the ``else`` suite leaves the loop with its
-    # bindings published beneath it, under its guard and faces, owing what it
-    # owes; a halt of the suite leaves as it is.
+    # Every face of the ``else`` suite leaves the loop with its bindings
+    # published beneath it, under its guard and faces, owing what it owes; a
+    # halt of the suite leaves by itself, with what the items left and its
+    # own record (#7757 item 7).
     from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
     face, _ = partition("carrier-bridge-sites.else")
@@ -760,7 +768,12 @@ def test_loop_else_with_several_faces_publishes_beneath_each(monkeypatch):
     assert "owed.first" in published_first.owed
     assert "test.else.second" in str(published_second.guard)
     assert "owed.second" in published_second.owed
-    assert raised in finished.exits
+    (left_by_raise,) = [
+        exit_ for exit_ in finished.exits if isinstance(exit_, Halted)
+    ]
+    assert left_by_raise.effect == raised.effect
+    assert left_by_raise.state == ("published", ("before",), None)
+    assert "test.else.raised" in str(left_by_raise.guard)
 
 
 def test_loop_else_carrier_publishes_once_it_discharges(monkeypatch):
@@ -814,10 +827,17 @@ def test_loop_symbolic_item_carrier_composes_through_after_discharge():
         lambda value: ExitSet.completed(_ReducedBlock((value,), False, ()))
     )
     loop = SimpleNamespace(target_cid="loop-target:" + "c" * 32)
+
+    def leaving(entries=(), *, halt=None, can_fall_through=True):
+        # The loop leaving: by the item's ``return``, or as its recurrence.
+        if not can_fall_through:
+            return ExitSet.completed(BlockValue(entries, can_fall_through=False))
+        return ExitSet.completed(("recurrence", *entries))
+
     left_by = LoopRecurrenceSugar._leave_symbolic_item(
         loop,
         body,
-        lambda entries=(): ExitSet.completed(("recurrence", *entries)),
+        leaving,
         atomic("test.item", []),
         target_bindings=(),
     )
