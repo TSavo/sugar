@@ -350,25 +350,20 @@ def _explicit_state(name: str, state):
 
 
 _NESTED_COMPREHENSION_TEMPLATE = object()
-# The closure cells of the eager comprehensions enclosing a substitution
-# (#7757 item 7), one layer per comprehension, outermost first: the lambdas it
-# stores unevaluated in what it produces, and, for each name its targets bind,
-# what the cell holds once it is done (``_closure_cell_scope``).
-_CLOSURE_CELLS = object()
 
 # Set in the scope a generator expression substitutes its conditions and
 # element in: a walrus there writes when the generator is consumed, not where
 # it is made (``NamedExpr.substitute`` marks it ``deferred``).
 _DEFERRED_WALRUS = object()
 
-# The source positions of the lambdas that escape a comprehension and may be
-# called while it runs or after it: each lambda in the value of a walrus
-# enclosing a substitution (``NamedExpr.substitute``), which escapes through
-# the walrus's name, and each lambda a generator expression yields
-# (``GeneratorExp.substitute``: the element is a lambda, holds one in a
-# display, or an inner comprehension there stores one), which escapes through
-# the generator.  Such a lambda reads each comprehension cell at its call
-# (``Lambda._cells_read_at_the_call``), however it escapes.
+# The source positions of the lambdas inside the comprehensions enclosing a
+# substitution: every lambda anywhere in a comprehension (its element, key,
+# value, conditions and iterables), whatever route it may take out of it --
+# called in place, handed to a call, stored, yielded, returned by a call, held
+# by a walrus's name (``_escaping_at_the_call``).  The route is never guessed
+# from the lambda's syntactic shape.  Each such lambda reads each
+# comprehension cell at its call (``Lambda._cells_read_at_the_call``), and the
+# call decides the member (``EvaluationRefSugar``).
 _ESCAPES_READ_AT_THE_CALL = object()
 
 
@@ -4463,11 +4458,12 @@ def final_member_coordinate(member_coordinate: str) -> str:
     what the comprehension's cell for ``member_coordinate`` holds once the
     comprehension is done (the last member iterated, filtered or not).
 
-    A closure stored in what the comprehension produces is called after the
-    comprehension (``fs = [lambda: x for x in xs]; fs[0]()``), and Python
-    reads the cell at call time, so its read of the member is a member
-    reference to this coordinate (``_closure_cell_scope``), bound by
-    ``ComprehensionSugar`` before the element is reduced."""
+    A lambda made in the comprehension may be called after it (``fs =
+    [lambda: x for x in xs]; fs[0]()``), and Python reads the cell at call
+    time, so its read of the member names this coordinate
+    (``Lambda._cells_read_at_the_call``), bound by ``ComprehensionSugar``
+    before the element is reduced and read by a call after the
+    comprehension."""
     from sugar_lift_python_source.canonical import cid_of_json
 
     return cid_of_json(
@@ -4514,22 +4510,30 @@ def lambda_evaluation_coordinate(member_coordinate: str) -> str:
     )
 
 
-def _walrus_lambdas(value) -> frozenset:
-    """The source positions of the lambdas in a walrus's value
-    (``_ESCAPES_READ_AT_THE_CALL``): each may be bound to the walrus's name,
-    or held in what is."""
-    return frozenset(
-        _source_position(node) for node in value.walk() if isinstance(node, Lambda)
+def _escaping_at_the_call(scope, comprehension) -> "BindingMap":
+    """``scope`` with every lambda in ``comprehension`` marked
+    (``_ESCAPES_READ_AT_THE_CALL``): the one way a lambda inside a
+    comprehension or generator expression is told to read each comprehension
+    cell at its call (``Lambda._cells_read_at_the_call``).
+
+    Every lambda, whatever its shape: one stored in the element, yielded,
+    called in place (``key=``), handed to a call that returns or keeps it
+    (``(f(lambda: x) for x in xs)``), held in an inner generator's iterable
+    (``((y for y in [lambda: x]) for x in xs)``) or bound by a walrus may be
+    called inside a run of the comprehension or after it, and its syntactic
+    shape does not say which.  The call decides (``EvaluationRefSugar``):
+    inside the run that made it, the member current at the call; after the
+    run, the final member, placed always for an eager comprehension and for
+    a generator only where it is consumed whole in place
+    (``GeneratorExp._consumed_whole_in_place``); refused by name otherwise.
+    A lambda that reads no comprehension member is unchanged by the mark.  A
+    ``def`` cannot stand in a comprehension: its lambdas are the only
+    functions made there.  ``scope`` unchanged when there are none."""
+    positions = frozenset(
+        _source_position(node)
+        for node in comprehension.walk()
+        if isinstance(node, Lambda)
     )
-
-
-def _escaping_at_the_call(scope, positions) -> "BindingMap":
-    """``scope`` with the lambdas at ``positions`` marked as escaping
-    (``_ESCAPES_READ_AT_THE_CALL``): the one way a lambda that escapes a
-    comprehension -- through a walrus's name or yielded by a generator
-    expression -- is told to read each comprehension cell at its call
-    (``Lambda._cells_read_at_the_call``).  ``scope`` unchanged when there
-    are none."""
     if not positions:
         return scope
     escapes = scope.get(_ESCAPES_READ_AT_THE_CALL, frozenset()) | positions
@@ -4538,130 +4542,9 @@ def _escaping_at_the_call(scope, positions) -> "BindingMap":
 
 def _source_position(node: "Node") -> tuple:
     """The source occurrence a node is recognised by across substitution (a
-    rewrite borrows its origin's span): a stored lambda, a module statement
-    the module threading recorded."""
+    rewrite borrows its origin's span): a lambda read at its call, a module
+    statement the module threading recorded."""
     return (node.kind, node.span.start, node.span.end)
-
-
-def _stored_closures(roots) -> frozenset:
-    """The lambdas a comprehension puts unevaluated in what it produces: an
-    element (a dict comprehension's key or value) that is a lambda, a lambda
-    inside a list, tuple, set or dict display there, or a lambda an eager
-    comprehension there stores in its own result (``[[lambda: x for _ in
-    ys] for x in xs]``): that result is stored in this one, so the lambda
-    escapes both.
-
-    Nothing calls such a lambda before an eager comprehension is done, so it
-    reads the comprehension's final member (``_closure_cell_scope``).  A
-    generator expression yields such a lambda while it runs, and its
-    consumer may call it before the next member, so it reads the cell at
-    each call (``GeneratorExp.substitute``, ``_ESCAPES_READ_AT_THE_CALL``).
-    A lambda anywhere else (called in place, handed to a call, read by a
-    condition, yielded by a generator expression in the element, which marks
-    it itself) may be called while the comprehension runs, when the cell
-    holds the current member, and is not one of these.  Nor is a lambda in a
-    walrus's value (``[(g := lambda: x) for x in xs]``): it escapes through
-    the walrus's name and may be called while the comprehension runs or
-    after it, so it reads the cell at each call
-    (``Lambda._cells_read_at_the_call``)."""
-    found = set()
-    pending = list(roots)
-    while pending:
-        node = pending.pop()
-        if isinstance(node, Lambda):
-            found.add(_source_position(node))
-        elif isinstance(node, (List, Tuple_, Set)):
-            pending.extend(node.elts)
-        elif isinstance(node, Dict):
-            for item in node.items:
-                if item.key is not None:
-                    pending.append(item.key)
-                pending.append(item.value)
-        elif isinstance(node, (ListComp, SetComp)):
-            pending.append(node.elt)
-        elif isinstance(node, DictComp):
-            pending.extend((node.key, node.value))
-    return frozenset(found)
-
-
-def _closure_cell_scope(scope, roots, cells) -> "BindingMap":
-    """``scope`` for substituting ``roots`` (an eager comprehension's element,
-    or a dict comprehension's key and value) with ``cells``: each name the
-    comprehension's targets bind, to what the comprehension's cell for it
-    holds once the comprehension is done -- the last member's projection
-    when the comprehension dissolves, a member reference to the final member
-    coordinate (``final_member_coordinate``) when it does not.
-
-    The cells are one layer on the layers of the comprehensions enclosing
-    this one: a lambda reads, for each comprehension it escapes, that
-    comprehension's cells (``Lambda.substitute``).  ``Lambda.substitute``
-    reads them in the body of a lambda the comprehension stores
-    (``_stored_closures``), the way a lambda's body reads every other
-    enclosing binding: by substitution.  ``scope`` unchanged when no lambda
-    is stored or no name has a cell."""
-    if not cells:
-        return scope
-    stored = _stored_closures(roots)
-    if not stored:
-        return scope
-    return {
-        **scope,
-        _CLOSURE_CELLS: (*scope.get(_CLOSURE_CELLS, ()), (stored, dict(cells))),
-    }
-
-
-def _mask_closure_cells(scope, names) -> "BindingMap":
-    """``scope`` with ``names`` -- the names a comprehension's targets bind --
-    removed from the cells of every enclosing comprehension: inside it those
-    names are its own, never an enclosing comprehension's cell."""
-    layers = scope.get(_CLOSURE_CELLS)
-    if not layers or not names:
-        return scope
-    return {
-        **scope,
-        _CLOSURE_CELLS: tuple(
-            (stored, {k: v for k, v in cells.items() if k not in names})
-            for stored, cells in layers
-        ),
-    }
-
-
-def _member_closure_scope(owner, inner, roots) -> "BindingMap":
-    """``inner`` (the scope an eager comprehension ``owner`` that does not
-    dissolve substitutes ``roots`` in) with the comprehension's cells: each
-    target name, to a member reference to its final member coordinate
-    (``_final_member_cells``)."""
-    if not _stored_closures(roots):
-        return inner
-    return _closure_cell_scope(
-        inner, roots, _final_member_cells(owner, owner.generators, inner)
-    )
-
-
-def _final_member_cells(owner, generators, inner) -> dict:
-    """Each name ``generators`` bind whose read in ``inner`` is a member
-    reference (``ListComp._target_references``), to a member reference to
-    that member's final coordinate (``final_member_coordinate``), marked
-    ``cell``: the lambda that reads it carries the binding in its closure."""
-    names = set()
-    for gen in generators:
-        names |= owner._bound_names_in(gen.target)
-    cells = {}
-    for name in names:
-        reference = unwrap_binding_state(inner.get(name))
-        if (
-            isinstance(reference, EvaluationRef)
-            and getattr(reference, "member", False) is True
-        ):
-            cells[name] = _evaluation_ref(
-                owner,
-                reference.span,
-                final_member_coordinate(reference.evaluation),
-                reference.name,
-                member=True,
-                cell=True,
-            )
-    return cells
 
 
 def _loop_header_evaluation_key(loop, name: str, scope) -> str:
@@ -6038,7 +5921,13 @@ class Node(Typed):
         comprehension -- a condition, a later generator's iterable, the
         element -- reads that, never the binding before the comprehension.
         The first generator's iterable is evaluated before any member, so it
-        reads ``scope``."""
+        reads ``scope``.
+
+        Every lambda in this comprehension -- element, key, value, conditions,
+        iterables -- is marked to read each comprehension cell at its call
+        (``_escaping_at_the_call``): ``scope`` and every scope threaded from
+        it carry the mark, and the call decides the member."""
+        scope = _escaping_at_the_call(scope, self)
         bound = set()
         inner = scope
         recurrence = dict(recurrence or {})
@@ -6060,9 +5949,6 @@ class Node(Typed):
                 **{k: v for k, v in scope.items() if k not in bound},
                 **carried,
             }
-        # A name a target binds is this comprehension's own: never an
-        # enclosing comprehension's cell (``_mask_closure_cells``).
-        inner = _mask_closure_cells(inner, bound)
         return (tuple(new_gens) if changed else generators), inner, changed
 
     def _pattern_bound_names(self, pattern) -> set:
@@ -16212,19 +16098,11 @@ class NamedExpr(Expression):
         later read substitution rewrites is an ``EvaluationRef`` to it
         (temporal choice 1, #7661).
 
-        A lambda in the value of a Name-target walrus escapes every
-        comprehension around the walrus through its name, so the value is
-        substituted with that lambda marked (``_escaping_at_the_call``): it
-        reads each comprehension cell at its call
-        (``Lambda._cells_read_at_the_call``).  In a generator expression's
-        element or conditions (``_DEFERRED_WALRUS``) too: the generator's
-        body runs when it is consumed, so the member at a call depends on
-        how far it has been consumed.  A call inside a run of the generator
-        reads the member current at the call; a call after it reads the
-        final member only where the generator is consumed whole in place
-        (``GeneratorExp._consumed_whole_in_place``), and is refused by name
-        everywhere else (``ComprehensionSugar.final_member``).  Never the
-        member current where the lambda was made."""
+        A lambda in the value of a walrus inside a comprehension escapes it
+        through the walrus's name; it is marked by the comprehension, as
+        every lambda in it is (``_escaping_at_the_call``), and reads each
+        comprehension cell at its call (``Lambda._cells_read_at_the_call``).
+        The walrus adds no mark of its own."""
         from .backend import Leaf, materialize
         from .shadow import (
             OccurrenceShadowNode,
@@ -16233,10 +16111,7 @@ class NamedExpr(Expression):
             rewrite,
         )
 
-        value_scope = scope
-        if isinstance(self.target, Name):
-            value_scope = _escaping_at_the_call(scope, _walrus_lambdas(self.value))
-        new_value, d = self._substitute_field(self.value, value_scope)
+        new_value, d = self._substitute_field(self.value, scope)
         rewritten = self if not d else rewrite(self, value=new_value)
         if not isinstance(rewritten.target, Name):
             return rewritten
@@ -16572,28 +16447,23 @@ class Lambda(Expression):
     def substitute(self, scope):
         """Mask formals and mark the result as substitution-authenticated.
 
-        A lambda an eager comprehension stores in what it produces is called
-        after the comprehension, so its body reads each comprehension name
-        through the comprehension's cell (``_closure_cell_scope``): what the
-        cell holds once the comprehension is done, never the member of the
-        iteration that built the lambda.  This holds for every enclosing
-        comprehension whose result the lambda escapes, one cell layer each
-        (``[[lambda: x for _ in ys] for x in xs]`` reads the outer's final
-        ``x``); an inner comprehension's cell masks an outer one's.  The
-        formals' defaults are evaluated when the lambda is built and read the
-        current member.
-
-        A lambda that escapes a comprehension and may be called while it runs
-        or after it (``_ESCAPES_READ_AT_THE_CALL``) -- in a walrus's value
-        (``[(g := lambda: x) for x in xs if g()]; g()``), or yielded by a
-        generator expression (``list(lambda: x for x in xs)``, ``([lambda: x
-        for _ in ys] for x in xs)``) -- reads each comprehension cell at the
-        call (``_cells_read_at_the_call``): the member current at a call
-        inside the run that made it, the final member at a call after the
-        comprehension, refused by name where the call is placed in neither.
-        A generator's final member is placed only where the generator is
-        consumed whole in place (``GeneratorExp._consumed_whole_in_place``).
-        Never the member current where the lambda was made.
+        Every lambda inside a comprehension or generator expression
+        (``_ESCAPES_READ_AT_THE_CALL``, ``_escaping_at_the_call``) -- stored
+        (``[lambda: x for x in xs]``), yielded (``list(lambda: x for x in
+        xs)``), called in place (``sorted(ys, key=lambda v: v + x)``), handed
+        to a call that returns it (``(f(lambda: x) for x in xs)``), held in an
+        inner generator's iterable (``((y for y in [lambda: x]) for x in
+        xs)``), bound by a walrus (``[(g := lambda: x) for x in xs if g()];
+        g()``) -- reads each comprehension cell at the call
+        (``_cells_read_at_the_call``), for every comprehension around it (an
+        inner comprehension's member of the same name is the one in scope):
+        the member current at a call inside the run that made it, the final
+        member at a call after the comprehension, refused by name where the
+        call is placed in neither.  A generator's final member is placed only
+        where the generator is consumed whole in place
+        (``GeneratorExp._consumed_whole_in_place``).  Never the member
+        current where the lambda was made.  The formals' defaults are
+        evaluated when the lambda is built and read the current member.
 
         Every other enclosing function's local the body reads is read the
         same way a nested ``def`` reads one: through a captured coordinate
@@ -16617,9 +16487,6 @@ class Lambda(Expression):
         ``def`` body's own reference) is never read."""
         from .shadow import rewrite, rewrite_with_leaves
 
-        layers = scope.get(_CLOSURE_CELLS)
-        if layers is not None:
-            scope = {k: v for k, v in scope.items() if k is not _CLOSURE_CELLS}
         bound = {p.name for p in self.params}
         held_out = bound | self._module_globals_read()
         bs = (
@@ -16627,20 +16494,11 @@ class Lambda(Expression):
             if held_out
             else scope
         )
-        position = _source_position(self)
         held: set = set()
-        if position in scope.get(_ESCAPES_READ_AT_THE_CALL, ()):
+        if _source_position(self) in scope.get(_ESCAPES_READ_AT_THE_CALL, ()):
             cell_reads = self._cells_read_at_the_call(bs, bound)
             held.update(cell_reads)
             bs = {**bs, **cell_reads}
-        else:
-            for stored, cells in layers or ():
-                if position in stored:
-                    cell_reads = {
-                        name: cell for name, cell in cells.items() if name not in bound
-                    }
-                    held.update(cell_reads)
-                    bs = {**bs, **cell_reads}
         prior = tuple(getattr(self, "captured_bindings", None) or ())
         fresh = tuple(
             (name, self._captured_coordinate(name))
@@ -16690,9 +16548,9 @@ class Lambda(Expression):
         it was made in (``_closure_coordinates``, ``_evaluation_coordinates``);
         each call reads the cell as it is then (``EvaluationRefSugar``).
 
-        Every comprehension whose member ``scope`` holds encloses the walrus
-        or the generator the lambda escapes through, so every one of them is
-        a cell the lambda may outlive.  A running value of a walrus name
+        Every comprehension whose member ``scope`` holds encloses the lambda,
+        so every one of them is a cell the lambda may be called inside or
+        outlive.  A running value of a walrus name
         (``recurrence``) and a cell already read at the call are left as they
         are."""
         names = {node.id for node in self.body.walk() if isinstance(node, Name)}
@@ -16795,7 +16653,7 @@ class Lambda(Expression):
         that function's cell at its call as any lambda written there does.
 
         Not captured: a name the lambda reads from an enclosing
-        comprehension (its member or its cell, ``_closure_cell_scope``) or
+        comprehension (its cell, ``_cells_read_at_the_call``) or
         from an enclosing lambda's formals -- the nearer scope binds it --
         and every name of a lambda that stands in no function (module level,
         a class body, a module-level ``def``'s defaults or decorators),
@@ -16983,7 +16841,7 @@ class Lambda(Expression):
     def _closure_coordinates(self) -> tuple:
         """The final-member coordinates this lambda's body reads through an
         enclosing comprehension's cell (``cell`` references,
-        ``_final_member_cells``, ``_cells_read_at_the_call``), in pre-order.
+        ``_cells_read_at_the_call``), in pre-order.
         ``LambdaSugar`` carries their bindings in the lambda value, so its
         body reduces after the comprehension is done."""
         found = []
@@ -17263,7 +17121,7 @@ class ListComp(Expression):
             scope,
             ListComp._recurrence_references(self, recurrence),
         )
-        template_scope = _member_closure_scope(self, inner, (self.elt,))
+        template_scope = inner
         if ListComp._contains_forbidden_shape(self, (self.elt,)):
             template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         new_elt, de = self._substitute_field(self.elt, template_scope)
@@ -17285,9 +17143,9 @@ class ListComp(Expression):
         each element substitutes into `elt`, and the results are the display's
         elements. Reuses For's readers (same structural recognition).
 
-        A lambda the display stores reads the last element's projection
-        (``_closure_cell_scope``): the cell holds it once the comprehension is
-        done, whichever members the filters kept."""
+        A comprehension holding a lambda does not dissolve
+        (``_contains_forbidden_shape``): the lambda reads the cell at its
+        call, which a display has no run of the comprehension to place."""
         if len(self.generators) != 1 or ListComp._contains_forbidden_shape(
             self, (self.elt,)
         ):
@@ -17309,9 +17167,6 @@ class ListComp(Expression):
         if len(elements) > For._UNROLL_FUEL:
             return None
         target = gen.target
-        final = ListComp._final_element_cells(self, target, elements, (self.elt,))
-        if final is None:
-            return None
         results = []
         for index, element in enumerate(elements):
             bindings = self.unit.require_target_pattern(self, target).bindings_for(
@@ -17325,25 +17180,11 @@ class ListComp(Expression):
                 return None
             if not filters_pass:
                 continue
-            new_elt, _d = self._substitute_field(
-                self.elt, _closure_cell_scope(inner, (self.elt,), final)
-            )
+            new_elt, _d = self._substitute_field(self.elt, inner)
             # Each member is its own evaluation of the element expression.
             (member,) = _iteration_copies(self, index, (new_elt if _d else self.elt,))
             results.append(member)
         return ListComp._make_list(self, tuple(results))
-
-    def _final_element_cells(self, target, elements, roots) -> "Optional[dict]":
-        """What a dissolving comprehension's cells hold once it is done: the
-        last element's projection through ``target``, for the lambdas
-        ``roots`` store (``_closure_cell_scope``).  Empty when ``roots`` store
-        no lambda or there is no element; None when the last element does not
-        project (the comprehension does not dissolve)."""
-        if not elements or not _stored_closures(roots):
-            return {}
-        return self.unit.require_target_pattern(self, target).bindings_for(
-            elements[-1]
-        )
 
     def _ground_filters_pass(self, filters, scope) -> "Optional[bool]":
         """The conjunction of constructed ground filters, or no testimony.
@@ -17361,10 +17202,20 @@ class ListComp(Expression):
         return all(verdicts)
 
     def _contains_forbidden_shape(self, roots: tuple) -> bool:
-        """True for a nested comprehension or walrus in this comprehension."""
+        """True for a nested comprehension, walrus or lambda in this
+        comprehension.  A lambda reads each comprehension cell at its call
+        (``_escaping_at_the_call``), and a call is placed by the run of the
+        comprehension it is in or after; a display has no run."""
         return any(
             node.kind
-            in ("ListComp", "SetComp", "DictComp", "GeneratorExp", "NamedExpr")
+            in (
+                "ListComp",
+                "SetComp",
+                "DictComp",
+                "GeneratorExp",
+                "NamedExpr",
+                "Lambda",
+            )
             for root in roots
             for node in root.walk()
         )
@@ -17877,7 +17728,7 @@ class SetComp(Expression):
             scope,
             ListComp._recurrence_references(self, recurrence),
         )
-        template_scope = _member_closure_scope(self, inner, (self.elt,))
+        template_scope = inner
         if ListComp._contains_forbidden_shape(self, (self.elt,)):
             template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         new_elt, de = self._substitute_field(self.elt, template_scope)
@@ -17992,7 +17843,7 @@ class DictComp(Expression):
             scope,
             ListComp._recurrence_references(self, recurrence),
         )
-        template_scope = _member_closure_scope(self, inner, (self.key, self.value))
+        template_scope = inner
         if ListComp._contains_forbidden_shape(self, (self.key, self.value)):
             template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         changed = {}
@@ -18031,10 +17882,6 @@ class DictComp(Expression):
         )
         if elements is None or len(elements) > For._UNROLL_FUEL:
             return None
-        roots = (self.key, self.value)
-        final = ListComp._final_element_cells(self, gen.target, elements, roots)
-        if final is None:
-            return None
         pairs = []
         key_indexes = {}
         for element in elements:
@@ -18049,11 +17896,8 @@ class DictComp(Expression):
                 return None
             if not filters_pass:
                 continue
-            # A lambda the display stores reads the last element's projection
-            # (``_closure_cell_scope``).
-            cell_scope = _closure_cell_scope(inner, roots, final)
-            key, key_changed = self._substitute_field(self.key, cell_scope)
-            value, value_changed = self._substitute_field(self.value, cell_scope)
+            key, key_changed = self._substitute_field(self.key, inner)
+            value, value_changed = self._substitute_field(self.value, inner)
             result_key = key if key_changed else self.key
             result_value = value if value_changed else self.value
             hash_key = ListComp._ground_hash_key(self, result_key)
@@ -18125,16 +17969,16 @@ class GeneratorExp(Expression):
         reference (``ListComp._walrus_recurrence``) that nothing binds, so it
         is refused by name.
 
-        A lambda the generator yields (``_stored_closures``: the element is a
-        lambda, holds one in a display, or an inner comprehension there
-        stores one -- ``list(lambda: x for x in xs)``, ``([lambda: x for _ in
-        ys] for x in xs)``) escapes it, and its consumer may call it before
-        the next member or after the last: it is marked
-        (``_escaping_at_the_call``) and reads each comprehension cell at the
-        call, as a lambda a walrus lets escape does
-        (``Lambda._cells_read_at_the_call``) -- the member current at a call
-        inside the run, the final member at a call after it only where the
-        generator is consumed whole in place
+        Every lambda in the generator, whatever its shape -- yielded
+        (``list(lambda: x for x in xs)``), returned by a call in the element
+        (``(f(lambda: x) for x in xs)``), held by an inner generator
+        (``((y for y in [lambda: x]) for x in xs)``) -- may be called before
+        the next member or after the last.  It is marked as every lambda in a
+        comprehension is (``_substitute_generators``,
+        ``_escaping_at_the_call``) and reads each comprehension cell at the
+        call (``Lambda._cells_read_at_the_call``): the member current at a
+        call inside the run, the final member at a call after it only where
+        the generator is consumed whole in place
         (``_consumed_whole_in_place``), refused by name everywhere else.
         Never the member current where the lambda was made."""
         from .shadow import rewrite
@@ -18149,7 +17993,7 @@ class GeneratorExp(Expression):
             scope,
             ListComp._recurrence_references(self, recurrence),
         )
-        template_scope = _escaping_at_the_call(inner, _stored_closures((self.elt,)))
+        template_scope = inner
         if ListComp._contains_forbidden_shape(self, (self.elt,)):
             template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         new_elt, de = self._substitute_field(self.elt, template_scope)
@@ -20889,12 +20733,11 @@ class EvaluationRef(Expression):
     comprehension's element and conditions a read of a target name is an
     ``EvaluationRef`` to the coordinate the comprehension binds each member
     under (``ListComp._target_references``, ``ComprehensionSugar``), marked
-    ``member``: it reads that coordinate only.  In the body of a lambda the
-    comprehension stores, the read is a member reference to the final
-    member's coordinate (``final_member_coordinate``, ``_closure_cell_scope``),
-    marked ``cell``: the lambda carries that binding in its closure.  In the
-    body of a lambda a walrus lets escape, a ``cell`` reference also names the
-    member coordinate (``current``): the cell is read at each call
+    ``member``: it reads that coordinate only.  In the body of any lambda in
+    the comprehension, the read is a member reference to the final member's
+    coordinate (``final_member_coordinate``), marked ``cell`` -- the lambda
+    carries that binding in its closure -- that also names the member
+    coordinate (``current``): the cell is read at each call
     (``Lambda._cells_read_at_the_call``).
     A walrus's reference is marked
     ``walrus``: it resolves through the key only, and is refused where the

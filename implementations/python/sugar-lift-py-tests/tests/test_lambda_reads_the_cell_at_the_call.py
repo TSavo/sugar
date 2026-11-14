@@ -21,8 +21,10 @@ inside the callee binds them.  A callee that may keep the lambda past the call
 (``map``'s iterator, a function that returns it) carries nothing, and the
 lambda's call stays refused by name.
 
-A lambda an eager comprehension stores still reads the comprehension's final
-member (#7944, #7949): that is the comprehension cell's value at the call.
+A lambda in an eager comprehension reads the comprehension's cell at the
+call (#7944, #7949, #8002): the final member at a call after the
+comprehension, the member current at a call inside it -- stored or called in
+place alike, whatever its shape.
 """
 
 from __future__ import annotations
@@ -280,7 +282,7 @@ def test_a_lambda_at_module_level_captures_nothing() -> None:
 
 
 # ---------------------------------------------------------------------------
-# A stored comprehension lambda still reads the final member.
+# A comprehension lambda reads the cell at the call: the final member after it.
 # ---------------------------------------------------------------------------
 
 
@@ -300,7 +302,10 @@ def test_a_stored_lambda_still_reads_the_final_member() -> None:
     assert lam._captured_bindings()[0] == ("k",)
 
 
-def test_a_lambda_called_in_place_reads_the_current_member() -> None:
+def test_a_lambda_called_in_place_reads_the_cell_at_the_call() -> None:
+    # Its shape is not asked: the body names the member current at the call
+    # and the final member, and the call decides which it reads (inside the
+    # comprehension that made it: the current member).
     source = "def f(xs):\n    return [(lambda: x)() for x in xs]\n"
     (ret,) = _function(source).substitute({}).body
     comp = ret.value
@@ -308,7 +313,9 @@ def test_a_lambda_called_in_place_reads_the_current_member() -> None:
     lam = comp.elt.func
     assert lam._captured_bindings() == ((), ())
     assert isinstance(lam.body, EvaluationRef)
-    assert lam.body.evaluation == coordinate
+    assert lam.body.evaluation == final_member_coordinate(coordinate)
+    assert lam.body.cell is True
+    assert lam.body.current == coordinate
 
 
 # ---------------------------------------------------------------------------
