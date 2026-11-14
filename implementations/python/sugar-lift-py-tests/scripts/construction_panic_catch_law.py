@@ -62,6 +62,7 @@ _SOFT_AFTER_CATCH = frozenset(
         "return",
         "append",
         "Incomplete",
+        "halted",
         "resolved_value",
         "recovered",
     }
@@ -509,6 +510,7 @@ def _soft_continue(handler: ast.ExceptHandler) -> bool:
         "\ncontinue",
         "\n        pass",
         "Incomplete",
+        "ExitSet.halted(",
         "append(",
         "resolved_value = None",
     )

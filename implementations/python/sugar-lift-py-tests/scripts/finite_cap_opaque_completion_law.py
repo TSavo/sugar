@@ -112,8 +112,14 @@ def _call_has_true_keyword(node: ast.Call, keyword: str) -> bool:
     )
 
 
+def _is_completion_constructor(name: str) -> bool:
+    """``Complete(...)`` or the ExitSet form ``ExitSet.completed(...)``."""
+    parts = name.split(".")
+    return parts[-1] == "Complete" or parts[-2:] == ["ExitSet", "completed"]
+
+
 def _is_forbidden_cap_complete(node: ast.Call) -> bool:
-    if _name(node.func).split(".")[-1] != "Complete" or not node.args:
+    if not _is_completion_constructor(_name(node.func)) or not node.args:
         return False
     payload = node.args[0]
     constructor = (
