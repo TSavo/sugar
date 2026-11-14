@@ -67,8 +67,9 @@ def _import_bound_unanswered_call(sugar):
     callee's target symbol; no dependency source is read to decide what the
     name is (step 3).  Nothing in this proof answers the call, so it is the
     unanswered ``undecided`` member under that symbol and two-faced -- never a
-    total completion.  A call cited off the population keeps its citation,
-    and a ``with`` item's resolved manager keeps its resolution's faces.
+    total completion.  A call cited off the population is the same unanswered
+    call (``_off_population_unanswered_call``), and a ``with`` item's resolved
+    manager keeps its resolution's faces.
     """
     if sugar.reference_symbol is None or sugar.contract_resolution_gap is not None:
         return None
@@ -82,14 +83,18 @@ def _import_bound_unanswered_call(sugar):
 _OFF_POPULATION = "call-target-off-population:"
 
 
-def _off_population_source_call(sugar):
-    """The may-raise testimony for a call cited off the enrolled population."""
+def _off_population_unanswered_call(sugar):
+    """The may-raise testimony for a call cited off the enrolled population.
+
+    Not bridged is cited one way: the callee's body was not looked at and
+    nothing here answers the call, so it is the same ``UnknownCalleeCallV1``
+    every unanswered call is, under the call's one spelling (#7837)."""
     gap = sugar.contract_resolution_gap
     if not isinstance(gap, str) or not gap.startswith(_OFF_POPULATION):
         return None
-    from sugar_lift_py_tests.source_call_resolution import OffPopulationSourceCallV1
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
-    return OffPopulationSourceCallV1(gap[len(_OFF_POPULATION) :])
+    return UnknownCalleeCallV1(sugar.spelled_target)
 
 
 def _lexically_unknown_callee(sugar) -> bool:
@@ -924,7 +929,7 @@ class CallSiteSugar(ConstructedTermSugar):
         if callsite.body is None:
             unprojected = _import_bound_unanswered_call(self)
             if unprojected is None:
-                unprojected = _off_population_source_call(self)
+                unprojected = _off_population_unanswered_call(self)
             if unprojected is not None:
                 from sugar_lift_py_tests.source_call_resolution import (
                     cpython_cited_fold,

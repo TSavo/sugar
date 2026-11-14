@@ -76,7 +76,7 @@ def test_head_enter_exit_and_completion_faces_all_reach_the_function(
     assert any(
         isinstance(face, Halted)
         and isinstance(face.effect, UndeterminedRaiseEffect)
-        and "OffPopulationCall:python:tarfile.open" in str(face.effect)
+        and "UnknownCallee:tarfile.open" in str(face.effect)
         for face in exits.exits
     ), names
     # __enter__ and __exit__ may each raise.
