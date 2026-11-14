@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 
 from sugar_lift_py_tests.floor import DictValue, TermValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.delete_effect_sugar import AttributeDeleteEffectSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -28,7 +28,7 @@ class _Value(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
 
 def _outcomes(tmp_path):
@@ -46,24 +46,27 @@ def _outcomes(tmp_path):
 
 def test_dict_attribute_mutations_have_exact_owner_occurrences(tmp_path):
     for outcome, owner, site in _outcomes(tmp_path):
-        assert isinstance(outcome, Incomplete)
-        assert outcome.effect.exception_name == "AttributeError"
-        assert outcome.effect.producer_node_owner == owner
-        assert outcome.effect.occurrence_id == str(site)
+        assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+        (halt,) = outcome.halts()
+        assert halt.effect.exception_name == "AttributeError"
+        assert halt.effect.producer_node_owner == owner
+        assert halt.effect.occurrence_id == str(site)
 
 
 def test_dict_attribute_mutations_cannot_fabricate_completion(tmp_path):
     for outcome, _, _ in _outcomes(tmp_path):
-        assert not isinstance(outcome, Complete)
+        assert outcome.completed_value() is None
 
 
 def test_dict_attribute_mutations_reject_wrong_site_substitution(tmp_path):
     outcomes = _outcomes(tmp_path)
     store_outcome, _, store_site = outcomes[0]
     delete_outcome, _, delete_site = outcomes[1]
+    (store_halt,) = store_outcome.exits
+    (delete_halt,) = delete_outcome.exits
 
     assert store_site != delete_site
-    assert store_outcome.effect.occurrence_id == str(store_site)
-    assert store_outcome.effect.occurrence_id != str(delete_site)
-    assert delete_outcome.effect.occurrence_id == str(delete_site)
-    assert delete_outcome.effect.occurrence_id != str(store_site)
+    assert store_halt.effect.occurrence_id == str(store_site)
+    assert store_halt.effect.occurrence_id != str(delete_site)
+    assert delete_halt.effect.occurrence_id == str(delete_site)
+    assert delete_halt.effect.occurrence_id != str(store_site)

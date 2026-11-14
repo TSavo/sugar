@@ -15,7 +15,6 @@ import pytest
 
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import _Ctor, make_var
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 from sugar_source_tree.tree import SourceFile
 
@@ -93,8 +92,8 @@ def test_symbolic_isinstance_re_i_regexflag_projects_value_directly(tmp_path) ->
 
     outcome = regex_flag.test_python_type(imported_flag, _sites(tmp_path)[0])
 
-    assert isinstance(outcome, Incomplete)
-    operation = outcome.effect.witness.operation
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    operation = outcome.halts()[0].effect.witness.operation
     assert isinstance(operation, _Ctor)
     assert operation.name == "adt.is_python_type"
     assert operation.args == (imported_flag.term, regex_flag.term)
@@ -110,8 +109,8 @@ def test_setitem_projects_index_and_value_directly(
 
     outcome = receiver.setitem(index, value, _sites(tmp_path)[1])
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.term.args[1:] == (
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().term.args[1:] == (
         index.to_term(owner=f"{type(receiver).__name__}.setitem index"),
         value.to_term(owner=f"{type(receiver).__name__}.setitem value"),
     )
@@ -123,8 +122,8 @@ def test_callsite_append_projects_appended_value_directly(tmp_path) -> None:
 
     outcome = receiver.append_with(value, _sites(tmp_path)[2])
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.term.args[1] == value.to_term(
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().term.args[1] == value.to_term(
         owner="CallSiteValue.append_with value"
     )
 
@@ -136,8 +135,8 @@ def test_delitem_projects_index_directly(tmp_path, receiver_kind: str) -> None:
 
     outcome = receiver.delitem(index, _sites(tmp_path)[3])
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.term.args[1] == index.to_term(
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().term.args[1] == index.to_term(
         owner=f"{type(receiver).__name__}.delitem index"
     )
 

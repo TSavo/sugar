@@ -49,12 +49,11 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.effect import RaiseEffect
 
 CODEX1 = (
@@ -136,13 +135,13 @@ def _post_object(completed: Completed) -> ObjectValue:
     )
 
 
-def _keyerror_raise(outcome, *, site) -> Incomplete:
+def _keyerror_raise(outcome, *, site) -> Halted:
     """Authenticated read face: the KeyError halt at the given locus."""
-    assert isinstance(
-        outcome, Incomplete
-    ), f"{CODEX3}: expected KeyError halt, got {type(outcome).__name__}"
-    assert isinstance(outcome.effect, RaiseEffect), outcome.effect
-    raise_value = outcome
+    assert (
+        len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    ), f"{CODEX3}: expected KeyError halt, got {outcome!r:.200}"
+    (raise_value,) = outcome.halts()
+    assert isinstance(raise_value.effect, RaiseEffect), raise_value.effect
     assert raise_value.effect.exception_name == "KeyError"
     assert raise_value.effect.exception_type_coordinate == _identity("KeyError")
     # Occurrence lineage: KeyError is bound to the delete locus (site).
@@ -191,8 +190,8 @@ def test_completed_delitem_readback_yields_named_keyerror_with_delete_lineage() 
     assert not any(k.value == "a" for k, _ in post.entries)
     # Sibling key still readable.
     present = post.subscript(StringValue("b"), delete_site)
-    assert isinstance(present, Complete)
-    assert present.value == TermValue(2)
+    assert present.completed_value() is not None
+    assert present.completed_value() == TermValue(2)
     # Deleted key: named KeyError with delete occurrence lineage.
     missing = post.subscript(StringValue("a"), delete_site)
     raise_value = _keyerror_raise(missing, site=delete_site)
@@ -213,7 +212,9 @@ def test_discrimination_completed_delitem_does_not_fabricate_deleted_value() -> 
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), site)
     with pytest.raises(AssertionError):
-        assert isinstance(missing, Complete) and missing.value == TermValue(1)
+        assert missing.completed_value() is not None and (
+            missing.completed_value() == TermValue(1)
+        )
     raise_value = _keyerror_raise(missing, site=site)
     with pytest.raises(AssertionError):
         assert raise_value.effect.exception_name == "ValueError"
@@ -250,9 +251,14 @@ def test_completed_delattr_removes_field_and_read_is_attributeerror_or_named_gap
             f"{FLOOR_ATTR}: ConstructionPanic on missing field read: {err}"
         ) from err
 
-    if isinstance(read, Incomplete) and isinstance(read.effect, RaiseEffect):
-        assert read.effect.exception_name == "AttributeError"
-        assert read.effect.exception_type_coordinate == _identity("AttributeError")
+    if (
+        len(read.exits) == 1
+        and read.halts() == read.exits
+        and isinstance(read.halts()[0].effect, RaiseEffect)
+    ):
+        (halt,) = read.halts()
+        assert halt.effect.exception_name == "AttributeError"
+        assert halt.effect.exception_type_coordinate == _identity("AttributeError")
         return
     raise AssertionError(
         f"{FLOOR_ATTR}: expected the AttributeError halt, "
@@ -288,13 +294,13 @@ def test_delete_then_restore_setitem_reads_new_value() -> None:
     deleted = pending.discharge({obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(deleted.exits[0])
     restored = post.setitem(StringValue("a"), TermValue(99), site)
-    assert isinstance(restored, Complete)
-    assert isinstance(restored.value, DictValue)
-    read = restored.value.subscript(StringValue("a"), site)
-    assert isinstance(read, Complete)
-    assert read.value == TermValue(99)
+    assert restored.completed_value() is not None
+    assert isinstance(restored.completed_value(), DictValue)
+    read = restored.completed_value().subscript(StringValue("a"), site)
+    assert read.completed_value() is not None
+    assert read.completed_value() == TermValue(99)
     with pytest.raises(AssertionError):
-        assert read.value == TermValue(1)
+        assert read.completed_value() == TermValue(1)
 
 
 def test_delete_then_restore_setattr_reads_new_value() -> None:
@@ -310,9 +316,9 @@ def test_delete_then_restore_setattr_reads_new_value() -> None:
     deleted = pending.discharge({obj_cid: receiver})
     post = _post_object(deleted.exits[0])
     restored = post.setattr("field", TermValue(99), site)
-    assert isinstance(restored, Complete)
-    assert isinstance(restored.value, ObjectValue)
-    fields = {f.name: f.value for f in restored.value.fields}
+    assert restored.completed_value() is not None
+    assert isinstance(restored.completed_value(), ObjectValue)
+    fields = {f.name: f.value for f in restored.completed_value().fields}
     assert fields.get("field") == TermValue(99)
     with pytest.raises(AssertionError):
         assert fields.get("field") == TermValue(7)
@@ -344,11 +350,11 @@ def test_readback_after_halted_delete_still_sees_original() -> None:
     ), f"{CODEX1}: halt state identity lost"
     # Original receiver still carries pre-delete content.
     present = original.subscript(StringValue("a"), site)
-    assert isinstance(present, Complete)
-    assert present.value == TermValue(1)
+    assert present.completed_value() is not None
+    assert present.completed_value() == TermValue(1)
     present_b = original.subscript(StringValue("b"), site)
-    assert isinstance(present_b, Complete)
-    assert present_b.value == TermValue(2)
+    assert present_b.completed_value() is not None
+    assert present_b.completed_value() == TermValue(2)
 
 
 def test_discrimination_halted_delete_is_not_a_completed_empty_dict() -> None:
@@ -395,7 +401,10 @@ def test_lying_fabricated_deleted_value_refuses_against_keyerror() -> None:
     exits = pending.discharge({obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), site)
-    assert not (isinstance(missing, Complete) and missing.value == TermValue(1))
+    assert not (
+        missing.completed_value() is not None
+        and missing.completed_value() == TermValue(1)
+    )
     _keyerror_raise(missing, site=site)
 
 
@@ -422,10 +431,11 @@ def test_list_delitem_readback_indexerror_after_completed_delete() -> None:
     assert post == ListValue((TermValue(1),))
     # Remaining element readable at 0.
     ok = post.subscript(TermValue(0), site)
-    assert isinstance(ok, Complete)
-    assert ok.value == TermValue(1)
+    assert ok.completed_value() is not None
+    assert ok.completed_value() == TermValue(1)
     # Index 1 is gone.
     gone = post.subscript(TermValue(1), site)
-    assert isinstance(gone, Incomplete)
-    assert isinstance(gone.effect, RaiseEffect)
-    assert gone.effect.exception_name == "IndexError"
+    assert len(gone.exits) == 1 and gone.halts() == gone.exits
+    (gone_halt,) = gone.halts()
+    assert isinstance(gone_halt.effect, RaiseEffect)
+    assert gone_halt.effect.exception_name == "IndexError"

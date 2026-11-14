@@ -60,7 +60,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, FunctionDef
@@ -302,10 +302,10 @@ def test_bound_method_delete_callsite_prepends_self_without_shifting_args() -> N
     )
     assert len(calls) == 1
     constructed = calls[0].sugar().desugar(None)
-    assert isinstance(
-        constructed, Complete
-    ), f"{CODEX3}: expected Complete(CallSiteValue), got {type(constructed).__name__}"
-    site = constructed.value
+    assert (
+        constructed.completed_value() is not None
+    ), f"{CODEX3}: expected one completed CallSiteValue, got {constructed!r:.200}"
+    site = constructed.completed_value()
     assert isinstance(site, CallSiteValue)
     assert site.parameters == ("self", "obj", "key")
     assert isinstance(site.arg_values[0], ObjectValue)

@@ -122,7 +122,7 @@ def test_observed_effect_projects_only_an_authenticated_context_preimage() -> No
     projected = ObservedEffectValue(slot_id="S", effect=outer).attribute(
         "__context__", site=None
     )
-    assert projected.value is inner_value
+    assert projected.completed_value() is inner_value
 
     with pytest.raises(ConstructionPanic) as caught:
         EffectCoordinate(slot_id="S").attribute("__context__", site=None)
@@ -146,7 +146,6 @@ def test_effect_ref_observes_the_same_effect_the_route_deposited() -> None:
     )
     from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.sugar.effect_ref_sugar import EffectRefSugar
 
     inner_value = TermValue(11)
@@ -164,21 +163,22 @@ def test_effect_ref_observes_the_same_effect_the_route_deposited() -> None:
 
     ctx = ReduceContext.root(owner="as-e-identity").with_observed_effect("S", routed)
     out = EffectRefSugar(slot_id="S").desugar(ctx)
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, ObservedEffectValue)
-    assert out.value.effect is routed
-    assert out.value.effect is not other
-    assert out.value.effect.occurrence_id == "outer.py:2:4"
+    observed = out.completed_value()
+    assert observed is not None
+    assert isinstance(observed, ObservedEffectValue)
+    assert observed.effect is routed
+    assert observed.effect is not other
+    assert observed.effect.occurrence_id == "outer.py:2:4"
     # Same occurrence the boundary routed: context preimage is authentic.
-    projected = out.value.attribute("__context__", site=None)
-    assert projected.value is inner_value
+    projected = observed.attribute("__context__", site=None)
+    assert projected.completed_value() is inner_value
 
     # Unauthenticated twin: pure coordinate stays loud on the same projection.
     bare = EffectRefSugar(slot_id="S").desugar(None)
-    assert isinstance(bare, Complete)
-    assert type(bare.value) is EffectCoordinate
+    assert bare.completed_value() is not None
+    assert type(bare.completed_value()) is EffectCoordinate
     with pytest.raises(ConstructionPanic) as caught:
-        bare.value.attribute("__context__", site=None)
+        bare.completed_value().attribute("__context__", site=None)
     assert "no authenticated context preimage" in caught.value.info.observed
 
 
@@ -198,7 +198,6 @@ def test_function_universe_threads_observed_effect_binding_into_next_statement()
         EffectCoordinate,
         ObservedEffectValue,
     )
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_lift_py_tests.sugar.effect_ref_sugar import EffectRefSugar
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -209,18 +208,18 @@ def test_function_universe_threads_observed_effect_binding_into_next_statement()
     routed = RaiseEffect.for_builtin("ValueError", occurrence="route.py:3:0")
 
     # Unauthenticated: no observed preimage → pure coordinate.
-    bare = reduce_block_to_exitset((EffectRefSugar(slot_id="S"),)).collapse()
-    assert isinstance(bare, Complete)
-    assert type(bare.value.entries[0]) is EffectCoordinate
+    bare = reduce_block_to_exitset((EffectRefSugar(slot_id="S"),)).completed_value()
+    assert bare is not None
+    assert type(bare.entries[0]) is EffectCoordinate
 
     # Authenticated via ctx (handler path): same RaiseEffect object.
     via_ctx = reduce_block_to_exitset(
         (EffectRefSugar(slot_id="S"),),
         ReduceContext.root(owner="seed").with_observed_effect("S", routed),
-    ).collapse()
-    assert isinstance(via_ctx, Complete)
-    assert isinstance(via_ctx.value.entries[0], ObservedEffectValue)
-    assert via_ctx.value.entries[0].effect is routed
+    ).completed_value()
+    assert via_ctx is not None
+    assert isinstance(via_ctx.entries[0], ObservedEffectValue)
+    assert via_ctx.entries[0].effect is routed
 
     # Authenticated via prior entry (function_universe thread path).
     # ObservedEffectBinding.contribution() is empty on purpose (preimage, not
@@ -241,9 +240,9 @@ def test_function_universe_threads_observed_effect_binding_into_next_statement()
         def desugar(self, ctx):
             return EffectRefSugar(slot_id="S").desugar(ctx)
 
-    via_entries = reduce_block_to_exitset((_Deposit(), _Read())).collapse()
-    assert isinstance(via_entries, Complete)
-    read = via_entries.value.entries[-1]
+    via_entries = reduce_block_to_exitset((_Deposit(), _Read())).completed_value()
+    assert via_entries is not None
+    read = via_entries.entries[-1]
     assert isinstance(read, ObservedEffectValue)
     assert read.effect is routed
 
@@ -260,14 +259,13 @@ def test_observed_exception_info_type_is_the_language_class() -> None:
     )
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.ir import ctor, str_const
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
 
     routed = RaiseEffect.for_builtin("ValueError", occurrence="route.py:3:0")
     observed = ObservedExceptionInfoValue(slot_id="S", effect=routed)
     projected = observed.attribute("type", site=None)
-    assert isinstance(projected, Complete)
-    typ = projected.value
+    typ = projected.completed_value()
+    assert typ is not None
     assert isinstance(typ, BuiltinExceptionClassValue)
     assert typ.name == "ValueError"
     assert typ is builtin_name_temporal().value_if_bound("ValueError")
@@ -288,8 +286,8 @@ def test_observed_exception_info_type_is_the_language_class() -> None:
         ),
     )
     value = with_instance.attribute("value", site=None)
-    assert isinstance(value, Complete)
-    assert value.value is instance
+    assert value.completed_value() is not None
+    assert value.completed_value() is instance
 
     with pytest.raises(ConstructionPanic) as caught:
         ExceptionInfoCoordinate(slot_id="S").attribute("type", site=None)
@@ -316,7 +314,6 @@ def test_exception_callsite_args_are_the_constructor_arguments() -> None:
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
     from sugar_lift_py_tests.ir import ctor, str_const
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_source_tree.panic import SugarNotWritten
 
     boom = StringValue("boom")
@@ -333,8 +330,8 @@ def test_exception_callsite_args_are_the_constructor_arguments() -> None:
         exception_type_coordinate=identity,
     )
     projected = instance.attribute("args", site=None)
-    assert isinstance(projected, Complete)
-    assert projected.value == TupleValue(elements=(boom,))
+    assert projected.completed_value() is not None
+    assert projected.completed_value() == TupleValue(elements=(boom,))
 
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceFragmentCoordinateV1,

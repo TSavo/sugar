@@ -15,7 +15,6 @@ from sugar_lift_py_tests.floor.decorated_class_value import (
     DecoratorApplicationPublicationV1,
 )
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.source_call_frame import (
     DecoratedClassBindingV1,
     SourceCallBindingGap,
@@ -39,9 +38,9 @@ def _class_value(definition: ClassDef) -> ClassDefinitionValue:
     outcome = definition.sugar().desugar(
         ReduceContext.root(owner="decorated binding target test")
     )
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, ClassDefinitionValue)
-    return outcome.value
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), ClassDefinitionValue)
+    return outcome.completed_value()
 
 
 def _classes(tmp_path: Path):

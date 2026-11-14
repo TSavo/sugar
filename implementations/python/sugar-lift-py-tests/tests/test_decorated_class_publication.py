@@ -15,7 +15,6 @@ from sugar_lift_py_tests.floor.decorated_class_value import (
     DecoratorApplicationPublicationV1,
 )
 from sugar_lift_py_tests.ir import _Var
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.source_call_frame import DecoratedClassBindingV1
 from sugar_lift_py_tests.sugar.call_site_sugar import _with_frame_mutable_globals
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
@@ -77,8 +76,8 @@ def test_replacing_decorator_publication_ties_member_to_final_class(
 
     result = class_value.test_python_type(member, object())
 
-    assert isinstance(result, Complete)
-    assert isinstance(result.value, TrueBoolLiteralSugar)
+    assert result.completed_value() is not None
+    assert isinstance(result.completed_value(), TrueBoolLiteralSugar)
     assert class_value.published_floor is final
     assert member.publication_cid == publication.publication_cid
 

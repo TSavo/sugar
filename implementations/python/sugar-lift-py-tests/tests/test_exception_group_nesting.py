@@ -19,7 +19,6 @@ from __future__ import annotations
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.tree import SourceFile
@@ -48,8 +47,6 @@ def _leaves(effect) -> list[RaiseEffect]:
 
 
 def _halt_effect(outcome):
-    if isinstance(outcome, Incomplete):
-        return outcome.effect
     if isinstance(outcome, ExitSet):
         halted = [face for face in outcome.exits if isinstance(face, Halted)]
         assert len(halted) == 1, outcome.exits
@@ -444,7 +441,7 @@ def test_twin_never_selects_only_first_nested_leaf_of_repeated_type():
 
 
 def test_twin_full_outer_consume_is_complete_not_nested_residual():
-    """Both outer leaves matched → Complete; no invented nested residual."""
+    """Both outer leaves matched → one completed arm; no invented nested residual."""
     outcome = _desugar(
         "def f():\n"
         "    try:\n"
@@ -459,7 +456,7 @@ def test_twin_full_outer_consume_is_complete_not_nested_residual():
         "        pass\n",
         name="twin_full_consume.py",
     )
-    assert isinstance(outcome, Complete), outcome
+    assert outcome.completed_value() is not None, outcome
 
 
 def test_nested_handler_preserves_temporal_bindings_across_inner_try_star():
@@ -486,9 +483,10 @@ def test_nested_handler_preserves_temporal_bindings_across_inner_try_star():
         "        pass\n",
         name="nested_temporal_y.py",
     )
-    assert isinstance(outcome, Complete), outcome
-    returns = [s for s in outcome.value.record.statements if isinstance(s, ReturnValue)]
-    assert returns, outcome.value.record.statements
+    completed = outcome.completed_value()
+    assert completed is not None, outcome
+    returns = [s for s in completed.record.statements if isinstance(s, ReturnValue)]
+    assert returns, completed.record.statements
     assert returns[0].value.value == 1
 
     # Inner-handler binding used inside the nested except* (same arm).
@@ -506,8 +504,9 @@ def test_nested_handler_preserves_temporal_bindings_across_inner_try_star():
         "        pass\n",
         name="nested_temporal_z.py",
     )
-    assert isinstance(outcome_z, Complete), outcome_z
+    completed_z = outcome_z.completed_value()
+    assert completed_z is not None, outcome_z
     returns_z = [
-        s for s in outcome_z.value.record.statements if isinstance(s, ReturnValue)
+        s for s in completed_z.record.statements if isinstance(s, ReturnValue)
     ]
     assert returns_z and returns_z[0].value.value == 2
