@@ -439,18 +439,22 @@ class ComparisonOpSugar(ConstructedTermSugar):
 
     def _ordering(self, left, right, ctx):
         """Ordering law: left owns the rich method; undecided dispatch dual-edges."""
+        from sugar_lift_py_tests.floor.floor_value import ORDERING_FLOOR_OPERATIONS
+
         method = COMPARE_METHODS[self.op_kind]
         deferred = defer_formal_native_operation(
             left, right, self.site, operator=method
         )
         if deferred is not None:
             return deferred
+        # The ordering floor's own explicit call (#7757), never a method
+        # looked up by its name.
         return publish_undecided_ordering_edges(
             left,
             right,
             self.site,
             self.op_kind,
-            getattr(left, method)(right, self.site, ctx),
+            ORDERING_FLOOR_OPERATIONS[method](left, right, self.site, ctx),
         )
 
     def _apply(self, left, right, ctx):

@@ -10,6 +10,10 @@ residual read all take it, and no module outside the door calls a floor's
 A parameter in a slice bound (``(0, 1, 2)[start:]``) defers the slice itself
 (``construct_slice``, the ``slice`` carrier): the caller's actual decides the
 slice, and the read continues on it.
+
+No floor operation is dispatched by its name either (the second law): a
+guarded value reads each arm through the door, never as
+``getattr(arm, "subscript")``, so a parameter arm defers its read too.
 """
 
 from __future__ import annotations
@@ -177,6 +181,130 @@ def test_the_law_bites_on_a_read_that_skips_the_door() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The law: no floor operation is dispatched by its name
+# ---------------------------------------------------------------------------
+#
+# A read handed to each arm as ``_map("subscript", ...)`` and answered by
+# ``getattr(arm, method)(...)`` never names ``.subscript`` / the door in source,
+# so the law above cannot see it (#8109).  Every operation is called explicitly
+# instead, through its one door.  This law refuses the three spellings of a call
+# looked up by a name: ``getattr(value, name)(...)`` with a name that is not
+# written out, a name bound to such a lookup and called in the same scope, and
+# ``operator.methodcaller``.
+
+_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def _looked_up_by_name(node) -> bool:
+    """``getattr(value, name, ...)`` whose ``name`` is not written out."""
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "getattr"
+        and len(node.args) >= 2
+        and not (
+            isinstance(node.args[1], ast.Constant)
+            and isinstance(node.args[1].value, str)
+        )
+    )
+
+
+def _in_scope(scope):
+    """Every node of ``scope`` outside the scopes nested in it."""
+    pending = list(ast.iter_child_nodes(scope))
+    while pending:
+        node = pending.pop()
+        yield node
+        if not isinstance(node, _SCOPES):
+            pending.extend(ast.iter_child_nodes(node))
+
+
+def _dispatches_by_name_in(source: str, relative: str) -> list[str]:
+    tree = ast.parse(source, filename=relative)
+    found: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if _looked_up_by_name(node.func):
+            found.add(node.lineno)
+        callee = node.func
+        named = callee.id if isinstance(callee, ast.Name) else None
+        attribute = callee.attr if isinstance(callee, ast.Attribute) else None
+        if "methodcaller" in (named, attribute):
+            found.add(node.lineno)
+    functions = (ast.FunctionDef, ast.AsyncFunctionDef)
+    scopes = [tree, *(node for node in ast.walk(tree) if isinstance(node, functions))]
+    for scope in scopes:
+        nodes = list(_in_scope(scope))
+        bound = {
+            target.id
+            for node in nodes
+            if isinstance(node, ast.Assign) and _looked_up_by_name(node.value)
+            for target in node.targets
+            if isinstance(target, ast.Name)
+        }
+        found.update(
+            node.lineno
+            for node in nodes
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in bound
+        )
+    return [f"{relative}:{line}" for line in sorted(found)]
+
+
+def test_no_module_dispatches_a_floor_operation_by_name() -> None:
+    import sugar_lift_py_tests
+
+    root = Path(sugar_lift_py_tests.__file__).resolve().parent
+    found = []
+    for path in SourceTree(root).paths():
+        relative = path.relative_to(root).as_posix()
+        found.extend(_dispatches_by_name_in(path.read_text(encoding="utf-8"), relative))
+
+    assert found == [], (
+        "call each floor operation explicitly, through its one door "
+        f"(discharge_subscript, project_attribute, ...), never by name: {found}"
+    )
+
+
+def test_the_law_bites_on_a_call_looked_up_by_name() -> None:
+    lying = (
+        "from operator import methodcaller\n"
+        "\n"
+        "\n"
+        "def distribute(arms, method, *args):\n"
+        "    return [getattr(arm, method)(*args) for arm in arms]\n"
+        "\n"
+        "\n"
+        "def dig(dug, name, other):\n"
+        "    method = getattr(dug, name, None)\n"
+        "    if callable(method):\n"
+        "        return method(other)\n"
+        "    return getattr(super(), name)(other)\n"
+        "\n"
+        "\n"
+        "def each(arms):\n"
+        "    return list(map(methodcaller('subscript', 0), arms))\n"
+    )
+    truthful = (
+        "def probe(face, faces, name, site):\n"
+        "    narrowed = getattr(face, 'stands_on_append_floor', None)\n"
+        "    fields = tuple(getattr(other, name) for other in faces)\n"
+        "    length = face.length(site)\n"
+        "    return narrowed() if callable(narrowed) else (fields, length)\n"
+    )
+
+    assert _dispatches_by_name_in(lying, "lying.py") == [
+        "lying.py:5",
+        "lying.py:11",
+        "lying.py:12",
+        "lying.py:16",
+    ]
+    assert _dispatches_by_name_in(truthful, "truthful.py") == []
+
+
+# ---------------------------------------------------------------------------
 # A parameter index defers to the caller wherever the read is made
 # ---------------------------------------------------------------------------
 
@@ -252,6 +380,37 @@ def test_a_mapping_object_getitem_with_a_parameter_key_defers_to_the_caller() ->
         _assert_index_deferred(pending, coordinate)
         exits = pending.discharge(None, {coordinate.coordinate_cid: StringValue("a")})
         assert exits.completed_value() == TermValue(1)
+
+
+def test_a_guarded_parameter_arm_defers_its_read_through_the_door() -> None:
+    """``(xs if c else (5,))[0]``: each arm is read through the one door, so
+    the parameter arm's read waits on its caller and resolves with the
+    caller's actual, beside the other arm's read under its own polarity."""
+    from sugar_lift_py_tests.floor import GuardedValue
+    from sugar_lift_py_tests.ir import atomic, not_
+    from sugar_lift_py_tests.operations.subscript_operation import (
+        discharge_subscript,
+    )
+    from sugar_lift_py_tests.outcome import Completed
+
+    site = _site()
+    receiver, coordinate = _formal(site, "xs", 0)
+    guard = atomic("chosen", [])
+    guarded = GuardedValue(guard, receiver, _tuple(5))
+
+    pending = discharge_subscript(
+        guarded, TermValue(0), site, None, owner="SubscriptSugar"
+    )
+
+    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
+    assert pending.demand.operator == "subscript"
+    assert pending.demand.operand_coordinate_cids == (coordinate.coordinate_cid, None)
+    exits = pending.discharge(None, {coordinate.coordinate_cid: _tuple(7)})
+    assert all(isinstance(face, Completed) for face in exits.exits), exits
+    assert {(face.guard, face.value) for face in exits.exits} == {
+        (guard, TermValue(7)),
+        (not_(guard), TermValue(5)),
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -247,10 +247,10 @@ class StringValue(GuardStableValue):
         # A guarded needle is not one needle: distribute into its faces and
         # rejoin under the same guard before this receiver's own law runs.
         from sugar_lift_py_tests.floor.guarded_operand import (
-            distribute_guarded_predicate,
+            distribute_guarded_membership,
         )
 
-        distributed = distribute_guarded_predicate(self, item, "contains", site)
+        distributed = distribute_guarded_membership(self, item, site)
         if distributed is not None:
             return distributed
         # Python ``needle in haystack`` for str: substring when both are strings;
@@ -437,7 +437,9 @@ class StringValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if isinstance(other, GuardedValue):
-            return other.map_from_left("add", self, site, ctx)
+            return other.map_from_left(
+                lambda arm: self.add(arm, site, ctx), site, operation="add"
+            )
         from sugar_source_tree.nodes import LanguageCallee
 
         if (

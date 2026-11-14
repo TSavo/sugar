@@ -1,4 +1,4 @@
-"""A binary operation whose RIGHT operand is split by a guard.
+"""A membership test whose NEEDLE is split by a guard.
 
 ``GuardedValue`` already owns both directions of this distribution:
 ``_map`` / ``_predicate`` when the guarded value is the receiver, and
@@ -21,14 +21,19 @@ source.
 from __future__ import annotations
 
 
-def distribute_guarded_predicate(receiver, operand, method: str, site):
-    """The rejoined predicate, or ``None`` when the operand carries no guard.
+def distribute_guarded_membership(container, needle, site):
+    """``needle in container`` rejoined over a guarded needle, or ``None``
+    when the needle carries no guard.
 
-    ``None`` is "this door does not apply", never a soft answer: the caller
-    falls through to its own law, whose None arm is still the honest no.
+    Each arm of the needle is asked ``container.contains(arm, site)``, the
+    membership floor's explicit call (#7757), never a method named by a
+    string.  ``None`` is "this door does not apply", never a soft answer: the
+    caller falls through to its own law, whose None arm is still the honest no.
     """
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 
-    if not isinstance(operand, GuardedValue):
+    if not isinstance(needle, GuardedValue):
         return None
-    return operand.predicate_from_left(method, receiver, site)
+    return needle.predicate_from_left(
+        lambda arm: container.contains(arm, site), site, operation="contains"
+    )

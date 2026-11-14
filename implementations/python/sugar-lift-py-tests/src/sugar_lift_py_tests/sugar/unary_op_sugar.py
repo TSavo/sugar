@@ -26,6 +26,7 @@ Formal operands ride the existing ``NativeOperationExitCarrierV1`` via the
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import Any, Callable
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import (
@@ -34,13 +35,14 @@ from sugar_lift_py_tests.sugar.sugar_base import (
 )
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
-# Unary operator kind -> the floor method that owns its meaning. Every entry is
-# a real FloorValue method; an operator whose value has no such floor reaches
-# that value's own loud gap, never a silent default.
-UNARYOP_METHODS: dict[str, str] = {
-    "USub": "unary_minus",
-    "UAdd": "unary_plus",
-    "Invert": "bitwise_invert",
+# Unary operator kind -> the explicit call of the floor that owns its meaning
+# (#7757), never a method looked up by its name. Every entry calls a real
+# FloorValue method; an operator whose value has no such floor reaches that
+# value's own loud gap, never a silent default.
+UNARYOP_METHODS: dict[str, Callable[[Any, Any], ExitSet]] = {
+    "USub": lambda value, site: value.unary_minus(site),
+    "UAdd": lambda value, site: value.unary_plus(site),
+    "Invert": lambda value, site: value.bitwise_invert(site),
 }
 
 
@@ -204,9 +206,7 @@ class UnaryOpSugar(ConstructedTermSugar):
             return operand.and_then(
                 lambda value: consume_operands(project_not, value)
             ).and_then(lambda predicate: predicate.negate())
-        method = UNARYOP_METHODS[self.op_kind]
+        operate = UNARYOP_METHODS[self.op_kind]
         return operand.and_then(
-            lambda value: consume_operands(
-                lambda v: getattr(v, method)(self.site), value
-            )
+            lambda value: consume_operands(lambda v: operate(v, self.site), value)
         )

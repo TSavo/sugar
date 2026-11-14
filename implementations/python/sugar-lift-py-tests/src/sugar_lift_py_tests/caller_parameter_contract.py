@@ -9,6 +9,10 @@ from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordin
 from sugar_lift_py_tests.context_manager_contract import _json_value
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.floor import FloorValue
+from sugar_lift_py_tests.floor.floor_value import (
+    BINARY_FLOOR_OPERATIONS,
+    ORDERING_FLOOR_OPERATIONS,
+)
 from sugar_lift_py_tests.ir import (
     Formula,
     Term,
@@ -671,32 +675,14 @@ _NATIVE_OPERATION_PROJECTORS = {
     "iter": project_iter,
     "next": project_next,
     # Binary arithmetic / bitwise (_BINARY_OPERATOR_COORDINATE keys), applied
-    # under the caller's context.
-    "add": lambda left, right, site, ctx: left.add(right, site, ctx),
-    "subtract": lambda left, right, site, ctx: left.subtract(right, site, ctx),
-    "multiply": lambda left, right, site, ctx: left.multiply(right, site, ctx),
-    "divide": lambda left, right, site, ctx: left.divide(right, site, ctx),
-    "floor_divide": lambda left, right, site, ctx: left.floor_divide(right, site, ctx),
-    "modulo": lambda left, right, site, ctx: left.modulo(right, site, ctx),
-    "power": lambda left, right, site, ctx: left.power(right, site, ctx),
-    "matrix_multiply": lambda left, right, site, ctx: left.matrix_multiply(
-        right, site, ctx
-    ),
-    "bitwise_and": lambda left, right, site, ctx: left.bitwise_and(right, site, ctx),
-    "bitwise_or": lambda left, right, site, ctx: left.bitwise_or(right, site, ctx),
-    "bitwise_xor": lambda left, right, site, ctx: left.bitwise_xor(right, site, ctx),
-    "left_shift": lambda left, right, site, ctx: left.left_shift(right, site, ctx),
-    "right_shift": lambda left, right, site, ctx: left.right_shift(right, site, ctx),
+    # under the caller's context: the one explicit call of each binary floor
+    # (``BINARY_FLOOR_OPERATIONS``), the same one ``BinOpSugar`` applies.
+    **BINARY_FLOOR_OPERATIONS,
     # Authenticated in-place (AugAssign); binary fallback is inside each projector.
     **_INPLACE_NATIVE_OPERATION_PROJECTORS,
     # Equality, ordering, membership (compare / equality sugars).
     "equals": lambda left, right, site, ctx: left.equals(right, site, ctx),
-    "less_than": lambda left, right, site, ctx: left.less_than(right, site, ctx),
-    "less_equal": lambda left, right, site, ctx: left.less_equal(right, site, ctx),
-    "greater_than": lambda left, right, site, ctx: left.greater_than(right, site, ctx),
-    "greater_equal": lambda left, right, site, ctx: left.greater_equal(
-        right, site, ctx
-    ),
+    **ORDERING_FLOOR_OPERATIONS,
     "contains": lambda container, item, site, ctx: container.contains(item, site),
     # Ternary store protocol (receiver, index|name, value + site).
     # Discharge order: receiver, index, value — never RHS-first.
