@@ -4704,15 +4704,26 @@ class WithItem(Node):
         enter_attr = self._make_attribute(self._make_manager_ref(), "__enter__")
         return self._make_call(enter_attr, ())
 
-    def _exit_face_id(self) -> str:
-        """Stable exit-face coordinate X for parametric exit-arg refs.
-
-        Still the source occurrence's, not the evaluation's: the manager
-        summary derivation records it per source item
-        (``manager_summary_derivation._direct_with_call_uses``) and the
-        resolved protocol states its exit over it, so the sugar's face facts
-        and the protocol's exit coordinates must name the same face."""
+    def _source_exit_face_id(self) -> str:
+        """The source occurrence's exit face: the one the manager summary
+        derivation states the derived protocol's ``__exit__`` over
+        (``manager_summary_derivation._direct_with_call_uses``), once per
+        use site, before any evaluation exists."""
         return f"{self._effect_slot_id()}#exit_face"
+
+    def _exit_face_id(self) -> str:
+        """Exit-face coordinate X for parametric exit-arg refs, one per
+        evaluation.
+
+        Keyed off the item's evaluation the way ``_manager_slot_id`` is: a
+        ``with`` evaluated more than once (a loop iteration's copy, a
+        duplicated ``finally``'s exit-path copy) exits over its own face,
+        never a sibling copy's.  The protocol that describes ``__exit__`` is
+        re-keyed onto this face where the sugar is built
+        (``With._protocol_at_exit_face``), so the sugar's face facts and the
+        protocol's exit coordinates name the same face.  An item evaluated
+        once keeps the source occurrence's face."""
+        return Statement._evaluation_slot(self, self._source_exit_face_id())
 
     def _make_exit_type_ref(self) -> "Node":
         from .backend import Leaf, materialize
@@ -10315,18 +10326,23 @@ class With(Statement):
         target = item.optional_vars
         if target is None or target.kind == "Name":
             return self
-        if self._generator_manager_frame(item) is not None:
-            return self
-        resolution = self._prebound_manager_resolution(item)
-        if not isinstance(
-            resolution,
-            (
-                ContextManagerContractRefV1,
-                SourceDerivedContextManagerRefV1,
-                LanguageOwnedContextManagerRefV1,
-            ),
-        ) or not isinstance(resolution.semantics, ProtocolResourceSemanticsV1):
-            return self
+        # A generator-based manager binds its enter result (the first yield)
+        # exactly as a class-based one does (``GeneratorWithSugar`` /
+        # ``WithSourceResourceSugar`` both bind the enter slot), so its store
+        # target is lowered the same way: ``a``/``b`` read their projections
+        # of that store, never their prior state by spelling.  Its contract
+        # is the generator frame, read before any resolution is required.
+        if self._generator_manager_frame(item) is None:
+            resolution = self._prebound_manager_resolution(item)
+            if not isinstance(
+                resolution,
+                (
+                    ContextManagerContractRefV1,
+                    SourceDerivedContextManagerRefV1,
+                    LanguageOwnedContextManagerRefV1,
+                ),
+            ) or not isinstance(resolution.semantics, ProtocolResourceSemanticsV1):
+                return self
 
         enter_slot = f"{item._manager_slot_id()}#enter_result"
         if self._already_bound_store(enter_slot):
@@ -10623,10 +10639,11 @@ class With(Statement):
                     manager=manager_sugar,
                     enter=enter_sugar,
                     exit=exit_sugar,
-                    protocol=(
+                    protocol=self._protocol_at_exit_face(
                         generator_protocol
                         if generator_protocol is not None
-                        else resolved_ref.protocol
+                        else resolved_ref.protocol,
+                        item,
                     ),
                     summary=resolved_ref,
                     body=tuple(stmt.sugar() for stmt in self.body),
@@ -10794,6 +10811,22 @@ class With(Statement):
         )
         testify(self.reporter, "report_gap", self, panic)
         raise panic
+
+    @staticmethod
+    def _protocol_at_exit_face(protocol, item):
+        """The derived protocol describing ``__exit__`` over this evaluation's
+        face.
+
+        The summary derivation states the protocol over the source
+        occurrence's face, once per use site.  A ``with`` evaluated more than
+        once exits over its own face per evaluation (``_exit_face_id``), so
+        the protocol is re-keyed onto that face here and the sugar's face
+        facts and the protocol's exit coordinates stay together.  An item
+        evaluated once keeps the derived protocol as published."""
+        face = item._exit_face_id()
+        if face == item._source_exit_face_id():
+            return protocol
+        return protocol.at_exit_face(face)
 
     def _require_native_resource_definitions(self, resolved_ref):
         """Require both protocol methods through the one authenticated door."""

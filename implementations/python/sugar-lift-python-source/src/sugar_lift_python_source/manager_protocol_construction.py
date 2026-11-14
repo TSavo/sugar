@@ -52,6 +52,27 @@ class ConstructedManagerProtocolV1:
         if cid_of_json(self.preimage) != self.protocol_construction_cid:
             raise ValueError("manager protocol CID does not match its preimage")
 
+    def at_exit_face(self, exit_face_id: str) -> "ConstructedManagerProtocolV1":
+        """This protocol describing ``__exit__`` over ``exit_face_id``.
+
+        The same receiver and the same protocol method frames; only the exit
+        face the calls are bound over (and so the protocol's construction
+        CID) is the given one: one face per evaluation of a duplicated
+        ``with`` (``WithItem._exit_face_id``)."""
+        enter, exit_ = _protocol_calls_at_face(
+            _completed_object_receivers(self.receiver_state)[0], exit_face_id
+        )
+        return ConstructedManagerProtocolV1(
+            self.manager_construction_cid,
+            cid_of_json({**self.preimage, "exitFaceId": exit_face_id}),
+            enter,
+            exit_,
+            self.enter_frame_cid,
+            self.exit_frame_cid,
+            exit_face_id,
+            self.receiver_state,
+        )
+
     def enter_outcome(self, ctx: object = None):
         if isinstance(self.receiver_state, ObjectValue):
             return self.enter_call.reduce_source_outcome(ctx)
@@ -652,6 +673,29 @@ class GeneratorBackedManagerProtocolV1:
         object.__setattr__(self, "_exited_entry_cids", set())
         object.__setattr__(self, "_enter_ordinal", 0)
 
+    def at_exit_face(self, exit_face_id: str):
+        """This protocol describing ``__exit__`` over ``exit_face_id``.
+
+        The same generator frame and definitions; only the exit face (and so
+        the protocol's construction CID) is the given one: one face per
+        evaluation of a duplicated ``with`` (``WithItem._exit_face_id``).
+        Each evaluation is its own instance, so its enter ordinal and
+        one-shot exit log are its own."""
+        from dataclasses import replace
+
+        return replace(
+            self,
+            exit_face_id=exit_face_id,
+            protocol_construction_cid=cid_of_json(
+                {**self.preimage, "exitFaceId": exit_face_id}
+            ),
+            **self._derived_identity_reset(),
+        )
+
+    def _derived_identity_reset(self) -> dict:
+        """Fields recomputed from the re-keyed preimage on construction."""
+        return {}
+
     def enter_resource_outcome(self, ctx: object = None):
         """Enter the authenticated generator lifecycle; return yield + machine."""
         return enter_generator_resource_outcome(self, ctx=ctx)
@@ -1107,19 +1151,7 @@ def construct_manager_protocol(
             "exit-missing", behavior.manager_construction_cid, "source-visible method"
         )
     representative = receivers[0]
-    enter = representative.bound_method_call(
-        "__enter__", (), owner="construct_manager_protocol", blame=exit_face_id
-    )
-    exit_ = representative.bound_method_call(
-        "__exit__",
-        (
-            ExitTypeCoordinate(exit_face_id, None),
-            ExitValueCoordinate(exit_face_id, None),
-            ExitTracebackCoordinate(exit_face_id, None),
-        ),
-        owner="construct_manager_protocol",
-        blame=exit_face_id,
-    )
+    enter, exit_ = _protocol_calls_at_face(representative, exit_face_id)
     enter_frame_cid = _method_frame_cid(representative, "__enter__")
     exit_frame_cid = _method_frame_cid(representative, "__exit__")
     if any(
@@ -1150,6 +1182,25 @@ def construct_manager_protocol(
         exit_face_id,
         receiver,
     )
+
+
+def _protocol_calls_at_face(representative, exit_face_id: str):
+    """``__enter__()`` and ``__exit__(ExitTypeRef(X), …)`` bound on the
+    representative receiver, with ``X`` the exit face."""
+    enter = representative.bound_method_call(
+        "__enter__", (), owner="construct_manager_protocol", blame=exit_face_id
+    )
+    exit_ = representative.bound_method_call(
+        "__exit__",
+        (
+            ExitTypeCoordinate(exit_face_id, None),
+            ExitValueCoordinate(exit_face_id, None),
+            ExitTracebackCoordinate(exit_face_id, None),
+        ),
+        owner="construct_manager_protocol",
+        blame=exit_face_id,
+    )
+    return enter, exit_
 
 
 def _method_frame_cid(receiver, name: str) -> str:

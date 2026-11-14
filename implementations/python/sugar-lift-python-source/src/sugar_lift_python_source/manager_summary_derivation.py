@@ -357,6 +357,11 @@ class GeneratorBackedLifecycleProtocolV1(GeneratorBackedManagerProtocolV1):
             raise ValueError("generator lifecycle CID does not match its preimage")
         object.__setattr__(self, "lifecycle_cid", expected)
 
+    def _derived_identity_reset(self) -> dict:
+        """The lifecycle CID names the protocol CID and exit face, so a
+        re-keyed lifecycle recomputes it (``__post_init__``)."""
+        return {"lifecycle_cid": ""}
+
     @property
     def lifecycle_preimage(self) -> dict:
         return {
@@ -5370,7 +5375,7 @@ def _direct_with_call_uses(root) -> dict:
             uses[(span.start_line, span.start_col, span.end_line, span.end_col)] = (
                 coordinate,
                 expr,
-                item._exit_face_id(),
+                item._source_exit_face_id(),
             )
     return uses
 
@@ -5426,7 +5431,11 @@ def _projected_manager_call_uses(source_file, selected_arms=None):
                             leaf_coordinate = SourceFragmentCoordinateV1(
                                 leaf.unit.source_cid, *key
                             )
-                            uses[key] = (leaf_coordinate, leaf, item._exit_face_id())
+                            uses[key] = (
+                                leaf_coordinate,
+                                leaf,
+                                item._source_exit_face_id(),
+                            )
                             if selected_arms is not None:
                                 use_coordinate = SourceFragmentCoordinateV1(
                                     leaf.unit.source_cid, *item._manager_use_site_span()
@@ -5468,7 +5477,7 @@ def _projected_manager_call_uses(source_file, selected_arms=None):
                 uses[(span.start_line, span.start_col, span.end_line, span.end_col)] = (
                     coordinate,
                     expr,
-                    item._exit_face_id(),
+                    item._source_exit_face_id(),
                 )
 
 
