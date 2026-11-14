@@ -741,28 +741,63 @@ class CallSiteSugar(ConstructedTermSugar):
             if module_halt is not None:
                 return module_halt
         # The one binder (``object_value.bind_call``): every call form binds
-        # its actuals there, and ``producer_outcome`` below applies the body.
-        callsite = bind_source_frame_call(
-            self.target_name,
-            positional,
-            kw_values,
-            frame=source_call_frame,
-            ctx=ctx,
-            owner="CallSiteSugar.desugar",
-            blame=self.site,
-            term=term,
-            call_occurrence=self.call_occurrence,
-            authenticated_target_symbol=self.import_target_symbol,
-            exception_type_coordinate=self.exception_type_coordinate,
-            exception_type_mro=self.exception_type_mro,
-            builtin_exception_class=self._applied_builtin_exception_class(
-                source_call_frame
-            ),
-            python_type_coordinate=self._applied_builtin_type_of(
-                source_call_frame, positional, kw_values, term
-            ),
-            language_callee=self.language_callee,
+        # its actuals there, and ``_apply_bound`` applies the body.
+        body = (
+            None
+            if source_call_frame is None
+            else source_frame_body(
+                source_call_frame, owner="CallSiteSugar.desugar", blame=self.site
+            )
         )
+
+        def bind(defaults, body):
+            return bind_source_frame_call(
+                self.target_name,
+                positional,
+                kw_values,
+                frame=source_call_frame,
+                ctx=ctx,
+                owner="CallSiteSugar.desugar",
+                blame=self.site,
+                term=term,
+                body=body,
+                defaults=defaults,
+                call_occurrence=self.call_occurrence,
+                authenticated_target_symbol=self.import_target_symbol,
+                exception_type_coordinate=self.exception_type_coordinate,
+                exception_type_mro=self.exception_type_mro,
+                builtin_exception_class=self._applied_builtin_exception_class(
+                    source_call_frame
+                ),
+                python_type_coordinate=self._applied_builtin_type_of(
+                    source_call_frame, positional, kw_values, term
+                ),
+                language_callee=self.language_callee,
+            )
+
+        from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
+            ClassConstructorBodySugar,
+        )
+
+        if isinstance(body, ClassConstructorBodySugar):
+            # ``Cls(...)``: the class statement's one outcome is read, and on
+            # each completed face the call binds the constructor defaults its
+            # class value carries (``bind_class_call``).
+            return body.bind_class_call(
+                ctx,
+                lambda defaults, entered: self._apply_bound(
+                    bind(defaults, entered), source_call_frame, ctx
+                ),
+                site=self.site,
+            )
+        return self._apply_bound(bind((), body), source_call_frame, ctx)
+
+    def _apply_bound(self, callsite, source_call_frame, ctx):
+        """Apply the call ``callsite`` the one binder bound into
+        ``source_call_frame`` (None for a frameless call): a generator's
+        construction, a pending native operation's discharge, an unanswered
+        callee's faces, or the body's application
+        (``CallSiteValue.producer_outcome``)."""
         bound_source_actuals = callsite.bound_source_actuals
         if (
             source_call_frame is not None
@@ -1162,29 +1197,30 @@ def bind_source_frame_call(
     blame: object,
     term,
     refuse=_refuse_loud,
+    body=None,
     **testimony,
 ):
     """``target_name(*positional, **keywords)`` bound by the one binder.
 
     ``object_value.bind_call`` with what ``frame`` (entered through
     ``enter_source_frame``) says about the callee: its formals, its
-    declaration body (``source_frame_body``), its coordinates.  With no frame
-    the call is bound bodyless.  The result is applied by
+    declaration body (``source_frame_body``, or ``body`` where the caller
+    already has it: a class call's constructor body entered on its class
+    value, ``ClassConstructorBodySugar.bind_class_call``), its coordinates.
+    With no frame the call is bound bodyless.  The result is applied by
     ``CallSiteValue.producer_outcome``, as every call is.
     """
     from sugar_lift_py_tests.floor.object_value import bind_call
 
+    if body is None and frame is not None:
+        body = source_frame_body(frame, owner=owner, blame=blame)
     return bind_call(
         target_name,
         positional,
         keywords,
         frame=frame,
         parameters=() if frame is None else frame.parameters,
-        body=(
-            None
-            if frame is None
-            else source_frame_body(frame, owner=owner, blame=blame)
-        ),
+        body=body,
         frame_cid=None if frame is None else frame.frame_cid,
         formal_coordinate_cids=(
             ()

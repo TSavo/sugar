@@ -84,7 +84,8 @@ class ClassDefinitionValue(GuardStableValue):
     # its per-parameter key (``nodes._default_evaluation_key``).  Python
     # stores the values on the function; every call that omits the formal
     # binds that one object (``object_value.bind_method_call`` passes them
-    # to ``bind_call``'s ``defaults``, as a lambda value's are).
+    # to ``bind_call``'s ``defaults``, as a lambda value's are, and a class
+    # call its constructor's, ``constructor_defaults``).
     method_defaults: tuple = field(default=(), compare=False)
 
     def __post_init__(self):
@@ -102,7 +103,10 @@ class ClassDefinitionValue(GuardStableValue):
         ``__new__``, dataclass and inherited-exception arms) through the one
         application routine, ``CallSiteValue.producer_outcome``, exactly as
         ``CallSiteSugar`` applies it for a lexically named class.  Every face of
-        the constructor, halts included, is this call's.
+        the constructor, halts included, is this call's.  The call is bound
+        where the class call reads the class statement
+        (``ClassConstructorBodySugar.bind_class_call``), with the constructor
+        defaults the class value carries (``constructor_defaults``).
         """
         from sugar_lift_py_tests.floor.object_value import bind_call
 
@@ -136,22 +140,43 @@ class ClassDefinitionValue(GuardStableValue):
                 fix=fix,
             )
 
-        return bind_call(
-            self.class_name,
-            positional,
-            keywords,
-            frame=frame,
-            parameters=frame.parameters,
-            body=frame.body,
-            frame_cid=frame.frame_cid,
-            formal_coordinate_cids=tuple(
-                coordinate.cid for coordinate in frame.formal_coordinates
-            ),
-            ctx=ctx,
-            owner="ClassDefinitionValue.callable_application_with",
-            blame=operation.site,
-            refuse=refuse,
-        ).producer_outcome(ctx)
+        return frame.body.bind_class_call(
+            ctx,
+            lambda defaults, body: bind_call(
+                self.class_name,
+                positional,
+                keywords,
+                frame=frame,
+                parameters=frame.parameters,
+                body=body,
+                frame_cid=frame.frame_cid,
+                formal_coordinate_cids=tuple(
+                    coordinate.cid for coordinate in frame.formal_coordinates
+                ),
+                ctx=ctx,
+                owner="ClassDefinitionValue.callable_application_with",
+                blame=operation.site,
+                refuse=refuse,
+                defaults=defaults,
+            ).producer_outcome(ctx),
+            site=operation.site,
+        )
+
+    def constructor_defaults(self) -> tuple:
+        """``(key, value)``: each method default this class and every class
+        of its MRO carries (``method_defaults``), which a call of the class
+        binds where it binds its actuals (``object_value.bind_call``'s
+        ``defaults``).  The constructor's formals are its ``__init__``'s,
+        written on this class or inherited from a base, or its source
+        ``__new__``'s; each default's key names its own ``def``
+        (``nodes._default_evaluation_key``), so the one each omitted formal
+        reads is the value its ``def`` statement evaluated when that class
+        body ran."""
+        return tuple(
+            pair
+            for cls in (self, *self._c3_tail())
+            for pair in cls.method_defaults
+        )
 
     def call_method_value(
         self,

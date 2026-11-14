@@ -49,6 +49,10 @@ class ClassConstructorBodySugar(Sugar):
     receiver_coordinate_cid: str | None
     site: object = field(compare=False)
     constructed_new_method: object | None = field(default=None, compare=False)
+    # The class value this call read the class statement's one outcome as
+    # (``enter``): set on the body a class call binds, so the initializer is
+    # entered on that value and the statement is read once per call.
+    class_value: object | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.constructed_new_method is None:
@@ -187,13 +191,84 @@ class ClassConstructorBodySugar(Sugar):
 
         return self.enter_initializer(ctx, initialize)
 
+    def enter(self, ctx, step, *, at_call=False, call_site=None) -> ExitSet:
+        """The class statement's one outcome, read once per class call
+        (#7794): its halted faces and what its arms owe are the call's, never
+        dropped.  On each completed face, ``step(value, body)``: ``value`` the
+        class value, ``body`` this constructor entered on it, whose
+        ``enter_initializer`` reads that value and not the statement again.
+        A body already entered answers ``step`` on its class value.
+
+        ``at_call``: read by the class call's own door (``bind_class_call``)
+        at ``call_site``, as the body's application read it before
+        (``CallSiteValue.producer_outcome``): in the call's frame
+        (``occurrence.call_frame_path``), its halts the Call's own faces
+        (``call_site_value.call_owned``)."""
+        if self.class_value is not None:
+            return step(self.class_value, self)
+        from dataclasses import replace
+
+        if at_call and call_site is not None:
+            from sugar_lift_py_tests.occurrence import (
+                call_frame_path,
+                current_path,
+                occurrence_path,
+            )
+
+            with occurrence_path(call_frame_path(call_site, current_path())):
+                statement = self.definition.desugar(ctx)
+        else:
+            # A module-level statement is reduced once, and this reads it.
+            statement = self.definition.desugar(ctx)
+        if at_call:
+            from sugar_lift_py_tests.floor.call_site_value import call_owned
+            from sugar_lift_py_tests.outcome import Halted
+
+            statement = ExitSet(
+                tuple(
+                    Halted(
+                        exit_.guard,
+                        call_owned(exit_.effect),
+                        exit_.state,
+                        exit_.faces,
+                        exit_.owed,
+                    )
+                    if isinstance(exit_, Halted)
+                    else exit_
+                    for exit_ in statement.exits
+                )
+            )
+        return statement.and_then(
+            lambda value: step(value, replace(self, class_value=value))
+        )
+
+    def bind_class_call(self, ctx, bind, *, site) -> ExitSet:
+        """THE class call ``Cls(...)`` at ``site``: the class statement's one
+        outcome is read (``enter``), and on each completed face the call is
+        bound and applied by ``bind(defaults, body)``.
+
+        ``defaults`` are the ``(key, value)`` pairs the class value carries
+        for its constructor (``ClassDefinitionValue.constructor_defaults``):
+        what the ``__init__`` / ``__new__`` ``def`` statement evaluated when
+        its class body ran.  ``bind`` hands them to ``object_value.bind_call``
+        (``defaults``), so a formal the call omits binds that value
+        (``DefaultValueSugar``), never its default expression evaluated at
+        the call.  ``body`` is this constructor entered on the class value,
+        the body the bound call applies."""
+        return self.enter(
+            ctx,
+            lambda value, body: bind(constructor_defaults(value), body),
+            at_call=True,
+            call_site=site,
+        )
+
     def enter_initializer(self, ctx, initialize) -> ExitSet:
         """THE class call up to its ``__init__``: the one place a receiver is
         made for an initializer to run on.
 
-        The class statement's one outcome is read (#7794): its halted faces
-        and what its arms owe are the call's, never dropped.  On each
-        completed face, an unrun source ``__new__`` is refused by name, the
+        The class statement's one outcome is read (#7794, ``enter``): by the
+        class call that bound this body (``bind_class_call``), else here.  On
+        each completed face, an unrun source ``__new__`` is refused by name, the
         fresh receiver is seated at the receiver coordinate with the PEP 3135
         ``__class__`` cell and ``self``, and ``initialize(value, ctx)`` runs
         the initializer in that context.  A class with no initializer
@@ -252,6 +327,19 @@ class ClassConstructorBodySugar(Sugar):
                 )
             return initialize(value, ctx.with_temporal(temporal))
 
-        # The class statement's one outcome: a module-level statement is
-        # reduced once, and this call reads it (#7794).
-        return self.definition.desugar(ctx).and_then(construct)
+        return self.enter(ctx, lambda value, _body: construct(value))
+
+
+def constructor_defaults(value) -> tuple:
+    """The ``(key, value)`` pairs a class call binds where it binds its
+    actuals: each method default the class value and every class of its
+    MRO carries (``ClassDefinitionValue.constructor_defaults``), among them
+    its ``__init__``'s, own or inherited, and its source ``__new__``'s.  A
+    class value that is no source class statement's carries none."""
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+
+    if not isinstance(value, ClassDefinitionValue):
+        return ()
+    return value.constructor_defaults()

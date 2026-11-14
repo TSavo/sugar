@@ -1726,7 +1726,6 @@ class CallSiteValue(FloorValue):
 
         from dataclasses import replace
 
-        from sugar_lift_py_tests.effect import RaiseEffect
         from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
         def retaining(value):
@@ -1743,11 +1742,6 @@ class CallSiteValue(FloorValue):
                 _RetainedSourceCompletionV1(value),
             )
             return retained
-
-        def call_owned(effect):
-            if isinstance(effect, RaiseEffect):
-                return replace(effect, producer_node_owner="Call")
-            return effect
 
         if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
             # A completed body seats its value on the Call.  A raise is never
@@ -1794,6 +1788,21 @@ class CallSiteValue(FloorValue):
                 for exit_ in exits.exits
             )
         ).normalize()
+
+
+def call_owned(effect):
+    """A halt of a call as the Call's own face: a raise is owned by the Call
+    node (``producer_node_owner``).  Every halt a call publishes takes it:
+    the body's (``CallSiteValue.project_producer_outcome``) and, for a class
+    call, the class statement's it reads first
+    (``ClassConstructorBodySugar.bind_class_call``)."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.effect import RaiseEffect
+
+    if isinstance(effect, RaiseEffect):
+        return replace(effect, producer_node_owner="Call")
+    return effect
 
 
 def force_floor(

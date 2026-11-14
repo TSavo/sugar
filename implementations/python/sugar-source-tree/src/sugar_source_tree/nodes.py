@@ -9421,7 +9421,9 @@ class ClassDef(Statement):
         class body's ``read``: each default bound under its per-parameter key
         (``_default_evaluation_key``, #8020), which the class value carries
         to every call of the method (``ClassDefinitionValue.method_defaults``,
-        ``object_value.bind_method_call``).  A decorated method
+        ``object_value.bind_method_call``), and to every call of the class
+        for its ``__init__`` and ``__new__``
+        (``ClassConstructorBodySugar.bind_class_call``).  A decorated method
         (``staticmethod``, ``classmethod``, ``property``) evaluates its
         defaults the same way, before its decorators apply: its descriptor
         is the class body's descriptor table's, not applied here, and every
@@ -10133,9 +10135,14 @@ class ClassDef(Statement):
                 ("formal", index) for index, _ in enumerate(params)
             ),
             parameter_kinds=tuple(param.param_kind for param in params),
+            # Each default reads the value the constructor's ``def``
+            # statement evaluated when its class body ran, which the class
+            # value carries and the class call binds
+            # (``ClassConstructorBodySugar.bind_class_call``); the formals
+            # are the constructor's after its first.
             default_sugars=tuple(
-                param.default.sugar() if param.default is not None else None
-                for param in params
+                _default_value_sugar(constructor, index + 1)
+                for index, _param in enumerate(params)
             ),
             default_fragments=tuple(
                 param.default.fragment if param.default is not None else None
