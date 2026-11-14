@@ -1972,7 +1972,7 @@ class SourceUnit:
             raise
         finally:
             # A scope that kept the record records nothing after this.
-            record.open = False
+            record.close()
             _MODULE_THREADING.reset(threading_token)
             _MODULE_EXECUTION_SITE.reset(site_token)
         states = ModuleBindingStatesV1(
@@ -5110,12 +5110,28 @@ class _ModuleStatementRecord:
     reader outside the module block reads, never every name at every
     statement."""
 
-    __slots__ = ("at", "names", "open")
+    __slots__ = ("at", "names", "open", "point")
 
     def __init__(self, names: frozenset) -> None:
         self.at: dict = {}
         self.names = names
         self.open = True
+        # The ``_MODULE_THREADING`` set for the statement threaded now,
+        # reset when the next statement is recorded or the threading ends.
+        self.point = None
+
+    def advance(self) -> None:
+        """A new point of the threading: the next statement is recorded."""
+        if self.point is not None:
+            _MODULE_THREADING.reset(self.point)
+        self.point = _MODULE_THREADING.set(object())
+
+    def close(self) -> None:
+        """The threading ends: it records nothing after this."""
+        self.open = False
+        if self.point is not None:
+            _MODULE_THREADING.reset(self.point)
+            self.point = None
 
     def record(self, statement, scope: dict) -> None:
         self.at.setdefault(_source_position(statement), []).append(
@@ -5176,21 +5192,22 @@ _MODULE_THREADING: AmbientVar = AmbientVar("sugar_module_threading", default=Non
 
 def current_module_execution_site():
     """The module execution site the construction running now is under
-    (``_MODULE_EXECUTION_SITE``), not recorded as a read.  A source call
-    frame carries it (``SourceVisibleCallFrameV1.module_execution_site``),
-    so the frame read again at reduce is read at the site its call was
-    constructed at.  A frame whose body does not depend on the site reads
-    the same at any site."""
-    return _MODULE_EXECUTION_SITE.now(None)
+    (``_MODULE_EXECUTION_SITE``), read as every ambient value is read: on
+    the memo row in flight.  A source call frame carries it
+    (``SourceVisibleCallFrameV1.module_execution_site``), so the frame read
+    again at reduce is read at the site its call was constructed at; a
+    frame remembered at one site is therefore served only at that site
+    (#7838)."""
+    return _MODULE_EXECUTION_SITE.get()
 
 
 def construct_at_module_execution_site(site, construct):
     """``construct()`` under the module execution ``site``: a call the
     module body runs (``Call._construct_sugar``), a frame read again at
     reduce at the site it was constructed at, or the reduction of a sugar
-    stamped with its site (``_at_module_execution_site``)."""
-    if site == _MODULE_EXECUTION_SITE.now(None):
-        return construct()
+    stamped with its site (``_at_module_execution_site``).  The site is
+    this construction's own, set whatever the site around it is, so it is
+    never ambient to it."""
     token = _MODULE_EXECUTION_SITE.set(site)
     try:
         return construct()
@@ -6368,7 +6385,7 @@ class Node(Typed):
             record = scope.get(_MODULE_STATEMENT_STATES)
             if record is not None and record.open:
                 record.record(stmt, pre_statement_scope)
-                _MODULE_THREADING.set(object())
+                record.advance()
             lc = stmt.line_col_span()
             with reduction_span(
                 sugar="SubstituteStatement",

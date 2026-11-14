@@ -226,6 +226,12 @@ class OwnerReduction:
         self.ends = ends
 
 
+# Each owner's reduction, remembered through the one door for memo rows
+# (``construction_cache``): served only where every ambient value the
+# reduction read (the module execution site, the occurrence path, the frames
+# and module runs under way, ...) is still equal.  Keyed by the unit's id and
+# the owner's span; each row's ``OwnerReduction`` holds its unit, so the id
+# is never recycled under a live row.
 _OWNER_REDUCTIONS: dict = {}
 _OWNER_REDUCTIONS_BOUND = 256
 
@@ -233,8 +239,8 @@ _OWNER_REDUCTIONS_BOUND = 256
 def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     """THE reduction of a function (``owner``) or of a module (``owner`` None,
     ``sf`` given: anything holding the module's ``root``, a ``SourceFile`` or
-    its unit's ``constructed_module``), once per resident unit (#7757,
-    inventory item 28).
+    its unit's ``constructed_module``), once per resident unit and ambient
+    state (#7757, inventory items 28 and 44).
 
     Every reader of a function's reduction reads this one: the universe rows,
     the link-unit enrollment, and the ``facts`` row of each assert in it. An assert is therefore reduced once, in context, and
@@ -246,13 +252,24 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     context each completed arm ended with (``OwnerReduction.ends``).
     """
     from sugar_lift_py_tests import assert_reductions
+    from sugar_source_tree.construction_cache import (
+        abandon_row,
+        close_row,
+        open_row,
+        serve,
+    )
     from sugar_source_tree.nodes import construct_at_module_execution_site
 
     node = owner if owner is not None else sf.root
     lc = node.line_col_span()
     key = (id(node.unit), node.kind, lc.start_line, lc.start_col, lc.end_line, lc.end_col)
-    held = _OWNER_REDUCTIONS.get(key)
-    if held is None or held.unit is not node.unit:
+    row = serve(_OWNER_REDUCTIONS, key, node.reporter)
+    if row is not None:
+        return row.value
+    if len(_OWNER_REDUCTIONS) >= _OWNER_REDUCTIONS_BOUND:
+        _OWNER_REDUCTIONS.clear()
+    computation = open_row()
+    try:
         ends = ()
         with assert_reductions.collecting() as asserts:
             if owner is not None:
@@ -261,10 +278,13 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
                 outcome, ends = construct_at_module_execution_site(
                     None, lambda: sf.root.sugar().run(None)
                 )
-        if len(_OWNER_REDUCTIONS) >= _OWNER_REDUCTIONS_BOUND:
-            _OWNER_REDUCTIONS.clear()
-        held = OwnerReduction(node.unit, outcome, tuple(asserts), ends)
-        _OWNER_REDUCTIONS[key] = held
+    except BaseException:
+        # A refusal is not kept: what the reduction read and said belongs
+        # to the computation around it.
+        abandon_row(computation)
+        raise
+    held = OwnerReduction(node.unit, outcome, tuple(asserts), ends)
+    close_row(_OWNER_REDUCTIONS, key, computation, node.reporter, value=held)
     return held
 
 
