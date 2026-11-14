@@ -208,7 +208,7 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
         provisional_contract_refs_from_demands,
         tree_construction_context_for_workspace,
     )
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     path = tmp_path / "consumer.py"
     path.write_text(
@@ -226,10 +226,10 @@ def test_known_constructed_with_item_shows_constructed_gt_zero(tmp_path: Path):
 
     class _Protocol:
         def enter_resource_outcome(self, _ctx=None):
-            return Complete(SimpleNamespace(enter_value=None))
+            return ExitSet.completed(SimpleNamespace(enter_value=None))
 
         def exit_outcome_for(self, _entered, _ctx=None):
-            return Complete(False)
+            return ExitSet.completed(False)
 
     ctx.source_derived_contract_refs[use_site] = SourceDerivedContextManagerRefV1(
         use_site=use_site,

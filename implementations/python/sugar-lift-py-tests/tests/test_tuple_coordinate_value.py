@@ -20,7 +20,6 @@ from sugar_lift_py_tests.floor import (
     TupleCoordinateValue,
 )
 from sugar_lift_py_tests.ir import _term_content_cid, atomic, ctor, make_var, str_const
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_source_tree.nodes import Call, Subscript
@@ -58,8 +57,8 @@ def _nodes(tree: SourceFile):
 
 
 def _value(outcome):
-    assert isinstance(outcome, Complete), outcome
-    return outcome.value
+    assert outcome.completed_value() is not None, outcome
+    return outcome.completed_value()
 
 
 def _context(owner: str):
@@ -113,9 +112,9 @@ def test_tuple_coordinate_truth_emits_predicate_without_inventing_cardinality(
     assert isinstance(constructed, TupleCoordinateValue)
     outcome = constructed.truth(call.fragment)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, PredicateValue)
-    assert outcome.value.formula == py_truthy(constructed.term)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), PredicateValue)
+    assert outcome.completed_value().formula == py_truthy(constructed.term)
 
 
 
@@ -144,9 +143,9 @@ def test_tuple_coordinate_length_equals_int_is_native_int_equality(
         length, one, call.fragment, "Eq", outcome
     )
 
-    assert isinstance(published, Complete)
-    assert isinstance(published.value, PredicateValue)
-    assert published.value.formula == py_eq(length.term, one.to_term(owner=str(call.fragment)))
+    assert published.completed_value() is not None
+    assert isinstance(published.completed_value(), PredicateValue)
+    assert published.completed_value().formula == py_eq(length.term, one.to_term(owner=str(call.fragment)))
 
 
 def test_source_tuple_slice_extends_receiver_coordinate_and_occurrence(
@@ -238,11 +237,11 @@ def test_tuple_coordinate_member_lookup_is_a_subscript_coordinate_not_an_invente
 
     outcome = constructed.subscript(index, site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.target_name == "__getitem__"
-    assert outcome.value.arg_values == (constructed, index)
-    assert outcome.value.term == ctor(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert outcome.completed_value().target_name == "__getitem__"
+    assert outcome.completed_value().arg_values == (constructed, index)
+    assert outcome.completed_value().term == ctor(
         "py.subscript",
         (
             constructed.to_term(owner="TupleCoordinateValue.subscript"),
@@ -265,10 +264,10 @@ def test_tuple_coordinate_member_name_is_a_coordinate_not_an_invented_string(
 
     outcome = member.attribute("__name__", site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.target_name == "__name__"
-    assert outcome.value.term == ctor(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert outcome.completed_value().target_name == "__name__"
+    assert outcome.completed_value().term == ctor(
         "attr:__name__",
         [member.to_term(owner=str(site))],
         symbol_kind="method-coordinate",
@@ -286,9 +285,9 @@ def test_tuple_coordinate_type_test_is_a_predicate_not_an_invented_membership(
 
     outcome = constructed.test_python_type(obj, site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, PredicateValue)
-    assert outcome.value.formula == atomic(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), PredicateValue)
+    assert outcome.completed_value().formula == atomic(
         "adt.is_python_type",
         [
             obj.to_term(owner="native_type_tester"),
@@ -307,8 +306,8 @@ def test_tuple_coordinate_is_not_a_type_object(tmp_path: Path) -> None:
         "type", ctor("python:type", [str_const("type")]), "site"
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, FalseBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), FalseBoolLiteralSugar)
 
 
 def test_tuple_coordinate_is_an_instance_of_tuple(tmp_path: Path) -> None:
@@ -320,8 +319,8 @@ def test_tuple_coordinate_is_an_instance_of_tuple(tmp_path: Path) -> None:
         "tuple", ctor("python:type", [str_const("tuple")]), "site"
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)
 
 
 def test_shadowed_tuple_call_cannot_mint_tuple_coordinate(tmp_path: Path) -> None:
@@ -400,14 +399,14 @@ def test_guarded_tuple_slice_preserves_exact_occurrence_in_both_arms(
         index, subscript.fragment, occurrence
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, GuardedValue)
-    assert outcome.value.guard == guard
-    assert outcome.value.when_true.use_occurrence is occurrence
-    assert outcome.value.when_false.use_occurrence is occurrence
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), GuardedValue)
+    assert outcome.completed_value().guard == guard
+    assert outcome.completed_value().when_true.use_occurrence is occurrence
+    assert outcome.completed_value().when_false.use_occurrence is occurrence
     assert (
-        outcome.value.when_true.coordinate_cid
-        == outcome.value.when_false.coordinate_cid
+        outcome.completed_value().when_true.coordinate_cid
+        == outcome.completed_value().when_false.coordinate_cid
     )
 
 

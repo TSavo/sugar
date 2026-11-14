@@ -23,7 +23,6 @@ from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor.effect_coordinate import ObservedEffectValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.panic import SugarNotWritten
@@ -54,14 +53,12 @@ def _leaves(effect) -> list[RaiseEffect]:
 
 
 def _halt_effect(outcome):
-    """Project the single halt effect from Incomplete or a one-face ExitSet."""
-    if isinstance(outcome, Incomplete):
-        return outcome.effect
+    """Project the single halt effect from a one-halt ExitSet."""
     if isinstance(outcome, ExitSet):
         halted = [face for face in outcome.exits if isinstance(face, Halted)]
         assert len(halted) == 1, outcome.exits
         return halted[0].effect
-    raise AssertionError(f"expected Incomplete|ExitSet halt, got {type(outcome)}")
+    raise AssertionError(f"expected an ExitSet halt, got {type(outcome)}")
 
 
 def _grouped_halt(outcome) -> GroupedRaiseEffect:
@@ -196,7 +193,7 @@ def test_subsequent_handler_consumes_prior_residual():
         "        pass\n",
         name="subsequent.py",
     )
-    assert isinstance(outcome, Complete), outcome
+    assert outcome.completed_value() is not None, outcome
 
 
 def test_type_tuple_handler_runs_body_once_for_all_listed_types():
@@ -287,9 +284,10 @@ def test_finally_raise_overrides_residual_group():
         "        raise RuntimeError('finally-wins')\n",
         name="finally_raise.py",
     )
-    assert isinstance(outcome, Incomplete), outcome
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "RuntimeError"
+    assert outcome.halts() == outcome.exits, outcome
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "RuntimeError"
 
 
 def test_finally_return_overrides_residual_group():
@@ -304,8 +302,9 @@ def test_finally_return_overrides_residual_group():
         "        return 99\n",
         name="finally_return.py",
     )
-    assert isinstance(outcome, Complete), outcome
-    record = outcome.value.record
+    value = outcome.completed_value()
+    assert value is not None, outcome
+    record = value.record
     returns = [s for s in record.statements if isinstance(s, ReturnValue)]
     assert returns, record.statements
     assert returns[0].value.value == 99
@@ -491,7 +490,7 @@ def test_truthful_ordinary_try_still_matches_raise_effect():
         "        return 1\n",
         name="ordinary_raise_truthful.py",
     )
-    assert isinstance(outcome, Complete), outcome
+    assert outcome.completed_value() is not None, outcome
 
 
 # ---------------------------------------------------------------------------
@@ -579,7 +578,6 @@ def test_second_handler_reads_first_handler_temporal_binding():
 
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.floor import TermValue
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
     from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_py_tests.sugar.try_star_sugar import TryStarSugar
@@ -633,7 +631,7 @@ def test_second_handler_reads_first_handler_temporal_binding():
             if ctx is None:
                 ctx = ReduceContext.root(owner="BindX")
             bound = ctx.with_temporal(ctx.temporal.bind_value("x", TermValue(1)))
-            # ExitSet face carries _ReducedBlock.context (Complete(floor) cannot).
+            # ExitSet face carries _ReducedBlock.context.
             return ExitSet.completed(
                 _ReducedBlock(
                     entries=(),
@@ -652,13 +650,13 @@ def test_second_handler_reads_first_handler_temporal_binding():
             temporal = getattr(ctx, "temporal", None) if ctx is not None else None
             bound = temporal.value_if_bound("x") if temporal is not None else None
             if bound is None:
-                return Incomplete(
+                return ExitSet.halted(
                     RaiseEffect(
                         exception_name="NameError",
                         occurrence=AuthenticatedRaiseLocus.of("read-x-missing"),
                     )
                 )
-            return Incomplete(
+            return ExitSet.halted(
                 RaiseEffect(
                     exception_name="RuntimeError",
                     occurrence=AuthenticatedRaiseLocus.of("read-x-ok"),
@@ -675,14 +673,14 @@ def test_second_handler_reads_first_handler_temporal_binding():
 
         def desugar(self, ctx=None):
             del ctx
-            return Complete(self.typed)
+            return ExitSet.completed(self.typed)
 
         @classmethod
         def witnesses(cls):
             return ()
 
     sugar = TryStarSugar(
-        body=(Fixed(Incomplete(group)),),
+        body=(Fixed(ExitSet.halted(group)),),
         handlers=(
             ((MatchType(ve_typed),), (BindX(),), "slot-ve"),
             ((MatchType(te_typed),), (ReadXOrHalt(),), "slot-te"),
@@ -690,23 +688,19 @@ def test_second_handler_reads_first_handler_temporal_binding():
         site=site,
     )
     outcome = sugar.desugar(ReduceContext.root(owner="temporal_twin"))
-    # Retained faces (handler completion + exceptional regroup) collapse to a
-    # linear Complete carrying Incomplete entries — project raise names from both.
+    # Retained faces (handler completion + exceptional regroup) may complete
+    # with a record carrying all-halting entries — project raise names from both.
     names: list[str] = []
 
     def collect(obj):
-        if isinstance(obj, Incomplete):
-            if isinstance(obj.effect, GroupedRaiseEffect):
-                names.extend(leaf.exception_name for leaf in _leaves(obj.effect))
-            elif isinstance(obj.effect, RaiseEffect):
-                names.append(obj.effect.exception_name)
-        elif isinstance(obj, Complete):
-            record = getattr(obj.value, "record", obj.value)
-            for stmt in getattr(record, "statements", ()) or getattr(
-                record, "entries", ()
-            ):
-                collect(stmt)
-        elif isinstance(obj, ExitSet):
+        if isinstance(obj, ExitSet):
+            value = obj.completed_value()
+            if value is not None:
+                record = getattr(value, "record", value)
+                for stmt in getattr(record, "statements", ()) or getattr(
+                    record, "entries", ()
+                ):
+                    collect(stmt)
             for face in obj.exits:
                 if isinstance(face, Halted):
                     if isinstance(face.effect, GroupedRaiseEffect):
@@ -733,8 +727,9 @@ def test_handler_terminal_return_face_is_retained_not_dropped():
         "        return 7\n",
         name="handler_return_face.py",
     )
-    assert isinstance(outcome, Complete), outcome
-    returns = [s for s in outcome.value.record.statements if isinstance(s, ReturnValue)]
+    value = outcome.completed_value()
+    assert value is not None, outcome
+    returns = [s for s in value.record.statements if isinstance(s, ReturnValue)]
     assert returns and returns[0].value.value == 7
 
 
@@ -766,8 +761,8 @@ def test_handler_pass_with_residual_is_not_a_completed_edge():
         "        pass\n"
     )
     outcome = _desugar(source, name="residual_not_complete.py")
-    # Must halt with residual TypeError — never Complete at the function edge.
-    assert not isinstance(outcome, Complete), outcome
+    # Must halt with residual TypeError — never complete at the function edge.
+    assert outcome.completed_value() is None, outcome
     effect = _grouped_halt(outcome)
     assert [leaf.exception_name for leaf in _leaves(effect)] == ["TypeError"]
 
@@ -814,7 +809,6 @@ def test_guarded_handler_faces_conjoin_body_guard():
 
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.ir import atomic, str_const
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_py_tests.sugar.try_star_sugar import TryStarSugar
@@ -854,7 +848,7 @@ def test_guarded_handler_faces_conjoin_body_guard():
     class MatchVE(Sugar):
         def desugar(self, ctx=None):
             del ctx
-            return Complete(ve_typed)
+            return ExitSet.completed(ve_typed)
 
         @classmethod
         def witnesses(cls):
@@ -918,7 +912,6 @@ def test_alternative_exceptional_faces_keep_separate_guards():
 
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.ir import atomic, str_const
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_py_tests.sugar.try_star_sugar import TryStarSugar
@@ -947,7 +940,7 @@ def test_alternative_exceptional_faces_keep_separate_guards():
     class MatchVE(Sugar):
         def desugar(self, ctx=None):
             del ctx
-            return Complete(ve_typed)
+            return ExitSet.completed(ve_typed)
 
         @classmethod
         def witnesses(cls):

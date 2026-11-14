@@ -67,8 +67,7 @@ from sugar_lift_py_tests.effect import ExpectationNotMetEffect
 from sugar_lift_py_tests.floor import BlockValue, CallSiteValue, NoneValue
 from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor
-from sugar_lift_py_tests.outcome import Complete
-from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
@@ -158,7 +157,7 @@ class _Record(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(BlockValue(self.entries))
+        return ExitSet.completed(BlockValue(self.entries))
 
     @classmethod
     def witnesses(cls):
@@ -195,7 +194,7 @@ def _no_warning_boundary(entries):
         )
     )
     return WithEffectBoundarySugar(
-        manager=_Fixed(Complete(manager_value)),
+        manager=_Fixed(ExitSet.completed(manager_value)),
         body=(_Record(entries),),
         semantics=SEMANTICS,
         contract_ref=SimpleNamespace(import_signature=signature),

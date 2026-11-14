@@ -43,7 +43,6 @@ from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.operations import SequenceProjectionOperation
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -81,8 +80,8 @@ def test_guarded_rhs_rejoins_per_target_name() -> None:
         TupleLiteralValue((TermValue(3), TermValue(4))),
     )
     outcome = _operation("a", "b").submit(value, None)
-    assert isinstance(outcome, Complete), outcome
-    assert outcome.value == ScopeRebinds(
+    assert outcome.completed_value() is not None, outcome
+    assert outcome.completed_value() == ScopeRebinds(
         (
             ("a", GuardedValue(GUARD, TermValue(1), TermValue(3))),
             ("b", GuardedValue(GUARD, TermValue(2), TermValue(4))),
@@ -230,8 +229,9 @@ OPAQUE_CALL_THREE = "def A(o, v):\n    a, b, c = o.copy()\n    return v\n"
 
 def test_callsite_rhs_retains_the_typed_unpack_obligation(tmp_path: Path) -> None:
     outcome = _outcome(tmp_path, OPAQUE_CALL_TWO, "callsite_two")
-    assert isinstance(outcome, Incomplete), outcome
-    effect = outcome.effect
+    assert outcome.halts() == outcome.exits, outcome
+    (halt,) = outcome.halts()
+    effect = halt.effect
     assert isinstance(effect, SequenceUnpackRuntimeEffect), effect
     assert "exactly 2 members" in effect.reason
     assert "no authenticated cardinality" in effect.reason
@@ -275,8 +275,9 @@ def test_callsite_with_no_reachable_body_takes_the_opaque_arm(
         "    return a\n"
     )
     outcome = _outcome(tmp_path, source, "callsite_opaque")
-    assert isinstance(outcome, Incomplete), outcome
-    effect = outcome.effect
+    assert outcome.halts() == outcome.exits, outcome
+    (halt,) = outcome.halts()
+    effect = halt.effect
     assert isinstance(effect, SequenceUnpackRuntimeEffect), effect
     # The obligation names the callsite coordinate, not an invented element.
     assert "call:pair" in str(effect.witness.operation)

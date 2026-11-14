@@ -35,7 +35,7 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -129,7 +129,7 @@ def test_helper_alone_retains_setitem_with_variadic_value() -> None:
 def test_helper_alone_is_not_completed_discrimination() -> None:
     _, pending = _helper()
     with pytest.raises(AssertionError):
-        assert isinstance(pending, Complete)
+        assert isinstance(pending, ExitSet) and pending.completed_value() is not None
     with pytest.raises(AssertionError):
         assert isinstance(pending, Completed)
 

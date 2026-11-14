@@ -38,7 +38,7 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, str_const
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
     WithEffectBoundarySugar,
@@ -126,7 +126,7 @@ def _assertion_boundary_unmatched(body: ExitSet) -> ExitSet:
         keyword_names=(),
     )
     sugar = WithEffectBoundarySugar(
-        manager=_FixedSugar(Complete(manager_value)),
+        manager=_FixedSugar(ExitSet.completed(manager_value)),
         body=(_FixedSugar(body),),
         semantics=EffectBoundarySemanticsV1(
             ExpectsModeV1(),

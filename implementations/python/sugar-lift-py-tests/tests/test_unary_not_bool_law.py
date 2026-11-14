@@ -42,7 +42,7 @@ from sugar_lift_py_tests.floor import FloorValue, NoneValue, SymbolicValue, Term
 from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, outcome_to_exitset
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -90,7 +90,7 @@ class _ValueSugar(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
 
 @dataclass(frozen=True)
@@ -130,7 +130,7 @@ class _OperandReturningTruth(FloorValue):
 
     def truth(self, site):
         del site
-        return Complete(self.payload)
+        return ExitSet.completed(self.payload)
 
     def to_term(self, *, owner: str):
         del owner
@@ -388,7 +388,7 @@ def test_lying_operand_return_is_not_the_not_law() -> None:
     # Lying path: pretend truth returned the operand (skip bool coerce).
     lying_floor = _OperandReturningTruth(operand)
     lying_truth = lying_floor.truth(_Site())
-    assert isinstance(lying_truth, Complete)
+    assert lying_truth.completed_value() is not None
     # The lying floor's truth is the operand — UnaryOp must not accept that as
     # the final ``not`` result.  Real desugar on a value whose truth is non-bool
     # and not a raise hits negate on a TermValue → construction panic (no

@@ -28,7 +28,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -92,7 +92,7 @@ class _FloorSugar(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     @classmethod
     def witnesses(cls):
@@ -165,7 +165,7 @@ def test_helper_alone_is_undischarged_unary_carrier(source: str, operator: str) 
 def test_discrimination_helper_alone_is_not_completed() -> None:
     _, pending = _helper("def helper(x):\n    return -x\n")
     with pytest.raises(AssertionError):
-        assert isinstance(pending, Complete)
+        assert isinstance(pending, ExitSet) and pending.completed_value() is not None
 
 
 def test_not_formal_stays_unary_truth_not_unary_minus() -> None:
@@ -277,7 +277,7 @@ def test_discrimination_open_symbol_is_not_silent_neg_coordinate() -> None:
     with pytest.raises(SugarNotWritten):
         out = UnaryOpSugar("USub", _FloorSugar(open_sym), site).desugar(None)
         # Lying claim: open symbol completed as a success coordinate.
-        assert isinstance(out, Complete)
+        assert out.completed_value() is not None
 
 
 # ---------------------------------------------------------------------------

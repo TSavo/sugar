@@ -33,7 +33,7 @@ from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.floor import ReturnValue, TermValue
 from sugar_lift_py_tests.floor.branch_result_coordinate import BranchResultSlot
 from sugar_lift_py_tests.floor.named_expression_value import NamedExpressionValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 from sugar_lift_py_tests.sugar.if_sugar import IfSugar
@@ -107,8 +107,8 @@ def _return_terms(outcome) -> list:
             if isinstance(inner, ReturnValue):
                 found.append(inner.value)
 
-    if isinstance(outcome, Complete):
-        v = outcome.value
+    v = outcome.completed_value()
+    if v is not None:
         walk(getattr(v, "entries", None) or getattr(v, "statements", None))
     return found
 
@@ -143,7 +143,7 @@ class _CountingValue(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         self.calls += 1
-        return Complete(TermValue(self.n))
+        return ExitSet.completed(TermValue(self.n))
 
 
 def test_condition_evaluates_once() -> None:
@@ -230,7 +230,7 @@ class _HaltValue(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         self.calls += 1
-        return Incomplete(self.effect)
+        return ExitSet.halted(self.effect)
 
 
 class _MustNotRun(Sugar):
@@ -255,23 +255,24 @@ def test_condition_halt_bypasses_both_arms() -> None:
     out = _if(_walrus("n", halt), then_body=then_body, else_body=else_body).desugar(
         _root("halt")
     )
-    assert isinstance(out, Incomplete)
-    assert out.effect is effect
+    assert out.halts() == out.exits
+    (out_halt,) = out.halts()
+    assert out_halt.effect is effect
     assert then_body[0].calls == 0
     assert else_body[0].calls == 0
     assert halt.calls == 1
-    # No bind: Incomplete never produced NamedExpressionValue to extend_scope.
+    # No bind: the halt never produced NamedExpressionValue to extend_scope.
 
 
 def test_condition_halt_has_no_branch_returns() -> None:
-    """Halt is Incomplete — not a Completed branch return of the bound name."""
+    """Halt is a halted exit — not a Completed branch return of the bound name."""
     effect = NameErrorEffect(name="missing", site=SITE)
     out = _if(
         _walrus("n", _HaltValue(effect)),
         then_body=(_ret(_name("n")),),
         else_body=(_ret(_int(0)),),
     ).desugar(_root("halt-ret"))
-    assert isinstance(out, Incomplete)
+    assert out.exits and out.halts() == out.exits
     assert _return_terms(out) == []
 
 
@@ -284,11 +285,11 @@ def test_left_hand_comparison_presented_owns_and_carry_binds() -> None:
     """``(n := 5) > 0`` — greater_than on presented; carry keeps n → 5."""
     nev = NamedExpressionValue("n", TermValue(5))
     cmp_out = nev.greater_than(TermValue(0), SITE, None)
-    assert isinstance(cmp_out, Complete)
-    assert isinstance(cmp_out.value, NamedExpressionValue)
-    assert cmp_out.value.name == "n"
-    assert cmp_out.value.assigned_value == TermValue(5)
-    scoped = cmp_out.value.extend_scope(_root("cmp"))
+    assert cmp_out.completed_value() is not None
+    assert isinstance(cmp_out.completed_value(), NamedExpressionValue)
+    assert cmp_out.completed_value().name == "n"
+    assert cmp_out.completed_value().assigned_value == TermValue(5)
+    scoped = cmp_out.completed_value().extend_scope(_root("cmp"))
     assert _name("n").desugar(scoped).value == TermValue(5)
 
 
@@ -305,15 +306,15 @@ def test_right_hand_zero_lt_walrus_reaches_typed_method() -> None:
     right = NamedExpressionValue("n", TermValue(5))
     # General double-dispatch: left.less_than → other.less_than_from_left.
     out = left.less_than(right, SITE, None)
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, NamedExpressionValue)
-    assert out.value.name == "n"
-    assert out.value.assigned_value == TermValue(5)
+    assert out.completed_value() is not None
+    assert isinstance(out.completed_value(), NamedExpressionValue)
+    assert out.completed_value().name == "n"
+    assert out.completed_value().assigned_value == TermValue(5)
     direct = right.less_than_from_left(left, SITE, None)
-    assert isinstance(direct, Complete)
-    assert isinstance(direct.value, NamedExpressionValue)
-    assert direct.value.assigned_value == TermValue(5)
-    scoped = out.value.extend_scope(_root("rhs"))
+    assert direct.completed_value() is not None
+    assert isinstance(direct.completed_value(), NamedExpressionValue)
+    assert direct.completed_value().assigned_value == TermValue(5)
+    scoped = out.completed_value().extend_scope(_root("rhs"))
     assert _name("n").desugar(scoped).value == TermValue(5)
 
 
@@ -322,17 +323,17 @@ def test_ordinary_rhs_term_uses_default_less_than_from_left() -> None:
     left = TermValue(0)
     right = TermValue(5)
     out = left.less_than(right, SITE, None)
-    assert isinstance(out, Complete)
+    assert out.completed_value() is not None
     # Not walrus-kind membrane: ordinary RHS never yields NamedExpressionValue.
-    assert not isinstance(out.value, NamedExpressionValue)
+    assert not isinstance(out.completed_value(), NamedExpressionValue)
     # Protocol default door is present on FloorValue (not a NEV-only arm).
     assert hasattr(type(right), "less_than_from_left")
     direct = right.less_than_from_left(left, SITE, None)
-    assert isinstance(direct, Complete)
-    assert not isinstance(direct.value, NamedExpressionValue)
+    assert direct.completed_value() is not None
+    assert not isinstance(direct.completed_value(), NamedExpressionValue)
     # Ground 0 < 5 is decided true-ish, not false.
-    assert type(out.value).__name__ != "FalseBoolLiteralSugar"
-    assert type(direct.value).__name__ != "FalseBoolLiteralSugar"
+    assert type(out.completed_value()).__name__ != "FalseBoolLiteralSugar"
+    assert type(direct.completed_value()).__name__ != "FalseBoolLiteralSugar"
 
 
 def test_rhs_walrus_via_comparison_op_sugar_lt() -> None:
@@ -344,9 +345,9 @@ def test_rhs_walrus_via_comparison_op_sugar_lt() -> None:
         site=SITE,
     )
     out = cmp.desugar(_root("cmp-lt"))
-    assert isinstance(out, Complete)
+    assert out.completed_value() is not None
     # Completed predicate still carries the walrus face when RHS is NEV.
-    val = out.value
+    val = out.completed_value()
     if isinstance(val, NamedExpressionValue):
         assert val.assigned_value == TermValue(5)
         scoped = val.extend_scope(_root("cmp-lt-bind"))
@@ -380,12 +381,12 @@ def test_lying_operator_token_twin_refuses_same_outcome() -> None:
     lying = ComparisonOpSugar("Gt", _int(0), _walrus("n", _int(5)), site=SITE).desugar(
         _root("op-lie")
     )
-    assert isinstance(truthful, Complete)
-    assert isinstance(lying, Complete)
+    assert truthful.completed_value() is not None
+    assert lying.completed_value() is not None
     # Ground 0 < 5 vs 0 > 5 must not be outcome-identical.
-    assert type(truthful.value).__name__ != type(lying.value).__name__ or (
-        truthful.value != lying.value
-    ), (truthful.value, lying.value)
+    assert type(truthful.completed_value()).__name__ != type(lying.completed_value()).__name__ or (
+        truthful.completed_value() != lying.completed_value()
+    ), (truthful.completed_value(), lying.completed_value())
 
 
 def test_lying_comparison_twin_refuses_wrong_return() -> None:

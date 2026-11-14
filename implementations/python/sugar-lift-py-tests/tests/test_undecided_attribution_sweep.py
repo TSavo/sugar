@@ -87,7 +87,6 @@ def test_mutable_global_attribute_is_undecided_not_write_more_floor() -> None:
 def test_mutable_global_dict_contains_still_constructs() -> None:
     """Do not break decided dict membership on the pin."""
     from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.outcome import Complete
 
     v = _mutable(kind="dict")
     site_ok = SimpleNamespace(
@@ -95,4 +94,4 @@ def test_mutable_global_dict_contains_still_constructs() -> None:
         source_cid=_CID,
     )
     outcome = v.contains(TermValue(1), site_ok)
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None

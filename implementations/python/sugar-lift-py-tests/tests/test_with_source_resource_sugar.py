@@ -20,7 +20,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import ctor, not_
-from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import true_guard
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -58,13 +58,13 @@ class _CompletedProtocol:
     def enter_resource_outcome(self, ctx=None):
         del ctx
         self.enter_calls += 1
-        return Complete(SimpleNamespace(enter_value=self.enter_value))
+        return ExitSet.completed(SimpleNamespace(enter_value=self.enter_value))
 
     def exit_outcome_for(self, entered, ctx=None):
         assert entered.enter_value == self.enter_value
         del ctx
         self.exit_calls += 1
-        return Complete(self.exit_value)
+        return ExitSet.completed(self.exit_value)
 
 
 def _protocol_calls():
@@ -111,7 +111,7 @@ def _truthiness_resource(*, exit_value, body, enter_value=TermValue(2), slot=Non
     protocol = _CompletedProtocol(enter_value=enter_value, exit_value=exit_value)
     return (
         _source_resource(
-            manager=_FixedSugar(Complete(TermValue(1))),
+            manager=_FixedSugar(ExitSet.completed(TermValue(1))),
             protocol=protocol,
             summary=summary,
             body=body,
@@ -134,12 +134,12 @@ def test_summary_suppresses_disposition_consumes_matching_body_halt():
     protocol = _CompletedProtocol()
     _, mro = _builtin_exception_identity("ValueError")
     sugar = _source_resource(
-        manager=_FixedSugar(Complete(TermValue(1))),
+        manager=_FixedSugar(ExitSet.completed(TermValue(1))),
         protocol=protocol,
         summary=summary,
         body=(
             _FixedSugar(
-                Incomplete(
+                ExitSet.halted(
                     RaiseEffect.for_builtin(
                         "ValueError",
                         occurrence="resource.py:4:8",
@@ -169,7 +169,7 @@ def test_summary_suppresses_disposition_consumes_matching_body_halt():
 def test_source_true_exit_consumes_the_halted_edge():
     effect = RaiseEffect.for_builtin("ValueError", occurrence="resource.py:4:8")
     sugar, protocol = _truthiness_resource(
-        exit_value=TermValue(True), body=(_FixedSugar(Incomplete(effect)),)
+        exit_value=TermValue(True), body=(_FixedSugar(ExitSet.halted(effect)),)
     )
 
     exits = sugar.desugar().exits
@@ -182,7 +182,7 @@ def test_source_true_exit_consumes_the_halted_edge():
 def test_source_false_exit_passes_the_exact_halted_edge_through():
     effect = RaiseEffect.for_builtin("ValueError", occurrence="resource.py:4:8")
     sugar, protocol = _truthiness_resource(
-        exit_value=TermValue(False), body=(_FixedSugar(Incomplete(effect)),)
+        exit_value=TermValue(False), body=(_FixedSugar(ExitSet.halted(effect)),)
     )
 
     exits = sugar.desugar().exits
@@ -197,7 +197,7 @@ def test_source_undecided_exit_keeps_both_suppression_faces():
     effect = RaiseEffect.for_builtin("ValueError", occurrence="resource.py:4:8")
     result = SymbolicValue(ctor("fixture:undecided-exit", ()))
     sugar, _ = _truthiness_resource(
-        exit_value=result, body=(_FixedSugar(Incomplete(effect)),)
+        exit_value=result, body=(_FixedSugar(ExitSet.halted(effect)),)
     )
 
     exits = sugar.desugar().exits
@@ -217,7 +217,7 @@ def test_source_exit_runs_on_early_return_face():
 
     returned = BlockValue((ReturnValue(TermValue("early")),), can_fall_through=False)
     sugar, protocol = _truthiness_resource(
-        exit_value=TermValue(False), body=(_FixedSugar(Complete(returned)),)
+        exit_value=TermValue(False), body=(_FixedSugar(ExitSet.completed(returned)),)
     )
 
     exits = sugar.desugar().exits
@@ -230,19 +230,19 @@ def test_source_exit_runs_on_early_return_face():
     ("body_outcome", "exit_truth", "surviving_face"),
     [
         (
-            Complete(BlockValue((), can_fall_through=True)),
+            ExitSet.completed(BlockValue((), can_fall_through=True)),
             TermValue(True),
             Completed,
         ),
         (
-            Complete(
+            ExitSet.completed(
                 BlockValue((ReturnValue(TermValue("early")),), can_fall_through=False)
             ),
             TermValue(True),
             Completed,
         ),
         (
-            Incomplete(
+            ExitSet.halted(
                 RaiseEffect.for_builtin("ValueError", occurrence="resource.py:8:8")
             ),
             TermValue(False),
@@ -274,7 +274,7 @@ def test_source_truthy_exit_runs_but_cannot_suppress_loop_transfer(action):
         "blake3-512:" + "2" * 128,
     )
     sugar, protocol = _truthiness_resource(
-        exit_value=TermValue(True), body=(_FixedSugar(Incomplete(loop)),)
+        exit_value=TermValue(True), body=(_FixedSugar(ExitSet.halted(loop)),)
     )
 
     exits = sugar.desugar().exits
@@ -290,7 +290,7 @@ def test_enter_as_binding_carries_object_occurrence_identity():
     sugar, _ = _truthiness_resource(
         exit_value=TermValue(False),
         enter_value=entered,
-        body=(_FixedSugar(Complete(BlockValue((), can_fall_through=True))),),
+        body=(_FixedSugar(ExitSet.completed(BlockValue((), can_fall_through=True))),),
         slot="enter-slot",
     )
 

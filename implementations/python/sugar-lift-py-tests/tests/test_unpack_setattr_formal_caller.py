@@ -56,7 +56,7 @@ from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -99,10 +99,10 @@ def _source_class_receiver(class_body: str):
         if isinstance(node, FunctionDef) and node.name == "f"
     )
     class_outcome = class_def.sugar().desugar(None)
-    assert isinstance(class_outcome, Complete)
-    assert isinstance(class_outcome.value, ClassDefinitionValue)
-    receiver = class_outcome.value.construct_receiver_state_from_block(
-        None, class_outcome.value.class_definition_cid
+    class_value = class_outcome.completed_value()
+    assert isinstance(class_value, ClassDefinitionValue)
+    receiver = class_value.construct_receiver_state_from_block(
+        None, class_value.class_definition_cid
     )
     assert isinstance(receiver, ObjectValue)
     pending = helper.sugar().desugar(None)
@@ -148,7 +148,7 @@ def test_helper_alone_retains_setattr_named_demand_in_discharge_order() -> None:
 def test_helper_alone_is_not_a_completed_face_discrimination() -> None:
     _, pending = _helper()
     with pytest.raises(AssertionError):
-        assert isinstance(pending, Complete)
+        assert isinstance(pending, ExitSet) and pending.completed_value() is not None
     with pytest.raises(AssertionError):
         assert isinstance(pending, Completed)
 
@@ -202,12 +202,12 @@ def test_property_without_setter_named_attribute_error_preserves_x_state() -> No
     # Floor store path (not read) refuses.
     site = helper.body[0].fragment
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
     direct = receiver.setattr("field", TermValue(7), site)
-    assert isinstance(direct, Incomplete) and isinstance(direct.effect, RaiseEffect)
-    assert direct.effect.exception_name == "AttributeError"
-    assert direct.effect.producer_node_owner == "ObjectValue.setattr"
+    assert direct.halts() == direct.exits
+    (direct_halt,) = direct.halts()
+    assert isinstance(direct_halt.effect, RaiseEffect)
+    assert direct_halt.effect.exception_name == "AttributeError"
+    assert direct_halt.effect.producer_node_owner == "ObjectValue.setattr"
 
     assert pending.pre_effect_state is not None
     obj_cid, _, q_cid = pending.demand.operand_coordinate_cids

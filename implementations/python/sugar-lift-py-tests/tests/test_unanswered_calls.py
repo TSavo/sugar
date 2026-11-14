@@ -17,7 +17,6 @@ from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordin
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.ir import atomic
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
@@ -77,7 +76,7 @@ def test_owed_never_decides_equality_or_a_merge() -> None:
 
 def test_sequence_carries_the_prefix_debt_onto_every_continuation() -> None:
     item = unanswered_calls.unanswered_call("python:idn.ident", _Site())
-    sequenced = _call_arms(item).and_then(lambda value: Complete(TermValue(2)))
+    sequenced = _call_arms(item).and_then(lambda value: ExitSet.completed(TermValue(2)))
     assert sequenced.exits
     assert all(exit_.owed == (item,) for exit_ in sequenced.exits)
     assert unanswered_calls.owed_calls(sequenced) == (item,)
@@ -90,7 +89,9 @@ def test_an_owing_arm_is_never_collapsed_to_a_linear_outcome() -> None:
     )
     assert isinstance(owing.collapse(), ExitSet)
     assert owing.completed_value() == TermValue(1)
-    assert isinstance(ExitSet.completed(TermValue(1)).collapse(), Complete)
+    # The debt rides the arm; an arm that owes nothing carries none.
+    assert owing.owed_items() == (item,)
+    assert ExitSet.completed(TermValue(1)).owed_items() == ()
 
 
 def test_owed_union_keeps_every_debt_once_in_first_seen_order() -> None:
@@ -100,8 +101,8 @@ def test_owed_union_keeps_every_debt_once_in_first_seen_order() -> None:
     assert owed_union((), ()) == ()
 
 
-def test_a_linear_outcome_owes_nothing() -> None:
-    assert unanswered_calls.owed_calls(Complete(TermValue(1))) == ()
+def test_an_arm_with_no_debt_owes_nothing() -> None:
+    assert unanswered_calls.owed_calls(ExitSet.completed(TermValue(1))) == ()
 
 
 def test_a_call_without_a_site_is_loud_where_it_would_become_a_member() -> None:
