@@ -106,7 +106,7 @@ class SubscriptSugar(ConstructedTermSugar):
         """One door: prefer ``subscript_with`` (operation) over legacy ``subscript``.
 
         Several floors implement only ``subscript_with`` (DictLiteralValue,
-        ArrayLiteral, TupleLiteralValue, ObjectValue, StringValue, …). Routing
+        TupleLiteralValue, ObjectValue, StringValue, …). Routing
         solely through ``subscript`` left those as owner=subscript construction
         panics even though the operation edge was already written. Prefer the
         operation edge when the receiver overrides it; otherwise fall back to

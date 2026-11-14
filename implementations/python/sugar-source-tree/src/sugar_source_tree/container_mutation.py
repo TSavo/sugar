@@ -19,9 +19,15 @@ THE LAW, at a statement that calls a mutating method of a built-in container:
 - **Every other alias.** A name whose value merely CONTAINS the object
   (``outer = [r]``) is not rebuilt: it is rebound to an unknown value minted at
   the call. Never the pre-call contents.
-- **Undecided receiver.** A mutating method name on any other receiver keeps
-  its ordinary (opaque) call, and the receiver and its aliases are rebound to
-  an unknown value minted at the call.
+- **Receiver the source does not decide, bound by an assignment.**
+  ``parts = 'a b'.split(); parts.append('c')``: the value the binding holds
+  decides the call at reduce (``bound_receiver_mutation_statement``, the path
+  door with no steps): a ``ListValue`` takes the cited mutation a display's
+  receiver takes, any other value the ordinary call, and the object's names
+  read the post-state, or an unknown minted at the call.
+- **Undecided receiver.** A mutating method name on any other receiver (a
+  formal, a global) keeps its ordinary (opaque) call, and the receiver and
+  its aliases are rebound to an unknown value minted at the call.
 - **Exposure.** A decided container passed to a call the floor does not cite
   as pure may be mutated by it: the object and its aliases are rebound to an
   unknown after that statement.
@@ -625,9 +631,12 @@ def havoc_after(statement, pre_scope, scope):
             continue
         if isinstance(call, PathContainerCall):
             root, _steps = path_steps(call.receiver)
-            if root is not None:
-                targets.append(root)
-                targets.extend(_sharing_states(pre_scope, root))
+            if root is None:
+                # No steps (``bound_receiver_mutation_statement``): the
+                # receiver is the object the call may change.
+                root = call.receiver
+            targets.append(root)
+            targets.extend(_sharing_states(pre_scope, root))
             continue
         targets.extend(_call_targets(call, pre_scope, bound_refs))
     havocked = _rebind(statement, pre_scope, scope, targets)
@@ -1020,33 +1029,78 @@ def _path_after(
     return _materialize(site_node, "PathAfterCall", tuple(fields), tags)
 
 
+def _mutating_named_call(call) -> bool:
+    """``<receiver>.<m>(*args)`` with ``m`` a mutating method of some builtin
+    container, no keywords and no ``*`` argument."""
+    from .nodes import Attribute, Call, Starred
+    from sugar_lift_py_tests.floor.builtin_container_method import (
+        ANY_MUTATING_METHOD,
+    )
+
+    return (
+        isinstance(call, Call)
+        and not call.keywords
+        and isinstance(call.func, Attribute)
+        and call.func.attr in ANY_MUTATING_METHOD
+        and not any(isinstance(arg, Starred) for arg in call.args)
+    )
+
+
 def path_mutation_statement(statement, scope, *, call, target_name=None):
     """The shadow statement for ``<path>.<mutator>(*args)``, or None.
 
     ``call`` is the statement's call, already substituted against ``scope``.
     """
-    from .backend import Child, Children, Leaf
-    from .nodes import Attribute, Call, Node, Starred
-    from .shadow import _handle_of, occurrence_tags_of
-    from sugar_lift_py_tests.floor.builtin_container_method import (
-        ANY_MUTATING_METHOD,
-    )
+    if not _mutating_named_call(call):
+        return None
+    # ``root_read`` is the read of the root at the statement: for a name an
+    # assignment bound, a reference to its key.  The root after the call
+    # reads ``root_read``, never the display or call evaluated again at each
+    # read of the name.
+    root_read, steps = path_steps(call.func.value)
+    return _mutation_through(statement, scope, call, root_read, steps, target_name)
 
-    if (
-        not isinstance(call, Call)
-        or call.keywords
-        or not isinstance(call.func, Attribute)
-        or call.func.attr not in ANY_MUTATING_METHOD
-        or any(isinstance(arg, Starred) for arg in call.args)
+
+def bound_receiver_mutation_statement(statement, scope, *, call, target_name=None):
+    """The shadow statement for ``<name>.<mutator>(*args)``, or None.
+
+    ``name`` is a name an assignment bound (its read is a reference to the
+    assignment's key carrying the value node, ``of``) whose type the source
+    does not decide (``mutation_statement`` answered None):
+    ``parts = 'a b'.split(); parts.append('c')``.  The receiver is the path
+    door's with no steps: the call is evaluated once, at the statement, and
+    the value the binding holds decides it (``PathContainerCallSugar``) -- a
+    ``ListValue`` takes the cited ``list`` mutation exactly as a display's
+    does, any other value the ordinary call -- and every name bound to the
+    object is rebound to the object after the call (``PathAfterCall``): the
+    post-state when the value was a decided container, else an unknown minted
+    at the call.  A list display and a folded ``str.split`` are one case at
+    reduce: the value, never the spelling of the right-hand side.
+
+    ``call`` is the statement's call, already substituted against ``scope``.
+    """
+    if not _mutating_named_call(call):
+        return None
+    from .nodes import Node
+
+    receiver = call.func.value
+    if getattr(receiver, "kind", None) != "EvaluationRef" or not isinstance(
+        getattr(receiver, "of", None), Node
     ):
         return None
+    return _mutation_through(statement, scope, call, receiver, (), target_name)
+
+
+def _mutation_through(statement, scope, call, root_read, steps, target_name):
+    """The path door's statement for ``call`` on the object ``root_read``
+    reaches through ``steps`` (none: the object ``root_read`` denotes)."""
+    from .backend import Child, Children, Leaf
+    from .nodes import Node
+    from .shadow import _handle_of, occurrence_tags_of
+
     receiver = call.func.value
-    # ``root_read`` is the read of the root at the statement: for a name an
-    # assignment bound, a reference to its key.  ``root`` is the object it
-    # denotes (``_identity``: the display or call the name was given), which
-    # decides the shape only.  The root after the call reads ``root_read``,
-    # never the display or call evaluated again at each read of the name.
-    root_read, steps = path_steps(receiver)
+    # ``root`` is the object ``root_read`` denotes (``_identity``: the display
+    # or call the name was given), which decides the shape only.
     root = _identity(root_read)
     if root is None or getattr(root, "kind", None) not in _PATH_ROOT_KINDS:
         return None

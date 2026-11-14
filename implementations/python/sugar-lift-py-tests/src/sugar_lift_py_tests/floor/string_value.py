@@ -788,9 +788,20 @@ def _fold_string_method(receiver: StringValue, operation):
         if len(args) == 0:
             return new_list(receiver.value.splitlines())
         if len(args) == 1:
+            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+                FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+                TrueBoolLiteralSugar,
+            )
+
             keep = args[0]
-            if isinstance(keep):
-                return new_list(receiver.value.splitlines(keep.value))
+            # The bool floor is the literal itself: ``True`` / ``False`` hold
+            # no ``.value``; the type IS the boolean.
+            if type(keep) is TrueBoolLiteralSugar:
+                return new_list(receiver.value.splitlines(True))
+            if type(keep) is FalseBoolLiteralSugar:
+                return new_list(receiver.value.splitlines(False))
             if isinstance(keep, TermValue) and type(keep.value) is int:
                 return new_list(receiver.value.splitlines(bool(keep.value)))
             return opaque_coordinate()
@@ -801,14 +812,13 @@ def _fold_string_method(receiver: StringValue, operation):
 
 def _static_str_parts(iterable) -> list[str] | None:
     """Extract a fully-static list of strings from a join iterable, or None."""
-    from sugar_lift_py_tests.floor.array_literal import ArrayLiteral
     from sugar_lift_py_tests.floor.list_value import ListValue
     from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 
     if isinstance(iterable, StringValue):
         # str.join over a string iterates characters.
         return list(iterable.value)
-    if isinstance(iterable, (ArrayLiteral, ListValue, TupleLiteralValue)):
+    if isinstance(iterable, (ListValue, TupleLiteralValue)):
         parts: list[str] = []
         for item in iterable.items:
             if not isinstance(item, StringValue):

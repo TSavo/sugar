@@ -11054,6 +11054,9 @@ class Assign(Statement):
         mapping_pop = self._mapping_pop_assignment(scope)
         if mapping_pop is not None:
             return mapping_pop
+        mutation = self._bound_receiver_mutation(scope)
+        if mutation is not None:
+            return mutation
 
         new_value, changed = self._substitute_field(self.value, scope)
         field_state = self._receiver_field_store_state(scope, new_value)
@@ -11510,6 +11513,26 @@ class Assign(Statement):
 
         return path_mutation_statement(
             self, scope, call=call.substitute(scope), target_name=target.id
+        )
+
+    def _bound_receiver_mutation(self, scope):
+        """``x = r.<mutator>(...)`` on a name ``r`` an assignment bound whose
+        type the source does not decide: the value ``r`` holds decides it
+        (``container_mutation.bound_receiver_mutation_statement``)."""
+        if (
+            len(self.targets) != 1
+            or not isinstance(self.targets[0], Name)
+            or not isinstance(self.value, Call)
+            or not isinstance(self.value.func, Attribute)
+        ):
+            return None
+        from .container_mutation import bound_receiver_mutation_statement
+
+        return bound_receiver_mutation_statement(
+            self,
+            scope,
+            call=self.value.substitute(scope),
+            target_name=self.targets[0].id,
         )
 
     def _mapping_pop_assignment(self, scope):
@@ -16554,7 +16577,12 @@ class Expr(Statement):
             state = self._mapping_pop_state(scope)
             statement_kind = "MappingPopStatement"
         if state is None:
-            return rewritten
+            from .container_mutation import bound_receiver_mutation_statement
+
+            mutation = bound_receiver_mutation_statement(
+                self, scope, call=rewritten.value
+            )
+            return rewritten if mutation is None else mutation
 
         name, post_state = state
         from .backend import Child, Leaf, materialize

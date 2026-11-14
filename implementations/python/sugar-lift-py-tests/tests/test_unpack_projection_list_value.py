@@ -17,8 +17,8 @@ The guarded-TUPLE twin below is the control: same shape, same distribution, one
 face-type answered and its twin panicked. That asymmetry is the finding.
 
 Law: a constructed list answers from its own authenticated members, on the
-``project_array`` arm -- the same arm ``ArrayLiteral`` takes. Both project to
-``ctor("array", ...)`` in ``to_term``, and the arm choice is observable: it is
+``project_array`` arm. It projects to ``ctor("array", ...)`` in ``to_term``,
+and the arm choice is observable: it is
 what names the value in a decidable arity-mismatch diagnostic. Delegating to
 ``project_tuple`` would stop the panic while printing a tuple diagnostic for a
 list, which is a correct refusal wearing the wrong name.

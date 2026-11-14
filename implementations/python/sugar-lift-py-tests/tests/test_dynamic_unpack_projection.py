@@ -37,8 +37,8 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
-from sugar_lift_py_tests.floor.array_literal import ArrayLiteral
 from sugar_lift_py_tests.floor.floor_value import FloorValue
+from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
@@ -233,9 +233,9 @@ def test_authenticated_tuple_members_bind_positionally() -> None:
     assert bound != ScopeRebinds((("a", TermValue(1)), ("b", TermValue(1))))
 
 
-def test_authenticated_array_members_bind_positionally() -> None:
+def test_authenticated_list_members_bind_positionally() -> None:
     members = (TermValue(7), TermValue(8), TermValue(9))
-    outcome = _operation("a", "b", "c").submit(ArrayLiteral(members), None)
+    outcome = _operation("a", "b", "c").submit(ListValue(members), None)
     assert outcome.completed_value() is not None, outcome
     assert outcome.completed_value() == ScopeRebinds(
         (("a", TermValue(7)), ("b", TermValue(8)), ("c", TermValue(9)))

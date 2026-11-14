@@ -254,7 +254,7 @@ def scan_source(source: str, *, path: str) -> list[FiniteCapOpaqueCompletion]:
                         "isinstance(" in test
                         and any(
                             word in test
-                            for word in ("ListValue", "TupleValue", "ArrayLiteral")
+                            for word in ("ListValue", "TupleValue")
                         )
                     )
                 ):

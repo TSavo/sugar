@@ -90,10 +90,10 @@ class ListValue(GuardStableValue):
     def project_sequence_with(self, operation, ctx):
         """Unpack against authenticated reduced members already in hand.
 
-        A constructed list is the same testimony an ``ArrayLiteral`` carries --
-        ``to_term`` projects both as ``array`` -- so it takes the SAME arm.
-        Routing it through ``project_tuple`` would print a tuple diagnostic for
-        an arity mismatch on a list: a correct refusal wearing the wrong name.
+        A constructed list projects as ``array`` (``to_term``), so it takes the
+        array arm. Routing it through ``project_tuple`` would print a tuple
+        diagnostic for an arity mismatch on a list: a correct refusal wearing
+        the wrong name.
         """
         return operation.project_array(self, ctx)
 

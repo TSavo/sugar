@@ -27,9 +27,7 @@ def repeat_sequence(sequence, count, site, *, elements, rebuild):
 
     ``elements`` and ``rebuild`` are the receiver's own element tuple and its
     own constructor over one, so each sequence category names and rebuilds its
-    own shape and no category learns another's. (``ArrayLiteral`` spells its
-    elements ``items``; reading ``.elements`` off the receiver was this law
-    knowing one category's field name, which is why the array never joined.)
+    own shape and no category learns another's.
     """
     from sugar_lift_py_tests.floor.ground_sequence_repetition_value import (
         GroundSequenceRepetitionValue,
