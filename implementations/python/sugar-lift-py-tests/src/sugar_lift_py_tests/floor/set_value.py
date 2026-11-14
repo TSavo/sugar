@@ -167,7 +167,7 @@ class SetValue(GuardStableValue):
             return decided
         return _unsupported_member(item, site)
 
-    def subtract(self, other, site):
+    def subtract(self, other, site, ctx):
         if type(other) is SetValue:
             from sugar_lift_py_tests.outcome import ExitSet
 
@@ -175,9 +175,9 @@ class SetValue(GuardStableValue):
             if result is not None:
                 return ExitSet.completed(SetValue(result))
             return _symbolic_set_operation("python.set.difference", self, other, site)
-        return super().subtract(other, site)
+        return super().subtract(other, site, ctx)
 
-    def bitwise_or(self, other, site):
+    def bitwise_or(self, other, site, ctx):
         if type(other) is SetValue:
             from sugar_lift_py_tests.outcome import ExitSet
 
@@ -185,9 +185,9 @@ class SetValue(GuardStableValue):
             if result is not None:
                 return ExitSet.completed(SetValue(result))
             return _symbolic_set_operation("python.set.union", self, other, site)
-        return super().bitwise_or(other, site)
+        return super().bitwise_or(other, site, ctx)
 
-    def bitwise_and(self, other, site):
+    def bitwise_and(self, other, site, ctx):
         if type(other) is SetValue:
             from sugar_lift_py_tests.outcome import ExitSet
 
@@ -195,7 +195,7 @@ class SetValue(GuardStableValue):
             if result is not None:
                 return ExitSet.completed(SetValue(result))
             return _symbolic_set_operation("python.set.intersection", self, other, site)
-        return super().bitwise_and(other, site)
+        return super().bitwise_and(other, site, ctx)
 
 
 def undecided_length(container, site):

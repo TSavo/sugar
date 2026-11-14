@@ -17,21 +17,22 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, ClassVar
 
-# Surface operator spelling (as ObjectValue / BinaryOperator.symbol) → Floor binary.
+# Surface operator spelling (as ObjectValue / BinaryOperator.symbol) → Floor binary,
+# applied under the caller's context.
 _SURFACE_BINARY: dict[str, Callable] = {
-    "+": lambda left, right, site: left.add(right, site),
-    "-": lambda left, right, site: left.subtract(right, site),
-    "*": lambda left, right, site: left.multiply(right, site),
-    "/": lambda left, right, site: left.divide(right, site),
-    "//": lambda left, right, site: left.floor_divide(right, site),
-    "%": lambda left, right, site: left.modulo(right, site),
-    "**": lambda left, right, site: left.power(right, site),
-    "@": lambda left, right, site: left.matrix_multiply(right, site),
-    "&": lambda left, right, site: left.bitwise_and(right, site),
-    "|": lambda left, right, site: left.bitwise_or(right, site),
-    "^": lambda left, right, site: left.bitwise_xor(right, site),
-    "<<": lambda left, right, site: left.left_shift(right, site),
-    ">>": lambda left, right, site: left.right_shift(right, site),
+    "+": lambda left, right, site, ctx: left.add(right, site, ctx),
+    "-": lambda left, right, site, ctx: left.subtract(right, site, ctx),
+    "*": lambda left, right, site, ctx: left.multiply(right, site, ctx),
+    "/": lambda left, right, site, ctx: left.divide(right, site, ctx),
+    "//": lambda left, right, site, ctx: left.floor_divide(right, site, ctx),
+    "%": lambda left, right, site, ctx: left.modulo(right, site, ctx),
+    "**": lambda left, right, site, ctx: left.power(right, site, ctx),
+    "@": lambda left, right, site, ctx: left.matrix_multiply(right, site, ctx),
+    "&": lambda left, right, site, ctx: left.bitwise_and(right, site, ctx),
+    "|": lambda left, right, site, ctx: left.bitwise_or(right, site, ctx),
+    "^": lambda left, right, site, ctx: left.bitwise_xor(right, site, ctx),
+    "<<": lambda left, right, site, ctx: left.left_shift(right, site, ctx),
+    ">>": lambda left, right, site, ctx: left.right_shift(right, site, ctx),
 }
 
 
@@ -63,8 +64,8 @@ class InplaceBinaryOperatorOperation:
         return self.blame
 
     def inplace_default(self, receiver, ctx) -> Any:
-        """Species without inplace override: ordinary binary by surface operator."""
-        del ctx
+        """Species without inplace override: ordinary binary by surface operator,
+        under the caller's context."""
         binary = _SURFACE_BINARY.get(self.operator)
         if binary is None:
             from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
@@ -81,7 +82,7 @@ class InplaceBinaryOperatorOperation:
                     gap_locus=GapLocus.CONSTRUCTION,
                 )
             )
-        return binary(receiver, self.right, self.blame)
+        return binary(receiver, self.right, self.blame, ctx)
 
 
 def after_inplace_notimplemented(projected, binary_fallback: Callable):
@@ -108,12 +109,14 @@ def after_inplace_notimplemented(projected, binary_fallback: Callable):
     return projected
 
 
-def discharge_inplace(left, right, site, *, surface: str):
+def discharge_inplace(left, right, site, ctx, *, surface: str):
     """Production projector body: established floor edge + NotImplemented law.
 
     1. ``left.inplace_binary_operator_with(InplaceBinaryOperatorOperation(...))``
     2. If the floor yields raw/completed NotImplemented → corresponding binary
     3. Otherwise return the floor face unchanged
+
+    Both the in-place method and the binary fallback apply under ``ctx``.
     """
     binary = _SURFACE_BINARY.get(surface)
     if binary is None:
@@ -138,6 +141,8 @@ def discharge_inplace(left, right, site, *, surface: str):
             owner=f"inplace:{surface}",
             blame=site,
         ),
-        None,
+        ctx,
     )
-    return after_inplace_notimplemented(projected, lambda: binary(left, right, site))
+    return after_inplace_notimplemented(
+        projected, lambda: binary(left, right, site, ctx)
+    )

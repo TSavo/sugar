@@ -121,22 +121,22 @@ class NoneValue(GuardStableValue):
             exception_name="TypeError", site=site, owner="NoneValue.delitem"
         )
 
-    def less_than(self, other, site):
+    def less_than(self, other, site, ctx):
         # None orders against nothing: any ground comparison is authenticated
         # TypeError. Undecided peers refuse named (no FOL invent).
         if self._unorderable_ground_peer(other):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="NoneValue.less_than")
-        return super().less_than(other, site)
+        return super().less_than(other, site, ctx)
 
-    def less_than_from_left(self, left, site):
+    def less_than_from_left(self, left, site, ctx):
         """``left < None`` — TypeError when left is a decided ground peer."""
         if self._unorderable_ground_peer(left):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="NoneValue.less_than_from_left")
-        return super().less_than_from_left(left, site)
+        return super().less_than_from_left(left, site, ctx)
 
     def _unorderable_ground_peer(self, other) -> bool:
         from sugar_lift_py_tests.floor.list_value import ListValue
@@ -154,26 +154,26 @@ class NoneValue(GuardStableValue):
             SetValue,
         )
 
-    def less_equal(self, other, site):
+    def less_equal(self, other, site, ctx):
         if self._unorderable_ground_peer(other):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="NoneValue.less_equal")
-        return super().less_equal(other, site)
+        return super().less_equal(other, site, ctx)
 
-    def greater_than(self, other, site):
+    def greater_than(self, other, site, ctx):
         if self._unorderable_ground_peer(other):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="NoneValue.greater_than")
-        return super().greater_than(other, site)
+        return super().greater_than(other, site, ctx)
 
-    def greater_equal(self, other, site):
+    def greater_equal(self, other, site, ctx):
         if self._unorderable_ground_peer(other):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="NoneValue.greater_equal")
-        return super().greater_equal(other, site)
+        return super().greater_equal(other, site, ctx)
 
     def contains(self, item, site):
         """``x in None`` is exact TypeError — None is never a container."""
@@ -182,7 +182,7 @@ class NoneValue(GuardStableValue):
 
         return ground_type_error(site=site, owner="NoneValue.contains")
 
-    def equals(self, other, site):
+    def equals(self, other, site, ctx):
         # None stands on the equals floor only against itself. Cross-type is the
         # honest default gap until a ruling lands.
         if type(other) is NoneValue:
@@ -202,7 +202,7 @@ class NoneValue(GuardStableValue):
             )
 
             return ExitSet.completed(FalseBoolLiteralSugar(site=site))
-        return super().equals(other, site)
+        return super().equals(other, site, ctx)
 
     def _none_arithmetic_type_error(self, other, site, *, owner: str):
         """``None <op> x`` is TypeError when the right type is source-decided.
@@ -216,15 +216,15 @@ class NoneValue(GuardStableValue):
             return ground_type_error(site=site, owner=owner)
         return None
 
-    def add(self, other, site):
+    def add(self, other, site, ctx):
         constructed = self._none_arithmetic_type_error(
             other, site, owner="NoneValue.add"
         )
         if constructed is not None:
             return constructed
-        return super().add(other, site)
+        return super().add(other, site, ctx)
 
-    def subtract(self, other, site):
+    def subtract(self, other, site, ctx):
         # None - x is TypeError when the right type is source-decided.  Undecided
         # rights stay on the shared binary-operation third-value law.
         constructed = self._none_arithmetic_type_error(
@@ -232,31 +232,31 @@ class NoneValue(GuardStableValue):
         )
         if constructed is not None:
             return constructed
-        return super().subtract(other, site)
+        return super().subtract(other, site, ctx)
 
-    def multiply(self, other, site):
+    def multiply(self, other, site, ctx):
         constructed = self._none_arithmetic_type_error(
             other, site, owner="NoneValue.multiply"
         )
         if constructed is not None:
             return constructed
-        return super().multiply(other, site)
+        return super().multiply(other, site, ctx)
 
-    def divide(self, other, site):
+    def divide(self, other, site, ctx):
         constructed = self._none_arithmetic_type_error(
             other, site, owner="NoneValue.divide"
         )
         if constructed is not None:
             return constructed
-        return super().divide(other, site)
+        return super().divide(other, site, ctx)
 
-    def floor_divide(self, other, site):
+    def floor_divide(self, other, site, ctx):
         constructed = self._none_arithmetic_type_error(
             other, site, owner="NoneValue.floor_divide"
         )
         if constructed is not None:
             return constructed
-        return super().floor_divide(other, site)
+        return super().floor_divide(other, site, ctx)
 
     def is_identical(self, other, site):
         # None is a singleton: None is None folds True. Against anything else,

@@ -46,7 +46,7 @@ def test_opaque_arithmetic_cites_operator_coordinate(method, operator, kind) -> 
     left = SymbolicValue(make_var("left"))
     if kind == "callsite":
         left = CallSiteValue("opaque", (), (), ctor("call:opaque", []), None)
-    outcome = getattr(left, method)(TermValue(2), "arithmetic.py:1")
+    outcome = getattr(left, method)(TermValue(2), "arithmetic.py:1", None)
     assert outcome.value.to_term(owner="test") == ctor(
         operator, [left.to_term(owner="test"), num(2)]
     )

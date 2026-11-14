@@ -30,7 +30,7 @@ class ArrayLiteral(FloorValue):
     def project_sequence_with(self, operation: Any, ctx: Any) -> Any:
         return operation.project_array(self, ctx)
 
-    def multiply(self, other, site):
+    def multiply(self, other, site, ctx):
         # Array repetition, through the one sequence-repetition law -- the same
         # law list and tuple were consolidated onto (#6060). This arm kept a
         # private copy that PANICKED above a static cap; the cap was abolished

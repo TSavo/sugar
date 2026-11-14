@@ -71,7 +71,12 @@ class GuardedValue(FloorValue):
         """Distribute length through both authenticated guarded arms."""
         return self._map("length", site)
 
-    def _map(self, method: str, *args):
+    def _map(self, method: str, *args, **keywords):
+        """Distribute ``method`` over both arms.
+
+        ``keywords`` carries a binary operator's ``ctx`` to each arm, so an arm
+        that applies a body applies it under the caller's context.
+        """
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import ExitSet
@@ -80,10 +85,10 @@ class GuardedValue(FloorValue):
         blame = args[-1] if args else method
         if args and isinstance(args[0], GuardedValue):
             other, *rest = args
-            true_outcome = self._map(method, other.when_true, *rest)
+            true_outcome = self._map(method, other.when_true, *rest, **keywords)
             if true_outcome.halts() == true_outcome.exits:
                 return true_outcome.guarded(other.guard)
-            false_outcome = self._map(method, other.when_false, *rest)
+            false_outcome = self._map(method, other.when_false, *rest, **keywords)
             if false_outcome.halts() == false_outcome.exits:
                 return false_outcome.guarded(not_(other.guard))
             true_outcome = require_single_value(
@@ -101,10 +106,10 @@ class GuardedValue(FloorValue):
                 )
             )
 
-        true_outcome = getattr(self.when_true, method)(*args)
+        true_outcome = getattr(self.when_true, method)(*args, **keywords)
         if true_outcome.halts() == true_outcome.exits:
             return true_outcome.guarded(self.guard)
-        false_outcome = getattr(self.when_false, method)(*args)
+        false_outcome = getattr(self.when_false, method)(*args, **keywords)
         if false_outcome.halts() == false_outcome.exits:
             return false_outcome.guarded(not_(self.guard))
         # Dual-edge partitions from undecided native dispatch (BinOp/Compare):
@@ -150,7 +155,7 @@ class GuardedValue(FloorValue):
             )
         )
 
-    def _predicate(self, method: str, *args):
+    def _predicate(self, method: str, *args, **keywords):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import and_, implies, not_
         from sugar_lift_py_tests.outcome import ExitSet
@@ -170,10 +175,10 @@ class GuardedValue(FloorValue):
 
         owner = f"GuardedValue._predicate({method})"
         blame = args[-1] if args else method
-        true_outcome = getattr(self.when_true, method)(*args)
+        true_outcome = getattr(self.when_true, method)(*args, **keywords)
         if true_outcome.halts() == true_outcome.exits:
             return true_outcome.guarded(self.guard)
-        false_outcome = getattr(self.when_false, method)(*args)
+        false_outcome = getattr(self.when_false, method)(*args, **keywords)
         if false_outcome.halts() == false_outcome.exits:
             return false_outcome.guarded(not_(self.guard))
         true_outcome = require_single_value(
@@ -198,7 +203,7 @@ class GuardedValue(FloorValue):
         true_formula = formula(true_value)
         false_formula = formula(false_value)
         if true_formula is None or false_formula is None:
-            return super().equals(args[0], args[-1])
+            return super().equals(args[0], args[-1], keywords.get("ctx"))
         if (
             type(true_value) is TrueBoolLiteralSugar
             and type(false_value) is FalseBoolLiteralSugar
@@ -245,32 +250,33 @@ class GuardedValue(FloorValue):
         ).normalize()
         return joined
 
-    def less_than_from_left(self, left, site):
+    def less_than_from_left(self, left, site, ctx):
         """Typed Floor obligation: distribute ``left <`` across guarded arms.
 
         Preserves existing guarded-predicate distribution; does not invent a
         generic getattr/string surface on the Floor protocol.
         """
-        return self.predicate_from_left("less_than", left, site)
+        return self.predicate_from_left("less_than", left, site, ctx=ctx)
 
-    def predicate_from_left(self, method: str, left, site):
+    def predicate_from_left(self, method: str, left, site, **keywords):
         """Distribute a binary predicate whose guarded value is the RHS."""
         return GuardedValue(
             self.guard, self.when_true, self.when_false
-        )._predicate_from_left(method, left, site)
+        )._predicate_from_left(method, left, site, **keywords)
 
-    def map_from_left(self, method: str, left, site):
-        """Distribute a binary value operation whose guarded value is the RHS."""
+    def map_from_left(self, method: str, left, site, ctx):
+        """Distribute a binary value operation whose guarded value is the RHS,
+        each arm under the caller's context."""
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import ExitSet
 
         from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
 
         owner = f"GuardedValue.map_from_left({method})"
-        true_outcome = getattr(left, method)(self.when_true, site)
+        true_outcome = getattr(left, method)(self.when_true, site, ctx)
         if true_outcome.halts() == true_outcome.exits:
             return true_outcome.guarded(self.guard)
-        false_outcome = getattr(left, method)(self.when_false, site)
+        false_outcome = getattr(left, method)(self.when_false, site, ctx)
         if false_outcome.halts() == false_outcome.exits:
             return false_outcome.guarded(not_(self.guard))
 
@@ -301,11 +307,11 @@ class GuardedValue(FloorValue):
             )
         )
 
-    def _predicate_from_left(self, method: str, left, site):
-        true_outcome = getattr(left, method)(self.when_true, site)
+    def _predicate_from_left(self, method: str, left, site, **keywords):
+        true_outcome = getattr(left, method)(self.when_true, site, **keywords)
         if true_outcome.halts() == true_outcome.exits:
             return true_outcome.guarded(self.guard)
-        false_outcome = getattr(left, method)(self.when_false, site)
+        false_outcome = getattr(left, method)(self.when_false, site, **keywords)
         if false_outcome.halts() == false_outcome.exits:
             from sugar_lift_py_tests.ir import not_
 
@@ -420,8 +426,8 @@ class GuardedValue(FloorValue):
         """Rebind both statically known receiver faces after a subscript delete."""
         return self._map("delitem", index, site)
 
-    def add(self, other, site):
-        return self._map("add", other, site)
+    def add(self, other, site, ctx):
+        return self._map("add", other, site, ctx=ctx)
 
     def append_with(self, value, site):
         if all(
@@ -444,32 +450,32 @@ class GuardedValue(FloorValue):
             )
         )
 
-    def subtract(self, other, site):
-        return self._map("subtract", other, site)
+    def subtract(self, other, site, ctx):
+        return self._map("subtract", other, site, ctx=ctx)
 
-    def multiply(self, other, site):
-        return self._map("multiply", other, site)
+    def multiply(self, other, site, ctx):
+        return self._map("multiply", other, site, ctx=ctx)
 
-    def power(self, other, site):
-        return self._map("power", other, site)
+    def power(self, other, site, ctx):
+        return self._map("power", other, site, ctx=ctx)
 
-    def divide(self, other, site):
-        return self._map("divide", other, site)
+    def divide(self, other, site, ctx):
+        return self._map("divide", other, site, ctx=ctx)
 
-    def modulo(self, other, site):
-        return self._map("modulo", other, site)
+    def modulo(self, other, site, ctx):
+        return self._map("modulo", other, site, ctx=ctx)
 
-    def floor_divide(self, other, site):
-        return self._map("floor_divide", other, site)
+    def floor_divide(self, other, site, ctx):
+        return self._map("floor_divide", other, site, ctx=ctx)
 
-    def left_shift(self, other, site):
-        return self._map("left_shift", other, site)
+    def left_shift(self, other, site, ctx):
+        return self._map("left_shift", other, site, ctx=ctx)
 
-    def right_shift(self, other, site):
-        return self._map("right_shift", other, site)
+    def right_shift(self, other, site, ctx):
+        return self._map("right_shift", other, site, ctx=ctx)
 
-    def bitwise_or(self, other, site):
-        return self._map("bitwise_or", other, site)
+    def bitwise_or(self, other, site, ctx):
+        return self._map("bitwise_or", other, site, ctx=ctx)
 
     def bitwise_invert(self, site):
         return self._map("bitwise_invert", site)
@@ -483,14 +489,14 @@ class GuardedValue(FloorValue):
     def truth(self, site):
         return self._predicate("truth", site)
 
-    def equals(self, other, site):
-        return self._predicate("equals", other, site)
+    def equals(self, other, site, ctx):
+        return self._predicate("equals", other, site, ctx=ctx)
 
     def is_identical(self, other, site):  # type: ignore[override]
         return self._predicate("is_identical", other, site)
 
-    def less_than(self, other, site):
-        return self._predicate("less_than", other, site)
+    def less_than(self, other, site, ctx):
+        return self._predicate("less_than", other, site, ctx=ctx)
 
     def python_isinstance(self, type_name: str, type_term, site):
         return self._predicate("python_isinstance", type_name, type_term, site)

@@ -103,9 +103,9 @@ class _OperationReceiverProjectionProbe(FloorValue):
         self.calls.append((self.label, ctx, owner))
         return self.projected
 
-    def equals(self, other, site):
+    def equals(self, other, site, ctx):
         peer = other.projected if isinstance(other, type(self)) else other
-        return self.projected.equals(peer, site)
+        return self.projected.equals(peer, site, ctx)
 
 
 def _repo_root() -> Path:

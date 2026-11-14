@@ -44,7 +44,7 @@ def test_symbolic_plus_string_mints_native_operation_carrier() -> None:
     left = SymbolicValue(make_var("cls_name"))
     right = StringValue(".")
     assert left.formal_coordinate is None
-    outcome = left.add(right, site)
+    outcome = left.add(right, site, None)
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "add"
 
@@ -53,7 +53,7 @@ def test_string_plus_symbolic_mints_native_operation_carrier() -> None:
     site = _tiny_binop_site()
     left = StringValue(".")
     right = SymbolicValue(make_var("cls_name"))
-    outcome = left.add(right, site)
+    outcome = left.add(right, site, None)
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "add"
 
@@ -67,7 +67,7 @@ def test_symbolic_plus_int_is_the_undecided_binary_law() -> None:
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
     site = _tiny_binop_site()
-    outcome = SymbolicValue(make_var("n")).add(TermValue(2), site)
+    outcome = SymbolicValue(make_var("n")).add(TermValue(2), site, None)
     assert not isinstance(outcome, NativeOperationExitCarrierV1)
     halts = [face for face in outcome.exits if isinstance(face, Halted)]
     assert [face.effect.producer_node_owner for face in halts] == [

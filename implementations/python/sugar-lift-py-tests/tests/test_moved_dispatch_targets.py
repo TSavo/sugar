@@ -113,7 +113,7 @@ def test_dynamic_isinstance_keeps_a_value_owned_term_refusal_loud() -> None:
 def test_array_repetition_folds_the_same_law_list_and_tuple_fold() -> None:
     element = TermValue(7)
 
-    outcome = ArrayLiteral((element,)).multiply(TermValue(64), "multiply-site")
+    outcome = ArrayLiteral((element,)).multiply(TermValue(64), "multiply-site", None)
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, ArrayLiteral)
@@ -134,7 +134,7 @@ def test_no_cardinality_refuses_a_concrete_repetition(sequence, count) -> None:
     This is the arm that used to reach `sugar.for_sugar`: above the static limit
     it raised (and latterly ImportError'd) instead of repeating.
     """
-    outcome = sequence.multiply(TermValue(count), "multiply-site")
+    outcome = sequence.multiply(TermValue(count), "multiply-site", None)
 
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, GroundSequenceRepetitionValue)
@@ -148,7 +148,7 @@ def test_no_cardinality_refuses_a_concrete_repetition(sequence, count) -> None:
 def test_a_symbolic_count_is_the_same_closed_coordinate() -> None:
     """The array's private `SequenceRepetitionRuntimeEffect` arm is gone too."""
     outcome = ArrayLiteral((TermValue(7),)).multiply(
-        SymbolicValue(make_var("n")), "multiply-site"
+        SymbolicValue(make_var("n")), "multiply-site", None
     )
 
     assert isinstance(outcome, Complete)

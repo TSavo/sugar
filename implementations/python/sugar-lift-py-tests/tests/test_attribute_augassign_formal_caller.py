@@ -548,7 +548,7 @@ def test_notimplemented_fallback_twins_via_production_projector() -> None:
             calls.append("inplace")
             return NotImplemented
 
-        def add(self, other, site):
+        def add(self, other, site, ctx):
             calls.append("add")
             return ExitSet.completed(TermValue(3))
 
@@ -562,7 +562,7 @@ def test_notimplemented_fallback_twins_via_production_projector() -> None:
             calls.append("inplace")
             return ExitSet.completed(NotImplemented)  # type: ignore[arg-type]
 
-        def add(self, other, site):
+        def add(self, other, site, ctx):
             calls.append("add")
             return ExitSet.completed(TermValue(4))
 
@@ -585,7 +585,7 @@ def test_discrimination_incomplete_does_not_fall_through() -> None:
             del operation, ctx
             return face
 
-        def add(self, other, site):
+        def add(self, other, site, ctx):
             return ExitSet.completed(TermValue(0))
 
     assert project_iadd(_Inc(), TermValue(1), "op") is face

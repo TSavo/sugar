@@ -45,16 +45,16 @@ def _folded(outcome) -> complex:
 
 def test_int_plus_complex_literal_is_pythons_own_sum() -> None:
     """The exact pandas shape: `1 + 1j`."""
-    assert _folded(TermValue(1).add(ComplexValue(0.0, 1.0), SITE)) == 1 + 1j
+    assert _folded(TermValue(1).add(ComplexValue(0.0, 1.0), SITE, None)) == 1 + 1j
 
 
 def test_complex_literal_plus_int_is_pythons_own_sum() -> None:
-    assert _folded(ComplexValue(0.0, 1.0).add(TermValue(1), SITE)) == 1j + 1
+    assert _folded(ComplexValue(0.0, 1.0).add(TermValue(1), SITE, None)) == 1j + 1
 
 
 def test_float_plus_complex_literal_is_pythons_own_sum() -> None:
     """The exact pandas shape: `1.0 + 1.0j`."""
-    assert _folded(TermValue(1.0).add(ComplexValue(0.0, 1.0), SITE)) == 1.0 + 1.0j
+    assert _folded(TermValue(1.0).add(ComplexValue(0.0, 1.0), SITE, None)) == 1.0 + 1.0j
 
 
 @pytest.mark.parametrize(
@@ -69,7 +69,7 @@ def test_float_plus_complex_literal_is_pythons_own_sum() -> None:
     ),
 )
 def test_addition_mirrors_python_for_every_field_member(left, right, expected) -> None:
-    assert _folded(left.add(right, SITE)) == expected
+    assert _folded(left.add(right, SITE, None)) == expected
 
 
 @pytest.mark.parametrize(
@@ -81,7 +81,7 @@ def test_addition_mirrors_python_for_every_field_member(left, right, expected) -
     ),
 )
 def test_subtraction_mirrors_python(left, right, expected) -> None:
-    assert _folded(left.subtract(right, SITE)) == expected
+    assert _folded(left.subtract(right, SITE, None)) == expected
 
 
 @pytest.mark.parametrize(
@@ -94,14 +94,14 @@ def test_subtraction_mirrors_python(left, right, expected) -> None:
     ),
 )
 def test_multiplication_mirrors_python(left, right, expected) -> None:
-    assert _folded(left.multiply(right, SITE)) == expected
+    assert _folded(left.multiply(right, SITE, None)) == expected
 
 
 def test_i_squared_is_exactly_negative_one() -> None:
     """The identity that makes the field a field, asserted exactly."""
-    product = (
-        ComplexValue(0.0, 1.0).multiply(ComplexValue(0.0, 1.0), SITE).completed_value()
-    )
+    product = ComplexValue(0.0, 1.0).multiply(
+        ComplexValue(0.0, 1.0), SITE, None
+    ).completed_value()
 
     assert product.real == -1.0
     assert product.imag == 0.0
@@ -112,7 +112,7 @@ def test_i_squared_is_exactly_negative_one() -> None:
 
 def test_two_integers_still_fold_on_the_number_floor() -> None:
     """No operand was silently widened: int + int is still an int TermValue."""
-    outcome = TermValue(3).add(TermValue(4), SITE)
+    outcome = TermValue(3).add(TermValue(4), SITE, None)
 
     assert outcome.completed_value() is not None
     assert type(outcome.completed_value()) is TermValue
@@ -121,7 +121,7 @@ def test_two_integers_still_fold_on_the_number_floor() -> None:
 
 
 def test_two_floats_still_fold_on_the_number_floor() -> None:
-    outcome = TermValue(1.5).add(TermValue(2.5), SITE)
+    outcome = TermValue(1.5).add(TermValue(2.5), SITE, None)
 
     assert type(outcome.completed_value()) is TermValue
     assert outcome.completed_value().value == 4.0
@@ -148,7 +148,7 @@ class _FragmentSite:
 def test_a_non_member_operand_is_authenticated_type_error(off_field) -> None:
     """Decided non-field peers are a TypeError halt, never a complex coordinate."""
     from sugar_lift_py_tests.effect import RaiseEffect
-    outcome = ComplexValue(0.0, 1.0).add(off_field, _FragmentSite())
+    outcome = ComplexValue(0.0, 1.0).add(off_field, _FragmentSite(), None)
     assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
     assert isinstance(halt.effect, RaiseEffect)
@@ -161,7 +161,7 @@ def test_an_integer_too_large_for_the_float_field_stays_loud() -> None:
     assert complex_field_coordinate(TermValue(10**400)) is None
 
     with pytest.raises(ConstructionPanic) as raised:
-        TermValue(10**400).add(ComplexValue(0.0, 1.0), SITE)
+        TermValue(10**400).add(ComplexValue(0.0, 1.0), SITE, None)
 
     info = raised.value.info
     assert info.owner == "add"
@@ -182,7 +182,7 @@ def test_a_result_that_overflows_the_float_field_stays_loud() -> None:
     huge = ComplexValue(1e308, 0.0)
 
     with pytest.raises(ConstructionPanic) as raised:
-        huge.multiply(huge, SITE)
+        huge.multiply(huge, SITE, None)
 
     assert raised.value.info.owner == "multiply"
 
@@ -190,7 +190,7 @@ def test_a_result_that_overflows_the_float_field_stays_loud() -> None:
 def test_a_nan_result_stays_loud() -> None:
     """inf * 0 is NaN in Python; NaN has no canonical decimal string either."""
     with pytest.raises(ConstructionPanic):
-        ComplexValue(float("inf"), 0.0).multiply(ComplexValue(0.0, 0.0), SITE)
+        ComplexValue(float("inf"), 0.0).multiply(ComplexValue(0.0, 0.0), SITE, None)
 
 
 def test_a_finite_result_at_the_edge_of_the_field_still_folds() -> None:
@@ -199,7 +199,7 @@ def test_a_finite_result_at_the_edge_of_the_field_still_folds() -> None:
     A guard that refused by size would be the same kind of cardinality cap this
     floor deleted from sequence repetition. 1e308 + 1.0 is finite, so it folds.
     """
-    outcome = ComplexValue(1e308, 0.0).add(ComplexValue(1.0, 0.0), SITE)
+    outcome = ComplexValue(1e308, 0.0).add(ComplexValue(1.0, 0.0), SITE, None)
 
     assert outcome.completed_value() is not None
     assert outcome.completed_value().real == 1e308 + 1.0
@@ -209,7 +209,7 @@ def test_no_folded_result_ever_projects_a_non_numeric_real() -> None:
     """The law behind the guard, stated on the term the theory actually reads."""
     from sugar_lift_py_tests.ir import _ConstReal
 
-    outcome = ComplexValue(1e200, 0.0).multiply(ComplexValue(1e-200, 0.0), SITE)
+    outcome = ComplexValue(1e200, 0.0).multiply(ComplexValue(1e-200, 0.0), SITE, None)
     term = outcome.completed_value().to_term(owner=SITE)
 
     for arg in term.args:
@@ -236,7 +236,7 @@ def test_an_opaque_operand_keeps_the_undecided_third_value_loud() -> None:
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 
-    outcome = ComplexValue(0.0, 1.0).add(opaque, SITE)
+    outcome = ComplexValue(0.0, 1.0).add(opaque, SITE, None)
     assert isinstance(outcome, ExitSet)
     assert {type(exit_) for exit_ in outcome.exits} == {Completed, Halted}
     assert not any(
@@ -252,7 +252,7 @@ def test_an_integer_plus_a_symbolic_operand_retains_both_dispatch_faces() -> Non
 
     symbolic = SymbolicValue(TermValue(2).to_term(owner=SITE))
 
-    outcome = TermValue(1).add(symbolic, SITE)
+    outcome = TermValue(1).add(symbolic, SITE, None)
     assert isinstance(outcome, ExitSet)
     assert {type(exit_) for exit_ in outcome.exits} == {Completed, Halted}
     halted = next(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))

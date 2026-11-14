@@ -179,26 +179,30 @@ class PredicateValue(FloorValue):
             )
         )
 
-    def bitwise_or(self, other, site):
+    def bitwise_or(self, other, site, ctx):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if type(other) is SymbolicValue:
-            return SymbolicValue(self.to_term(owner=str(site))).bitwise_or(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).bitwise_or(
+                other, site, ctx
+            )
         if type(other) is not PredicateValue:
-            return super().bitwise_or(other, site)
+            return super().bitwise_or(other, site, ctx)
         del site
         from sugar_lift_py_tests.ir import or_
         from sugar_lift_py_tests.outcome import ExitSet
 
         return ExitSet.completed(PredicateValue(or_([self.formula, other.formula])))
 
-    def bitwise_and(self, other, site):
+    def bitwise_and(self, other, site, ctx):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if type(other) is SymbolicValue:
-            return SymbolicValue(self.to_term(owner=str(site))).bitwise_and(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).bitwise_and(
+                other, site, ctx
+            )
         if type(other) is not PredicateValue:
-            return super().bitwise_and(other, site)
+            return super().bitwise_and(other, site, ctx)
         from sugar_lift_py_tests.ir import and_
         from sugar_lift_py_tests.outcome import ExitSet
 
@@ -212,9 +216,9 @@ class PredicateValue(FloorValue):
             )
         )
 
-    def bitwise_xor(self, other, site):
+    def bitwise_xor(self, other, site, ctx):
         if type(other) is not PredicateValue:
-            return super().bitwise_xor(other, site)
+            return super().bitwise_xor(other, site, ctx)
         from sugar_lift_py_tests.ir import and_, not_, or_
         from sugar_lift_py_tests.outcome import ExitSet
 

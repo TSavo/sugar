@@ -127,7 +127,7 @@ def test_walrus_value_binds_its_evaluation_and_its_name() -> None:
 
 def test_a_comparison_carries_the_walrus_evaluation() -> None:
     value = NamedExpressionValue("x", TermValue(5), evaluation=KEY)
-    compared = _value(value.greater_than(TermValue(0), SITE))
+    compared = _value(value.greater_than(TermValue(0), SITE, None))
     assert isinstance(compared, NamedExpressionValue)
     assert compared.evaluation == KEY
     ctx = compared.extend_scope(_root())

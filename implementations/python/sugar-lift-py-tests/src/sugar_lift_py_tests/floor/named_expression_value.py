@@ -88,42 +88,44 @@ class NamedExpressionValue(FloorValue):
     def is_identical(self, other, site):
         return self.presented_value.is_identical(other, site).and_then(self._carry)
 
-    def equals(self, other, site):
-        return self.presented_value.equals(other, site).and_then(self._carry)
+    def equals(self, other, site, ctx):
+        return self.presented_value.equals(other, site, ctx).and_then(self._carry)
 
-    def less_than(self, other, site):
-        return self.presented_value.less_than(other, site).and_then(self._carry)
+    def less_than(self, other, site, ctx):
+        return self.presented_value.less_than(other, site, ctx).and_then(self._carry)
 
-    def less_equal(self, other, site):
-        return self.presented_value.less_equal(other, site).and_then(self._carry)
+    def less_equal(self, other, site, ctx):
+        return self.presented_value.less_equal(other, site, ctx).and_then(self._carry)
 
-    def greater_than(self, other, site):
-        return self.presented_value.greater_than(other, site).and_then(self._carry)
+    def greater_than(self, other, site, ctx):
+        return self.presented_value.greater_than(other, site, ctx).and_then(self._carry)
 
-    def greater_equal(self, other, site):
-        return self.presented_value.greater_equal(other, site).and_then(self._carry)
+    def greater_equal(self, other, site, ctx):
+        return self.presented_value.greater_equal(other, site, ctx).and_then(
+            self._carry
+        )
 
     # --- right-hand: operator-owned typed double-dispatch (no string door) ---
 
-    def less_than_from_left(self, left, site):
+    def less_than_from_left(self, left, site, ctx):
         """``left < (n := e)`` — presented is the RHS; carry the walrus bind."""
-        return left.less_than(self.presented_value, site).and_then(self._carry)
+        return left.less_than(self.presented_value, site, ctx).and_then(self._carry)
 
-    def less_equal_from_left(self, left, site):
+    def less_equal_from_left(self, left, site, ctx):
         """``left <= (n := e)`` — typed RHS door; not string-admitted."""
-        return left.less_equal(self.presented_value, site).and_then(self._carry)
+        return left.less_equal(self.presented_value, site, ctx).and_then(self._carry)
 
-    def greater_than_from_left(self, left, site):
+    def greater_than_from_left(self, left, site, ctx):
         """``left > (n := e)`` — typed RHS door; not string-admitted."""
-        return left.greater_than(self.presented_value, site).and_then(self._carry)
+        return left.greater_than(self.presented_value, site, ctx).and_then(self._carry)
 
-    def greater_equal_from_left(self, left, site):
+    def greater_equal_from_left(self, left, site, ctx):
         """``left >= (n := e)`` — typed RHS door; not string-admitted."""
-        return left.greater_equal(self.presented_value, site).and_then(self._carry)
+        return left.greater_equal(self.presented_value, site, ctx).and_then(self._carry)
 
-    def equals_from_left(self, left, site):
+    def equals_from_left(self, left, site, ctx):
         """``left == (n := e)`` — typed RHS door; not string-admitted."""
-        return left.equals(self.presented_value, site).and_then(self._carry)
+        return left.equals(self.presented_value, site, ctx).and_then(self._carry)
 
     def is_identical_from_left(self, left, site):
         """``left is (n := e)`` — typed RHS door; not string-admitted."""

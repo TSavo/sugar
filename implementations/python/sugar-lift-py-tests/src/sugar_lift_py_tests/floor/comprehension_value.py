@@ -199,7 +199,7 @@ class ComprehensionValue(GuardStableValue):
             )
         )
 
-    def add(self, other, site):
+    def add(self, other, site, ctx):
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import ExitSet
@@ -226,10 +226,10 @@ class ComprehensionValue(GuardStableValue):
         if type(other) is CallSiteValue:
             from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
-            return SymbolicValue(self.term).add(other, site)
-        return super().add(other, site)
+            return SymbolicValue(self.term).add(other, site, ctx)
+        return super().add(other, site, ctx)
 
-    def subtract(self, other, site):
+    def subtract(self, other, site, ctx):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
         if (
@@ -247,9 +247,9 @@ class ComprehensionValue(GuardStableValue):
             from sugar_lift_py_tests.effect import runtime_subtract
 
             return runtime_subtract(self, other, site)
-        return super().subtract(other, site)
+        return super().subtract(other, site, ctx)
 
-    def bitwise_or(self, other, site):
+    def bitwise_or(self, other, site, ctx):
         if (
             type(other) is ComprehensionValue
             and _is_set_coordinate(self.term)
@@ -261,9 +261,9 @@ class ComprehensionValue(GuardStableValue):
             return ExitSet.completed(
                 ComprehensionValue(ctor("py.set_union", [self.term, other.term]))
             )
-        return super().bitwise_or(other, site)
+        return super().bitwise_or(other, site, ctx)
 
-    def multiply(self, other, site):
+    def multiply(self, other, site, ctx):
         """Preserve repetition when the count is a constructed Python integer."""
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
@@ -273,8 +273,8 @@ class ComprehensionValue(GuardStableValue):
             and type(other) is TermValue
             and type(other.value) is int
         ):
-            return SymbolicValue(self.term).multiply(other, site)
-        return super().multiply(other, site)
+            return SymbolicValue(self.term).multiply(other, site, ctx)
+        return super().multiply(other, site, ctx)
 
     def subscript(self, index, site):
         # A runtime comprehension still has Python collection semantics, but

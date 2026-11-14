@@ -103,7 +103,7 @@ class StringValue(GuardStableValue):
             SetValue,
         )
 
-    def less_than(self, other, site):
+    def less_than(self, other, site, ctx):
         # A string stands on the ordering floor: two strings fold to True/False
         # Sugar. Ground cross-type is authenticated TypeError. Undecided peers
         # refuse named (no FOL invent).
@@ -125,9 +125,9 @@ class StringValue(GuardStableValue):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="StringValue.less_than")
-        return super().less_than(other, site)
+        return super().less_than(other, site, ctx)
 
-    def less_than_from_left(self, left, site):
+    def less_than_from_left(self, left, site, ctx):
         """``left < self`` when the RHS is a string — Sugar fold or TypeError."""
         if type(left) is StringValue:
             from sugar_lift_py_tests.outcome import ExitSet
@@ -147,9 +147,9 @@ class StringValue(GuardStableValue):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="StringValue.less_than_from_left")
-        return super().less_than_from_left(left, site)
+        return super().less_than_from_left(left, site, ctx)
 
-    def less_equal(self, other, site):
+    def less_equal(self, other, site, ctx):
         # Source-decided str lexicographic order is Sugar, not FOL invent and
         # not a named refusal of missing machinery.
         if type(other) is StringValue:
@@ -170,9 +170,9 @@ class StringValue(GuardStableValue):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="StringValue.less_equal")
-        return super().less_equal(other, site)
+        return super().less_equal(other, site, ctx)
 
-    def greater_than(self, other, site):
+    def greater_than(self, other, site, ctx):
         if type(other) is StringValue:
             from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -191,9 +191,9 @@ class StringValue(GuardStableValue):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="StringValue.greater_than")
-        return super().greater_than(other, site)
+        return super().greater_than(other, site, ctx)
 
-    def greater_equal(self, other, site):
+    def greater_equal(self, other, site, ctx):
         if type(other) is StringValue:
             from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -212,7 +212,7 @@ class StringValue(GuardStableValue):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="StringValue.greater_equal")
-        return super().greater_equal(other, site)
+        return super().greater_equal(other, site, ctx)
 
     def length(self, site):
         # A string knows its length: the count of characters.
@@ -423,7 +423,7 @@ class StringValue(GuardStableValue):
             exception_name="AttributeError", site=site, owner="StringValue.delattr"
         )
 
-    def add(self, other, site):
+    def add(self, other, site, ctx):
         # A string's addition IS concatenation: two strings fold to their join.
         # Anything else falls to the honest addition-floor gap.
         if type(other) is StringValue:
@@ -436,7 +436,7 @@ class StringValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if isinstance(other, GuardedValue):
-            return other.map_from_left("add", self, site)
+            return other.map_from_left("add", self, site, ctx)
         if type(other) is OpaqueOpCallsite and other.callee == "str":
             if type(other.computed) is StringValue:
                 from sugar_lift_py_tests.outcome import ExitSet
@@ -481,14 +481,14 @@ class StringValue(GuardStableValue):
             # f-string dead-end. Do not invent the concatenated string.
             return CallSiteValue.named_string_concat(self, other, site)
         if type(other) is CallSiteValue:
-            return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).add(other, site, ctx)
         if other.denotes_value() and other.runtime_type_is_decided():
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="StringValue.add")
-        return super().add(other, site)
+        return super().add(other, site, ctx)
 
-    def subtract(self, other, site):
+    def subtract(self, other, site, ctx):
         """``str - x``: undecided rights stay third-valued; decided rights TypeError.
 
         A body-less call result has no lift-time value, so Python's
@@ -506,9 +506,9 @@ class StringValue(GuardStableValue):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="StringValue.subtract")
-        return super().subtract(other, site)
+        return super().subtract(other, site, ctx)
 
-    def multiply(self, other, site):
+    def multiply(self, other, site, ctx):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.floor.term_value import TermValue
@@ -518,26 +518,28 @@ class StringValue(GuardStableValue):
 
             return ExitSet.completed(StringValue(self.value * other.value))
         if type(other) in (CallSiteValue, SymbolicValue):
-            return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).multiply(
+                other, site, ctx
+            )
         if other.denotes_value() and other.runtime_type_is_decided():
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="StringValue.multiply")
-        return super().multiply(other, site)
+        return super().multiply(other, site, ctx)
 
-    def divide(self, other, site):
+    def divide(self, other, site, ctx):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if type(other) is CallSiteValue:
-            return SymbolicValue(self.to_term(owner=str(site))).divide(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).divide(other, site, ctx)
         if other.denotes_value() and other.runtime_type_is_decided():
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="StringValue.divide")
-        return super().divide(other, site)
+        return super().divide(other, site, ctx)
 
-    def modulo(self, other, site):
+    def modulo(self, other, site, ctx):
         """Apply Python's printf-style string formatting floor.
 
         Ground scalar and tuple operands use the interpreter itself. Symbolic
@@ -545,7 +547,7 @@ class StringValue(GuardStableValue):
         coordinate used by formatted-string construction. Other floor shapes
         stay on the default loud modulo gap.
         """
-        distributed = self._distribute_guarded_modulo(other, site)
+        distributed = self._distribute_guarded_modulo(other, site, ctx)
         if distributed is not None:
             return distributed
 
@@ -588,9 +590,9 @@ class StringValue(GuardStableValue):
                     )
                 )
             )
-        return super().modulo(other, site)
+        return super().modulo(other, site, ctx)
 
-    def _distribute_guarded_modulo(self, other, site):
+    def _distribute_guarded_modulo(self, other, site, ctx):
         from sugar_lift_py_tests.floor.guarded_value import GuardedValue
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.outcome import ExitSet, complete_value
@@ -600,11 +602,11 @@ class StringValue(GuardStableValue):
                 GuardedValue(
                     other.guard,
                     complete_value(
-                        self.modulo(other.when_true, site),
+                        self.modulo(other.when_true, site, ctx),
                         owner="StringValue.modulo guarded true",
                     ),
                     complete_value(
-                        self.modulo(other.when_false, site),
+                        self.modulo(other.when_false, site, ctx),
                         owner="StringValue.modulo guarded false",
                     ),
                 )
@@ -618,7 +620,7 @@ class StringValue(GuardStableValue):
                     elements = list(other.elements)
                     elements[index] = value
                     return complete_value(
-                        self.modulo(TupleValue(tuple(elements)), site),
+                        self.modulo(TupleValue(tuple(elements)), site, ctx),
                         owner="StringValue.modulo guarded tuple element",
                     )
 

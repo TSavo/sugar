@@ -45,7 +45,7 @@ class EllipsisValue(FloorValue):
 
         return ExitSet.completed(TrueBoolLiteralSugar(site=site))
 
-    def equals(self, other, site):
+    def equals(self, other, site, ctx):
         if type(other) is EllipsisValue:
             from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
@@ -53,7 +53,7 @@ class EllipsisValue(FloorValue):
             )
 
             return ExitSet.completed(TrueBoolLiteralSugar(site=site))
-        return super().equals(other, site)
+        return super().equals(other, site, ctx)
 
     def is_identical(self, other, site):
         # Ellipsis is a singleton: `... is ...` folds True.

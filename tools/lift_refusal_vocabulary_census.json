@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 2205,
+  "lift_output_backlog": 2191,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -1325,36 +1325,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:04768a62b9348346:1",
-      "line": 967,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "def _dig_or_refuse_binop(self, other, site, *, op: str, floor_method: str):",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:0a60b9e9283c560b:1",
-      "line": 927,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(other, site, op=\"%\", floor_method=\"modulo\")",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:151e94d813ebdcb4:1",
-      "line": 918,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(other, site, op=\"*\", floor_method=\"multiply\")",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:19ecbdcd4fffef36:1",
       "line": 537,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
@@ -1385,16 +1355,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:47ca32290ca83d0d:1",
-      "line": 924,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(other, site, op=\"/\", floor_method=\"divide\")",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:52a4a4cf224c64da:1",
       "line": 907,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
@@ -1415,86 +1375,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:b4ef46960d398f7a:1",
-      "line": 960,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(other, site, op=\"|\", floor_method=\"bitwise_or\")",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:c20dae017f95487e:1",
-      "line": 921,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(other, site, op=\"**\", floor_method=\"power\")",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:d0f289d1ced31436:1",
-      "line": 930,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:d0f289d1ced31436:2",
-      "line": 935,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:d0f289d1ced31436:3",
-      "line": 943,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:d0f289d1ced31436:4",
-      "line": 950,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:d0f289d1ced31436:5",
-      "line": 955,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:d0f289d1ced31436:6",
-      "line": 963,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:d753c45130bb14e1:1",
       "line": 988,
       "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
@@ -1502,26 +1382,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "if refused is not None:",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:e9e27e8fd5e4ebc8:1",
-      "line": 915,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(other, site, op=\"-\", floor_method=\"subtract\")",
-      "wire_marker": "internal-only"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py:f587884b31c4c7b3:1",
-      "line": 912,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/floor/call_site_value.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "return self._dig_or_refuse_binop(other, site, op=\"+\", floor_method=\"add\")",
       "wire_marker": "internal-only"
     },
     {
@@ -23099,10 +22959,10 @@
   "speaker_counts": {
     "emitter-provenance-guard": 3,
     "instrument-prose": 10,
-    "lift-output-backlog": 2205,
+    "lift-output-backlog": 2191,
     "provenance-oracle-guard": 57,
     "vendor-language-identifier": 2,
     "verifier-verdict-quote": 33
   },
-  "total_occurrences": 2310
+  "total_occurrences": 2296
 }

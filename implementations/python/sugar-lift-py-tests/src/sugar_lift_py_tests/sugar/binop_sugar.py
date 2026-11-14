@@ -96,6 +96,7 @@ class BinOpSugar(ConstructedTermSugar):
                         ctx, owner="BinOpSugar right operation receiver"
                     ),
                     self.site,
+                    ctx,
                 )
             )
         )

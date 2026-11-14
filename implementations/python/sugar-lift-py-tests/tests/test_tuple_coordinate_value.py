@@ -139,7 +139,7 @@ def test_tuple_coordinate_length_equals_int_is_native_int_equality(
     assert length.runtime_type_is_decided()
 
     one = TermValue(1)
-    outcome = length.equals(one, call.fragment)
+    outcome = length.equals(one, call.fragment, None)
     published = publish_undecided_equality_edges(
         length, one, call.fragment, "Eq", outcome
     )

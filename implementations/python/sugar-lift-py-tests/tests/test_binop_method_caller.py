@@ -407,7 +407,7 @@ def test_incompatible_operands_method_call_halts_with_named_typeerror() -> None:
     # Floor path: NoneValue.add refuses with TypeError (membership-style pin).
     _, method, _pending = _method_definition()
     floor_site = method.body[0].fragment
-    direct = NoneValue().add(TermValue(2), floor_site)
+    direct = NoneValue().add(TermValue(2), floor_site, None)
     assert len(direct.exits) == 1 and direct.halts() == direct.exits, direct
     assert direct.halts()[0].effect.exception_name == "TypeError"
 

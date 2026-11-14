@@ -90,12 +90,12 @@ class SubscriptOperation:
         )
 
     def subscript_object(self, receiver, ctx: object) -> Outcome:
-        del ctx
         return receiver.call_method_value(
             "__getitem__",
             (self.index,),
             owner=self.owner,
             blame=self.blame,
+            ctx=ctx,
         )
 
     def subscript_symbolic(self, receiver, ctx: object) -> Outcome:

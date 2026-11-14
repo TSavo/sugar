@@ -103,10 +103,10 @@ def test_constructed_dict_support_rides_under_control_without_new_identity():
 def test_ground_term_value_equality_folds():
     site = "site"
     assert isinstance(
-        TermValue(1).equals(TermValue(1), site).value, TrueBoolLiteralSugar
+        TermValue(1).equals(TermValue(1), site, None).value, TrueBoolLiteralSugar
     )
     assert isinstance(
-        TermValue(1).equals(TermValue(2), site).value, FalseBoolLiteralSugar
+        TermValue(1).equals(TermValue(2), site, None).value, FalseBoolLiteralSugar
     )
 
 

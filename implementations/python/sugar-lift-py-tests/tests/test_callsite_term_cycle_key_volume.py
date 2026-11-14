@@ -128,7 +128,7 @@ def test_callsite_add_on_deep_terms_does_not_rebuild_cid_keys() -> None:
         )
         started = time.perf_counter()
         for _ in range(8):
-            outcome = left.add(right, site="stats.py:205")
+            outcome = left.add(right, site="stats.py:205", ctx=None)
             assert outcome is not None
         elapsed = time.perf_counter() - started
     assert elapsed < budget_seconds, (

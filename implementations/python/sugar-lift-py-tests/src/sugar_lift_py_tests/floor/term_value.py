@@ -18,7 +18,7 @@ class TermValue(GuardStableValue):
     def python_index_protocol(self) -> bool:
         return isinstance(self.value, int)
 
-    def equals(self, other, site):
+    def equals(self, other, site, ctx):
         """Ground numeric equality folds so ``len(xs) == 1`` can ground Ifs.
 
         RaisesExc selects the singular absent-effect diagnostic with
@@ -39,7 +39,7 @@ class TermValue(GuardStableValue):
                 if self.value == other.value
                 else FalseBoolLiteralSugar(site=site)
             )
-        return super().equals(other, site)
+        return super().equals(other, site, ctx)
 
     def python_isinstance(self, type_name: str, type_term, site):
         del type_name  # display spelling is not authority
@@ -124,7 +124,7 @@ class TermValue(GuardStableValue):
 
         return ground_type_error(site=site, owner=owner)
 
-    def _decided_binary_type_error(self, other, site, *, owner: str):
+    def _decided_binary_type_error(self, other, site, ctx, *, owner: str):
         """Decided non-numeric right → authenticated TypeError; else super gap.
 
         After the numeric tower and sequence-repetition arms have run, a
@@ -136,9 +136,9 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner=owner)
-        return getattr(super(), owner.rsplit(".", 1)[-1])(other, site)
+        return getattr(super(), owner.rsplit(".", 1)[-1])(other, site, ctx)
 
-    def less_than(self, other, site):
+    def less_than(self, other, site, ctx):
         # A number stands on the ordering floor: two numbers fold to True/False
         # Sugar. Ground cross-type is authenticated TypeError. Undecided peers
         # refuse named (LAW_OF_ONE — no ExitSet.completed(PredicateValue) invent).
@@ -158,9 +158,9 @@ class TermValue(GuardStableValue):
             )
         if self._unorderable_ground_peer(other):
             return self._ground_ordering_type_error(site, owner="TermValue.less_than")
-        return super().less_than(other, site)
+        return super().less_than(other, site, ctx)
 
-    def less_than_from_left(self, left, site):
+    def less_than_from_left(self, left, site, ctx):
         """``left < self`` when the RHS is a number — Sugar fold or TypeError."""
         if type(left) is TermValue:
             from sugar_lift_py_tests.outcome import ExitSet
@@ -180,9 +180,9 @@ class TermValue(GuardStableValue):
             return self._ground_ordering_type_error(
                 site, owner="TermValue.less_than_from_left"
             )
-        return super().less_than_from_left(left, site)
+        return super().less_than_from_left(left, site, ctx)
 
-    def less_equal(self, other, site):
+    def less_equal(self, other, site, ctx):
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -199,9 +199,9 @@ class TermValue(GuardStableValue):
             )
         if self._unorderable_ground_peer(other):
             return self._ground_ordering_type_error(site, owner="TermValue.less_equal")
-        return super().less_equal(other, site)
+        return super().less_equal(other, site, ctx)
 
-    def greater_than(self, other, site):
+    def greater_than(self, other, site, ctx):
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -220,9 +220,9 @@ class TermValue(GuardStableValue):
             return self._ground_ordering_type_error(
                 site, owner="TermValue.greater_than"
             )
-        return super().greater_than(other, site)
+        return super().greater_than(other, site, ctx)
 
-    def greater_equal(self, other, site):
+    def greater_equal(self, other, site, ctx):
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import ExitSet
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -241,9 +241,9 @@ class TermValue(GuardStableValue):
             return self._ground_ordering_type_error(
                 site, owner="TermValue.greater_equal"
             )
-        return super().greater_equal(other, site)
+        return super().greater_equal(other, site, ctx)
 
-    def add(self, other, site):
+    def add(self, other, site, ctx):
         # Python int/float arithmetic folds while retaining the result's concrete
         # Python type; ProofIR projection later preserves Int versus Real.
         if type(other) is TermValue:
@@ -272,14 +272,14 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if isinstance(other, GuardedValue):
-            return other.map_from_left("add", self, site)
+            return other.map_from_left("add", self, site, ctx)
         if type(other) in (
             CallSiteValue,
             OpaqueOpCallsite,
             PredicateValue,
             SymbolicValue,
         ):
-            return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).add(other, site, ctx)
         # A number plus a complex literal is a complex: the numeric tower's own
         # closed law, not a per-operand special case. `1 + 1j` was the largest
         # remaining pandas add panic.
@@ -293,10 +293,10 @@ class TermValue(GuardStableValue):
         # Overflow / non-finite complex field results stay loud construction
         # gaps — not TypeError.
         if type(other) is ComplexValue:
-            return super().add(other, site)
-        return self._decided_binary_type_error(other, site, owner="TermValue.add")
+            return super().add(other, site, ctx)
+        return self._decided_binary_type_error(other, site, ctx, owner="TermValue.add")
 
-    def subtract(self, other, site):
+    def subtract(self, other, site, ctx):
         # A number stands on the subtraction floor: two numbers subtract to a number.
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import ExitSet
@@ -306,7 +306,9 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if type(other) is SymbolicValue:
-            return SymbolicValue(self.to_term(owner=str(site))).subtract(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).subtract(
+                other, site, ctx
+            )
         if type(other) is CallSiteValue:
             from sugar_lift_py_tests.effect import runtime_subtract
 
@@ -319,10 +321,12 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.complex_value import ComplexValue
 
         if type(other) is ComplexValue:
-            return super().subtract(other, site)
-        return self._decided_binary_type_error(other, site, owner="TermValue.subtract")
+            return super().subtract(other, site, ctx)
+        return self._decided_binary_type_error(
+            other, site, ctx, owner="TermValue.subtract"
+        )
 
-    def multiply(self, other, site):
+    def multiply(self, other, site, ctx):
         # A number stands on the multiplication floor: two numbers multiply, and the
         # The product retains Python's concrete int/float result type.
         if type(other) is TermValue:
@@ -338,17 +342,21 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
         if isinstance(other, GuardedValue):
-            return other.map_from_left("multiply", self, site)
+            return other.map_from_left("multiply", self, site, ctx)
         if type(other) in (CallSiteValue, SymbolicValue):
-            return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).multiply(
+                other, site, ctx
+            )
         if type(other) is OpaqueOpCallsite and other.callee == "len":
-            return SymbolicValue(self.to_term(owner=str(site))).multiply(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).multiply(
+                other, site, ctx
+            )
         if type(other) in (ListValue, StringValue, TupleValue):
             # int/bool * sequence is repetition; float * sequence is TypeError.
             if isinstance(self.value, int):
-                return other.multiply(self, site)
+                return other.multiply(self, site, ctx)
             return self._decided_binary_type_error(
-                other, site, owner="TermValue.multiply"
+                other, site, ctx, owner="TermValue.multiply"
             )
         from sugar_lift_py_tests.floor.complex_arithmetic import complex_multiply
 
@@ -358,10 +366,12 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.complex_value import ComplexValue
 
         if type(other) is ComplexValue:
-            return super().multiply(other, site)
-        return self._decided_binary_type_error(other, site, owner="TermValue.multiply")
+            return super().multiply(other, site, ctx)
+        return self._decided_binary_type_error(
+            other, site, ctx, owner="TermValue.multiply"
+        )
 
-    def power(self, other, site):
+    def power(self, other, site, ctx):
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import ExitSet
 
@@ -372,14 +382,14 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if isinstance(other, GuardedValue):
-            return other.map_from_left("power", self, site)
+            return other.map_from_left("power", self, site, ctx)
         if type(other) is SymbolicValue:
-            return SymbolicValue(self.to_term(owner=str(site))).power(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).power(other, site, ctx)
         if type(other) is OpaqueOpCallsite and other.callee == "len":
             # len(...) has an independently constructed integer result contract.
             # Preserve its call coordinate as the exponent; do not collapse the
             # runtime length to an invented concrete value.
-            return SymbolicValue(self.to_term(owner=str(site))).power(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).power(other, site, ctx)
         if (
             type(other) is CallSiteValue
             and other.target_name == "iter_elem"
@@ -396,13 +406,13 @@ class TermValue(GuardStableValue):
             # A value yielded by range(...) is an integer when every range
             # bound already carries an integer warrant. Preserve that yielded
             # coordinate; do not pretend to know which iteration is active.
-            return SymbolicValue(self.to_term(owner=str(site))).power(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).power(other, site, ctx)
         if type(other) is CallSiteValue:
             dug = other._dig_floor_or_none(
-                None, owner="TermValue.power callsite exponent"
+                ctx, owner="TermValue.power callsite exponent"
             )
             if dug is not None and dug is not other:
-                return self.power(dug, site)
+                return self.power(dug, site, ctx)
 
             from sugar_lift_py_tests.effect import (
                 PowerRuntimeEffect,
@@ -425,9 +435,9 @@ class TermValue(GuardStableValue):
                     **runtime_effect_evidence("py.power", operand, site),
                 )
             )
-        return super().power(other, site)
+        return super().power(other, site, ctx)
 
-    def divide(self, other, site):
+    def divide(self, other, site, ctx):
         # A number stands on the division floor: true division. A concrete zero
         # divisor is a runtime effect (the program halts), not a lift-side gap.
         if type(other) is TermValue:
@@ -447,10 +457,12 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
         if type(other) in (CallSiteValue, SymbolicValue):
-            return SymbolicValue(self.to_term(owner=str(site))).divide(other, site)
-        return self._decided_binary_type_error(other, site, owner="TermValue.divide")
+            return SymbolicValue(self.to_term(owner=str(site))).divide(other, site, ctx)
+        return self._decided_binary_type_error(
+            other, site, ctx, owner="TermValue.divide"
+        )
 
-    def modulo(self, other, site):
+    def modulo(self, other, site, ctx):
         # A number stands on the modulo floor: the remainder. A concrete zero
         # divisor is decidable at lift time, so it cannot mint runtime-effect
         # evidence. Keep the missing exact exception construction loud.
@@ -470,9 +482,11 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.effect import runtime_modulo
 
             return runtime_modulo(self, other, site)
-        return self._decided_binary_type_error(other, site, owner="TermValue.modulo")
+        return self._decided_binary_type_error(
+            other, site, ctx, owner="TermValue.modulo"
+        )
 
-    def floor_divide(self, other, site):
+    def floor_divide(self, other, site, ctx):
         if type(other) is TermValue:
             from sugar_lift_py_tests.outcome import ExitSet
 
@@ -488,10 +502,10 @@ class TermValue(GuardStableValue):
 
         if type(other) in (CallSiteValue, SymbolicValue):
             return SymbolicValue(self.to_term(owner=str(site))).floor_divide(
-                other, site
+                other, site, ctx
             )
         return self._decided_binary_type_error(
-            other, site, owner="TermValue.floor_divide"
+            other, site, ctx, owner="TermValue.floor_divide"
         )
 
     def contains(self, item, site):
@@ -516,7 +530,7 @@ class TermValue(GuardStableValue):
             return ground_type_error(site=site, owner=owner)
         return None
 
-    def bitwise_and(self, other, site):
+    def bitwise_and(self, other, site, ctx):
         float_error = self._bitwise_float_type_error(
             other, site, owner="TermValue.bitwise_and"
         )
@@ -526,9 +540,9 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(TermValue(self.value & other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, "&", "bv32.and")
+        return self._symbolic_or_bv32_bitwise(other, site, ctx, "&", "bv32.and")
 
-    def bitwise_xor(self, other, site):
+    def bitwise_xor(self, other, site, ctx):
         float_error = self._bitwise_float_type_error(
             other, site, owner="TermValue.bitwise_xor"
         )
@@ -538,9 +552,9 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(TermValue(self.value ^ other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, "^", "bv32.xor")
+        return self._symbolic_or_bv32_bitwise(other, site, ctx, "^", "bv32.xor")
 
-    def bitwise_or(self, other, site):
+    def bitwise_or(self, other, site, ctx):
         float_error = self._bitwise_float_type_error(
             other, site, owner="TermValue.bitwise_or"
         )
@@ -550,9 +564,9 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(TermValue(self.value | other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, "|", "bv32.or")
+        return self._symbolic_or_bv32_bitwise(other, site, ctx, "|", "bv32.or")
 
-    def left_shift(self, other, site):
+    def left_shift(self, other, site, ctx):
         float_error = self._bitwise_float_type_error(
             other, site, owner="TermValue.left_shift"
         )
@@ -562,9 +576,9 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(TermValue(self.value << other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, "<<", "bv32.shl")
+        return self._symbolic_or_bv32_bitwise(other, site, ctx, "<<", "bv32.shl")
 
-    def right_shift(self, other, site):
+    def right_shift(self, other, site, ctx):
         float_error = self._bitwise_float_type_error(
             other, site, owner="TermValue.right_shift"
         )
@@ -578,9 +592,9 @@ class TermValue(GuardStableValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(TermValue(self.value >> other.value))
-        return self._symbolic_or_bv32_bitwise(other, site, ">>", "bv32.lshr")
+        return self._symbolic_or_bv32_bitwise(other, site, ctx, ">>", "bv32.lshr")
 
-    def _symbolic_or_bv32_bitwise(self, other, site, operator, bv32_operator):
+    def _symbolic_or_bv32_bitwise(self, other, site, ctx, operator, bv32_operator):
         from sugar_lift_py_tests.floor.bv32_value import Bv32Value
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
@@ -594,7 +608,7 @@ class TermValue(GuardStableValue):
                     "<<": "left_shift",
                     ">>": "right_shift",
                 }[operator],
-            )(other, site)
+            )(other, site, ctx)
         if type(other) is Bv32Value:
             from sugar_lift_py_tests.ir import ctor
             from sugar_lift_py_tests.outcome import ExitSet
@@ -614,9 +628,9 @@ class TermValue(GuardStableValue):
             "<<": "left_shift",
             ">>": "right_shift",
         }[operator]
-        return getattr(super(), method)(other, site)
+        return getattr(super(), method)(other, site, ctx)
 
-    def matrix_multiply(self, other, site):
+    def matrix_multiply(self, other, site, ctx):
         """``@`` is not defined on numbers — construct or typed-red, never panic.
 
         Free symbolic peers stay the native ``@`` coordinate. Concrete
@@ -629,7 +643,7 @@ class TermValue(GuardStableValue):
 
         if type(other) is SymbolicValue:
             return SymbolicValue(self.to_term(owner=str(site))).matrix_multiply(
-                other, site
+                other, site, ctx
             )
         if type(other) is ObjectValue and other.has_method("__rmatmul__"):
             return other.call_method_value(
@@ -637,12 +651,13 @@ class TermValue(GuardStableValue):
                 (self,),
                 owner="MatrixMultiplyOpSugar",
                 blame=str(site),
+                ctx=ctx,
             )
         if type(other) is TermValue:
             from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 
             return ground_type_error(site=site, owner="TermValue.matrix_multiply")
-        return super().matrix_multiply(other, site)
+        return super().matrix_multiply(other, site, ctx)
 
     def unary_minus(self, site):
         # Arithmetic negation: fold to -value.

@@ -207,7 +207,7 @@ def test_source_decided_number_string_ordering_emits_type_error() -> None:
     from sugar_lift_py_tests.outcome import Incomplete
 
     site = _relative_fragment('def f():\n    return 1.0 < "a"\n', "number-lt-string.py")
-    outcome = TermValue(1.0).less_than(StringValue("a"), site)
+    outcome = TermValue(1.0).less_than(StringValue("a"), site, None)
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, RaiseEffect)
     assert outcome.effect.exception_name == "TypeError"
@@ -217,7 +217,7 @@ def test_source_decided_int_ordering_constructs_bool_sugar() -> None:
     """Truthful twin: two decided numbers construct TrueBoolLiteralSugar."""
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
-    outcome = TermValue(1).less_than(TermValue(2), SITE)
+    outcome = TermValue(1).less_than(TermValue(2), SITE, None)
     assert isinstance(outcome, Complete)
     assert isinstance(outcome.value, TrueBoolLiteralSugar)
 
@@ -233,7 +233,7 @@ def test_decided_default_pair_without_sugar_arm_panics_not_refuses() -> None:
 
     # ListValue has no ordering arm; both types are source-decided.
     with pytest.raises(ConstructionPanic) as raised:
-        ListValue((TermValue(1),)).less_than(ListValue((TermValue(2),)), SITE)
+        ListValue((TermValue(1),)).less_than(ListValue((TermValue(2),)), SITE, None)
     msg = str(raised.value)
     assert "no Sugar arm" in msg or "SOURCEFILE_CONSTRUCTION_DOOR" in msg
     assert "Complete(PredicateValue)" in msg or "PredicateValue" in msg
@@ -245,23 +245,23 @@ def test_decided_string_le_gt_ge_construct_bool_sugar() -> None:
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
     a, b = StringValue("a"), StringValue("b")
-    le = a.less_equal(b, SITE)
+    le = a.less_equal(b, SITE, None)
     assert isinstance(le, Complete)
     assert isinstance(le.value, TrueBoolLiteralSugar)
-    gt = b.greater_than(a, SITE)
+    gt = b.greater_than(a, SITE, None)
     assert isinstance(gt, Complete)
     assert isinstance(gt.value, TrueBoolLiteralSugar)
-    ge = a.greater_equal(a, SITE)
+    ge = a.greater_equal(a, SITE, None)
     assert isinstance(ge, Complete)
     assert isinstance(ge.value, TrueBoolLiteralSugar)
     # False face still Sugar, never PredicateValue invent.
-    le_false = b.less_equal(a, SITE)
+    le_false = b.less_equal(a, SITE, None)
     assert isinstance(le_false.value, FalseBoolLiteralSugar)
 
 
 def test_lying_complete_predicate_is_not_ordering_meaning() -> None:
     """Lying twin: a sole Complete(PredicateValue) is never the ordering answer."""
-    outcome = _symbolic().less_than(TermValue(1), SITE)
+    outcome = _symbolic().less_than(TermValue(1), SITE, None)
     assert not isinstance(outcome, Complete)
     _assert_undecided_ordering_faces(outcome)
 
@@ -325,7 +325,7 @@ def test_lying_residual_ordering_predicate_mint_panics_at_publisher() -> None:
 def test_undecided_binary_throws_named_never_nameless_halt(method: str) -> None:
     """Nameless Halted faces route outside TypeError boundaries — refuse instead."""
     with pytest.raises(SugarNotWritten) as raised:
-        getattr(_symbolic(), method)(TermValue(2), SITE)
+        getattr(_symbolic(), method)(TermValue(2), SITE, None)
     owner = raised.value.owner or ""
     observed = raised.value.observed or ""
     assert "binary" in owner.lower() or "undecided" in observed.lower()
@@ -339,7 +339,7 @@ def test_source_decided_int_float_bitand_emits_type_error() -> None:
     from sugar_lift_py_tests.outcome import Incomplete
 
     site = _relative_fragment("def f():\n    return 1 & 3.14\n", "int-bitand-float.py")
-    outcome = TermValue(1).bitwise_and(TermValue(3.14), site)
+    outcome = TermValue(1).bitwise_and(TermValue(3.14), site, None)
     assert isinstance(outcome, Incomplete)
     assert isinstance(outcome.effect, RaiseEffect)
     assert outcome.effect.exception_name == "TypeError"
@@ -351,7 +351,7 @@ def test_lying_dual_edge_is_not_undecided_binary_answer() -> None:
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
     with pytest.raises(SugarNotWritten):
-        outcome = _symbolic().subtract(TermValue(1), SITE)
+        outcome = _symbolic().subtract(TermValue(1), SITE, None)
         if isinstance(outcome, ExitSet):
             for face in outcome.exits:
                 if (

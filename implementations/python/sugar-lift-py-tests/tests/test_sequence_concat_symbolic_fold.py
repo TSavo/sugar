@@ -50,7 +50,7 @@ def test_list_plus_comprehension_constructs_symbolic_concat() -> None:
         line = 1
         col = 0
 
-    out = left.add(right, site=_Site())
+    out = left.add(right, site=_Site(), ctx=None)
     assert isinstance(out, Complete)
     assert isinstance(out.value, ComprehensionValue)
     assert out.value.term.name == "+"  # type: ignore[attr-defined]

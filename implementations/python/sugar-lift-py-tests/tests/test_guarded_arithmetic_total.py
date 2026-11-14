@@ -33,7 +33,7 @@ def test_guarded_arithmetic_preserves_undecided_arms_as_dual_edge_partitions(
         SymbolicValue(make_var("left")),
         SymbolicValue(make_var("right")),
     )
-    outcome = getattr(value, method)(TermValue(2), "t.py:1")
+    outcome = getattr(value, method)(TermValue(2), "t.py:1", None)
     assert isinstance(outcome, ExitSet)
     halted = tuple(face for face in outcome.exits if isinstance(face, Halted))
     completed = tuple(face for face in outcome.exits if isinstance(face, Completed))
@@ -57,7 +57,7 @@ def test_guarded_right_operand_preserves_both_dispatch_faces_on_each_branch() ->
         SymbolicValue(make_var("right_false")),
     )
 
-    outcome = SymbolicValue(make_var("left")).subtract(right, "t.py:2")
+    outcome = SymbolicValue(make_var("left")).subtract(right, "t.py:2", None)
 
     assert isinstance(outcome, ExitSet)
     assert {type(exit_).__name__ for exit_ in outcome.exits} == {
@@ -96,6 +96,7 @@ def test_guarded_bitwise_or_distributes_exact_set_union_to_both_faces() -> None:
     outcome = value.bitwise_or(
         SetValue((TermValue(3),)),
         "t.py:1",
+        None,
     )
 
     assert outcome == Complete(

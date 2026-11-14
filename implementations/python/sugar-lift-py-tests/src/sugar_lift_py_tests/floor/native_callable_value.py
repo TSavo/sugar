@@ -29,16 +29,16 @@ class NativeCallableValue(FloorValue):
             symbol_kind="coordinate",
         )
 
-    def subtract(self, other, site):
+    def subtract(self, other, site, ctx):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
         if type(other) is CallSiteValue:
             from sugar_lift_py_tests.effect import runtime_subtract
 
             return runtime_subtract(self, other, site)
-        return super().subtract(other, site)
+        return super().subtract(other, site, ctx)
 
-    def add(self, other, site):
+    def add(self, other, site, ctx):
         """Preserve addition when both native and call-result coordinates exist.
 
         This does not claim the call's result type or fold the sum.  It only
@@ -51,8 +51,8 @@ class NativeCallableValue(FloorValue):
         if type(other) is CallSiteValue:
             from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 
-            return SymbolicValue(self.to_term(owner=str(site))).add(other, site)
-        return super().add(other, site)
+            return SymbolicValue(self.to_term(owner=str(site))).add(other, site, ctx)
+        return super().add(other, site, ctx)
 
     def unary_minus(self, site):
         """Construct negation of the exact installed-native coordinate.
@@ -66,14 +66,14 @@ class NativeCallableValue(FloorValue):
 
         return SymbolicValue(self.to_term(owner=str(site))).unary_minus(site)
 
-    def divide(self, other, site):
+    def divide(self, other, site, ctx):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
         if type(other) is CallSiteValue and other.body is None:
             from sugar_lift_py_tests.effect import runtime_divide
 
             return runtime_divide(self, other, site)
-        return super().divide(other, site)
+        return super().divide(other, site, ctx)
 
     def format_data_model(self, spec, site, ctx):
         """Construct ``format(native_callable, spec)`` as an exact coordinate.

@@ -379,7 +379,7 @@ def test_formal_binary_dispatch_mints_caller_discharge_carrier(method, operator)
     left = SymbolicValue(make_var("left"), left_coordinate)
     right = SymbolicValue(make_var("right"), right_coordinate)
 
-    outcome = getattr(left, method)(right, _site())
+    outcome = getattr(left, method)(right, _site(), None)
 
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == operator
@@ -396,8 +396,8 @@ def test_swapped_formal_binary_operands_retain_distinct_ordered_demands():
     left = SymbolicValue(make_var("left"), left_coordinate)
     right = SymbolicValue(make_var("right"), right_coordinate)
 
-    forward = left.subtract(right, _site())
-    reverse = right.subtract(left, _site())
+    forward = left.subtract(right, _site(), None)
+    reverse = right.subtract(left, _site(), None)
 
     assert isinstance(forward, NativeOperationExitCarrierV1)
     assert isinstance(reverse, NativeOperationExitCarrierV1)
@@ -423,7 +423,7 @@ def test_either_formal_operand_is_enough_to_defer_binary_dispatch(formal_side):
         make_var("right"), coordinate if formal_side == "right" else None
     )
 
-    outcome = left.add(right, _site())
+    outcome = left.add(right, _site(), None)
 
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.coordinates == (
@@ -434,7 +434,7 @@ def test_either_formal_operand_is_enough_to_defer_binary_dispatch(formal_side):
 
 def test_coordinate_free_binary_dispatch_retains_existing_symbolic_faces():
     outcome = SymbolicValue(make_var("left")).add(
-        SymbolicValue(make_var("right")), _site()
+        SymbolicValue(make_var("right")), _site(), None
     )
 
     assert isinstance(outcome, ExitSet)

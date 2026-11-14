@@ -71,8 +71,8 @@ class _TruthOperand(FloorValue):
 class _CarrierReceiver(FloorValue):
     projected: ExitSet
 
-    def equals(self, other, site):
-        del other, site
+    def equals(self, other, site, ctx):
+        del other, site, ctx
         return self.projected
 
     def to_term(self, *, owner: str):

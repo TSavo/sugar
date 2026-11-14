@@ -55,7 +55,7 @@ def _owners(halts):
 )
 def test_floor_ordering_on_a_call_result_is_two_faced(method, op):
     left = CallSiteValue("unknown", (), (), ctor("call:unknown", []), None)
-    result = getattr(left, method)(TermValue(1), SITE)
+    result = getattr(left, method)(TermValue(1), SITE, None)
     assert isinstance(result, ExitSet)
     (completed,) = [face for face in result.exits if isinstance(face, Completed)]
     (halted,) = [face for face in result.exits if isinstance(face, Halted)]
