@@ -29,15 +29,17 @@ from types import SimpleNamespace
 
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+from sugar_lift_py_tests.ir import ctor, make_var, str_const
 from sugar_lift_py_tests.occurrence import (
     entered,
     live_iterations,
     loop_iteration_segment,
+    loop_symbolic_item_segment,
     occurrence_path,
 )
-from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 from sugar_lift_py_tests.sugar.assigned_value import carried_write_key
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
@@ -553,6 +555,64 @@ def test_a_nested_loop_rebinding_a_carried_target_is_a_write() -> None:
     assert inner.construction.loop_runtime.carried_names == ("x",)
     [(_header, writes, _else_writes)] = runtime.carried_evaluations
     assert writes == inner.binding_coordinate_cids
+
+
+_SYMBOLIC_EXIT = (
+    "def f(xs):\n"
+    "    for x in xs:\n"
+    "        if x:\n"
+    "            return x\n"
+)
+
+
+def test_an_exit_in_the_symbolic_item_reads_the_items_target() -> None:
+    # ``xs`` is symbolic, so the loop runs as its recurrence: ``return x`` is
+    # an outward face reduced in the recurrence's one symbolic item, and its
+    # read of ``x`` is the target's key, bound there to the item of ``xs``.
+    loop = next(
+        statement
+        for statement in _function(_SYMBOLIC_EXIT).sugar().statements
+        if isinstance(statement, LoopRecurrenceSugar)
+    )
+    assert loop.outward_faces
+    xs = SymbolicValue(make_var("xs"))
+    outcome = loop._desugar_with_iterable(
+        xs, ReduceContext.root(owner="live-symbolic-item")
+    )
+    item = SymbolicValue(
+        ctor(
+            "python:loop.item",
+            [str_const(loop.target_cid), xs.to_term(owner="test")],
+            symbol_kind="coordinate",
+        )
+    )
+    returned = [
+        getattr(entry, "value", None)
+        for exit_ in outcome.exits
+        if isinstance(exit_, Completed)
+        for entry in getattr(exit_.value, "statements", ())
+    ]
+    assert item in returned
+
+
+def test_the_symbolic_item_binds_its_keys_in_its_own_segment() -> None:
+    loop = next(
+        statement
+        for statement in _function(_SYMBOLIC_EXIT).sugar().statements
+        if isinstance(statement, LoopRecurrenceSugar)
+    )
+    runtime = loop.construction.loop_runtime
+    [target] = runtime.target_evaluations
+    ctx, item = loop._enter_symbolic_item(
+        runtime, ReduceContext.root(owner="live-symbolic-item"), None, ()
+    )
+    ref = EvaluationRefSugar(evaluation=target, name="x", site=None)
+    with item():
+        assert live_iterations() == (loop_symbolic_item_segment(loop.target_cid),)
+        bound = ref.desugar(ctx).completed_value()
+    assert isinstance(bound, SymbolicValue)
+    # Outside the item nothing is bound: the key is the item's own.
+    assert ctx.temporal.value_if_bound(target) is None
 
 
 def test_each_read_of_an_evaluation_is_spanned_at_its_use() -> None:
