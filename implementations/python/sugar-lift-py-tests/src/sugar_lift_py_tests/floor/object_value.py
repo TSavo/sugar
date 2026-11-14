@@ -852,6 +852,7 @@ def bind_call(
     blame: object,
     refuse,
     term=None,
+    defaults=(),
     **testimony,
 ):
     """Bind ``arguments``/``keywords`` to a source frame: the call, unapplied.
@@ -871,6 +872,12 @@ def bind_call(
     call's ``call:<name>(...)``); ``testimony`` is what that form
     authenticated about the call (its occurrence, its exception type, its
     import target), carried on the value unchanged.
+
+    ``defaults`` are the ``(key, value)`` pairs a called lambda value carries
+    (``LambdaCallable.defaults``): the values its lambda expression evaluated
+    for its defaults.  They are bound under their keys where the frame binds
+    the actuals, so a formal the call omits binds the carried value
+    (``DefaultValueSugar``).
     """
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor
@@ -883,9 +890,14 @@ def bind_call(
         keyword_names = tuple(name for name, _value in keywords)
     else:
         from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+        from sugar_lift_py_tests.sugar.default_value_sugar import (
+            bind_carried_defaults,
+        )
 
         try:
-            bound_source_actuals = frame.bind_actuals(arg_values, keywords, ctx)
+            bound_source_actuals = frame.bind_actuals(
+                arg_values, keywords, bind_carried_defaults(ctx, defaults)
+            )
         except SourceCallBindingGap as exc:
             refuse(
                 owner=owner,

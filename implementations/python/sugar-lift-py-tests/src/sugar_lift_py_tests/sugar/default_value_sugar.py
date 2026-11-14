@@ -20,6 +20,14 @@ The law has two halves, and this module owns both:
   binder every call form reaches through ``object_value.bind_call``): the
   value bound under the key, the same object for every call.
 
+A lambda's defaults follow the same law: the lambda expression evaluates them
+where it is evaluated (``LambdaSugar``), under the same per-formal keys, and
+its value carries them (``LambdaCallable.defaults``); every call binds what
+the value carries (``bind_carried_defaults``, from ``object_value.bind_call``)
+before the frame reads the keys.  A lambda's default expression is never
+evaluated at a call: a call whose callee carries no value for the key is
+refused by name.
+
 Where no reduction running the ``def`` statement bound the key -- a module
 or class-body ``def``, whose statement is not reduced in the temporal of a
 call made after import, or a function called outside the frame that ran its
@@ -81,10 +89,11 @@ class DefaultValueSugar(Sugar):
     statement bound under the default's key (``evaluation``), read where the
     call runs (``evaluation_read_here``).  ``value`` is the default
     expression's own sugar, evaluated only where no reduction running the
-    statement bound the key (see the module docstring)."""
+    statement bound the key (see the module docstring); None for a lambda's
+    default, which only the lambda expression evaluates."""
 
     evaluation: str
-    value: Sugar
+    value: Sugar | None
     site: object = dataclass_field(compare=False)
 
     @classmethod
@@ -99,6 +108,12 @@ class DefaultValueSugar(Sugar):
         bound = self.bound_value(ctx)
         if bound is not None:
             return ExitSet.completed(bound)
+        if self.value is None:
+            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+
+            raise SourceCallBindingGap(
+                "lambda default not carried by the called lambda value"
+            )
         return self.value.desugar(ctx)
 
     def bound_value(self, ctx):
@@ -112,3 +127,15 @@ class DefaultValueSugar(Sugar):
         )
 
         return temporal.value_if_bound(evaluation_read_here(temporal, self.evaluation))
+
+
+def bind_carried_defaults(ctx, defaults):
+    """``ctx`` with each ``(key, value)`` a called lambda value carries
+    (``LambdaCallable.defaults``) bound under its key, where the call binds
+    its actuals: the values its lambda expression evaluated, read by the
+    frame's ``DefaultValueSugar``.  ``ctx`` itself when nothing is carried."""
+    if not defaults:
+        return ctx
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+
+    return ScopeRebinds(tuple(defaults)).extend_scope(ctx)

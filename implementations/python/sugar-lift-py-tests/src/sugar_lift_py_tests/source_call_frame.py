@@ -440,7 +440,6 @@ class SourceVisibleCallFrameV1:
     formal_projection_paths: tuple[tuple[str | int, ...], ...]
     parameter_kinds: tuple[str, ...]
     default_sugars: tuple[object | None, ...] = field(compare=False)
-    default_nodes: tuple[object | None, ...] = field(compare=False)
     default_fragments: tuple[object | None, ...] = field(compare=False)
     default_fragment_cids: tuple[str | None, ...]
     body: object = field(compare=False)
@@ -822,7 +821,14 @@ class SourceVisibleCallFrameV1:
         keywords: tuple,
         testimonies: tuple[object | None, ...] | None = None,
     ) -> "SourceVisibleCallFrameV1":
-        """Substitute real typed actual Nodes before constructing body Sugars."""
+        """Substitute real typed actual Nodes before constructing body Sugars.
+
+        A formal the call omits is never given its default expression here:
+        the specialised body reads the formal's own coordinate, which the one
+        binder binds to the default's value (``bind_actuals``,
+        ``DefaultValueSugar``: the value the ``def`` statement or the lambda
+        expression bound under the default's key).  Defaults come only from
+        those keys."""
         remaining = list(positional)
         named = dict(keywords)
         if len(named) != len(keywords):
@@ -832,7 +838,7 @@ class SourceVisibleCallFrameV1:
             zip(
                 self.parameters,
                 self.parameter_kinds,
-                self.default_nodes,
+                self.default_sugars,
                 strict=True,
             )
         ):
@@ -884,7 +890,10 @@ class SourceVisibleCallFrameV1:
                 value = named.pop(name)
                 present = True
             if not present and default is not None:
-                value = default
+                # The binder binds this coordinate from the default's key.
+                value = _formal_coordinate_ref(
+                    self.owner.unit, self.formal_coordinates[index], self.owner.reporter
+                )
                 present = True
             if not present:
                 raise SourceCallBindingGap(f"missing required formal {index}")
@@ -1010,15 +1019,22 @@ def _same_unit_actual_node(owner_unit, node, coordinate):
     consume exact seats on the owning SourceUnit (source-CID authenticated at
     publication). No broad Exception catch, no fallback fabrication of seats.
     """
-    from sugar_source_tree.backend import Leaf, materialize
     from sugar_source_tree.nodes import Node
-    from sugar_source_tree.shadow import ShadowNode
-    from sugar_source_tree.spans import Span
 
     if not isinstance(node, Node):
         return node
     if node.unit.source_cid == owner_unit.source_cid:
         return node
+    return _formal_coordinate_ref(owner_unit, coordinate, node.reporter)
+
+
+def _formal_coordinate_ref(owner_unit, coordinate, reporter):
+    """A ``BindingCoordinateRef`` to the formal ``coordinate`` at its
+    owner-local declaration span: what a body reads a formal through when the
+    binder, not the call's node, supplies its value."""
+    from sugar_source_tree.backend import Leaf, materialize
+    from sugar_source_tree.shadow import ShadowNode
+    from sugar_source_tree.spans import Span
 
     site = coordinate.binding_site
     if not isinstance(site, dict):
@@ -1044,7 +1060,7 @@ def _same_unit_actual_node(owner_unit, node, coordinate):
             owner_span,
             (("coordinate", Leaf(coordinate)),),
         ),
-        node.reporter,
+        reporter,
     )
 
 

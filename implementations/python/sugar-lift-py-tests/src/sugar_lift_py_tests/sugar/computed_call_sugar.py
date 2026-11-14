@@ -213,6 +213,8 @@ class ComputedCallSugar(ConstructedTermSugar):
             )
             if module_halt is not None:
                 return module_halt
+            from sugar_lift_py_tests.floor import LambdaCallable
+
             return bind_source_frame_call(
                 "py.call",
                 positional,
@@ -222,6 +224,11 @@ class ComputedCallSugar(ConstructedTermSugar):
                 owner="ComputedCallSugar.desugar",
                 blame=self.site,
                 term=term,
+                # The defaults the called lambda value's expression evaluated
+                # (``LambdaCallable.defaults``).
+                defaults=(
+                    callee.defaults if isinstance(callee, LambdaCallable) else ()
+                ),
             ).producer_outcome(ctx)
         from sugar_lift_py_tests.floor import (
             BoundMethodValue,

@@ -868,3 +868,164 @@ def test_a_descriptor_read_off_an_instance_is_a_callable_value() -> None:
             CallableApplication((TermValue(3),), (), "pick-site", owner="test"), ctx
         )
         assert _halt_names(outcome) == ["ValueError"], decorator
+
+
+# ---------------------------------------------------------------------------
+# A lambda's defaults are evaluated where the lambda expression is evaluated.
+# ---------------------------------------------------------------------------
+
+
+def test_a_lambda_default_is_the_binding_where_the_lambda_is_evaluated() -> None:
+    """``x = 1; f = lambda a=x: a; x = 2; f()`` is 1: the lambda expression
+    evaluates its default, its value carries it, and the call binds the
+    carried value; the default expression is never evaluated at the call."""
+    source = """\
+def test_default():
+    x = 1
+    f = lambda a=x: a
+    x = 2
+    assert f() == {expected}
+"""
+    truthful = _test_function_outcome(source.format(expected=1))
+    assert _raises(truthful, "AssertionError") == []
+    assert truthful.completed_value() is not None, truthful
+    lying = _test_function_outcome(source.format(expected=2))
+    assert _raises(lying, "AssertionError") != []
+
+
+def test_a_lambda_default_that_raises_raises_at_the_lambda_expression() -> None:
+    """Python evaluates ``1 // 0`` where the lambda expression is evaluated,
+    whether or not the lambda is ever called."""
+    raising = _test_function_outcome(
+        """\
+def test_default():
+    f = lambda a=1 // 0: a
+    assert 1 == 1
+"""
+    )
+    assert _raises(raising, "ZeroDivisionError") != []
+
+
+def test_a_lambda_value_carries_its_defaults_under_the_frames_keys() -> None:
+    """The lambda value carries each evaluated default under the key its
+    frame's ``DefaultValueSugar`` reads, and the frame never evaluates the
+    expression itself."""
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.floor import LambdaCallable
+    from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
+    from sugar_source_tree.nodes import Lambda
+
+    tree = _tree("def test_default():\n    return (lambda a, b=2: b)(1)\n")
+    lam = next(node for node in tree.nodes() if isinstance(node, Lambda))
+    sugar = lam.substitute({}).sugar()
+    value = sugar.desugar(ReduceContext.root(owner="test")).completed_value()
+    assert isinstance(value, LambdaCallable)
+    frame = lam.source_visible_call_frame()
+    assert frame.default_sugars[0] is None
+    read = frame.default_sugars[1]
+    assert isinstance(read, DefaultValueSugar)
+    assert read.value is None
+    ((key, carried),) = value.defaults
+    assert key == read.evaluation
+    assert carried.to_term(owner="test") is not None
+
+
+# ---------------------------------------------------------------------------
+# A generator's nested ``def`` with defaults is a step: it evaluates them.
+# ---------------------------------------------------------------------------
+
+
+_GENERATOR_DEFAULTS = """\
+def gen():
+    def inner(a={default}):
+        return a
+
+    yield 5
+"""
+
+
+def _generator_machine(default: str):
+    from sugar_lift_py_tests.generator_construction import GeneratorConstructionV1
+
+    tree = _tree(_GENERATOR_DEFAULTS.format(default=default))
+    frame = _function_named(tree, "gen").source_visible_call_frame()
+    return frame, GeneratorConstructionV1.allocate(
+        allocation_coordinate="test:generator-defaults",
+        frame_coordinate=frame.frame_cid,
+        binding_state=(),
+        steps=frame.generator_steps,
+    )
+
+
+def test_a_generator_nested_def_with_defaults_is_a_named_step() -> None:
+    from sugar_lift_py_tests.generator_construction import (
+        DefinitionDefaultsStepV1,
+        OpaqueStepV1,
+        _generator_step_testimony,
+    )
+
+    frame, _machine = _generator_machine("1")
+    steps = frame.generator_steps
+    assert steps is not None
+    assert not any(isinstance(step, OpaqueStepV1) for step in steps), steps
+    (defaults,) = (
+        step for step in steps if isinstance(step, DefinitionDefaultsStepV1)
+    )
+    assert len(defaults.values) == len(defaults.evaluations) == 1
+    assert _generator_step_testimony(defaults, owner="test")["kind"] == (
+        "definition-defaults"
+    )
+
+
+def test_a_generator_steps_through_its_nested_def_with_defaults() -> None:
+    """The step evaluates the default and the machine reaches the yield; a
+    default that raises halts the step, its face an arm of the machine."""
+    from sugar_lift_py_tests.generator_construction import GeneratorTransitionGapV1
+
+    _frame, machine = _generator_machine("1")
+    resumed = machine.resume()
+    assert not isinstance(resumed, GeneratorTransitionGapV1), resumed
+    assert _raises(resumed, "ZeroDivisionError") == []
+    _frame, raising = _generator_machine("1 // 0")
+    halted = raising.resume()
+    assert not isinstance(halted, GeneratorTransitionGapV1), halted
+    assert _raises(halted, "ZeroDivisionError") != []
+
+
+# ---------------------------------------------------------------------------
+# A specialised body never carries a default expression.
+# ---------------------------------------------------------------------------
+
+
+def test_no_default_expression_appears_in_a_specialised_body() -> None:
+    """``bind_node_actuals`` gives an omitted formal its own coordinate,
+    which the one binder binds from the default's key: the default
+    expression is never copied into the body."""
+    from sugar_source_tree.nodes import BindingCoordinateRef
+
+    tree = _tree(
+        "def f(a, b=7):\n    return b\n\n\ndef test_f():\n    assert f(1) == 7\n"
+    )
+    definition = _function_named(tree, "f")
+    frame = definition.source_visible_call_frame()
+    bound = frame.bind_node_actuals(tuple(_call_of(tree, "f").args), ())
+    entry = bound.runtime_entries[1]
+    assert isinstance(entry.state, BindingCoordinateRef), entry.state
+    assert entry.state.coordinate == frame.formal_coordinates[1]
+    default = definition.params[1].default
+    assert all(
+        item.state is not default
+        and item.state.fragment.seal().cid != default.fragment.seal().cid
+        for item in bound.runtime_entries
+    )
+
+
+def test_an_omitted_formal_still_binds_its_default_at_the_call() -> None:
+    source = (
+        "def f(a, b=7):\n    return b\n\n\n"
+        "def test_f():\n    assert f(1) == {expected}\n"
+    )
+    truthful = _test_function_outcome(source.format(expected=7))
+    assert _raises(truthful, "AssertionError") == []
+    lying = _test_function_outcome(source.format(expected=8))
+    assert _raises(lying, "AssertionError") != []

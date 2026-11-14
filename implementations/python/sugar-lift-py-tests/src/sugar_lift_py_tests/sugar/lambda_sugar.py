@@ -38,7 +38,16 @@ class LambdaSugar(ConstructedTermSugar):
     lambda is passed to, whose callee runs it during the call
     (``Call._carry_argument_cells``): ``((name, coordinate cid, sugar),
     ...)``, read where the argument is evaluated and carried on the value
-    (``LambdaCallable.captured``)."""
+    (``LambdaCallable.captured``).
+
+    ``defaults`` are ``((key, sugar), ...)``, one per formal with a default,
+    in source order: Python evaluates a lambda's defaults where the lambda
+    expression is evaluated, left to right, and every call that omits the
+    formal binds that one object.  ``desugar`` evaluates each here, under the
+    state the ones before it leave; a default that halts is a face of the
+    lambda expression, and a completed one is carried on the value under its
+    key (``LambdaCallable.defaults``), which every call binds
+    (``object_value.bind_call``) and the frame reads (``DefaultValueSugar``)."""
 
     formals: tuple[str, ...]
     body: Sugar
@@ -49,6 +58,9 @@ class LambdaSugar(ConstructedTermSugar):
     closure_coordinates: tuple[str, ...] = ()
     captured: tuple = dataclass_field(default=(), compare=False)
     evaluation_coordinates: tuple[tuple[str, str], ...] = ()
+    defaults: tuple[tuple[str, Sugar], ...] = dataclass_field(
+        default=(), compare=False
+    )
 
     def __post_init__(self) -> None:
         from sugar_source_tree.panic import SugarNotWritten
@@ -122,22 +134,39 @@ class LambdaSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor import LambdaCallable
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            reduce_operands,
+        )
         from sugar_lift_py_tests.sugar.call_site_sugar import carried_captured_values
 
         sealed = self.site.seal()
         construction_identity = (
             f"{sealed.source_cid}@{sealed.start}:{sealed.end}#{sealed.cid}"
         )
-        return ExitSet.completed(
-            LambdaCallable(
-                parameters=self.formals,
-                body=self.body,
-                construction_identity=construction_identity,
-                source_call_frame=self.source_call_frame,
-                closure=self._closure(ctx),
-                captured=carried_captured_values(self.captured, ctx),
+        keys = tuple(key for key, _sugar in self.defaults)
+
+        def construct(*values) -> ExitSet:
+            return ExitSet.completed(
+                LambdaCallable(
+                    parameters=self.formals,
+                    body=self.body,
+                    construction_identity=construction_identity,
+                    source_call_frame=self.source_call_frame,
+                    defaults=tuple(zip(keys, values, strict=True)),
+                    closure=self._closure(ctx),
+                    captured=carried_captured_values(self.captured, ctx),
+                )
             )
-        )
+
+        if not self.defaults:
+            return construct()
+        # The defaults are the lambda expression's operands: evaluated left
+        # to right, each halt a face of the expression, and a walrus in one
+        # binds once, through the one operand door.
+        return reduce_operands(
+            tuple(sugar for _key, sugar in self.defaults), ctx
+        ).and_then(lambda values: consume_operands(construct, *values))
 
     def _closure(self, ctx) -> tuple:
         """Each closure coordinate ``ctx`` binds, with the value bound: what
