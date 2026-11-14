@@ -11,7 +11,14 @@ from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
 @dataclass(frozen=True)
 class LambdaSugar(ConstructedTermSugar):
-    """Plain positional formals plus one already-constructed body expression."""
+    """Plain positional formals plus one already-constructed body expression.
+
+    ``closure_coordinates`` are the final-member coordinates the body reads
+    through an enclosing comprehension's cell (#7757 item 7,
+    ``Lambda._closure_coordinates``).  The comprehension binds them before it
+    reduces the element; the lambda value carries each binding (its closure,
+    ``LambdaCallable.closure``), so its body reduces after the comprehension
+    is done, when the context no longer binds them."""
 
     formals: tuple[str, ...]
     body: Sugar
@@ -19,6 +26,7 @@ class LambdaSugar(ConstructedTermSugar):
     formal_coordinate_cids: tuple[str, ...]
     body_fragment_cid: str
     site: object = dataclass_field(compare=False)
+    closure_coordinates: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         from sugar_source_tree.panic import SugarNotWritten
@@ -91,7 +99,6 @@ class LambdaSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        del ctx
         from sugar_lift_py_tests.floor import LambdaCallable
 
         sealed = self.site.seal()
@@ -104,8 +111,24 @@ class LambdaSugar(ConstructedTermSugar):
                 body=self.body,
                 construction_identity=construction_identity,
                 source_call_frame=self.source_call_frame,
+                closure=self._closure(ctx),
             )
         )
+
+    def _closure(self, ctx) -> tuple:
+        """Each closure coordinate ``ctx`` binds, with the value bound: what
+        the enclosing comprehension's cell holds once it is done.  A
+        coordinate ``ctx`` does not bind is not carried; a later reduction of
+        the body reads it unbound and refuses, as before."""
+        temporal = getattr(ctx, "temporal", None)
+        if temporal is None:
+            return ()
+        closure = []
+        for coordinate in self.closure_coordinates:
+            value = temporal.value_if_bound(coordinate)
+            if value is not None:
+                closure.append((coordinate, value))
+        return tuple(closure)
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, num, str_const
