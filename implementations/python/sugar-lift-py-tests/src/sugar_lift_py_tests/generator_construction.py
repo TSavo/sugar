@@ -1176,10 +1176,13 @@ class GeneratorAssignBindingV1:
     name: str | None
     value: object
     fragment_cid: str
-    # The RHS occurrence (``assigned_value.assigned_key``) this binding is the
-    # completed value of: a later step whose substituted sugar inlines that
-    # RHS answers with this value instead of evaluating the call again.
-    rhs_key: object = field(default=None, compare=False, repr=False)
+    # The RHS sugar this binding is the completed value of: a later step
+    # whose substituted sugar inlines that RHS answers with this value
+    # instead of evaluating the call again.  Keyed where that step reads it
+    # (``_guard_evaluation_context``, ``assigned_value.assigned_key``): the
+    # generator's step evaluated it once, whatever item of its consumer
+    # resumes the generator.
+    rhs: object = field(default=None, compare=False, repr=False)
     # The key the assignment's evaluation binds the value under, as any
     # assignment's sugar binds it (``Assign.target_evaluations``,
     # ``_bind_evaluations``): ``y = yield v`` binds the sent value here, so a
@@ -1863,8 +1866,6 @@ class GeneratorConstructionV1:
                 return value
 
             def transition_assign(resolved_value):
-                from sugar_lift_py_tests.sugar.assigned_value import assigned_key
-
                 # ``y = (x := v)``: the walrus wrote before the assignment
                 # does.  Its bind is recorded first and ``y`` is bound to the
                 # value the walrus presents.
@@ -1873,7 +1874,7 @@ class GeneratorConstructionV1:
                     step.name,
                     presented,
                     step.fragment_cid,
-                    assigned_key(step.value),
+                    step.value,
                 )
                 machine = replace(
                     recorded,
@@ -3275,14 +3276,21 @@ class GeneratorConstructionV1:
                 ctx = item.bind.bind(ctx)
         # An assignment step evaluated its RHS once, at the step (#7600): a
         # later step's substituted read of that RHS answers with the value the
-        # step completed with, never a second evaluation.
+        # step completed with, never a second evaluation.  The record is keyed
+        # here, in the occurrence the later step reads it in
+        # (``assigned_key``): the generator frame's one evaluation of the RHS,
+        # never re-keyed by the consumer item that resumes it.
+        from sugar_lift_py_tests.sugar.assigned_value import assigned_key
+
         for item in self.binding_state:
             if (
                 isinstance(item, GeneratorAssignBindingV1)
                 and item.value is not None
-                and item.rhs_key is not None
+                and item.rhs is not None
             ):
-                ctx = ctx.with_assigned_value(item.rhs_key, item.value)
+                key = assigned_key(item.rhs)
+                if key is not None:
+                    ctx = ctx.with_assigned_value(key, item.value)
         return ctx
 
     def _guard_truth(self, guard: object):

@@ -156,19 +156,6 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
     # the name, which runs no class body's stores.
     runs_statement: bool = field(default=False, compare=False)
 
-    @property
-    def evaluation_token(self):
-        """The statement's own application is keyed on its run's occurrence
-        (``class_definition_sugar.statement_run_token``): a recorded read of
-        the name never answers it, nor one of an earlier item or call."""
-        if not self.runs_statement:
-            return None
-        from sugar_lift_py_tests.sugar.class_definition_sugar import (
-            statement_run_token,
-        )
-
-        return statement_run_token(self.site)
-
     @classmethod
     def witnesses(cls):
         # A source decorator replaces the function: the call returns what the
