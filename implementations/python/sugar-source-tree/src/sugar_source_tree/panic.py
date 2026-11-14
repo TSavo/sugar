@@ -68,6 +68,18 @@ class LifterRefusal(BaseException):
     typed-gap classification), and is otherwise purely re-raised.
     """
 
+    def diagnostic(self) -> dict[str, str]:
+        """The refusal's testimony, one shape for both families.
+
+        ``owner``, ``blame`` (the locus, as prose), ``observed``,
+        ``requested``, ``fix``. The resident RPC answers every refusal of one
+        request with this (``lift_rpc._serve``).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} derives from LifterRefusal through neither "
+            "family; a refusal is a SourceTreePanic or a ConstructionPanic"
+        )
+
 
 class SourceTreePanic(LifterRefusal):
     """Common base. Every refusal carries the native coordinate it blames."""
@@ -91,6 +103,15 @@ class SourceTreePanic(LifterRefusal):
         self.observed = observed
         self.requested = requested
         self.fix = fix
+
+    def diagnostic(self) -> dict[str, str]:
+        return {
+            "owner": self.owner,
+            "blame": _render_blame(self.blame),
+            "observed": self.observed,
+            "requested": self.requested,
+            "fix": self.fix,
+        }
 
     _LABEL = "SOURCE TREE PANIC"
 

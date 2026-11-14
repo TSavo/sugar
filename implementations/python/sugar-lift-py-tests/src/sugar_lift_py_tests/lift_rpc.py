@@ -2775,20 +2775,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         # is served (#7785). What the function sees of the name
                         # is not decided here.
                         if seek:
-                            # A seek packages nothing: it sees what it sees
-                            # for any refused callee, a gap.
-                            gaps.append(
-                                {
-                                    "memento": _tree.function_def_memento(
-                                        fn, file_rel
-                                    ).to_rpc(),
-                                    "reason": (
-                                        f"{refusal.info.owner}: "
-                                        f"{refusal.info.observed}"
-                                    ),
-                                }
-                            )
-                            continue
+                            # A seek packages nothing, so it has no row to
+                            # write: the refusal leaves as itself, the one
+                            # typed-loud RPC error every refusal gives (#8081).
+                            raise
                         # The full scan mint packages: one `undecided` row,
                         # which mint writes as the function's member (step 8).
                         # The proof never silently lacks the function's claims.
@@ -2799,7 +2789,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             )
                         )
                         continue
-                    # A SugarNotWritten from the function, in a full scan or a
+                    # Any other refusal from the function, in a full scan or a
                     # seek, is not turned into an enumeration gap: it leaves
                     # through the typed-loud RPC membrane by name.
                     for row in _tree.unanswered_call_rows(calls, file_rel):
@@ -3241,8 +3231,8 @@ def _serialize_source_call_binding_gap(exc: BaseException) -> dict[str, Any] | N
 
 
 def _serve() -> None:
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+    from sugar_source_tree.panic import LifterRefusal
 
     request_count = 0
     while True:
@@ -3264,47 +3254,23 @@ def _serve() -> None:
         request_count += 1
         try:
             keep_serving = _dispatch_request(msg)
-        except ConstructionPanic as panic:
-            # Fatal to this resident: emit a protocol error then die. Never
-            # convert ConstructionPanic into a successful result, None, or
-            # keep-serving soft continue. Parent may use --allow-failed-components
-            # to continue other components after this process exits.
-            _send(
-                {
-                    "jsonrpc": "2.0",
-                    "id": msg.get("id"),
-                    "error": {
-                        "code": -32603,
-                        "message": str(panic),
-                        "data": {
-                            "exception_type": type(panic).__name__,
-                            "stage": "dispatch",
-                            "diagnostic": panic.info.to_json(),
-                        },
-                    },
-                }
-            )
-            raise SystemExit(1) from panic
-        except SourceTreePanic as panic:
-            # Tree-gap (not ConstructionPanic): serialize as JSON-RPC error and
-            # keep serving. Never exit 1 unclassified after the client has a row.
+        except LifterRefusal as refusal:
+            # The one refusal, one answer (#7757): a refusal of one request is
+            # that request's typed-loud JSON-RPC error naming the refusal (its
+            # class, message and locus), never a result; the resident keeps
+            # serving the next request.
             _send(
                 {
                     "jsonrpc": "2.0",
                     "id": msg.get("id"),
                     "error": {
                         "code": -32001,
-                        "message": str(panic),
+                        "message": str(refusal),
                         "data": {
                             "kind": "typed-loud",
-                            "exception_type": type(panic).__name__,
+                            "exception_type": type(refusal).__name__,
                             "stage": "dispatch",
-                            "diagnostic": {
-                                "owner": panic.owner,
-                                "observed": panic.observed,
-                                "requested": panic.requested,
-                                "fix": panic.fix,
-                            },
+                            "diagnostic": refusal.diagnostic(),
                         },
                     },
                 }

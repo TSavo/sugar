@@ -332,6 +332,7 @@ def test_rpc_entry_preserves_tree_panic_role(
     import sugar_source_tree.panic as tree_panic
 
     panic = getattr(tree_panic, panic_type)(
+        blame="role.py:1:0",
         owner="rpc-role-map",
         observed="fixture",
         requested="role-correct answer",
@@ -361,13 +362,15 @@ def test_rpc_entry_preserves_tree_panic_role(
     )
     monkeypatch.setattr(lift_rpc, "_send", sent.append)
 
-    with pytest.raises(SystemExit):
-        lift_rpc._serve()
+    # The refusal is the request's typed error; the resident keeps serving and
+    # returns when the input ends.
+    lift_rpc._serve()
 
     diagnostic = sent[0]["error"]["data"]
     assert diagnostic["exception_type"] == panic_type
     assert diagnostic["diagnostic"] == {
         "owner": "rpc-role-map",
+        "blame": "role.py:1:0",
         "observed": "fixture",
         "requested": "role-correct answer",
         "fix": "preserve the concrete tree taxonomy",

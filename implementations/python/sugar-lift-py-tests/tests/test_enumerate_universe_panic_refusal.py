@@ -13,6 +13,7 @@ from types import SimpleNamespace
 import pytest
 
 from sugar_lift_py_tests import lift_rpc, tree_enumerate
+from sugar_lift_py_tests.proofir._errors import proofir_free_variable_refusal
 from sugar_source_tree.panic import SugarNotWritten
 
 
@@ -68,9 +69,68 @@ def test_universe_door_preserves_sugar_not_written_as_typed_loud(
         "stage": "dispatch",
         "diagnostic": {
             "owner": panic.owner,
+            "blame": "subject.py:2:4",
             "observed": panic.observed,
             "requested": panic.requested,
             "fix": panic.fix,
         },
     }
     assert "subject.py:2:4" in response["error"]["message"]
+
+
+def test_universe_seek_answers_free_variable_refusal_as_the_one_refusal_error(
+    tmp_path, monkeypatch
+) -> None:
+    """A seek packages nothing, so a scope-law refusal is not a gap row: it
+    leaves as the one typed-loud refusal error (#8081, #7757), and the
+    resident keeps serving."""
+
+    subject = tmp_path / "subject.py"
+    subject.write_text("def subject():\n    return 1\n", encoding="utf-8")
+
+    def refuse_contract_rows(_fn, _file_rel):
+        proofir_free_variable_refusal(
+            owner="ScopeLaw.function_outcome",
+            names=("GLOBAL",),
+            requested="a formula over the function's declared scope",
+            fix="bind the name through the function's frame",
+        )
+
+    request = {
+        "jsonrpc": "2.0",
+        "id": 18,
+        "method": "sugar.enumerate",
+        "params": {
+            "level": "universe",
+            "workspace_root": str(tmp_path),
+            "at": {"file": subject.name},
+            "seek": True,
+        },
+    }
+    shutdown = {"jsonrpc": "2.0", "id": 19, "method": "shutdown", "params": {}}
+    requests = iter([request, shutdown])
+    sent = []
+    monkeypatch.setattr(lift_rpc, "_BOUND_CONTRACT_REFS", None)
+    monkeypatch.setattr(tree_enumerate, "function_contract_rows", refuse_contract_rows)
+    monkeypatch.setattr(lift_rpc, "_recv", lambda: next(requests, None))
+    monkeypatch.setattr(lift_rpc, "_send", sent.append)
+
+    lift_rpc._serve()
+
+    assert len(sent) == 2, sent
+    response = sent[0]
+    assert "result" not in response, response
+    assert response["error"]["code"] == -32001
+    assert response["error"]["data"] == {
+        "kind": "typed-loud",
+        "exception_type": "FreeVariableRefusal",
+        "stage": "dispatch",
+        "diagnostic": {
+            "owner": "ScopeLaw.function_outcome",
+            "blame": "proofir-construction-law",
+            "observed": "illegal free var(s): GLOBAL",
+            "requested": "a formula over the function's declared scope",
+            "fix": "bind the name through the function's frame",
+        },
+    }
+    assert sent[1] == {"jsonrpc": "2.0", "id": 19, "result": {"ok": True}}
