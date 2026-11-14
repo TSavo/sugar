@@ -316,31 +316,40 @@ def function_def_memento(fn, file_rel: str):
 
 
 class UndecidedRow:
-    """A function the lifter refuses by name: one ``undecided`` row (step 8).
+    """What a proof does not decide, and why: one ``undecided`` row (step 8).
 
-    The one member kind for what a proof does not decide, and why (the owner,
-    2026-11-12). ``symbol`` is the function's own ``bridgeSourceSymbol``, the
-    one its contract row would have carried; ``site`` is its ``def`` as a
-    ``SourceFragmentCoordinateV1`` wire plus the workspace-relative ``file``;
-    ``reason`` is the refusal's own owner and observed text. Mint turns the row
-    into the member through ``sugar_claim_envelope::mint_undecided``.
+    The one member kind for it (the owner, 2026-11-12). Two cases, one shape:
+
+    - a function the lifter refuses by name (``refused_function_row``):
+      ``symbol`` is the function's own ``bridgeSourceSymbol``, ``site`` its
+      ``def``, ``reason`` ``{"refused": {owner, observed}}``;
+    - a call nothing here answers (``unanswered_call_row``): ``symbol`` is the
+      import door's target symbol or ``None``, ``site`` the call,
+      ``reason`` ``{"unanswered": {}}``.
+
+    ``site`` is a ``SourceFragmentCoordinateV1`` wire plus the
+    workspace-relative ``file``. Mint turns the row into the member through
+    ``sugar_claim_envelope::mint_undecided``.
     """
 
-    __slots__ = ("symbol", "site", "owner", "observed")
+    __slots__ = ("symbol", "site", "reason")
 
-    def __init__(self, *, symbol, site, owner, observed):
+    def __init__(self, *, symbol, site, reason):
         self.symbol = symbol
         self.site = site
-        self.owner = owner
-        self.observed = observed
+        self.reason = reason
 
     def to_rpc_with_term_table(self, _table):
         return {
             "kind": "undecided",
             "symbol": self.symbol,
             "site": dict(self.site),
-            "reason": {"refused": {"owner": self.owner, "observed": self.observed}},
+            "reason": self.reason,
         }
+
+
+def _undecided_site(file_rel: str, coordinate) -> dict:
+    return {"file": file_rel, **coordinate.wire()}
 
 
 def refused_function_row(fn, file_rel: str, refusal) -> UndecidedRow:
@@ -362,13 +371,49 @@ def refused_function_row(fn, file_rel: str, refusal) -> UndecidedRow:
         memento.span.end_line,
         memento.span.end_col,
     )
-    site = {"file": file_rel, **coordinate.wire()}
     return UndecidedRow(
         symbol=fn.sugar().bridge_source_symbol,
-        site=site,
-        owner=refusal.info.owner,
-        observed=refusal.info.observed,
+        site=_undecided_site(file_rel, coordinate),
+        reason={
+            "refused": {
+                "owner": refusal.info.owner,
+                "observed": refusal.info.observed,
+            }
+        },
     )
+
+
+def unanswered_call_row(symbol, coordinate, file_rel: str) -> UndecidedRow:
+    """The ``undecided`` row for one call nothing in this proof answers.
+
+    ``symbol`` is the import door's target symbol (an enrolled imported call)
+    or ``None`` (Q5); ``coordinate`` is the call's ``SourceFragmentCoordinateV1``.
+    The row records the call, never what answers it: the join to an imported
+    contract is prove's (step 9), so the row is the same staged or unstaged.
+    """
+    return UndecidedRow(
+        symbol=symbol,
+        site=_undecided_site(file_rel, coordinate),
+        reason={"unanswered": {}},
+    )
+
+
+def unanswered_call_rows(calls, file_rel: str) -> list:
+    """One ``undecided`` row per distinct (symbol, site) a reduction recorded.
+
+    ``calls`` is what ``unanswered_calls.collecting`` gathered, in reduction
+    order. A site reduced more than once (an unrolled loop, a re-reduction
+    under another guard) is one call, so one row.
+    """
+    rows = []
+    seen = set()
+    for symbol, coordinate in calls:
+        key = (symbol, tuple(sorted(coordinate.wire().items())))
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(unanswered_call_row(symbol, coordinate, file_rel))
+    return rows
 
 
 def require_outcome_in_scope(outcome, owner) -> None:

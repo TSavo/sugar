@@ -1418,21 +1418,10 @@ pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Va
     // its authenticated resolution set so post() projects. Resolved functions are
     // then skipped by the universe scan (their contract comes from the resume).
     let mut resolved_mementos: Vec<Value> = Vec::new();
+    // A link unit records no call: a Python call's only record is its
+    // `undecided` member, which the universe scan below routes to `ir`
+    // (step 8; PR B on #7766). The unit's caller-side edge list is gone.
     let link_unit_rows = preconstruction_rows_rpc(&conn, Level::ParameterContractLinkUnits)?;
-    for row in &link_unit_rows {
-        // The caller side of a parameter-contract link unit carries the very
-        // edges mint needs; they are on the raw wire row, not on the typed
-        // unit's discharge result.
-        if let Some(edges) = row
-            .get("callEdges")
-            .or_else(|| row.get("call_edges"))
-            .and_then(Value::as_array)
-        {
-            for edge in edges {
-                call_edges.push(edge);
-            }
-        }
-    }
     if !link_unit_rows.is_empty() {
         let units: Vec<sugar_linker::caller_parameter::ParameterContractLinkUnitV1> =
             link_unit_rows

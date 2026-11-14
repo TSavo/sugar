@@ -1,6 +1,5 @@
 use std::collections::BTreeSet;
 
-use libsugar::wp::substitute_in_formula;
 use serde::{Deserialize, Serialize};
 use serde_json::Value as Json;
 use sugar_ir_types::{IrFormula, IrTerm, Sort};
@@ -137,97 +136,6 @@ impl ParameterOwnedContractV1 {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct ValueOccurrenceCoordinateV1 {
-    pub source: SourceFragmentCoordinateV1,
-    pub occurrence_cid: Cid,
-}
-
-impl ValueOccurrenceCoordinateV1 {
-    pub fn validate(&self) -> Result<(), ParameterResolutionGapV1> {
-        let preimage = serde_json::json!({"kind": "value-occurrence", "source": self.source});
-        if canonical_json_cid(&preimage) != self.occurrence_cid {
-            return Err(ParameterResolutionGapV1::UnauthenticatedActualOccurrence);
-        }
-        Ok(())
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct FormalActualBindingV1 {
-    pub formal_coordinate_cid: Cid,
-    pub actual_occurrence: ValueOccurrenceCoordinateV1,
-    pub actual_term: IrTerm,
-    pub actual_contract_ref_cid: Option<Cid>,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct CallEdgeV2 {
-    pub kind: String,
-    pub schema_version: String,
-    pub source_contract_cid: Cid,
-    pub target_contract_cid: Cid,
-    pub call_site: SourceFragmentCoordinateV1,
-    pub formal_actual_bindings: Vec<FormalActualBindingV1>,
-    pub edge_cid: Cid,
-}
-
-impl CallEdgeV2 {
-    pub fn preimage(&self) -> Json {
-        serde_json::json!({
-            "kind": self.kind,
-            "schemaVersion": self.schema_version,
-            "sourceContractCid": self.source_contract_cid,
-            "targetContractCid": self.target_contract_cid,
-            "callSite": self.call_site,
-            "formalActualBindings": self.formal_actual_bindings,
-        })
-    }
-
-    pub fn validate_against(
-        &self,
-        contract: &ParameterOwnedContractV1,
-    ) -> Result<(), ParameterResolutionGapV1> {
-        if self.kind != "call-edge"
-            || self.schema_version != "2"
-            || canonical_json_cid(&self.preimage()) != self.edge_cid
-        {
-            return Err(ParameterResolutionGapV1::StaleCallEdge);
-        }
-        contract.validate()?;
-        if self.target_contract_cid != contract.contract_cid {
-            return Err(ParameterResolutionGapV1::StaleContract);
-        }
-        if self.formal_actual_bindings.len() != contract.formal_declarations.len() {
-            return Err(ParameterResolutionGapV1::FormalCoordinateMismatch);
-        }
-        let mut seen = BTreeSet::new();
-        for (ordinal, binding) in self.formal_actual_bindings.iter().enumerate() {
-            if !seen.insert(binding.formal_coordinate_cid.clone()) {
-                return Err(ParameterResolutionGapV1::FormalCoordinateMismatch);
-            }
-            binding.actual_occurrence.validate()?;
-            if binding.actual_occurrence.source.source_cid != self.call_site.source_cid {
-                return Err(ParameterResolutionGapV1::UnauthenticatedActualOccurrence);
-            }
-            if binding.actual_contract_ref_cid.is_some() {
-                return Err(ParameterResolutionGapV1::UnauthenticatedActualContractRef);
-            }
-            let declaration = &contract.formal_declarations[ordinal];
-            if declaration.coordinate.coordinate_cid != binding.formal_coordinate_cid {
-                return Err(ParameterResolutionGapV1::FormalCoordinateMismatch);
-            }
-            if declaration.coordinate.ordinal != ordinal {
-                return Err(ParameterResolutionGapV1::FormalOrdinalMismatch);
-            }
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ParameterContractDemandV1 {
@@ -290,18 +198,9 @@ impl ContractConditionalConstructionV1 {
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct AuthenticatedCallerV1 {
-    pub caller_contract_cid: Cid,
-    pub caller_contract_decl: Json,
-    pub edge: CallEdgeV2,
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ClosedCallerUniverseV1 {
     pub closed: bool,
     pub has_external_callers: bool,
-    pub callers: Vec<AuthenticatedCallerV1>,
 }
 
 impl ClosedCallerUniverseV1 {
@@ -311,7 +210,6 @@ impl ClosedCallerUniverseV1 {
             "schemaVersion": "1",
             "closed": self.closed,
             "hasExternalCallers": self.has_external_callers,
-            "callers": self.callers,
         })
     }
 
@@ -420,15 +318,11 @@ pub enum ParameterResolutionGapV1 {
     FormalCoordinateMismatch,
     FormalOrdinalMismatch,
     FormalSortMismatch,
-    UnauthenticatedActualOccurrence,
-    UnauthenticatedActualContractRef,
     StaleFormalCoordinate,
     StaleContract,
-    StaleCallEdge,
     StaleCandidateOrDemand,
     NoIncomingCaller,
     OpenCallerUniverse,
-    DisagreeingCallers,
     StaleResolution,
 }
 
@@ -462,47 +356,12 @@ pub fn discharge_parameter_candidate(
     if !universe.closed || universe.has_external_callers {
         return Err(ParameterResolutionGapV1::OpenCallerUniverse);
     }
-    if universe.callers.is_empty() {
-        return Err(ParameterResolutionGapV1::NoIncomingCaller);
-    }
-    for caller in &universe.callers {
-        caller.edge.validate_against(callee)?;
-        if caller.caller_contract_cid != caller.edge.source_contract_cid
-            || canonical_json_cid(&caller.caller_contract_decl) != caller.caller_contract_cid
-        {
-            return Err(ParameterResolutionGapV1::DisagreeingCallers);
-        }
-        let Some(binding) = caller.edge.formal_actual_bindings.iter().find(|binding| {
-            binding.formal_coordinate_cid == candidate.demand.formal_coordinate_cid
-        }) else {
-            return Err(ParameterResolutionGapV1::FormalCoordinateMismatch);
-        };
-        let Some(declaration) = callee.formal_declarations.iter().find(|declaration| {
-            declaration.coordinate.coordinate_cid == candidate.demand.formal_coordinate_cid
-        }) else {
-            return Err(ParameterResolutionGapV1::FormalCoordinateMismatch);
-        };
-        let instantiated = substitute_in_formula(
-            candidate.demand.demanded_formula.clone(),
-            &declaration.coordinate.declared_name,
-            &binding.actual_term,
-        );
-        let proved = caller
-            .caller_contract_decl
-            .get("provedFormulas")
-            .and_then(Json::as_array)
-            .ok_or(ParameterResolutionGapV1::DisagreeingCallers)?;
-        if !proved.contains(&serde_json::to_value(instantiated).unwrap()) {
-            return Err(ParameterResolutionGapV1::DisagreeingCallers);
-        }
-    }
-    Ok(ParameterContractResolutionV1::mint(
-        candidate.demand.demand_cid.clone(),
-        candidate.candidate_cid.clone(),
-        callee.contract_cid.clone(),
-        ResolutionBasisV1::ClosedCallers,
-        Some(universe.cid()),
-    ))
+    // A caller is authenticated only by a call edge that binds its actuals
+    // to these formals. No call is recorded as an edge: a Python call's only
+    // record is its `undecided` member (step 8; PR B on #7766), and the
+    // caller-side `CallEdgeV2` that this check read is gone. So no caller can
+    // be authenticated here, and a closed universe still has none.
+    Err(ParameterResolutionGapV1::NoIncomingCaller)
 }
 
 // --- Phase 1/2 wire: the enrolled link unit and the fold that discharges it ---
@@ -515,7 +374,6 @@ pub struct ParameterContractLinkUnitV1 {
     pub source_memento: Json,
     pub parameter_owned_contract: ParameterOwnedContractV1,
     pub candidates: Vec<ContractConditionalConstructionV1>,
-    pub call_edges: Vec<CallEdgeV2>,
     pub link_unit_cid: Cid,
 }
 
@@ -527,7 +385,6 @@ impl ParameterContractLinkUnitV1 {
             "sourceMemento": self.source_memento,
             "parameterOwnedContract": serde_json::to_value(&self.parameter_owned_contract).unwrap(),
             "candidates": serde_json::to_value(&self.candidates).unwrap(),
-            "callEdges": serde_json::to_value(&self.call_edges).unwrap(),
         })
     }
 
@@ -575,18 +432,17 @@ impl ParameterContractResolutionSetV1 {
     }
 }
 
-/// v1 SCOPE: closed-callers discharge is NOT yet authorized. Authenticated call
-/// edges are not populated (Python emits `call_edges=()`) and no project-closure
-/// testimony exists, so fabricating `closed=true, has_external_callers=false`
-/// would be a lie. Until real edges + closure testimony land, every candidate is
-/// discharged against an explicitly UNESTABLISHED caller universe: a self-
+/// v1 SCOPE: closed-callers discharge is NOT authorized. No call is recorded
+/// as a caller-side edge (a Python call's only record is its `undecided`
+/// member) and no project-closure testimony exists, so fabricating
+/// `closed=true, has_external_callers=false` would be a lie. Every candidate
+/// is discharged against an explicitly UNESTABLISHED caller universe: a self-
 /// declared demand resolves (it returns before the universe is consulted); every
 /// non-declared candidate hits `OpenCallerUniverse` and stays LOUD (unresolved).
 fn unestablished_caller_universe() -> ClosedCallerUniverseV1 {
     ClosedCallerUniverseV1 {
         closed: false,
         has_external_callers: true,
-        callers: Vec::new(),
     }
 }
 
