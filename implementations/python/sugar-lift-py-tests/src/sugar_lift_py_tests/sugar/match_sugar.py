@@ -168,7 +168,6 @@ def _decide(formula, site):
     decided it, the two faces of its split (minted here, the test owning it)
     when the formula is symbolic."""
     from sugar_lift_py_tests.ir import not_
-    from sugar_lift_py_tests.outcome import Completed
     from sugar_lift_py_tests.outcome.exit_set import _is_false, _is_true, partition
 
     if _is_true(formula):
@@ -176,12 +175,9 @@ def _decide(formula, site):
     if _is_false(formula):
         return _outcome(False)
     yes, no = partition(("MatchPattern", site, formula))
-    return ExitSet(
-        (
-            Completed(formula, _Matched(True), frozenset({yes})),
-            Completed(not_(formula), _Matched(False), frozenset({no})),
-        )
-    ).normalize()
+    return _outcome(True).guarded(formula, yes).union(
+        _outcome(False).guarded(not_(formula), no)
+    )
 
 
 def _tested(outcome, site):
@@ -618,10 +614,7 @@ def _debt(owed=()):
     ``ExitSet.union`` for sibling faces of one step, which merges them into
     one arm owing every sibling's debt -- never by unioning debts by hand.
     """
-    from sugar_lift_py_tests.outcome import Completed
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
-
-    return ExitSet((Completed(true_guard(), None, owed=owed),))
+    return ExitSet.completed(None, owed=owed)
 
 
 def _then(path, step):
@@ -645,21 +638,9 @@ def _after(guard, path, exits):
 
 
 def _halted_face(face, prefix_guard):
-    """Preserve a Halted face (effect + state) under an outer prefix."""
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
-
-    combined = _and_parts(prefix_guard, face.guard)
-    return ExitSet(
-        (
-            Halted(
-                combined,
-                face.effect,
-                face.state,
-                face.faces,
-                face.owed,
-            ),
-        )
-    )
+    """Preserve a Halted face (effect, state, faces, owed) under an outer
+    prefix: the arm restricted to ``prefix_guard`` (``ExitSet.guarded``)."""
+    return ExitSet((face,)).guarded(prefix_guard)
 
 
 def _formula_from_floor_value(value, site):
@@ -675,19 +656,7 @@ def _exceptional_faces_only(exits, prefix_guard):
     Completed faces feed matching / guard truth; they must not also escape as
     completed Match outcomes by wholesale ExitSet union.
     """
-    from sugar_lift_py_tests.outcome import Completed, Halted
-
-    side = ExitSet(())
-    for face in exits.exits:
-        if isinstance(face, Completed):
-            continue
-        if isinstance(face, Halted):
-            side = side.union(_halted_face(face, prefix_guard))
-        else:
-            raise NotImplementedError(
-                f"match side face not lifted: {type(face).__name__}"
-            )
-    return side
+    return ExitSet(exits.halts()).guarded(prefix_guard)
 
 
 def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev, ctx):
@@ -826,10 +795,16 @@ def _guard_faces_under(
             continue
         if isinstance(face, Completed):
             truth = _formula_from_floor_value(face.value, site)
-            selection = _and_parts(reached, face.guard, truth)
             body_exits = routed(reduce_block_to_exitset(body, body_ctx))
+            # The body runs after ``path`` and then the guard face itself: its
+            # guard, its partition testimony and what it owes ride onto every
+            # body arm.
             parts.append(
-                _after(selection, _then(path, _debt(face.owed)), body_exits)
+                _after(
+                    _and_parts(reached, truth),
+                    _then(path, ExitSet((face,))),
+                    body_exits,
+                )
             )
             earlier_bits.append(_and_parts(match_formula, face.guard, truth))
             guard_path = guard_path.union(_debt(face.owed))
@@ -862,7 +837,6 @@ class MatchSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.ir import or_
-        from sugar_lift_py_tests.outcome.exit_set import true_guard
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
             reduce_block_to_exitset,
@@ -878,30 +852,20 @@ class MatchSugar(Sugar):
             return subject_out
         subject = plain_completed_value(subject_out)
         if subject is None:
-            # Multi-face subject: fan the whole match under each completed face.
-            # Halted subject faces preserve state under their own guards.
-            from sugar_lift_py_tests.outcome import Completed, Halted
-
-            parts = ExitSet(())
-            for face in subject_out.exits:
-                if isinstance(face, Halted):
-                    parts = parts.union(_halted_face(face, true_guard()))
-                    continue
-                if isinstance(face, Completed):
-                    # Re-enter with a constant subject sugar is not needed:
-                    # recurse by building a one-shot match over the face's
-                    # value via a synthetic sugar wrapper.
-                    sub = _CompleteValueSugar(face.value, self.site)
-                    nested = MatchSugar(
-                        sub, self.cases, self.site, self.route_site
-                    ).desugar(ctx)
-                    # Sequenced under the face: its guard, its partition
-                    # testimony and what it owes ride onto every nested arm.
-                    parts = parts.union(
-                        ExitSet((face,)).sequence(lambda _value, n=nested: n)
-                    )
+            # Multi-face subject: the whole match runs beneath each completed
+            # face, over a one-shot sugar presenting that face's value; its
+            # guard, its partition testimony and what it owes ride onto every
+            # nested arm. A halted subject face stands.
+            parts = subject_out.sequence(
+                lambda value: MatchSugar(
+                    _CompleteValueSugar(value, self.site),
+                    self.cases,
+                    self.site,
+                    self.route_site,
+                ).desugar(ctx)
+            )
             if parts.exits:
-                return parts.normalize()
+                return parts
             from sugar_lift_py_tests.floor.block_value import BlockValue
 
             return ExitSet.completed(BlockValue((), can_fall_through=True))
@@ -1041,19 +1005,21 @@ class MatchSugar(Sugar):
             pattern_path = pattern_path.union(_debt(face.owed))
             if not face.value.matched:
                 continue
-            reached = _and_parts(not_prev, face.guard)
-            path = _then(running, _debt(face.owed))
+            # Every arm of this selection runs after ``running`` and then the
+            # matched face itself: its guard, its partition testimony and what
+            # it owes ride onto every arm.
+            path = _then(running, ExitSet((face,)))
             body_ctx = _bind_captures(ctx, face.value.binds)
             if case.guard is None:
                 body_exits = self._routed(
                     arm, reduce_block_to_exitset(case.body, body_ctx)
                 )
-                parts = parts.union(_after(reached, path, body_exits))
+                parts = parts.union(_after(not_prev, path, body_exits))
                 selections.append(face.guard)
                 continue
             guard_parts, bits, guard_path = _guard_faces_under(
                 case.guard.desugar(body_ctx),
-                reached,
+                not_prev,
                 self.site,
                 case.body,
                 body_ctx,

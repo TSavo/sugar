@@ -1731,7 +1731,7 @@ class CallSiteValue(FloorValue):
 
         from dataclasses import replace
 
-        from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+        from sugar_lift_py_tests.outcome import ExitSet
 
         def retaining(value):
             if not isinstance(value, FloorValue):
@@ -1771,28 +1771,15 @@ class CallSiteValue(FloorValue):
                 # and cannot discharge as a formal.
                 return outcome
             outcome = outcome.discharge(ctx, actuals)
-        exits = outcome
-        return ExitSet(
-            tuple(
-                (
-                    Completed(
-                        exit_.guard,
-                        retaining(exit_.value),
-                        exit_.faces,
-                        exit_.owed,
-                    )
-                    if isinstance(exit_, Completed)
-                    else Halted(
-                        exit_.guard,
-                        call_owned(exit_.effect),
-                        exit_.state,
-                        exit_.faces,
-                        exit_.owed,
-                    )
-                )
-                for exit_ in exits.exits
-            )
-        ).normalize()
+        # Each completed arm continues as the Call retaining its value; each
+        # halt continues as the Call's own halt. Both are continuations beneath
+        # the arm, so its guard, faces and ``owed`` ride on.
+        return outcome.sequence(
+            lambda value: ExitSet.completed(retaining(value)),
+            consume=lambda halt: ExitSet.halted(
+                call_owned(halt.effect), state=halt.state
+            ),
+        )
 
 
 def call_owned(effect):

@@ -353,13 +353,8 @@ class ClassDefinitionValue(GuardStableValue):
             ctor,
             str_const,
         )
-        from sugar_lift_py_tests.outcome import Completed, ExitSet
-        from sugar_lift_py_tests.outcome.exit_set import (
-            _and_guards,
-            complement_guard,
-            partition,
-            true_guard,
-        )
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.outcome.exit_set import partition
 
         receiver_type = (
             MappingObjectValue if self._has_authenticated_dict_base() else ObjectValue
@@ -410,16 +405,20 @@ class ClassDefinitionValue(GuardStableValue):
                 )
                 else ()
             )
-            states = [(true_guard(), initial, frozenset())]
+            # Each arm's value is the stores written on its path. A plain
+            # statement continues every arm; a guarded store splits every arm
+            # into its two faces, each a continuation beneath that arm.
+            states = ExitSet.completed(initial)
             for statement in block.statements:
                 if isinstance(statement, ObjectValue) or (
                     isinstance(statement, ReceiverFieldStoreValue)
                     and not isinstance(statement, GuardedReceiverFieldStoreValue)
                 ):
-                    states = [
-                        (guard, (*stores, statement), faces)
-                        for guard, stores, faces in states
-                    ]
+                    states = states.sequence(
+                        lambda stores, written=statement: ExitSet.completed(
+                            (*stores, written)
+                        )
+                    )
                     continue
                 if not isinstance(
                     statement, (GuardedReceiverFieldStoreValue, GuardedReceiverStateValue)
@@ -432,43 +431,23 @@ class ClassDefinitionValue(GuardStableValue):
                         store.to_term(owner=self.class_definition_cid),
                     )
                 )
-                next_states = []
-                for guard, stores, faces in states:
-                    next_states.append(
-                        (
-                            _and_guards(guard, store.guard),
-                            (
-                                *stores,
-                                (
-                                    store.receiver
-                                    if isinstance(store, GuardedReceiverStateValue)
-                                    else ReceiverFieldStoreValue(
-                                        store.receiver, store.attr, store.value
-                                    )
-                                ),
-                            ),
-                            faces | {then_face},
-                        )
-                    )
-                    next_states.append(
-                        (
-                            _and_guards(guard, complement_guard(store.guard)),
-                            stores,
-                            faces | {else_face},
-                        )
-                    )
-                states = next_states
-            exits = tuple(
-                Completed(
-                    guard,
-                    self.construct_receiver_state_from_block(
-                        type(block)(stores), receiver_coordinate_cid
-                    ),
-                    faces,
+                written = (
+                    store.receiver
+                    if isinstance(store, GuardedReceiverStateValue)
+                    else ReceiverFieldStoreValue(store.receiver, store.attr, store.value)
                 )
-                for guard, stores, faces in states
+                states = states.sequence(
+                    _store_split(store.guard, written, then_face, else_face)
+                )
+            return ReceiverStatePartitionValue(
+                states.sequence(
+                    lambda stores: ExitSet.completed(
+                        self.construct_receiver_state_from_block(
+                            type(block)(stores), receiver_coordinate_cid
+                        )
+                    )
+                )
             )
-            return ReceiverStatePartitionValue(ExitSet(exits).normalize())
         fields: dict[str, object] = {}
         snapshot = None
         for statement in block.statements:
@@ -597,6 +576,25 @@ class ClassDefinitionValue(GuardStableValue):
             seen.add(id(base))
             pending.extend(base.base_classes)
         return False
+
+
+def _store_split(guard, written, then_face, else_face):
+    """One guarded store's two faces beneath an arm whose value is the stores
+    written on its path: ``written`` appended under ``guard``, nothing under
+    its complement, each stamped with its face of the store's split."""
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import complement_guard
+
+    def split(stores):
+        return (
+            ExitSet.completed((*stores, written))
+            .guarded(guard, then_face)
+            .union(
+                ExitSet.completed(stores).guarded(complement_guard(guard), else_face)
+            )
+        )
+
+    return split
 
 
 def c3_tail(bases, tail_of, *, blame, owner: str) -> tuple:

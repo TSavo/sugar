@@ -309,30 +309,6 @@ def _conjuncts(guard: Formula) -> tuple[Formula, ...]:
     return (guard,)
 
 
-def _partition_exclusive(
-    left: frozenset[tuple[str, int]] | None,
-    right: frozenset[tuple[str, int]] | None,
-) -> bool:
-    """Whether two arms carry opposite faces of one authenticated partition."""
-    if not left or not right:
-        return False
-    for partition_id, face in left:
-        for other_id, other_face in right:
-            if partition_id == other_id and face != other_face:
-                return True
-    return False
-
-
-def _union_partition(
-    left: frozenset[tuple[str, int]] | None,
-    right: frozenset[tuple[str, int]] | None,
-) -> frozenset[tuple[str, int]] | None:
-    """Accumulate partition faces through sequencing."""
-    if left is None and right is None:
-        return None
-    return frozenset((*(left or ()), *(right or ())))
-
-
 def _are_exclusive(left: Formula, right: Formula) -> bool:
     """Whether two guards provably cannot hold together, syntactically.
 
@@ -552,9 +528,12 @@ class ExitSet(Generic[T]):
     exits: tuple[Exit[T], ...]
 
     @classmethod
-    def completed(cls, value: T, guard: Formula | None = None) -> "ExitSet[T]":
-        """One completed arm holding ``v`` under ``guard`` (truth when omitted)."""
-        return cls((Completed(guard or true_guard(), value),)).normalize()
+    def completed(
+        cls, value: T, guard: Formula | None = None, *, owed: tuple = _NO_OWED
+    ) -> "ExitSet[T]":
+        """One completed arm holding ``v`` under ``guard`` (truth when omitted),
+        owing ``owed`` (nothing when omitted)."""
+        return cls((Completed(guard or true_guard(), value, owed=owed),)).normalize()
 
     @classmethod
     def halted(
@@ -679,24 +658,21 @@ class ExitSet(Generic[T]):
                 )
         return ExitSet(tuple(exits)).normalize()
 
-    def with_partition_face(self, partition_id: str, face: int) -> "ExitSet[T]":
-        """Stamp every completed arm with one authenticated partition face.
+    def with_partition_face(self, partition_id: object, face: int) -> "ExitSet[T]":
+        """Stamp every completed arm with one face of ``partition(partition_id)``.
 
-        Face is 0/1 for then/else of one producer-owned branch. Nested joins
-        accumulate faces; two arms are exclusive when they disagree on any
-        shared partition_id.
+        Face is 0/1 for then/else of one producer-owned branch: the then and
+        else faces ``partition`` mints for that owner. The stamp joins the
+        arm's ``faces`` (it never replaces them), so nested joins accumulate
+        faces and two arms are exclusive when they lie on different sides of a
+        shared split (``_faces_exclusive``). Halted arms stand unchanged. The
+        stamp is a continuation beneath each completed arm, so every arm keeps
+        its guard and ``owed``.
         """
-        face_key = (partition_id, face)
-        exits: list[Exit[T]] = []
-        for exit_ in self.exits:
-            if isinstance(exit_, Completed):
-                stamped = frozenset((*((exit_.partition or frozenset())), face_key))
-                exits.append(
-                    Completed(exit_.guard, exit_.value, stamped, exit_.owed)
-                )
-            else:
-                exits.append(exit_)
-        return ExitSet(tuple(exits))
+        stamp = partition(partition_id)[face]
+        return self.sequence(
+            lambda value: ExitSet.completed(value).guarded(true_guard(), stamp)
+        )
 
     def factor_completed(self) -> "ExitSet[T]":
         """Collapse the completed FACE into one arm carrying a guarded value.
