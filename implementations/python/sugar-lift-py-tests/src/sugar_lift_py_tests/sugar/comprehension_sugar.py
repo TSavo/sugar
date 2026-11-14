@@ -150,7 +150,8 @@ class ComprehensionSugar(ConstructedTermSugar):
     # no running value: its reads are refused by name.
     walrus_recurrence: tuple = dataclass_field(compare=False, default=())
     # Whether the comprehension's final member is placed after it: what a
-    # lambda its walrus lets escape reads at a call outside every run of it
+    # lambda that escapes it (through a walrus, or yielded by a generator
+    # expression) reads at a call outside every run of it
     # (``_final_member_ctx``, ``_symbolic_final_ctx``).  An eager
     # comprehension runs whole where it is made.  A generator expression
     # runs when it is consumed: only where it is consumed whole in place

@@ -28,6 +28,13 @@ is read at the call (#7757 item 7, residue of #7975).
    whole in place (``GeneratorExp._consumed_whole_in_place``); refused by
    name everywhere else (a stored generator, ``any``, ``set``, a shadowed
    ``list``).
+5. A lambda a generator expression yields, with no walrus -- the element
+   itself (``list(lambda: x for x in xs)``) or a lambda an inner
+   comprehension in the element stores (``([lambda: x for _ in ys] for x in
+   xs)``) -- escapes the generator the same way and is read by the same rule
+   (``GeneratorExp.substitute``, ``_escaping_at_the_call``): ``fs =
+   list(lambda: x for x in [1, 2]); fs[0]()`` is 2, and a stored
+   generator's yielded lambda called after the run is refused by name.
 """
 
 from __future__ import annotations
@@ -627,6 +634,92 @@ def test_a_stored_generators_lambda_called_later_is_refused_by_name() -> None:
     assert read == ExitSet.completed(TermValue(2))
     # After it (``h = next(gen); h()``): how far it was consumed is not
     # decided here, and the read is refused by name, never the member
+    # current where the lambda was made.
+    after = ReduceContext.root(owner="after-the-generator")
+    with pytest.raises(SugarNotWritten, match="not consumed whole in place"):
+        lam.body.desugar(_called(callable_, after))
+
+
+# -- 5. a lambda a generator expression yields, with no walrus ----------------
+
+
+YIELDED_CONSUMED_IN_PLACE = (
+    "def f():\n    fs = list(lambda: x for x in [1, 2])\n    return fs[0]()\n"
+)
+YIELDED_STORED = (
+    "def f(xs):\n"
+    "    gen = (lambda: x for x in xs)\n"
+    "    h = next(gen)\n"
+    "    return h()\n"
+)
+YIELDED_BY_AN_INNER_COMPREHENSION = (
+    "def f(xs, ys):\n"
+    "    gen = ([lambda: x for _ in ys] for x in xs)\n"
+    "    h = next(gen)[0]\n"
+    "    return h()\n"
+)
+
+
+def test_a_yielded_lambda_reads_the_cell_at_the_call() -> None:
+    # Yielded directly or stored by an inner comprehension the generator
+    # yields, consumed in place or stored: the body never reads the member
+    # current where the lambda was made.
+    for source in (
+        YIELDED_CONSUMED_IN_PLACE,
+        YIELDED_STORED,
+        YIELDED_BY_AN_INNER_COMPREHENSION,
+    ):
+        gen = _generator(source)
+        coordinate = ListComp._generator_binding_coordinate(
+            gen, 0, gen.generators[0]
+        )
+        (lam,) = _lambdas([gen.elt])
+        _assert_reads_the_cell_at_the_call(lam, coordinate)
+
+
+def test_a_lambda_list_drains_from_a_generator_reads_the_final_member() -> None:
+    # ``fs = list(lambda: x for x in [1, 2]); fs[0]()`` is 2: ``list`` drains
+    # the generator before ``fs[0]`` is called, and the cell then holds the
+    # final member, never the 1 the lambda was made under.
+    assert _generator(YIELDED_CONSUMED_IN_PLACE).sugar().final_member is True
+    sugar, generator, lam = _escaping_generator(YIELDED_CONSUMED_IN_PLACE)
+    member = generator.binding_coordinate_cid
+    evaluation = _evaluation(sugar, generator, TermValue(2))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.desugar(made).completed_value()
+    assert (final_member_coordinate(member), TermValue(2)) in callable_.closure
+    after = ReduceContext.root(owner="after-the-generator")
+    read = lam.body.desugar(_called(callable_, after))
+    assert read == ExitSet.completed(TermValue(2))
+    # Called inside the run (by the consumer before the next member): the
+    # member current at the call.
+    read = lam.body.desugar(_called(callable_, made))
+    assert read == ExitSet.completed(TermValue(1))
+    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    read = lam.body.desugar(_called(callable_, later))
+    assert read == ExitSet.completed(TermValue(2))
+
+
+@pytest.mark.parametrize("source", [YIELDED_STORED, YIELDED_BY_AN_INNER_COMPREHENSION])
+def test_a_stored_generators_yielded_lambda_called_later_is_refused(
+    source: str,
+) -> None:
+    assert _generator(source).sugar().final_member is False
+    sugar, generator, lam = _escaping_generator(source)
+    member = generator.binding_coordinate_cid
+    evaluation = _evaluation(sugar, generator, TermValue(3))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.desugar(made).completed_value()
+    # No final member is placed, so none is carried.
+    assert all(
+        carried != final_member_coordinate(member)
+        for carried, _value in callable_.closure
+    )
+    # Inside a run of the generator: the member current at the call.
+    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    read = lam.body.desugar(_called(callable_, later))
+    assert read == ExitSet.completed(TermValue(2))
+    # After it (``h = next(gen); h()``): refused by name, never the member
     # current where the lambda was made.
     after = ReduceContext.root(owner="after-the-generator")
     with pytest.raises(SugarNotWritten, match="not consumed whole in place"):

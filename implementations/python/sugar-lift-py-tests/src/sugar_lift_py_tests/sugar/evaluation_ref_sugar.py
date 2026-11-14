@@ -60,9 +60,11 @@ evaluation of the comprehension that made the lambda -- the evaluation the
 lambda carries is the one running (``ComprehensionSugar._evaluation_ctx``) --
 the member current at the call; with no evaluation of the comprehension
 running, the final member the lambda carries; refused by name otherwise.
-Never the member current where the lambda was made.  A generator
-expression's walrus lambda (``list((g := lambda: x) for x in xs)``) is read
-the same way: a run is a consumption of the generator, and the final member
+Never the member current where the lambda was made.  A lambda that escapes a
+generator expression, through a walrus (``list((g := lambda: x) for x in
+xs)``) or yielded (``list(lambda: x for x in xs)``, ``([lambda: x for _ in
+ys] for x in xs)``), is read the same way: a run is a consumption of the
+generator, and the final member
 is carried only where the generator is consumed whole in place
 (``ComprehensionSugar.final_member``); a call after a generator consumed
 anywhere else (stored, ``next``, a ``for``, ``any``) is refused by name.
