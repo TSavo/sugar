@@ -2372,9 +2372,9 @@ def _read_same_module_class_head(
         if not (hasattr(call_sugar, "args") and hasattr(call_sugar, "keywords")):
             # A spread/starred manager call (``with LocalClass(*args): ...``)
             # constructs a SpreadCallSugar with no positional/keyword actual
-            # surface.  Refuse as a COUNTABLE terminal (the caller installs a
-            # local derivation gap) rather than crashing with a bare
-            # AttributeError that voids the whole file as an instrument failure.
+            # surface.  Refuse by name (the refusal propagates as itself)
+            # rather than crashing with a bare AttributeError that voids the
+            # whole file as an instrument failure.
             raise SugarNotWritten(
                 owner="_read_same_module_class_head.collect_application",
                 blame=getattr(call_sugar, "site", None),
@@ -2417,77 +2417,71 @@ def _read_same_module_class_head(
         return positional(0, ())
 
     target_symbol = f"python:local:{class_def.name}"
-    try:
-        # The class, the call's actuals and the call's result are each read
-        # here: a deferred native-operation carrier is refused by name.
-        class_outcome = _require_exit_set(
-            class_def.sugar().desugar(reduce_ctx),
-            owner="_read_same_module_class_head",
-        )
-        class_value = class_outcome.completed_value()
-        if type(class_value) is not ClassDefinitionValue:
-            _install_local_derivation_gap(
-                context,
-                coordinate,
-                target_symbol,
-                "class-definition-not-constructed",
-                type(class_outcome).__name__,
-            )
-            return
-        application = _require_exit_set(
-            collect_application(call.sugar()),
-            owner="_read_same_module_class_head",
-        )
-        application_value = application.completed_value()
-        # The manager behavior built from these actuals has no arm to
-        # carry an owed item on: an owing application is not constructed.
-        if application_value is None or application.owed_items():
-            _install_local_derivation_gap(
-                context, coordinate, target_symbol,
-                "call-arguments-not-constructed", type(application).__name__
-            )
-            return
-        result_outcome = class_value.callable_application_with(
-            application_value, reduce_ctx
-        )
-        result = _receiver_from_constructor_outcome(result_outcome)
-        if isinstance(result, ObjectValue):
-            if not _owned_by_class(result, class_value):
-                _install_local_derivation_gap(
-                    context,
-                    coordinate,
-                    target_symbol,
-                    "class-definition-provenance-mismatch",
-                    "constructed receiver is not owned by authenticated class_def",
-                )
-                return
-        elif isinstance(result, ReceiverStatePartitionValue):
-            leaves = _completed_object_receivers(result)
-            if not leaves or any(
-                not _owned_by_class(leaf, class_value)
-                for leaf in leaves
-            ):
-                _install_local_derivation_gap(
-                    context,
-                    coordinate,
-                    target_symbol,
-                    "class-definition-provenance-mismatch",
-                    "constructed receiver is not owned by authenticated class_def",
-                )
-                return
-        else:
-            _install_local_derivation_gap(
-                context,
-                coordinate,
-                target_symbol,
-                "non-manager-result",
-                type(result).__name__,
-            )
-            return
-    except (SugarNotWritten, TypeError) as exc:
-        kind, detail = _populate_body_defect_kind_detail(exc)
+    # The class, the call's actuals and the call's result are each read
+    # here: a deferred native-operation carrier is refused by name, and a
+    # refusal raised while reading them propagates as itself (#7757 item 4).
+    class_outcome = _require_exit_set(
+        class_def.sugar().desugar(reduce_ctx),
+        owner="_read_same_module_class_head",
+    )
+    class_value = class_outcome.completed_value()
+    if type(class_value) is not ClassDefinitionValue:
         _install_local_derivation_gap(
-            context, coordinate, target_symbol, kind, detail
+            context,
+            coordinate,
+            target_symbol,
+            "class-definition-not-constructed",
+            type(class_outcome).__name__,
+        )
+        return
+    application = _require_exit_set(
+        collect_application(call.sugar()),
+        owner="_read_same_module_class_head",
+    )
+    application_value = application.completed_value()
+    # The manager behavior built from these actuals has no arm to
+    # carry an owed item on: an owing application is not constructed.
+    if application_value is None or application.owed_items():
+        _install_local_derivation_gap(
+            context, coordinate, target_symbol,
+            "call-arguments-not-constructed", type(application).__name__
+        )
+        return
+    result_outcome = class_value.callable_application_with(
+        application_value, reduce_ctx
+    )
+    result = _receiver_from_constructor_outcome(result_outcome)
+    if isinstance(result, ObjectValue):
+        if not _owned_by_class(result, class_value):
+            _install_local_derivation_gap(
+                context,
+                coordinate,
+                target_symbol,
+                "class-definition-provenance-mismatch",
+                "constructed receiver is not owned by authenticated class_def",
+            )
+            return
+    elif isinstance(result, ReceiverStatePartitionValue):
+        leaves = _completed_object_receivers(result)
+        if not leaves or any(
+            not _owned_by_class(leaf, class_value)
+            for leaf in leaves
+        ):
+            _install_local_derivation_gap(
+                context,
+                coordinate,
+                target_symbol,
+                "class-definition-provenance-mismatch",
+                "constructed receiver is not owned by authenticated class_def",
+            )
+            return
+    else:
+        _install_local_derivation_gap(
+            context,
+            coordinate,
+            target_symbol,
+            "non-manager-result",
+            type(result).__name__,
         )
         return
     result = _floor_tuple_construct_fields(
@@ -2550,14 +2544,7 @@ def _read_same_module_class_head(
         factory_prefix=(),
         factory_prefix_cids=(),
     )
-    try:
-        protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
-    except (SugarNotWritten, TypeError) as exc:
-        kind, detail = _populate_body_defect_kind_detail(exc)
-        _install_local_derivation_gap(
-            context, coordinate, target_symbol, kind, detail
-        )
-        return
+    protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
     if not isinstance(protocol, ConstructedManagerProtocolV1):
         if _publish_proven_non_manager_head(
             context,
@@ -3544,36 +3531,6 @@ def _projected_manager_call_uses(source_file, selected_arms=None):
         collect(function.substitute({}), projected_names=True)
 
     return uses
-
-
-def _populate_body_defect_kind_detail(exc: BaseException) -> tuple[str, str]:
-    """The one undecided statement for a populate-path body defect.
-
-    A ``SugarNotWritten`` (#7063), a ``TypeError`` (#7062 second costume:
-    construction require_* / IfExpSugar post_init failure that used to abort
-    the open) or a ``ContextManagerContractError`` (a factory body that is not
-    a context manager, such as pytest.raises function form) each leave the
-    body undecided: one kind, ``undecided`` (#7757 item 4).  The exception's
-    class never chooses the label; what was observed rides in the detail.
-
-    Callers must catch only these named classes — never bare ``except``.
-    """
-    from sugar_lift_py_tests.context_manager_contract import (
-        ContextManagerContractError,
-    )
-    from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
-    from sugar_source_tree.panic import SugarNotWritten
-
-    if isinstance(exc, SugarNotWritten):
-        observed = getattr(exc, "observed", None) or str(exc)
-        return UNDECIDED_GAP_KIND, str(observed)
-    if isinstance(exc, (TypeError, ContextManagerContractError)):
-        return UNDECIDED_GAP_KIND, f"{type(exc).__name__}: {exc}"
-    raise TypeError(
-        f"_populate_body_defect_kind_detail got unexpected {type(exc).__name__}; "
-        f"callers must catch only SugarNotWritten, TypeError, and "
-        f"ContextManagerContractError"
-    ) from exc
 
 
 def _gap_kind_and_detail(gap) -> tuple[str, str | None]:
