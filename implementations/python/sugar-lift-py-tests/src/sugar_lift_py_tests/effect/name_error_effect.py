@@ -68,21 +68,12 @@ def _unbound_read_exception_name(name: str, site) -> str:
 
     The scope is the innermost function, class, or lambda whose BODY contains
     the read occurrence (decorators, defaults, and bases are evaluated in the
-    enclosing scope). A function scope decides by its own symbol table.
+    enclosing scope). A function scope decides by its own symbol table.  A
+    unit with no typed tree refuses by name (``_require_typed_module``).
     """
-    from sugar_source_tree.panic import SugarNotWritten
-
-    unit = getattr(site, "unit", None)
-    module = getattr(unit, "typed_module", None)
-    span = getattr(site, "span", None)
-    if module is None or span is None:
-        raise SugarNotWritten(
-            owner="NameErrorEffect.at",
-            blame=site,
-            observed="unbound read with no typed module to decide its scope",
-            requested="the read occurrence's enclosing scope",
-            fix="bind the typed module before minting the unbound read",
-        )
+    unit = site.unit
+    module = unit._require_typed_module("NameErrorEffect.at", blame=site)
+    span = site.span
     innermost = None
     innermost_start = -1
     for node in module.walk():

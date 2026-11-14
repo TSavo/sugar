@@ -477,7 +477,7 @@ def test_every_declared_non_enrollment_reason_is_produced_by_the_walk(
 
     assert nodes._LEXICAL_CALL_NON_ENROLLMENT_REASONS == frozenset(
         {reason for *_, reason in cases}
-        | {"no-typed-module", "synthesized-call-occurrence"}
+        | {"synthesized-call-occurrence"}
     ), "a declared reason with no producer path, or a path with no reason"
 
 

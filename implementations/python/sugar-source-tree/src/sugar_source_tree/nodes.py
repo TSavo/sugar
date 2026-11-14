@@ -723,9 +723,6 @@ _LEXICAL_CALL_NON_ENROLLMENT_REASONS = frozenset(
         # deletion, rebinding, or a later definition -- not a lexical function
         # definition visible at this call.
         "binding-not-a-function-definition",
-        # This unit has no typed module root yet, so no lexical relation has
-        # been published for any occurrence in it.
-        "no-typed-module",
         # A desugarer-synthesized Call shell (``Node._make_call``) over a
         # borrowed span: it is not a source call occurrence, so it is outside
         # the relation's DOMAIN.  Only shadow-minted nodes may take this arm;
@@ -1280,11 +1277,12 @@ class SourceUnit:
         the position owns the read.  A class owns it only when its own body
         is that innermost body -- a method's or a lambda's body skips the
         class scope, while a method's decorators and defaults sit in the
-        class body itself.  A unit with no typed root answers None.
+        class body itself.  A unit with no typed root refuses by name
+        (``_require_typed_module``).
         """
-        module = self.typed_module
-        if module is None:
-            return None
+        module = self._require_typed_module(
+            "SourceUnit.class_body_holding", blame=self.filename
+        )
         index = self._scope_body_index
         if index is None or index[0] is not module:
             rows = []
@@ -1330,10 +1328,12 @@ class SourceUnit:
         a decision for EVERY call occurrence it walked; therefore a lookup that
         finds no decision is a failed join and REFUSES.  It is never reported
         as not-enrolled: absence and lookup-failure do not share a
-        representation here.
+        representation here.  A unit with no typed root has published
+        nothing and refuses by name (``_require_typed_module``).
         """
-        if self.typed_module is None:
-            return mint_lexical_call_enrollment(call, "no-typed-module")
+        self._require_typed_module(
+            "SourceUnit.lexical_call_enrollment", blame=call.fragment
+        )
         occurrence = SourceOccurrenceIdentityV1.of(call)
         matches = self._published_enrollment_decisions(occurrence)
         if not matches:
@@ -1636,11 +1636,12 @@ class SourceUnit:
         in the function, or ``getattr = g`` earlier in the class body each
         leave the read with no builtin reference; a method of that class
         still reads the builtin.  A unit
-        with no typed root has no function index to consult and answers
-        ``None``.
+        with no typed root has no function index to consult and refuses by
+        name (``_require_typed_module``).
         """
-        if self.typed_module is None:
-            return None
+        self._require_typed_module(
+            "SourceUnit.builtin_reference_at", blame=self.filename
+        )
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
             builtin_name_temporal,
         )
@@ -1662,10 +1663,14 @@ class SourceUnit:
         The same resolution as ``builtin_reference_at``: the read reaches the
         interpreter's binding only where the innermost function around it
         neither takes nor binds the name, the module binds no ``name`` of its
-        own, and no star import may.
+        own, and no star import may.  A unit with no typed root refuses by
+        name (``_require_typed_module``).
         """
+        self._require_typed_module(
+            "SourceUnit.interpreter_reference_at", blame=self.filename
+        )
         target = _INTERPRETER_BOUND_TARGETS.get(name)
-        if target is None or self.typed_module is None:
+        if target is None:
             return None
         if "*" in self._module_name_rows()[0]:
             return None
@@ -1794,10 +1799,12 @@ class SourceUnit:
         builtin, not a name the interpreter binds itself, and no read or
         import in the module reaches a dynamic global writer (``globals``,
         ``exec``, ... by their binding, ``_module_reaches_dynamic_global_writer``).
-        Any doubt, and a unit with no typed root, answers False.
+        Any doubt answers False; a unit with no typed root refuses by name
+        (``_require_typed_module``).
         """
-        if self.typed_module is None:
-            return False
+        self._require_typed_module(
+            "SourceUnit.name_bound_nowhere", blame=self.filename
+        )
         if hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
             return False
         bound, _read = self._module_name_rows()
@@ -1825,7 +1832,7 @@ class SourceUnit:
         import table's row for that binding (``import_binding_reference``),
         ``except ... as`` the handler's effect slot until the handler ends,
         ``del`` unbinds.  Read off the typed tree, one walk per typed root.
-        A unit with no typed root answers the empty set.
+        A unit with no typed root refuses by name (``_require_typed_module``).
         """
         return self._module_global_rows()[0]
 
@@ -1844,9 +1851,9 @@ class SourceUnit:
         return self._module_global_rows()[1]
 
     def _module_global_rows(self) -> Tuple[frozenset, frozenset]:
-        module = self.typed_module
-        if module is None:
-            return frozenset(), frozenset()
+        module = self._require_typed_module(
+            "SourceUnit._module_global_rows", blame=self.filename
+        )
         memo = self._module_global_rows_memo
         if memo is not None and memo[0] is module:
             return memo[1], memo[2]
@@ -3046,7 +3053,7 @@ class SourceUnit:
         # module-level definition (#7348 caller 2).
         enrollment = self.lexical_call_enrollment(call)
         if isinstance(enrollment, LexicalCallNotEnrolledV1):
-            if enrollment.reason in ("non-name-callee", "no-typed-module"):
+            if enrollment.reason == "non-name-callee":
                 return None
             # module-scope-call / no-lexical-binding-in-scope /
             # binding-not-a-function-definition: the lawful symtable-classified
@@ -4625,14 +4632,14 @@ def _list_escapes(loop, reference, ground, scope) -> bool:
 
     Read from the source tree of ``loop``'s unit, in the innermost function
     that holds ``loop`` (else the module).  A list bound in another unit or
-    another scope, or a unit with no typed module, escapes: nothing decides
-    who else holds it."""
+    another scope escapes: nothing decides who else holds it.  A unit with
+    no typed module refuses by name (``SourceUnit._require_typed_module``)."""
     names, identities = _object_names(reference, scope)
-    unit = getattr(loop, "unit", None)
-    module = getattr(unit, "typed_module", None)
+    unit = loop.unit
+    module = unit._require_typed_module("nodes._list_escapes", blame=loop.fragment)
     here = getattr(loop, "span", None)
     spans = [getattr(identity, "span", None) for identity in identities]
-    if module is None or here is None or any(span is None for span in spans):
+    if here is None or any(span is None for span in spans):
         return True
     source = getattr(unit, "source_cid", None)
     if any(
@@ -8775,8 +8782,6 @@ class FunctionDef(Statement):
         threading's: its read resolves the definition or the import.
         """
         unit = self.unit
-        if unit.typed_module is None:
-            return {}
         candidates = unit.module_threaded_names()
         if not candidates:
             return {}
@@ -9506,8 +9511,6 @@ class ClassDef(Statement):
         is not answered here.
         """
         unit = self.unit
-        if unit.typed_module is None:
-            return {}
         candidates = unit.module_threaded_names()
         if not candidates:
             return {}
@@ -17619,8 +17622,6 @@ class Lambda(Expression):
         the body binds (a walrus), a comprehension's member or cell and an
         enclosing function's local are not globals there."""
         unit = self.unit
-        if unit.typed_module is None:
-            return frozenset()
         candidates = unit.module_threaded_names()
         if not candidates:
             return frozenset()
