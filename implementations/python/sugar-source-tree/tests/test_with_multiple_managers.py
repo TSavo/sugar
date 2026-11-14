@@ -282,6 +282,10 @@ def test_discrimination_authenticated_pair_is_not_loud(tmp_path):
 
 
 class _FixedSugar(Sugar):
+    # A canned statement binds nothing before its halts: the block's prefix
+    # is their record.
+    halts_at_statement_head = True
+
     def __init__(self, outcome, *, probe=None):
         self._outcome = outcome
         self._probe = probe

@@ -88,8 +88,10 @@ def _plain_halt(outcome: ExitSet):
     """The effect of ONE plain halted arm that carries no state, else ``None``.
 
     Plain: one halted arm under truth, no partition faces, owing nothing, and
-    no temporal state of its own -- a halt at the head of the statement, whose
-    pre-halt state is the enclosing block's prefix.
+    no temporal state of its own -- a halt at the head of a statement that
+    declares it halts there (``halts_at_statement_head``; any other
+    statement's record-less halt is refused first, ``_require_recorded_halts``),
+    whose pre-halt state is the enclosing block's prefix.
     """
     if len(outcome.exits) != 1:
         return None
@@ -105,14 +107,15 @@ def _plain_halt(outcome: ExitSet):
     return None
 
 
-def _prefixed(state: _ReducedBlock, inner: object) -> object:
+def _prefixed(state: _ReducedBlock, inner: _ReducedBlock) -> _ReducedBlock:
     """The temporal state of a halt INSIDE a nested statement, read from outside.
 
-    ``inner`` is what the nested reduction reached before halting; ``state`` is
-    everything this block had already established when the statement began.
-    Python never rolls back what already happened, so the halt arm carries both,
-    in order. A nested state with no ``entries`` (a non-block payload) is left
-    alone -- there is nothing to splice onto.
+    ``inner`` is the record the nested reduction reached before halting;
+    ``state`` is everything this block had already established when the
+    statement began. Python never rolls back what already happened, so the
+    halt arm carries both, in order. Every halt reaching here carries a
+    record: the block reducer refused a record-less one at the statement
+    (``_require_recorded_halts``) or gave it the prefix whole.
 
     Identity law (R1): when the prefix contributes nothing (no entries, no
     transforms), the nested record already IS the complete temporal state.
@@ -121,20 +124,18 @@ def _prefixed(state: _ReducedBlock, inner: object) -> object:
     residuals (``face.state is halted.state``) while try/except ``and_exit`` and
     NeverSuppresses correctly retained ``is``.
     """
-    entries = getattr(inner, "entries", None)
-    if entries is None:
-        return inner
-    if not state.entries and not state.transforms and isinstance(inner, _ReducedBlock):
+    if not state.entries and not state.transforms:
         # Empty prefix: retain the nested pre-halt record as the same cell.
         return inner
+    entries = inner.entries
     for transform in reversed(state.transforms):
         entries = transform(entries)
     return _ReducedBlock(
         (*state.entries, *entries),
-        getattr(inner, "can_fall_through", False),
+        inner.can_fall_through,
         (),
         state.transforms,
-        getattr(inner, "context", state.context),
+        inner.context,
     )
 
 
@@ -148,6 +149,50 @@ def _halt_state(state: _ReducedBlock, exit_) -> object:
     it halted in, and the prefix spliced here is then its whole record.
     """
     return _prefixed(state, exit_.state)
+
+
+def _require_recorded_halts(outcome, statement) -> None:
+    """THE BOUNDARY between an expression's halt and a block's: stop by name
+    (``SugarNotWritten``, owner ``reduce_block_to_exitset.statement``) a
+    statement that hands the block reducer a halt with no record.
+
+    A halt's state is ``None`` only inside an expression's evaluation: the
+    expression offers no record of its own. The statement that runs it
+    records it before the halt leaves the statement -- at its head
+    (``halt_record``, ``halts_recorded``), or after what it bound first
+    (``NestedDynamicUnpackAssignSugar``: the outer targets an inner unpack
+    halted after). A statement that binds nothing before any of its halts
+    declares so (``halts_at_statement_head``): the reducer records each such
+    halt with the block's prefix, its whole pre-halt state. Any other
+    statement whose halt still offers no record is refused here, never given
+    the prefix (which would drop what the statement bound before it) and
+    never let through record-less (a suite resuming after it would have
+    nothing to resume from).
+    """
+    if getattr(statement, "halts_at_statement_head", False):
+        return
+    if not any(
+        isinstance(exit_, Halted) and exit_.state is None for exit_ in outcome.exits
+    ):
+        return
+    from sugar_source_tree.panic import SugarNotWritten
+
+    name = type(statement).__name__
+    site = getattr(statement, "site", None)
+    raise SugarNotWritten(
+        owner="reduce_block_to_exitset.statement",
+        blame=site if site is not None else name,
+        observed=f"a {name} statement handing the block a halt with no record",
+        requested=(
+            "every halt that leaves a statement carries its record: the "
+            "entries and the context it halted in"
+        ),
+        fix=(
+            "record the halt at the statement (halt_record, halts_recorded); "
+            "a statement that binds nothing before any halt declares "
+            "halts_at_statement_head"
+        ),
+    )
 
 
 def halt_record(ctx, *, frame=None) -> _ReducedBlock:
@@ -180,7 +225,10 @@ def require_halt_record(state, *, owner: str) -> None:
     context it halted in), or ``None`` -- an expression's halt, which
     offers no record of its own because nothing of it ran before it, and
     which the statement that runs it records (``halts_recorded``, the block
-    composition). Any other state -- a bare context, a generator's machine,
+    composition) before it leaves the statement: the block reducer refuses
+    a statement whose halt still offers none (``_require_recorded_halts``),
+    so ``None`` exists only inside an expression's evaluation. Any other
+    state -- a bare context, a generator's machine,
     a value, any other payload -- is stopped here by name, never carried
     in place of a record: whatever else a halt must carry lives inside its
     record (a generator frame: ``halt_record(..., frame=)``).
@@ -545,6 +593,11 @@ def reduce_block_to_exitset(
                 # (``store_faces``), and they arrive through the seam below.
                 return project(plain)
 
+            # The boundary: a halt leaves a statement with its record, or
+            # from the head of a statement that declares it binds nothing
+            # before any halt. ``None`` lives only inside an expression.
+            _require_recorded_halts(outcome, statement)
+
             effect = _plain_halt(outcome)
             if effect is not None:
                 # One plain halt at the statement: nothing ran inside it before
@@ -583,21 +636,19 @@ def reduce_block_to_exitset(
             # sequencing. Without this, a halt inside a nested statement
             # would report an empty temporal state and every earlier store
             # would read as rolled back (Python never rolls back a store).
-            head_halt = getattr(statement, "halts_at_statement_head", False)
 
             def spliced(halt):
                 # The halt leaves from the prefix spliced onto its own state;
-                # ``sequence`` keeps its guard, faces and ``owed``. A simple
-                # statement binds nothing before its own halt (an expression
-                # halt, a store's halted face): a stateless arm halted at its
-                # head, where the prefix is the whole record -- the same state
-                # the plain halt above gives.
+                # ``sequence`` keeps its guard, faces and ``owed``. A
+                # record-less arm reaches here only from a statement that
+                # binds nothing before its own halt (``halts_at_statement_head``,
+                # checked above: an expression halt, a store's halted face): it
+                # halted at the head, where the prefix is the whole record --
+                # the same state the plain halt above gives.
                 return ExitSet.halted(
                     halt.effect,
                     state=(
-                        state
-                        if head_halt and halt.state is None
-                        else _halt_state(state, halt)
+                        state if halt.state is None else _halt_state(state, halt)
                     ),
                 )
 

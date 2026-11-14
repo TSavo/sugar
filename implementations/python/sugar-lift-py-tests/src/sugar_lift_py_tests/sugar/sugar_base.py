@@ -57,7 +57,9 @@ class Sugar(ABC):
     # set this: some of their halts happen after a body ran, and the prefix
     # would erase that body's record. Every halt they hand back carries its
     # own record instead (``function_universe_sugar.halt_record``: the empty
-    # one where it halted, for a halt at the statement's head).
+    # one where it halted, for a halt at the statement's head). A statement
+    # that does not set this and hands the block reducer a halt with no
+    # record is refused by name (``_require_recorded_halts``).
     halts_at_statement_head: ClassVar[bool] = False
 
     def __init_subclass__(cls, **kwargs):

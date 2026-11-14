@@ -671,6 +671,10 @@ def test_second_handler_reads_first_handler_temporal_binding():
     )
 
     class Fixed(Sugar):
+        # A statement that binds nothing before its halt: the block's
+        # prefix is its record.
+        halts_at_statement_head = True
+
         def __init__(self, outcome):
             self.outcome = outcome
 
@@ -704,6 +708,10 @@ def test_second_handler_reads_first_handler_temporal_binding():
             return ()
 
     class ReadXOrHalt(Sugar):
+        # Its read halts before it binds anything: the block's prefix is
+        # its record.
+        halts_at_statement_head = True
+
         def desugar(self, ctx=None):
             temporal = getattr(ctx, "temporal", None) if ctx is not None else None
             bound = temporal.value_if_bound("x") if temporal is not None else None
@@ -892,6 +900,8 @@ def test_guarded_handler_faces_conjoin_body_guard():
     handler_atom = atomic("handler.guard", [str_const("handler")])
 
     class Fixed(Sugar):
+        halts_at_statement_head = True
+
         def __init__(self, outcome):
             self.outcome = outcome
 
@@ -913,6 +923,9 @@ def test_guarded_handler_faces_conjoin_body_guard():
             return ()
 
     class GuardedRaise(Sugar):
+        # A raise statement: it binds nothing before its halt.
+        halts_at_statement_head = True
+
         def desugar(self, ctx=None):
             del ctx
             return ExitSet(
@@ -933,6 +946,9 @@ def test_guarded_handler_faces_conjoin_body_guard():
             return ()
 
     class BodyHalt(Sugar):
+        # A raise statement: it binds nothing before its halt.
+        halts_at_statement_head = True
+
         def desugar(self, ctx=None):
             del ctx
             return ExitSet((Halted(body_atom, group, None),))
@@ -1005,6 +1021,9 @@ def test_alternative_exceptional_faces_keep_separate_guards():
             return ()
 
     class SplitRaise(Sugar):
+        # A raise statement: it binds nothing before its halts.
+        halts_at_statement_head = True
+
         def desugar(self, ctx=None):
             del ctx
             return ExitSet(
@@ -1033,6 +1052,9 @@ def test_alternative_exceptional_faces_keep_separate_guards():
             return ()
 
     class BodyHalt(Sugar):
+        # A raise statement: it binds nothing before its halt.
+        halts_at_statement_head = True
+
         def desugar(self, ctx=None):
             del ctx
             return ExitSet((Halted(body_atom, group, None),))

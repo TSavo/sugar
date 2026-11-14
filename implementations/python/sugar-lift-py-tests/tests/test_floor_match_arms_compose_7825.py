@@ -179,6 +179,9 @@ class _Outcome(Sugar):
 
     outcome: object
     site: object = SITE
+    # A canned statement binds nothing before its halts: the block's prefix
+    # is their record.
+    halts_at_statement_head = True
 
     @classmethod
     def witnesses(cls):

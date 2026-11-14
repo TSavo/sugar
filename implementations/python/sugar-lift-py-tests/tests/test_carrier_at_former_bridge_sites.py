@@ -93,6 +93,9 @@ class _Answer(Sugar):
     """A sugar whose desugar answers exactly ``answer``."""
 
     answer: object
+    # A canned statement binds nothing before its halts: the block's prefix
+    # is their record.
+    halts_at_statement_head = True
 
     @classmethod
     def witnesses(cls):

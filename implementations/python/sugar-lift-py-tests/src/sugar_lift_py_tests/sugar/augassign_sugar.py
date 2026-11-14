@@ -49,6 +49,9 @@ class AugAssignSugar(Sugar):
     op_site: object = dataclass_field(compare=False)
     site: object = dataclass_field(compare=False)
     evaluation: str | None = None
+    # Every halt (the read, the right-hand side, the inplace operation) is
+    # before the rebind: its pre-halt record is the block's prefix.
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):

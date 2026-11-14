@@ -17,12 +17,17 @@ from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRa
 from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted, true_guard
-from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+from sugar_lift_py_tests.sugar.function_universe_sugar import (
+    _ReducedBlock,
+    halt_record,
+)
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
 class _Fixed(Sugar):
-    """A statement whose reduction is handed in."""
+    """A statement whose reduction is handed in. Every halt it hands the
+    block carries its record (``halt_record``: where it halted), as every
+    statement's does: the block reducer refuses one that offers none."""
 
     def __init__(self, build):
         self.build = build
@@ -57,7 +62,9 @@ def test_a_halt_through_an_owing_finally_owes_both() -> None:
         exception_name="ValueError",
         occurrence=AuthenticatedRaiseLocus.of("body:ve:7825"),
     )
-    pre_finally = ExitSet((Halted(true_guard(), raised, None, owed=("debt:body",)),))
+    pre_finally = ExitSet(
+        (Halted(true_guard(), raised, halt_record(ctx), owed=("debt:body",)),)
+    )
     finalbody = (_Fixed(lambda c: _owing_completion(c, "debt:finally")),)
 
     after = _and_finally_with_raise_context(
@@ -119,8 +126,12 @@ def test_an_owing_except_star_handler_makes_the_result_owe_it() -> None:
     sugar = TryStarSugar(
         body=(
             _Fixed(
-                lambda _c: ExitSet(
-                    (Halted(body_atom, group, None, owed=("debt:body",)),)
+                lambda c: ExitSet(
+                    (
+                        Halted(
+                            body_atom, group, halt_record(c), owed=("debt:body",)
+                        ),
+                    )
                 )
             ),
         ),
@@ -171,7 +182,9 @@ def _one_leaf_try_star(tag: str, handler_body: tuple):
         unit=SimpleNamespace(source="try-star"),
     )
     sugar = TryStarSugar(
-        body=(_Fixed(lambda _c: ExitSet((Halted(body_atom, group, None),))),),
+        body=(
+            _Fixed(lambda c: ExitSet((Halted(body_atom, group, halt_record(c)),))),
+        ),
         handlers=(
             (
                 (_Fixed(lambda _c: ExitSet.completed(ve_typed)),),
@@ -190,7 +203,9 @@ def test_a_reraising_handler_yields_only_the_halt() -> None:
     sugar, leaf = _one_leaf_try_star(
         "reraise_7825",
         lambda leaf: (
-            _Fixed(lambda _c: ExitSet((Halted(true_guard(), leaf, None),))),
+            _Fixed(
+                lambda c: ExitSet((Halted(true_guard(), leaf, halt_record(c)),))
+            ),
         ),
     )
     result = sugar.desugar(ReduceContext.root(owner="reraise_7825"))

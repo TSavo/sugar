@@ -105,6 +105,10 @@ def test_block_reduction_retains_complement_of_guarded_halt():
     )
 
     class GuardedHalt:
+        # A statement that binds nothing before its halt: the block's prefix
+        # is its record.
+        halts_at_statement_head = True
+
         def desugar(self, ctx=None):
             del ctx
             return ExitSet.halted(effect).guarded(condition)

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
-from typing import Any
+from typing import Any, ClassVar
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -55,6 +55,12 @@ class NestedDynamicUnpackAssignSugar(Sugar):
     # The statement's one evaluation: every leaf's member is bound under its
     # projection of this key too (temporal choice 1; DynamicUnpackAssignSugar).
     evaluation: str | None = None
+    # A record-less halt is the right-hand side's, or a level's unpack before
+    # any leaf was bound (the outer one; an inner one first in its parent):
+    # its pre-halt record is the block's prefix. An inner level that halts
+    # after a leaf was bound carries the record of what was bound
+    # (``_bound_record``).
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):
@@ -88,14 +94,48 @@ class NestedDynamicUnpackAssignSugar(Sugar):
     def _project(
         self, value: Any, pattern: tuple[NameUnpackPattern, ...], ctx: object
     ) -> ExitSet:
-        return project_nested_pattern(value, pattern, ctx, site=self.site)
+        return project_nested_pattern(
+            value, pattern, ctx, site=self.site, record=self._bound_record(ctx)
+        )
+
+    def _bound_record(self, ctx: object):
+        """The record an inner level's halt carries: ``(name, member)`` of
+        every leaf Python bound before that level unpacked, bound as the
+        statement's completed face binds them (under their projections of
+        ``evaluation`` when the statement was substituted), in the context
+        the statement halted in.
+
+        CPython stores each target of a level before it unpacks the next
+        nested one (``(a, b), (c, d) = v``: ``a`` and ``b`` are bound when
+        the second unpack raises), and never unbinds them: a handler
+        around the statement reads them.
+        """
+        from sugar_lift_py_tests.floor.scope_rebind import (
+            ScopeRebinds,
+            bind_unpack_projections,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
+
+        def record(bindings):
+            bound = bind_unpack_projections(
+                ScopeRebinds(tuple(bindings)), self.evaluation
+            ).completed_value()
+            return halt_record(bound.extend_scope(ctx))
+
+        return record
 
 
 _OWNER = "NestedDynamicUnpackAssignSugar"
 
 
 def project_nested_pattern(
-    value: Any, pattern: tuple[NameUnpackPattern, ...], ctx: object, *, site
+    value: Any,
+    pattern: tuple[NameUnpackPattern, ...],
+    ctx: object,
+    *,
+    site,
+    bound: tuple = (),
+    record=None,
 ) -> ExitSet:
     """The one nested Name-only unpack of an already-evaluated ``value``.
 
@@ -113,6 +153,13 @@ def project_nested_pattern(
 
     A starred leaf (``(a, *b, (c, d))``) takes the list of the members
     between its fixed neighbours.
+
+    ``bound``: the ``(name, member)`` of every leaf bound before this level
+    unpacks (the earlier targets of every enclosing level).  ``record``
+    (``bindings -> record``): where given, a halt of this level's unpack
+    after a leaf was bound carries ``record(bound)``, the record of those
+    bindings; a halt before any leaf was bound offers none, and the
+    statement records it at its head.
     """
     from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
     from sugar_lift_py_tests.operations.sequence_projection_operation import (
@@ -161,14 +208,26 @@ def project_nested_pattern(
         name, member = bindings[index]
         if not name.startswith("@"):
             return splice(bindings, index + 1, (*collected, (name, member)))
+        # Every earlier target of this level is bound before the nested
+        # one unpacks.
         return project_nested_pattern(
-            member, pattern[int(name[1:])], ctx, site=site
+            member,
+            pattern[int(name[1:])],
+            ctx,
+            site=site,
+            bound=(*bound, *collected),
+            record=record,
         ).and_then(
             lambda sub: splice(
                 bindings, index + 1, (*collected, *rebinds_of(sub))
             )
         )
 
-    return operation.submit(value, ctx).and_then(
-        lambda level: splice(rebinds_of(level), 0, ())
-    )
+    unpacked = operation.submit(value, ctx)
+    if record is not None and bound:
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halts_recorded,
+        )
+
+        unpacked = halts_recorded(unpacked, record(bound))
+    return unpacked.and_then(lambda level: splice(rebinds_of(level), 0, ()))

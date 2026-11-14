@@ -131,6 +131,10 @@ def _boundary_from_exitset(
     )
 
     class Fixed(Sugar):
+        # A canned statement binds nothing before its halts: the block's
+        # prefix is their record.
+        halts_at_statement_head = True
+
         def __init__(self, outcome):
             self.outcome = outcome
 
@@ -565,6 +569,10 @@ def _factored_boundary_from_exitset(
     )
 
     class Fixed(Sugar):
+        # A canned statement binds nothing before its halts: the block's
+        # prefix is their record.
+        halts_at_statement_head = True
+
         def __init__(self, outcome):
             self.outcome = outcome
 

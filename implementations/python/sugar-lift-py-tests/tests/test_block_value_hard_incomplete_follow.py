@@ -12,6 +12,10 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_ex
 
 
 class _Fixed:
+    # A statement that binds nothing before its halt: the block's prefix is
+    # its record.
+    halts_at_statement_head = True
+
     def __init__(self, outcome, log=None):
         self.outcome = outcome
         self.log = log

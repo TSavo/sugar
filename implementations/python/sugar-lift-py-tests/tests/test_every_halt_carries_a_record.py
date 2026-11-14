@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 from frame_fresh import fresh
@@ -231,6 +232,66 @@ def test_an_if_conditions_halt_carries_what_ran_before_the_if() -> None:
     assert halt.state.context is ctx
 
 
+# -- the boundary: ``None`` never leaves a statement ------------------------------
+
+
+@dataclass(frozen=True)
+class _Leaks(Sugar):
+    """A statement that hands the block an expression's halt as it is: no
+    record, and no declaration that it halted at its head."""
+
+    guarded: bool = False
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        halted = ExitSet.halted(_effect())
+        if self.guarded:
+            return halted.guarded(atomic("test.leaks", []))
+        return halted
+
+
+@dataclass(frozen=True)
+class _HaltsAtHead(_Leaks):
+    """The same halt from a statement that binds nothing before it."""
+
+    halts_at_statement_head: ClassVar[bool] = True
+
+
+@pytest.mark.parametrize("guarded", [False, True], ids=["plain", "guarded"])
+def test_the_block_refuses_a_statement_that_leaks_a_halt_with_no_record(
+    guarded: bool,
+) -> None:
+    # ``None`` lives only inside an expression's evaluation: a statement that
+    # hands it to the block reducer is stopped by name, never given the
+    # block's prefix (which would drop what it bound first) and never let
+    # through record-less.
+    ctx = ReduceContext.root(owner="every-halt-record.leaks")
+    before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
+    with pytest.raises(SugarNotWritten) as refused:
+        reduce_block_to_exitset((_Leaks(guarded=guarded),), ctx, after=before)
+    assert refused.value.owner == "reduce_block_to_exitset.statement"
+
+
+@pytest.mark.parametrize("guarded", [False, True], ids=["plain", "guarded"])
+def test_a_statement_that_halts_at_its_head_takes_the_blocks_prefix(
+    guarded: bool,
+) -> None:
+    # A statement that binds nothing before its halt declares it: the
+    # block's prefix is the halt's whole record.
+    ctx = ReduceContext.root(owner="every-halt-record.head")
+    before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
+    exits = reduce_block_to_exitset(
+        (_HaltsAtHead(guarded=guarded),), ctx, after=before
+    )
+    (halt,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
+    assert isinstance(halt.state, _ReducedBlock)
+    assert halt.state.entries == (TermValue(7),)
+
+
 # -- end to end: a handler sees what ran before the raise ------------------------
 
 
@@ -344,3 +405,36 @@ def test_every_halt_leaving_a_head_carries_a_record_with_what_ran_before(
     for halt in halts:
         assert isinstance(halt.state, _ReducedBlock), halt
         assert _holds(halt.state.entries, _ONE), halt.state.entries
+
+
+# -- a nested unpack: the inner halt carries what the outer targets bound ------
+
+
+def _nested_unpack(second: str, read: str) -> str:
+    """``f``: ``(a, b), (c, d) = pairs`` whose second member is ``second``;
+    a handler for its ``ValueError`` (and the completed path) returns
+    ``read``."""
+    return (
+        "def f():\n"
+        f"    pairs = ((1, 2), {second})\n"
+        "    try:\n"
+        "        (a, b), (c, d) = pairs\n"
+        "    except ValueError:\n"
+        f"        return {read}\n"
+        f"    return {read}\n"
+    )
+
+
+@pytest.mark.parametrize("read", ["a", "b"])
+def test_a_nested_unpack_whose_inner_arity_fails_keeps_the_outer_binding(
+    read: str,
+) -> None:
+    # CPython stores ``a`` and ``b`` before it unpacks ``(3, 4, 5)`` into
+    # ``(c, d)`` and raises: the handler reads them as the completed path
+    # would. The inner halt used to offer no record, and the statement's
+    # prefix (from before ``a`` and ``b`` were bound) stood in for it.
+    def returned(second: str):
+        source = _nested_unpack(second, read)
+        return _returned_value(function_universe_outcome(_function(source)))
+
+    assert returned("(3, 4, 5)") == returned("(3, 4)")

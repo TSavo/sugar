@@ -138,6 +138,9 @@ class ChainedAssignSugar(Sugar):
     site: object = dataclass_field(compare=False)
     evaluations: tuple = ()  # (name, key) per Name target, as AssignSugar's
     evaluation: str | None = None  # the key the stores read the value under
+    # A record-less halt is the RHS's, before any target is assigned; the
+    # stores' halts carry the record their block gave them.
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):
@@ -247,6 +250,10 @@ class DynamicUnpackStoreAssignSugar(Sugar):
     value: Sugar
     targets: tuple  # Name|Star|Attribute|Subscript unpack targets, source order
     site: object = dataclass_field(compare=False)
+    # A record-less halt is the RHS's or the unpack's, before any target
+    # applies its member; a target's halt carries the record the targets'
+    # block gave it (``_apply_authenticated_roster``).
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):
@@ -423,6 +430,9 @@ class UnpackStoreAssignSugar(Sugar):
     site: object = dataclass_field(compare=False)
     evaluations: tuple = ()  # (name, key) per Name leaf, as AssignSugar's
     members: tuple = ()  # (member key, value_sugar) per store leaf
+    # A record-less halt is a RHS member's, before any target is assigned;
+    # the stores' halts carry the record their block gave them.
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):

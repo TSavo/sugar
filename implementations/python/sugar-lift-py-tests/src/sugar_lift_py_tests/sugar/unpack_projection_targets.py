@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field as dataclass_field
+from typing import ClassVar
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -143,6 +144,10 @@ class ApplyUnpackMemberSugar(Sugar):
     target: UnpackProjectionTarget
     member: object  # FloorValue
     site: object = dataclass_field(compare=False, default=None)
+    # A record-less halt is a nested level's unpack, before any of its own
+    # targets applies: what the earlier targets bound is the prefix of the
+    # block these steps reduce in. A store target's halt carries its record.
+    halts_at_statement_head: ClassVar[bool] = True
 
     def __post_init__(self) -> None:
         if not isinstance(self.target, UnpackProjectionTarget):
