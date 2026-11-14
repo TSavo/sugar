@@ -1,11 +1,10 @@
 """Full-tree universe mint must not downgrade product panics to gaps.
 
-The targeted ``seek=true`` universe door may retain an abstract gap while it
-tries an applied call-site construction (``test_dig_with_args`` owns that
-composition law).  The full-tree ``seek=false`` mint has no such second
-construction: converting ``SugarNotWritten`` to a gap lets Rust turn it into a
-diagnostic and seal an incomplete ``ir-document``.  This tooth pins the other
-arm at the real JSON-RPC membrane.
+The targeted ``seek=true`` universe door answers one call site, so it names
+the refused function as a gap.  The full-tree ``seek=false`` mint must not:
+converting ``SugarNotWritten`` to a gap lets Rust turn it into a diagnostic
+and seal an incomplete ``ir-document``.  This tooth pins that arm at the real
+JSON-RPC membrane.
 """
 
 from __future__ import annotations

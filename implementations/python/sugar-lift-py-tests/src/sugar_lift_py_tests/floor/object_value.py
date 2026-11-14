@@ -502,22 +502,23 @@ class ObjectValue(FloorValue):
     def iter_with(
         self, operation: IteratorOperation, ctx: ReduceContext | None
     ) -> Outcome:
-        """``iter(obj)`` is the constructor-bound ``__iter__`` data-model method."""
-        del ctx
+        """``iter(obj)`` is the constructor-bound ``__iter__`` data-model method,
+        applied under the caller's context like any call (#7757 item 12)."""
         return self.call_method_value(
             "__iter__",
             (),
             owner=operation.owner,
             blame=operation.blame,
+            ctx=ctx,
         )
 
     def next_with(self, operation: NextOperation, ctx: ReduceContext | None) -> Outcome:
-        del ctx
         return self.call_method_value(
             "__next__",
             (),
             owner=operation.owner,
             blame=operation.blame,
+            ctx=ctx,
         )
 
     def subscript_with(
@@ -535,7 +536,6 @@ class ObjectValue(FloorValue):
         operation: InplaceBinaryOperatorOperation,
         ctx: ReduceContext | None,
     ) -> Outcome:
-        del ctx
         method_name = _INPLACE_BINARY_DUNDER_METHODS.get(operation.operator)
         if method_name is None:
             return self._floor_gap(
@@ -553,6 +553,7 @@ class ObjectValue(FloorValue):
             (operation.right,),
             owner=operation.owner,
             blame=operation.blame,
+            ctx=ctx,
         )
 
     def call_method_value(

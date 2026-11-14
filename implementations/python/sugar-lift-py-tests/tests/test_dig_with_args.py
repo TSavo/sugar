@@ -1,10 +1,10 @@
-"""The dig-with-args: a call IS substitution, drained at the universe cue.
+"""The universe cue at a call site serves the callee's ONE contract.
 
-The caller's fact is a REFERENCE (`call:A(array(1,2,3)) == 6`); the dig at that
-call site serves A's contract AS APPLIED -- ground args substitute into the
-callee body, the loop unrolls there, and the fold coordinate collapses to the
-literal: post `out == 6`. An arg still carrying a hole (a free name) leaves the
-abstract contract standing -- the callable floor.
+The caller's fact is a REFERENCE (`call:A(...) == 6`). The dig at that call
+site serves A's abstract contract, whatever the actuals are: a contract is
+applied in one place, at prove (the nine steps, step 6 and step 9). The seek
+path's own application (`applied_contract_rows`: bind the actuals, reduce the
+callee body again) is deleted (#7757 item 12).
 """
 
 import tempfile
@@ -63,23 +63,7 @@ SUM_HELPER = (
 )
 
 
-def test_ground_args_serve_the_applied_contract():
-    # A([1, 2, 3]) dug -> the fold collapses: post out == 6.
-    uni, gaps, kw = _enumerate(
-        SUM_HELPER + "def test_a():\n    assert A([1, 2, 3]) == 6\n"
-    )
-    assert len(uni) == 1 and not gaps
-    post = _resolved_post(uni, kw)
-    assert post["name"] == "="
-    assert post["args"][0] == {"kind": "var", "name": "out"}
-    assert post["args"][1]["value"] == 6
-
-
-def test_hole_args_serve_the_abstract_contract():
-    # A(ys) where ys is the caller's own formal: the pre is still a hole, so
-    # the curried (abstract) contract stands -- post over the fold coordinate,
-    # not a literal.
-    uni, gaps, kw = _enumerate(SUM_HELPER + "def test_a(ys):\n    assert A(ys) == 6\n")
+def _abstract_fold_post(uni, kw):
     assert len(uni) == 1
     post = _resolved_post(uni, kw)
     assert post["name"] == "="
@@ -87,11 +71,21 @@ def test_hole_args_serve_the_abstract_contract():
     assert right.get("kind") == "ctor" and right["name"] == "call:py.fold.Add"
 
 
-if __name__ == "__main__":
-    test_ground_args_serve_the_applied_contract()
-    test_hole_args_serve_the_abstract_contract()
-    test_applied_dig_fires_even_when_the_abstract_universe_is_a_gap()
-    print("ok: dig-with-args -- ground fills and collapses, a hole stays curried")
+def test_ground_args_serve_the_abstract_contract():
+    # A([1, 2, 3]): the seek no longer reduces A's body under these actuals;
+    # it serves the same contract a hole argument gets.
+    uni, gaps, kw = _enumerate(
+        SUM_HELPER + "def test_a():\n    assert A([1, 2, 3]) == 6\n"
+    )
+    assert not gaps
+    _abstract_fold_post(uni, kw)
+
+
+def test_hole_args_serve_the_abstract_contract():
+    uni, _gaps, kw = _enumerate(
+        SUM_HELPER + "def test_a(ys):\n    assert A(ys) == 6\n"
+    )
+    _abstract_fold_post(uni, kw)
 
 
 WHILE_HELPER = (
@@ -103,12 +97,15 @@ WHILE_HELPER = (
 )
 
 
-def test_applied_dig_fires_even_when_the_abstract_universe_is_a_gap():
-    # The symbolic while has NO abstract universe (loud) -- but a ground call
-    # fills n, the condition grounds, and the existing unroll fires: the dig
-    # serves out == 3. A symbolic while needed no coordinate; it was a
-    # substitute all along.
-    uni, gaps, kw = _enumerate(WHILE_HELPER + "def test_a():\n    assert A(3) == 3\n")
-    assert len(uni) == 1
+def test_a_ground_call_never_gets_an_applied_answer():
+    # A ground call no longer reduces A's body a second time under A(3): the
+    # cue is A's abstract contract, or a named gap when A has none. It is
+    # never the applied literal `out == 3`.
+    uni, gaps, kw = _enumerate(
+        WHILE_HELPER + "def test_a():\n    assert A(3) == 3\n"
+    )
+    if not uni:
+        assert gaps, "a callee with no contract is a named gap, never a silent empty"
+        return
     post = _resolved_post(uni, kw)
-    assert post["args"][1]["value"] == 3
+    assert post["args"][1].get("value") != 3

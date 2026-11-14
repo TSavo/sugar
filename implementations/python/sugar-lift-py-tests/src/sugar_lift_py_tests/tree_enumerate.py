@@ -595,9 +595,9 @@ def function_universe_outcome(fn):
 def reduction_rows(outcome, *, owner, blame, def_memento):
     """THE projection from one reduction to its wire rows (#7766).
 
-    Every caller that turns a function body's reduction into rows comes
-    through here: the abstract universe (``function_contract_rows``) and the
-    universe as applied at a call (``applied_contract_rows``). ``outcome`` is a
+    A function body's one reduction (``function_contract_rows``) becomes rows
+    here and nowhere else; enumerate never applies a body at a call itself
+    (#7757 item 12: a contract is applied at prove). ``outcome`` is a
     ``Complete`` (one arm under guard true) or an ``ExitSet`` of completed and
     halted arms; ``owner`` states the name, formals and symbol when no arm
     completed. ``None`` when the outcome is not a set of arms.
@@ -704,68 +704,6 @@ def call_nodes_in_assert(sf: SourceFile, span: Optional[dict]) -> list:
         for call in node.walk()
         if isinstance(call, Call) and isinstance(call.func, Name)
     ]
-
-
-def _args_are_ground(call) -> bool:
-    """True when every argument fills its pre with no remaining hole: no free
-    Name inside any arg. A hole-bearing arg leaves the callee's contract
-    curried (the abstract contract IS the callable floor); a ground arg set is
-    a fill, and the dig applies it."""
-    for arg in call.args:
-        for n in arg.walk():
-            if n.kind == "Name":
-                return False
-    return True
-
-
-def applied_contract_rows(fn, arg_nodes: tuple, file_rel: str, keywords: tuple = ()):
-    """The callee's contract AS APPLIED at a call: a call IS substitution.
-
-    Binding goes through ``SourceCallFrame.bind_node_actuals`` — the same door
-    that packs positional, keyword, default, positional-only, keyword-only, and
-    variadic formals. An ad-hoc flat param/actual zip binder is forbidden:
-    ``def f(a, *rest)`` called ``f(1, 2)`` must bind ``rest=(2,)``, not
-    ``rest=2``.
-
-    Construction uses the bound frame's already-sugared body and the frame's
-    formal coordinates — not a second bare ``FunctionUniverseSugar`` mint that
-    drifts from ``FunctionDef.sugar()``. Its rows come through the one
-    projection, ``reduction_rows``, as the abstract path's do; an outcome that
-    is not a set of arms is (memento, None), an effect. Binding gaps propagate
-    as ``SourceCallBindingGap``.
-    """
-    from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
-
-    def_memento = function_def_memento(fn, file_rel)
-    frame = fn.source_visible_call_frame()
-    # SourceCallBindingGap propagates loud — no soft gap swallow.
-    bound = frame.bind_node_actuals(tuple(arg_nodes), tuple(keywords))
-    # Statement sugars and formal coordinates come from the construction door
-    # (frame bind + FunctionDef body sugars). Project the universe floor
-    # without a second incomplete FunctionUniverseSugar producer.
-    outcome = reduce_body(bound.body.statements).and_then(
-        lambda record: Complete(
-            UniverseValue(
-                name=fn.name,
-                formals=bound.parameters,
-                record=record,
-                formal_coordinates=bound.formal_coordinates,
-            )
-        )
-    )
-    from types import SimpleNamespace
-
-    owner = SimpleNamespace(
-        name=fn.name,
-        formals=bound.parameters,
-        bridge_source_symbol=None,
-        formal_coordinates=bound.formal_coordinates,
-    )
-    return def_memento, reduction_rows(
-        outcome, owner=owner, blame=fn.fragment, def_memento=def_memento
-    )
 
 
 def module_definition_memento(sf: SourceFile, file_rel: str, file_cid: str) -> dict:

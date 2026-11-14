@@ -2676,7 +2676,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_py_tests import unanswered_calls as _unanswered
                 from sugar_lift_py_tests.ir import TermTableBuilder
                 from sugar_lift_py_tests.proofir._errors import FreeVariableRefusal
-                from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
                 from sugar_source_tree.panic import SugarNotWritten
 
                 sf = _open_enumerated_file(full_path, root=root, locus_root=locus_root)
@@ -2760,8 +2759,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         # lets the Rust fold downgrade it to a diagnostic and
                         # seal incomplete IR.  Let the existing typed-loud RPC
                         # membrane carry the structured panic instead.  A
-                        # targeted seek is different: it may still construct an
-                        # applied callee after its abstract universe refused.
+                        # targeted seek answers one call site: that callee's
+                        # universe is a named gap there.
                         if not seek:
                             raise
                         gaps.append(
@@ -2844,48 +2843,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             }
                         )
                         continue
-                    # A call IS substitution: ground args fill the pre, so the
-                    # dig serves the contract AS APPLIED at this call (a concrete
-                    # iterable unrolls the callee's loop here; the fold
-                    # coordinate collapses; a symbolic while's condition grounds
-                    # and unrolls). An arg still carrying a hole leaves the
-                    # abstract contract standing -- the callable floor. The
-                    # applied dig is attempted even when the ABSTRACT universe is
-                    # a gap: the applied substitution can succeed exactly where
-                    # the abstract is still a hole (that is the whole point of
-                    # filling the pre). Arity is the binder's job (vararg packs,
-                    # defaults fill) — never len(args)==len(params).
-                    if _tree._args_are_ground(call):
-                        try:
-                            keywords = tuple(
-                                (keyword.arg, keyword.value)
-                                for keyword in call.keywords
-                                if keyword.arg is not None
-                            )
-                            memento, rows = _tree.applied_contract_rows(
-                                fn, tuple(call.args), file_rel, keywords=keywords
-                            )
-                        except SugarNotWritten:
-                            # Typed tree frontier: abstract identity fallback.
-                            rows = None
-                        except FreeVariableRefusal:
-                            # The callee as applied names a variable outside
-                            # its scope. Its member comes from the full scan
-                            # mint packages; here the abstract fallback below
-                            # is taken, with no cue gap and no node (#7785).
-                            rows = None
-                        except SourceCallBindingGap as bind_gap:
-                            cue_gaps.append(
-                                {
-                                    "memento": at,
-                                    "reason": f"SourceCallBindingGap: {bind_gap}",
-                                }
-                            )
-                            rows = None
-                        if rows:
-                            cued.append(_node(memento.to_rpc(), rows[0]))
-                            continue
-                    # Abstract contract for THIS authenticated definition only.
+                    # The callee's one contract, whatever the actuals are: a
+                    # contract is applied in one place, at prove (steps 6 and
+                    # 9). This door does not bind the actuals and reduce the
+                    # body a second time (#7757 item 12).
                     def_rpc = _tree.function_def_memento(fn, file_rel).to_rpc()
                     abstract = by_source_cid.get(def_rpc["source_cid"])
                     if abstract is not None:
