@@ -12,6 +12,8 @@ from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
+from frame_fresh import FRAME_FRESH
+
 
 def _definition_and_receiver():
     source = (
@@ -26,7 +28,7 @@ def _definition_and_receiver():
     definition = next(node for node in tree.root.body if isinstance(node, ClassDef))
     outcome = definition.sugar().desugar(ReduceContext.root(owner="test"))
     value = outcome.completed_value()
-    return value, value.fresh_receiver("receiver")
+    return value, value.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
 
 def test_builtin_super_setitem_carries_receiver_transition_and_none_separately():
@@ -52,7 +54,9 @@ def test_builtin_super_setitem_carries_receiver_transition_and_none_separately()
 
 def test_receiver_transition_updates_every_exact_identity_alias_only():
     definition, receiver = _definition_and_receiver()
-    distinct = MappingObjectValue("Mapping", (), identity="other")
+    distinct = MappingObjectValue(
+        "Mapping", (), identity="other", allocation=FRAME_FRESH
+    )
     result = (
         BuiltinSuperValue(definition, receiver)
         .call_method_value(

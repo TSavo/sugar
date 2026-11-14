@@ -19,6 +19,8 @@ from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
+from frame_fresh import FRAME_FRESH
+
 
 def _source_receiver(source: str):
     tree = SourceFile(
@@ -29,7 +31,9 @@ def _source_receiver(source: str):
     context = ReduceContext.root(owner="test_enum_setitem_lineage")
     class_outcome = definition.sugar().desugar(context)
     assert class_outcome.completed_value() is not None
-    receiver = class_outcome.completed_value().fresh_receiver("namespace-coordinate")
+    receiver = class_outcome.completed_value().fresh_receiver(
+        "namespace-coordinate", allocation=FRAME_FRESH
+    )
     assert isinstance(receiver, MappingObjectValue)
     return receiver, context
 

@@ -9,6 +9,8 @@ from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
+from frame_fresh import FRAME_FRESH
+
 
 def _constructed(source: str):
     tree = SourceFile(
@@ -40,7 +42,7 @@ _TRUTHFUL = (
 
 def test_super_dispatches_into_source_defined_base_init() -> None:
     context, (base, derived) = _constructed(_TRUTHFUL)
-    receiver = derived.fresh_receiver("receiver")
+    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
     zuper = BuiltinSuperValue(current_class=derived, receiver=receiver)
 
     projected = zuper.call_method_value(
@@ -78,7 +80,7 @@ def test_super_naming_an_absent_method_is_the_attribute_error() -> None:
     # Derived's MRO is read whole (Derived, Base, object) and no class after
     # Derived binds ``greet``: CPython's AttributeError, never a base method.
     context, (_base, derived) = _constructed(_LIAR)
-    receiver = derived.fresh_receiver("receiver")
+    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
     zuper = BuiltinSuperValue(current_class=derived, receiver=receiver)
 
     outcome = zuper.call_method_value(
@@ -112,7 +114,7 @@ _OWN_METHOD_ONLY = (
 
 def test_super_runs_the_first_class_after_the_cell_that_binds_the_name() -> None:
     context, (base, _middle, derived) = _constructed(_OWN_METHOD_ONLY)
-    receiver = derived.fresh_receiver("receiver")
+    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     call = (
         BuiltinSuperValue(current_class=derived, receiver=receiver)
@@ -163,7 +165,7 @@ def test_super_init_statement_applies_annotated_field_stores() -> None:
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     context, (_base, derived) = _constructed(_ANNOTATED)
-    receiver = derived.fresh_receiver("receiver")
+    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
     projected = receiver.call_method_value(
         "__init__",
         (),

@@ -23,6 +23,7 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute
 from sugar_source_tree.tree import SourceFile
 
+from frame_fresh import FRAME_FRESH
 
 from sugar_lift_py_tests.repo_root import python_implementations_root, resolve_repo_root, sugar_lift_py_tests_package_root
 
@@ -90,7 +91,9 @@ def test_formal_attribute_completes_or_halts_from_authenticated_actual() -> None
         None,
         {
             formal.coordinate_cid: ObjectValue(
-                "Receiver", (ObjectField("value", TermValue(7)),)
+                "Receiver",
+                (ObjectField("value", TermValue(7)),),
+                allocation=FRAME_FRESH,
             )
         },
     )
@@ -177,7 +180,9 @@ def test_total_attribute_actual_never_acquires_exceptional_edge() -> None:
         None,
         {
             formal.coordinate_cid: ObjectValue(
-                "Receiver", (ObjectField("value", TermValue(7)),)
+                "Receiver",
+                (ObjectField("value", TermValue(7)),),
+                allocation=FRAME_FRESH,
             )
         },
     )

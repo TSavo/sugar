@@ -275,6 +275,9 @@ def _floor_object_tuple_fields(
         obj.deferred_helper_fields,
         obj.deleted_instance_fields,
         obj.defining_class,
+        # The same object: it keeps its ``allocation`` and ``arrival``.
+        allocation=obj.allocation,
+        arrival=obj.arrival,
     )
 
 

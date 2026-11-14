@@ -15,7 +15,7 @@ from dataclasses import replace
 
 import pytest
 
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
@@ -232,7 +232,7 @@ def test_a_class_pattern_tests_the_instance_and_its_attribute() -> None:
         (),
         (("x", ValuePatternSpec(_CompleteValueSugar(TermValue(0), SITE))),),
     )
-    receiver = point.fresh_receiver("point-receiver")
+    receiver = point.fresh_receiver("point-receiver", allocation=FRAME_FRESH)
     at_zero = replace(receiver, fields=(ObjectField("x", TermValue(0)),))
     at_one = replace(receiver, fields=(ObjectField("x", TermValue(1)),))
     assert _matched(match_pattern(pattern, at_zero, SITE, None)).matched

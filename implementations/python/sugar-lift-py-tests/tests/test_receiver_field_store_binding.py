@@ -34,6 +34,8 @@ from sugar_source_tree.nodes import (
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
+from frame_fresh import FRAME_FRESH
+
 
 @dataclass(frozen=True)
 class _StoreReceiverField(Sugar):
@@ -164,7 +166,9 @@ def test_class_initializer_universe_seats_its_constructed_receiver() -> None:
 
 def test_receiver_field_store_rebinds_the_same_receiver_for_the_tail():
     """A completed ``self.x = value`` owns the later ``self.x`` projection."""
-    receiver = ObjectValue("Renamed", (), identity="receiver-1")
+    receiver = ObjectValue(
+        "Renamed", (), identity="receiver-1", allocation=FRAME_FRESH
+    )
     stored = TermValue(17)
     context = ReduceContext.root(owner="receiver-field-store").with_temporal(
         ReduceContext.root(owner="receiver-field-store-seed").temporal.bind_value(
@@ -187,6 +191,7 @@ def test_returned_alias_observes_updated_mapping_receiver_identity():
         (),
         identity="receiver-1",
         entries=((StringValue("member"), TermValue(1)),),
+        allocation=FRAME_FRESH,
     )
     alias = receiver.mapping_with_entries(receiver.entries)
     context = ReduceContext.root(owner="receiver-alias")
@@ -211,8 +216,12 @@ def test_returned_alias_observes_updated_mapping_receiver_identity():
 
 
 def test_same_class_different_receiver_identity_is_not_rewritten():
-    receiver = MappingObjectValue("Namespace", (), identity="receiver-1")
-    distinct = MappingObjectValue("Namespace", (), identity="receiver-2")
+    receiver = MappingObjectValue(
+        "Namespace", (), identity="receiver-1", allocation=FRAME_FRESH
+    )
+    distinct = MappingObjectValue(
+        "Namespace", (), identity="receiver-2", allocation=FRAME_FRESH
+    )
     context = ReduceContext.root(owner="receiver-alias")
     temporal = context.temporal.bind_value("self", receiver)
     temporal = temporal.bind_value("other", distinct)
@@ -281,6 +290,7 @@ def test_receiver_field_post_state_preserves_mapping_identity_and_entries() -> N
         (),
         identity="receiver-1",
         entries=((StringValue("member"), TermValue(1)),),
+        allocation=FRAME_FRESH,
     )
 
     outcome = ReceiverFieldStoreStateSugar(
@@ -301,7 +311,11 @@ def test_receiver_field_post_state_preserves_mapping_identity_and_entries() -> N
 def test_receiver_field_post_state_preserves_defining_class_authority() -> None:
     defining_class = object()
     receiver = ObjectValue(
-        "Namespace", (), identity="receiver-1", defining_class=defining_class
+        "Namespace",
+        (),
+        identity="receiver-1",
+        defining_class=defining_class,
+        allocation=FRAME_FRESH,
     )
 
     outcome = ReceiverFieldStoreStateSugar(
@@ -316,10 +330,18 @@ def test_receiver_field_post_state_does_not_borrow_foreign_class_authority() -> 
     own_class = object()
     foreign_class = object()
     receiver = ObjectValue(
-        "Namespace", (), identity="receiver-1", defining_class=own_class
+        "Namespace",
+        (),
+        identity="receiver-1",
+        defining_class=own_class,
+        allocation=FRAME_FRESH,
     )
     foreign = ObjectValue(
-        "Namespace", (), identity="receiver-1", defining_class=foreign_class
+        "Namespace",
+        (),
+        identity="receiver-1",
+        defining_class=foreign_class,
+        allocation=FRAME_FRESH,
     )
 
     updated = receiver.with_field_store("owner", TermValue(7))

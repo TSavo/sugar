@@ -27,6 +27,8 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 
+from frame_fresh import FRAME_FRESH
+
 
 def _classes(source: str, name: str = "namespace.py") -> dict:
     """Every module ``class`` statement of ``source``, by name."""
@@ -93,7 +95,13 @@ def test_super_in_a_subclass_reaches_the_dataclass_generated_init() -> None:
 def test_super_init_selecting_a_generated_init_is_the_unanswered_call() -> None:
     classes = _classes(_DATACLASS_SUBCLASS)
     c_value = _class_value(classes["C"])
-    receiver = ObjectValue("C", (), identity="receiver", defining_class=c_value)
+    receiver = ObjectValue(
+        "C",
+        (),
+        identity="receiver",
+        defining_class=c_value,
+        allocation=FRAME_FRESH,
+    )
 
     outcome = BuiltinSuperValue(c_value, receiver).call_method_value(
         "__init__", (), owner="test", blame="super-init"

@@ -36,7 +36,7 @@ MUST NOT TOUCH: production, carrier/ExitSet.
 from __future__ import annotations
 
 import pytest
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -238,6 +238,7 @@ def test_completed_delattr_removes_field_and_read_is_attributeerror_or_named_gap
         class_name="Widget",
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
+        allocation=FRAME_FRESH,
     )
     exits = pending.discharge(None, {obj_cid: receiver})
     assert isinstance(exits.exits[0], Completed)
@@ -275,6 +276,7 @@ def test_discrimination_delattr_does_not_leave_readable_old_value() -> None:
         class_name="Widget",
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
+        allocation=FRAME_FRESH,
     )
     exits = pending.discharge(None, {obj_cid: receiver})
     post = _post_object(exits.exits[0])
@@ -314,6 +316,7 @@ def test_delete_then_restore_setattr_reads_new_value() -> None:
         class_name="Widget",
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
+        allocation=FRAME_FRESH,
     )
     deleted = pending.discharge(None, {obj_cid: receiver})
     post = _post_object(deleted.exits[0])

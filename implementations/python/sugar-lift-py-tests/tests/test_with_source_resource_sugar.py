@@ -34,6 +34,8 @@ from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
     WithSourceResourceSugar,
 )
 
+from frame_fresh import FRAME_FRESH
+
 
 class _FixedSugar(Sugar):
     # A canned statement binds nothing before its halts: the block's prefix
@@ -366,7 +368,12 @@ def test_a_suppressed_halt_goes_on_without_the_dead_return_its_record_holds():
 
 
 def test_enter_as_binding_carries_object_occurrence_identity():
-    entered = ObjectValue("RenamedResource", (), identity="object-occurrence-cid")
+    entered = ObjectValue(
+        "RenamedResource",
+        (),
+        identity="object-occurrence-cid",
+        allocation=FRAME_FRESH,
+    )
     sugar, _ = _truthiness_resource(
         exit_value=TermValue(False),
         enter_value=entered,

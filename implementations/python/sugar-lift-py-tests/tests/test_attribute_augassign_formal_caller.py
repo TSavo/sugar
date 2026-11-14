@@ -35,6 +35,8 @@ from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect import RaiseEffect
 
+from frame_fresh import FRAME_FRESH
+
 
 def _tree(source: str, name: str = "attribute_augassign.py") -> SourceFile:
     return SourceFile(
@@ -85,6 +87,7 @@ def _obj_with_field(n: int = 1) -> ObjectValue:
         (),
         (),
         "w0",
+        allocation=FRAME_FRESH,
     )
 
 
@@ -168,6 +171,7 @@ def test_production_receiver_evaluated_once_for_get_and_set() -> None:
         (),
         (),
         "c0",
+        allocation=FRAME_FRESH,
     )
     out = _production_desugar(receiver, TermValue(3))
     assert out.completed_value() is not None
@@ -185,7 +189,14 @@ def test_discrimination_duplicated_get_is_detected() -> None:
             box["get"] += 1
             return super().attribute(name, site, ctx)
 
-    r = _CountingObject("Widget", (ObjectField("field", TermValue(1)),), (), (), "d0")
+    r = _CountingObject(
+        "Widget",
+        (ObjectField("field", TermValue(1)),),
+        (),
+        (),
+        "d0",
+        allocation=FRAME_FRESH,
+    )
     r.attribute("field", "g1", None)
     r.attribute("field", "g2", None)
     assert box["get"] == 2
@@ -229,6 +240,7 @@ def test_production_getattr_before_rhs_order() -> None:
                 (),
                 (),
                 "o0",
+                allocation=FRAME_FRESH,
             )
         ),
         attr="field",
@@ -273,7 +285,9 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
             return super().setattr(name, value, site_, ctx)
 
     # Empty fields — attribute read is undecided / AttributeError path
-    receiver = _StoreCounting("Widget", (), (), (), "empty")
+    receiver = _StoreCounting(
+        "Widget", (), (), (), "empty", allocation=FRAME_FRESH
+    )
     sugar = AttributeAugAssignSugar(
         receiver=_FloorSugar(receiver),
         attr="field",
@@ -308,6 +322,7 @@ def test_production_arithmetic_halt_blocks_store() -> None:
         (),
         (),
         "a0",
+        allocation=FRAME_FRESH,
     )
     out = _production_desugar(receiver, NoneValue())
     assert box["set"] == 0
@@ -336,6 +351,7 @@ def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
         (),
         (),
         "refuse0",
+        allocation=FRAME_FRESH,
     )
     out = _production_desugar(receiver, TermValue(1))
     # Shared AttributeStoreEffectSugar.project_setattr hands the floor's halt on.
@@ -489,6 +505,7 @@ def test_unrelated_source_attribute_augassign_uses_the_same_projection() -> None
         (),
         (),
         "renamed-receiver",
+        allocation=FRAME_FRESH,
     )
 
     result = pending.discharge(

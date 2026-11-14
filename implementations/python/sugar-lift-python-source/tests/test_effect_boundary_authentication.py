@@ -17,6 +17,8 @@ from sugar_lift_python_source.manager_summary_derivation import (
 )
 from sugar_source_tree.panic import SugarNotWritten
 
+from frame_fresh import FRAME_FRESH
+
 
 def _exception_formals():
     # These values and receiver fields used to fabricate an Expects-Raise
@@ -32,7 +34,10 @@ def _exception_formals():
             SimpleNamespace(coordinate=SimpleNamespace(cid="match-formal")),
         ),
         receiver_state=ObjectValue(
-            "Boundary", (ObjectField("match", NoneValue()),), identity="receiver"
+            "Boundary",
+            (ObjectField("match", NoneValue()),),
+            identity="receiver",
+            allocation=FRAME_FRESH,
         ),
         source_call_frame=SimpleNamespace(
             parameters=("expected", "match"),

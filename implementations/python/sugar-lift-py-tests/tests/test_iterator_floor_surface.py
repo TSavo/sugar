@@ -20,7 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 import pytest
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 
 from sugar_lift_py_tests.caller_parameter_contract import project_iter, project_next
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -265,7 +265,7 @@ def test_list_has_no_next_authority() -> None:
 
 def test_object_without_iter_method_is_loud() -> None:
     """ObjectValue without constructor-bound ``__iter__`` cannot invent one."""
-    bare = ObjectValue("Bare", ())
+    bare = ObjectValue("Bare", (), allocation=FRAME_FRESH)
     with pytest.raises(ConstructionPanic) as caught:
         _iter_op(owner="project_iter").submit(bare, None)
     text = str(caught.value)
@@ -273,7 +273,7 @@ def test_object_without_iter_method_is_loud() -> None:
 
 
 def test_object_without_next_method_is_loud() -> None:
-    bare = ObjectValue("Bare", ())
+    bare = ObjectValue("Bare", (), allocation=FRAME_FRESH)
     with pytest.raises(ConstructionPanic) as caught:
         _next_op(owner="project_next").submit(bare, None)
     text = str(caught.value)

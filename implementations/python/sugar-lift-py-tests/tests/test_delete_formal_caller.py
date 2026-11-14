@@ -41,7 +41,7 @@ import inspect
 from dataclasses import dataclass
 
 import pytest
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
@@ -439,6 +439,7 @@ def test_writable_field_delete_completes_with_attribute_gone() -> None:
         class_name="Widget",
         fields=(ObjectField("field", TermValue(7)),),
         methods=(),
+        allocation=FRAME_FRESH,
     )
     exits = pending.discharge(None, {obj_cid: receiver})
     assert isinstance(exits.exits[0], Completed)
@@ -510,7 +511,9 @@ def test_missing_attribute_halts_with_named_attributeerror_and_pre_effect() -> N
         testimony is not None
     ), "reducer did not enroll ReducerPreEffectStateV1 on formal delattr_named"
     obj_cid, _ = pending.demand.operand_coordinate_cids
-    receiver = ObjectValue(class_name="Widget", fields=(), methods=())
+    receiver = ObjectValue(
+        class_name="Widget", fields=(), methods=(), allocation=FRAME_FRESH
+    )
     exits = pending.discharge(None, {obj_cid: receiver})
     halted = _assert_named_halt(exits, "AttributeError")
     assert halted.state is testimony.state
@@ -638,6 +641,7 @@ def test_read_does_not_authorize_delete_on_getter_only_property() -> None:
                 descriptor_kind="property",
             ),
         ),
+        allocation=FRAME_FRESH,
     )
     assert any(
         m.name == "field" and m.descriptor_kind == "property" for m in receiver.methods
@@ -658,6 +662,7 @@ def test_discrimination_writable_field_is_not_attributeerror_delete() -> None:
         class_name="Widget",
         fields=(ObjectField("field", TermValue(1)),),
         methods=(),
+        allocation=FRAME_FRESH,
     )
     exits = pending.discharge(None, {obj_cid: receiver})
     assert isinstance(exits.exits[0], Completed)

@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from frame_fresh import FRAME_FRESH
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
@@ -83,7 +84,7 @@ _INHERITED_METHOD = (
 
 def test_an_inherited_method_runs_with_its_defining_class_cell() -> None:
     context, classes = _classes(_INHERITED_METHOD, "inherited_method.py")
-    receiver = classes["B"].fresh_receiver("receiver")
+    receiver = classes["B"].fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     call = receiver.call_method_value(
         "m", (), owner="test", blame="b-m", ctx=context
@@ -107,7 +108,7 @@ _INHERITED_SETITEM = (
 
 def test_a_source_store_runs_an_inherited_override_with_its_defining_class() -> None:
     context, classes = _classes(_INHERITED_SETITEM, "inherited_setitem.py")
-    receiver = classes["B"].fresh_receiver("receiver")
+    receiver = classes["B"].fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     stored = receiver.setitem(StringValue("k"), TermValue(7), "caller", context)
 
@@ -256,7 +257,7 @@ _DICT_OVERRIDES = (
 def _override():
     context, classes = _classes(_DICT_OVERRIDES, "dict_overrides.py")
     definition = classes["Override"]
-    receiver = definition.fresh_receiver("receiver").mapping_with_entries(
+    receiver = definition.fresh_receiver("receiver", allocation=FRAME_FRESH).mapping_with_entries(
         ((StringValue("k"), TermValue(7)),)
     )
     return context, definition, receiver

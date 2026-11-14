@@ -72,6 +72,26 @@ class ObjectValue(FloorValue):
     defining_class: object | None = dataclass_field(
         default=None, compare=False, repr=False
     )
+    # The construction that made this object in the frame reading it (the
+    # class call's site, ``object_identity.made_at``), kept by every
+    # post-state of the object (a field store, a delete); None for an
+    # instance that arrived by binding (``object_identity``: ``arrived``,
+    # ``contents_current``).  Required, never defaulted: every construction
+    # names it.  Whether ``fields`` are the object's fields now.
+    allocation: str | None = dataclass_field(
+        kw_only=True,
+        compare=False,
+        metadata={"testimony": "provenance"},
+    )
+    # The binding read an instance with no ``allocation`` arrived through:
+    # what an undecided read names the object by (``object_identity.arrived``,
+    # ``identity_term``).
+    arrival: str | None = dataclass_field(
+        default=None,
+        kw_only=True,
+        compare=False,
+        metadata={"testimony": "provenance"},
+    )
 
     def denotes_value(self) -> bool:
         """A constructed receiver denotes a runtime object, not a pure slot."""
@@ -253,9 +273,25 @@ class ObjectValue(FloorValue):
         """Project an exact field from this constructed receiver state.
 
         A property getter is a body: it applies under ``ctx``, the reading
-        caller's context, keeping that caller's temporal and halts."""
+        caller's context, keeping that caller's temporal and halts.
+
+        The one currency rule (``object_identity.contents_current``): the
+        recorded instance fields are read only when they are the object's
+        fields now (a construction in this frame made it).  An instance that
+        arrived by binding may have been changed since by another alias: a
+        read that would answer from its instance fields -- a recorded field,
+        a deleted one -- is the undecided attribute read
+        (``undecided_attribute``) over the object's identity
+        (``identity_term``), never the recorded value."""
+        from .object_identity import contents_current
+
+        current = contents_current(self)
         for field in reversed(self.fields):
             if field.name == name:
+                if not current:
+                    return self.undecided_attribute(
+                        name, site, owner="ObjectValue.attribute"
+                    )
                 from sugar_lift_py_tests.outcome import ExitSet
 
                 return ExitSet.completed(field.value)
@@ -320,6 +356,11 @@ class ObjectValue(FloorValue):
 
             return ExitSet.completed(BoundMethodValue(self, name))
         if name in self.deleted_instance_fields:
+            if not current:
+                # Another alias may have stored it again since the delete.
+                return self.undecided_attribute(
+                    name, site, owner="ObjectValue.attribute"
+                )
             # Authenticated delattr removed this instance field — read is
             # AttributeError with delete→read lineage, not an undecided gap.
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
@@ -392,6 +433,9 @@ class ObjectValue(FloorValue):
             self.deferred_helper_fields,
             still_deleted,
             self.defining_class,
+            # The same object: it keeps its ``allocation`` and ``arrival``.
+            allocation=self.allocation,
+            arrival=self.arrival,
         )
 
     def authenticates_plain_attribute_store(self, name: str) -> bool:
@@ -467,6 +511,9 @@ class ObjectValue(FloorValue):
                 self.identity,
                 self.deferred_helper_fields,
                 deleted,
+                # The same object: it keeps its ``allocation`` and ``arrival``.
+                allocation=self.allocation,
+                arrival=self.arrival,
             )
         )
 
@@ -480,6 +527,9 @@ class ObjectValue(FloorValue):
             self.identity,
             names,
             self.deleted_instance_fields,
+            # The same object: it keeps its ``allocation`` and ``arrival``.
+            allocation=self.allocation,
+            arrival=self.arrival,
         )
 
     def helper_receiver_field_names(self) -> tuple[str, ...]:

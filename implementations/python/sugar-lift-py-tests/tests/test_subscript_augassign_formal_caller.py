@@ -730,7 +730,7 @@ def _operation_edge_object(stored: list):
             stored.append((index, value))
             return ExitSet.completed(self)
 
-    return _Indexed("Indexed", ())
+    return _Indexed("Indexed", (), allocation=FRAME_FRESH)
 
 
 def test_augassign_read_answers_through_the_one_subscript_door() -> None:

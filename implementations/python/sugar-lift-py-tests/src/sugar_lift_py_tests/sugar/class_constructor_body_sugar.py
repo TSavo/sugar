@@ -84,6 +84,13 @@ class ClassConstructorBodySugar(Sugar):
     # face it leaves by, the read after the last statement is not the
     # receiver it left with.
     returns_early: bool = field(default=False, compare=False)
+    # The class call's own site, set where the call binds this body
+    # (``enter`` at the call): the construction that makes the instance in
+    # the calling frame (``object_identity.made_at``), its ``allocation``.
+    # None when no class call of the reading frame entered it (an
+    # initializer's own universe): that receiver reached ``__init__`` by
+    # binding and its fields are not current.
+    call_site: object | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.constructed_new_method is None:
@@ -231,7 +238,11 @@ class ClassConstructorBodySugar(Sugar):
                     )
                 returned = project_new_return(value, block)
                 if returned is not None:
-                    return ExitSet.completed(returned)
+                    # The object the call made: named by its construction,
+                    # whatever the state ``__new__`` returned carried.
+                    from dataclasses import replace
+
+                    return ExitSet.completed(replace(returned, **self._made()))
                 return self._receiver_where_it_ends(record, initializer_ctx)
 
             # ``Cls(x)`` is a call: the initializer's halted faces are the
@@ -279,6 +290,19 @@ class ClassConstructorBodySugar(Sugar):
             )
         context = record.context if record.context is not None else ctx
         return self.receiver_at_end.desugar(context)
+
+    def _made(self) -> dict:
+        """The ``allocation`` and ``arrival`` of the instance this class call
+        makes, as the keywords its constructor takes.  At a call: the call's
+        site (``object_identity.made_at``), its fields its fields now.  With
+        no call (an initializer's own universe): none, and its ``arrival``
+        is the receiver coordinate it reached ``__init__`` through."""
+        from sugar_lift_py_tests.floor.object_identity import made_at
+
+        allocation = made_at(self.call_site)
+        if allocation is not None:
+            return {"allocation": allocation, "arrival": None}
+        return {"allocation": None, "arrival": self.receiver_coordinate_cid}
 
     def enter(self, ctx, step, *, at_call=False, call_site=None) -> ExitSet:
         """The class statement's one outcome, read once per class call
@@ -335,8 +359,13 @@ class ClassConstructorBodySugar(Sugar):
                     for exit_ in statement.exits
                 )
             )
+        # The body the call entered names the call's site: the instance it
+        # makes is made there (``call_site``).
+        entered_at = call_site if at_call else self.call_site
         return statement.and_then(
-            lambda value: step(value, replace(self, class_value=value))
+            lambda value: step(
+                value, replace(self, class_value=value, call_site=entered_at)
+            )
         )
 
     def bind_class_call(self, ctx, bind, *, site) -> ExitSet:
@@ -389,7 +418,9 @@ class ClassConstructorBodySugar(Sugar):
                 site=self.site,
                 owner="ClassConstructorBodySugar.__new__",
             )
-            receiver = value.fresh_receiver(self.receiver_coordinate_cid)
+            receiver = value.fresh_receiver(
+                self.receiver_coordinate_cid, **self._made()
+            )
             if self.initializer_body is None:
                 if self.exception_args_coordinate_cid is not None:
                     receiver = self._carrying_exception_args(receiver, ctx)

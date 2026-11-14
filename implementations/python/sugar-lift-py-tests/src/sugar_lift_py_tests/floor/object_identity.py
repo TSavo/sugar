@@ -15,20 +15,23 @@ never the same object (False).  ``None``, ``True`` and ``False`` are the
 language's singletons (True).  Anything else is the one comparison's own
 undecided atom over this evaluation's operands.
 
-The same ``allocation`` says whether a container's contents are the
-object's contents now (``contents_current``): this frame threads every
-change to an object it made through the one mutation door, whose post-state
-keeps the object's ``allocation``.  A value that reaches a frame by binding
-(a parameter's actual, a global, an attribute, a callee's return, a yielded
-value) carries none (``arrived``): code this frame does not see may have
-changed it since its contents were read.
+The same ``allocation`` says whether an object's contents -- a container's
+members, an instance's fields -- are the object's contents now
+(``contents_current``): this frame threads every change to an object it
+made through the one mutation door (a container's) or the field store (an
+instance's), whose post-state keeps the object's ``allocation``.  A value
+that reaches a frame by binding (a parameter's actual, a global, an
+attribute, a callee's return, a yielded value) carries none (``arrived``):
+code this frame does not see may have changed it since its contents were
+read.
 """
 
 from __future__ import annotations
 
 # There is no default ``allocation``: every ``list``/``dict``/``set`` value
-# constructor names it (a required keyword).  A fresh object names the
-# source site that made it (``made_at``, ``made_from``); a same-object
+# and every ``ObjectValue`` constructor names it (a required keyword).  A
+# fresh object names the source site that made it (``made_at``,
+# ``made_from``; an instance, its class call's site); a same-object
 # post-state names the producing value's own, and so does an object a
 # builtin hands back from its operand (it is that operand's own value,
 # ``_handed_over`` in ``source_call_resolution``); a value that arrived, or
@@ -36,9 +39,10 @@ from __future__ import annotations
 # names it only where a display
 # CPython builds at runtime made it (``TupleSugar``); every other tuple names
 # None (a tuple's contents never change, so its ``allocation`` answers
-# identity only).  A ``list``/``dict``/``set`` with None names its object by
-# ``arrival`` instead (``arrived``, ``arrived_as``, ``made_from``); none at
-# all, and an undecided read of it refuses by name (``identity_term``).
+# identity only).  A ``list``/``dict``/``set`` or an instance with None names
+# its object by ``arrival`` instead (``arrived``, ``arrived_as``,
+# ``made_from``); none at all, and an undecided read of it refuses by name
+# (``identity_term``).
 
 
 def made_at(site) -> str | None:
@@ -63,9 +67,13 @@ def contents_current(value) -> bool:
     The one currency rule: every read of a builtin container's contents asks
     it -- the cited fold (``_host_ground``), the one door's container law
     (``builtin_container_method.apply``), and each floor read (``len``,
-    subscript and slicing, iteration and unpacking, ``in``, ``==``).  A
-    container that is not current (``contents_stale``) is read in the read's
-    own undecided form, never from the contents it holds."""
+    subscript and slicing, iteration and unpacking, ``in``, ``==``) -- and
+    so does every read of an instance's fields (``ObjectValue.attribute``,
+    which ``getattr``/``hasattr`` and a method's own ``self.<field>`` reads
+    go through; a path store's field step).  A container that is not current
+    (``contents_stale``) or an instance that is not (``instance_stale``) is
+    read in the read's own undecided form, never from the contents it
+    holds."""
     return getattr(value, "allocation", None) is not None
 
 
@@ -79,6 +87,19 @@ def contents_stale(value) -> bool:
     return type(value) in (ListValue, DictValue, SetValue) and not contents_current(
         value
     )
+
+
+def instance_stale(value) -> bool:
+    """``value`` is an instance of a source class (``ObjectValue``) whose
+    fields are not current (``contents_current``): no read takes them.
+
+    Apart from ``contents_stale``: an instance's ``==`` with no ``__eq__``
+    and its ``is`` are its identity, which reads no field; only a read of a
+    field (``ObjectValue.attribute``) and the term an undecided read names
+    it by (``identity_term``) ask this."""
+    from .object_value import ObjectValue
+
+    return isinstance(value, ObjectValue) and not contents_current(value)
 
 
 def holds_stale(value, depth=0) -> bool:
@@ -110,9 +131,10 @@ def holds_stale(value, depth=0) -> bool:
 def identity_term(value, site, role: str, *, owner: str):
     """The term an undecided read at ``site`` names its operand ``value`` by.
 
-    ``value``'s own term when no container in it is stale (``holds_stale``):
-    its contents are its object's contents now.  Otherwise each stale
-    container in it, at any depth, is named by its identity, never by the
+    ``value``'s own term when no container in it is stale (``holds_stale``)
+    and it is no stale instance (``instance_stale``): its contents are its
+    object's contents now.  Otherwise each stale container in it, at any
+    depth, and each stale instance, is named by its identity, never by the
     contents it arrived with -- a proof states no fact about contents the
     program may no longer hold:
     ``python:object_read(<read occurrence>, <role and path>, <arrival>)``,
@@ -131,7 +153,7 @@ def identity_term(value, site, role: str, *, owner: str):
     from an operand with no arrival, ``made_from``), and one term for every
     such object would let two objects one read meets share it -- a fact
     about one would be read as a fact about the other."""
-    if not holds_stale(value):
+    if not (holds_stale(value) or instance_stale(value)):
         return value.to_term(owner=owner)
     if site is None:
         from sugar_source_tree.panic import SugarNotWritten
@@ -152,8 +174,8 @@ def identity_term(value, site, role: str, *, owner: str):
 
 
 def _named(value, key: str, path: str, owner: str, depth=0):
-    """``value`` with each stale container in it replaced by its object's
-    term (``identity_term``)."""
+    """``value`` with each stale container or instance in it replaced by its
+    object's term (``identity_term``)."""
     from dataclasses import replace
 
     from .dict_value import DictValue
@@ -163,7 +185,7 @@ def _named(value, key: str, path: str, owner: str, depth=0):
     from .symbolic_value import SymbolicValue
     from .tuple_value import TupleValue
 
-    if contents_stale(value):
+    if contents_stale(value) or instance_stale(value):
         if value.arrival is None:
             from sugar_source_tree.panic import SugarNotWritten
 
@@ -249,17 +271,21 @@ def made_from(op: str, site, *operands) -> dict:
 
 def arrived(value, site):
     """``value`` as it reaches a frame by binding at the read ``site``: every
-    builtin container in it, at any depth, without its ``allocation``.
+    builtin container and every instance of a source class (``ObjectValue``)
+    in it, at any depth -- through containers, an instance's fields, the
+    faces of a guarded value or of a constructor's receiver partition --
+    without its ``allocation``.
 
     Its contents are what the binding held, not the object's contents now,
     and which construction made it is not this frame's to say.  What names
-    the object instead is the binding read it arrived through: a container
+    the object instead is the binding read it arrived through: an object
     with no ``arrival`` yet takes the read's occurrence
     (``occurrence.occurrence_key`` of ``site``), a member the path to it
-    inside (``<read>/<position>``).  A container that already has one keeps
-    it: it is still that object.  Only ``identity_term`` reads it.  A read
-    whose site names no source coordinate names none: an undecided read of
-    the container refuses by name (``identity_term``)."""
+    inside (``<read>/<position>``, an instance's field ``<read>/.<name>``).
+    An object that already has one keeps it: it is still that object.  Only
+    ``identity_term`` reads it.  A read whose site names no source
+    coordinate names none: an undecided read of the object refuses by name
+    (``identity_term``)."""
     memo = []
 
     def through():
@@ -293,6 +319,9 @@ def _arrived(value, through):
     from .dict_value import DictValue
     from .guarded_value import GuardedValue
     from .list_value import ListValue
+    from .object_field import ObjectField
+    from .object_value import ObjectValue
+    from .receiver_state_partition_value import ReceiverStatePartitionValue
     from .set_value import SetValue
     from .tuple_value import TupleValue
 
@@ -343,7 +372,52 @@ def _arrived(value, through):
         if when_true is value.when_true and when_false is value.when_false:
             return value
         return replace(value, when_true=when_true, when_false=when_false)
+    if isinstance(value, ObjectValue):
+        # An instance's fields are its contents: each object reachable
+        # through them arrived with it.
+        fields = []
+        for field in value.fields:
+            held = _arrived(field.value, inner(f".{field.name}"))
+            fields.append(
+                field if held is field.value else ObjectField(field.name, held)
+            )
+        unchanged = all(a is b for a, b in zip(fields, value.fields))
+        stamp = value.arrival if value.arrival is not None else through()
+        if unchanged and value.allocation is None and stamp == value.arrival:
+            return value
+        return replace(value, fields=tuple(fields), allocation=None, arrival=stamp)
+    if kind is ReceiverStatePartitionValue:
+        # A constructor's receiver on each of its faces: each one arrived.
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        return replace(
+            value,
+            exits=value.exits.and_then(
+                lambda face: ExitSet.completed(_arrived(face, through))
+            ),
+        )
     return value
+
+
+def as_the_alias_holds(after, alias):
+    """``after``, an instance's state after a field store or a mutation, as
+    the binding ``alias`` that held the same instance holds it now.
+
+    Its fields are current only when the alias's were and ``after``'s are
+    (``contents_current``): an alias whose instance arrived by binding never
+    becomes current by a store this frame made, and keeps its ``arrival``.
+    Any other value is ``after`` itself."""
+    from dataclasses import replace
+
+    from .object_value import ObjectValue
+
+    if not (isinstance(after, ObjectValue) and isinstance(alias, ObjectValue)):
+        return after
+    return replace(
+        after,
+        allocation=alias.allocation if contents_current(after) else None,
+        arrival=alias.arrival,
+    )
 
 
 def arrived_outcome(outcome, site):

@@ -16,6 +16,8 @@ from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
 
+from frame_fresh import FRAME_FRESH
+
 
 def _site(tmp_path, member):
     path = tmp_path / "read_field.py"
@@ -34,7 +36,9 @@ def _site(tmp_path, member):
 )
 def test_missing_field_panics_but_written_twin_projects(tmp_path, class_name, member):
     site = _site(tmp_path, member)
-    receiver = ObjectValue(class_name, (ObjectField("marker", TermValue(3)),))
+    receiver = ObjectValue(
+        class_name, (ObjectField("marker", TermValue(3)),), allocation=FRAME_FRESH
+    )
     written = receiver.with_field_store(member, TermValue(7))
     assert written.attribute(member, site, None) == ExitSet.completed(TermValue(7))
 
@@ -53,7 +57,9 @@ def test_missing_field_panics_but_written_twin_projects(tmp_path, class_name, me
 
 def test_deleted_field_keeps_authenticated_attribute_error(tmp_path):
     site = _site(tmp_path, "payload")
-    receiver = ObjectValue("Renamed", (ObjectField("payload", TermValue(7)),))
+    receiver = ObjectValue(
+        "Renamed", (ObjectField("payload", TermValue(7)),), allocation=FRAME_FRESH
+    )
     deleted = receiver.delattr("payload", site, None)
     deleted_value = deleted.completed_value()
     assert deleted_value is not None
@@ -67,7 +73,9 @@ def test_deleted_field_keeps_authenticated_attribute_error(tmp_path):
 
 def test_deferred_helper_field_keeps_its_coordinate_not_a_missing_field_panic(tmp_path):
     site = _site(tmp_path, "payload")
-    receiver = ObjectValue("Renamed", (), deferred_helper_fields=("payload",))
+    receiver = ObjectValue(
+        "Renamed", (), deferred_helper_fields=("payload",), allocation=FRAME_FRESH
+    )
     outcome = receiver.attribute("payload", site, None)
     value = outcome.completed_value()
     assert value is not None

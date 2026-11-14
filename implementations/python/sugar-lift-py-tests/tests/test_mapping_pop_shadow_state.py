@@ -14,6 +14,8 @@ from sugar_lift_py_tests.sugar.mapping_pop_state_sugar import MappingPopStateSug
 from sugar_lift_py_tests.sugar.mapping_pop_result_sugar import MappingPopResultSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
+from frame_fresh import FRAME_FRESH
+
 
 @dataclass(frozen=True)
 class _FloorSugar(ConstructedTermSugar):
@@ -64,6 +66,7 @@ def test_present_key_is_removed_without_replacing_receiver_identity() -> None:
         "DerivedDict",
         (ObjectField("source_field", TermValue(7)),),
         identity="receiver-coordinate",
+        allocation=FRAME_FRESH,
         entries=(
             (StringValue("remove"), TermValue(1)),
             (StringValue("keep"), TermValue(2)),
@@ -83,6 +86,7 @@ def test_absent_key_with_default_preserves_exact_receiver() -> None:
         "DerivedDict",
         (),
         identity="receiver-coordinate",
+        allocation=FRAME_FRESH,
         entries=((StringValue("keep"), TermValue(2)),),
     )
 
@@ -94,6 +98,7 @@ def test_pop_result_is_the_removed_value_not_the_receiver_state() -> None:
         "DerivedDict",
         (),
         identity="receiver-coordinate",
+        allocation=FRAME_FRESH,
         entries=((StringValue("present"), TermValue(2)),),
     )
 
@@ -106,6 +111,7 @@ def test_same_spelling_wrong_key_does_not_remove_an_entry() -> None:
         "DerivedDict",
         (),
         identity="receiver-coordinate",
+        allocation=FRAME_FRESH,
         entries=((StringValue("remove"), TermValue(1)),),
     )
 
@@ -119,6 +125,7 @@ def test_inherited_get_projects_present_and_default_values() -> None:
         "DerivedDict",
         (),
         identity="receiver-coordinate",
+        allocation=FRAME_FRESH,
         entries=((StringValue("present"), TermValue(1)),),
     )
 
@@ -138,6 +145,7 @@ def test_inherited_items_retains_insertion_order_and_pairing() -> None:
         "DerivedDict",
         (),
         identity="receiver-coordinate",
+        allocation=FRAME_FRESH,
         entries=(
             (StringValue("first"), TermValue(1)),
             (StringValue("second"), TermValue(2)),

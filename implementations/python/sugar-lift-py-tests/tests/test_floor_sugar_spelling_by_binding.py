@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
@@ -153,7 +153,7 @@ def test_super_init_dispatches_with_a_receiver_not_spelled_self() -> None:
         context.temporal = context.temporal.bind_value(value.class_name, value)
         values.append(value)
     _base, derived = values
-    receiver = derived.fresh_receiver("receiver")
+    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     call = receiver.call_method_value(
         "__init__",

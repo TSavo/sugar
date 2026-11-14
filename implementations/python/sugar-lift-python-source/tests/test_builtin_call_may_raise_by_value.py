@@ -1087,7 +1087,8 @@ def test_the_doors_post_state_names_its_receivers_allocation():
 
 def test_a_dict_subclass_instances_dict_state_is_not_current():
     # Whether an instance's ``dict`` base state is its state now is not
-    # decided (an instance's currency is not tracked): never read as fresh.
+    # decided (its currency is not threaded through a source override's
+    # post-state): never read as fresh, whatever the instance's own.
     from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
     from sugar_lift_py_tests.floor.object_identity import contents_current
 
@@ -1117,6 +1118,147 @@ def test_a_str_method_over_an_opaque_argument_keeps_its_marker():
         ).completed_value()
         assert type(minted) is OpaqueOpCallsite
         assert minted.language_callee is marker
+
+
+# An instance of a source class (``ObjectValue``) carries currency by the one
+# rule (#7757, residue of #8117/#8137): made in this frame (its class call's
+# ``allocation``) or arrived by binding (none).  A field read on one that
+# arrived is the undecided attribute read over its identity, never the field
+# values recorded where it was built.
+
+
+def _instance_made_and_arrived():
+    from sugar_lift_py_tests.floor.object_field import ObjectField
+    from sugar_lift_py_tests.floor.object_identity import arrived
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+
+    inner = ObjectValue("D", (ObjectField("y", TermValue(2)),), allocation="inner")
+    made = ObjectValue(
+        "C",
+        (
+            ObjectField("x", TermValue(1)),
+            ObjectField("items", ListValue((TermValue(3),), allocation="items")),
+            ObjectField("inner", inner),
+        ),
+        allocation="made-here",
+    )
+    return made, arrived(made, "binding-read")
+
+
+@pytest.mark.parametrize("kind", ["ObjectValue", "MappingObjectValue"])
+def test_an_instance_built_without_an_allocation_is_refused(kind):
+    from sugar_lift_py_tests import floor
+
+    with pytest.raises(TypeError):
+        getattr(floor, kind)("C", ())
+
+
+def test_arrived_takes_the_allocation_off_an_instance_and_all_it_holds():
+    from sugar_lift_py_tests.floor.object_identity import (
+        contents_current,
+        instance_stale,
+    )
+
+    made, stale = _instance_made_and_arrived()
+    assert contents_current(made) and not instance_stale(made)
+    assert not contents_current(stale) and instance_stale(stale)
+    assert stale.arrival == "binding-read"
+    held = {field.name: field.value for field in stale.fields}
+    # Every object reachable through its fields arrived with it, named by
+    # the path to it.
+    assert not contents_current(held["items"])
+    assert held["items"].arrival == "binding-read/.items"
+    assert not contents_current(held["inner"])
+    assert held["inner"].arrival == "binding-read/.inner"
+    # The values are the same; only the currency is gone.
+    assert held["x"] == TermValue(1)
+    assert stale == made
+
+
+def test_a_stale_instances_field_read_is_the_undecided_read_never_its_value():
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.floor import CallSiteValue
+
+    made, stale = _instance_made_and_arrived()
+    assert made.attribute("x", "read-site", None).completed_value() == TermValue(1)
+    outcome = stale.attribute("x", "read-site", None)
+    completed = _completed_values(outcome)
+    assert completed and TermValue(1) not in completed
+    assert all(type(value) is CallSiteValue for value in completed)
+    # The member names the object, never the fields it was built with.
+    for value in completed:
+        assert value.term.name == "attr:x"
+        assert _object_reads(value.term)
+    # Whether the read completes is not decided: it may raise.
+    assert outcome.halts()
+    # A field it was built with and since deleted is not decided either.
+    deleted = made.delattr("x", "del-site", None).completed_value()
+    assert deleted.attribute("x", "read-site", None).halts()
+    stale_deleted = replace(deleted, allocation=None, arrival="read-b")
+    assert _completed_values(stale_deleted.attribute("x", "read-site", None))
+    # An instance that names no arrival cannot be told apart: refused.
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(SugarNotWritten):
+        replace(stale, arrival=None).attribute("x", "read-site", None)
+
+
+def test_a_store_keeps_an_instances_currency_and_an_alias_never_gains_it():
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.floor.object_identity import (
+        as_the_alias_holds,
+        contents_current,
+    )
+
+    made, stale = _instance_made_and_arrived()
+    # The same object after a field store: its allocation is kept.
+    assert made.with_field_store("x", TermValue(9)).allocation == "made-here"
+    assert not contents_current(stale.with_field_store("x", TermValue(9)))
+    # An alias holding the instance as it arrived stays not current after a
+    # store through a current one, and keeps its own arrival.
+    held = replace(stale, arrival="alias-read")
+    rebound = as_the_alias_holds(made.with_field_store("x", TermValue(9)), held)
+    assert not contents_current(rebound) and rebound.arrival == "alias-read"
+    assert contents_current(
+        as_the_alias_holds(made.with_field_store("x", TermValue(9)), made)
+    )
+
+
+def test_a_path_store_through_a_stale_instance_finds_no_field():
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _replace_path
+
+    made, stale = _instance_made_and_arrived()
+    post = ListValue((TermValue(3), TermValue(4)), allocation="items")
+    steps = (("attr", "items"),)
+    assert _replace_path(made, steps, post, False) is not None
+    assert _replace_path(stale, steps, post, False) is None
+
+
+_C = "class C:\n    def __init__(self, x):\n        self.x = x\n"
+
+
+def test_a_helper_never_reads_the_fields_its_object_arrived_with(tmp_path):
+    # ``o`` reaches ``g`` by binding: the ``x`` the caller built it with is
+    # not ``o.x`` at the read (another alias may have changed it since).
+    source = (
+        _C
+        + "def g(o):\n"
+        + "    return o.x\n"
+        + "def f():\n"
+        + "    return g(C(5))\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert TermValue(5) not in returns
+
+
+def test_an_instance_this_frame_built_still_answers_its_field(tmp_path):
+    returns, halts = _returns(
+        tmp_path, _C + "def f():\n    o = C(5)\n    return o.x\n"
+    )
+    assert returns == [TermValue(5)]
+    assert halts == []
 
 
 # The residue of #8145: a mapping pattern's ``**rest`` over a stale dict
