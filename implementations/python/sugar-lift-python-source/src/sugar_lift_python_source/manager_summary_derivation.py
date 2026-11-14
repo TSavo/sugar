@@ -1964,12 +1964,15 @@ def _read_same_module_class_head(
             type(result).__name__,
         )
         return
+    # The ``__enter__`` the one class-namespace lookup selects on each
+    # receiver's type (``ObjectValue.class_member``), never a roster entry
+    # found by its name.
     enter_method = next(
         (
-            method
+            selected
             for receiver in receivers
-            for method in receiver.methods
-            if method.name == "__enter__"
+            for selected in (receiver.class_member("__enter__")[1],)
+            if selected is not None
         ),
         None,
     )
@@ -2537,18 +2540,15 @@ def _publish_class_protocol_native_definitions(context, receiver, behavior) -> N
     objects = _completed_object_receivers(behavior.receiver_state)
     if not objects:
         return
-    enter = exit_ = None
-    for method in objects[0].methods:
-        frame = method.source_call_frame
-        if frame is None:
-            continue
-        site = getattr(frame, "definition_site", None)
-        if site is None:
-            continue
-        if method.name == "__enter__":
-            enter = site
-        elif method.name == "__exit__":
-            exit_ = site
+    def definition_site(name):
+        """The definition site of the method the one class-namespace lookup
+        selects for ``name`` (``ObjectValue.class_member``), or None."""
+        _decided, method, _value = objects[0].class_member(name)
+        frame = None if method is None else method.source_call_frame
+        return None if frame is None else getattr(frame, "definition_site", None)
+
+    enter = definition_site("__enter__")
+    exit_ = definition_site("__exit__")
     if enter is None or exit_ is None:
         return
     if enter == exit_:

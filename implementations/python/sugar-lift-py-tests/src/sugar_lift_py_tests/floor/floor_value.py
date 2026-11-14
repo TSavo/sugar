@@ -1041,7 +1041,7 @@ class FloorValue:
             )
 
             return ExitSet.completed(FalseBoolLiteralSugar(site=site))
-        if isinstance(other, ObjectValue) and other.has_method("__eq__"):
+        if isinstance(other, ObjectValue) and other.has_method("__eq__") is not False:
             return self._floor_gap(
                 owner="FloorValue.equals",
                 blame=site,

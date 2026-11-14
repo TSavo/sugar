@@ -42,7 +42,10 @@ class PlaceAssignSugar(Sugar):
                 raise SugarNotWritten(
                     blame=self.site,
                     owner="PlaceAssignSugar",
-                    observed="source-authenticated property data descriptor",
+                    observed=(
+                        "source-authenticated property data descriptor, or a "
+                        "class member the one class-namespace lookup does not decide"
+                    ),
                     requested="the descriptor's authenticated assignment behavior",
                     fix=(
                         "construct the property's setter before treating the write "

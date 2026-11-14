@@ -477,9 +477,10 @@ _DATACLASS_KEEPS_BOUND = _DATACLASS_WRITES - {
 
 # The names the bare ``@dataclasses.dataclass`` may write, by the class or
 # the interpreter version: ``__replace__`` (3.13), ``__abstractmethods__``
-# (``abc.update_abstractmethods`` on a class that has it).  A field's
-# default is stored or deleted under its own annotated name, which the
-# body's annotation already leaves undecided (``ClassDef._body_binding``).
+# (``abc.update_abstractmethods`` on a class that has it).  A field whose
+# class attribute is a ``dataclasses.Field`` has its default stored, or the
+# attribute deleted, under its own annotated name
+# (``ClassDef._creation_rewrites``).
 _DATACLASS_MAY_WRITE = frozenset({"__replace__", "__abstractmethods__"})
 
 # The names CPython's type creation may write in a class namespace beyond
@@ -506,6 +507,141 @@ _TYPE_CREATION_NAMES = frozenset(
         "__type_params__",
     }
 )
+
+
+def _class_scope_nodes(statement):
+    """The class-body statement ``statement`` and every node under it in the
+    class body's own scope: a nested ``def``, ``class``, lambda or
+    comprehension is yielded (it binds its own name here) but nothing under
+    it, whose scope is its own."""
+    scopes = (
+        FunctionDef,
+        AsyncFunctionDef,
+        ClassDef,
+        Lambda,
+        ListComp,
+        SetComp,
+        DictComp,
+        GeneratorExp,
+    )
+    stack = [statement]
+    while stack:
+        node = stack.pop()
+        yield node
+        if not isinstance(node, scopes):
+            stack.extend(child for _name, _index, child in node._child_edges())
+
+
+# The methods whose first formal is the class they run on with no
+# ``classmethod`` decorator: ``__new__`` (a static method called with the
+# class), ``__init_subclass__`` and ``__class_getitem__`` (implicit class
+# methods).
+_IMPLICIT_CLASS_RECEIVERS = frozenset(
+    {"__new__", "__init_subclass__", "__class_getitem__"}
+)
+
+
+def _class_receiver_read(receiver: str, is_class: bool):
+    """The test of whether an expression in a method whose first formal is
+    ``receiver`` reads the class the method runs on: the formal itself when
+    it is the class (``is_class``), otherwise ``type(<receiver>)`` (the
+    builtin ``type`` by binding, one actual) or ``<receiver>.__class__``.
+
+    A nested function that rebinds the spelling is read as the formal: a
+    store it makes is counted, never dropped."""
+
+    def reads(node) -> bool:
+        if is_class:
+            return isinstance(node, Name) and node.id == receiver
+        if isinstance(node, Attribute):
+            return (
+                node.attr == "__class__"
+                and isinstance(node.value, Name)
+                and node.value.id == receiver
+            )
+        return (
+            isinstance(node, Call)
+            and len(node.args) == 1
+            and not node.keywords
+            and isinstance(node.args[0], Name)
+            and node.args[0].id == receiver
+            and node.language_callee() is LanguageCallee.BUILTIN_TYPE
+        )
+
+    return reads
+
+
+def _class_scope_binds(statement, name: str) -> bool:
+    """Whether the class-body statement ``statement``, or anything under it
+    in the class body's own scope (``_class_scope_nodes``), binds or
+    deletes ``name`` (``names_bound_here``: a definition, an assignment
+    target, an import, a ``for``/``with``/``except`` target, a walrus, a
+    ``del``, an annotation).  A ``global``/``nonlocal`` declaration binds
+    nothing here."""
+    return any(
+        not isinstance(node, (Global, Nonlocal)) and name in node.names_bound_here()
+        for node in _class_scope_nodes(statement)
+    )
+
+
+def _class_block_binding(statements, name: str, state: "bool | None"):
+    """Whether ``name`` is bound in the class namespace once the class-body
+    statements ``statements`` have run from ``state`` (True bound, False
+    not, None not decided): the body's own control flow, read where it
+    decides (``_class_statement_binding``)."""
+    for statement in statements:
+        state = _class_statement_binding(statement, name, state)
+    return state
+
+
+def _class_statement_binding(statement, name: str, state: "bool | None"):
+    """``name``'s binding in the class namespace after the class-body
+    statement ``statement`` runs from ``state``.
+
+    The class exists only when its body completed, so every statement the
+    body runs unconditionally has run: an assignment, augmented or
+    annotated assignment with a value, ``def``, ``class``, import or type
+    alias binds; a ``del`` unbinds (a ``del`` of an unbound name is
+    ``NameError``, and no class).  An annotation alone (``x: int``) binds
+    nothing.  An ``if`` whose test is a constant runs the branch the
+    constant selects; a ``try`` runs its ``finally`` whenever the class is
+    made.  Anything else that binds or deletes ``name`` -- under an ``if``,
+    ``try``, ``with``, ``for``, ``while`` or ``match``, or through a
+    walrus -- may or may not have run: None."""
+    if isinstance(statement, Delete):
+        return False if name in statement.names_bound_here() else state
+    if not _class_scope_binds(statement, name):
+        return state
+    if isinstance(statement, If) and isinstance(statement.test, Constant):
+        taken = statement.body if statement.test.value else statement.orelse
+        return _class_block_binding(taken, name, state)
+    if isinstance(statement, (Try, TryStar)):
+        conditional = any(
+            _class_scope_binds(part, name)
+            for part in (*statement.body, *statement.handlers, *statement.orelse)
+        )
+        return _class_block_binding(
+            statement.finalbody, name, None if conditional else state
+        )
+    if isinstance(statement, AnnAssign) and statement.value is None:
+        return state
+    if isinstance(statement, (Import, ImportFrom)):
+        return True
+    if isinstance(
+        statement,
+        (
+            Assign,
+            AugAssign,
+            AnnAssign,
+            FunctionDef,
+            AsyncFunctionDef,
+            ClassDef,
+            TypeAlias,
+        ),
+    ) and name in statement.names_bound_here():
+        return True
+    return None
+
 
 # The annotation markers whose field ``dataclasses.dataclass`` does not write
 # as a plain ``__init__`` parameter (``ClassDef._dataclass_generated_init_fields``),
@@ -1394,8 +1530,11 @@ class SourceUnit:
     _module_statement_starts_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
-    # ``(typed module, {class occurrence: names stored or deleted on it})``:
-    # one walk of the typed tree, for ``class_namespace_stores``.
+    # ``(typed module, {class occurrence: names stored or deleted on it},
+    # ((class statement, names, subclasses only), ...), answers)``: one walk
+    # of the typed tree, for ``class_namespace_stores``; ``answers`` holds
+    # each class's stores and each ``ClassDef.namespace_binds`` answer
+    # (``class_namespace_answer``), read once per typed root.
     _class_namespace_stores_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
@@ -2187,58 +2326,197 @@ class SourceUnit:
         spells as a string constant, ``"*"`` (any name) for anything else.
 
         ``C`` is read by its binding where it stands
-        (``module_definition_at``): a local or parameter of that spelling is
-        not the class.  A store through another reference to the class (an
-        alias, ``cls`` in a classmethod, ``type(self)``) is not seen here.
-        One walk per typed root.
+        (``_module_binding_read_at``): a local or parameter of that spelling
+        is not the class.  An alias of the class is the class: a name bound
+        by ``K = C`` (``C`` itself read so, or another alias) -- the module's
+        one binding of ``K`` where a read reaches it, or a local of the same
+        function.
+
+        A store through the class a method runs on stores on this class and
+        on every subclass it may run on (``mro_holds`` is not False):
+        ``cls.name`` in a ``classmethod`` (and ``__new__``,
+        ``__class_getitem__``, ``__init_subclass__`` -- the last only ever on
+        a subclass), ``type(self).name`` and ``self.__class__.name`` in any
+        other method, and ``setattr``/``delattr`` on them.  A store through
+        any other reference (a parameter, a call's result, ``exec``) is not
+        seen here.  One walk per typed root.
         """
         module = self._require_typed_module(
             "SourceUnit.class_namespace_stores", blame=self.filename
         )
         memo = self._class_namespace_stores_memo
         if memo is None or memo[0] is not module:
-            rows: dict = {}
-            bindings = self.module_direct_bindings or {}
+            memo = (module, *self._class_namespace_store_rows(module), {})
+            object.__setattr__(self, "_class_namespace_stores_memo", memo)
+        _module, rows, receiver_rows, answers = memo
+        occurrence = SourceOccurrenceIdentityV1.of(statement)
+        key = ("stores", occurrence)
+        if key not in answers:
+            names = set(rows.get(occurrence, ()))
+            for owner, stored, subclasses_only in receiver_rows:
+                if (
+                    subclasses_only
+                    and SourceOccurrenceIdentityV1.of(owner) == occurrence
+                ):
+                    continue
+                if statement.mro_holds(owner) is not False:
+                    names |= stored
+            answers[key] = frozenset(names)
+        return answers[key]
 
-            def class_read(node):
-                """The occurrence of the module class ``node`` reads, or None."""
-                if not isinstance(node, Name):
-                    return None
-                bound = bindings.get(node.id, ())
-                if len(bound) != 1 or not isinstance(bound[0], ClassDef):
-                    return None
-                definition = self.module_definition_at(node.id, node.line_col_span())
-                if not isinstance(definition, ClassDef):
-                    return None
-                return SourceOccurrenceIdentityV1.of(definition)
+    def class_namespace_answer(self, statement: "ClassDef", name: str, compute):
+        """``ClassDef.namespace_binds``'s answer for ``statement`` and
+        ``name``, computed (``compute()``) once per typed root: everything
+        it reads -- the class symtable, the body, the decorators and bases
+        by binding, the module's stores -- is fixed by the typed tree."""
+        self.class_namespace_stores(statement)
+        answers = self._class_namespace_stores_memo[3]
+        key = ("binds", SourceOccurrenceIdentityV1.of(statement), name)
+        if key not in answers:
+            answers[key] = compute()
+        return answers[key]
 
-            for node in module.walk():
+    def _class_namespace_store_rows(self, module) -> tuple:
+        """``(rows, receiver_rows)`` for ``class_namespace_stores``: the
+        names stored on each class occurrence through the class or an alias
+        of it, and ``(class statement, names, subclasses only)`` for each
+        method that stores through the class it runs on."""
+
+        def scope_of(node):
+            function = self.innermost_function_containing(node.line_col_span())
+            return None if function is None else SourceOccurrenceIdentityV1.of(function)
+
+        module_aliases: dict = {}
+        local_aliases: dict = {}
+        aliases: list = []
+        classes: list = []
+        for node in module.walk():
+            if isinstance(node, ClassDef):
+                classes.append(node)
+            elif (
+                isinstance(node, Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], Name)
+                and isinstance(node.value, Name)
+            ):
+                aliases.append(node)
+        # The only spellings a class or an alias of one is read by: a name
+        # the module binds by a ``class`` statement, or an alias's target.
+        spellings = frozenset(
+            name
+            for name, bound in (self.module_direct_bindings or {}).items()
+            if any(isinstance(statement, ClassDef) for statement in bound)
+        ) | frozenset(node.targets[0].id for node in aliases)
+
+        def classes_of(node) -> frozenset:
+            """The occurrences of the classes the expression ``node`` may
+            read by binding -- the module class, or an alias of one (a local
+            alias bound more than once may be any of them)."""
+            if not isinstance(node, Name) or node.id not in spellings:
+                return frozenset()
+            binding = self._module_binding_read_at(node.id, node.line_col_span())
+            if isinstance(binding, ClassDef):
+                return frozenset({SourceOccurrenceIdentityV1.of(binding)})
+            if binding is not None:
+                return module_aliases.get(
+                    SourceOccurrenceIdentityV1.of(binding), frozenset()
+                )
+            scope = scope_of(node)
+            if scope is None:
+                return frozenset()
+            return local_aliases.get((scope, node.id), frozenset())
+
+        # Aliases of aliases: read again until no alias reaches a new class.
+        changed = True
+        while changed:
+            changed = False
+            for node in aliases:
+                reached = classes_of(node.value)
+                if not reached:
+                    continue
+                scope = scope_of(node)
+                if scope is None:
+                    key, table = SourceOccurrenceIdentityV1.of(node), module_aliases
+                else:
+                    key, table = (scope, node.targets[0].id), local_aliases
+                held = table.get(key, frozenset())
+                if not reached <= held:
+                    table[key] = held | reached
+                    changed = True
+
+        def stores(root, on_class) -> list:
+            """``(reference, name)`` for every store under ``root`` through
+            a reference ``on_class`` accepts: an attribute target ``r.name``,
+            and ``setattr``/``delattr`` (by binding) on ``r`` with the name
+            its second actual spells as a string constant, else ``"*"``."""
+            found: list = []
+            for node in root.walk():
                 for field_name in type(node)._bound_target_fields:
                     value = getattr(node, field_name)
                     targets = value if isinstance(value, tuple) else (value,)
                     for leaf in _store_leaves(targets):
-                        if not isinstance(leaf, Attribute):
-                            continue
-                        occurrence = class_read(leaf.value)
-                        if occurrence is not None:
-                            rows.setdefault(occurrence, set()).add(leaf.attr)
-                if not isinstance(node, Call) or not node.args:
-                    continue
-                occurrence = class_read(node.args[0])
-                if occurrence is None or node.language_callee() not in (
-                    LanguageCallee.BUILTIN_SETATTR,
-                    LanguageCallee.BUILTIN_DELATTR,
+                        if isinstance(leaf, Attribute) and on_class(leaf.value):
+                            found.append((leaf.value, leaf.attr))
+                if (
+                    isinstance(node, Call)
+                    and node.args
+                    and on_class(node.args[0])
+                    and node.language_callee()
+                    in (LanguageCallee.BUILTIN_SETATTR, LanguageCallee.BUILTIN_DELATTR)
                 ):
-                    continue
-                spelled = node.args[1] if len(node.args) > 1 else None
-                rows.setdefault(occurrence, set()).add(
-                    spelled.value
-                    if isinstance(spelled, Constant) and isinstance(spelled.value, str)
-                    else "*"
-                )
-            memo = (module, {key: frozenset(names) for key, names in rows.items()})
-            object.__setattr__(self, "_class_namespace_stores_memo", memo)
-        return memo[1].get(SourceOccurrenceIdentityV1.of(statement), frozenset())
+                    spelled = node.args[1] if len(node.args) > 1 else None
+                    found.append(
+                        (
+                            node.args[0],
+                            spelled.value
+                            if isinstance(spelled, Constant)
+                            and isinstance(spelled.value, str)
+                            else "*",
+                        )
+                    )
+            return found
+
+        rows: dict = {}
+        for reference, name in stores(module, lambda node: bool(classes_of(node))):
+            for occurrence in classes_of(reference):
+                rows.setdefault(occurrence, set()).add(name)
+
+        receiver_rows = []
+        for klass in classes:
+            for statement in klass.body:
+                for method in _class_scope_nodes(statement):
+                    if not isinstance(method, (FunctionDef, AsyncFunctionDef)):
+                        continue
+                    first = method.params[0] if method.params else None
+                    if first is None or first.param_kind not in (
+                        "positional_only",
+                        "positional_or_keyword",
+                    ):
+                        continue
+                    kind = klass._method_descriptor_kind(method)
+                    if kind == "staticmethod":
+                        continue
+                    on_class = _class_receiver_read(
+                        first.name,
+                        kind == "classmethod"
+                        or (
+                            not method.decorators
+                            and method.name in _IMPLICIT_CLASS_RECEIVERS
+                        ),
+                    )
+                    stored = stores(method, on_class)
+                    if stored:
+                        receiver_rows.append(
+                            (
+                                klass,
+                                frozenset(name for _reference, name in stored),
+                                method.name == "__init_subclass__",
+                            )
+                        )
+        return (
+            {key: frozenset(names) for key, names in rows.items()},
+            tuple(receiver_rows),
+        )
 
     def module_threaded_names(self) -> frozenset:
         """The module names a reader outside the module block takes from the
@@ -3490,6 +3768,17 @@ class SourceUnit:
         not the module's name, and a name the module binds more than once, or
         by anything but one ``def``/``class``, answers None.
         """
+        binding = self._module_binding_read_at(name, span)
+        if not isinstance(binding, (FunctionDef, AsyncFunctionDef, ClassDef)):
+            return None
+        return binding
+
+    def _module_binding_read_at(self, name: str, span):
+        """The one module binding statement of ``name`` a read of ``name``
+        at ``span`` reaches (``module_definition_at``'s law, whatever the
+        statement), or None: a parameter, local, free or nonlocal of the
+        function around the read is not the module's name, and a name the
+        module binds more than once answers None."""
         owner = self.innermost_function_containing(span)
         if owner is not None:
             table = self.function_symtable(owner.name, owner.line_col_span().start_line)
@@ -3505,9 +3794,7 @@ class SourceUnit:
             ):
                 return None
         bindings = (self.module_direct_bindings or {}).get(name, ())
-        if len(bindings) != 1 or not isinstance(
-            bindings[0], (FunctionDef, AsyncFunctionDef, ClassDef)
-        ):
+        if len(bindings) != 1:
             return None
         return bindings[0]
 
@@ -3676,8 +3963,20 @@ class SourceUnit:
         this door.  A
         decorated class binds its name to the decorators' result: a call of
         it calls that value (``DecoratedDefinitionRef``), never this frame.
+        A class whose ``__init__`` the one class-namespace lookup does not
+        decide as a source ``def`` or a builtin's
+        (``ClassDef.initializer_entry`` is None: a store to it, a
+        conditional ``def``, a base's ``__init_subclass__``) carries no frame
+        either, unless its source ``__new__`` shape constructs it: that call
+        is the unanswered call.
         """
         if definition.decorators:
+            return False
+        if (
+            isinstance(definition, ClassDef)
+            and definition._authenticated_new_constructor_shape() is None
+            and definition.initializer_entry() is None
+        ):
             return False
         return SourceUnit.source_class_has_authenticated_default_attribute_behavior(
             definition
@@ -9208,20 +9507,19 @@ class FunctionDef(Statement):
         overwritten -- degrading its receiver entrance to an ordinary formal.
         A genuinely overwritten initializer denotes a DIFFERENT occurrence and
         stays inactive.
+
+        The class value's ``__init__`` is read by the one class-namespace
+        lookup (``ClassDef.namespace_value_is_body``): a class whose
+        ``__init__`` a decorator, its creation, a store or a conditional
+        binding may have made something else has no active initializer here,
+        and this ``def`` keeps the ordinary formal entrance.
         """
         if self.name != "__init__":
             return None
         owner = self.unit.lexical_class_owner_for(self)
-        if owner is None:
+        if owner is None or not owner.namespace_value_is_body("__init__"):
             return None
-        active = next(
-            (
-                item
-                for item in reversed(owner.body)
-                if isinstance(item, FunctionDef) and item.name == "__init__"
-            ),
-            None,
-        )
+        active = owner._written_initializer()
         if active is None:
             return None
         occurrence = SourceOccurrenceIdentityV1.of(self)
@@ -10366,41 +10664,32 @@ class ClassDef(Statement):
         )
 
     def initializer_entry(self):
-        """The first class of the MRO (``method_resolution_order``) that has
-        ``__init__``, which a call of this class runs: a ``ClassDef`` whose
-        body writes ``def __init__``, or a builtin class name -- ``object``
-        and every builtin exception class carry their own ``__init__``.
+        """The class whose ``__init__`` a call of this class runs: the one
+        class-namespace lookup of ``__init__`` (``namespace_owner``) -- a
+        ``ClassDef`` whose class value holds the ``def __init__`` its body
+        wrote (``namespace_value_is_body``), or a builtin class name --
+        ``object`` and every builtin exception class carry their own
+        ``__init__``.
 
         A source ``__init__`` anywhere in a chain that ends in a builtin
         exception base is just the first ``__init__`` found; a source class
         after a builtin exception in the order is never reached by the call.
 
-        When the order is not read (``method_resolution_order`` is None),
-        only its head is decided: this class, then its first base, which
-        follows the class in every MRO Python builds (the C3 merge takes the
-        first base's head first; any other order is a TypeError at class
-        creation).  Their own ``__init__`` is the entry; otherwise None.
+        None when the lookup does not decide it (an unread base, a decorator
+        or a store that may write ``__init__``, a conditional ``def``), and
+        when the class that holds it holds a value its body did not write
+        as a ``def`` (a dataclass's generated ``__init__``, an assignment):
+        no source ``__init__`` and no builtin one is assumed.
         """
-        order = self.method_resolution_order()
-        if order is None:
-            head = tuple(
-                entry
-                for entry in self.method_resolution_head()
-                if isinstance(entry, ClassDef)
-            )
-            return next(
-                (entry for entry in head if entry._written_initializer() is not None),
-                None,
-            )
-        return next(
-            (
-                entry
-                for entry in order
-                if not isinstance(entry, ClassDef)
-                or entry._written_initializer() is not None
-            ),
-            None,
-        )
+        decided, owner = self.namespace_owner("__init__")
+        if not decided:
+            return None
+        if isinstance(owner, ClassDef) and (
+            not owner.namespace_value_is_body("__init__")
+            or owner._written_initializer() is None
+        ):
+            return None
+        return owner
 
     def method_resolution_head(self) -> tuple:
         """What every MRO Python builds for this class starts with, read when
@@ -10412,21 +10701,48 @@ class ClassDef(Statement):
         return (self,) if first is None else (self, first)
 
     def _body_binding(self, name: str) -> "bool | None":
-        """Whether this class statement's body binds ``name`` in the class
-        namespace -- a ``def``, an assignment, an import -- read off the
-        unit's CPython class ``symtable``, never off a spelling scan.
+        """Whether this class statement's body leaves ``name`` bound in the
+        class namespace -- a ``def``, an assignment, an import -- once it
+        has run.
 
-        None for an annotated name: an annotation alone (``x: int``) binds
-        nothing in the namespace, and the symtable does not tell it from an
-        annotated assignment (``x: int = 0``)."""
+        The unit's CPython class ``symtable`` says whether the body binds
+        the name in its own namespace at all (a ``global``/``nonlocal``
+        declaration binds the module's or the enclosing function's); the
+        body's own statements, in order, say whether the binding stands
+        (``_class_block_binding``): an unconditional binding is True, a
+        ``del`` after it False, an annotation alone (``x: int``) nothing, and
+        a binding or ``del`` under control flow the body does not decide (an
+        ``if c:``, a ``try`` whose handler passes, a loop) None."""
         table = self.unit.class_symtable(self.name, self.line_col_span().start_line)
         try:
             symbol = table.lookup(name)
         except KeyError:
             return False
-        if symbol.is_annotated():
-            return None
-        return symbol.is_assigned() or symbol.is_imported() or symbol.is_namespace()
+        if symbol.is_declared_global() or symbol.is_nonlocal():
+            return False
+        return _class_block_binding(self.body, name, False)
+
+    def _creation_rewrites(self) -> frozenset:
+        """The names the body binds that a decorator may rebind or delete
+        over the body's value: under the bare ``@dataclasses.dataclass``,
+        every annotated name the body assigns anything but a constant (a
+        ``dataclasses.Field`` default is replaced by its default, or deleted
+        when it has none; ``_process_class``)."""
+        if not any(
+            self.unit.language_callee_of(decorator)
+            is LanguageCallee.DATACLASSES_DATACLASS
+            for decorator in self.decorators
+        ):
+            return frozenset()
+        return frozenset(
+            node.target.id
+            for statement in self.body
+            for node in _class_scope_nodes(statement)
+            if isinstance(node, AnnAssign)
+            and isinstance(node.target, Name)
+            and node.value is not None
+            and not isinstance(node.value, Constant)
+        )
 
     def _creation_opens_namespace(self) -> bool:
         """Whether something this statement runs at class creation may write
@@ -10501,16 +10817,27 @@ class ClassDef(Statement):
 
         True or False when decided; None -- the one unanswered form, never
         "missing" -- for a name a store or delete of the module names (it
-        may or may not have run before the read), a name the body only
-        annotates, a name creation may write, and every name the body does
-        not bind when creation may write any (``open``).  A class whose
-        ``__eq__`` the body binds and ``__hash__`` it does not holds
-        ``__hash__`` (``None``, set by type creation).
+        may or may not have run before the read), a name the body binds or
+        deletes only under control flow it does not decide, a body binding a
+        decorator may rebind or delete (``_creation_rewrites``), a name
+        creation may write, and every name the body does not bind when
+        creation may write any (``open``).  A class whose ``__eq__`` the body
+        binds and ``__hash__`` it does not holds ``__hash__`` (``None``, set
+        by type creation).  Read once per typed root
+        (``SourceUnit.class_namespace_answer``).
         """
+        return self.unit.class_namespace_answer(
+            self, name, lambda: self._namespace_binds(name)
+        )
+
+    def _namespace_binds(self, name: str) -> "bool | None":
+        """``namespace_binds``, read off the tree."""
         stored = self.unit.class_namespace_stores(self)
         if name in stored or "*" in stored:
             return None
         own = self._body_binding(name)
+        if own is True and name in self._creation_rewrites():
+            return None
         if own is not False:
             return own
         writes, may_write, open_ = self._creation_writes()
