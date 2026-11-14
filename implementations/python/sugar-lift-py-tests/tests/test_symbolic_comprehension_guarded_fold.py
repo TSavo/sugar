@@ -688,8 +688,11 @@ def test_a_comprehension_substituted_into_a_dict_value_is_constructed():
 
 def test_a_walrus_in_a_comprehension_element_stays_loud_in_every_form():
     # The LYING twin's arm: opening the door to a nested comprehension must
-    # not open it to a walrus. A walrus binds into the enclosing scope, which
-    # the scoped guarded fold does not model, so every form stays loud.
+    # not open it to a walrus. A walrus binds into the enclosing scope: over
+    # finite members each member writes its key, but over a symbolic iterable
+    # the scoped guarded fold has no one value for that write, so every form
+    # stays loud (a generator expression at construction, the others when the
+    # fold would complete).
     from sugar_source_tree.panic import SugarNotWritten
 
     for source in (

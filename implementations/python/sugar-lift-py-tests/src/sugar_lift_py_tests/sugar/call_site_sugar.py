@@ -567,16 +567,25 @@ class CallSiteSugar(ConstructedTermSugar):
         return term
 
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            carrying_walrus_binds,
+        )
+
         if remaining:
             head, *rest = remaining
             actual_ctx = _actual_reduce_context(ctx)
+            # A walrus in the actual (``f((x := 5))``) binds once: the call
+            # consumes the value it presents and its result carries the bind.
             return head.desugar(actual_ctx).and_then(
-                lambda value: value.project_operation_receiver_outcome(
-                    actual_ctx, owner="CallSiteSugar positional actual"
-                ).and_then(
-                    lambda actual: self._collect(
-                        tuple(rest), accumulated + (actual,), ctx
-                    )
+                lambda value: carrying_walrus_binds(
+                    value,
+                    lambda presented: presented.project_operation_receiver_outcome(
+                        actual_ctx, owner="CallSiteSugar positional actual"
+                    ).and_then(
+                        lambda actual: self._collect(
+                            tuple(rest), accumulated + (actual,), ctx
+                        )
+                    ),
                 )
             )
         return self._collect_kwargs(self.keywords, (), accumulated, ctx)
@@ -585,18 +594,25 @@ class CallSiteSugar(ConstructedTermSugar):
         self, remaining: tuple, kw_values: tuple, positional: tuple, ctx: object
     ) -> Outcome:
         if remaining:
+            from sugar_lift_py_tests.floor.named_expression_value import (
+                carrying_walrus_binds,
+            )
+
             (name, sugar), *rest = remaining
             actual_ctx = _actual_reduce_context(ctx)
             return sugar.desugar(actual_ctx).and_then(
-                lambda value: value.project_operation_receiver_outcome(
-                    actual_ctx, owner="CallSiteSugar keyword actual"
-                ).and_then(
-                    lambda actual: self._collect_kwargs(
-                        tuple(rest),
-                        kw_values + ((name, actual),),
-                        positional,
-                        ctx,
-                    )
+                lambda value: carrying_walrus_binds(
+                    value,
+                    lambda presented: presented.project_operation_receiver_outcome(
+                        actual_ctx, owner="CallSiteSugar keyword actual"
+                    ).and_then(
+                        lambda actual: self._collect_kwargs(
+                            tuple(rest),
+                            kw_values + ((name, actual),),
+                            positional,
+                            ctx,
+                        )
+                    ),
                 )
             )
         if ctx is not None:

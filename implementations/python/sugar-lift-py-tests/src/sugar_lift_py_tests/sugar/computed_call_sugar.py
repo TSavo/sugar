@@ -97,11 +97,20 @@ class ComputedCallSugar(ConstructedTermSugar):
         )
 
     def _collect(self, callee, remaining: tuple, accumulated: tuple, ctx) -> Outcome:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            carrying_walrus_binds,
+        )
+
         if remaining:
             head, *rest = remaining
+            # A walrus in the actual binds once: the call consumes the value
+            # it presents and its result carries the bind.
             return head.desugar(ctx).and_then(
-                lambda value: self._collect(
-                    callee, tuple(rest), accumulated + (value,), ctx
+                lambda value: carrying_walrus_binds(
+                    value,
+                    lambda presented: self._collect(
+                        callee, tuple(rest), accumulated + (presented,), ctx
+                    ),
                 )
             )
         return self._collect_kwargs(callee, self.keywords, (), accumulated, ctx)
@@ -110,14 +119,21 @@ class ComputedCallSugar(ConstructedTermSugar):
         self, callee, remaining: tuple, kw_values: tuple, positional: tuple, ctx
     ) -> Outcome:
         if remaining:
+            from sugar_lift_py_tests.floor.named_expression_value import (
+                carrying_walrus_binds,
+            )
+
             (name, sugar), *rest = remaining
             return sugar.desugar(ctx).and_then(
-                lambda value: self._collect_kwargs(
-                    callee,
-                    tuple(rest),
-                    kw_values + ((name, value),),
-                    positional,
-                    ctx,
+                lambda value: carrying_walrus_binds(
+                    value,
+                    lambda presented: self._collect_kwargs(
+                        callee,
+                        tuple(rest),
+                        kw_values + ((name, presented),),
+                        positional,
+                        ctx,
+                    ),
                 )
             )
         from sugar_lift_py_tests.floor import CallSiteValue

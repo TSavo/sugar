@@ -115,11 +115,20 @@ class ExprStatementSugar(Sugar):
     def _record_statement_value(self, value, ctx):
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            carry_walrus_binds,
+            peel_walrus_binds,
+        )
         from sugar_lift_py_tests.sugar.warning_observation_producer import (
             project_warning_observation,
         )
 
-        recorded = project_warning_observation(value) or value
+        # A walrus the expression evaluated (``(x := 5)``, ``f((x := 5))``)
+        # binds the rest of the block: the record carries its binds
+        # (``BlockValue.extend_scope``), and the value it presents is what
+        # this statement reads (a call stays a call).
+        binds, value = peel_walrus_binds(value)
+        recorded = carry_walrus_binds(binds, project_warning_observation(value) or value)
         # ``super().__init__(...)`` is a constructor call in statement
         # position: it exists for its field stores, not as a value. Leaving
         # the CallSiteValue unreduced dropped AbstractRaises.__init__ stores

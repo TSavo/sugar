@@ -40,25 +40,40 @@ class NamedExpressionValue(FloorValue):
         return carried
 
     def extend_scope(self, ctx):
+        return self.presented_value.extend_scope(self.bind(ctx))
+
+    def bind(self, ctx):
+        """``ctx`` with this walrus's bind: the assigned value under the name
+        and under the evaluation key.  The one place a walrus writes the
+        temporal; ``extend_scope`` and every carrier (``bind_walrus_binds``)
+        apply it."""
         # Root mint is Floor-owned when the reducer has no ambient context yet
         # (function desugar(None) / SourceFile production tooth).
         if ctx is None:
             from sugar_lift_py_tests.context import ReduceContext
 
             ctx = ReduceContext.root(owner="NamedExpressionValue")
-        # The name first, the evaluation last: a read of the evaluation is the
-        # latest of the two until something rebinds the name.
-        temporal = ctx.temporal.bind_value(self.name, self.assigned_value)
+        key = None
         if self.evaluation is not None:
             from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
                 evaluation_here,
             )
 
             # In a live loop each item's evaluation is its own key.
-            temporal = temporal.bind_value(
-                evaluation_here(self.evaluation), self.assigned_value
-            )
-        return self.presented_value.extend_scope(replace(ctx, temporal=temporal))
+            key = evaluation_here(self.evaluation)
+            if ctx.temporal.value_if_bound(key) == self.assigned_value:
+                # This evaluation's bind is already in the temporal: a later
+                # read of a value that carries it (a name substitution
+                # inlined the walrus's right-hand side, an assignment's record
+                # answered it) is not the walrus evaluating again, and binding
+                # the name again would shadow a write of it made since.
+                return ctx
+        # The name first, the evaluation last: a read of the evaluation is the
+        # latest of the two until something rebinds the name.
+        temporal = ctx.temporal.bind_value(self.name, self.assigned_value)
+        if key is not None:
+            temporal = temporal.bind_value(key, self.assigned_value)
+        return replace(ctx, temporal=temporal)
 
     def as_expression_statement(self):
         """A bare ``(name := value)`` statement still binds ``name`` afterward."""
@@ -153,8 +168,59 @@ class NamedExpressionValue(FloorValue):
     def _carry(self, presented: FloorValue):
         from sugar_lift_py_tests.outcome import ExitSet
 
-        return ExitSet.completed(
-            NamedExpressionValue.carrying(
-                self.name, self.assigned_value, presented, self.evaluation
-            )
+        return ExitSet.completed(carry_walrus_binds((self,), presented))
+
+
+# A walrus nested in a larger expression (``y = (x := 5)``, ``f((x := 5))``,
+# a comprehension's element) completes inside an operand.  Its bind reaches the
+# enclosing statement's temporal by riding the value: an operand consumer peels
+# the binds off the operand (``peel_walrus_binds``), consumes the value it
+# presents, and carries the binds onto its own result (``carry_walrus_binds``);
+# the statement applies them to its temporal (``bind_walrus_binds``).  A read
+# after the statement is an ``EvaluationRef`` to the walrus's key and resolves
+# through it, never by evaluating the walrus's value again (temporal choice 1,
+# #7661).
+
+
+def peel_walrus_binds(value) -> tuple[tuple["NamedExpressionValue", ...], object]:
+    """The walrus binds ``value`` carries, in evaluation order, and the value
+    it presents beneath them.  An ordinary value carries none and presents
+    itself."""
+    binds = []
+    while isinstance(value, NamedExpressionValue):
+        binds.append(value)
+        value = value.presented_value
+    return tuple(binds), value
+
+
+def carry_walrus_binds(binds, presented):
+    """``presented`` carrying ``binds`` (``peel_walrus_binds`` order)."""
+    for bind in reversed(binds):
+        presented = NamedExpressionValue.carrying(
+            bind.name, bind.assigned_value, presented, bind.evaluation
         )
+    return presented
+
+
+def bind_walrus_binds(binds, ctx):
+    """``ctx`` with each walrus bind applied in evaluation order (the same
+    ``ctx`` object when there is none)."""
+    for bind in binds:
+        ctx = bind.bind(ctx)
+    return ctx
+
+
+def carrying_walrus_binds(value, step):
+    """``step`` applied to the value ``value`` presents, its completed result
+    carrying ``value``'s walrus binds.  An operand consumer (a call's actual)
+    hands its continuation here so a walrus in the operand is evaluated once
+    and its bind still reaches the enclosing statement."""
+    binds, presented = peel_walrus_binds(value)
+    outcome = step(presented)
+    if not binds:
+        return outcome
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    return outcome.and_then(
+        lambda result: ExitSet.completed(carry_walrus_binds(binds, result))
+    )

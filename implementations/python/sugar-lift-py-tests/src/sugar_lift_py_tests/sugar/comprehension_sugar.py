@@ -347,12 +347,26 @@ class ComprehensionSugar(ConstructedTermSugar):
         except TypeError:
             return NotProjected(FiniteProjectionNonSuccessV1.REPLACEMENT_FAILED)
 
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            bind_walrus_binds,
+            carry_walrus_binds,
+            peel_walrus_binds,
+        )
+
         owner = str(self.site)
 
-        def project(index, projected):
+        # A walrus in the element (``[(last := v) for v in xs]``) binds the
+        # enclosing scope on every member: each member's element writes its
+        # key, the next member starts from that write (``carried``), and the
+        # comprehension's value carries the last write of each key out to the
+        # enclosing statement.  The element is evaluated once per member and
+        # its walrus value is never evaluated again.
+        def project(index, projected, binds, carried):
             if index == len(members):
                 if self.key is not None:
-                    return ExitSet.completed(DictValue(tuple(projected)))
+                    return ExitSet.completed(
+                        carry_walrus_binds(binds, DictValue(tuple(projected)))
+                    )
                 if projected:
                     element_term = projected[0].to_term(owner=owner)
                 else:
@@ -375,30 +389,60 @@ class ComprehensionSugar(ConstructedTermSugar):
                     symbol_kind="coordinate",
                 )
                 return ExitSet.completed(
-                    ComprehensionValue(term, finite_elements=tuple(projected))
-                )
-
-            inner_ctx = self._member_ctx(generator, members[index], ctx)
-            if not isinstance(inner_ctx, type(ctx)):
-                return inner_ctx
-            if self.key is not None:
-                return self.key.desugar(inner_ctx).and_then(
-                    lambda key: self.element.desugar(inner_ctx).and_then(
-                        lambda value: project(index + 1, (*projected, (key, value)))
+                    carry_walrus_binds(
+                        binds,
+                        ComprehensionValue(term, finite_elements=tuple(projected)),
                     )
                 )
-            return self.element.desugar(inner_ctx).and_then(
-                lambda value: project(
+
+            inner_ctx = self._member_ctx(generator, members[index], carried)
+            if not isinstance(inner_ctx, type(ctx)):
+                return inner_ctx
+
+            def written(wrote):
+                """The member's walrus writes: on the next member's context
+                and on what the comprehension carries out."""
+                return (
+                    _last_binds((*binds, *wrote)),
+                    bind_walrus_binds(wrote, carried),
+                )
+
+            if self.key is not None:
+
+                def after_key(key_value):
+                    key_binds, key = peel_walrus_binds(key_value)
+                    # Python evaluates the key before the value: the value
+                    # reads the key's walrus write.
+                    value_ctx = bind_walrus_binds(key_binds, inner_ctx)
+                    return self.element.desugar(value_ctx).and_then(
+                        lambda value_value: after_value(key_binds, key, value_value)
+                    )
+
+                def after_value(key_binds, key, value_value):
+                    value_binds, value = peel_walrus_binds(value_value)
+                    return project(
+                        index + 1,
+                        (*projected, (key, value)),
+                        *written((*key_binds, *value_binds)),
+                    )
+
+                return self.key.desugar(inner_ctx).and_then(after_key)
+
+            def after_element(element_value):
+                element_binds, element = peel_walrus_binds(element_value)
+                return project(
                     index + 1,
                     (
                         *projected,
-                        value.project_operation_receiver(
+                        element.project_operation_receiver(
                             inner_ctx,
                             owner="ComprehensionSugar finite constructed element",
                         ),
                     ),
+                    *written(element_binds),
                 )
-            )
+
+            return self.element.desugar(inner_ctx).and_then(after_element)
 
         if generator.filters:
             kept = self._kept_members(generator, members, ctx)
@@ -410,7 +454,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         # Outcome.and_then owns terminal/guarded propagation. Every constructed
         # outcome propagates unchanged through its own continuation law and is
         # TRANSPORTED by ``Projected`` -- which is not a non-success cause.
-        return Projected(project(0, ()))
+        return Projected(project(0, (), (), ctx))
 
     def _member_ctx(self, generator, member, ctx):
         """``ctx`` with one finite member bound to the generator's target.
@@ -573,8 +617,34 @@ class ComprehensionSugar(ConstructedTermSugar):
             make_var,
             subst_var_in_term,
         )
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            peel_walrus_binds,
+        )
         from sugar_lift_py_tests.outcome import ExitSet
 
+        if peel_walrus_binds(element)[0] or (
+            key is not None and peel_walrus_binds(key)[0]
+        ):
+            # Over a symbolic iterable no member is ever evaluated: after the
+            # comprehension the walrus's name holds the last member's write,
+            # or its earlier value when there is none, and neither is one
+            # value this recurrence binds.  Refused by name, never read as the
+            # element's symbolic value.
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="ComprehensionSugar._complete",
+                blame=self.site,
+                observed=(
+                    "a walrus in the element of a comprehension over a "
+                    "symbolic iterable"
+                ),
+                requested="the walrus's write from each member",
+                fix=(
+                    "project the comprehension over finite members "
+                    "(ComprehensionSugar._finite_map), or keep it loud"
+                ),
+            )
         owner = str(self.site)
         element_term = (
             ctor(
@@ -633,6 +703,18 @@ class ComprehensionSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
         return ExitSet.completed(ComprehensionValue(term))
+
+
+def _last_binds(binds) -> tuple:
+    """The last write of each walrus in ``binds``, in the order of those last
+    writes: what the comprehension's value carries out after its final
+    member."""
+    last: dict = {}
+    for bind in binds:
+        identity = (bind.name, bind.evaluation)
+        last.pop(identity, None)
+        last[identity] = bind
+    return tuple(last.values())
 
 
 def _decided_bool(outcome):

@@ -35,14 +35,16 @@ see (an unsubstituted unpack) still binds the name. The read is then
 whichever of the two was bound last: the evaluation, or a later write of the
 name.
 
-Where this temporal never received the evaluation, a walrus's reference reads
-the walrus's substituted value (``unevaluated``), the read it was before: a
-walrus nested in an operand that does not carry its bind out to the statement
-(an assignment's right-hand side, a call argument), or in a comprehension
-(refused at construction, so no element evaluates it). The name is not read
-there: it may hold a write older than the walrus. Otherwise (``x += e`` in a
-nested frame, a reduction of the expression alone, a live loop reduced as its
-recurrence and not per item) the read is the name read it always was.
+A walrus's reference (``walrus``) resolves through the key only. A walrus
+nested in a larger expression carries its bind out to the enclosing statement
+on the value (``named_expression_value.carry_walrus_binds``), and a
+comprehension's element writes it per member, so a temporal that never
+received the key is one where the walrus never completed, or where its bind
+was not carried: the read is refused there by name. The name is never read in
+its place (it may hold a write older than the walrus) and the walrus's value
+is never evaluated again. Otherwise (``x += e`` in a nested frame, a reduction
+of the expression alone, a live loop reduced as its recurrence and not per
+item) the read is the name read it always was.
 """
 
 from __future__ import annotations
@@ -81,8 +83,8 @@ class EvaluationRefSugar(ConstructedTermSugar):
     evaluation: str
     name: str
     site: object = dataclass_field(compare=False)
-    unevaluated: object = None
     member: bool = False
+    walrus: bool = False
 
     @classmethod
     def witnesses(cls):
@@ -101,7 +103,6 @@ class EvaluationRefSugar(ConstructedTermSugar):
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
         if self.member:
             return self._member(temporal)
-        evaluated = False
         if temporal is not None:
             key = evaluation_here(self.evaluation)
             latest = temporal.latest(key, self.name)
@@ -109,12 +110,34 @@ class EvaluationRefSugar(ConstructedTermSugar):
                 from sugar_lift_py_tests.outcome import ExitSet
 
                 return ExitSet.completed(latest.value)
-            evaluated = temporal.value_if_bound(key) is not None
-        if self.unevaluated is not None and not evaluated:
-            return self.unevaluated.desugar(ctx)
+            if self.walrus and temporal.value_if_bound(key) is None:
+                return self._unreached_walrus()
+        elif self.walrus:
+            return self._unreached_walrus()
         from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 
         return NameSugar(name=self.name, site=self.site).desugar(ctx)
+
+    def _unreached_walrus(self) -> Outcome:
+        """A walrus's reference whose key this temporal never received: the
+        walrus never completed here, or its bind was not carried out of the
+        operand that holds it.  Refused by name: the name may hold a write
+        older than the walrus, and the walrus is never evaluated again."""
+        from sugar_lift_py_tests.gap.panic import construction_panic_gap
+
+        construction_panic_gap(
+            owner="EvaluationRefSugar",
+            blame=self.site,
+            observed=(
+                f"read of `{self.name}` after its walrus with the walrus's "
+                f"evaluation {self.evaluation} unbound"
+            ),
+            requested="the walrus's completed value bound under its key",
+            fix=(
+                "carry the walrus's bind out of the operand that holds it to "
+                "the enclosing statement (carry_walrus_binds)"
+            ),
+        )
 
     def _member(self, temporal) -> Outcome:
         """A comprehension member's coordinate, bound by the comprehension
