@@ -19,6 +19,7 @@ import pytest
 from sugar_lift_py_tests.floor import (
     ArrayLiteral,
     CallSiteValue,
+    GroundSequenceRepetitionValue,
     ListValue,
     StringValue,
     SymbolicValue,
@@ -136,8 +137,9 @@ def test_no_cardinality_refuses_a_concrete_repetition(sequence, count) -> None:
     outcome = sequence.multiply(TermValue(count), "multiply-site")
 
     assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, SymbolicValue)
-    term = outcome.value.term
+    assert isinstance(outcome.value, GroundSequenceRepetitionValue)
+    assert outcome.value.repetitions == count
+    term = outcome.value.to_term(owner="multiply-site")
     assert isinstance(term, _Ctor)
     assert term.name == "python:sequence_repeat"
     assert len(term.args) == 2

@@ -75,13 +75,30 @@ def test_symbolic_plus_int_is_the_undecided_binary_law() -> None:
     ]
 
 
-def test_enum_py_line75_binop_desugar_does_not_snw() -> None:
-    """Live locus: enum._is_internal_class ``cls_name + '.' + getattr(...)``."""
-    enum_path = Path(__import__("enum").__file__)
-    source = SourceFile.from_path(
+def _enum_through_the_construction_door(tmp_path: Path):
+    """The interpreter's own ``enum.py``, opened through the construction door.
+
+    Its text is seated as ``enum.py`` in a workspace of its own, so the open
+    carries a construction context without listing the whole stdlib directory
+    as the workspace roster. Lines and columns are the live file's.
+    """
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+    enum_path = tmp_path / "enum.py"
+    enum_path.write_text(
+        Path(__import__("enum").__file__).read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return open_source_file_for_construction(
         enum_path,
+        root=tmp_path,
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
+
+
+def test_enum_py_line75_binop_desugar_does_not_snw(tmp_path: Path) -> None:
+    """Live locus: enum._is_internal_class ``cls_name + '.' + getattr(...)``."""
+    source = _enum_through_the_construction_door(tmp_path)
     binops = [
         node
         for node in source.nodes()
@@ -102,12 +119,8 @@ def test_enum_py_line75_binop_desugar_does_not_snw() -> None:
         assert not isinstance(outcome, SugarNotWritten)
 
 
-def test_enum_is_internal_class_function_sugar_still_constructs() -> None:
-    enum_path = Path(__import__("enum").__file__)
-    source = SourceFile.from_path(
-        enum_path,
-        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-    )
+def test_enum_is_internal_class_function_sugar_still_constructs(tmp_path: Path) -> None:
+    source = _enum_through_the_construction_door(tmp_path)
     function = next(fn for fn in source.functions() if fn.name == "_is_internal_class")
     sugar = function.sugar()
     outcome = sugar.desugar(None)

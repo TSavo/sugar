@@ -29,3 +29,36 @@ def parsed_tree(source: str, filename: str = "<unknown>") -> ast.Module:
     must not take this door — ``SourceFile`` is the sole parse gate.
     """
     return _parsed(source, filename)
+
+
+def module_level_import_aliases(source: str, name: str) -> frozenset[str] | None:
+    """Every module that ``source`` binds to ``name`` by ``import X as name``.
+
+    Module-level statements only, through every branch of ``if``/``try``
+    (platform guards); function and class bodies are another scope. ``None``
+    when the source does not parse. Only names leave this adapter.
+    """
+    try:
+        tree = parsed_tree(source)
+    except SyntaxError:
+        return None
+    candidates: set[str] = set()
+
+    def visit(statements):
+        for statement in statements:
+            if isinstance(
+                statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                continue
+            if isinstance(statement, ast.Import):
+                candidates.update(
+                    alias.name for alias in statement.names if alias.asname == name
+                )
+                continue
+            for field_name in ("body", "orelse", "finalbody"):
+                visit(getattr(statement, field_name, ()) or ())
+            for handler in getattr(statement, "handlers", ()) or ():
+                visit(handler.body)
+
+    visit(tree.body)
+    return frozenset(candidates)

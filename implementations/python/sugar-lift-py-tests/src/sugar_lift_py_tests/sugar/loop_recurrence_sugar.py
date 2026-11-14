@@ -358,10 +358,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # iteration 2 is never claimed to complete exactly when iteration 1's
         # did (the unrolled loop's law, sugar/loop iteration segments).
         with entered(loop_iteration_segment(self.target_cid, index)):
-            body = reduce_block_to_exitset(
-                tuple(statement.sugar() for statement in runtime.body_statements),
-                iteration_ctx,
-            )
+            body = reduce_block_to_exitset(runtime.body_sugars, iteration_ctx)
         if not isinstance(body, ExitSet):
             return body
         if len(body.exits) != 1:
@@ -535,11 +532,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.outcome import Completed, ExitSet
         from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
-        if not runtime.else_statements:
+        if not runtime.else_sugars:
             return self._publish_runtime_bindings(runtime, ctx, entries=entries)
-        otherwise = reduce_block_to_exitset(
-            tuple(statement.sugar() for statement in runtime.else_statements), ctx
-        )
+        otherwise = reduce_block_to_exitset(runtime.else_sugars, ctx)
         if not isinstance(otherwise, ExitSet) or len(otherwise.exits) != 1:
             return otherwise
         face = otherwise.exits[0]

@@ -7,25 +7,29 @@ from .floor_value import FloorValue
 
 @dataclass(frozen=True)
 class GroundSequenceRepetitionValue(FloorValue):
-    """A ground Python sequence repetition without eager tuple expansion."""
+    """``sequence * count`` for one concrete sequence and one concrete count,
+    held without eager element expansion.
 
-    constructor_name: str
+    The value is exact: its identity is the receiver sequence (its own category
+    and elements) and the concrete count, so its length and truth are decided
+    and its term is the one closed ``python:sequence_repeat`` coordinate the
+    opaque-count arm also emits. It is not a ``SymbolicValue``: nothing about
+    this value is undecided, its Python type included.
+    """
+
+    sequence: FloorValue
     elements: tuple
+    count: FloorValue
     repetitions: int
 
-    def to_term(self, *, owner: str):
-        from sugar_lift_py_tests.ir import ctor, num
+    def denotes_value(self) -> bool:
+        """A sequence repetition denotes a Python runtime value."""
+        return True
 
-        return ctor(
-            "*",
-            [
-                ctor(
-                    self.constructor_name,
-                    [element.to_term(owner=owner) for element in self.elements],
-                ),
-                num(self.repetitions),
-            ],
-        )
+    def to_term(self, *, owner: str):
+        from sugar_lift_py_tests.floor.sequence_repetition import repetition_term
+
+        return repetition_term(self.sequence, self.count, owner)
 
     def length(self, site):
         del site
