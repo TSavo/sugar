@@ -244,7 +244,13 @@ pub fn add_consistency_with_verification(
 /// never green (`report_exit_code`).
 pub fn add_undecided_members(pool: &MementoPool, r: &mut Report) {
     use sugar_proof_envelope::{UndecidedMember, UndecidedReason};
+    // A call the join answers (step 9) is no longer owed: an imported
+    // contract states its post, and the row that reads the call decides.
+    let joined = crate::consistency::joined_member_cids(pool);
     for (cid, member) in pool.undecided_members() {
+        if joined.contains(&cid.to_string()) {
+            continue;
+        }
         let reason;
         let mut cs = CallSite::default();
         match UndecidedMember::from_stored(member) {

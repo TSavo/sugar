@@ -14153,11 +14153,12 @@ class Call(Expression):
         import_target_symbol = None
         if isinstance(resolution, CallContractResolutionGapV1):
             # Step 6: a call stands as coordinate plus edge, bound or not.
-            # A gap that names ONE definite target which nothing answers
-            # is that state exactly: not bridged. The receipt's symbol
-            # rides to the edge. Every other gap (no definite import
-            # target, or something answered wrongly) stays a refusal.
-            if resolution.names_an_unanswered_target():
+            # A gap that names ONE definite target is that state, whether
+            # nothing answers it or something answers it wrongly: the
+            # receipt's symbol rides to the edge, and prove's join refuses
+            # a wrong answer (step 9). Only a gap with no definite import
+            # target stays a refusal here.
+            if resolution.names_a_definite_target():
                 # The gap row echoes the demand's symbol; the demand
                 # itself is the source when the kit served one.
                 import_target_symbol = (
