@@ -1670,9 +1670,11 @@ class CallSiteValue(FloorValue):
     def reduce_source_outcome(self, ctx: Any = None):
         """Reduce this already-constructed source body without floor projection.
 
-        Context-manager protocol construction needs the body's complete
-        ExitSet, including method halts.  This uses the identical explicit call
-        frame/curry path as ``force_floor`` and never reconstructs source.
+        The body reduction ``producer_outcome`` applies: the body's complete
+        ExitSet, method halts included.  A context-manager protocol method is
+        applied through ``producer_outcome`` like every call (#7757 entry 6),
+        not here.  This uses the identical explicit call frame/curry path as
+        ``force_floor`` and never reconstructs source.
         """
         if self._retained_source_completion is not None:
             _retained_completion_invariant(

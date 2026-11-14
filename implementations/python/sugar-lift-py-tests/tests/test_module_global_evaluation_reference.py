@@ -58,6 +58,7 @@ from sugar_source_tree.nodes import (
     Name,
     Return,
     Subscript,
+    With,
     _at_module_execution_site,
     _module_reference_state,
     construct_at_module_execution_site,
@@ -567,6 +568,51 @@ def test_a_for_statements_own_call_runs_after_its_body() -> None:
     read = unit.module_bindings_at(at_call, {"x"})["x"]
     assert isinstance(read, EvaluationRef)
     assert read.evaluation == first
+
+
+_MODULE_WITH = (
+    "x = 1\n"
+    "class M:\n"
+    "    def __enter__(self):\n"
+    "        return x\n"
+    "    def __exit__(self, t, v, tb):\n"
+    "        return False\n"
+    "with M() as y:\n"
+    "    pass\n"
+    "x = 2\n"
+)
+
+
+def test_a_module_with_enters_reading_the_binding_at_the_with() -> None:
+    # ``x = 1; class M: def __enter__(self): return x; with M() as y: ...;
+    # x = 2``: the with's ``__enter__`` runs where the with stands, so ``y``
+    # is the ``x = 1`` binding.  The protocol binds ``__enter__`` through
+    # ``bind_method_call`` at the with's site (``_call_protocol_method``),
+    # which reads the method frame again there.
+    tree = _source(_MODULE_WITH)
+    first, second = _assignment_keys(tree, "x")
+    node = _only(tree, With)
+    site = node.unit.module_execution_site(node)
+    assert site is not None
+    function = _function(tree, "__enter__")
+    read = construct_at_module_execution_site(site, lambda: _returned(function))
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == first
+    # Called after import, the same body reads the module's final binding.
+    after_import = _returned(function)
+    assert isinstance(after_import, EvaluationRef)
+    assert after_import.evaluation == second
+    # The method frame the class statement constructs is read again at the
+    # with, as ``bind_method_call`` reads it.
+    frame = function.source_visible_call_frame()
+    at_with = construct_at_module_execution_site(
+        site, lambda: frame_at_current_module_execution_site(frame)
+    )
+    assert at_with.module_execution_site == site
+    returned = at_with.body.statements[-1]
+    assert isinstance(returned, ReturnSugar)
+    assert isinstance(returned.value, EvaluationRefSugar)
+    assert returned.value.evaluation == first
 
 
 # -- x += e binds its evaluation, and the name only for a live loop -----------

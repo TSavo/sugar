@@ -75,7 +75,7 @@ class ConstructedManagerProtocolV1:
 
     def enter_outcome(self, ctx: object = None):
         if isinstance(self.receiver_state, ObjectValue):
-            return self.enter_call.reduce_source_outcome(ctx)
+            return _apply_protocol_call(self.enter_call, ctx)
         return _completed_receiver_exits(self.receiver_state).sequence(
             lambda receiver: _call_protocol_method(
                 receiver,
@@ -83,14 +83,14 @@ class ConstructedManagerProtocolV1:
                 (),
                 self.exit_face_id,
                 ctx,
-            ).reduce_source_outcome(ctx)
+            )
         )
 
     def exit_outcome(self, ctx: object = None):
         def run_exit(receiver):
             enter = _call_protocol_method(
                 receiver, "__enter__", (), self.exit_face_id, ctx
-            ).reduce_source_outcome(ctx)
+            )
             entered = _receiver_state_after_enter(
                 receiver, enter, blame=self.exit_face_id
             )
@@ -104,7 +104,7 @@ class ConstructedManagerProtocolV1:
                 ),
                 self.exit_face_id,
                 ctx,
-            ).reduce_source_outcome(ctx)
+            )
 
         if isinstance(self.receiver_state, ObjectValue):
             return run_exit(self.receiver_state)
@@ -120,9 +120,7 @@ class ConstructedManagerProtocolV1:
 
     def enter_resource_outcome_for(self, receiver, ctx: object = None):
         """Run enter on the exact receiver value produced by the manager face."""
-        enter = _call_protocol_method(
-            receiver, "__enter__", (), self.exit_face_id, ctx
-        ).reduce_source_outcome(ctx)
+        enter = _call_protocol_method(receiver, "__enter__", (), self.exit_face_id, ctx)
         return _resource_enter_transitions(receiver, enter, blame=self.exit_face_id)
 
     def exit_outcome_for(self, entered: EnteredManagerStateValue, ctx: object = None):
@@ -154,7 +152,7 @@ class ConstructedManagerProtocolV1:
             ),
             self.exit_face_id,
             ctx,
-        ).reduce_source_outcome(ctx)
+        )
 
     def exit_outcome_for_body(self, entered, body_face, ctx: object = None):
         """Invoke the cited exit frame with this body face's actual ABI inputs.
@@ -287,7 +285,7 @@ class ConstructedManagerProtocolV1:
             args,
             self.exit_face_id,
             ctx,
-        ).reduce_source_outcome(ctx)
+        )
 
 
 def _completed_object_receivers(receiver) -> tuple[ObjectValue, ...]:
@@ -380,6 +378,13 @@ def _completed_receiver_exits(receiver_state: ReceiverStatePartitionValue):
 
 
 def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
+    """``receiver.<name>(*arguments)``: bound, then applied, as every call is.
+
+    The protocol method binds through ``bind_method_call`` (the receiver's
+    ``bound_method_call``), so its frame is read again at the module
+    execution site the With runs at (#7972), and is applied by
+    ``_apply_protocol_call`` (``CallSiteValue.producer_outcome``).
+    """
     from sugar_source_tree.panic import SugarNotWritten
 
     bound_method_call = getattr(receiver, "bound_method_call", None)
@@ -391,12 +396,62 @@ def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
             requested=f"authenticated {name} call over projected receiver state",
             fix="preserve the exact receiver method frame or keep protocol loud",
         )
-    return bound_method_call(
-        name,
-        arguments,
-        owner="ConstructedManagerProtocolV1.protocol_method",
-        blame=exit_face_id,
-        ctx=ctx,
+    return _apply_protocol_call(
+        bound_method_call(
+            name,
+            arguments,
+            owner="ConstructedManagerProtocolV1.protocol_method",
+            blame=exit_face_id,
+            ctx=ctx,
+        ),
+        ctx,
+    )
+
+
+def _apply_protocol_call(call: CallSiteValue, ctx):
+    """The one application of a bound ``__enter__``/``__exit__`` call.
+
+    ``CallSiteValue.producer_outcome`` applies it, as it applies every call
+    (#7757 entry 6, #7969): each halt of the body is the call's own, and a
+    deferred native operation over a formal is discharged against the bound
+    actuals.  The With reads what the body did (its receiver stores and its
+    return), so each completed face carries the body completion the Call
+    retained (``retained_source_completion_outcome``), never a second
+    reduction of the body.
+    """
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.gap.panic import construction_panic_gap
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    if call.body is None:
+        # ``producer_outcome`` answers a bodiless call with the call itself;
+        # a protocol method with no source body stays the refusal it was.
+        construction_panic_gap(
+            owner="ConstructedManagerProtocolV1.protocol_method",
+            blame=call.target_name,
+            observed="protocol method call has no source body",
+            requested="the constructed source body of the protocol method",
+            fix="retain the source-visible call frame or keep the call loud",
+        )
+    outcome = call.producer_outcome(ctx)
+    if not isinstance(outcome, ExitSet):
+        return outcome
+
+    def body_completion(value):
+        if isinstance(value, CallSiteValue) and value.term is call.term:
+            retained = value.retained_source_completion_outcome()
+            if retained is not None:
+                return retained.completed_value()
+        return value
+
+    return ExitSet(
+        tuple(
+            replace(face, value=body_completion(face.value))
+            if isinstance(face, Completed)
+            else face
+            for face in outcome.exits
+        )
     )
 
 
