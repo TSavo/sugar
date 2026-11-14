@@ -6,7 +6,6 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import CallSiteValue
 from sugar_lift_py_tests.floor.builtin_super_value import BuiltinSuperValue
 from sugar_lift_py_tests.floor.string_value import StringValue
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.panic import SugarNotWritten
@@ -55,8 +54,7 @@ def test_super_dispatches_into_source_defined_base_init() -> None:
         ctx=context,
     )
 
-    assert isinstance(projected, Complete)
-    call = projected.value
+    call = projected.completed_value()
     assert isinstance(call, CallSiteValue)
     # The base body runs bound to the original instance receiver, and
     # __class__ inside it is the base (so a chained super would select the
@@ -64,7 +62,7 @@ def test_super_dispatches_into_source_defined_base_init() -> None:
     assert call.lexical_defining_class is base
     assert call.arg_values[0] is receiver
     reduced = call.retained_source_completion_outcome()
-    assert isinstance(reduced, Complete)
+    assert reduced.completed_value() is not None
 
 
 # --- lying twin: super() naming a method no base defines must stay loud --------
@@ -133,21 +131,17 @@ def test_super_init_statement_applies_annotated_field_stores() -> None:
         ctx=context,
         keywords=(("match", NoneValue()),),
     )
-    assert isinstance(projected, Complete)
-    call = projected.value
+    call = projected.completed_value()
     assert isinstance(call, CallSiteValue)
     reduced = call.retained_source_completion_outcome()
-    if isinstance(reduced, ExitSet):
-        completed = [
-            face.value
-            for face in reduced.exits
-            if type(face).__name__ == "Completed"
-        ]
-        assert completed, reduced
-        block = completed[-1]
-    else:
-        assert isinstance(reduced, Complete)
-        block = reduced.value
+    assert isinstance(reduced, ExitSet), reduced
+    completed = [
+        face.value
+        for face in reduced.exits
+        if type(face).__name__ == "Completed"
+    ]
+    assert completed, reduced
+    block = completed[-1]
     if not isinstance(block, BlockValue):
         block = BlockValue((block,), can_fall_through=True)
     built = derived.construct_receiver_state_from_block(block, "receiver")

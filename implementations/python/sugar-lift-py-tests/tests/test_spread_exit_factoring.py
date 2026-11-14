@@ -35,7 +35,6 @@ from sugar_lift_py_tests.ir import (
     make_var,
     not_,
 )
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
@@ -100,7 +99,7 @@ class _SingleFacedElement:
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(SymbolicValue(ctor(f"only{self.index}", [])))
+        return ExitSet.completed(SymbolicValue(ctor(f"only{self.index}", [])))
 
 
 def _collection_sugar(elements):

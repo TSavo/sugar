@@ -6,7 +6,7 @@ from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.operations.subscript_operation import SubscriptOperation
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 
 
 class _RecordingTermIndex:
@@ -31,8 +31,9 @@ def test_symbolic_subscript_projects_its_index_through_the_owned_term_door() -> 
 
     outcome = operation.subscript_symbolic(receiver, None)
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.term == ctor("py.subscript", [receiver.term, index.term])
+    value = outcome.completed_value()
+    assert value is not None
+    assert value.term == ctor("py.subscript", [receiver.term, index.term])
     assert index.owners == ["symbolic-subscript index"]
 
 
@@ -75,7 +76,7 @@ class _RecordingSubscriptReceiver:
 
     def subscript_with(self, operation, ctx):
         self.subscripts.append((operation, ctx))
-        return Complete(self)
+        return ExitSet.completed(self)
 
 
 def test_subscript_operation_submits_itself_to_the_receiver_port() -> None:
@@ -89,6 +90,5 @@ def test_subscript_operation_submits_itself_to_the_receiver_port() -> None:
 
     outcome = operation.submit(receiver, ctx)
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value is receiver
+    assert outcome.completed_value() is receiver
     assert receiver.subscripts == [(operation, ctx)]

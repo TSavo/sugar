@@ -8,7 +8,6 @@ from sugar_lift_py_tests.floor import (
     MappingObjectValue,
     ObjectValue,
 )
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
@@ -29,10 +28,11 @@ def test_builtin_dict_base_is_evaluated_through_the_temporal_floor() -> None:
 
     constructed = definition.sugar().desugar(context)
 
-    assert isinstance(constructed, Complete)
-    assert len(constructed.value.base_classes) == 1
-    assert type(constructed.value.base_classes[0]) is BuiltinDictClassValue
-    receiver = constructed.value.construct_receiver_state_from_block(None, "receiver")
+    class_value = constructed.completed_value()
+    assert class_value is not None
+    assert len(class_value.base_classes) == 1
+    assert type(class_value.base_classes[0]) is BuiltinDictClassValue
+    receiver = class_value.construct_receiver_state_from_block(None, "receiver")
     assert type(receiver) is MappingObjectValue
 
 

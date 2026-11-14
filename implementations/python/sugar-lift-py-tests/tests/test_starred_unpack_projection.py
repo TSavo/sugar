@@ -32,7 +32,6 @@ from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.floor.tuple_value import TupleValue
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.operations import SequenceProjectionOperation
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, outcome_to_exitset
 from sugar_lift_python_source.source_oracle import path_source, workspace_path_source
 from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
@@ -89,8 +88,8 @@ def _workspace_site(tmp_path: Path):
 def test_tuple_head_star_tail_binds_source_order() -> None:
     members = (TermValue(1), TermValue(2), TermValue(3), TermValue(4))
     outcome = _star_op(prefix=("head",)).submit(TupleValue(members), None)
-    assert isinstance(outcome, Complete)
-    assert outcome.value == ScopeRebinds(
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value() == ScopeRebinds(
         (
             ("head", TermValue(1)),
             ("tail", ListValue((TermValue(2), TermValue(3), TermValue(4)))),
@@ -101,8 +100,8 @@ def test_tuple_head_star_tail_binds_source_order() -> None:
 def test_list_head_star_tail_binds_source_order() -> None:
     members = (TermValue(10), TermValue(20), TermValue(30))
     outcome = _star_op(prefix=("head",)).submit(ListValue(members), None)
-    assert isinstance(outcome, Complete)
-    assert outcome.value == ScopeRebinds(
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value() == ScopeRebinds(
         (
             ("head", TermValue(10)),
             ("tail", ListValue((TermValue(20), TermValue(30)))),
@@ -115,8 +114,8 @@ def test_head_star_mid_suffix_binds_middle_as_list() -> None:
     outcome = _star_op(prefix=("a",), star="mid", suffix=("b",)).submit(
         TupleLiteralValue(members), None
     )
-    assert isinstance(outcome, Complete)
-    assert outcome.value == ScopeRebinds(
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value() == ScopeRebinds(
         (
             ("a", TermValue(1)),
             ("mid", ListValue((TermValue(2), TermValue(3)))),
@@ -128,15 +127,15 @@ def test_head_star_mid_suffix_binds_middle_as_list() -> None:
 def test_empty_tail_is_empty_list_not_none() -> None:
     """``a, *rest = (1,)``: rest is [] — never None, never omitted."""
     outcome = _star_op(prefix=("a",)).submit(TupleValue((TermValue(1),)), None)
-    assert isinstance(outcome, Complete)
-    assert outcome.value == ScopeRebinds((("a", TermValue(1)), ("tail", ListValue(()))))
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value() == ScopeRebinds((("a", TermValue(1)), ("tail", ListValue(()))))
 
 
 def test_reversed_tail_lying_twin_fails() -> None:
     """Bite: reverse middle members must not match the truthful rebind."""
     members = (TermValue(1), TermValue(2), TermValue(3), TermValue(4))
     outcome = _star_op(prefix=("head",)).submit(TupleValue(members), None)
-    truthful = outcome.value
+    truthful = outcome.completed_value()
     lying = ScopeRebinds(
         (
             ("head", TermValue(1)),
@@ -158,17 +157,18 @@ def test_too_few_members_named_valueerror(tmp_path: Path) -> None:
     # Need two fixed positions (a and b) but only one member.
     op = _star_op(prefix=("a", "b"), star="rest", blame=site)
     outcome = op.submit(TupleValue((TermValue(1),)), None)
-    assert isinstance(outcome, Incomplete)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
     # RaiseEffect is unconstructible without coordinate; pin identity, not presence.
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
-    assert isinstance(outcome.effect, RaiseEffect)
+    assert isinstance(halt.effect, RaiseEffect)
     expected = RaiseEffect.for_builtin(
         "ValueError",
         occurrence="implementations/python/sugar-lift-py-tests/tests/test_starred_unpack_projection.py:156:0",
     )
     assert (
-        outcome.effect.exception_type_coordinate == expected.exception_type_coordinate
+        halt.effect.exception_type_coordinate == expected.exception_type_coordinate
     )
 
 
@@ -177,7 +177,9 @@ def test_too_few_discrimination_is_not_completed_bind(tmp_path: Path) -> None:
     op = _star_op(prefix=("a", "b"), star="rest", blame=site)
     outcome = op.submit(ListValue((TermValue(1),)), None)
     with pytest.raises(AssertionError):
-        assert isinstance(outcome, Complete), "too-few starred unpack completed"
+        assert (
+            outcome.completed_value() is not None
+        ), "too-few starred unpack completed"
 
 
 # ---------------------------------------------------------------------------
@@ -190,11 +192,12 @@ def test_opaque_starred_retains_typed_obligation_no_bind(tmp_path: Path) -> None
     outcome = _star_op(prefix=("head",), blame=site).submit(
         SymbolicValue(make_var("xs")), None
     )
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, SequenceUnpackRuntimeEffect)
-    assert "no authenticated cardinality" in outcome.effect.reason
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    assert "no authenticated cardinality" in halt.effect.reason
     assert (
-        "at least" in outcome.effect.reason or "starred=True" in outcome.effect.reason
+        "at least" in halt.effect.reason or "starred=True" in halt.effect.reason
     )
 
 
@@ -202,10 +205,11 @@ def test_source_opaque_starred_never_completes(tmp_path: Path) -> None:
     outcome = _function_sugar(
         tmp_path, "def f(xs):\n    head, *tail = xs\n    return head\n", "opaque_src"
     ).desugar(None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, SequenceUnpackRuntimeEffect)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
     with pytest.raises(AssertionError):
-        assert isinstance(outcome, Complete)
+        assert outcome.completed_value() is not None
 
 
 def test_opaque_starred_discrimination_display_does_bind(tmp_path: Path) -> None:
@@ -218,8 +222,8 @@ def test_opaque_starred_discrimination_display_does_bind(tmp_path: Path) -> None
         "def f(p, q, r):\n    a, *rest = p, q, r\n    return a\n",
         "disp_disc",
     ).desugar(None)
-    assert isinstance(opaque, Incomplete)
-    assert isinstance(display, Complete)
+    assert opaque.exits and opaque.halts() == opaque.exits
+    assert display.completed_value() is not None
 
 
 # ---------------------------------------------------------------------------
@@ -306,12 +310,12 @@ def test_arity_lying_twin_exact_count_is_not_star_minimum() -> None:
     starred = _star_op(prefix=("head",))
     members = (TermValue(1), TermValue(2), TermValue(3))
     star_ok = starred.submit(TupleValue(members), None)
-    assert isinstance(star_ok, Complete)
+    assert star_ok.completed_value() is not None
     # Exact one-name against three members is a mismatch (too many) → gap on prose site.
     with pytest.raises(ConstructionPanic):
         exact.submit(TupleValue(members), None)
     with pytest.raises(AssertionError):
-        assert star_ok.value == ScopeRebinds((("head", TermValue(1)),))
+        assert star_ok.completed_value() == ScopeRebinds((("head", TermValue(1)),))
 
 
 def test_source_authenticated_star_binds_through_local_display(tmp_path: Path) -> None:
@@ -321,7 +325,7 @@ def test_source_authenticated_star_binds_through_local_display(tmp_path: Path) -
         "def f():\n    xs = (1, 2, 3)\n    head, *tail = xs\n    return head\n",
         "local_star",
     ).desugar(None)
-    assert isinstance(outcome, Complete)
-    assert "1" in str(outcome.value.record) or "TermValue(value=1)" in str(
-        outcome.value
+    assert outcome.completed_value() is not None
+    assert "1" in str(outcome.completed_value().record) or "TermValue(value=1)" in str(
+        outcome.completed_value()
     )

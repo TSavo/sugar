@@ -30,7 +30,6 @@ from sugar_lift_py_tests.floor.sequence_repetition import (
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import _Ctor
-from sugar_lift_py_tests.outcome import Complete
 
 SEQUENCES = (ListValue, TupleValue)
 SITE = "repetition-site"
@@ -47,11 +46,11 @@ def test_repetition_at_the_budget_materializes_every_element(sequence_type) -> N
         TermValue(EAGER_MATERIALIZATION_BUDGET), SITE, None
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, sequence_type)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), sequence_type)
     # Exact cardinality: 128 elements, every one the repeated element.
-    assert len(outcome.value.elements) == EAGER_MATERIALIZATION_BUDGET
-    assert outcome.value.elements == (element,) * EAGER_MATERIALIZATION_BUDGET
+    assert len(outcome.completed_value().elements) == EAGER_MATERIALIZATION_BUDGET
+    assert outcome.completed_value().elements == (element,) * EAGER_MATERIALIZATION_BUDGET
 
 
 # -- positive arm: one element past the budget no longer panics ---------------
@@ -66,11 +65,11 @@ def test_one_element_past_the_budget_folds_instead_of_panicking(
 
     outcome = sequence.multiply(count, SITE, None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, GroundSequenceRepetitionValue)
-    assert outcome.value.to_term(owner=SITE) == repetition_term(sequence, count, SITE)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), GroundSequenceRepetitionValue)
+    assert outcome.completed_value().to_term(owner=SITE) == repetition_term(sequence, count, SITE)
     # Exact, not opaque: the folded value still knows its own cardinality.
-    assert outcome.value.length(SITE).value.value == EAGER_MATERIALIZATION_BUDGET + 1
+    assert outcome.completed_value().length(SITE).value.value == EAGER_MATERIALIZATION_BUDGET + 1
 
 
 @pytest.mark.parametrize("sequence_type", SEQUENCES)
@@ -83,9 +82,9 @@ def test_a_cardinality_no_machine_could_materialize_still_constructs(
 
     outcome = sequence.multiply(count, SITE, None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, GroundSequenceRepetitionValue)
-    term = outcome.value.to_term(owner=SITE)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), GroundSequenceRepetitionValue)
+    term = outcome.completed_value().to_term(owner=SITE)
     assert isinstance(term, _Ctor)
     assert term.name == "python:sequence_repeat"
     assert term.args[1] == count.to_term(owner=SITE)
@@ -98,7 +97,7 @@ def test_no_cardinality_makes_repetition_panic(sequence_type) -> None:
 
     for count in (0, 1, 63, 64, 65, 128, 129, 10**6, 10**15):
         outcome = sequence.multiply(TermValue(count), SITE, None)
-        assert isinstance(outcome, Complete), count
+        assert outcome.completed_value() is not None, count
 
 
 # -- discriminating arm: the folded form is the OPAQUE-count coordinate -------
@@ -139,7 +138,6 @@ def test_a_known_invalid_count_does_not_reach_either_repetition_arm(
         TreeConstructionContextV1,
     )
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.tree import SourceFile
 
@@ -153,9 +151,10 @@ def test_a_known_invalid_count_does_not_reach_either_repetition_arm(
 
     outcome = sequence_type((TermValue(1),)).multiply(TermValue(1.5), fragment, None)
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 # -- discriminating arm: each category rebuilds ITSELF ------------------------
@@ -182,18 +181,18 @@ def test_an_empty_sequence_repeats_to_empty_at_any_count(sequence_type) -> None:
     """len 0 * huge n is 0, materializable -- never folded, never a panic."""
     outcome = sequence_type(()).multiply(TermValue(10**12), SITE, None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, sequence_type)
-    assert len(outcome.value.elements) == 0
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), sequence_type)
+    assert len(outcome.completed_value().elements) == 0
 
 
 @pytest.mark.parametrize("sequence_type", SEQUENCES)
 def test_a_negative_count_repeats_to_empty(sequence_type) -> None:
     outcome = sequence_type((TermValue(7),)).multiply(TermValue(-4), SITE, None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, sequence_type)
-    assert len(outcome.value.elements) == 0
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), sequence_type)
+    assert len(outcome.completed_value().elements) == 0
 
 
 # -- the gap that remains: no sequence category invented a repetition ---------

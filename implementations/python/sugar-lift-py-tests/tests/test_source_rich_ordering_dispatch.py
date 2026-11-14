@@ -23,7 +23,7 @@ from sugar_lift_py_tests.floor.receiver_state_partition_value import (
     ReceiverStatePartitionValue,
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -44,8 +44,9 @@ def _returned(source: str):
         if isinstance(node, FunctionDef) and node.name == "f"
     )
     outcome = function_universe_outcome(function)
-    assert isinstance(outcome, Complete)
-    (statement,) = outcome.value.record.statements
+    value = outcome.completed_value()
+    assert value is not None
+    (statement,) = value.record.statements
     return statement.value
 
 
@@ -132,7 +133,7 @@ class _Fixed(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner: str):
         return TermValue(0).to_term(owner=owner)

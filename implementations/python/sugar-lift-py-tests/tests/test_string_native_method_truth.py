@@ -2,7 +2,7 @@ from sugar_source_tree.spans import LineColSpan
 
 from sugar_lift_py_tests.floor import CallSiteValue, StringValue, SymbolicValue
 from sugar_lift_py_tests.ir import atomic
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -50,7 +50,7 @@ class _FixedSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner):
         return self.value.to_term(owner=owner)
@@ -64,8 +64,7 @@ def test_string_receiver_owns_startswith_boolean_return() -> None:
         _Site("call"),
     ).desugar()
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)
 
 
 def test_string_receiver_owns_endswith_boolean_return() -> None:
@@ -76,8 +75,7 @@ def test_string_receiver_owns_endswith_boolean_return() -> None:
         _Site("call"),
     ).desugar()
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)
 
 
 def test_symbolic_receiver_cannot_borrow_native_string_return_type() -> None:
@@ -88,8 +86,7 @@ def test_symbolic_receiver_cannot_borrow_native_string_return_type() -> None:
         _Site("call"),
     ).desugar()
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
+    assert isinstance(outcome.completed_value(), CallSiteValue)
 
 
 def test_string_receiver_with_undecided_prefix_stays_untyped() -> None:

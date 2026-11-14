@@ -15,11 +15,10 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_source_tree.panic import SugarNotWritten
-from sugar_lift_py_tests.outcome import Incomplete
 
 
 def _site(tmp_path):
@@ -47,7 +46,7 @@ class _ObservedSugar(Sugar):
     def desugar(self, ctx=None):
         del ctx
         self.log.append(self.label)
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
 
 def _store(receiver, key, value, log, site):
@@ -66,7 +65,7 @@ def test_subscript_store_evaluates_rhs_receiver_and_key_once_in_python_order(tmp
     ).desugar()
 
     assert log == ["value", "receiver", "key"]
-    assert outcome == Complete(ListValue((TermValue(7),)))
+    assert outcome == ExitSet.completed(ListValue((TermValue(7),)))
 
 
 def test_readable_immutable_receiver_raises_on_store(tmp_path):
@@ -77,11 +76,13 @@ def test_readable_immutable_receiver_raises_on_store(tmp_path):
         receiver, TermValue(0), TermValue(7), [], _site(tmp_path)
     ).desugar()
 
-    assert type(outcome).__name__ == "Incomplete"
-    assert outcome.effect.exception_name == "TypeError"
-    assert "TypeError" in repr(outcome.effect.exception_type_coordinate)
-    assert "ValueError" not in repr(outcome.effect.exception_type_coordinate)
-    assert outcome.effect.producer_node_owner == "TupleValue.setitem"
+    assert type(outcome) is ExitSet
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "TypeError"
+    assert "TypeError" in repr(halt.effect.exception_type_coordinate)
+    assert "ValueError" not in repr(halt.effect.exception_type_coordinate)
+    assert halt.effect.producer_node_owner == "TupleValue.setitem"
 
 
 @pytest.mark.parametrize(
@@ -103,10 +104,12 @@ def test_immutable_slice_store_has_exact_typeerror_occurrence(
         site,
     ).desugar()
 
-    assert type(outcome).__name__ == "Incomplete"
-    assert outcome.effect.exception_name == "TypeError"
-    assert outcome.effect.producer_node_owner == owner
-    assert outcome.effect.occurrence_id == str(site)
+    assert type(outcome) is ExitSet
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "TypeError"
+    assert halt.effect.producer_node_owner == owner
+    assert halt.effect.occurrence_id == str(site)
 
 
 @pytest.mark.parametrize(
@@ -128,8 +131,10 @@ def test_immutable_slice_store_cannot_fabricate_mutated_receiver(
         site,
     ).desugar()
 
-    assert outcome != Complete(fabricated)
-    assert outcome.effect.producer_node_owner != "TupleValue.setitem"
+    assert outcome != ExitSet.completed(fabricated)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.producer_node_owner != "TupleValue.setitem"
 
 
 @pytest.mark.parametrize("receiver", (StringValue("abc"), BytesValue(b"abc")))
@@ -196,7 +201,7 @@ def test_rhs_halt_wins_before_receiver_or_key_evaluation(tmp_path):
         def desugar(self, ctx=None):
             del ctx
             log.append("value")
-            return Incomplete(
+            return ExitSet.halted(
                 RaiseEffect(
                     exception_type_coordinate=str_const("ValueError"),
                     occurrence=AuthenticatedRaiseLocus.of("store.py:4:12"),
@@ -216,7 +221,8 @@ def test_rhs_halt_wins_before_receiver_or_key_evaluation(tmp_path):
     outcome = store.desugar()
 
     assert log == ["value"]
-    assert outcome.effect.exception_type_coordinate == str_const("ValueError")
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_type_coordinate == str_const("ValueError")
 
 
 def test_receiver_halt_wins_before_key_after_rhs_completed(tmp_path):
@@ -230,7 +236,7 @@ def test_receiver_halt_wins_before_key_after_rhs_completed(tmp_path):
         def desugar(self, ctx=None):
             del ctx
             log.append("receiver")
-            return Incomplete(
+            return ExitSet.halted(
                 RaiseEffect(
                     exception_type_coordinate=str_const("LookupError"),
                     occurrence=AuthenticatedRaiseLocus.of("store.py:4:4"),
@@ -251,7 +257,8 @@ def test_receiver_halt_wins_before_key_after_rhs_completed(tmp_path):
     outcome = store.desugar()
 
     assert log == ["value", "receiver"]
-    assert outcome.effect.exception_type_coordinate == str_const("LookupError")
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_type_coordinate == str_const("LookupError")
 
 
 def test_store_halt_preserves_state_completed_before_it(tmp_path):

@@ -15,7 +15,7 @@ from sugar_lift_py_tests.floor import (
     ReturnValue,
     TermValue,
 )
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -94,11 +94,7 @@ def _only_exit(outcome, kind):
 
 
 def _return_value(outcome) -> TermValue:
-    value = (
-        outcome.value
-        if isinstance(outcome, Complete)
-        else _only_exit(outcome, Completed).value
-    )
+    value = _only_exit(outcome, Completed).value
     if isinstance(value, CallSiteValue):
         value = value._dig_floor_or_none(None, owner="source-return-compare-control")
         assert value is not None

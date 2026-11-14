@@ -112,10 +112,10 @@ def test_enum_py_line75_binop_desugar_does_not_snw(tmp_path: Path) -> None:
         # Must not raise SugarNotWritten(binary_operation_exception_floor)
         outcome = sugar.desugar(None)
         assert outcome is not None
-        # Prefer carrier or Complete — never the old SNW abort.
+        # Prefer carrier or a completion — never the old SNW abort.
         if isinstance(outcome, Exception):
             raise AssertionError(outcome)
-        # Nested left is NameSugar/formal-less path; carrier or nested Complete.
+        # Nested left is NameSugar/formal-less path; carrier or nested completion.
         assert not isinstance(outcome, SugarNotWritten)
 
 

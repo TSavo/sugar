@@ -32,7 +32,7 @@ from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.ir import ctor, make_var
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_source_tree.panic import SugarNotWritten
 
 
@@ -124,6 +124,16 @@ def test_floor_value_ordering_defaults_never_mint_predicate_complete() -> None:
                         # when its argument is PredicateValue — ban any Complete mint
                         # on the default doors (ground arms live on subclasses).
                         offenders.append(f"{item.name}:{child.lineno}:Complete(...)")
+                    if (
+                        isinstance(func, ast.Attribute)
+                        and func.attr == "completed"
+                        and isinstance(func.value, ast.Name)
+                        and func.value.id == "ExitSet"
+                    ):
+                        # The same completion mint in the ExitSet form (#7825).
+                        offenders.append(
+                            f"{item.name}:{child.lineno}:ExitSet.completed(...)"
+                        )
                     if isinstance(func, ast.Name) and func.id == "PredicateValue":
                         offenders.append(
                             f"{item.name}:{child.lineno}:PredicateValue(...)"
@@ -204,13 +214,13 @@ def _relative_fragment(source: str, filename: str):
 def test_source_decided_number_string_ordering_emits_type_error() -> None:
     """Truthful twin: decided unorderable pair halts with a TypeError."""
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _relative_fragment('def f():\n    return 1.0 < "a"\n', "number-lt-string.py")
     outcome = TermValue(1.0).less_than(StringValue("a"), site, None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_source_decided_int_ordering_constructs_bool_sugar() -> None:
@@ -218,8 +228,7 @@ def test_source_decided_int_ordering_constructs_bool_sugar() -> None:
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
     outcome = TermValue(1).less_than(TermValue(2), SITE, None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)
 
 
 def test_decided_default_pair_without_sugar_arm_panics_not_refuses() -> None:
@@ -246,23 +255,20 @@ def test_decided_string_le_gt_ge_construct_bool_sugar() -> None:
 
     a, b = StringValue("a"), StringValue("b")
     le = a.less_equal(b, SITE, None)
-    assert isinstance(le, Complete)
-    assert isinstance(le.value, TrueBoolLiteralSugar)
+    assert isinstance(le.completed_value(), TrueBoolLiteralSugar)
     gt = b.greater_than(a, SITE, None)
-    assert isinstance(gt, Complete)
-    assert isinstance(gt.value, TrueBoolLiteralSugar)
+    assert isinstance(gt.completed_value(), TrueBoolLiteralSugar)
     ge = a.greater_equal(a, SITE, None)
-    assert isinstance(ge, Complete)
-    assert isinstance(ge.value, TrueBoolLiteralSugar)
+    assert isinstance(ge.completed_value(), TrueBoolLiteralSugar)
     # False face still Sugar, never PredicateValue invent.
     le_false = b.less_equal(a, SITE, None)
-    assert isinstance(le_false.value, FalseBoolLiteralSugar)
+    assert isinstance(le_false.completed_value(), FalseBoolLiteralSugar)
 
 
 def test_lying_complete_predicate_is_not_ordering_meaning() -> None:
     """Lying twin: a sole Complete(PredicateValue) is never the ordering answer."""
     outcome = _symbolic().less_than(TermValue(1), SITE, None)
-    assert not isinstance(outcome, Complete)
+    assert outcome.completed_value() is None
     _assert_undecided_ordering_faces(outcome)
 
 
@@ -282,7 +288,7 @@ def test_lying_residual_ordering_predicate_mint_panics_at_publisher() -> None:
 
     left = _symbolic()
     right = TermValue(1)
-    forged = Complete(
+    forged = ExitSet.completed(
         PredicateValue(
             atomic(
                 "py.lt",
@@ -336,13 +342,13 @@ def test_undecided_binary_throws_named_never_nameless_halt(method: str) -> None:
 def test_source_decided_int_float_bitand_emits_type_error() -> None:
     """Truthful twin: decided ground pair still constructs TypeError."""
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _relative_fragment("def f():\n    return 1 & 3.14\n", "int-bitand-float.py")
     outcome = TermValue(1).bitwise_and(TermValue(3.14), site, None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_lying_dual_edge_is_not_undecided_binary_answer() -> None:
@@ -410,10 +416,10 @@ def test_undecided_attribute_remains_named_refusal() -> None:
 def test_source_decided_none_contains_emits_type_error() -> None:
     """Truthful twin: decided non-container constructs TypeError."""
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _relative_fragment("def f():\n    return 1 in None\n", "in-none.py")
     outcome = NoneValue().contains(TermValue(1), site)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"

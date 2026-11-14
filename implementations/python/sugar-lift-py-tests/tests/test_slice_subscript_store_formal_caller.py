@@ -33,7 +33,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.slice_sugar import SliceSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -94,7 +94,7 @@ class _FloorSugar(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     @classmethod
     def witnesses(cls):
@@ -122,11 +122,11 @@ def test_slice_sugar_builds_floor_slice_value() -> None:
         None,
         site,
     ).desugar(None)
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, SliceValue)
-    assert out.value.lower == TermValue(1)
-    assert out.value.upper == TermValue(3)
-    assert out.value.step is None
+    value = out.completed_value()
+    assert isinstance(value, SliceValue)
+    assert value.lower == TermValue(1)
+    assert value.upper == TermValue(3)
+    assert value.step is None
 
 
 def test_slice_sugar_omitted_bounds_are_none() -> None:
@@ -141,7 +141,6 @@ def test_slice_lower_halt_skips_upper_and_step_desugar() -> None:
 
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.ir import ctor, str_const
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
     site = _site()
@@ -159,7 +158,7 @@ def test_slice_lower_halt_skips_upper_and_step_desugar() -> None:
         def desugar(self, ctx=None):
             del ctx
             log.append(self.label)
-            return Incomplete(
+            return ExitSet.halted(
                 RaiseEffect(
                     exception_name="ValueError",
                     blame=str(self.site),
@@ -184,7 +183,7 @@ def test_slice_lower_halt_skips_upper_and_step_desugar() -> None:
         def desugar(self, ctx=None):
             del ctx
             log.append(self.label)
-            return Complete(TermValue(0))
+            return ExitSet.completed(TermValue(0))
 
         @classmethod
         def witnesses(cls):
@@ -196,7 +195,7 @@ def test_slice_lower_halt_skips_upper_and_step_desugar() -> None:
         _LogBound("step", site),
         site,
     ).desugar(None)
-    assert isinstance(out, Incomplete)
+    assert out.exits and out.halts() == out.exits
     assert log == ["lower"]
     with pytest.raises(AssertionError):
         assert "upper" in log
@@ -213,8 +212,7 @@ def test_list_slice_assignment_replaces_range() -> None:
     index = SliceValue(TermValue(1), TermValue(3), None)
     rhs = ListValue((TermValue(9), TermValue(9)))
     out = receiver.setitem(index, rhs, site)
-    assert isinstance(out, Complete)
-    assert out.value == ListValue(
+    assert out.completed_value() == ListValue(
         (TermValue(0), TermValue(9), TermValue(9), TermValue(3))
     )
 
@@ -254,7 +252,6 @@ def test_discrimination_slice_store_is_not_scalar_index_overwrite() -> None:
 
 def test_extended_slice_length_mismatch_is_value_error() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _site()
     receiver = ListValue((TermValue(0), TermValue(1), TermValue(2), TermValue(3)))
@@ -264,15 +261,15 @@ def test_extended_slice_length_mismatch_is_value_error() -> None:
         ListValue((TermValue(1),)),
         site,
     )
-    # Floor ground exit is a halt: Incomplete(effect).
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_name == "ValueError"
+    # Floor ground exit is a halt: ExitSet.halted(effect).
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "ValueError"
 
 
 def test_non_sequence_rhs_is_type_error() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _site()
     receiver = ListValue((TermValue(0), TermValue(1), TermValue(2)))
@@ -281,9 +278,10 @@ def test_non_sequence_rhs_is_type_error() -> None:
         TermValue(9),
         site,
     )
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_name == "TypeError"
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_tuple_rhs_is_accepted_for_slice_store() -> None:
@@ -302,7 +300,7 @@ def test_string_rhs_projects_authenticated_characters() -> None:
     out = ListValue((TermValue(0),)).setitem(
         SliceValue(None, None, None), StringValue("ab"), site
     )
-    assert out == Complete(ListValue((StringValue("a"), StringValue("b"))))
+    assert out == ExitSet.completed(ListValue((StringValue("a"), StringValue("b"))))
 
 
 def test_string_rhs_is_not_one_unsplit_string_or_typeerror() -> None:
@@ -310,11 +308,14 @@ def test_string_rhs_is_not_one_unsplit_string_or_typeerror() -> None:
     out = ListValue((TermValue(0),)).setitem(
         SliceValue(None, None, None), StringValue("ab"), site
     )
-    assert out != Complete(ListValue((StringValue("ab"),)))
+    assert out != ExitSet.completed(ListValue((StringValue("ab"),)))
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
-    assert not (isinstance(out, Incomplete) and isinstance(out.effect, RaiseEffect))
+    assert not (
+        out.exits
+        and out.halts() == out.exits
+        and any(isinstance(halt.effect, RaiseEffect) for halt in out.halts())
+    )
 
 
 def test_bytes_rhs_projects_authenticated_integer_bytes() -> None:
@@ -322,7 +323,7 @@ def test_bytes_rhs_projects_authenticated_integer_bytes() -> None:
     out = ListValue((TermValue(0),)).setitem(
         SliceValue(None, None, None), BytesValue(b"AB"), site
     )
-    assert out == Complete(ListValue((TermValue(65), TermValue(66))))
+    assert out == ExitSet.completed(ListValue((TermValue(65), TermValue(66))))
 
 
 def test_bytes_rhs_is_not_bytes_singletons_or_typeerror() -> None:
@@ -330,11 +331,14 @@ def test_bytes_rhs_is_not_bytes_singletons_or_typeerror() -> None:
     out = ListValue((TermValue(0),)).setitem(
         SliceValue(None, None, None), BytesValue(b"AB"), site
     )
-    assert out != Complete(ListValue((BytesValue(b"A"), BytesValue(b"B"))))
+    assert out != ExitSet.completed(ListValue((BytesValue(b"A"), BytesValue(b"B"))))
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
-    assert not (isinstance(out, Incomplete) and isinstance(out.effect, RaiseEffect))
+    assert not (
+        out.exits
+        and out.halts() == out.exits
+        and any(isinstance(halt.effect, RaiseEffect) for halt in out.halts())
+    )
 
 
 def test_dict_rhs_projects_authenticated_insertion_order_keys() -> None:
@@ -343,7 +347,7 @@ def test_dict_rhs_projects_authenticated_insertion_order_keys() -> None:
         ((StringValue("a"), TermValue(1)), (StringValue("b"), TermValue(2)))
     )
     out = ListValue((TermValue(0),)).setitem(SliceValue(None, None, None), rhs, site)
-    assert out == Complete(ListValue((StringValue("a"), StringValue("b"))))
+    assert out == ExitSet.completed(ListValue((StringValue("a"), StringValue("b"))))
 
 
 def test_dict_rhs_is_not_values_or_typeerror() -> None:
@@ -352,11 +356,14 @@ def test_dict_rhs_is_not_values_or_typeerror() -> None:
         ((StringValue("a"), TermValue(1)), (StringValue("b"), TermValue(2)))
     )
     out = ListValue((TermValue(0),)).setitem(SliceValue(None, None, None), rhs, site)
-    assert out != Complete(ListValue((TermValue(1), TermValue(2))))
+    assert out != ExitSet.completed(ListValue((TermValue(1), TermValue(2))))
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
-    assert not (isinstance(out, Incomplete) and isinstance(out.effect, RaiseEffect))
+    assert not (
+        out.exits
+        and out.halts() == out.exits
+        and any(isinstance(halt.effect, RaiseEffect) for halt in out.halts())
+    )
 
 
 def test_set_rhs_keeps_unowned_runtime_iteration_order_loud() -> None:
@@ -385,7 +392,7 @@ def test_set_rhs_does_not_fabricate_construction_order_or_typeerror() -> None:
         fabricated = ListValue((TermValue(0),)).setitem(
             SliceValue(None, None, None), SetValue(constructed), site
         )
-        assert fabricated == Complete(ListValue(constructed))
+        assert fabricated == ExitSet.completed(ListValue(constructed))
 
 
 # ---------------------------------------------------------------------------
@@ -407,7 +414,7 @@ def test_production_store_sugar_with_slice_index_completes() -> None:
         def desugar(self, ctx=None):
             del ctx
             log.append(self.label)
-            return Complete(self.value)
+            return ExitSet.completed(self.value)
 
         @classmethod
         def witnesses(cls):
@@ -430,8 +437,7 @@ def test_production_store_sugar_with_slice_index_completes() -> None:
     # Python order: RHS, receiver, index (slice bounds inside index).
     assert log[0] == "value"
     assert log[1] == "receiver"
-    assert isinstance(out, Complete)
-    assert out.value == ListValue((TermValue(9), TermValue(2)))
+    assert out.completed_value() == ListValue((TermValue(9), TermValue(2)))
 
 
 # ---------------------------------------------------------------------------
@@ -455,7 +461,7 @@ def test_helper_alone_slice_store_is_undischarged_setitem() -> None:
 def test_discrimination_helper_alone_is_not_completed() -> None:
     _, pending = _helper("def helper(obj, value):\n    obj[1:3] = value\n")
     with pytest.raises(AssertionError):
-        assert isinstance(pending, Complete)
+        assert isinstance(pending, ExitSet) and pending.completed_value() is not None
 
 
 def test_positional_caller_completes_slice_store() -> None:
@@ -554,7 +560,6 @@ def test_production_delete_slice_caller() -> None:
 
 def test_step_zero_setitem_is_named_valueerror_with_occurrence() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _site()
     out = ListValue((TermValue(0), TermValue(1))).setitem(
@@ -562,9 +567,10 @@ def test_step_zero_setitem_is_named_valueerror_with_occurrence() -> None:
         ListValue(()),
         site,
     )
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    effect = out.effect
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    effect = halt.effect
     assert effect.exception_name == "ValueError"
     assert effect.producer_node_owner == "ListValue.setitem"
     assert effect.occurrence == str(site) or effect.occurrence_id == str(site)
@@ -572,16 +578,16 @@ def test_step_zero_setitem_is_named_valueerror_with_occurrence() -> None:
 
 def test_step_zero_delitem_is_named_valueerror_with_occurrence() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     site = _site()
     out = ListValue((TermValue(0), TermValue(1), TermValue(2))).delitem(
         SliceValue(None, None, TermValue(0)),
         site,
     )
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    effect = out.effect
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    effect = halt.effect
     assert effect.exception_name == "ValueError"
     assert effect.producer_node_owner == "ListValue.delitem"
     assert effect.occurrence_id == str(site)
@@ -614,11 +620,9 @@ def test_formal_bound_demand_gap_is_executable_red_law() -> None:
     demand gap stays executable (carrier / incomplete / construction red), not
     a silent green.
     """
-    from sugar_lift_py_tests.outcome import Incomplete
-
     function, pending = _helper("def helper(obj, lo, value):\n    obj[lo:3] = value\n")
-    # Whatever shell production chooses today must not be a fabricated Complete
-    # list store — formal lower bound is still open work.
+    # Whatever shell production chooses today must not be a fabricated sole
+    # completed list store — formal lower bound is still open work.
     if isinstance(pending, NativeOperationExitCarrierV1):
         # If a setitem carrier mints, the index formal must appear or the
         # demand must retain the bound coordinate — not a ground-only index.
@@ -630,8 +634,12 @@ def test_formal_bound_demand_gap_is_executable_red_law() -> None:
             pending.discharge({})
         formals = function.formal_coordinates()
         assert len(formals) >= 2
-    elif isinstance(pending, Incomplete):
-        assert pending.effect is not None
+    elif (
+        isinstance(pending, ExitSet)
+        and pending.exits
+        and pending.halts() == pending.exits
+    ):
+        assert all(halt.effect is not None for halt in pending.halts())
     elif isinstance(pending, ExitSet):
         # No sole Completed face that silently stored.
         completed = [e for e in pending.exits if isinstance(e, Completed)]
@@ -642,12 +650,11 @@ def test_formal_bound_demand_gap_is_executable_red_law() -> None:
             is False
             and False  # never treat ExitSet alone as proof of green store
         )
-        # Executable red: not a sole fabricated Complete.
+        # Executable red: not a sole fabricated unconditional completion.
         with pytest.raises(AssertionError):
-            assert isinstance(pending, Complete)
+            assert pending.completed_value() is not None
     else:
-        # Must not look like an unconditional Complete green.
-        assert not isinstance(pending, Complete), type(pending)
+        raise AssertionError(f"unexpected outcome {type(pending).__name__}")
 
 
 def test_slice_assign_iterable_door_not_getattr_probe() -> None:
@@ -660,18 +667,15 @@ def test_slice_assign_iterable_door_not_getattr_probe() -> None:
     from sugar_lift_py_tests.operations.slice_assign_iterable_operation import (
         SliceAssignIterableOperation,
     )
-    from sugar_lift_py_tests.outcome import Incomplete
-
     site = _site()
     # Exact list answers members.
     exact = SliceAssignIterableOperation(owner="test", blame=site).submit(
         ListValue((TermValue(1), TermValue(2))), None
     )
-    assert isinstance(exact, Complete)
-    assert exact.value == (TermValue(1), TermValue(2))
-    # Undecided stays Incomplete (not construction panic, not getattr).
+    assert exact.completed_value() == (TermValue(1), TermValue(2))
+    # Undecided stays a halt (not construction panic, not getattr).
     undecided = SliceAssignIterableOperation(owner="test", blame=site).submit(
         SymbolicValue(make_var("xs")), None
     )
-    assert isinstance(undecided, Incomplete)
+    assert undecided.exits and undecided.halts() == undecided.exits
     assert "getattr(" not in inspect.getsource(FloorValue.slice_assign_iterable_with)

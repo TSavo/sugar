@@ -12,7 +12,6 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 from sugar_lift_py_tests.ir import _Ctor, ctor
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect import RaiseEffect
@@ -31,9 +30,9 @@ def _site(tmp_path):
 
 def _symbolic_result(sequence, multiplier):
     outcome = sequence.multiply(multiplier, "multiply-site", None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, SymbolicValue)
-    term = outcome.value.term
+    value = outcome.completed_value()
+    assert isinstance(value, SymbolicValue)
+    term = value.term
     assert isinstance(term, _Ctor)
     assert term.name == "python:sequence_repeat"
     return term
@@ -47,9 +46,9 @@ def test_exact_constructed_integer_is_the_only_finite_repetition_path(
 
     outcome = sequence_type((element,)).multiply(TermValue(64), "multiply-site", None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, sequence_type)
-    assert outcome.value.elements == (element,) * 64
+    value = outcome.completed_value()
+    assert isinstance(value, sequence_type)
+    assert value.elements == (element,) * 64
 
 
 @pytest.mark.parametrize("sequence_type", (ListValue, TupleValue))
@@ -58,16 +57,18 @@ def test_exact_constructed_bool_is_a_valid_repetition_count(sequence_type) -> No
 
     outcome = sequence_type((element,)).multiply(TermValue(True), "multiply-site", None)
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.elements == (element,)
+    value = outcome.completed_value()
+    assert value is not None
+    assert value.elements == (element,)
 
 
 def test_list_times_known_ground_float_is_authenticated_type_error(tmp_path) -> None:
     outcome = ListValue((TermValue(1),)).multiply(TermValue(1.5), _site(tmp_path), None)
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_tuple_times_known_ground_string_is_authenticated_type_error(tmp_path) -> None:
@@ -77,9 +78,10 @@ def test_tuple_times_known_ground_string_is_authenticated_type_error(tmp_path) -
         None,
     )
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 @pytest.mark.parametrize("sequence_type", (ListValue, TupleValue))

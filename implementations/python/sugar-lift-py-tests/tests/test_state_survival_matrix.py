@@ -87,7 +87,7 @@ from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, str_const
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset, true_guard
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -208,7 +208,7 @@ def _assertion_boundary(
         keyword_names=(),
     )
     return WithEffectBoundarySugar(
-        manager=_FixedSugar(Complete(manager_value)),
+        manager=_FixedSugar(ExitSet.completed(manager_value)),
         body=(_FixedSugar(body),),
         semantics=EffectBoundarySemanticsV1(
             ExpectsModeV1(),
@@ -628,7 +628,7 @@ def test_fabricated_post_halt_state_refused_at_carrier_enrollment() -> None:
     fabricated = _ReducedBlock((TermValue(99),), True, ())
     with pytest.raises(TypeError, match="reducer-issued testimony"):
         pending.and_then(
-            lambda value: Complete(value),
+            lambda value: ExitSet.completed(value),
             pre_effect_state=fabricated,
         )
 
@@ -640,7 +640,7 @@ def test_conflicting_second_state_enrollment_panics() -> None:
     )
     with pytest.raises(ConstructionPanic, match="second conflicting"):
         pending.and_then(
-            lambda value: Complete(value),
+            lambda value: ExitSet.completed(value),
             pre_effect_state=conflicting,
         )
 
