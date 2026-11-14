@@ -219,21 +219,28 @@ def scan_module_value_pins(
     return scan
 
 
-_VALUE_ENUM_BASES = ("IntEnum", "StrEnum")
-_PLAIN_ENUM_BASES = ("Enum", "Flag", "IntFlag")
-
-
 def _enum_base_kind(node: typed.ClassDef) -> Optional[str]:
+    """``value`` for an ``enum.IntEnum``/``enum.StrEnum`` base, ``plain`` for
+    ``enum.Enum``/``enum.Flag``/``enum.IntFlag``, else ``None``.
+
+    A base is recognised by its binding (``SourceUnit.language_callee_of``:
+    ``from enum import IntEnum`` or ``enum.IntEnum`` under ``import enum``),
+    never by its spelling: a local or third-party class named ``IntEnum``
+    reaches no member."""
+    from sugar_source_tree.nodes import LanguageCallee
+
+    kinds = {
+        LanguageCallee.ENUM_INTENUM: "value",
+        LanguageCallee.ENUM_STRENUM: "value",
+        LanguageCallee.ENUM_ENUM: "plain",
+        LanguageCallee.ENUM_FLAG: "plain",
+        LanguageCallee.ENUM_INTFLAG: "plain",
+    }
+    unit = node.unit
     for base in node.bases:
-        name = None
-        if isinstance(base, typed.Name):
-            name = base.id
-        elif isinstance(base, typed.Attribute):
-            name = base.attr
-        if name in _VALUE_ENUM_BASES:
-            return "value"
-        if name in _PLAIN_ENUM_BASES:
-            return "plain"
+        kind = kinds.get(unit.language_callee_of(base))
+        if kind is not None:
+            return kind
     return None
 
 
