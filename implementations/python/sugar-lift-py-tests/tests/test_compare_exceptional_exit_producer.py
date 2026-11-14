@@ -21,7 +21,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -74,7 +74,7 @@ class _ValueSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner: str):
         return self.value.to_term(owner=owner)
@@ -303,8 +303,8 @@ def test_literal_container_lying_twin_does_not_inherit_the_refusal() -> None:
 
     outcome = _compare_at(path, lying, line=365).sugar().desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)
 
 
 def test_runtime_truthful_and_lying_twins_discriminate() -> None:
@@ -380,7 +380,7 @@ def test_every_nonidentity_comparison_keeps_undecided_call_dispatch_loud(
 def test_undecided_symbolic_ordering_is_two_faced_never_sole_complete(
     op_kind: str, operator: str, atom: str
 ) -> None:
-    """Ordering with undecided operands dual-edges — never a sole Complete(py.lt)."""
+    """Ordering with undecided operands dual-edges — never a sole completed py.lt."""
     node = _synthetic_compare(f"left {operator} 1")
     left = _ValueSugar(SymbolicValue(make_var("left")))
     right = _ValueSugar(TermValue(1))
@@ -416,7 +416,6 @@ def test_ground_decided_equality_still_completes() -> None:
     Ground ``1 == 2`` folds to a False literal (not a dual-edge ExitSet and
     not a residual py.eq invent). Accept the honest completed bool sugar.
     """
-    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 
     outcome = EqualityOpSugar(
@@ -424,9 +423,9 @@ def test_ground_decided_equality_still_completes() -> None:
         _ValueSugar(TermValue(2)),
         "compare-site",
     ).desugar(None)
-    assert isinstance(outcome, Complete)
-    assert not isinstance(outcome, ExitSet)
-    assert isinstance(outcome.value, FalseBoolLiteralSugar)
+    # One unconditional completed arm: no dual-edge split.
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), FalseBoolLiteralSugar)
 
 
 def test_equality_projects_both_operation_receivers_with_exact_owners() -> None:
@@ -445,8 +444,8 @@ def test_equality_projects_both_operation_receivers_with_exact_owners() -> None:
         ("left", ctx, "EqualityOpSugar left operation receiver"),
         ("right", ctx, "EqualityOpSugar right operation receiver"),
     ]
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)
 
 
 @pytest.mark.parametrize(
@@ -458,7 +457,7 @@ def test_membership_law_routes_through_authenticated_contains(
 ) -> None:
     node = _synthetic_compare(expression)
     # Undecided container: the contains door's two faces (never a sole
-    # Complete(py.in)); ``not in`` negates the completed face only.
+    # completed py.in); ``not in`` negates the completed face only.
     sugar = ComparisonOpSugar(
         op_kind,
         _ValueSugar(TermValue(1)),
@@ -645,7 +644,7 @@ def test_formal_identity_remains_total_without_a_native_operation_carrier() -> N
         node.fragment,
     ).desugar(None)
 
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     assert not isinstance(outcome, NativeOperationExitCarrierV1)
 
 
@@ -658,7 +657,7 @@ def test_identity_never_gains_an_exceptional_dispatch_edge() -> None:
         _ValueSugar(TermValue(1)),
         node.fragment,
     ).desugar(None)
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
 
 
 def test_ground_decided_membership_still_completes() -> None:
@@ -671,8 +670,8 @@ def test_ground_decided_membership_still_completes() -> None:
         _ValueSugar(ListValue((TermValue(1),))),
         "compare-site",
     ).desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)
 
 
 def test_pandas_categorical_equality_retains_both_dispatch_faces() -> None:
@@ -692,7 +691,6 @@ def test_pandas_index_length_equality_retains_both_dispatch_faces() -> None:
 
 def test_source_decided_membership_in_number_emits_type_error() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     twin = "def f():\n    return 1 in 2\n"
     tree = SourceFile(
@@ -710,15 +708,15 @@ def test_source_decided_membership_in_number_emits_type_error() -> None:
         _ValueSugar(TermValue(2)),
         node.fragment,
     ).desugar(None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_source_decided_none_greater_than_emits_type_error() -> None:
     from sugar_lift_py_tests.floor import NoneValue
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     twin = "def f():\n    return None > 1\n"
     tree = SourceFile(
@@ -736,9 +734,10 @@ def test_source_decided_none_greater_than_emits_type_error() -> None:
         _ValueSugar(TermValue(1)),
         node.fragment,
     ).desugar(None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_pandas_series_string_ordering_retains_both_faces() -> None:
@@ -773,7 +772,6 @@ def test_source_decided_number_string_ordering_emits_type_error() -> None:
     """
     from sugar_lift_py_tests.floor import StringValue
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
     twin = 'def f():\n    return 1.0 < "a"\n'
     tree = SourceFile(
@@ -792,10 +790,11 @@ def test_source_decided_number_string_ordering_emits_type_error() -> None:
         node.fragment,
     ).desugar(None)
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
-    assert outcome.effect.blame is not None
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
+    assert halt.effect.blame is not None
 
 
 @pytest.mark.parametrize(
@@ -890,7 +889,6 @@ def test_identity_law_never_publishes_a_raise_partition(
     """Identity law is total for both ``is`` and ``is not``."""
     from sugar_lift_py_tests.floor import PredicateValue, SymbolicValue
     from sugar_lift_py_tests.ir import make_var
-    from sugar_lift_py_tests.outcome import Complete, ExitSet
     from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 
     outcome = ComparisonOpSugar(
@@ -899,10 +897,10 @@ def test_identity_law_never_publishes_a_raise_partition(
         _ValueSugar(SymbolicValue(make_var("b"))),
         "identity-site",
     ).desugar(None)
-    assert isinstance(outcome, Complete)
-    assert not isinstance(outcome, ExitSet)
-    assert isinstance(outcome.value, PredicateValue)
-    assert ("not" in repr(outcome.value.formula)) is negated
+    # One unconditional completed arm: no dual-edge split.
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), PredicateValue)
+    assert ("not" in repr(outcome.completed_value().formula)) is negated
 
 
 def test_chained_comparison_composes_pair_ordering_laws() -> None:
@@ -974,7 +972,7 @@ def test_subscript_root_preserves_nested_compare_owned_refusal() -> None:
 
     The nested comparison's undetermined halt (owner ``UndecidedCompare:<op>``,
     blamed on the Compare) survives through the Subscript root: it is never
-    swallowed into a sole Complete.
+    swallowed into a sole completed arm.
     """
     path = _corpus_root() / "tests/series/indexing/test_getitem.py"
     source = path.read_text(encoding="utf-8")

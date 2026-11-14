@@ -1,5 +1,4 @@
 from sugar_lift_py_tests.floor import ComplexValue, TermValue
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
 
@@ -32,7 +31,9 @@ def _outcomes(tmp_path):
 
 def test_complex_subscript_mutations_have_exact_owner_occurrences(tmp_path):
     for outcome, owner, site in _outcomes(tmp_path):
-        effect = outcome.value.effect
+        assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+        (halt,) = outcome.halts()
+        effect = halt.effect
         assert effect.exception_name == "TypeError"
         assert effect.producer_node_owner == owner
         assert effect.occurrence_id == str(site)
@@ -40,6 +41,6 @@ def test_complex_subscript_mutations_have_exact_owner_occurrences(tmp_path):
 
 def test_complex_subscript_mutations_cannot_fabricate_completion(tmp_path):
     for outcome, _, _ in _outcomes(tmp_path):
-        assert not (
-            isinstance(outcome, Complete) and not hasattr(outcome.value, "effect")
-        )
+        # A raise is never a completion (#7821): no completed arm at all.
+        assert outcome.completed_value() is None
+        assert not any(exit_ not in outcome.halts() for exit_ in outcome.exits)

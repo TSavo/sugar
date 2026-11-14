@@ -86,7 +86,6 @@ def _class_statement_reductions(source: str, monkeypatch) -> int:
     from sugar_lift_py_tests.context_manager_resolution import (
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
     from sugar_source_tree.nodes import FunctionDef
     from sugar_source_tree.tree import SourceFile
@@ -101,7 +100,7 @@ def _class_statement_reductions(source: str, monkeypatch) -> int:
         for node in tree.nodes()
         if isinstance(node, FunctionDef) and node.name.startswith("test_")
     )
-    assert isinstance(function_universe_outcome(function), Complete)
+    assert function_universe_outcome(function).completed_value() is not None
     return reductions["Box"]
 
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -133,4 +133,4 @@ def test_a_member_binds_the_coordinate_last() -> None:
     reference = EvaluationRefSugar(
         evaluation=generator.binding_coordinate_cid, name="x", site=None
     )
-    assert reference.desugar(inner) == Complete(TermValue(3))
+    assert reference.desugar(inner) == ExitSet.completed(TermValue(3))

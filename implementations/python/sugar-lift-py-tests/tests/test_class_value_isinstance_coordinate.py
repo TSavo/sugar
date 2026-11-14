@@ -12,7 +12,6 @@ import pytest
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.class_value import ClassValue
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_source_tree.panic import SugarNotWritten
@@ -28,14 +27,14 @@ def _type_term(name: str):
 
 def test_truthful_type_coordinate_is_true() -> None:
     outcome = _class().python_isinstance("type", _type_term("type"), "site")
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(),TrueBoolLiteralSugar)
 
 
 def test_truthful_tuple_coordinate_is_false() -> None:
     outcome = _class().python_isinstance("tuple", _type_term("tuple"), "site")
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, FalseBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(),FalseBoolLiteralSugar)
 
 
 def test_lying_twin_spelling_tuple_foreign_coordinate_throws() -> None:
@@ -50,8 +49,8 @@ def test_lying_twin_spelling_tuple_foreign_coordinate_throws() -> None:
 def test_lying_twin_spelling_does_not_override_authenticated_type() -> None:
     """If coordinate says type, spelling 'tuple' must not force False."""
     outcome = _class().python_isinstance("tuple", _type_term("type"), "site")
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(),TrueBoolLiteralSugar)
 
 
 def test_missing_type_term_throws() -> None:

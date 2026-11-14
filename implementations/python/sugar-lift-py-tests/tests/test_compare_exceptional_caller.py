@@ -29,48 +29,42 @@ def _comparison(tmp_path: Path, expression: str):
 
 def test_pandas_ordering_helper_produces_named_type_error(tmp_path: Path) -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
     outcome = _comparison(tmp_path, '1 < "mismatched"')
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_pandas_ordering_helper_keeps_compatible_ordering_non_exceptional(
     tmp_path: Path,
 ) -> None:
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
     outcome = _comparison(tmp_path, "1 < 2")
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)
 
 
 def test_identity_remains_total_and_non_raising(tmp_path: Path) -> None:
-    from sugar_lift_py_tests.outcome import Complete
-
-    assert isinstance(_comparison(tmp_path, '1 is "mismatched"'), Complete)
+    assert _comparison(tmp_path, '1 is "mismatched"').completed_value() is not None
 
 
 def test_membership_dispatches_through_contains(tmp_path: Path) -> None:
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
     outcome = _comparison(tmp_path, "1 in [1, 2]")
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)
 
 
 def test_equality_does_not_borrow_orderings_exception_law(tmp_path: Path) -> None:
     from sugar_lift_py_tests.floor import PredicateValue
-    from sugar_lift_py_tests.outcome import Complete
 
     outcome = _comparison(tmp_path, '1 == "mismatched"')
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, PredicateValue)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), PredicateValue)

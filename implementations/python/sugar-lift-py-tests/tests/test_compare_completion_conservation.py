@@ -20,7 +20,7 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     pull_shared_demand_table,
     require_expected_denominators,
 )
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 
 from sugar_lift_py_tests.repo_root import resolve_repo_root
 
@@ -81,7 +81,7 @@ def test_one_silent_compare_completion_is_row_level_red() -> None:
     probe = BodyProbe(
         body_id="pandas/example.py:1:Compare",
         family=ProducerFamily.COMPARE,
-        evaluator=lambda: Complete(object()),
+        evaluator=lambda: ExitSet.completed(object()),
     )
 
     with pytest.raises(AttributionInvariantError, match="completed without"):

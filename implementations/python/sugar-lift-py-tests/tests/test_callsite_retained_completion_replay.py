@@ -10,7 +10,7 @@ from sugar_lift_py_tests.claim import SugarRole
 from sugar_lift_py_tests.floor import CallSiteValue, FloorValue, TermValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, true_guard
+from sugar_lift_py_tests.outcome import Completed, ExitSet, true_guard
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar_body import SugarBody
 from sugar_source_tree.panic import BackendDefect, SugarNotWritten
@@ -28,7 +28,7 @@ class _CountingCompletion(ConstructedTermSugar):
     def desugar(self, ctx=None):
         del ctx
         self.reductions += 1
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner: str):
         del owner
@@ -48,8 +48,8 @@ def _retained_source_call(original: FloorValue | None = None):
         source_call_frame_cid="blake3-512:" + "7" * 128,
     )
     produced = source_call.producer_outcome(None)
-    assert isinstance(produced, Complete)
-    retained = produced.value
+    assert produced.completed_value() is not None
+    retained = produced.completed_value()
     assert isinstance(retained, CallSiteValue)
     assert retained is not source_call
     assert body.reductions == 1
@@ -76,7 +76,7 @@ def test_retained_source_completion_refuses_different_producer_replay(
     hash_before = hash(retained)
     replacement = original if replacement_value == 7 else TermValue(replacement_value)
     replay = (
-        Complete(replacement)
+        ExitSet.completed(replacement)
         if replay_kind == "complete"
         else ExitSet((Completed(true_guard(), replacement),))
     )
@@ -91,8 +91,8 @@ def test_retained_source_completion_refuses_different_producer_replay(
     projected = retained.project_operation_receiver_outcome(
         None, owner="CallSiteSugar positional actual"
     )
-    assert isinstance(projected, Complete)
-    assert projected.value is original
+    assert projected.completed_value() is not None
+    assert projected.completed_value() is original
 
 
 @pytest.mark.parametrize("door", ("producer_outcome", "reduce_source_outcome"))
@@ -113,8 +113,8 @@ def test_retained_source_completion_refuses_every_second_reduction_door(
     projected = retained.project_operation_receiver_outcome(
         None, owner="CallSiteSugar positional actual"
     )
-    assert isinstance(projected, Complete)
-    assert projected.value is original
+    assert projected.completed_value() is not None
+    assert projected.completed_value() is original
 
 
 def test_legacy_operation_projection_paths_consume_retained_value_without_reduction() -> (
@@ -206,7 +206,7 @@ def test_non_floor_completion_is_a_producer_defect() -> None:
     )
 
     with pytest.raises(BackendDefect, match="Floor|completion|producer"):
-        source_call.project_producer_outcome(Complete(object()))
+        source_call.project_producer_outcome(ExitSet.completed(object()))
     assert body.reductions == 0
 
 
@@ -235,6 +235,6 @@ def test_retained_completion_consumer_requires_the_private_exact_wrapper() -> No
         None, owner="CallSiteSugar keyword actual"
     )
 
-    assert isinstance(projected, Complete)
-    assert projected.value is original
+    assert projected.completed_value() is not None
+    assert projected.completed_value() is original
     assert body.reductions == 1

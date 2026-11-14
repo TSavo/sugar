@@ -109,11 +109,11 @@ def _test_function_outcome(source: str):
     ids=["plain", "always-raises", "one-face-not-taken", "one-face-taken"],
 )
 def test_constructor_halt_in_process(body: str, actual: int, raises: bool) -> None:
-    from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+    from sugar_lift_py_tests.outcome import ExitSet, Halted
 
     outcome = _test_function_outcome(_CONSTRUCTOR.format(body=body, actual=actual))
     if not raises:
-        assert isinstance(outcome, Complete), outcome
+        assert outcome.completed_value() is not None, outcome
         return
     assert isinstance(outcome, ExitSet), outcome
     assert [type(face) for face in outcome.exits] == [Halted]

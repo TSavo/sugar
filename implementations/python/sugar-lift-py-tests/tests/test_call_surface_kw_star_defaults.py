@@ -13,7 +13,6 @@ Wrong entrance was Param with a default (or annotation) falling through to
 
 from __future__ import annotations
 
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -66,7 +65,7 @@ def test_named_keyword_actual_constructs_on_call_site() -> None:
     assert name == "a"
     assert isinstance(value, ConstructedTermSugar)
     assert isinstance(value, IntLiteralSugar)
-    assert isinstance(sugar.desugar(None), Complete)
+    assert sugar.desugar(None).completed_value() is not None
 
 
 def test_method_keyword_actual_constructs() -> None:
@@ -88,7 +87,7 @@ def test_method_keyword_actual_constructs() -> None:
     assert isinstance(sugar, MethodCallSugar)
     assert sugar.keywords[0][0] == "x"
     assert isinstance(sugar.keywords[0][1], ConstructedTermSugar)
-    assert isinstance(sugar.desugar(None), Complete)
+    assert sugar.desugar(None).completed_value() is not None
 
 
 def test_starred_positional_actual_constructs_spread_call() -> None:
@@ -104,7 +103,7 @@ def test_starred_positional_actual_constructs_spread_call() -> None:
     )
     sugar = call.sugar()
     assert isinstance(sugar, SpreadCallSugar)
-    assert isinstance(sugar.desugar(None), Complete)
+    assert sugar.desugar(None).completed_value() is not None
 
 
 def test_double_star_keyword_actual_constructs_spread_call() -> None:
@@ -118,7 +117,7 @@ def test_double_star_keyword_actual_constructs_spread_call() -> None:
     )
     sugar = call.sugar()
     assert isinstance(sugar, SpreadCallSugar)
-    assert isinstance(sugar.desugar(None), Complete)
+    assert sugar.desugar(None).completed_value() is not None
 
 
 def test_param_with_default_constructs_param_sugar_not_gap() -> None:
@@ -134,7 +133,7 @@ def test_param_with_default_constructs_param_sugar_not_gap() -> None:
     assert sugar.default is not None
     assert isinstance(sugar.default, ConstructedTermSugar)
     assert isinstance(sugar.default, IntLiteralSugar)
-    assert isinstance(sugar.desugar(None), Complete)
+    assert sugar.desugar(None).completed_value() is not None
 
 
 def test_param_with_annotation_only_still_constructs() -> None:
