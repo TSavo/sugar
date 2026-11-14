@@ -360,6 +360,16 @@ class LanguageCallee(_enum.Enum):
     # specifier (Lib/dataclasses.py).
     DATACLASSES_DATACLASS = "python:dataclasses.dataclass"
     DATACLASSES_FIELD = "python:dataclasses.field"
+    # The annotation markers ``dataclasses`` reads by identity, never by
+    # spelling (``_is_classvar`` / ``_is_initvar`` / ``_is_kw_only``,
+    # Lib/dataclasses.py): an annotation reaching one is no ``__init__``
+    # parameter of the plain kind.
+    TYPING_CLASSVAR = "python:typing.ClassVar"
+    DATACLASSES_INITVAR = "python:dataclasses.InitVar"
+    DATACLASSES_KW_ONLY = "python:dataclasses.KW_ONLY"
+    # ``typing.Final``: the annotation qualifier a module binding confesses
+    # its value final with (a value pin's confession, ``value_pins``).
+    TYPING_FINAL_QUALIFIER = "python:typing.Final"
     # ``typing.Generic``: the parameterisable base that contributes no
     # fields.
     TYPING_GENERIC = "python:typing.Generic"
@@ -396,6 +406,17 @@ METHOD_DESCRIPTOR_KINDS = {
 # sets ``__isabstractmethod__`` and returns ``f`` (Lib/typing.py, Lib/abc.py).
 _IDENTITY_DECORATORS = frozenset(
     {LanguageCallee.TYPING_FINAL, LanguageCallee.ABC_ABSTRACTMETHOD}
+)
+
+# The annotation markers whose field ``dataclasses.dataclass`` does not write
+# as a plain ``__init__`` parameter (``ClassDef._dataclass_generated_init_fields``),
+# reached only through an annotation name's binding.
+_DATACLASS_FIELD_MARKERS = frozenset(
+    {
+        LanguageCallee.TYPING_CLASSVAR,
+        LanguageCallee.DATACLASSES_INITVAR,
+        LanguageCallee.DATACLASSES_KW_ONLY,
+    }
 )
 
 # The bindings through which a read can write a global (or a builtin) the
@@ -10140,18 +10161,12 @@ class ClassDef(Statement):
             return None
 
         def mentions_special(annotation) -> bool:
+            # A marker ``dataclasses`` reads by identity is known by its
+            # binding (``SourceUnit.language_callee_of``): ``from typing
+            # import ClassVar as CV`` reaches it, a source class named
+            # ``ClassVar`` does not.
             for node in annotation.walk():
-                if isinstance(node, Name) and node.id in {
-                    "ClassVar",
-                    "InitVar",
-                    "KW_ONLY",
-                }:
-                    return True
-                if isinstance(node, Attribute) and node.attr in {
-                    "ClassVar",
-                    "InitVar",
-                    "KW_ONLY",
-                }:
+                if unit.language_callee_of(node) in _DATACLASS_FIELD_MARKERS:
                     return True
                 if isinstance(node, Constant) and isinstance(node.value, str):
                     return True  # a string annotation is not read here

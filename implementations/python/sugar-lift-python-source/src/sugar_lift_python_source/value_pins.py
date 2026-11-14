@@ -512,14 +512,22 @@ def _collect_candidates(tree: typed.Module) -> dict[str, _Candidate]:
 
 
 def _is_final_annotation(annotation: typed.expr) -> bool:
+    """Whether ``annotation`` (or the subscripted head of it) is bound to
+    ``typing.Final``.
+
+    The qualifier is recognised by its binding (``SourceUnit.language_callee_of``:
+    ``from typing import Final as F`` or ``typing.Final`` under ``import
+    typing``), never by its spelling: a source class named ``Final`` confesses
+    nothing."""
+    from sugar_source_tree.nodes import LanguageCallee
+
     target = annotation
     if isinstance(target, typed.Subscript):
         target = target.value
-    if isinstance(target, typed.Name):
-        return target.id == "Final"
-    if isinstance(target, typed.Attribute):
-        return target.attr == "Final"
-    return False
+    return (
+        annotation.unit.language_callee_of(target)
+        is LanguageCallee.TYPING_FINAL_QUALIFIER
+    )
 
 
 def _is_literal_shaped(node: typed.expr) -> bool:

@@ -79,7 +79,7 @@ def test_construct_over_a_deferred_marker_does_not_raise() -> None:
     # A deferred (proven message-only) value-use constructs its ordinary
     # AttributeSugar -- the opacity is resolved at reduce (a MessageOpaqueValue),
     # never a construct-time gap.  as_gap remains the SEAT-time abort path for a
-    # decision-reaching unresolved value (see test_message_only_value_use.py).
+    # decision-reaching unresolved value.
     tree = _tree("def f(mod):\n    return mod.thing\n")
     unit = tree.unit
     attr = next(
