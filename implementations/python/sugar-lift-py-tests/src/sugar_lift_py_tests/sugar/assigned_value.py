@@ -116,7 +116,10 @@ def _bind_evaluations(active, evaluations, index, value):
     targets, where it stands among them, left to right (``AssignedNames``),
     so a class body's later field reads it too; no RHS of the same statement
     reads it (substitution threads the binding to the statements after this
-    one), and no RHS's halt carries it."""
+    one), and no RHS's halt carries it.  A key no target of one right side
+    holds -- a value the later values of the same evaluation read -- is bound
+    by the same binding as soon as its value completes
+    (``evaluate_assignment_values``' ``as_completed``)."""
     from sugar_lift_py_tests.floor.floor_value import FloorValue
     from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
     from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
@@ -186,7 +189,14 @@ def _in_target_order(targets, completed):
 
 
 def evaluate_assignment_values(
-    values, ctx, tail=None, bind=(), evaluations=(), site=None, targets=()
+    values,
+    ctx,
+    tail=None,
+    bind=(),
+    evaluations=(),
+    site=None,
+    targets=(),
+    as_completed=(),
 ):
     """Evaluate ``values`` (RHS sugars, in evaluation order) at the statement.
 
@@ -224,6 +234,16 @@ def evaluate_assignment_values(
     (``sugar_base._recorded_at_its_head``); the statement's declaration that
     it binds nothing before a halt holds only where it holds no walrus
     (``function_universe_sugar._require_recorded_halts``).
+
+    ``as_completed`` names ``(key, value index)`` pairs that are no target of
+    one right side: a value the later values of the same evaluation read
+    through its key.  Each is bound (``_bind_evaluations``) as soon as its
+    value completes, before the next value is evaluated, so every later
+    value, every later halt and the completed path carry it: a container
+    mutation's pair, which the receiver's post-state, every holder's and
+    a later call on the call's value read (``ContainerMutationStatementSugar``),
+    and a class body's field, a statement of its own that every later field
+    statement of the body reads (``ClassDefinitionSugar``).
     """
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor.block_value import BlockValue
@@ -317,10 +337,12 @@ def evaluate_assignment_values(
                 # the enclosing block routes it.
                 return outcome
             evaluated, plain, more = _walrus_bound(active, plain)
+            evaluated = _bind_evaluations(evaluated, as_completed, index, plain)
             return step(index + 1, evaluated, (*completed, plain), (*stores, *more))
 
         def completed_face(value):
             evaluated, value, more = _walrus_bound(active, value)
+            evaluated = _bind_evaluations(evaluated, as_completed, index, value)
             return step(index + 1, evaluated, (*completed, value), (*stores, *more))
 
         return outcome.and_then(completed_face)

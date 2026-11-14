@@ -347,15 +347,23 @@ class ContainerMutationStatementSugar(Sugar):
                 )
             )
 
-        evaluations = ((self.evaluation, 0),) if self.evaluation else ()
+        # Each call's pair is read by the values after it -- the receiver's
+        # post-state, every holder's, a later call on the call's value
+        # (``PathAfterCall``, ``BuiltinContainerProjection``) -- so it is
+        # bound under its key as soon as it completes (``as_completed``).
+        # ``r += x``'s in-place result is the write of ``r``, a target: bound
+        # once every value has completed.
+        pairs = ((self.evaluation, 0),) if self.evaluation else ()
+        pairs = (*pairs, *self.pair_evaluations)
+        evaluations = ()
         if self.result_evaluation is not None:
-            evaluations = (*evaluations, self.result_evaluation)
-        evaluations = (*evaluations, *self.pair_evaluations)
+            evaluations = (self.result_evaluation,)
         return evaluate_assignment_values(
             self.evaluated,
             ctx,
             tail=record,
             evaluations=evaluations,
+            as_completed=pairs,
         )
 
 
