@@ -58,14 +58,6 @@ class AttributeStoreEffectSugar(Sugar):
             )
         )
 
-    def desugar_store(self, ctx: object, value) -> ExitSet:
-        """Store an RHS already reduced once by a chained assignment."""
-        return self.receiver.desugar(ctx).and_then(
-            lambda receiver: self.project_setattr(
-                receiver, self.attr, value, self.site, ctx
-            )
-        )
-
     def _store(self, receiver, value, ctx) -> ExitSet:
         return self.project_setattr(receiver, self.attr, value, self.site, ctx)
 
@@ -195,13 +187,6 @@ class SubscriptStoreEffectSugar(Sugar):
             )
         )
 
-    def desugar_store(self, ctx: object, value) -> ExitSet:
-        return self.receiver.desugar(ctx).and_then(
-            lambda receiver: self.index.desugar(ctx).and_then(
-                lambda index: self._store(receiver, index, value, ctx)
-            )
-        )
-
     def _store(self, receiver, index, value, ctx) -> ExitSet:
         return self.project_setitem(receiver, index, value, self.site, ctx)
 
@@ -209,8 +194,9 @@ class SubscriptStoreEffectSugar(Sugar):
     def project_setitem(receiver, index, value, site, ctx) -> ExitSet:
         """Producer-owned subscript **store** projection (one door).
 
-        Shared by the ordinary store statement and an unpack target's
-        member store; the store applies under the statement's ``ctx``.
+        Shared by the ordinary store statement and every store target of a
+        chain or an unpack (each is that same statement); the store applies
+        under the statement's ``ctx``.
         """
         receiver = receiver.project_operation_receiver(
             ctx, owner="SubscriptStoreEffectSugar receiver"

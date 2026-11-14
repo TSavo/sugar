@@ -150,6 +150,18 @@ def _handle_of(node: Node) -> BackendNode:
     return node.ref  # type: ignore[attr-defined]
 
 
+def _child_slot(replacement: object) -> Slot:
+    """The child slot holding ``replacement``: a Node, None (an absent
+    optional child), or a tuple of Nodes."""
+    if isinstance(replacement, Node):
+        return Child(_handle_of(replacement))
+    if replacement is None:
+        return MaybeChild(None)
+    if isinstance(replacement, tuple):
+        return Children(tuple(_handle_of(n) for n in replacement))
+    return MaybeChild(_handle_of(replacement))
+
+
 def rewrite(origin: Node, **children: object) -> Node:
     """Produce a shadow-backed rewrite of ``origin`` with some child slots
     replaced, keeping its kind, span and every unchanged slot.
@@ -167,26 +179,26 @@ def rewrite_with_leaves(origin: Node, leaves: dict, /, **children: object) -> No
     """``rewrite``, also setting the leaf slots ``leaves`` names (a leaf of
     that name is replaced, a new one appended).  A statement carries what its
     substitution decided this way -- ``a, b = f()`` its evaluation key -- and
-    stays the same evaluation of the same source occurrence."""
+    stays the same evaluation of the same source occurrence.  A child slot
+    ``children`` names that the origin does not have is appended the same
+    way: ``a = o.x = v`` carries each store target's own statement
+    (``Assign.stores``)."""
     desc = origin.ref.describe()  # type: ignore[attr-defined]
     new_slots: list[Tuple[str, Slot]] = []
+    present = set()
     for name, slot in desc.slots:
+        present.add(name)
         if name in leaves:
             continue
         if name not in children:
             new_slots.append((name, slot))
             continue
-        replacement = children[name]
-        if isinstance(replacement, Node):
-            new_slots.append((name, Child(_handle_of(replacement))))
-        elif replacement is None:
-            new_slots.append((name, MaybeChild(None)))
-        elif isinstance(replacement, tuple):
-            new_slots.append(
-                (name, Children(tuple(_handle_of(n) for n in replacement)))
-            )
-        else:  # an optional single child given as a Node was handled above
-            new_slots.append((name, MaybeChild(_handle_of(replacement))))
+        new_slots.append((name, _child_slot(children[name])))
+    new_slots.extend(
+        (name, _child_slot(replacement))
+        for name, replacement in children.items()
+        if name not in present and name not in leaves
+    )
     new_slots.extend((name, Leaf(value)) for name, value in leaves.items())
     tags = occurrence_tags_of(origin)
     if tags:

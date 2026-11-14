@@ -33,13 +33,17 @@ from sugar_lift_py_tests.sugar.assign_sugar import (
 from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
     DynamicUnpackAssignSugar,
 )
+from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
+from sugar_lift_py_tests.sugar.store_effect_sugar import (
+    AttributeStoreEffectSugar,
+    SubscriptStoreEffectSugar,
+)
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.unpack_projection_targets import (
-    AttributeUnpackTarget,
     NameUnpackTarget,
     StarUnpackTarget,
-    SubscriptUnpackTarget,
+    StoreUnpackTarget,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
@@ -81,6 +85,31 @@ class _FloorSugar(Sugar):
         return ()
 
 
+def _member_key(ordinal: int = 0) -> str:
+    return f"evaluation:star-store/<member {ordinal}>"
+
+
+def _attr_store(receiver, attr: str, site, ordinal: int = 0):
+    """``receiver.attr = <member>``: the leaf's own store statement's sugar,
+    its value read through the leaf's member key (``Assign._store_statements``)."""
+    key = _member_key(ordinal)
+    return AttributeStoreEffectSugar(
+        receiver=_FloorSugar(receiver),
+        value=EvaluationRefSugar(
+            evaluation=key, name=f"<member {ordinal}>", site=site, place=True
+        ),
+        attr=attr,
+        site=site,
+    )
+
+
+def _attr_leaf(receiver, attr: str, site, ordinal: int = 0) -> StoreUnpackTarget:
+    return StoreUnpackTarget(
+        evaluation=_member_key(ordinal),
+        store=_attr_store(receiver, attr, site, ordinal),
+    )
+
+
 @dataclass(frozen=True)
 class _CountingRhs(Sugar):
     box: dict
@@ -110,9 +139,9 @@ def test_star_store_constructs_typed_targets_not_string_tags() -> None:
         for s in function.sugar().statements
         if isinstance(s, DynamicUnpackStoreAssignSugar)
     )
-    assert isinstance(stmt.targets[0], AttributeUnpackTarget)
+    assert isinstance(stmt.targets[0], StoreUnpackTarget)
     assert isinstance(stmt.targets[1], StarUnpackTarget)
-    assert stmt.targets[0].attr == "x"
+    assert stmt.targets[0].store.attr == "x"
     assert stmt.targets[1].name == "rest"
     # No fabricated synthetic name map on the sugar.
     assert not hasattr(stmt, "leaves")
@@ -143,8 +172,10 @@ def test_attribute_and_subscript_production_construction() -> None:
         for s in function.sugar().statements
         if isinstance(s, DynamicUnpackStoreAssignSugar)
     )
-    assert isinstance(stmt.targets[0], AttributeUnpackTarget)
-    assert isinstance(stmt.targets[1], SubscriptUnpackTarget)
+    assert isinstance(stmt.targets[0], StoreUnpackTarget)
+    assert isinstance(stmt.targets[0].store, AttributeStoreEffectSugar)
+    assert isinstance(stmt.targets[1], StoreUnpackTarget)
+    assert isinstance(stmt.targets[1].store, SubscriptStoreEffectSugar)
     assert isinstance(stmt.targets[2], StarUnpackTarget)
 
 
@@ -156,7 +187,7 @@ def test_name_store_name_interleaved_constructs() -> None:
         if isinstance(s, DynamicUnpackStoreAssignSugar)
     )
     types = tuple(type(t) for t in stmt.targets)
-    assert types == (NameUnpackTarget, AttributeUnpackTarget, NameUnpackTarget)
+    assert types == (NameUnpackTarget, StoreUnpackTarget, NameUnpackTarget)
 
 
 # ---------------------------------------------------------------------------
@@ -170,7 +201,7 @@ def test_ground_star_store_rest_and_field() -> None:
     sugar = DynamicUnpackStoreAssignSugar(
         value=_FloorSugar(ListValue((TermValue(1), TermValue(2), TermValue(3)))),
         targets=(
-            AttributeUnpackTarget(_FloorSugar(receiver), "x", site),
+            _attr_leaf(receiver, "x", site),
             StarUnpackTarget("rest"),
         ),
         site=site,
@@ -197,9 +228,9 @@ def test_interleaved_name_store_name_order() -> None:
             return super().apply_member(member, ctx)
 
     @dataclass(frozen=True)
-    class _OrderAttr(AttributeUnpackTarget):
+    class _OrderStore(StoreUnpackTarget):
         def apply_member(self, member, ctx):
-            order.append(f"attr:{self.attr}")
+            order.append(f"attr:{self.store.attr}")
             return super().apply_member(member, ctx)
 
     receiver = ObjectValue("W", (), (), (), "w1")
@@ -207,7 +238,7 @@ def test_interleaved_name_store_name_order() -> None:
         value=_FloorSugar(ListValue((TermValue(1), TermValue(2), TermValue(3)))),
         targets=(
             _OrderName("a"),
-            _OrderAttr(_FloorSugar(receiver), "x", site),
+            _OrderStore(_member_key(), _attr_store(receiver, "x", site)),
             _OrderName("b"),
         ),
         site=site,
@@ -238,7 +269,7 @@ def test_first_store_halt_blocks_later_name() -> None:
     sugar = DynamicUnpackStoreAssignSugar(
         value=_FloorSugar(ListValue((TermValue(1), TermValue(2)))),
         targets=(
-            AttributeUnpackTarget(_FloorSugar(receiver), "x", site),
+            _attr_leaf(receiver, "x", site),
             NameUnpackTarget("name"),
         ),
         site=site,
@@ -276,9 +307,7 @@ def test_earlier_name_survives_later_store_halt() -> None:
         value=_FloorSugar(ListValue((TermValue(7), TermValue(8)))),
         targets=(
             NameUnpackTarget("name"),
-            AttributeUnpackTarget(
-                _FloorSugar(_RefuseSet("W", (), (), (), "r2")), "x", site
-            ),
+            _attr_leaf(_RefuseSet("W", (), (), (), "r2"), "x", site),
         ),
         site=site,
     )
@@ -353,12 +382,8 @@ def test_exact_arity_valueerror_identity() -> None:
     sugar = DynamicUnpackStoreAssignSugar(
         value=_FloorSugar(ListValue((TermValue(1),))),  # need 2
         targets=(
-            AttributeUnpackTarget(
-                _FloorSugar(ObjectValue("W", (), (), (), "w3")), "x", site
-            ),
-            AttributeUnpackTarget(
-                _FloorSugar(ObjectValue("W", (), (), (), "w4")), "y", site
-            ),
+            _attr_leaf(ObjectValue("W", (), (), (), "w3"), "x", site, 0),
+            _attr_leaf(ObjectValue("W", (), (), (), "w4"), "y", site, 1),
         ),
         site=site,
     )
@@ -381,12 +406,8 @@ def test_arity_valueerror_wrong_occurrence_is_not_truthful() -> None:
     sugar = DynamicUnpackStoreAssignSugar(
         value=_FloorSugar(ListValue((TermValue(1),))),
         targets=(
-            AttributeUnpackTarget(
-                _FloorSugar(ObjectValue("W", (), (), (), "w5")), "x", site
-            ),
-            AttributeUnpackTarget(
-                _FloorSugar(ObjectValue("W", (), (), (), "w6")), "y", site
-            ),
+            _attr_leaf(ObjectValue("W", (), (), (), "w5"), "x", site, 0),
+            _attr_leaf(ObjectValue("W", (), (), (), "w6"), "y", site, 1),
         ),
         site=site,
     )
@@ -462,13 +483,11 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     coord_i = SimpleNamespace(coordinate_cid="cid:i")
     formal_receiver = SymbolicValue(make_var("a"), formal_coordinate=coord_a)
     formal_index = SymbolicValue(make_var("i"), formal_coordinate=coord_i)
-    target = SubscriptUnpackTarget(
-        _FloorSugar(formal_receiver),
-        _FloorSugar(formal_index),
-        site,
-    )
     member = TermValue(99)
-    projected = target.apply_member(member, None)
+    # The leaf's store is ``a[i] = <member>``'s own: the one setitem door.
+    projected = SubscriptStoreEffectSugar.project_setitem(
+        formal_receiver, formal_index, member, site, None
+    )
     assert isinstance(projected, NativeOperationExitCarrierV1), projected
     assert projected.demand.operator == "setitem"
     # Discharge order: receiver, index, value — not value-first.
@@ -633,8 +652,10 @@ def test_no_kinds_tuple_isinstance_membrane_at_apply() -> None:
 
     assert issubclass(NameUnpackTarget, UnpackProjectionTarget)
     assert issubclass(StarUnpackTarget, UnpackProjectionTarget)
-    assert issubclass(AttributeUnpackTarget, UnpackProjectionTarget)
-    assert issubclass(SubscriptUnpackTarget, UnpackProjectionTarget)
+    assert issubclass(StoreUnpackTarget, UnpackProjectionTarget)
+    # A store leaf has no store door of its own (#7757 item 7).
+    assert not hasattr(targets, "AttributeUnpackTarget")
+    assert not hasattr(targets, "SubscriptUnpackTarget")
     with pytest.raises(TypeError, match="UnpackProjectionTarget"):
         ApplyUnpackMemberSugar(target=object(), member=TermValue(1), site=_site())
 

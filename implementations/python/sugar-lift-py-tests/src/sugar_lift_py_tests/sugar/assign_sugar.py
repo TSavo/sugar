@@ -122,13 +122,22 @@ class MultiAssignSugar(Sugar):
 
 @dataclass(frozen=True)
 class ChainedAssignSugar(Sugar):
-    """One evaluated RHS distributed left-to-right across names and stores."""
+    """One evaluated RHS distributed left-to-right across names and stores.
+
+    The RHS is evaluated HERE, once, and bound under ``evaluation`` (the
+    statement's key) and under each Name target's key (``evaluations``).
+    ``stores`` are the store targets' own statements' sugars
+    (``Assign._store_statements``), left to right: each reads the value
+    through ``evaluation`` and stores it exactly as ``o.x = v`` alone does,
+    binding what a later read of the place reads.
+    """
 
     bindings: tuple
     stores: tuple
     value: object
     site: object = dataclass_field(compare=False)
     evaluations: tuple = ()  # (name, key) per Name target, as AssignSugar's
+    evaluation: str | None = None  # the key the stores read the value under
 
     @classmethod
     def witnesses(cls):
@@ -139,15 +148,15 @@ class ChainedAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        from sugar_lift_py_tests.context import ReduceContext
         from sugar_lift_py_tests.sugar.assigned_value import (
             evaluate_assignment_values,
-        )
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            reduce_block_to_exitset,
         )
 
         bind = tuple((name, 0) for name in _chained_names(self.bindings))
         evaluations = _evaluation_indices(self.evaluations, bind)
+        if self.evaluation is not None:
+            evaluations = (*evaluations, (self.evaluation, 0))
         if not self.stores:
             return evaluate_assignment_values(
                 (self.value,),
@@ -156,16 +165,14 @@ class ChainedAssignSugar(Sugar):
                 evaluations=evaluations,
                 site=self.site,
             )
+        if ctx is None:
+            ctx = ReduceContext.root(owner="ChainedAssignSugar")
 
         def stores(active, completed):
-            # The RHS was evaluated once, above; each store consumes that one
-            # value, left to right.
-            (value,) = completed
-            return _reduce_targets(
-                tuple(_PreconstructedStoreSugar(s, value) for s in self.stores),
-                active,
-                ctx,
-            )
+            # The RHS was evaluated once, above, and bound under its key;
+            # each store target's statement reads it there, left to right.
+            del completed
+            return _reduce_targets(self.stores, active, ctx)
 
         return evaluate_assignment_values(
             (self.value,), ctx, tail=stores, evaluations=evaluations
@@ -221,25 +228,6 @@ class KeyedStoreSugar(Sugar):
         return evaluate_assignment_values(
             (self.value,), ctx, tail=store, evaluations=((self.evaluation, 0),)
         )
-
-
-@dataclass(frozen=True)
-class _PreconstructedStoreSugar(Sugar):
-    """One chained target consuming the statement's already-reduced RHS."""
-
-    store: Sugar
-    value: object
-
-    @classmethod
-    def witnesses(cls):
-        return NotVerdictBearing(
-            sugar_name=cls.__name__,
-            floor_name="chained store projection",
-            reason="the public ChainedAssignSugar twins own RHS-once sequencing",
-        )
-
-    def desugar(self, ctx: object = None) -> ExitSet:
-        return self.store.desugar_store(ctx, self.value)
 
 
 @dataclass(frozen=True)
@@ -412,8 +400,10 @@ class UnpackStoreAssignSugar(Sugar):
       ``ValueError`` exit exists).
     - Name leaves are spent by substitute (same as MultiAssign) — binding
       before later store leaves run.
-    - Store leaves desugar left-to-right through ``reduce_body``: each reuses
-      the Attribute/Subscript store law (#6599 / attribute-store window). A
+    - Each store leaf's member is bound under its member key (``members``)
+      when it completes; the store leaves' own statements
+      (``Assign._store_statements``) then run left to right, each reading
+      its member there and storing it exactly as ``o.x = v`` alone does. A
       later halt means the statement did not complete; earlier bindings and
       completed stores are not rolled back.
 
@@ -421,9 +411,10 @@ class UnpackStoreAssignSugar(Sugar):
     """
 
     bindings: tuple  # (name, value_sugar) — provenance; substitute spent them
-    stores: tuple  # AttributeStoreEffectSugar | SubscriptStoreEffectSugar | PlaceAssign
+    stores: tuple  # each store leaf's own statement's sugar, left to right
     site: object = dataclass_field(compare=False)
     evaluations: tuple = ()  # (name, key) per Name leaf, as AssignSugar's
+    members: tuple = ()  # (member key, value_sugar) per store leaf
 
     @classmethod
     def witnesses(cls):
@@ -438,54 +429,45 @@ class UnpackStoreAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
-
         # Name bindings are spent by substitute; only store effects remain.
         # Sequencing of store success/halt is the shared reducer — not a local
         # second composition algebra.
+        from sugar_lift_py_tests.context import ReduceContext
         from sugar_lift_py_tests.sugar.assigned_value import (
             evaluate_assignment_values,
         )
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            reduce_block_to_exitset,
-        )
 
+        if ctx is None:
+            ctx = ReduceContext.root(owner="UnpackStoreAssignSugar")
         # Python evaluates the whole RHS display first, left to right, then
         # assigns each target left to right. Every RHS member is evaluated
-        # here in source order; a store then reads its member's completed
-        # value and evaluates only its own target.
+        # here in source order and bound under its keys; a store then reads
+        # its member there and evaluates only its own target.
         values = sorted(
             (
                 *(value for _name, value in self.bindings),
-                *(store.value for store in self.stores),
+                *(value for _key, value in self.members),
             ),
             key=_source_start,
         )
         values = _distinct_in_order(values)
 
+        def index(value):
+            return next(i for i, v in enumerate(values) if v is value)
+
         def stores(active, completed):
-            # Each store consumes its member's one completed value and
-            # evaluates only its own target (receiver, then key).
-            def leaf(store):
-                for member, value in zip(values, completed):
-                    if store.value is member and hasattr(store, "desugar_store"):
-                        return _PreconstructedStoreSugar(store, value)
-                return store
+            del completed
+            return _reduce_targets(self.stores, active, ctx)
 
-            return _reduce_targets(
-                tuple(leaf(store) for store in self.stores), active, ctx
-            )
-
-        bind = tuple(
-            (name, next(i for i, v in enumerate(values) if v is value))
-            for name, value in self.bindings
-        )
+        bind = tuple((name, index(value)) for name, value in self.bindings)
         return evaluate_assignment_values(
             values,
             ctx,
             tail=stores if self.stores else None,
-            evaluations=_evaluation_indices(self.evaluations, bind),
+            evaluations=(
+                *_evaluation_indices(self.evaluations, bind),
+                *((key, index(value)) for key, value in self.members),
+            ),
         )
 
 
