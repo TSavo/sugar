@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-from contextvars import ContextVar
 import weakref
 from dataclasses import dataclass, field as dataclass_field
 from typing import Any, NoReturn
 
 from sugar_lift_py_tests.ir import Term, TermTableBuilder
+from sugar_source_tree.construction_cache import AmbientVar
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -17,7 +17,7 @@ from .source_return_projection import (
 
 _FORCE_FLOOR_BUDGET = 64
 _NESTED_DIG_DEMAND_BUDGET = 8
-_ACTIVE_DIG_DEMAND: ContextVar[int] = ContextVar(
+_ACTIVE_DIG_DEMAND: AmbientVar = AmbientVar(
     "sugar_callsite_active_dig_demand", default=0
 )
 

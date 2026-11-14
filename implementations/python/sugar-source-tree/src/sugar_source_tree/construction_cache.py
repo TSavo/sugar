@@ -16,6 +16,7 @@ so the key set converges with the ref set instead of growing with every loop.
 from __future__ import annotations
 
 import weakref
+from contextvars import ContextVar
 from typing import Any
 
 # Kinds whose constructed answer reads ControlConstructionContextV1.
@@ -182,6 +183,250 @@ def remember_constructed_value_cid_v2(value: object, cid: str) -> None:
     _CONSTRUCTED_VALUE_CIDS_V2[coordinate] = (reference, cid)
 
 
+# ---------------------------------------------------------------------------
+# THE ONE DOOR for memo rows (#7838, inventory item 44).
+#
+# A memo row -- a sugar answer, a substitution, a call frame -- is a function
+# of its coordinate AND of every ambient value its computation read: the
+# method projection, which frames are still open above it, the branch-suite
+# and manager-projection flags, the occurrence path, the dig depth, the
+# helpers in progress.  The row records each such value as it is read, and is
+# served only where every one of them is still equal now.  Anywhere else is a
+# miss, and the coordinate computes a row of its own beside the first.  A
+# value the computation set itself is not ambient to it.
+#
+# Ambient state is readable only through ``AmbientVar`` / ``AmbientSet``:
+# reading it any other way is a dependency no row can see.
+#
+# The row also stores the testimony its computation gave (``testify``), with
+# every row it read nested in order, and replays it on a hit into an asking
+# reporter that has not heard it.  So no memo key names the reporter.
+# ---------------------------------------------------------------------------
+
+
+class _Computation:
+    """One memo row being computed: what it read, what it set, what it said."""
+
+    __slots__ = ("reads", "internal", "testimony")
+
+    def __init__(self) -> None:
+        # (source, member) -> the value read, first read wins.
+        self.reads: dict[tuple, Any] = {}
+        # (source, member) this computation set itself: never ambient to it.
+        self.internal: set[tuple] = set()
+        # (method, args) testimony and nested MemoRow objects, in order.
+        self.testimony: list = []
+
+
+# The computations in flight, innermost last.
+_OPEN: list[_Computation] = []
+
+
+def _read(probe: tuple, value: Any) -> None:
+    if _OPEN:
+        top = _OPEN[-1]
+        if probe not in top.internal and probe not in top.reads:
+            top.reads[probe] = value
+
+
+def _wrote(probe: tuple) -> None:
+    if _OPEN:
+        _OPEN[-1].internal.add(probe)
+
+
+def _absorb(reads: dict) -> None:
+    """The innermost computation now depends on everything ``reads`` names."""
+    if _OPEN:
+        top = _OPEN[-1]
+        for probe, value in reads.items():
+            if probe not in top.internal and probe not in top.reads:
+                top.reads[probe] = value
+
+
+class AmbientVar:
+    """A ``ContextVar`` construction reads under memo rows.
+
+    ``get`` records the value on the computation in flight; ``set`` marks the
+    variable as that computation's own.  Same ``get`` / ``set`` / ``reset`` as
+    the ``ContextVar`` it wraps.
+    """
+
+    __slots__ = ("_var",)
+
+    def __init__(self, name: str, *, default: Any) -> None:
+        self._var: ContextVar = ContextVar(name, default=default)
+
+    @property
+    def name(self) -> str:
+        return self._var.name
+
+    def now(self, _member: object) -> Any:
+        return self._var.get()
+
+    def get(self) -> Any:
+        value = self._var.get()
+        _read((self, None), value)
+        return value
+
+    def set(self, value: Any):
+        _wrote((self, None))
+        return self._var.set(value)
+
+    def reset(self, token) -> None:
+        self._var.reset(token)
+
+
+class AmbientSet:
+    """A process set whose membership construction reads under memo rows.
+
+    ``member in s`` records the answer for that member on the computation in
+    flight; ``add`` marks that member as the computation's own.
+    """
+
+    __slots__ = ("name", "_members")
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._members: set = set()
+
+    def now(self, member: object) -> bool:
+        return member in self._members
+
+    def __contains__(self, member: object) -> bool:
+        value = member in self._members
+        _read((self, member), value)
+        return value
+
+    def add(self, member: object) -> None:
+        _wrote((self, member))
+        self._members.add(member)
+
+    def discard(self, member: object) -> None:
+        self._members.discard(member)
+
+    def __len__(self) -> int:
+        return len(self._members)
+
+    def __iter__(self):
+        return iter(self._members)
+
+
+def testify(reporter: object, method: str, *args: object) -> None:
+    """THE ONE DOOR for testimony given under a memo row.
+
+    The computation in flight stores it, so a hit can replay it to a reporter
+    that did not hear it; then the reporter hears it now.
+    """
+    if _OPEN:
+        _OPEN[-1].testimony.append((method, args))
+    getattr(reporter, method)(*args)
+
+
+class MemoRow:
+    """One remembered answer, the ambient values it read, and its testimony.
+
+    Exactly one of ``value`` / ``panic`` is meaningful: a gap is remembered
+    as loudly as a value and re-raised on every hit.
+    """
+
+    __slots__ = ("reads", "value", "panic", "testimony", "heard")
+
+    def __init__(self, reads, value, panic, testimony, reporter) -> None:
+        self.reads: dict[tuple, Any] = reads
+        self.value = value
+        self.panic: BaseException | None = panic
+        self.testimony: tuple = testimony
+        # id -> reporter, held so the id cannot be recycled under the row.
+        self.heard: dict[int, object] = {id(reporter): reporter}
+
+    def holds(self) -> bool:
+        """Every ambient value this row read is the same now."""
+        for (source, member), value in self.reads.items():
+            if source.now(member) != value:
+                return False
+        return True
+
+
+def _replay(row: MemoRow, reporter: object) -> None:
+    if id(reporter) in row.heard:
+        return
+    row.heard[id(reporter)] = reporter
+    for entry in row.testimony:
+        if type(entry) is MemoRow:
+            _replay(entry, reporter)
+        else:
+            method, args = entry
+            getattr(reporter, method)(*args)
+
+
+def serve(table: dict, key: tuple, reporter: object) -> MemoRow | None:
+    """The row at ``key`` whose ambient reads all hold now, or ``None``.
+
+    A hit makes the computation in flight depend on what the row read, nests
+    the row in its testimony, and replays the row's testimony into
+    ``reporter`` if it has not heard it.
+    """
+    for row in table.get(key, ()):
+        if not row.holds():
+            continue
+        _absorb(row.reads)
+        if _OPEN:
+            _OPEN[-1].testimony.append(row)
+        _replay(row, reporter)
+        return row
+    return None
+
+
+def open_row() -> _Computation:
+    """Start computing a memo row; close it with ``close_row`` or ``abandon_row``."""
+    computation = _Computation()
+    _OPEN.append(computation)
+    return computation
+
+
+def _pop(computation: _Computation) -> None:
+    while _OPEN:
+        top = _OPEN.pop()
+        if top is computation:
+            return
+        # A computation nested in this one that was never closed: its reads
+        # and testimony are this one's.
+        for probe, value in top.reads.items():
+            if probe not in computation.internal:
+                computation.reads.setdefault(probe, value)
+        computation.testimony.extend(top.testimony)
+
+
+def close_row(
+    table: dict,
+    key: tuple,
+    computation: _Computation,
+    reporter: object,
+    *,
+    value: Any = None,
+    panic: BaseException | None = None,
+) -> MemoRow:
+    """Remember ``computation``'s answer at ``key``, newest first."""
+    _pop(computation)
+    row = MemoRow(
+        computation.reads, value, panic, tuple(computation.testimony), reporter
+    )
+    table.setdefault(key, []).insert(0, row)
+    _absorb(row.reads)
+    if _OPEN:
+        _OPEN[-1].testimony.append(row)
+    return row
+
+
+def abandon_row(computation: _Computation) -> None:
+    """``computation`` ended in no answer to remember (a cycle passing through,
+    an interrupt): what it read and said belongs to the computation around it."""
+    _pop(computation)
+    _absorb(computation.reads)
+    if _OPEN:
+        _OPEN[-1].testimony.extend(computation.testimony)
+
+
 class ConstructionCache:
     """Shared field rows keyed by construction coordinate.
 
@@ -192,8 +437,7 @@ class ConstructionCache:
 
     __slots__ = (
         "fields",
-        "sugar_results",
-        "sugar_panics",
+        "sugar_rows",
         "substitutions",
         "call_frames",
         "_pinned",
@@ -202,7 +446,11 @@ class ConstructionCache:
     def __init__(self) -> None:
         # key -> {slot_name: resolved value}
         self.fields: dict[tuple, dict[str, Any]] = {}
-        # key -> constructed sugar. Substitution SHARES node objects (a bound
+        # The three memo tables below map a memo key to its ``MemoRow``s,
+        # newest first, each served only where its ambient reads still hold
+        # (``serve``).  A memo key never names the reporter (``memo_key``).
+        #
+        # memo key -> constructed sugar. Substitution SHARES node objects (a bound
         # name substitutes to the bound node itself), so the constructed graph
         # is a DAG while ``walk``/``_construct_sugar`` traverse it as a TREE:
         # without this row a shared site re-constructs once per incoming PATH
@@ -214,15 +462,15 @@ class ConstructionCache:
         # ref's kind and span. Same coordinate therefore means the same
         # construction, so each distinct coordinate constructs -- and answers
         # the roll -- exactly once, never once per DAG path.
-        self.sugar_results: dict[tuple, Any] = {}
-        # key -> the construction panic this coordinate raised. A gap MUST stay
-        # a gap on every subsequent call, so a panic is memoized as loudly as a
-        # value: the SAME panic object is re-raised, never swallowed, never
-        # softened into an absent value. Memoizing it (rather than leaving
-        # failures uncached) is what keeps present and absent SYMMETRIC under
-        # the coordinate rule -- the reporter testifies each coordinate once,
-        # whether it answers present or absent.
-        self.sugar_panics: dict[tuple, BaseException] = {}
+        #
+        # A row holds either the sugar or the construction panic this
+        # coordinate raised. A gap MUST stay a gap on every subsequent call,
+        # so a panic is memoized as loudly as a value: the SAME panic object
+        # is re-raised, never swallowed, never softened into an absent value.
+        # Memoizing it is what keeps present and absent SYMMETRIC under the
+        # coordinate rule -- each reporter hears each row once, whether it
+        # answers present or absent.
+        self.sugar_rows: dict[tuple, list] = {}
         # (ref, scope) -> the node that substitution produced for that PAIR.
         #
         # Substitution is a function of exactly two things: the node it
@@ -242,16 +490,14 @@ class ConstructionCache:
         # term: ``_substitute_body_tracked`` mints a FRESH scope dict per
         # binding (``{**scope, **binding}``), never mutates one in place, so a
         # rebind cannot alias a memo row that was minted before it.
-        self.substitutions: dict[tuple, Any] = {}
-        # key -> [(seats, reach, panic, frame), ...]: the source-visible call
-        # frames a definition coordinate has constructed, one per distinct
-        # answer the traversal above it could give. ``reach`` is every
-        # definition whose open-frame state the construction asked about,
-        # ``seats`` the ones that were open. A row answers a later call only
-        # when the same subset of ``reach`` is open again
-        # (``FunctionDef.source_visible_call_frame``). Exactly one of
-        # ``panic`` / ``frame`` is set: a gap is remembered as loudly as a
-        # frame, the same as ``sugar_panics``.
+        self.substitutions: dict[tuple, list] = {}
+        # memo key -> the source-visible call frames a definition coordinate
+        # has constructed, one row per distinct answer the traversal above it
+        # could give. Which frames were open above it is ambient state like
+        # any other: a row answers a later call only where the frames it
+        # asked about are open or closed as they were
+        # (``FunctionDef.source_visible_call_frame``). A gap is remembered as
+        # loudly as a frame, the same as in ``sugar_rows``.
         self.call_frames: dict[tuple, list] = {}
         # key -> pin bag. The cache key embeds live identities (ref,
         # construction_context, and for control-sensitive kinds the nearest
@@ -298,3 +544,14 @@ class ConstructionCache:
             pin = (ref, construction_context, control)
         self._pinned[computed] = pin
         return computed
+
+    @staticmethod
+    def memo_key(key: tuple) -> tuple:
+        """The memo key of construction coordinate ``key``: the reporter leaves.
+
+        A memo row's value never reads the reporter; its testimony is stored
+        in the row and replayed to each reporter that asks (``serve``). Field
+        rows keep the reporter: they hold the child shells, which carry it.
+        Every participant left here is pinned by ``key``.
+        """
+        return (key[0],) + key[2:]

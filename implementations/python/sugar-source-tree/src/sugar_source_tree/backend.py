@@ -906,6 +906,8 @@ class Backend:
         lexical_call_rows = tuple(lexical_rows)
         lexical_call_enrollments = tuple(lexical_enrollments)
 
+        from .construction_cache import abandon_row, close_row, open_row, testify
+
         provider_rows = []
         for node in constructed_nodes:
             if not isinstance(node, Assign) or len(node.targets) != 1:
@@ -917,10 +919,21 @@ class Backend:
             value = node.value.value
             if type(value) not in (int, float, str):
                 continue
-            value_sugar = node.value._construct_sugar()
             value_cache, value_key, _ = node.value._coordinate()
-            value_cache.sugar_results[value_key] = value_sugar
-            node.value.reporter.present_fact(node.value)
+            computation = open_row()
+            try:
+                value_sugar = node.value._construct_sugar()
+            except BaseException:
+                abandon_row(computation)
+                raise
+            testify(node.value.reporter, "present_fact", node.value)
+            close_row(
+                value_cache.sugar_rows,
+                value_cache.memo_key(value_key),
+                computation,
+                node.value.reporter,
+                value=value_sugar,
+            )
             assert node.value.sugar() is value_sugar
             constructed_value = object.__new__(_ConstructedProviderValueV1)
             value_identity = (

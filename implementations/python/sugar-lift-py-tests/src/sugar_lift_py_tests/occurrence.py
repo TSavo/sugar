@@ -22,9 +22,11 @@ when its term is later read outside that extent.
 from __future__ import annotations
 
 from contextlib import contextmanager
-from contextvars import ContextVar
 
-_PATH: ContextVar[tuple[str, ...]] = ContextVar("sugar_occurrence_path", default=())
+from sugar_source_tree.construction_cache import AmbientVar
+
+# Ambient to memo rows: a row that read the path is served only under it.
+_PATH: AmbientVar = AmbientVar("sugar_occurrence_path", default=())
 
 
 def current_path() -> tuple[str, ...]:

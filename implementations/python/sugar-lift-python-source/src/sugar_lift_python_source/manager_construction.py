@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import functools
-from contextvars import ContextVar
 from types import MappingProxyType
 
 from dataclasses import dataclass, field, replace
@@ -27,6 +26,7 @@ from sugar_source_tree.binding_provenance import (
     ConstructedValueTestimonyV1,
 )
 from sugar_source_tree.binding_state import BindingEntryV1
+from sugar_source_tree.construction_cache import AmbientVar
 from sugar_source_tree.nodes import (
     AnnAssign,
     Assign,
@@ -2702,14 +2702,12 @@ def resolve_source_visible_frame(
 # reaches narrowed to the methods its instances run.  Each projection then
 # reads its own module's narrowing (``_module_used_methods``) into
 # ``_USED_METHOD_PROJECTION``.  See ``resolve_source_visible_frame``.
-_NARROW_EVERY_CLASS: ContextVar[bool] = ContextVar(
-    "narrow_every_class", default=False
-)
+_NARROW_EVERY_CLASS: AmbientVar = AmbientVar("narrow_every_class", default=False)
 
 # Class name -> the method names a used-method projection constructs, for the
 # classes of the module being projected; None outside a narrowed projection.
-_USED_METHOD_PROJECTION: ContextVar[Mapping[str, frozenset[str]] | None] = (
-    ContextVar("used_method_projection", default=None)
+_USED_METHOD_PROJECTION: AmbientVar = AmbientVar(
+    "used_method_projection", default=None
 )
 
 _PROJECTED_ENTRY_METHODS = (

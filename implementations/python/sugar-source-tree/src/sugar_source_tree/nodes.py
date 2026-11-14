@@ -55,6 +55,15 @@ from .panic import (
     vocabulary_missing,
 )
 from .reporter import NULL_REPORTER, AuditReporter
+from .construction_cache import (
+    AmbientSet,
+    AmbientVar,
+    abandon_row,
+    close_row,
+    open_row,
+    serve,
+    testify,
+)
 from .spans import LineColSpan, LineTable, Span
 from .binding_state import (
     BindingEntryV1,
@@ -99,10 +108,8 @@ DEFER_DEFINITION_BODY_REFUSAL = object()
 # statement still binds every method, but a method nothing on the projected
 # path names keeps its source body for whoever calls it
 # (``DeferredClassMethodV1``).
-import contextvars as _contextvars
-
-PROJECTED_CLASS_METHODS: "_contextvars.ContextVar[dict | None]" = (
-    _contextvars.ContextVar("projected_class_methods", default=None)
+PROJECTED_CLASS_METHODS: AmbientVar = AmbientVar(
+    "projected_class_methods", default=None
 )
 _MISSING = object()
 
@@ -2960,24 +2967,17 @@ class _Splice:
 
 
 
-_FRAMES_UNDER_CONSTRUCTION: set = set()
-# One set per frame door in flight, innermost last: every definition whose
-# under-construction state that frame's construction asked about.
-_FRAME_REACH_STACK: list = []
+_FRAMES_UNDER_CONSTRUCTION: AmbientSet = AmbientSet("frames_under_construction")
 
 
 def _frame_is_under_construction(definition_cid: str) -> bool:
     """THE ONE READ of ``_FRAMES_UNDER_CONSTRUCTION``.
 
-    A frame's answer depends on the traversal above it through this question
-    and nothing else: is that definition's frame still open?  Each ask is
-    charged to the frame door in flight, so a frame remembers exactly which
-    open frames its answer was a function of (``FunctionDef
-    .source_visible_call_frame``).  Reading the set any other way is a
-    dependency the memo cannot see.
+    Is that definition's frame still open?  The set is ambient state: each
+    ask is recorded on the memo row in flight, so every row (a frame, a
+    sugar answer, a substitution) is served only where the frames it asked
+    about are open or closed as they were (``construction_cache.serve``).
     """
-    if _FRAME_REACH_STACK:
-        _FRAME_REACH_STACK[-1].add(definition_cid)
     return definition_cid in _FRAMES_UNDER_CONSTRUCTION
 
 
@@ -3035,7 +3035,7 @@ class Node(Typed):
         # constructor, means calling ``cls(...)`` at all is showing up on the
         # roll -- there is no way to new a node without it. (register only
         # records the reference; field *data* is memoized on the unit cache.)
-        self.reporter.register(self)
+        testify(self.reporter, "register", self)
         if isinstance(self, (For, AsyncFor, While)):
             object.__setattr__(
                 self,
@@ -3246,17 +3246,23 @@ class Node(Typed):
         scope the memo has never seen, and the child substitutes again.
         """
         cache = child._construction_cache()
-        key = (id(child.ref), id(child.reporter), id(scope))
-        remembered = cache.substitutions.get(key)
-        if remembered is not None:
-            return remembered
-        result = child.substitute(scope)
+        # No reporter in the key: the row's testimony is replayed to it.
+        key = (id(child.ref), id(scope))
+        row = serve(cache.substitutions, key, child.reporter)
+        if row is not None:
+            return row.value
+        computation = open_row()
+        try:
+            result = child.substitute(scope)
+        except BaseException:
+            abandon_row(computation)
+            raise
         # Pin both identity-bearing participants for the row's lifetime: a
         # transient shadow ref or a dropped scope dict must not have its
         # address recycled into a live key (the hazard construction_cache
         # already closes for field rows).
-        cache._pinned[key] = (child.ref, child.reporter, scope)
-        cache.substitutions[key] = result
+        cache._pinned[key] = (child.ref, scope)
+        close_row(cache.substitutions, key, computation, child.reporter, value=result)
         return result
 
     def _substitute_field(self, value, scope):
@@ -3299,7 +3305,7 @@ class Node(Typed):
         this the replaced node stays registered with no answer at all, which the
         minority report reads (correctly) as a silent unaccounted construction.
         """
-        self.reporter.present_inert(self)
+        testify(self.reporter, "present_inert", self)
 
     def _substitute_children(self, scope: BindingMap) -> "Node":
         """The structural recurse a NON-binding compound opts into: substitute
@@ -3766,13 +3772,18 @@ class Node(Typed):
         # rewritten shadow carries a DIFFERENT ref, so it can never collide
         # with the node it replaced. ``cache.key`` pins the ref, which is what
         # keeps a dead shadow's recycled address from serving stale work.
+        #
+        # One door (#7838): a row is served only where every ambient value its
+        # construction read is still equal, and a reporter that did not hear
+        # the row hears its testimony replayed (``construction_cache.serve``).
         cache, key, _ = self._coordinate()
-        remembered_panic = cache.sugar_panics.get(key)
-        if remembered_panic is not None:
-            # A gap stays a gap, every time. Same panic, re-raised loudly.
-            raise remembered_panic
-        if key in cache.sugar_results:
-            return cache.sugar_results[key]
+        memo = cache.memo_key(key)
+        row = serve(cache.sugar_rows, memo, self.reporter)
+        if row is not None:
+            if row.panic is not None:
+                # A gap stays a gap, every time. Same panic, re-raised loudly.
+                raise row.panic
+            return row.value
 
         where = f"{self.unit.filename}"
         try:
@@ -3783,6 +3794,7 @@ class Node(Typed):
         with reduction_span(
             sugar=f"{self.kind}.sugar", role="construction", site=where
         ):
+            computation = open_row()
             try:
                 result = _as_evaluation_of(self, self._construct_sugar())
                 # A constructed value whose testimony cannot be content-addressed
@@ -3790,15 +3802,22 @@ class Node(Typed):
                 # coordinate records the ABSENT answer (memoized panic, gap
                 # already testified through the reporter) instead of a present
                 # answer whose testimony silently failed to exist.
-                self.reporter.present_construction(self, result)
+                testify(self.reporter, "present_construction", self, result)
             except (SourceTreePanic, ConstructionPanic) as panic:
                 # The two sanctioned construction gaps. Remember the panic so
                 # this coordinate keeps throwing it -- memoization must never
                 # turn an absent answer into a present one.
-                cache.sugar_panics[key] = panic
+                close_row(
+                    cache.sugar_rows, memo, computation, self.reporter, panic=panic
+                )
                 raise
-            self.reporter.present_fact(self)
-            cache.sugar_results[key] = result
+            except BaseException:
+                # Anything else is a property of this traversal, never
+                # remembered.
+                abandon_row(computation)
+                raise
+            testify(self.reporter, "present_fact", self)
+            close_row(cache.sugar_rows, memo, computation, self.reporter, value=result)
             return result
 
     def _require_construction_context(self, *, owner: str) -> object:
@@ -3918,7 +3937,7 @@ class Node(Typed):
         # walk's CollectingReporter records it (the frontier row); the report
         # never suppresses the throw. Every gap carries its own .fragment, so
         # the census -> wire memento is one hop: node.fragment.seal().
-        self.reporter.report_gap(self, panic)
+        testify(self.reporter, "report_gap", self, panic)
         raise panic
 
     def segment(self) -> str:
@@ -4550,56 +4569,54 @@ class FunctionDef(Statement):
         # path (pandas/_testing/asserters.py: 92% of an 87 s run, unfinished).
         #
         # A remembered frame answers only a traversal that would have asked
-        # the same questions and heard the same answers: of every definition
-        # the first construction asked about (``reach``), exactly the ones
-        # that were open then (``seats``) are open now.  Any other traversal
-        # constructs its own variant.  So a recursion seat never leaks into a
-        # traversal where that definition is not open, and a full body never
-        # replaces a seat.
+        # the same questions and heard the same answers: every definition the
+        # first construction asked about is open or closed now as it was
+        # then, and so is every other ambient value it read -- the one rule
+        # every memo row keeps (``construction_cache.serve``).  Any other
+        # traversal constructs its own variant.  So a recursion seat never
+        # leaks into a traversal where that definition is not open, and a
+        # full body never replaces a seat.
         from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
         cache, key, _ = self._coordinate()
-        for seats, reach, panic, frame in cache.call_frames.get(key, ()):
-            if (_FRAMES_UNDER_CONSTRUCTION & reach) != seats:
-                continue
-            if _FRAME_REACH_STACK:
-                # The caller's frame now depends on everything this one did.
-                _FRAME_REACH_STACK[-1].update(reach)
-            if panic is not None:
+        memo = cache.memo_key(key)
+        row = serve(cache.call_frames, memo, self.reporter)
+        if row is not None:
+            if row.panic is not None:
                 # A gap stays a gap, every time. Same panic, re-raised loudly.
-                raise panic
+                raise row.panic
+            frame = row.value
             if frame.owner is not self:
                 # Shells are views; the frame is owned by the shell that asks.
                 frame = replace(frame, owner=self)
             return frame
 
-        open_above = frozenset(_FRAMES_UNDER_CONSTRUCTION)
-        asked: set = set()
-        _FRAME_REACH_STACK.append(asked)
+        computation = open_row()
+        # Opening its own frame is this construction's act, so whether it is
+        # open is never ambient to it: its own recursion is decided inside,
+        # never by the traversal above (the door refused above if it were
+        # open).
         _FRAMES_UNDER_CONSTRUCTION.add(definition_cid)
-        panic = None
-        frame = None
         try:
-            frame = FunctionDef._source_visible_call_frame_unguarded(self)
-        except (SourceTreePanic, ConstructionPanic) as raised:
+            try:
+                frame = FunctionDef._source_visible_call_frame_unguarded(self)
+            finally:
+                _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
+        except (SourceTreePanic, ConstructionPanic) as panic:
             # The two sanctioned construction gaps, remembered as loudly as a
-            # frame. Anything else (a cycle passing through, an interrupt) is
-            # a property of this traversal and is never remembered.
-            panic = raised
+            # frame.
+            close_row(cache.call_frames, memo, computation, self.reporter, panic=panic)
             raise
-        finally:
-            _FRAMES_UNDER_CONSTRUCTION.discard(definition_cid)
-            _FRAME_REACH_STACK.pop()
-            # Its own recursion is decided inside this construction, never by
-            # the traversal above: the door refused above if it were open.
-            asked.discard(definition_cid)
-            if _FRAME_REACH_STACK:
-                _FRAME_REACH_STACK[-1].update(asked)
-            if panic is not None or frame is not None:
-                reach = frozenset(asked)
-                cache.call_frames.setdefault(key, []).append(
-                    (reach & open_above, reach, panic, frame)
-                )
+        except BaseException:
+            # Anything else (a cycle passing through, an interrupt) is a
+            # property of this traversal and is never remembered.
+            abandon_row(computation)
+            raise
+        if frame is None:
+            # No frame is not an answer to remember.
+            abandon_row(computation)
+            return frame
+        close_row(cache.call_frames, memo, computation, self.reporter, value=frame)
         return frame
 
     def bound_classmethod_call_frame(self, class_def: "ClassDef"):
@@ -9181,11 +9198,8 @@ class If(Statement):
 # construction is refused by the same require door, loudly, before any
 # reader of the binding is reduced.
 import contextlib as _contextlib_for_projection
-import contextvars as _contextvars
 
-_IN_BRANCH_SUITE: "_contextvars.ContextVar[bool]" = _contextvars.ContextVar(
-    "sugar_in_branch_suite", default=False
-)
+_IN_BRANCH_SUITE: AmbientVar = AmbientVar("sugar_in_branch_suite", default=False)
 
 # True while population projects a frame only to collect its manager calls
 # (#7732).  That projection runs BEFORE any reader has seated a contract, so a
@@ -9193,7 +9207,7 @@ _IN_BRANCH_SUITE: "_contextvars.ContextVar[bool]" = _contextvars.ContextVar(
 # ``as`` binding instead of demanding the contract now.  The projection is
 # read for its manager calls and then discarded; the With itself constructs
 # later through the same require door, loudly, once every reader has run.
-_IN_MANAGER_USE_PROJECTION: "_contextvars.ContextVar[bool]" = _contextvars.ContextVar(
+_IN_MANAGER_USE_PROJECTION: AmbientVar = AmbientVar(
     "sugar_in_manager_use_projection", default=False
 )
 
@@ -9343,7 +9357,7 @@ class With(Statement):
                 ),
                 use_site=coordinate,
             )
-            self.reporter.report_gap(self, panic)
+            testify(self.reporter, "report_gap", self, panic)
             raise panic
 
     def _published_generator_resource_testimony(self, item: WithItem):
@@ -9420,7 +9434,7 @@ class With(Statement):
             resolution_kind=what if isinstance(what, str) else None,
             demand_cid=getattr(resolution, "demand_cid", None),
         )
-        self.reporter.report_gap(self, panic)
+        testify(self.reporter, "report_gap", self, panic)
         raise panic
 
     def _provider_manager_call(self, item: WithItem):
@@ -9604,7 +9618,7 @@ class With(Statement):
                     ),
                     fix="leave unsupported factored faces loud; never recombine or drop them",
                 )
-                self.reporter.report_gap(self, panic)
+                testify(self.reporter, "report_gap", self, panic)
                 raise panic
             # Expected-type and binding authorize every face. Disagreeing faces
             # must refuse here — never let face zero speak for the rest.
@@ -9704,7 +9718,7 @@ class With(Statement):
                 ),
                 fix="leave unsupported authenticated semantics loud; never upgrade testimony",
             )
-            self.reporter.report_gap(self, panic)
+            testify(self.reporter, "report_gap", self, panic)
             raise panic
         return resolution
 
@@ -10008,7 +10022,7 @@ class With(Statement):
                             "loud -- never drop the binding"
                         ),
                     )
-                    self.reporter.report_gap(self, panic)
+                    testify(self.reporter, "report_gap", self, panic)
                     raise panic
                 enter_slot = (
                     f"{item._manager_slot_id()}#enter_result"
@@ -10206,7 +10220,7 @@ class With(Statement):
                             "keep the store target loud -- never drop the binding"
                         ),
                     )
-                    self.reporter.report_gap(self, panic)
+                    testify(self.reporter, "report_gap", self, panic)
                     raise panic
                 observation_slot = None
                 if as_name is not None:
@@ -10266,7 +10280,7 @@ class With(Statement):
                             "keep the store target loud -- never drop the binding"
                         ),
                     )
-                    self.reporter.report_gap(self, panic)
+                    testify(self.reporter, "report_gap", self, panic)
                     raise panic
                 manager_sugar = item.context_expr.sugar()
                 manager_sugar = self._authenticate_expected_exception_type(
@@ -10336,7 +10350,7 @@ class With(Statement):
             requested="one resolved ContextManagerContractRefV1 at the exact use-site",
             fix="run authenticated contract resolution before tree construction",
         )
-        self.reporter.report_gap(self, panic)
+        testify(self.reporter, "report_gap", self, panic)
         raise panic
 
     def _require_native_resource_definitions(self, resolved_ref):
@@ -10583,7 +10597,7 @@ class With(Statement):
                 requested="a contract carrying exception-info or warning-observation binding",
                 fix="never grant an observation slot from the `as` spelling alone",
             )
-            self.reporter.report_gap(self, panic)
+            testify(self.reporter, "report_gap", self, panic)
             raise panic
         return f"{item._manager_slot_id()}#observation", projection
 
@@ -10690,7 +10704,7 @@ class AsyncWith(Statement):
             requested="one synchronous pre-resolved NeverSuppresses manager",
             fix="keep async enter/exit semantics loud until separately specified",
         )
-        self.reporter.report_gap(self, panic)
+        testify(self.reporter, "report_gap", self, panic)
         raise panic
 
     def _construct_sugar(self):
