@@ -45,6 +45,14 @@ class LiveOutwardHaltedFaceV1:
     statement_sugar: object
     guard: object
     state: tuple[BindingEntryV1, ...]
+    # The sugars of the body statements that run before the exit statement
+    # on its path, in order (``_control_guards``): the statements before it
+    # in its suite and, for an exit in an ``if`` arm, the statements before
+    # that ``if`` in the enclosing suites.  An inner loop among them
+    # publishes what it writes before the exit reads it: the recurrence's
+    # symbolic item reduces them, then the exit
+    # (``LoopRecurrenceSugar._face_outcome``).
+    prefix_sugars: tuple[object, ...] = ()
 
 
 from .nodes import TargetPatternV1 as LiveForTargetPatternV1
@@ -518,15 +526,20 @@ def _combine(outer, inner):
     return inner if outer is None else and_([outer, inner])
 
 
-def _control_guards(statements, scope, outer=None):
-    """Return exact owned control guards, including outward halted faces."""
+def _control_guards(statements, scope, outer=None, before=()):
+    """Return exact owned control guards, including outward halted faces.
+
+    Each outward halted face is ``(statement, guard, scope, prefix)``:
+    ``prefix`` is the statements that run before ``statement`` on its path
+    (``before``, the statements ahead of the enclosing ``if``s, then those
+    ahead of it in its own suite)."""
     from .nodes import Break, Continue, For, If, Raise, Return, While
 
     breaks = []
     continues = []
     halted = []
     current = dict(scope)
-    for statement in statements:
+    for index, statement in enumerate(statements):
         if isinstance(statement, Break):
             breaks.append(outer)
             continue
@@ -534,18 +547,23 @@ def _control_guards(statements, scope, outer=None):
             continues.append(outer)
             continue
         if isinstance(statement, (Return, Raise)):
-            halted.append((statement, outer, current))
+            halted.append(
+                (statement, outer, current, (*before, *statements[:index]))
+            )
             continue
         if isinstance(statement, If):
+            ahead = (*before, *statements[:index])
             guard = branch_result_guard(
                 branch_result_slot(statement.test), statement.test.fragment
             )
-            b, c, h = _control_guards(statement.body, current, _combine(outer, guard))
+            b, c, h = _control_guards(
+                statement.body, current, _combine(outer, guard), ahead
+            )
             breaks.extend(b)
             continues.extend(c)
             halted.extend(h)
             b, c, h = _control_guards(
-                statement.orelse, current, _combine(outer, not_(guard))
+                statement.orelse, current, _combine(outer, not_(guard)), ahead
             )
             breaks.extend(b)
             continues.extend(c)
@@ -785,7 +803,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     outward_faces = []
     outward_face_cids = []
     outward_records = []
-    for statement, guard, halted_scope in halted_specs:
+    for statement, guard, halted_scope, prefix in halted_specs:
         live_guard = guard if guard is not None else true_guard
         projected_entries = tuple(
             replace(
@@ -824,7 +842,12 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         outward_records.append(face)
         outward_face_cids.append(face["outwardHaltedFaceCid"])
         outward_faces.append(
-            LiveOutwardHaltedFaceV1(statement_sugar, live_guard, runtime_snapshot)
+            LiveOutwardHaltedFaceV1(
+                statement_sugar,
+                live_guard,
+                runtime_snapshot,
+                tuple(ahead.sugar() for ahead in prefix),
+            )
         )
 
     body_face = face_snapshots["BodyFallthrough"][0]

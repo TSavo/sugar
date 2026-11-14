@@ -1407,6 +1407,26 @@ def test_a_standalone_function_reads_the_module_runs_value_of_a_call() -> None:
     assert _returned_value(outcome) == _module_end_value(tree, key)
 
 
+def test_a_function_reduced_on_its_own_reads_a_module_loops_publication() -> None:
+    # ``for i in g(): last = i`` at module level, then ``f`` reads ``last``
+    # on its own: the frame entry binds the loop's post-loop key to what the
+    # run's loop left it as (the last item, 2) and decides the loop's write
+    # slot as the run decided it (an item wrote it), so the read takes the
+    # post-loop key alone -- never the ``NameError`` arm no run took.
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _source(LOOP_FIRST_BOUND)
+    final = _function(tree).unit.module_bindings_at(None, {"last"})["last"]
+    ctx = _entered(tree)
+    assert isinstance(
+        ctx.ground_branch_results.get(final.slot.slot_id), TrueBoolLiteralSugar
+    )
+    assert ctx.temporal.value_if_bound(final.when_true.evaluation) == TermValue(2)
+    assert ctx.temporal.value_if_bound("last") is None
+    outcome = function_universe_outcome(_function(tree))
+    assert _returned_value(outcome) == TermValue(2)
+
+
 @pytest.mark.skipif(not hasattr(ast, "TypeAlias"), reason="needs type aliases")
 def test_a_module_whose_other_function_refuses_still_lets_f_read_x() -> None:
     # ``bad``'s body refuses (``type`` has no sugar); its ``def`` statement
