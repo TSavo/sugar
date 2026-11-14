@@ -3568,7 +3568,9 @@ def _evaluation_ref(
     ``r = []; a = r; r.append(1)`` changes what ``a`` names too) and which
     lambda a call through the name applies (``Call._construct_sugar``).  It
     is a leaf, not a child: nothing walks into it and its sugar is never
-    built from it."""
+    built from it.  Where ``of`` is ground, substitution asks the reference
+    for that value to decide a shape (``EvaluationRef.ground_value``), and
+    for nothing else."""
     from .backend import Leaf, materialize
     from .shadow import ShadowNode
 
@@ -3587,6 +3589,92 @@ def _evaluation_ref(
         owner.unit,
         ShadowNode("EvaluationRef", span, slots),
         owner.reporter,
+    )
+
+
+def _ground_value(node) -> "Optional[Node]":
+    """The ground literal ``node`` denotes, or None.
+
+    The one way substitution asks for a value to decide a shape: how many
+    times a loop unrolls (``For._concrete_elements``, ``For._concrete_int``),
+    which suite a ground condition selects (``While._ground_truth``), which
+    member a starred unpack gives each name (``Assign._ground_members``).
+    The answer decides the shape only.  It never stands in for a read: a read
+    of an assigned name is still the reference to its key, and the statement
+    that reads it still reads the key at reduce.
+
+    Ground is: a ``Constant``; ``-``/``+`` over a ground operand; int
+    arithmetic over ground ints that ``For._concrete_int`` decides; a
+    ``List``/``Tuple`` display whose every member is ground (no ``*``
+    member); a subscript of a ground display by a ground int in range (its
+    member); and a key reference (``EvaluationRef``) whose ``of`` is ground,
+    the value that key holds.  A reference is the binding the scope holds
+    where it is read, so after a rebind it is the rebind's key: ``n = 3; n =
+    4`` reads 4, and ``n = 3; n += 1`` reads ``x += e``'s key, which carries
+    no ``of`` and is not ground."""
+    if not isinstance(node, Node):
+        return None
+    kind = node.kind
+    if kind == "EvaluationRef":
+        of = getattr(node, "of", None)
+        return _ground_value(of) if isinstance(of, Node) else None
+    if kind == "Constant":
+        return node
+    if kind == "UnaryOp":
+        if node.op.kind not in ("USub", "UAdd"):
+            return None
+        return node if _ground_value(node.operand) is not None else None
+    if kind == "BinOp":
+        return node if For._concrete_int(node, node) is not None else None
+    if kind in ("List", "Tuple"):
+        if all(
+            element.kind != "Starred" and _ground_value(element) is not None
+            for element in node.elts
+        ):
+            return node
+        return None
+    if kind == "Subscript":
+        display = _ground_value(node.value)
+        if display is None or display.kind not in ("List", "Tuple"):
+            return None
+        index = For._concrete_int(node, node.slice_)
+        if index is None or not -len(display.elts) <= index < len(display.elts):
+            return None
+        return _ground_value(display.elts[index])
+    return None
+
+
+def _object_read_in(reference, reads, scope) -> bool:
+    """Whether ``reads`` read a name that may reach the object ``reference``
+    denotes: the reference's own name, or any name ``scope`` binds to that
+    object or to an object it was taken from (``container_mutation._identity``,
+    through each subscript receiver).  A loop over a list unrolls through the
+    list's key only when its body cannot reach the list: Python iterates the
+    live list, so a body that appends to it changes how many items there
+    are."""
+    from .binding_state import unwrap_binding_state
+    from .container_mutation import _identity
+
+    identities = []
+    names = set()
+    node = reference
+    while isinstance(node, Node):
+        if node.kind == "EvaluationRef":
+            names.add(node.name)
+        identity = _identity(node)
+        identities.append(identity)
+        taken_from = getattr(identity, "kind", None) == "Subscript"
+        node = identity.value if taken_from else None
+    for name, state in scope.items():
+        if not isinstance(name, str):
+            continue
+        bound = _identity(unwrap_binding_state(state))
+        if any(bound is identity for identity in identities):
+            names.add(name)
+    return any(
+        node.kind == "Name" and node.id in names
+        for root in reads
+        for node in root.walk()
     )
 
 
@@ -8619,20 +8707,50 @@ class Assign(Statement):
         reduce.  Before, it bound nothing, and a later read fell to the
         name's prior state (the seeded unbound state: a false NameError).
         A statement that was never substituted carries no key and binds
-        nothing."""
+        nothing.
+
+        Where the right-hand side's key holds a ground display (``xs = [1, 2,
+        3]; a, *b = xs``), each reference carries the member that display
+        gives its name as the object it denotes (``_ground_members``): ``b``
+        denotes the new list ``[2, 3]``.  The reads still read the
+        projections; the members only decide later shapes (``for y in
+        b``)."""
         evaluation = getattr(self, "evaluation", None)
         target = self._dynamic_unpack_target()
         if not isinstance(evaluation, str) or target is None:
             return None
         from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
+        members = self._ground_members(target)
         bindings = {
             name: _evaluation_ref(
-                self, leaf.span, projection_key(evaluation, name), name
+                self,
+                leaf.span,
+                projection_key(evaluation, name),
+                name,
+                of=members.get(name),
             )
             for name, leaf in _unpack_target_names(target).items()
         }
         return bindings or None
+
+    def _ground_members(self, target) -> dict:
+        """Each Name leaf of ``target`` to the member of the right-hand side's
+        ground display it is given (``_ground_value``,
+        ``TargetPatternV1.bindings_for``; a starred leaf the new list of the
+        members it takes), or nothing where the value is not a ground display,
+        the target is no binding pattern, or the arity does not match."""
+        ground = _ground_value(self.value)
+        if ground is None or ground.kind not in ("List", "Tuple"):
+            return {}
+        enrollment = self.unit.target_pattern_enrollment(self)
+        if not isinstance(
+            enrollment, TargetPatternEnrolledV1
+        ) or not enrollment.covers(target):
+            return {}
+        owner = self.unit.require_target_pattern_for_target(target).consumer_occurrence
+        members = self.unit.require_target_pattern(owner, target).bindings_for(ground)
+        return members or {}
 
     def _name_values(self) -> dict:
         """The value node substitution binds each Name target to: the
@@ -10058,7 +10176,11 @@ class For(Statement):
             with reduction_span(
                 sugar="For.concrete_elements", role="temporal", site=where
             ):
-                elements = self._concrete_elements(subst_iter) if concrete else None
+                elements = (
+                    self._concrete_elements(subst_iter, self.body, scope)
+                    if concrete
+                    else None
+                )
             if elements is not None and len(elements) > self._UNROLL_FUEL:
                 elements = None  # past the unroll budget: the fold/universal stands
             if elements is not None:
@@ -10499,12 +10621,34 @@ class For(Statement):
     # unrolls.
     _UNROLL_FUEL = 128
 
-    def _concrete_elements(self, iterable: "Expression") -> "Optional[list]":
+    def _concrete_elements(
+        self, iterable: "Expression", reads=(), scope=None
+    ) -> "Optional[list]":
         """The element nodes to unroll over, or ``None`` if `iterable` is not
         concrete. A `List`/`Tuple_` literal is concrete by construction; a
         `range(...)` call is concrete only when every argument (after
         substitution) is a literal `int` -- a symbolic bound leaves the fold
-        real, so it is not recognized here."""
+        real, so it is not recognized here.
+
+        A read of a name whose key holds a ground display (``xs = [1, 2];
+        for x in xs``, ``_ground_value``) is concrete too: the display decides
+        how many items there are, and each item is ``xs[i]``, a read of the
+        key, never the display's member.  A list is unrolled this way only
+        when ``reads`` (the loop body, the comprehension's element and
+        conditions) cannot reach it (``_object_read_in``): Python iterates
+        the live list."""
+        if iterable.kind in ("EvaluationRef", "Subscript"):
+            ground = _ground_value(iterable)
+            if ground is None or ground.kind not in ("List", "Tuple"):
+                return None
+            if ground.kind == "List" and _object_read_in(
+                iterable, reads, scope or {}
+            ):
+                return None
+            return [
+                For._item_of(self, iterable, index)
+                for index in range(len(ground.elts))
+            ]
         if iterable.kind in ("List", "Tuple"):
             elements = list(iterable.elts)
             if any(For._is_ground_zero_division(self, element) for element in elements):
@@ -10533,7 +10677,14 @@ class For(Statement):
         """The literal int an arg denotes, or ``None`` if it is not one. A
         negative bound parses as `UnaryOp(USub, Constant(n))` (cpython does
         not fold the literal), so both shapes are recognized; `bool` is
-        rejected even though it subclasses `int`."""
+        rejected even though it subclasses `int`.  A key reference (or a
+        subscript of one) denotes the int its ground value is
+        (``_ground_value``): ``n = 3; range(n)``."""
+        if arg.kind in ("EvaluationRef", "Subscript"):
+            ground = _ground_value(arg)
+            if ground is None:
+                return None
+            arg = ground
         if (
             arg.kind == "Constant"
             and isinstance(arg.value, int)
@@ -10592,6 +10743,22 @@ class For(Statement):
         )
         return materialize(
             self.unit, ShadowNode("Constant", self.span, slots), self.reporter
+        )
+
+    def _item_of(self, iterable: "Node", index: int) -> "Node":
+        """``<iterable>[index]``, borrowing this node's span: one item of an
+        iterable whose ground value decided how many items there are
+        (``_concrete_elements``).  The item reads the iterable's key at
+        reduce; the ground value is never put in its place."""
+        from .backend import Child, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        slots = (
+            ("value", Child(_handle_of(iterable))),
+            ("slice_", Child(_handle_of(For._int_constant(self, index)))),
+        )
+        return materialize(
+            self.unit, ShadowNode("Subscript", self.span, slots), self.reporter
         )
 
 
@@ -10703,7 +10870,13 @@ class While(Statement):
         this is the same structural reading as For._concrete_int (recognizing
         literals), never an evaluation of symbolic meaning: a bool Constant
         stands as itself; a single-op Compare over int literals decides by the
-        operator. Anything else (a free name, a call) is not ground."""
+        operator. Anything else (a free name, a call) is not ground.  A key
+        reference decides by the ground value its key holds
+        (``_ground_value``): ``DEBUG = False; if DEBUG: break``."""
+        if test.kind in ("EvaluationRef", "Subscript"):
+            ground = _ground_value(test)
+            if ground is not None:
+                test = ground
         if test.kind == "Constant" and isinstance(test.value, bool):
             return test.value
         if test.kind == "Compare" and len(test.ops) == 1:
@@ -14779,7 +14952,7 @@ class ListComp(Expression):
         it = new_iter if ic else gen.iter
         if ListComp._calls_shadowed_range(self, it, scope):
             return None
-        elements = For._concrete_elements(self, it)
+        elements = For._concrete_elements(self, it, (self.elt, *gen.ifs), scope)
         if elements is None:
             return None
         if len(elements) > For._UNROLL_FUEL:
@@ -15214,7 +15387,9 @@ class SetComp(Expression):
         iterable = new_iter if changed else gen.iter
         if ListComp._calls_shadowed_range(self, iterable, scope):
             return None
-        elements = For._concrete_elements(self, iterable)
+        elements = For._concrete_elements(
+            self, iterable, (self.elt, *gen.ifs), scope
+        )
         if elements is None or len(elements) > For._UNROLL_FUEL:
             return None
         results = []
@@ -15319,7 +15494,9 @@ class DictComp(Expression):
         iterable = new_iter if changed else gen.iter
         if ListComp._calls_shadowed_range(self, iterable, scope):
             return None
-        elements = For._concrete_elements(self, iterable)
+        elements = For._concrete_elements(
+            self, iterable, (self.key, self.value, *gen.ifs), scope
+        )
         if elements is None or len(elements) > For._UNROLL_FUEL:
             return None
         roots = (self.key, self.value)
@@ -17783,6 +17960,12 @@ class EvaluationRef(Expression):
     def substitute(self, scope):
         del scope
         return self
+
+    def ground_value(self) -> "Optional[Node]":
+        """The ground literal this key holds (``_ground_value``), or None:
+        the value an assignment's ``of`` gives, when it is ground.  Asked
+        only to decide a shape; the read is still this reference."""
+        return _ground_value(self)
 
     def _construct_sugar(self):
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
