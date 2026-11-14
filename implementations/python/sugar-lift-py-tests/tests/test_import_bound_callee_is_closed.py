@@ -50,11 +50,9 @@ def _post(source: str):
 def _completed(outcome):
     """The one completed face's value.  A call of a module member the import
     door did not cite may raise (``UnknownCallee:<target>``)."""
-    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome import Completed, Halted
 
-    if isinstance(outcome, Complete):
-        return outcome.value
-    exits = outcome_to_exitset(outcome).exits
+    exits = outcome.exits
     completed = [face for face in exits if isinstance(face, Completed)]
     assert len(completed) == 1, exits
     assert all(

@@ -10,7 +10,7 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import MutableGlobalValue, PredicateValue, StringValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import atomic
-from sugar_lift_py_tests.outcome import Complete, ExitSet
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_source_tree.nodes import Compare, Name
 from sugar_source_tree.panic import SugarNotWritten
@@ -53,10 +53,10 @@ def test_same_source_mutable_dict_membership_keeps_exact_predicate(
 
     outcome = value.contains(item, site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, PredicateValue)
-    assert outcome.value.site is site
-    assert outcome.value.formula == atomic(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), PredicateValue)
+    assert outcome.completed_value().site is site
+    assert outcome.completed_value().formula == atomic(
         "py.in",
         [
             item.to_term(owner="mutable global membership test"),
@@ -75,7 +75,7 @@ def test_mutable_dict_membership_refuses_same_span_foreign_source(
     value, _ctx = _context(binding, kind="dict")
     item = StringValue("key")
 
-    assert isinstance(value.contains(item, truthful.fragment), Complete)
+    assert value.contains(item, truthful.fragment).completed_value() is not None
 
     with pytest.raises(SugarNotWritten) as raised:
         value.contains(item, foreign.fragment)

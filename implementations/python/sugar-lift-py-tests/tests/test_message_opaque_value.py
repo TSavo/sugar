@@ -6,7 +6,6 @@ from __future__ import annotations
 from sugar_lift_py_tests.floor.message_opaque_value import MessageOpaqueValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_lift_py_tests.outcome import Complete
 
 
 def _opaque() -> MessageOpaqueValue:
@@ -21,17 +20,17 @@ def test_is_a_symbolic_value_so_arithmetic_string_machinery_applies() -> None:
 
 def test_attribute_yields_message_opacity() -> None:
     out = _opaque().attribute("get_verbosity", site="s")
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, MessageOpaqueValue)
+    assert out.completed_value() is not None
+    assert isinstance(out.completed_value(), MessageOpaqueValue)
 
 
 def test_subscript_yields_message_opacity() -> None:
     out = _opaque().subscript(0, site="s")
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, MessageOpaqueValue)
+    assert out.completed_value() is not None
+    assert isinstance(out.completed_value(), MessageOpaqueValue)
 
 
 def test_contains_yields_message_opacity() -> None:
     out = _opaque().contains(_opaque(), site="s")
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, MessageOpaqueValue)
+    assert out.completed_value() is not None
+    assert isinstance(out.completed_value(), MessageOpaqueValue)

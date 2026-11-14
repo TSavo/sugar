@@ -16,7 +16,7 @@ from sugar_source_tree.tree import SourceFile
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_python_source.source_oracle import path_source
 
 
@@ -41,7 +41,7 @@ def test_an_int_literal_node_constructs_int_literal_sugar():
 def test_the_int_literal_sugar_desugars_to_the_number_as_a_term():
     (const,) = _constants("x = 42\n")
     outcome = const.sugar().desugar()
-    assert outcome == Complete(TermValue(42))
+    assert outcome == ExitSet.completed(TermValue(42))
 
 
 def test_the_sugar_carries_the_nodes_own_fragment_as_its_site():
@@ -150,5 +150,5 @@ def test_source_string_one_equals_one_gives_back_sugar():
     assert isinstance(sugar.right, IntLiteralSugar) and sugar.right.value == 1
 
     # and each side desugars to the number as a floor term
-    assert sugar.left.desugar() == Complete(TermValue(1))
-    assert sugar.right.desugar() == Complete(TermValue(1))
+    assert sugar.left.desugar() == ExitSet.completed(TermValue(1))
+    assert sugar.right.desugar() == ExitSet.completed(TermValue(1))
