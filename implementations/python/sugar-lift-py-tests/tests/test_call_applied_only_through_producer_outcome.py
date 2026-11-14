@@ -19,6 +19,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
 from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import CallSiteValue, FloorValue, TermValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor
@@ -183,25 +184,39 @@ class _CountingUniverse:
         return ExitSet.completed(TermValue(13))
 
 
+class _Site:
+    """A fragment's two coordinates: its unit's source CID and its span."""
+
+    class _Span:
+        start_line, start_col, end_line, end_col = 3, 0, 3, 9
+
+    source_cid = "blake3-512:" + "c" * 128
+    line_col_span = _Span()
+
+
 def test_call_without_a_frame_never_reduces_the_callee_universe(applications) -> None:
     """A call carrying the callee's universe but no frame applies no body.
 
-    It stands as its call coordinate, applied by ``producer_outcome``; the
-    universe is never reduced beside it.
+    The universe is never reduced beside it.  With no body applied and no
+    builtin binding, nothing answers the call: it is the one unanswered
+    citation, completing only under its atom and otherwise raising something
+    undetermined (#7757: a halt is never dropped), never a total completion.
     """
     universe = _CountingUniverse()
 
     outcome = CallSiteSugar(
         target_name="consume",
         args=(),
-        site="consumer.py:3:0",
+        site=_Site(),
         formal_function_sugar=universe,
     ).desugar(None)
 
     assert universe.reductions == 0
-    assert len(applications) == 1
-    assert applications[0].body is None
-    assert outcome.completed_value() is applications[0]
+    assert applications == []
+    assert outcome.completed_value() is None
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == "UnknownCallee:consume"
 
 
 def _source_coordinate(node) -> SourceFragmentCoordinateV1:

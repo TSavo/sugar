@@ -246,8 +246,9 @@ class ComputedCallSugar(ConstructedTermSugar):
             # that reduced to a bound method is that method's call; one that
             # reduced to a lambda (``fs[0](x)``, a formal given a lambda) is
             # the lambda's call.  Each binds and applies through the one
-            # routine.  Other computed callees stay a dig cue; this does not
-            # invent calling an import member or an unknown formal.
+            # routine.  Any other computed callee is the unanswered call
+            # below; this does not invent calling an import member or an
+            # unknown formal.
             return callee.callable_application_with(
                 CallableApplication(
                     positional + tuple(value for _, value in kw_values),
@@ -264,19 +265,14 @@ class ComputedCallSugar(ConstructedTermSugar):
             body=None,  # the dig is CUED, not inlined here
             site=self.site,
         )
-        from sugar_lift_py_tests.floor import SymbolicValue
+        # No frame, and the callee is no class, bound method or lambda the
+        # one routine applies: a formal, an opaque call's result, a value
+        # (``len = 5; len(x)``), whatever it is, nothing here resolved what
+        # runs.  The call is the one unanswered citation, two-faced and owed
+        # (#7585, #7757), never a completion.
+        from sugar_lift_py_tests.ir import _Var
+        from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
-        if self.site is not None and (
-            (type(callee) is SymbolicValue and callee.formal_coordinate is not None)
-            or (type(callee) is CallSiteValue and callee.body is None)
-        ):
-            # The callee is a formal or an opaque call's result: nothing here
-            # resolved what it runs, so the call is two-faced (#7585), never
-            # total.
-            from sugar_lift_py_tests.ir import _Var
-            from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
-
-            callee_term = callee.to_term(owner=owner)
-            name = callee_term.name if type(callee_term) is _Var else "py.call"
-            return UnknownCalleeCallV1(name).faces(callsite, self.site)
-        return ExitSet.completed(callsite)
+        callee_term = callee.to_term(owner=owner)
+        name = callee_term.name if type(callee_term) is _Var else "py.call"
+        return UnknownCalleeCallV1(name).faces(callsite, self.site)
