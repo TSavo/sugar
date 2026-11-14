@@ -43,12 +43,12 @@ def test_opaque_call_result_subscript_may_raise(tmp_path) -> None:
     )
     assert _owners(exits) == [
         "CallSiteValue.subscript",
-        "UnprojectedSourceCall:textwrap.dedent",
+        "UnknownCallee:textwrap.dedent",
     ]
     completed = [face for face in exits.exits if isinstance(face, Completed)]
     assert len(completed) == 1
     guard = repr(completed[0].guard)
-    assert "python:source_call.completes" in guard
+    assert "python:unknown_callee_call.completes" in guard
     assert "python:subscript.completes" in guard
     assert "py.subscript" in repr(completed[0].value)
 
@@ -64,7 +64,7 @@ def test_subscript_halt_is_guarded_by_the_call_completing(tmp_path) -> None:
         and face.effect.producer_node_owner == "CallSiteValue.subscript"
     ]
     guard = repr(subscript_halt.guard)
-    assert "python:source_call.completes" in guard
+    assert "python:unknown_callee_call.completes" in guard
     assert "python:subscript.completes" in guard
 
 

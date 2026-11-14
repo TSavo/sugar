@@ -1462,10 +1462,11 @@ class SourceUnit:
         *,
         source_cid: str,
     ) -> None:
-        """Seat one final-checked import value-use resolution on this unit only.
+        """Seat one final-checked import value-use receipt on this unit only.
 
-        This is a closed per-occurrence state machine.  An authenticated value-use
-        receipt seats first; an exact resolved object may then refine that receipt.
+        One authenticated value-use receipt per occurrence.  No dependency
+        source refines it: an imported name is answered only by its target
+        symbol and the imported proofs (step 3).
         """
         from sugar_source_tree.panic import BackendDefect
 
@@ -1505,85 +1506,60 @@ class SourceUnit:
                 fix="repair authenticated useSite coordinates",
             )
         from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
-        from sugar_lift_python_source.dependency_artifact import ResolvedPythonObjectV1
 
-        admitted_receipt = type(resolved) is AuthenticatedImportUseV1
-        admitted_resolution = type(resolved) is ResolvedPythonObjectV1
-        if not admitted_receipt and not admitted_resolution:
+        if type(resolved) is not AuthenticatedImportUseV1:
             raise BackendDefect(
                 blame=span,
                 owner="SourceUnit.seat_import_value_use_resolution",
                 observed=type(resolved).__name__,
-                requested="exact AuthenticatedImportUseV1 or ResolvedPythonObjectV1",
-                fix="seat only the closed import value-use producer products",
+                requested="exact AuthenticatedImportUseV1",
+                fix="seat only the closed import value-use producer product",
             )
         table = self._import_value_use_resolutions
         if table is None:
             table = {}
             object.__setattr__(self, "_import_value_use_resolutions", table)
         existing = table.get(span)
-        if admitted_receipt:
-            resolved.revalidate()
-            use = resolved.use
-            demand = resolved.demand
-            site = use.get("useSite") or {}
-            receipt_span = (
-                site.get("startLine"),
-                site.get("startCol"),
-                site.get("endLine"),
-                site.get("endCol"),
+        resolved.revalidate()
+        use = resolved.use
+        demand = resolved.demand
+        site = use.get("useSite") or {}
+        receipt_span = (
+            site.get("startLine"),
+            site.get("startCol"),
+            site.get("endLine"),
+            site.get("endCol"),
+        )
+        exported = use.get("exportedMemberPath")
+        if (
+            resolved.source_cid != self.source_cid
+            or site.get("sourceCid") != self.source_cid
+            or demand.get("sourceCid") != self.source_cid
+            or receipt_span != span
+            or demand.get("kind") != "import-value-use-demand"
+            or use.get("role") != "value-use"
+            or demand.get("role") != "value-use"
+            or use.get("importBindingCid") != resolved.import_binding.cid
+            or demand.get("importBindingCid") != resolved.import_binding.cid
+            or not isinstance(exported, list)
+            or demand.get("exportedMemberPath") != exported
+        ):
+            raise BackendDefect(
+                blame=span,
+                owner="SourceUnit.seat_import_value_use_resolution",
+                observed="receipt testimony does not match exact value-use seat",
+                requested="same-source value-use role, binding, member path, and span",
+                fix="seat the producer-minted receipt only at its own occurrence",
             )
-            exported = use.get("exportedMemberPath")
-            if (
-                resolved.source_cid != self.source_cid
-                or site.get("sourceCid") != self.source_cid
-                or demand.get("sourceCid") != self.source_cid
-                or receipt_span != span
-                or demand.get("kind") != "import-value-use-demand"
-                or use.get("role") != "value-use"
-                or demand.get("role") != "value-use"
-                or use.get("importBindingCid") != resolved.import_binding.cid
-                or demand.get("importBindingCid") != resolved.import_binding.cid
-                or not isinstance(exported, list)
-                or demand.get("exportedMemberPath") != exported
-            ):
-                raise BackendDefect(
-                    blame=span,
-                    owner="SourceUnit.seat_import_value_use_resolution",
-                    observed="receipt testimony does not match exact value-use seat",
-                    requested="same-source value-use role, binding, member path, and span",
-                    fix="seat the producer-minted receipt only at its own occurrence",
-                )
-            if existing is resolved:
-                return
-            if existing is not None:
-                raise BackendDefect(
-                    blame=span,
-                    owner="SourceUnit.seat_import_value_use_resolution",
-                    observed="receipt conflicts with occupied value-use occurrence",
-                    requested="one exact receipt identity before resolution",
-                    fix="preserve the producer-owned per-occurrence state transition",
-                )
-            table[span] = resolved
-            return
-
         if existing is resolved:
             return
-        if type(existing) is not AuthenticatedImportUseV1:
+        if existing is not None:
             raise BackendDefect(
                 blame=span,
                 owner="SourceUnit.seat_import_value_use_resolution",
-                observed="resolved object has no exact seated receipt predecessor",
-                requested="AuthenticatedImportUseV1 -> ResolvedPythonObjectV1",
-                fix="seat the authenticated receipt before dependency resolution",
-            )
-        if resolved.import_binding_cid != existing.import_binding.cid:
-            raise BackendDefect(
-                blame=span,
-                owner="SourceUnit.seat_import_value_use_resolution",
-                observed="resolved object cites a different import binding",
-                requested=existing.import_binding.cid,
-                fix="resolve only the exact receipt already seated at this occurrence",
+                observed="receipt conflicts with occupied value-use occurrence",
+                requested="one exact receipt identity per occurrence",
+                fix="preserve the producer-owned per-occurrence state transition",
             )
         table[span] = resolved
 

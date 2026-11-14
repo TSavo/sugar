@@ -64,7 +64,7 @@ def test_each_route_constructs_only_the_state_it_built(tmp_path):
     by_x = {_returned_x(face): face.guard for face in completed}
     assert set(by_x) == {0, 1}
     # x == 1 only where the call completed.
-    assert getattr(by_x[1], "name", None) == "python:source_call.completes"
+    assert getattr(by_x[1], "name", None) == "python:unknown_callee_call.completes"
     # x == 0 only where the handler caught a ValueError -- never under the
     # bare complement of ``completes``.
     assert "adt.is_python_type" in repr(by_x[0])
@@ -73,7 +73,7 @@ def test_each_route_constructs_only_the_state_it_built(tmp_path):
     # Any other exception leaves the constructor uncaught, carrying x == 0.
     (escape,) = halted
     assert isinstance(escape.effect, UndeterminedRaiseEffect)
-    assert escape.effect.producer_node_owner == "UnprojectedSourceCall:textwrap.dedent"
+    assert escape.effect.producer_node_owner == "UnknownCallee:textwrap.dedent"
     assert "kind='not', operands=(_Atomic(name='adt.is_python_type'" in repr(escape.guard)
 
 

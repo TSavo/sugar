@@ -7,11 +7,10 @@ lookup on every subsequent request -- callers never know different.
 Keying by content (never by path) preserves drift semantics exactly: changed
 source is a new key and recomputes; identical source never re-derives.
 
-Stdlib parse / foreign AST currency does NOT live here. Residual dual-body
-consumers that still need a content-keyed ``ast.Module`` enter through
-``source_tables_adapter.parsed_tree``. Production construction enters through
-``SourceFile`` / typed Nodes. Parent maps, locus indexes, and symtable caches
-that had no production callers were deleted rather than rewritten.
+Stdlib parse / foreign AST currency does NOT live here, and there is no
+second parse beside it: construction enters through ``SourceFile`` / typed
+Nodes. Parent maps, locus indexes, and symtable caches that had no
+production callers were deleted rather than rewritten.
 
 Process-lifetime bound: tables use a finite LRU (SOURCE_TABLE_CAPACITY), not
 `maxsize=None`. A resident lift generation walks many modules; unbounded
@@ -27,13 +26,11 @@ import functools
 import re
 from typing import Any, Protocol
 
-# Re-export residual dual parse for callers that still pin it; the adapter
-# owns the foreign ``ast`` import so this module stays construction-clean.
-from .source_tables_adapter import SOURCE_TABLE_CAPACITY, parsed_tree
+# Hot working set of modules in one generation, not the whole corpus forever.
+SOURCE_TABLE_CAPACITY = 64
 
 __all__ = [
     "SOURCE_TABLE_CAPACITY",
-    "parsed_tree",
     "source_lines",
     "source_segment",
     "source_splitlines",

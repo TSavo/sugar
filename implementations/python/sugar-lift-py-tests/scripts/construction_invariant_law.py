@@ -95,7 +95,6 @@ _REVALIDATION_WORDS = (
     "revalidate",
     "reconstruct",
     "re_resolve",
-    "resolve_import_binding",
     "authenticate",
     "from_graph",
 )

@@ -3805,16 +3805,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/dependency_export_adapter.py:b9b6d4181fa5afd5:1",
-      "line": 295,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/dependency_export_adapter.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# traversal. Refuse instead of reconstructing an enclosing suite.",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_construction.py:0553a9949395cd41:1",
       "line": 3703,
       "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_construction.py",

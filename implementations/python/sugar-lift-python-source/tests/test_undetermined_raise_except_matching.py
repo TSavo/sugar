@@ -35,7 +35,11 @@ from test_contextlib_suppress_source_exit_faces import _corpus, _open
 
 # A call nothing here answers (not bridged): the one two-faced unknown callee.
 C_CALL = ("", "h()", "UnknownCallee:h")
-SOURCE_CALL = ("import textwrap\n", 'textwrap.dedent("x")', "UnprojectedSourceCall:textwrap.dedent")
+SOURCE_CALL = (
+    "import textwrap\n",
+    'textwrap.dedent("x")',
+    "UnknownCallee:textwrap.dedent",
+)
 
 
 def _exits(tmp_path: Path, source: str):
@@ -106,7 +110,11 @@ def _handler(name: str) -> str:
     [
         C_CALL,
         SOURCE_CALL,
-        ("import json\n", 'json.JSONDecodeError("m", "d", 0)', "UnprojectedSourceConstruction:json.decoder.JSONDecodeError"),
+        (
+            "import json\n",
+            'json.JSONDecodeError("m", "d", 0)',
+            "UnknownCallee:json.JSONDecodeError",
+        ),
         ("import textwrap\n", 'textwrap.dedent("x")[0]', "CallSiteValue.subscript"),
     ],
     ids=["unanswered-call", "source-call", "construction", "opaque-subscript"],

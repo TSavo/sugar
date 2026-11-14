@@ -3,7 +3,7 @@
 A concrete loop dissolves into one copy of its body per iteration, a list
 comprehension into one copy of its element per member, and a source function's
 body is reduced once per call. All of those copies share one source span, so
-an opaque atom keyed on the span alone -- ``python:source_call.completes``, a
+an opaque atom keyed on the span alone -- an unanswered call's completion, a
 C call's completion and result, the exception an undetermined raise threw --
 named ONE unknown for every evaluation: iteration 2's call was claimed to
 complete exactly when iteration 1's did, and to return the same object.
@@ -29,7 +29,7 @@ import itertools
 from test_assignment_evaluates_rhs import _atoms, _holds, _rows
 from test_undetermined_raise_except_matching import _exits
 
-DEDENT = "UnprojectedSourceCall:textwrap.dedent"
+DEDENT = "UnknownCallee:textwrap.dedent"
 
 
 def _halt_occurrences(rows):
@@ -48,7 +48,9 @@ def _completion_atoms(rows):
     atoms = {}
     for _kind, _payload, guard in rows:
         _atoms(guard, atoms)
-    return [atom for atom in atoms if atom.name == "python:source_call.completes"]
+    return [
+        atom for atom in atoms if atom.name == "python:unknown_callee_call.completes"
+    ]
 
 
 def _each_row_alone_reachable(rows):

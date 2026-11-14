@@ -199,35 +199,6 @@ def _graph_is_off_population(
     return source_cid not in roster
 
 
-def _absent_module_is_off_population(
-    gap, *, session: SourceResolutionSession, dependency_graphs=None
-) -> bool:
-    """An ``artifact-module-absent`` export gap, asked the one bridged answer.
-
-    The gap names a module the importing artifact does not hold.  The graph
-    that would hold it is the module's own top-level artifact (``None`` when
-    none authenticates), and :func:`_graph_is_off_population` answers for that
-    graph and module.  No other gap kind is asked here: a name an artifact
-    holds the source of but cannot resolve statically stays its named gap.
-    """
-    from .dependency_artifact import DependencyArtifactAuthenticationError
-
-    if getattr(gap, "kind", None) != "artifact-module-absent":
-        return False
-    module_name = getattr(gap, "module_name", None)
-    if not isinstance(module_name, str) or not module_name:
-        return False
-    try:
-        graph = _dependency_graph_for_top(
-            module_name.split(".", 1)[0],
-            session=session,
-            dependency_graphs={} if dependency_graphs is None else dependency_graphs,
-        )
-    except DependencyArtifactAuthenticationError:
-        graph = None
-    return _graph_is_off_population(graph, session=session, module_name=module_name)
-
-
 def _floor_tuple_construct_fields(
     receiver: ObjectValue | ReceiverStatePartitionValue,
     actuals: tuple[FloorValue, ...],
