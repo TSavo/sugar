@@ -53,6 +53,14 @@ The residue of #8004:
 11. ``o[-1]`` named no field (a unary minus over a literal is not a
     literal), and a dict display's keys were decided by literal only.  Both
     ask the key expression's ground value (``ground_subscript_key``).
+
+Found by #8010:
+
+12. A chained store (``a = o.x = v``, ``a = d[k] = v``) and an unpack's
+    store leaf (``a, o.x = p, q``) carried no state into later reads of the
+    object: a later ``o.x``, ``d[k]`` or ``xs`` read the state from before
+    the store.  Each store target is now ``target = v``'s own statement
+    (``Assign._store_statements``), threaded left to right.
 """
 
 from __future__ import annotations
@@ -60,7 +68,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import ObjectValue, TermValue
+from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.formal_selected_manager import (
     FormalSelectedManagerHeadSugar,
 )
@@ -793,3 +801,87 @@ def test_a_dict_display_key_is_decided_by_its_ground_value() -> None:
     assert _display_member(display, ("item", "a")) is member
     assert _display_member(display, ("item", "b")) is None
     assert _runs_no_code(display)
+
+
+# ---------------------------------------------------------------------------
+# 12. A chained store and an unpack's store leaf (#7757 item 7, found by
+#     #8010): each store target is ``target = v``'s own statement, so a later
+#     read of the object sees the store, as after a single-target store.
+# ---------------------------------------------------------------------------
+
+# A chained store on an object place.
+CHAIN_FIELD = (
+    "class C:\n"
+    "    pass\n"
+    "\n"
+    "def f():\n"
+    "    o = C()\n"
+    "    a = o.x = 5\n"
+    "    return o.x\n"
+)
+# A chained store on a decided local dict.
+CHAIN_ITEM = "def f():\n    d = {}\n    a = d['k'] = 5\n    return d['k']\n"
+# A chained store on a decided local list, the whole list read after it.
+CHAIN_LIST = "def f():\n    xs = [0]\n    a = xs[0] = 9\n    return xs\n"
+# An unpack's store leaf on an object place.
+UNPACK_FIELD = (
+    "class C:\n"
+    "    pass\n"
+    "\n"
+    "def f():\n"
+    "    o = C()\n"
+    "    a, o.x = 1, 2\n"
+    "    return o.x\n"
+)
+
+
+def test_a_chained_field_store_is_read_after_it(tmp_path: Path) -> None:
+    returned = _returned(_outcome(tmp_path, CHAIN_FIELD, "chain_field"))
+    assert returned == [TermValue(5)], returned
+
+
+def test_a_chained_item_store_is_read_after_it(tmp_path: Path) -> None:
+    returned = _returned(_outcome(tmp_path, CHAIN_ITEM, "chain_item"))
+    assert returned == [TermValue(5)], returned
+
+
+def test_a_chained_list_store_is_in_the_list_read_after_it(tmp_path: Path) -> None:
+    returned = _returned(_outcome(tmp_path, CHAIN_LIST, "chain_list"))
+    assert returned == [ListValue((TermValue(9),))], returned
+
+
+def test_an_unpack_field_store_is_read_after_it(tmp_path: Path) -> None:
+    returned = _returned(_outcome(tmp_path, UNPACK_FIELD, "unpack_field"))
+    assert returned == [TermValue(2)], returned
+
+
+def test_a_chained_store_is_the_single_store_statement() -> None:
+    """``a = o.x = 5``'s store target is ``o.x = <the chain's value>``'s own
+    statement, built by the single-target ``Assign.substitute``: the
+    post-state a later ``o.x`` reads holds that statement's key, never the
+    state before the store."""
+    body = _function(CHAIN_FIELD).substitute({}).body
+    chain = next(
+        node for node in body if isinstance(node, Assign) and len(node.targets) == 2
+    )
+    (store,) = chain.stores
+    assert isinstance(store, ReceiverFieldStoreStatement)
+    assert isinstance(store.evaluation, str)
+    assert store.evaluation != chain.evaluation
+    # The store reads the chain's one evaluation: it evaluates nothing again.
+    assert store.value.kind == "EvaluationRef"
+    assert store.value.evaluation == chain.evaluation
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    states = [
+        node for node in ret.value.walk() if isinstance(node, ReceiverFieldStoreState)
+    ]
+    assert states
+    for state in states:
+        assert state.value.kind == "EvaluationRef"
+        assert state.value.place is True
+        assert state.value.evaluation == store.evaluation
+
+    # Discrimination: the same store alone threads the same kind of state.
+    single = _function(FIELD).substitute({}).body
+    assert any(isinstance(node, ReceiverFieldStoreStatement) for node in single)

@@ -191,7 +191,9 @@ def test_rhs_member_is_one_retained_occurrence(tmp_path: Path) -> None:
     """
     shared = "def f(p):\n    o.x, o.y = p, p\n    return p\n"
     unpack = _unpack(tmp_path, shared)
-    first, second = unpack.stores[0].value, unpack.stores[1].value
+    # Each store leaf reads its member through its member key; the member
+    # itself is the retained occurrence the statement evaluates.
+    (_, first), (_, second) = unpack.members
     assert first is second, (first, second)
 
     # ...and RHS-once holds on BOTH arms: the arm that halted at the second
@@ -211,8 +213,11 @@ def test_rhs_member_is_one_retained_occurrence(tmp_path: Path) -> None:
     # Discrimination: distinct RHS members must NOT collapse onto one
     # occurrence -- sharing must come from the source, never from the lift.
     distinct = _unpack(tmp_path, TWO_ATTRIBUTE, stem="distinct")
-    assert distinct.stores[0].value is not distinct.stores[1].value
-    assert distinct.stores[0].value != distinct.stores[1].value
+    assert distinct.members[0][1] is not distinct.members[1][1]
+    assert distinct.members[0][1] != distinct.members[1][1]
+    # Each store reads its own member's key, never another leaf's.
+    assert distinct.stores[0].value.evaluation == distinct.members[0][0]
+    assert distinct.stores[1].value.evaluation == distinct.members[1][0]
 
     # Discrimination: the prefix reading is not vacuous -- `p, p` and `p, q`
     # project the same FIRST store but different second stores, so the arm
@@ -767,9 +772,13 @@ def test_a_chained_receiver_reads_a_name_an_earlier_target_bound(
     tmp_path: Path,
 ) -> None:
     """``a = a[0] = v`` binds ``a`` first, then stores into the new ``a``:
-    the receiver reads ``a``'s projection of the chain's evaluation.  In
-    ``a[0] = a = v`` the receiver is evaluated before ``a`` is bound and
-    reads the formal."""
+    the receiver reads ``a``'s projection of the chain's evaluation, the
+    list ``[None]``, so the store is that list's mutation, as ``a[0] = v``
+    alone is on a decided local list.  In ``a[0] = a = v`` the receiver is
+    evaluated before ``a`` is bound and reads the formal."""
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+        ContainerMutationStatementSugar,
+    )
     from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
     from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
 
@@ -780,8 +789,10 @@ def test_a_chained_receiver_reads_a_name_an_earlier_target_bound(
         "ChainedAssignSugar",
     )
     (store,) = after.stores
-    assert isinstance(store.receiver, EvaluationRefSugar)
-    assert store.receiver.evaluation == dict(after.evaluations)["a"]
+    assert isinstance(store, ContainerMutationStatementSugar)
+    receiver = store.evaluated[0].receiver
+    assert isinstance(receiver, EvaluationRefSugar)
+    assert receiver.evaluation == dict(after.evaluations)["a"]
 
     before = _statement(
         tmp_path,
@@ -802,10 +813,13 @@ def test_a_nested_unpack_store_leaf_is_one_unpack_with_its_receiver_substituted(
     substituted."""
     from sugar_lift_py_tests.sugar.assign_sugar import DynamicUnpackStoreAssignSugar
     from sugar_lift_py_tests.sugar.formal_ref_sugar import FormalRefSugar
+    from sugar_lift_py_tests.sugar.store_effect_sugar import (
+        AttributeStoreEffectSugar,
+    )
     from sugar_lift_py_tests.sugar.unpack_projection_targets import (
-        AttributeUnpackTarget,
         NameUnpackTarget,
         NestedUnpackTarget,
+        StoreUnpackTarget,
     )
 
     unpack = _statement(
@@ -820,8 +834,12 @@ def test_a_nested_unpack_store_leaf_is_one_unpack_with_its_receiver_substituted(
     assert isinstance(nested, NestedUnpackTarget)
     inner_name, leaf = nested.targets
     assert isinstance(inner_name, NameUnpackTarget) and inner_name.name == "b"
-    assert isinstance(leaf, AttributeUnpackTarget) and leaf.attr == "x"
-    assert isinstance(leaf.receiver, FormalRefSugar)
+    # The leaf is ``o.x = <member>``'s own store, as ``o.x = v`` alone is.
+    assert isinstance(leaf, StoreUnpackTarget)
+    assert isinstance(leaf.store, AttributeStoreEffectSugar)
+    assert leaf.store.attr == "x"
+    assert isinstance(leaf.store.receiver, FormalRefSugar)
+    assert leaf.store.value.evaluation == leaf.evaluation
     # Every Name leaf binds under its projection of the one evaluation.
     assert first.evaluation is not None
     assert inner_name.evaluation == first.evaluation

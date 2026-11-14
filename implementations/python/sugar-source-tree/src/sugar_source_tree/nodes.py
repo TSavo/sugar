@@ -7567,7 +7567,8 @@ class FunctionDef(Statement):
             """A yield assignment whose targets are the statement's own
             sugar (``store_of``), built with its value read through the
             statement's evaluation key; ``bound`` are the Names it binds,
-            which the resume reads out of what it bound."""
+            which the resume reads out of what it bound, beside the keys its
+            store targets' own statements bind (``Assign._store_keeps``)."""
             store_evaluation = statement._evaluation_key({})
             store = store_of(
                 _place_read_sugar(store_evaluation, "yield", statement.fragment)
@@ -7581,6 +7582,7 @@ class FunctionDef(Statement):
                 occurrence=statement.fragment,
                 store=store,
                 store_evaluation=store_evaluation,
+                store_keeps=statement._store_keeps(),
             )
 
         def container_store_step(statement):
@@ -10117,65 +10119,119 @@ def _has_store_leaf(target) -> bool:
     return False
 
 
-def _substituted_assignment_targets(statement, value, scope):
-    """Substitute every store target's receiver and key in ``statement``'s
-    target list (``Assign.targets``), each the one way a single store's are
-    (``_substituted_store_target``): a chain (``a = o.x = d[k] = v``), the
-    store leaves of an unpack, nested levels included (``a, (b, o.x) =
-    v``).  Returns the rewritten targets, or None when nothing changed.
+def _store_leaves(targets) -> tuple:
+    """The Attribute/Subscript store targets in ``targets`` (``Assign.targets``),
+    left to right as Python assigns them: a chain's store targets, an
+    unpack's store leaves, nested levels and a starred leaf (``*o.x``, given
+    the list of the members it takes) included."""
+    leaves: list = []
 
-    The targets are substituted in the order Python evaluates them: left to
-    right, each after the value, and a Name target is bound before the next
-    target is evaluated.  So a later receiver or key that reads a Name an
-    earlier target bound reads that Name's projection of this statement's
-    evaluation (``Assign.target_evaluations``, ``_unpack_projection_binding``),
-    which the statement's sugar binds before it runs any store: ``a = a.x =
-    v`` stores on ``v``, never on the ``a`` bound before the statement.  An
-    earlier receiver reads what the scope held before (``a.x = a = v``).
-    ``value`` is the substituted right-hand side, the object a chain's Name
-    denotes (``of``); an unpack leaf's member is not known here and its
-    reference denotes none.
+    def visit(target) -> None:
+        if isinstance(target, (Attribute, Subscript)):
+            leaves.append(target)
+        elif isinstance(target, Starred):
+            visit(target.value)
+        elif isinstance(target, (Tuple_, List)):
+            for element in target.elts:
+                visit(element)
 
-    A Name and a starred Name are binding sites: never substituted.
-    """
-    from .shadow import rewrite
+    for target in targets:
+        visit(target)
+    return tuple(leaves)
+
+
+def _store_member_key(evaluation: str, ordinal: int) -> str:
+    """The key an unpack binds the member its ``ordinal``-th store leaf is
+    given under (``Assign._store_target_statement``): the leaf's own
+    statement reads its value there."""
     from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
-    if not any(_has_store_leaf(target) for target in statement.targets):
-        return None
-    threaded = statement._threaded_target_names()
-    evaluation = statement._evaluation_key(scope) if threaded else None
-    chain = len(statement.targets) > 1
-    state = {"scope": scope, "changed": False}
+    return projection_key(evaluation, f"<member {ordinal}>")
 
-    def bind(name_node) -> None:
-        if name_node.id not in threaded:
+
+def _store_statement_key(evaluation: str, ordinal: int) -> str:
+    """The evaluation key of the ``ordinal``-th store target's own statement
+    (``Assign._store_target_statement``): what that store binds, which every
+    later read of the place reads."""
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+    return projection_key(evaluation, f"<store {ordinal}>")
+
+
+def _store_statement_binding(store, scope) -> dict:
+    """The binding the store statement ``store`` introduces after it, as the
+    block threads any statement's (``Node._substitute_body_tracked``): its
+    ``substitution_binding``, its entries, refined."""
+    binding = store.substitution_binding(scope)
+    if not binding:
+        return {}
+    binding = store._binding_entries(binding, scope)
+    return store.refine_binding_entries(binding, scope)
+
+
+def _threaded_store_targets(statement, scope, store_for, *, rewrite_targets=False):
+    """Thread ``statement``'s targets (``Assign.targets``) left to right, as
+    Python assigns them after the value: ``(targets, stores, binding)``.
+
+    A Name (or starred Name) target binds its projection of the statement's
+    evaluation (``Assign._keyed_binding``) before the next target is
+    evaluated.  Each store target (``_store_leaves``) is its own statement,
+    ``store_for(ordinal, target, scope)``: the single-target store
+    ``target = <its value read through a key>`` substituted by
+    ``Assign.substitute`` (``Assign._store_target_statement``), or None for
+    a target list no store statement is built for.  That statement's
+    binding (``_store_target_binding``, a ``ReceiverFieldStoreStatement``'s
+    post-state, a ``ContainerMutationStatement``'s aliases) is threaded
+    into the scope every later target is evaluated in, and into the
+    statement's binding, exactly as the block threads a single store's.  So
+    ``a = a[0] = v`` stores into the new ``a``, ``a[0] = a = v`` into the
+    one before the statement, and ``a = o.x = 5; return o.x`` reads 5.
+
+    ``binding`` is what the statement binds for the rest of the block: each
+    name bound to what the last target that wrote it left.  ``targets`` is
+    the target list with each store target's receiver and key substituted
+    (``_substituted_store_target``) when ``rewrite_targets``, None when
+    nothing changed; ``stores`` the store statements, left to right.
+    """
+    from .shadow import rewrite
+
+    names = statement._keyed_binding(statement._value_binding(scope)) or {}
+    state = {"scope": dict(scope), "changed": False}
+    binding: dict = {}
+    stores: list = []
+
+    def bind(name: str) -> None:
+        if name not in names:
             return
-        reference = _evaluation_ref(
-            statement,
-            name_node.span,
-            projection_key(evaluation, name_node.id),
-            name_node.id,
-            of=value if chain else None,
-        )
-        # Read by this statement's later targets only: the binding the block
-        # carries on is the statement's own (``substitution_binding``).
-        state["scope"] = {**state["scope"], name_node.id: reference}
+        binding[name] = names[name]
+        state["scope"] = {**state["scope"], name: names[name]}
 
     def visit(target):
         if isinstance(target, (Attribute, Subscript)):
-            rewritten = _substituted_store_target(statement, target, state["scope"])
+            rewritten = (
+                _substituted_store_target(statement, target, state["scope"])
+                if rewrite_targets
+                else None
+            )
+            store = store_for(len(stores), target, state["scope"])
+            if store is not None:
+                stores.append(store)
+                threaded = _store_statement_binding(store, state["scope"])
+                binding.update(threaded)
+                state["scope"] = {**state["scope"], **threaded}
             if rewritten is None:
                 return target
             state["changed"] = True
             return rewritten
         if isinstance(target, Name):
-            bind(target)
+            bind(target.id)
             return target
         if isinstance(target, Starred):
             if isinstance(target.value, Name):
-                bind(target.value)
-            return target
+                bind(target.value.id)
+                return target
+            inner = visit(target.value)
+            return target if inner is target.value else rewrite(target, value=inner)
         if isinstance(target, (Tuple_, List)):
             elts = tuple(visit(element) for element in target.elts)
             if all(new is old for new, old in zip(elts, target.elts)):
@@ -10183,8 +10239,8 @@ def _substituted_assignment_targets(statement, value, scope):
             return rewrite(target, elts=elts)
         return target
 
-    new_targets = tuple(visit(target) for target in statement.targets)
-    return new_targets if state["changed"] else None
+    targets = tuple(visit(target) for target in statement.targets)
+    return (targets if state["changed"] else None), tuple(stores), binding
 
 
 def _valued_store_target_sugar(target, value_sugar, site, evaluation=None):
@@ -10519,11 +10575,10 @@ class Assign(Statement):
         rewrite the name being bound). Attribute/Subscript store targets load
         their receiver (and subscript index) as ordinary expressions: those
         faces must substitute so a prior ``xs = [0]`` reaches ``xs[0] = v`` as
-        a decided list. The same load law applies to every store target of a
-        chain (``a = o.x = d[k] = v``) and every store leaf of an unpack,
-        nested levels included (``x, (y, xs[0]) = v``), left to right
-        (``_substituted_assignment_targets``): Name leaves stay binding sites;
-        store leaves thread receivers and keys. The binding this statement
+        a decided list. Every store target of a chain (``a = o.x = d[k] =
+        v``) and every store leaf of an unpack, nested levels included
+        (``x, (y, xs[0]) = v``), is that same single-target store, left to
+        right (``_substituted_store_targets``). The binding this statement
         introduces for the rest of the block is reported by
         substitution_binding().
         """
@@ -10540,17 +10595,16 @@ class Assign(Statement):
         field_state = self._receiver_field_store_state(scope, new_value)
         if field_state is not None:
             return field_state
-        changes = {"value": new_value} if changed else {}
-        if len(self.targets) == 1 and isinstance(
+        single_store = len(self.targets) == 1 and isinstance(
             self.targets[0], (Attribute, Subscript)
-        ):
+        )
+        if not single_store and any(_has_store_leaf(t) for t in self.targets):
+            return self._substituted_store_targets(new_value, scope)
+        changes = {"value": new_value} if changed else {}
+        if single_store:
             new_target = _substituted_store_target(self, self.targets[0], scope)
             if new_target is not None:
                 changes["targets"] = (new_target,)
-        else:
-            new_targets = _substituted_assignment_targets(self, new_value, scope)
-            if new_targets is not None:
-                changes["targets"] = new_targets
         # No retention: the relation is keyed by SOURCE OCCURRENCE, and the
         # rewrite denotes the same occurrence, so its row joins by construction.
         rewritten = self if not changes else rewrite(self, **changes)
@@ -10574,6 +10628,190 @@ class Assign(Statement):
             "evaluation_exit_path": self._evaluation_exit_path(scope),
         }
         return rewrite_with_leaves(rewritten, leaves)
+
+    def _substituted_store_targets(self, new_value, scope):
+        """``a = o.x = d[k] = v``, ``a, o.x = p, q``, ``a, (b, o.x) = f()``:
+        a target list holding a store beside other targets.
+
+        The statement evaluates its value once and binds it under its key
+        (``ChainedAssignSugar``, an unpack's member keys).  Each store target
+        is then its own statement, the single-target store ``target =
+        <its value read through that key>`` (``_store_target_statement``),
+        substituted by this same ``substitute`` in the scope the targets
+        before it left (``_threaded_store_targets``): a store on a decided
+        local list/dict/set is its ``ContainerMutationStatement``, on a local
+        receiver its ``ReceiverFieldStoreStatement``, on an object place or
+        a coordinate receiver its keyed store.  There is no second store
+        door: the state a store leaves for later reads of the object is the
+        state ``o.x = v`` alone leaves.  The store statements ride the
+        statement as ``stores``; its sugar runs each after the value, left to
+        right, and ``substitution_binding`` threads each one's binding.
+
+        Re-substituted (its ``stores`` already built), the statement keeps
+        its key and re-substitutes its store statements, as a single store's
+        statement keeps its own.
+        """
+        from .shadow import rewrite, rewrite_with_leaves
+
+        existing = getattr(self, "stores", None)
+        evaluation = getattr(self, "evaluation", None)
+        if existing is not None and isinstance(evaluation, str):
+            exit_path = getattr(self, "evaluation_exit_path", None)
+            if not isinstance(exit_path, tuple):
+                exit_path = ()
+        else:
+            existing = None
+            evaluation = self._evaluation_key(scope)
+            exit_path = self._evaluation_exit_path(scope)
+        keyed = rewrite_with_leaves(
+            self,
+            {"evaluation": evaluation, "evaluation_exit_path": exit_path},
+            value=new_value,
+        )
+        shape = None if existing is not None else keyed._store_shape()
+
+        def store_for(ordinal, target, state):
+            if existing is not None:
+                return existing[ordinal].substitute(state)
+            if shape is None:
+                return None
+            single = keyed._store_target_statement(
+                ordinal, target, shape, evaluation, exit_path
+            )
+            return single.substitute(state)
+
+        targets, stores, _binding = _threaded_store_targets(
+            keyed, scope, store_for, rewrite_targets=True
+        )
+        children = {}
+        if targets is not None:
+            children["targets"] = targets
+        if stores:
+            children["stores"] = stores
+        return rewrite(keyed, **children) if children else keyed
+
+    def _store_shape(self):
+        """The target lists whose store targets are each their own statement
+        (``_store_target_statement``), with what gives each its value:
+        ``("chain", {})`` for a chain of Names and stores (every store is
+        given the one value), ``("display", members)`` for a flat unpack
+        against a display (each store leaf its member, by the leaf's
+        handle), ``("unpack", {})`` for an unpack of a non-display value
+        (each leaf the member the unpack hands it).  None for any other
+        target list (it stays a gap)."""
+        if len(self.targets) > 1:
+            if all(
+                isinstance(target, (Name, Attribute, Subscript))
+                for target in self.targets
+            ):
+                return ("chain", {})
+            return None
+        pairs = self._flat_store_unpack_pairs()
+        if pairs is not None:
+            return (
+                "display",
+                {
+                    id(leaf.ref): member
+                    for leaf, member in pairs
+                    if isinstance(leaf, (Attribute, Subscript))
+                },
+            )
+        target = self._dynamic_unpack_target()
+        if target is not None and self._admits_store_unpack(target):
+            return ("unpack", {})
+        return None
+
+    def _store_target_statement(self, ordinal, target, shape, evaluation, exit_path):
+        """The ``ordinal``-th store target's own statement: the single-target
+        store ``target = <value>``, ``<value>`` the read of what the
+        statement gave it through a key (``place``), never its expression
+        evaluated again: the chain's value under the statement's key
+        (``evaluation``), an unpack leaf's member under its member key
+        (``_store_member_key``).  The reference carries the expression the
+        value came from as the object it denotes (``of``): a chain's value,
+        a display member; a non-display unpack's member is not known here.
+
+        Keyed with its own evaluation (``_store_statement_key``) when the
+        statement is substituted (``exit_path`` not None), so its
+        substitution keys what it stores exactly as ``target = v`` alone is
+        keyed; unkeyed otherwise, as ``target = v`` never substituted is."""
+        from .shadow import rewrite_with_leaves
+
+        kind, members = shape
+        if kind == "chain":
+            value = _evaluation_ref(
+                self,
+                self.value.span,
+                evaluation,
+                "<value>",
+                place=True,
+                of=self.value,
+            )
+        else:
+            member = _store_member_key(evaluation, ordinal)
+            value = _evaluation_ref(
+                self,
+                target.span,
+                member,
+                f"<member {ordinal}>",
+                place=True,
+                of=members.get(id(target.ref)),
+            )
+        leaves = {}
+        if exit_path is not None:
+            leaves = {
+                "evaluation": _store_statement_key(evaluation, ordinal),
+                "evaluation_exit_path": exit_path,
+            }
+        return rewrite_with_leaves(self, leaves, targets=(target,), value=value)
+
+    def _store_value_evaluation(self) -> str:
+        """The key a statement whose store targets are their own statements
+        binds its value under (a chain), and derives its unpack leaves'
+        member keys from: its evaluation, or, never substituted, the key its
+        occurrence would be substituted under."""
+        evaluation = getattr(self, "evaluation", None)
+        if isinstance(evaluation, str):
+            return evaluation
+        return self._evaluation_key({})
+
+    def _store_statements(self) -> tuple:
+        """Each store target's own statement, left to right
+        (``_store_target_statement``): the ones substitution built
+        (``stores``), or, for a statement never substituted, each built
+        unsubstituted, as ``target = v`` never substituted is.  Empty for a
+        target list no store statement is built for."""
+        stores = getattr(self, "stores", None)
+        if stores is not None:
+            return tuple(stores)
+        shape = self._store_shape()
+        if shape is None:
+            return ()
+        evaluation = self._store_value_evaluation()
+        return tuple(
+            self._store_target_statement(ordinal, target, shape, evaluation, None)
+            for ordinal, target in enumerate(_store_leaves(self.targets))
+        )
+
+    def _store_keeps(self) -> tuple:
+        """The keys this statement's store statements bind that a later read
+        reads (``ContainerMutationStatement``'s pair, a keyed store's
+        value): what a yield assignment's step keeps past the store
+        (``YieldAssignStepV1.store_keeps``)."""
+        keeps = []
+        for store in self._store_statements():
+            evaluation = getattr(store, "evaluation", None)
+            if not isinstance(evaluation, str):
+                continue
+            if isinstance(
+                store, (ContainerMutationStatement, ReceiverFieldStoreStatement)
+            ) or (
+                isinstance(store, Assign)
+                and len(store.targets) == 1
+                and _store_evaluation(store, store.targets[0]) is not None
+            ):
+                keeps.append(evaluation)
+        return tuple(keeps)
 
     def _dynamic_unpack_target(self):
         """The Tuple/List target of an unpack whose right-hand side is not a
@@ -10678,18 +10916,6 @@ class Assign(Statement):
         read, against whatever had been rebound since (``x += 1; y = x + 0;
         x += 1; return y``)."""
         return tuple(self._name_values())
-
-    def _threaded_target_names(self) -> frozenset:
-        """Every Name target substitution binds to its projection of this
-        statement's evaluation: each keyed Name (``_keyed_names``), and each
-        Name leaf of an unpack against a non-display right-hand side
-        (``_unpack_projection_binding``).  A later target's receiver or key
-        that reads one of them reads that projection
-        (``_substituted_assignment_targets``)."""
-        target = self._dynamic_unpack_target()
-        if target is not None:
-            return frozenset(_unpack_target_names(target))
-        return frozenset(self._keyed_names())
 
     def target_evaluations(self) -> tuple:
         """``(name, key)`` for each keyed Name target (``_keyed_names``):
@@ -11039,72 +11265,87 @@ class Assign(Statement):
         ``NestedDynamicUnpackAssignSugar`` own it).  A Name leaf binds its
         member under its projection of ``evaluation`` (the statement's one
         evaluation) too.
+
+        A store leaf is its own statement (``_store_target_statement``,
+        ``StoreUnpackTarget``): the member is bound under the leaf's member
+        key, and the single-target store ``o.x = <member>`` runs, keyed and
+        threaded exactly as ``o.x = v`` alone is.
         """
-        if not isinstance(target, (Tuple_, List)):
+        if not self._admits_store_unpack(target):
             return None
         from sugar_lift_py_tests.sugar.unpack_projection_targets import (
-            AttributeUnpackTarget,
             NameUnpackTarget,
             NestedUnpackTarget,
             StarUnpackTarget,
-            SubscriptUnpackTarget,
+            StoreUnpackTarget,
         )
 
-        has_store = False
+        stores = self._store_statements()
+        if len(stores) != len(_store_leaves((target,))):
+            return None
+        value_evaluation = self._store_value_evaluation()
+        ordinal = 0
 
         def level(node):
-            nonlocal has_store
-            if sum(isinstance(element, Starred) for element in node.elts) > 1:
-                return None
+            nonlocal ordinal
             targets: list[object] = []
             for element in node.elts:
                 if isinstance(element, Name):
                     targets.append(
                         NameUnpackTarget(element.id, evaluation=evaluation)
                     )
-                    continue
-                if isinstance(element, Starred):
-                    if not isinstance(element.value, Name):
-                        return None
+                elif isinstance(element, Starred):
                     targets.append(
                         StarUnpackTarget(element.value.id, evaluation=evaluation)
                     )
-                    continue
-                if isinstance(element, Attribute):
-                    has_store = True
+                elif isinstance(element, (Attribute, Subscript)):
                     targets.append(
-                        AttributeUnpackTarget(
-                            receiver=element.value.sugar(),
-                            attr=element.attr,
-                            site=element.fragment,
+                        StoreUnpackTarget(
+                            evaluation=_store_member_key(value_evaluation, ordinal),
+                            store=stores[ordinal].sugar(),
                         )
                     )
-                    continue
-                if isinstance(element, Subscript):
-                    has_store = True
+                    ordinal += 1
+                else:
                     targets.append(
-                        SubscriptUnpackTarget(
-                            receiver=element.value.sugar(),
-                            index=element.slice_.sugar(),
-                            site=element.fragment,
+                        NestedUnpackTarget(
+                            targets=level(element), site=element.fragment
                         )
                     )
-                    continue
-                if isinstance(element, (Tuple_, List)) and element.elts:
-                    inner = level(element)
-                    if inner is None:
-                        return None
-                    targets.append(
-                        NestedUnpackTarget(targets=inner, site=element.fragment)
-                    )
-                    continue
-                return None
             return tuple(targets)
 
-        targets = level(target)
-        if targets is None or not has_store:
-            return None
-        return targets
+        return level(target)
+
+    def _admits_store_unpack(self, target) -> bool:
+        """Whether ``target`` is a Name|Attribute|Subscript|*Name unpack tree
+        with a store leaf (``_store_unpack_targets``): at most one ``*Name``
+        per level; ``*attr`` and an empty level stay unadmitted."""
+        if not isinstance(target, (Tuple_, List)):
+            return False
+        has_store = False
+
+        def level(node) -> bool:
+            nonlocal has_store
+            if sum(isinstance(element, Starred) for element in node.elts) > 1:
+                return False
+            for element in node.elts:
+                if isinstance(element, Name):
+                    continue
+                if isinstance(element, Starred):
+                    if not isinstance(element.value, Name):
+                        return False
+                    continue
+                if isinstance(element, (Attribute, Subscript)):
+                    has_store = True
+                    continue
+                if isinstance(element, (Tuple_, List)) and element.elts:
+                    if not level(element):
+                        return False
+                    continue
+                return False
+            return True
+
+        return level(target) and has_store
 
     def _flat_store_unpack_pairs(self):
         """Flat Name|Attribute|Subscript leaves against a display RHS.
@@ -11201,7 +11442,16 @@ class Assign(Statement):
 
     def substitution_binding(self, scope):
         # Every Name target binds to its own projection of this statement's
-        # evaluation, never to the right-hand side (``_keyed_names``).
+        # evaluation, never to the right-hand side (``_keyed_names``).  A
+        # target list whose store targets are their own statements
+        # (``_substituted_store_targets``) binds what its targets left, left
+        # to right: each Name's projection and each store statement's binding.
+        stores = getattr(self, "stores", None)
+        if stores is not None:
+            _targets, _stores, binding = _threaded_store_targets(
+                self, scope, lambda ordinal, _target, _scope: stores[ordinal]
+            )
+            return binding or None
         return self._keyed_binding(self._value_binding(scope))
 
     def _value_binding(self, scope):
@@ -11410,53 +11660,28 @@ class Assign(Statement):
         """``a = o.x = d[k] = <rhs>``: the one chained assignment of
         ``value_sugar`` (the right-hand side's sugar, or what a yield
         assignment's resume reads its resumed value through) to every target,
-        Names bound under their keys (``target_evaluations``) and each store
-        target storing it, left to right (``ChainedAssignSugar``).  None for
-        any other target list."""
+        left to right (``ChainedAssignSugar``): the value bound under the
+        statement's key and each Name under its own (``target_evaluations``),
+        then each store target's own statement (``_store_statements``), which
+        reads the value through the statement's key and stores it exactly as
+        ``target = v`` alone does.  None for any other target list."""
         if len(self.targets) < 2 or not all(
             isinstance(t, (Name, Attribute, Subscript)) for t in self.targets
         ):
             return None
         from sugar_lift_py_tests.sugar.assign_sugar import ChainedAssignSugar
 
-        stores = []
-        for target in self.targets:
-            if isinstance(target, Attribute):
-                from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                    AttributeStoreEffectSugar,
-                )
-
-                stores.append(
-                    AttributeStoreEffectSugar(
-                        receiver=target.value.sugar(),
-                        value=value_sugar,
-                        attr=target.attr,
-                        site=target.fragment,
-                    )
-                )
-            elif isinstance(target, Subscript):
-                from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                    SubscriptStoreEffectSugar,
-                )
-
-                stores.append(
-                    SubscriptStoreEffectSugar(
-                        receiver=target.value.sugar(),
-                        index=target.slice_.sugar(),
-                        value=value_sugar,
-                        site=target.fragment,
-                    )
-                )
         return ChainedAssignSugar(
             bindings=tuple(
                 (target.id, value_sugar)
                 for target in self.targets
                 if isinstance(target, Name)
             ),
-            stores=tuple(stores),
+            stores=tuple(store.sugar() for store in self._store_statements()),
             value=value_sugar,
             site=self.fragment,
             evaluations=self.target_evaluations(),
+            evaluation=self._store_value_evaluation(),
         )
 
     def unpack_store_sugar(self, value_sugar):
@@ -11516,86 +11741,33 @@ class Assign(Statement):
                     site=self.fragment,
                     evaluations=self.target_evaluations(),
                 )
-            # Flat Name|Attribute|Subscript leaves against a display RHS —
-            # historical factory mass (dual-subscript / multi-attribute unpack).
+            # Flat Name|Attribute|Subscript leaves against a display RHS: each
+            # member evaluated once, left to right; each Name bound under its
+            # key, each store leaf's member under its member key, then each
+            # store leaf's own statement (``_store_statements``) reads its
+            # member there and stores it exactly as ``o.x = v`` alone does.
             store_pairs = self._flat_store_unpack_pairs()
             if store_pairs is not None:
                 from sugar_lift_py_tests.sugar.assign_sugar import (
                     UnpackStoreAssignSugar,
                 )
-                from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                    AttributeStoreEffectSugar,
-                )
 
+                evaluation = self._store_value_evaluation()
                 name_bindings = []
-                stores = []
+                members = []
                 for leaf, val in store_pairs:
                     if isinstance(leaf, Name):
                         name_bindings.append((leaf.id, val.sugar()))
-                        continue
-                    if isinstance(leaf, Attribute):
-                        if isinstance(leaf.value, ObjectPlaceStateV1):
-                            from sugar_lift_py_tests.sugar.place_assign_sugar import (
-                                PlaceAssignSugar,
-                            )
-
-                            stores.append(
-                                PlaceAssignSugar(
-                                    receiver=leaf.value.sugar(),
-                                    selector_kind="attribute",
-                                    selector=leaf.attr,
-                                    value=val.sugar(),
-                                    site=leaf.fragment,
-                                )
-                            )
-                        else:
-                            stores.append(
-                                AttributeStoreEffectSugar(
-                                    receiver=leaf.value.sugar(),
-                                    value=val.sugar(),
-                                    attr=leaf.attr,
-                                    site=leaf.fragment,
-                                )
-                            )
-                        continue
-                    if isinstance(leaf, Subscript):
-                        # Object places keep PlaceAssignSugar; every other
-                        # source-visible subscript reuses the #6599 store
-                        # sugar (receiver + index + paired RHS member).
-                        if isinstance(leaf.value, ObjectPlaceStateV1):
-                            from sugar_lift_py_tests.sugar.place_assign_sugar import (
-                                PlaceAssignSugar,
-                            )
-
-                            stores.append(
-                                PlaceAssignSugar(
-                                    receiver=leaf.value.sugar(),
-                                    selector_kind="subscript",
-                                    selector=leaf.slice_.sugar(),
-                                    value=val.sugar(),
-                                    site=leaf.fragment,
-                                )
-                            )
-                        else:
-                            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                                SubscriptStoreEffectSugar,
-                            )
-
-                            stores.append(
-                                SubscriptStoreEffectSugar(
-                                    receiver=leaf.value.sugar(),
-                                    index=leaf.slice_.sugar(),
-                                    value=val.sugar(),
-                                    site=leaf.fragment,
-                                )
-                            )
-                        continue
-                    return super()._construct_sugar()
+                    else:
+                        members.append(
+                            (_store_member_key(evaluation, len(members)), val.sugar())
+                        )
                 return UnpackStoreAssignSugar(
                     bindings=tuple(name_bindings),
-                    stores=tuple(stores),
+                    stores=tuple(store.sugar() for store in self._store_statements()),
                     site=self.fragment,
                     evaluations=self.target_evaluations(),
+                    members=tuple(members),
                 )
             target = self.targets[0]
             if not isinstance(self.value, (Tuple_, List)) and target.elts:

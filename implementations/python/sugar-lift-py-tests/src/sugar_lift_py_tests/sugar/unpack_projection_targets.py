@@ -5,10 +5,11 @@ base: ``UnpackProjectionTarget``.  Application is left-to-right over an
 ``UnpackMemberRoster`` (positional members).  There is no kinds-tuple
 ``isinstance`` membrane at apply time — the target *is* the obligation.
 
-Store leaves route the **already-reduced** roster member through the shared
-store projection doors (``AttributeStoreEffectSugar.project_setattr`` /
-``SubscriptStoreEffectSugar.project_setitem``).  No panic-on-desugar placeholder
-Sugar stands in for the member field.
+A store leaf binds the **already-reduced** roster member under its member key
+and runs the leaf's own statement (``Assign._store_statements``): the
+single-target store ``o.x = <member>``, which reads the member there and
+stores it exactly as ``o.x = v`` alone does.  No panic-on-desugar placeholder
+Sugar stands in for the member field, and no second store door.
 """
 
 from __future__ import annotations
@@ -81,47 +82,32 @@ class StarUnpackTarget(UnpackProjectionTarget):
 
 
 @dataclass(frozen=True)
-class AttributeUnpackTarget(UnpackProjectionTarget):
-    """Attribute store leaf: ``receiver.attr = member`` via shared setattr door."""
+class StoreUnpackTarget(UnpackProjectionTarget):
+    """Store leaf: ``o.x`` / ``d[k]`` in ``a, o.x = v``.
 
-    receiver: Sugar
-    attr: str
-    site: object = dataclass_field(compare=False)
+    The member is bound under ``evaluation`` (the leaf's member key), then
+    ``store`` runs: the leaf's own statement's sugar, the single-target store
+    ``o.x = <member>`` reading the member there.  It is keyed and stores
+    exactly as ``o.x = v`` alone is, so a later read of the object sees it.
+    """
 
-    def apply_member(self, member, ctx) -> ExitSet:
-        from sugar_lift_py_tests.sugar.store_effect_sugar import (
-            AttributeStoreEffectSugar,
-        )
-
-        # Member is already reduced (roster FloorValue). Shared projection —
-        # never a second value.desugar, never a panic placeholder Sugar field.
-        return self.receiver.desugar(ctx).and_then(
-            lambda receiver: AttributeStoreEffectSugar.project_setattr(
-                receiver, self.attr, member, self.site, ctx
-            )
-        )
-
-
-@dataclass(frozen=True)
-class SubscriptUnpackTarget(UnpackProjectionTarget):
-    """Subscript store leaf: ``receiver[index] = member`` via shared setitem door."""
-
-    receiver: Sugar
-    index: Sugar
-    site: object = dataclass_field(compare=False)
+    evaluation: str
+    store: Sugar
 
     def apply_member(self, member, ctx) -> ExitSet:
-        from sugar_lift_py_tests.sugar.store_effect_sugar import (
-            SubscriptStoreEffectSugar,
-        )
+        from sugar_lift_py_tests.context import ReduceContext
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+        from sugar_lift_py_tests.sugar.assign_sugar import _reduce_targets
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
 
-        return self.receiver.desugar(ctx).and_then(
-            lambda receiver: self.index.desugar(ctx).and_then(
-                lambda index: SubscriptStoreEffectSugar.project_setitem(
-                    receiver, index, member, self.site, ctx
-                )
-            )
+        if ctx is None:
+            ctx = ReduceContext.root(owner="StoreUnpackTarget")
+        # Member is already reduced (roster FloorValue): bound, never a
+        # second value.desugar, never a panic placeholder Sugar field.
+        active = ScopeRebind(evaluation_here(self.evaluation), member).extend_scope(
+            ctx
         )
+        return _reduce_targets((self.store,), active, ctx)
 
 
 @dataclass(frozen=True)

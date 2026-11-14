@@ -18,7 +18,7 @@ Python semantic law made constructible here (distinct from the store lanes):
      or above the fixed count. Do not apply exact-arity to a starred pattern.
 
 Producer methods (this PR):
-  - ``Assign.substitute`` via ``_substituted_assignment_targets``
+  - ``Assign.substitute`` via ``_substituted_store_targets``
   - ``Assign._flat_store_unpack_pairs`` / ``Assign._construct_sugar``
   - ``UnpackStoreAssignSugar.desugar``
 
@@ -259,10 +259,14 @@ def test_dual_subscript_display_unpack_constructs_distinct_pairings(
         "dual_qp",
     )
     assert len(left.stores) == 2 and len(right.stores) == 2
-    # Each store carries its paired RHS member — not index text alone.
-    assert left.stores[0].value is not right.stores[0].value or (
-        str(left.stores[0].value) != str(right.stores[0].value)
+    # Each store reads its paired RHS member through its member key — not
+    # index text alone.
+    assert left.members[0][1] is not right.members[0][1] or (
+        str(left.members[0][1]) != str(right.members[0][1])
     )
+    assert [store.value.evaluation for store in left.stores] == [
+        key for key, _member in left.members
+    ]
 
 
 def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> None:
@@ -498,22 +502,24 @@ def test_lying_boundary_exception_type_is_not_store_origin(tmp_path: Path) -> No
         assert face.effect.producer_node_owner == "pytest.raises"
 
 
-def test_unpack_does_not_borrow_the_standalone_store_construction_path(
+def test_an_unpack_store_leaf_is_the_standalone_store_statement(
     tmp_path: Path,
 ) -> None:
-    """Unpack sequencing owns leaf admission; store desugar is the reused law."""
-    unpack = _unpack(
-        tmp_path,
-        "def f():\n    a = [0]\n    x, a[0] = 1, 2\n    return x\n",
-        "no_borrow",
-    )
-    assert isinstance(unpack, UnpackStoreAssignSugar)
-    assert isinstance(unpack.stores[0], SubscriptStoreEffectSugar)
-    # Standalone single-target store is a different sugar root: on a decided
-    # list it is the cited ``list.__setitem__`` mutation of the object.
+    """Unpack sequencing owns leaf admission; each store leaf is the
+    single-target store's own statement (#7757 item 7): on a decided list,
+    the cited ``list.__setitem__`` mutation of the object, exactly as
+    ``a[0] = 2`` alone is.  There is no second store door for a leaf."""
     from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
         ContainerMutationStatementSugar,
     )
+
+    unpack = _unpack(
+        tmp_path,
+        "def f():\n    a = [0]\n    x, a[0] = 1, 2\n    return x\n",
+        "one_door",
+    )
+    assert isinstance(unpack, UnpackStoreAssignSugar)
+    assert isinstance(unpack.stores[0], ContainerMutationStatementSugar)
 
     single = _function_sugar(
         tmp_path, "def f():\n    a = [0]\n    a[0] = 2\n    return a\n", "single"

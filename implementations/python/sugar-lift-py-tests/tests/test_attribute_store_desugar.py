@@ -144,8 +144,10 @@ def _formal(site) -> FormalParameterCoordinateV1:
 def test_producer_and_consumer_methods_are_the_named_seams() -> None:
     assert hasattr(AttributeStoreEffectSugar, "desugar")
     assert hasattr(AttributeStoreEffectSugar, "_store")
-    assert hasattr(AttributeStoreEffectSugar, "desugar_store")
     assert hasattr(AttributeStoreEffectSugar, "mint_setattr_named_carrier")
+    # A chain's or an unpack's store target is ``o.x = v``'s own statement:
+    # there is no second door that stores a value reduced elsewhere.
+    assert not hasattr(AttributeStoreEffectSugar, "desugar_store")
     assert hasattr(FloorValue, "setattr")
     assert hasattr(ObjectValue, "setattr")
     assert FloorValue.setattr is not FloorValue.attribute
@@ -464,9 +466,21 @@ def test_pinned_pandas_name_attr_unpack_coordinate_is_real() -> None:
         NativeOperationExitCarrierV1,
     )
 
-    outcome = store.desugar(None)
+    outcome = store.desugar(_member_bound(unpack))
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "setattr_named"
+
+
+def _member_bound(unpack):
+    """The context the line-113 store runs in: its member ``"foo"`` bound
+    under the leaf's member key, as the unpack binds it before the store."""
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+
+    ((key, _member),) = unpack.members
+    return ScopeRebind(key, StringValue("foo")).extend_scope(
+        ReduceContext.root(owner="pandas-name-store")
+    )
 
 
 def _real_pandas_name_store():
@@ -489,7 +503,7 @@ def _real_pandas_name_store():
         if isinstance(statement, UnpackStoreAssignSugar)
     )
     store = unpack.stores[0]
-    pending = store.desugar(None)
+    pending = store.desugar(_member_bound(unpack))
     assert isinstance(store, AttributeStoreEffectSugar)
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "setattr_named"
