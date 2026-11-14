@@ -1,7 +1,7 @@
 """The shadow backend: a rewritten tree is its own provider.
 
-Every node is a view over a backend that answers ``describe()``. The other
-backends (ast, libcst, tree-sitter) answer by parsing source. The SHADOW
+Every node is a view over a backend that answers ``describe()``. The
+source backend (CPython's ast) answers by parsing source. The SHADOW
 backend answers by carrying a *rewritten* node — a node that is not in any
 source, produced by substitution.
 

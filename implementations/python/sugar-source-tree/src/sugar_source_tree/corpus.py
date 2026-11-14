@@ -17,9 +17,9 @@ backend. (sha256, not production's blake3_512, so the corpus runs
 stdlib-only; the span components ride alongside so a change names
 which coordinate moved, not just that a hash changed. Precedent: #5940.)
 
-This artifact is the instrument that admits or rejects a future backend:
-enumerate the same tree through another adapter, emit, diff. A backend
-that diverges is not debugged — it is uninstalled.
+A Python file is read one way: CPython's ``ast`` (CPythonAstBackend), the
+backend ``SourceFile`` is wired to. The corpus pins what that one reader
+produces, span by span.
 
 Failures are LOUD: a VocabularyMissing (our vocabulary is incomplete for
 a shape the backend legitimately produced), a BackendDefect (the backend
@@ -28,14 +28,8 @@ could-not-parse outcome (BackendCouldNotParse, backend.py — the backend's own 
 for me", never its native exception type) on any file is recorded,
 reported, and fails the run. None of the three ever becomes silence.
 
-The backend is a parameter, not a source edit: default is CPython's
-``ast`` (CPythonAstBackend), but any Backend can be threaded through from
-the CLI (--backend) or from code, so a benchmark can run the same corpus
-through more than one adapter without monkeypatching this module.
-
 CLI:
     python -m sugar_source_tree.corpus --out corpus.jsonl PATH [PATH ...]
-    python -m sugar_source_tree.corpus --backend libcst PATH [PATH ...]
 """
 
 from __future__ import annotations
@@ -50,7 +44,7 @@ from typing import Iterator, Optional
 
 from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
 
-from .backend import Backend, BackendCouldNotParse
+from .backend import BackendCouldNotParse
 from .nodes import Node
 from .panic import BackendDefect, VocabularyMissing
 from .tree import SourceFile
@@ -111,13 +105,10 @@ def emit_corpus(
     paths: list[Path],
     out_path: Optional[Path],
     base: Optional[Path] = None,
-    backend: Optional[Backend] = None,
 ) -> CorpusResult:
     """Enumerate every file, one SourceFile at a time — built, recorded,
     dropped. Nothing retains parsed files across iterations, so peak RSS is
-    bounded by the largest file, not the corpus. The backend is the ONLY
-    thing that should ever change which parser a corpus run measures —
-    never a monkeypatch."""
+    bounded by the largest file, not the corpus."""
     files: list[Path] = []
     for p in paths:
         if p.is_dir():
@@ -146,14 +137,13 @@ def emit_corpus(
                 failures.append((rel, "source_unavailable", str(err)))
                 continue
             try:
-                file = SourceFile(identity, backend=backend)
+                file = SourceFile(identity)
                 recs = records_for_file(file, display=rel)
             except BackendCouldNotParse as err:
                 # The BACKEND could not parse the file (not valid input for it).
                 # Recorded loudly; distinct from a vocabulary MISSING. Never
                 # the backend's native exception type (#5946) — the tree's
-                # own contract type, so this catch works identically no
-                # matter which backend is installed.
+                # own contract type.
                 failures.append((rel, "backend_could_not_parse", str(err)))
                 continue
             except VocabularyMissing as err:
@@ -191,48 +181,14 @@ def emit_corpus(
     )
 
 
-_BACKENDS = ("cpython-ast", "libcst", "parso", "tree-sitter-python")
-
-
-def make_backend(name: Optional[str]) -> Optional[Backend]:
-    """None / "cpython-ast" -> the default (CPython's ast). Otherwise
-    construct the named backend by importing its adapter module lazily, so
-    installing libcst is never a condition of running the corpus with the
-    default backend."""
-    if name is None or name == "cpython-ast":
-        return None
-    if name == "libcst":
-        from .libcst_adapter import LibCSTBackend
-
-        return LibCSTBackend()
-    if name == "parso":
-        from .parso_adapter import ParsoBackend
-
-        return ParsoBackend()
-    if name == "tree-sitter-python":
-        from .tree_sitter_python_adapter import TreeSitterPythonBackend
-
-        return TreeSitterPythonBackend()
-    raise SystemExit(f"unknown --backend {name!r}; choices: {list(_BACKENDS)}")
-
-
 def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="+", type=Path)
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--base", type=Path, default=None)
-    parser.add_argument(
-        "--backend",
-        choices=list(_BACKENDS),
-        default="cpython-ast",
-        help="which Backend to run the corpus through (default: cpython-ast).",
-    )
     args = parser.parse_args(argv)
 
-    result = emit_corpus(
-        args.paths, args.out, args.base, backend=make_backend(args.backend)
-    )
-    print(f"backend:  {args.backend}")
+    result = emit_corpus(args.paths, args.out, args.base)
     print(f"files:    {result.files}")
     print(f"nodes:    {result.nodes}")
     print(f"kinds:    {len(result.kind_counts)}")

@@ -32,10 +32,9 @@ Failure vocabulary, three distinct classes, never a string:
 - ``BackendDefect`` (panic.py) — the backend produced something
   structurally invalid.
 - ``BackendCouldNotParse`` (here) — the backend's own parse outcome: the raw text was
-  not valid input for it at all. Every adapter must raise exactly this —
-  never its native library exception (``SyntaxError``,
-  ``libcst.ParserSyntaxError``, ...) — so no caller above this module
-  ever needs to know which parsing library answers the queries today.
+  not valid input for it at all. The adapter must raise exactly this —
+  never its native exception (``SyntaxError``) — so no caller above this
+  module ever names the parsing library.
 """
 
 from __future__ import annotations
@@ -658,8 +657,7 @@ class Backend:
         """The identity of THIS backend at the version that determines its
         output. The node stream a backend produces is a function of its
         version-of-record — for the CPython ``ast`` backend that is the
-        interpreter, for a library backend (libcst/parso/tree-sitter) it is the
-        library release. A golden is pinned per fingerprint: a backend at a new
+        interpreter. A golden is pinned per fingerprint: a backend at a new
         version is a new backend, recorded faithfully in its own file, never
         folded into another's or normalized to match. Defaults to the bare name
         for a versionless backend; version-sensitive backends append theirs."""

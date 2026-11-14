@@ -123,7 +123,7 @@ _SKIP_DIR_NAMES = frozenset(
 )
 
 # Adapters may hold foreign parser objects. Match *_adapter*.py (not only
-# the trailing _adapter.py form) so tree_sitter_python_adapter etc. stay free.
+# the trailing _adapter.py form).
 _ADAPTER_GLOB = "*_adapter*.py"
 
 

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.util
-
 import pytest
 
 from sugar_lift_py_tests.floor import TermValue
@@ -16,29 +14,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_source_tree.tree import SourceFile
 
 
-def _available_backends():
-    cases = [pytest.param(None, id="canonical-default")]
-    if importlib.util.find_spec("libcst") is not None:
-        from sugar_source_tree.libcst_adapter import LibCSTBackend
-
-        cases.append(pytest.param(LibCSTBackend(), id="libcst"))
-    if importlib.util.find_spec("parso") is not None:
-        from sugar_source_tree.parso_adapter import ParsoBackend
-
-        cases.append(pytest.param(ParsoBackend(), id="parso"))
-    if (
-        importlib.util.find_spec("tree_sitter") is not None
-        and importlib.util.find_spec("tree_sitter_python") is not None
-    ):
-        from sugar_source_tree.tree_sitter_python_adapter import (
-            TreeSitterPythonBackend,
-        )
-
-        cases.append(pytest.param(TreeSitterPythonBackend(), id="tree-sitter-python"))
-    return tuple(cases)
-
-
-def _authenticated_re_source(backend=None) -> tuple[SourceFile, ClassDef]:
+def _authenticated_re_source() -> tuple[SourceFile, ClassDef]:
     graph = DependencyArtifactGraph.authenticate_stdlib_module("re")
     module = graph.modules["re"]
     assert graph.distribution_version == "cpython-312"
@@ -47,7 +23,7 @@ def _authenticated_re_source(backend=None) -> tuple[SourceFile, ClassDef]:
         "    IGNORECASE = I = _compiler.SRE_FLAG_IGNORECASE # ignore case"
     )
     source = SourceFile(
-        (module.source, module.source_seat, module.source_cid), backend=backend, construction_context=TreeConstructionContextV1.for_test_without_workspace()
+        (module.source, module.source_seat, module.source_cid), construction_context=TreeConstructionContextV1.for_test_without_workspace()
     )
     regex_flag = next(
         node
@@ -65,11 +41,10 @@ def _line_assignment(class_node: ClassDef, line: int) -> Assign:
     )
 
 
-@pytest.mark.parametrize("backend", _available_backends())
 def test_re_regexflag_chained_names_retain_targets_and_one_evaluated_floor(
-    backend, monkeypatch: pytest.MonkeyPatch
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _source, class_node = _authenticated_re_source(backend)
+    _source, class_node = _authenticated_re_source()
     assignment = _line_assignment(class_node, 146)
 
     assert tuple(target.id for target in assignment.targets) == ("IGNORECASE", "I")

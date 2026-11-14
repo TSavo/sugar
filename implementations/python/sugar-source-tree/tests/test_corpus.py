@@ -3,25 +3,20 @@
 The pinned corpus for ``goldens/quirks.py`` is a record of what WE produce.
 Regenerating it here and comparing proves the emission is a pure function of
 the source — no object identity, no iteration-order dependence — and that
-today's build still produces the pinned spans and CIDs. It is NOT a
-cross-backend check: different parsers build different trees, and the memento
-is a location hash, so addresses differ by backend by construction.
+today's build still produces the pinned spans and CIDs.
 
-Each backend is its own identity, and they can and SHOULD produce different
-trees — cpython-ast, libcst, parso and tree-sitter genuinely parse the same
-source into different node streams, and CPython's ``ast`` produces different
-streams across interpreter releases (e.g. 3.12 staples a spurious empty
-``Constant("")`` into a nested f-string format spec; 3.14 does not). We do NOT
-normalize any of that away — normalizing would erase a real difference, and the
-tree is a FAITHFUL mirror of the backend, not a corrector of it. That difference
-is reality, not a fact we are here to change.
+A Python file is read one way, through CPython's ``ast``, and that reader
+produces different node streams across interpreter releases (e.g. 3.12 staples
+a spurious empty ``Constant("")`` into a nested f-string format spec; 3.14 does
+not). We do NOT normalize any of that away — normalizing would erase a real
+difference, and the tree is a FAITHFUL mirror of the backend, not a corrector
+of it. That difference is reality, not a fact we are here to change.
 
 So the golden is pinned PER backend fingerprint (``backend.fingerprint()`` —
-name plus its version-of-record: the interpreter for cpython-ast, the library
-release for a library backend). Each pin records precisely what that backend
-parsed; a CID differing across fingerprints is the honest report that the parse
-differed. A backend with no matching pin is a LOUD "mint me", never a silent
-pass and never a fall-back to another fingerprint's tree.
+name plus the interpreter it ran on). Each pin records precisely what that
+interpreter parsed; a CID differing across fingerprints is the honest report
+that the parse differed. A fingerprint with no matching pin is a LOUD "mint
+me", never a silent pass and never a fall-back to another fingerprint's tree.
 """
 
 import json

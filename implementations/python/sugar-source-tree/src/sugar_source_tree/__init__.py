@@ -1,7 +1,7 @@
 """sugar-source-tree: a parser and a source tree (#5940).
 
 Strongly typed objects that enumerate strongly typed children, delegating
-to a swappable backend:
+to one backend, CPython's ``ast`` (``cpython_adapter``):
 
     SourceTree   enumerates ->  SourceFile
     SourceFile   enumerates ->  its nodes
