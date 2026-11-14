@@ -5,9 +5,10 @@ callee's defining source (stdlib, an unenrolled distribution) and the
 population membrane declined to project it. Inside an enrolled dependency body
 ``CallSiteSugar`` used to collect such a call as an ordinary completion, so
 ``textwrap.dedent('x')`` in a ``@contextmanager``'s enter was claimed never to
-raise and ``f`` always returned 7. It is now two-faced (the #7585 law): it
-completes under ``python:off_population_call.completes(...)`` and halts with an
-``UndeterminedRaiseEffect`` under the complement.
+raise and ``f`` always returned 7. It is now two-faced (the #7585 law), and
+not bridged is stated one way: it is the same ``UnknownCalleeCallV1`` as any
+unanswered call, completing under ``python:unknown_callee_call.completes(...)``
+and halting with an ``UndeterminedRaiseEffect`` under the complement.
 
 A bare expression statement in a generator manager whose value is two-faced
 also used to hand the call's ExitSet to the consumer as if it were the
@@ -26,7 +27,7 @@ from sugar_source_tree.nodes import FunctionDef
 
 from test_contextmanager_generator_protocol import _function_rows, _imported
 
-_ATOM = "python:off_population_call.completes"
+_ATOM = "python:unknown_callee_call.completes"
 
 
 def _manager(enter: str) -> str:
@@ -60,7 +61,7 @@ def test_an_off_population_call_in_enter_is_two_faced(tmp_path, enter):
     (halt,) = [face for face in faces if isinstance(face, Halted)]
     (done,) = [face for face in faces if isinstance(face, Completed)]
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
-    assert halt.effect.producer_node_owner == "OffPopulationCall:python:textwrap.dedent"
+    assert halt.effect.producer_node_owner == "UnknownCallee:textwrap.dedent"
     assert _ATOM in repr(done.guard) and _ATOM in repr(halt.guard)
     assert "'not'" in repr(halt.guard) and "'not'" not in repr(done.guard)
 

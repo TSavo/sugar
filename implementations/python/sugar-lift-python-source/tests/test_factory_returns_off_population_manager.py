@@ -7,8 +7,8 @@
         return pytest.raises(expected_exception, match=None)
 
 ``pytest`` is off the enrolled population, so ``pytest.raises(...)`` inside
-the factory is an ``OffPopulationSourceCallV1``: two-faced, completing with a
-value nobody materialized.  Manager derivation used to force that value to a
+the factory is an unanswered ``UnknownCalleeCallV1``: two-faced, completing
+with a value nobody materialized.  Manager derivation used to force that value to a
 floor and panic (``construct_manager_behavior returned object``: missing
 callsite body), voiding the whole file -- all 21 files of #7667.
 

@@ -26,10 +26,11 @@ def test_an_unresolved_reference_stays_loud():
 def test_off_population_call_desugars_to_a_callsite_not_a_gap():
     """stdlib ``re.compile(match)`` stays a coordinate, not a factory abort.
 
-    Its body was never looked at, so the call is two-faced: the coordinate
-    completes only under ``python:off_population_call.completes`` and the
-    complement halts with an ``UndeterminedRaiseEffect``. A total completion
-    would claim ``re.compile`` never raises.
+    Its body was never looked at, so the call is not bridged and is stated
+    the one way, ``UnknownCalleeCallV1``: the coordinate completes only under
+    ``python:unknown_callee_call.completes`` and the complement halts with an
+    ``UndeterminedRaiseEffect``. A total completion would claim
+    ``re.compile`` never raises.
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor import CallSiteValue, StringValue
@@ -49,10 +50,10 @@ def test_off_population_call_desugars_to_a_callsite_not_a_gap():
     (halt,) = [face for face in outcome.exits if isinstance(face, Halted)]
     assert isinstance(done.value, CallSiteValue)
     assert done.value.arg_values == (StringValue("boom"),)
-    assert done.guard.name == "python:off_population_call.completes"
+    assert done.guard.name == "python:unknown_callee_call.completes"
     assert halt.guard == complement_guard(done.guard)
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
-    assert halt.effect.producer_node_owner == "OffPopulationCall:python:re.compile"
+    assert halt.effect.producer_node_owner == "UnknownCallee:re.compile"
 
 
 def test_import_demand_enrollment_has_positional_arity_and_module_identity(tmp_path):

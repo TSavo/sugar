@@ -127,9 +127,9 @@ def cpython_cited_fold(
 ):
     """A stdlib call with no projected body whose result CPython's source decides.
 
-    ``unprojected`` is the call's may-raise testimony: an off-population
-    citation or a callee nothing here answers (``UnknownCalleeCallV1``); it
-    says only that the call has no projected body, never which callee it is.
+    ``unprojected`` is the call's may-raise testimony: a callee nothing here
+    answers (``UnknownCalleeCallV1``); it says only that the call has no
+    projected body, never which callee it is.
 
     ``language_callee`` is the ``LanguageCallee`` the Call node bound the
     callee to; ``importlib.import_module`` and ``operator.index`` are
@@ -142,13 +142,13 @@ def cpython_cited_fold(
     it is not ``PyLong_CheckExact``: an exact ``int`` passes through unchanged
     and nothing is raised.  Only that
     case is decided here: an exact int (never ``bool``, whose index is a copy),
-    one positional, no keywords.  Every other operand keeps the off-population
+    one positional, no keywords.  Every other operand keeps the unanswered
     call two-faced.
     """
     from .floor.term_value import TermValue
     from .outcome import ExitSet
 
-    if not isinstance(unprojected, (OffPopulationSourceCallV1, UnknownCalleeCallV1)):
+    if not isinstance(unprojected, UnknownCalleeCallV1):
         return None
     from sugar_source_tree.nodes import LanguageCallee
 
@@ -190,71 +190,15 @@ def cpython_cited_fold(
 
 
 @dataclass(frozen=True)
-class OffPopulationSourceCallV1:
-    """An authenticated callee cited off the enrolled population, called here.
-
-    ``call-target-off-population`` means the export door authenticated the
-    callee's defining source (stdlib or an unenrolled distribution) and the
-    population membrane declined to project it. Its body is real Python that
-    was not looked at, so the call may raise anything: it completes only under
-    ``python:off_population_call.completes(python:off_population_call(target,
-    site))`` and halts with an ``UndeterminedRaiseEffect`` (owner
-    ``OffPopulationCall:<target>``) under the complement -- the #7585 law for a
-    consumer's unprojected call, applied where the call sits inside an
-    enrolled dependency body. Completing it totally would claim the callee
-    never raises. It never names what the callee does.
-    """
-
-    target_name: str
-
-    def faces(self, callsite, site):
-        from dataclasses import replace
-
-        from .effect.raise_effect import UndeterminedRaiseEffect
-        from .floor.call_site_value import CallSiteValue
-        from .ir import atomic, ctor, str_const
-        from .occurrence import occurrence_key
-        from .outcome.exit_set import ExitSet
-        from .unanswered_calls import unanswered_call
-
-        # Not bridged: nothing here answers this call, so both arms OWE it
-        # (#7825, H4), exactly as `UnknownCalleeCallV1`'s arms owe its call --
-        # the one import table's target symbol when the callee is
-        # import-bound, else none (Q5).
-        owed = (
-            unanswered_call(
-                getattr(callsite, "authenticated_target_symbol", None), site
-            ),
-        )
-        key = occurrence_key(site)
-        call = ctor(
-            "python:off_population_call",
-            (str_const(self.target_name), str_const(key)),
-        )
-        completes = atomic("python:off_population_call.completes", [call])
-        result = _occurrence_result(callsite, site)
-        if isinstance(result, CallSiteValue):
-            result = replace(result, off_population_target=self.target_name)
-        return ExitSet.two_faced(
-            result,
-            UndeterminedRaiseEffect(
-                blame=str(site) if site is not None else None,
-                occurrence=key if site is not None else None,
-                producer_node_owner=f"OffPopulationCall:{self.target_name}",
-            ),
-            guard=completes,
-            owed=owed,
-        )
-
-
-@dataclass(frozen=True)
 class UnknownCalleeCallV1:
-    """A call whose callee nothing here resolved: an undefined name, a formal,
-    or a module member the import door did not cite.
+    """A call nothing here answers: not bridged, stated one way.
 
-    ``h()`` with ``h`` unbound, ``y()`` with ``y`` a formal, or
-    ``random.random()`` whose module was not enrolled: no body, contract or
-    floor testified to what runs, so the call may raise anything
+    ``h()`` with ``h`` unbound, ``y()`` with ``y`` a formal,
+    ``random.random()`` whose module was not enrolled, or a callee the export
+    door cited off the enrolled population (``call-target-off-population``:
+    stdlib or an unenrolled distribution, whose body was not looked at): no
+    body, contract or floor testified to what runs, so the call may raise
+    anything
     (``NameError`` when the name is unbound, ``TypeError`` when the value is
     not callable, or whatever the callee raises).  It completes only under
     ``python:unknown_callee_call.completes(python:unknown_callee_call(callee,

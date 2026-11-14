@@ -1,7 +1,7 @@
 """Unanswered calls ride the arms' ``owed`` slot (PR B on #7766; #7825, H4).
 
-``UnknownCalleeCallV1.faces`` and ``OffPopulationSourceCallV1.faces`` put one
-``UnansweredCallV1`` on BOTH their arms. ``owed`` is carried by union at every
+``UnknownCalleeCallV1.faces`` puts one ``UnansweredCallV1`` on BOTH its
+arms. ``owed`` is carried by union at every
 arm rebuild, never decides a merge, and the full scan reads it off the
 reduction's final arms (``unanswered_calls.owed_calls``). There is no
 collector.
@@ -131,24 +131,37 @@ class _ImportedCall:
     authenticated_target_symbol = "python:zlib.crc32"
 
 
-def test_an_off_population_call_is_owed_like_an_unknown_callee() -> None:
-    # "Not bridged" is stated one way: a callee cited off the enrolled
-    # population is the same `undecided` member as an unknown callee, owed by
-    # both arms of its two-faced call.
-    from sugar_lift_py_tests.source_call_resolution import (
-        OffPopulationSourceCallV1,
-        UnknownCalleeCallV1,
+def test_an_unanswered_call_is_owed_by_both_arms() -> None:
+    # "Not bridged" is stated one way: an unknown callee, or a callee cited
+    # off the enrolled population, is one `UnknownCalleeCallV1`, owed by both
+    # arms of its two-faced call.
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+    faces = UnknownCalleeCallV1("zlib.crc32").faces(_ImportedCall(), _Site())
+    expected = (unanswered_calls.UnansweredCallV1("python:zlib.crc32", _COORDINATE),)
+    assert len(faces.exits) == 2
+    assert all(exit_.owed == expected for exit_ in faces.exits)
+    assert unanswered_calls.owed_calls(faces) == expected
+
+
+def test_an_off_population_call_is_the_unanswered_call() -> None:
+    # The cited-off-population producer makes no second kind of call.
+    from sugar_lift_py_tests import source_call_resolution
+    from sugar_lift_py_tests.sugar.call_site_sugar import (
+        CallSiteSugar,
+        _off_population_unanswered_call,
     )
 
-    off_population = OffPopulationSourceCallV1("python:zlib.crc32").faces(
-        _ImportedCall(), _Site()
+    assert not hasattr(source_call_resolution, "OffPopulationSourceCallV1")
+    sugar = CallSiteSugar(
+        target_name="crc32",
+        args=(),
+        site=_Site(),
+        contract_resolution_gap="call-target-off-population:python:zlib.crc32",
+        reference_symbol="zlib.crc32",
     )
-    unknown = UnknownCalleeCallV1("crc32").faces(_ImportedCall(), _Site())
-    expected = (unanswered_calls.UnansweredCallV1("python:zlib.crc32", _COORDINATE),)
-    for faces in (off_population, unknown):
-        assert len(faces.exits) == 2
-        assert all(exit_.owed == expected for exit_ in faces.exits)
-        assert unanswered_calls.owed_calls(faces) == expected
+    unanswered = _off_population_unanswered_call(sugar)
+    assert unanswered == source_call_resolution.UnknownCalleeCallV1("zlib.crc32")
 
 
 def test_one_row_per_distinct_symbol_and_site() -> None:

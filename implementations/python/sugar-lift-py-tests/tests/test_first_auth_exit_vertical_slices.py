@@ -101,7 +101,8 @@ def _without_pytest_raises_construction_halts(exits):
     """The With's body-route faces after ``AbstractRaises.__init__``'s own halts.
 
     pytest's ``re.compile(match)`` is an off-population call inside the
-    enrolled pytest body, so it may raise. Python evaluates
+    enrolled pytest body, an unanswered ``UnknownCalleeCallV1``, so it may
+    raise. Python evaluates
     ``pytest.raises(...)`` before anything is entered, so each such halt is the
     With's own face: the body never runs and ``__exit__`` never runs. pytest's
     ``except re.error`` route reaches ``fail(...)`` (``Failed``); any other
@@ -116,7 +117,7 @@ def _without_pytest_raises_construction_halts(exits):
         face
         for face in exits
         if isinstance(face, Halted)
-        and _negates_off_population_call(face.guard, "python:re.compile")
+        and _negates_unanswered_call(face.guard, "re.compile")
     ]
     kinds = sorted(
         (
@@ -129,27 +130,27 @@ def _without_pytest_raises_construction_halts(exits):
     assert kinds == [
         ("RaiseEffect", "Failed"),
         ("UndeterminedRaiseEffect", "BuiltinDunderCall:format"),
-        ("UndeterminedRaiseEffect", "OffPopulationCall:python:re.compile"),
+        ("UndeterminedRaiseEffect", "UnknownCallee:re.compile"),
     ], kinds
     (failed,) = [face for face in construction if face.effect.exception_name == "Failed"]
     assert "re.error" in repr(failed.guard)
     rest = tuple(face for face in exits if all(face is not c for c in construction))
     for face in rest:
-        assert not _negates_off_population_call(face.guard, "python:re.compile")
+        assert not _negates_unanswered_call(face.guard, "re.compile")
     return rest
 
 
-def _negates_off_population_call(guard, target):
-    """``guard`` conjoins ``not python:off_population_call.completes(target, _)``."""
+def _negates_unanswered_call(guard, target):
+    """``guard`` conjoins ``not python:unknown_callee_call.completes(target, _)``."""
     kind = getattr(guard, "kind", None)
     if kind == "not":
         (operand,) = guard.operands
-        if getattr(operand, "name", None) != "python:off_population_call.completes":
+        if getattr(operand, "name", None) != "python:unknown_callee_call.completes":
             return False
         (call,) = operand.args
         return getattr(call.args[0], "value", None) == target
     if kind == "and":
-        return any(_negates_off_population_call(op, target) for op in guard.operands)
+        return any(_negates_unanswered_call(op, target) for op in guard.operands)
     return False
 
 

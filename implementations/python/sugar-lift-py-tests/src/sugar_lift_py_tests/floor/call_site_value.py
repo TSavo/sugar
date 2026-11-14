@@ -221,15 +221,6 @@ class CallSiteValue(FloorValue):
         compare=False,
         repr=False,
     )
-    # The authenticated callee this value is the completed result of, when
-    # that callee was cited off the enrolled population
-    # (``OffPopulationSourceCallV1``).  Testimony only: a manager factory that
-    # returns this value returns a manager nobody materialized, and the
-    # ``with`` over the factory is cited exactly like a ``with`` over the
-    # callee itself (#7667).
-    off_population_target: str | None = dataclass_field(
-        default=None, compare=False, repr=False
-    )
     # The ``LanguageCallee`` the Call node bound this call's callee to (its
     # binding, never its spelling), carried from ``CallSiteSugar``.
     language_callee: object | None = dataclass_field(

@@ -8,10 +8,10 @@ call with no symbol is still a member). Its ``site`` is the call's
 ``SourceFragmentCoordinateV1``.
 
 A call is left unanswered where the lifter does not have its callee: the
-two-faced call of ``UnknownCalleeCallV1.faces`` (#7585) and of
-``OffPopulationSourceCallV1.faces`` (an authenticated callee cited off the
-enrolled population). "Not bridged" is stated one way: each puts one
-``UnansweredCallV1`` on the ``owed`` slot of BOTH its arms (#7825, H4), since
+two-faced call of ``UnknownCalleeCallV1.faces`` (#7585), which is also the
+call to an authenticated callee cited off the enrolled population. "Not
+bridged" is stated one way: it puts one ``UnansweredCallV1`` on the ``owed``
+slot of BOTH its arms (#7825, H4), since
 the call is incurred whether it then completes or raises. ``owed`` rides every
 arm rebuild by union (``ExitSet.sequence`` for a composition, ``ExitSet.union``
 / ``normalize`` for a merge), so the item reaches
