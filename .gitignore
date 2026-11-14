@@ -167,10 +167,6 @@ provekit-worktrees/
 provekit-warnings/
 implementations/swift/.build/
 
-# wall run artifacts are never committed
-.sugar/pandas-wall/
-.sugar/numpy-wall/
-
 # Generated local Python seats (bootstrap recreates; never commit)
 .venv-py312/
 .venv/

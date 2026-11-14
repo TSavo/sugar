@@ -2269,10 +2269,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             raise ValueError(
                 "semantic construction request has a stale contract-ref generation"
             )
-    # The audit frontier's factory census is deleted; auditFrontier now short-
-    # circuits to an empty frontier (its R census re-homes onto the source
-    # tree's reporter channel, not yet wired). allowedBrokenComponents was the
-    # factory's panic-recovery gate; with no factory audit walk it is inert.
+    # auditFrontier selects the board door's per-file construction roll call at
+    # level `facts` (see the audit_walk branch below). allowedBrokenComponents
+    # was the factory's panic-recovery gate; with no factory audit walk it is
+    # inert.
     audit_walk = options.get("auditFrontier") is True
     root = Path(workspace_root).resolve()
     _TRANSPORT_LOG.info(
@@ -2422,74 +2422,53 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 return
 
             if audit_walk:
-                # The recovered-construction frontier, re-homed onto the tree
-                # (the factory census is gone). The Rust driver walks
-                # source_files -> functions -> facts; we serve it at MODULE
-                # granularity: one demanded body per file whose audit leaf
-                # walks the whole file with a CollectingReporter. Every node
-                # whose own sugar() reaches the base throw self-reports; that
-                # count IS R. status is `failed` when the file has any unwritten
-                # sugar, `clean` when fully sugared -- no false green.
-                from sugar_lift_py_tests import tree_enumerate as _tree
-                from sugar_lift_python_source.source_oracle import (
-                    SourceUnavailable,
-                    path_source,
+                # auditFrontier is the board door's construction demand (D3 in
+                # scripts/recensus_enumerate_consumer.py): ONE facts leaf per
+                # file, sought at the file's own memento, whose roll call walks
+                # the whole file with a CollectingReporter. Every node whose own
+                # sugar() reaches the base throw self-reports; that count IS R.
+                # status is `failed` when the file has any unwritten sugar,
+                # `clean` when fully sugared -- no false green. No other level
+                # answers under auditFrontier: `sugar lift --audit-frontier` is
+                # not a driver of the Python kit (#7806).
+                if level != "facts":
+                    _send(
+                        {
+                            "jsonrpc": "2.0",
+                            "id": msg_id,
+                            "error": {
+                                "code": -32602,
+                                "message": (
+                                    "sugar.enumerate: auditFrontier is answered "
+                                    f"at level 'facts' only, not {level!r}; "
+                                    "`sugar lift --audit-frontier` does not drive "
+                                    "the Python kit -- the construction frontier "
+                                    "is the board door "
+                                    "(scripts/control_effect_recensus.py, #7806)"
+                                ),
+                            },
+                        }
+                    )
+                    return
+                expected_source_cid = None
+                if isinstance(at, dict):
+                    expected_source_cid = at.get("source_cid") or at.get("file_cid")
+                leaf = _roll_call_audit_leaf(
+                    full_path,
+                    file_rel,
+                    root=root,
+                    locus_root=locus_root,
+                    expected_source_cid=(
+                        str(expected_source_cid)
+                        if isinstance(expected_source_cid, str)
+                        else None
+                    ),
                 )
-
-                if level == "functions":
-                    try:
-                        identity = path_source(str(full_path))
-                    except SourceUnavailable as unavailable:
-                        _send_enumerate_result(
-                            msg_id, [], [{"memento": at, "reason": str(unavailable)}]
-                        )
-                        return
-                    _src, _fname, file_cid = identity
-                    # This entrance only mints the module memento, but it opens
-                    # the same tree every other level reads, under the same
-                    # authority: the demand table is derived per source and
-                    # memoized, so asking costs this file once.
-                    sf = _open_enumerated_file(
-                        full_path, root=root, locus_root=locus_root
-                    )
-                    memento = _tree.module_definition_memento(sf, file_rel, file_cid)
-                    _send_enumerate_result(
-                        msg_id,
-                        [{"memento": memento, "audit": None, "payload": None}],
-                        [],
-                    )
-                    _log_enumeration_demand(
-                        str(level), at, cache="miss", started=demand_started
-                    )
-                    return
-
-                if level == "facts":
-                    expected_source_cid = None
-                    if isinstance(at, dict):
-                        expected_source_cid = at.get("source_cid") or at.get("file_cid")
-                    leaf = _roll_call_audit_leaf(
-                        full_path,
-                        file_rel,
-                        root=root,
-                        locus_root=locus_root,
-                        expected_source_cid=(
-                            str(expected_source_cid)
-                            if isinstance(expected_source_cid, str)
-                            else None
-                        ),
-                    )
-                    _send_enumerate_result(
-                        msg_id,
-                        [{"memento": at, "audit": leaf, "payload": None}],
-                        [],
-                    )
-                    _log_enumeration_demand(
-                        str(level), at, cache="miss", started=demand_started
-                    )
-                    return
-
-                # No other level participates in the frontier walk.
-                _send_enumerate_result(msg_id, [], [])
+                _send_enumerate_result(
+                    msg_id,
+                    [{"memento": at, "audit": leaf, "payload": None}],
+                    [],
+                )
                 _log_enumeration_demand(
                     str(level), at, cache="miss", started=demand_started
                 )
@@ -2701,7 +2680,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             # function's Assert nodes and ask each for its sugar and its fact.
             # For a bare `assert`, call_site and assertion are the same locus
             # (1:1, protocol Section 4); the fact is the desugared InvValue.
-            # (audit_walk already returned empty above; this is the live path.)
+            # (audit_walk already answered or refused above; this is the live
+            # path.)
             if level == "universe":
                 # The callee contract, served from the tree. Each function's
                 # FunctionDef.sugar() reduces to a UniverseValue whose
@@ -3356,8 +3336,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     if "--audit-only" in argv:
         raise SystemExit(
             "--audit-only no longer enables construction-gap recovery; "
-            "use sugar lift --audit-frontier --continue-on-construction-gaps "
-            "--allowed-broken-components python"
+            "the construction frontier is the board door "
+            "(scripts/control_effect_recensus.py, #7806)"
         )
     _serve()
 

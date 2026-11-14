@@ -33,7 +33,7 @@ sys.path.insert(
     ),
 )
 
-from sugar_lift_py_tests.idd.collect_panic_audit import (  # noqa: E402
+from sugar_lift_py_tests.idd.installed_package_workspace import (  # noqa: E402
     _prepare_audit_workspace,
     _resolve_installed_package_path,
 )
@@ -79,7 +79,7 @@ def main(argv: list[str]) -> int:
         shutil.rmtree(output_dir)
     output_dir.mkdir(parents=True)
     workspace = output_dir / "workspace" / package_path.name
-    _prepare_audit_workspace(package_path, root, workspace, audit_only=False)
+    _prepare_audit_workspace(package_path, root, workspace)
 
     env = os.environ.copy()
     proof_dir = output_dir / "proof"

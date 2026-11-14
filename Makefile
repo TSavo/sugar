@@ -60,13 +60,10 @@ help:
 	@echo ""
 	@echo "Per-language test:"
 	@echo "  make test-rust  test-python   (the proven provers)"
-	@echo "  make numpy-wall                build and ratchet-check the NumPy lift wall"
-	@echo "  make pandas-wall               build and ratchet-check the pandas lift wall"
 	@echo "  make assertion-lift-frontier   run the explicit recursive assertion_lift frontier ratchet"
 	@echo "  make check-resident-ownership  Lane B: unbounded process-lifetime cache census (R→0)"
 	@echo "  make check-showcase-kit-preflight  Lane A: showcase kit import contracts (A1→0)"
 	@echo "  make check-lift-manifest-pythonpath  Lane A: lift_rpc PYTHONPATH + bind_rpc --rpc census"
-	@echo "  make wall-progress            Lane B: score partial wall run → progress.json"
 	@echo "  make showcase-verdict-scoreboard  Lane A: classify showcase log → A2 residue"
 	@echo "  make check-fleet-claim-contract   CLAIMED lanes must carry fleet:lane (+ kit set)"
 	@echo "  make showcase-bulk-refuse-class   Lane A: prove/durable vacuity parity instrument"
@@ -181,26 +178,6 @@ check-showcase-json-channels:
 	$(PYTHON) tools/showcase_json_channel_law.py --self-test
 	$(PYTHON) tools/showcase_json_channel_law.py
 
-# Lane B instrument 3: partial wall progress receipt (not a product gate).
-# Score transport.jsonl + wall.txt → progress.json. Incomplete is measured.
-# Self-test always runs; scoring requires a wall artifact (set WALL_DIR/LOGS_DIR
-# or run after make pandas-wall / download a CI artifact).
-.PHONY: wall-progress
-wall-progress:
-	$(PYTHON) tools/wall_progress_scoreboard.py --self-test
-	@wall_dir="$${WALL_DIR:-.sugar/$${WALL:-pandas}-wall}"; \
-	logs_dir="$${LOGS_DIR:-.sugar/$${WALL:-pandas}-wall-logs}"; \
-	if [ -d "$$wall_dir" ] || [ -d "$$logs_dir" ]; then \
-	  $(PYTHON) tools/wall_progress_scoreboard.py \
-	    --wall "$${WALL:-pandas}" \
-	    --wall-dir "$$wall_dir" \
-	    --logs-dir "$$logs_dir" \
-	    --output "$${WALL_PROGRESS_OUT:-$$wall_dir/progress.json}" \
-	    $${WALL_EXIT:+--exit-code $$WALL_EXIT}; \
-	else \
-	  echo "wall-progress: self-test only (no $$wall_dir / $$logs_dir; set WALL_DIR/LOGS_DIR to score a run)"; \
-	fi
-
 # Lane A instrument A2: classify test-showcases / CI log residue.
 # Requires SHOWCASE_LOG=path (or --from-log). Self-test always runs.
 .PHONY: showcase-verdict-scoreboard
@@ -236,14 +213,6 @@ showcase-bulk-refuse-class:
 .PHONY: check-fleet-claim-contract
 check-fleet-claim-contract:
 	$(PYTHON) tools/check_fleet_claim_contract.py
-
-.PHONY: numpy-wall
-numpy-wall:
-	python3 tools/numpy_wall.py
-
-.PHONY: pandas-wall
-pandas-wall:
-	python3 tools/pandas_wall.py
 
 # This frontier intentionally launches the known-red assertion_lift target in a
 # nested cargo process. Keep it explicit: ordinary test-rust/make ci must not pay

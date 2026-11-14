@@ -1,9 +1,0 @@
-{
-  "kind": "numpy-wall-ratchet-floors",
-  "floors": {
-    "frontier_ceilings": {
-      "independent_panics": 5569,
-      "suppressed_descendants": 7315
-    }
-  }
-}

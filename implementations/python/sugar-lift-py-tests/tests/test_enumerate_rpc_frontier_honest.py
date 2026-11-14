@@ -5,19 +5,19 @@ CollectingReporter. A file with an unwritten-sugar node (a bare Name) must
 report a panic -- status `failed`, R>0 -- not the false `complete` the empty
 stub produced. A fully-sugared file (only `assert 1 == 1`) reports `clean`.
 
-Both directions of the closed wire contract are validated in-process without
-the Rust build: the leaf decodes via RecoveredAuditDto.from_rpc, and a
-simulation of the Rust fold (fold_recovered_audit) assembles a tree audit that
-RecoveredFrontierAuditDto.from_rpc accepts.
+The leaf is demanded the way the board door's D3 demand asks for it (one facts
+leaf sought at each file's memento under auditFrontier) and validated
+in-process without the Rust build: it decodes via RecoveredAuditDto.from_rpc.
 """
 
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 from sugar_lift_py_tests import lift_rpc
 from sugar_lift_py_tests.kit_rpc.recovered_audit_dto import (
     RecoveredAuditDto,
-    RecoveredFrontierAuditDto,
+    RecoveredConstructionPanicDto,
 )
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.process_resident_file import (
@@ -27,9 +27,15 @@ from sugar_source_tree.process_resident_file import (
 from sugar_source_tree.tree import SourceFile
 
 
-def _drive_frontier(source: str):
-    """Walk source_files -> functions -> facts under auditFrontier, exactly as
-    the Rust fold does, and assemble the tree-level audit it would build."""
+@dataclass(frozen=True)
+class _Frontier:
+    status: str
+    panics: list[RecoveredConstructionPanicDto]
+
+
+def _drive_frontier(source: str) -> _Frontier:
+    """Demand source_files, then one facts leaf per file under auditFrontier,
+    exactly as the board door's D3 demand does."""
     captured = {}
     orig_send = lift_rpc._send_enumerate_result
     lift_rpc._send_enumerate_result = lambda mid, nodes, gaps, **kw: captured.update(
@@ -55,54 +61,17 @@ def _drive_frontier(source: str):
 
             files, fgaps = enum("source_files")
             assert not fgaps, fgaps
-            source_files_enumerated = len(files)
-            source_bodies_demanded = 0
-            audit_leaves_completed = 0
             all_panics = []
             for f in files:
-                defs, dgaps = enum("functions", f["memento"])
-                assert not dgaps, dgaps
-                source_bodies_demanded += 1
-                for d in defs:
-                    leaves, lgaps = enum("facts", d["memento"])
-                    assert not lgaps and len(leaves) == 1, (leaves, lgaps)
-                    leaf = leaves[0]["audit"]
-                    semantic_core = leaf.get("semanticCore") or leaf
-                    # leaf must decode as the closed leaf schema (producer end)
-                    RecoveredAuditDto.from_rpc(semantic_core)
-                    # fold stamps demandedBody/ownerIdentity per demanded body
-                    body = d["memento"]
-                    for p in semantic_core["panics"]:
-                        owner = {
-                            "demandedBody": body,
-                            "demandedSource": p["demandedSource"],
-                            "terminalGapLocus": p["terminalGapLocus"],
-                        }
-                        all_panics.append(
-                            {**p, "demandedBody": body, "ownerIdentity": owner}
-                        )
-                    audit_leaves_completed += 1
-            status = (
-                "valid-empty"
-                if source_files_enumerated == 0
-                else ("complete" if not all_panics else "failed")
+                leaves, lgaps = enum("facts", f["memento"])
+                assert not lgaps and len(leaves) == 1, (leaves, lgaps)
+                leaf = leaves[0]["audit"]
+                semantic_core = leaf.get("semanticCore") or leaf
+                # leaf must decode as the closed leaf schema (producer end)
+                all_panics.extend(RecoveredAuditDto.from_rpc(semantic_core).panics)
+            return _Frontier(
+                status="failed" if all_panics else "clean", panics=all_panics
             )
-            tree = {
-                "kind": "recovered-construction-audit",
-                "recoveryOverride": True,
-                "status": status,
-                "census": {
-                    "kind": "recovered-frontier-census",
-                    "sourceFilesEnumerated": source_files_enumerated,
-                    "sourceBodiesDemanded": source_bodies_demanded,
-                    "auditLeavesCompleted": audit_leaves_completed,
-                },
-                "panics": all_panics,
-                "effects": [],
-                "suppressedDescendants": [],
-            }
-            # the whole tree audit must validate as the closed fold schema
-            return RecoveredFrontierAuditDto.from_rpc(tree)
     finally:
         lift_rpc._send_enumerate_result = orig_send
 

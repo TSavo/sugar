@@ -90,22 +90,49 @@ def test_source_files_scan_finds_the_fixture_file(project: Path) -> None:
 
 
 def _audit_envelope(workspace: Path, file: str = "mathy.py") -> dict:
+    """The board door's D3 demand: one facts leaf sought at the file memento."""
     file_key = next(
         node["memento"]
         for node in _enumerate("source_files", workspace)["nodes"]
         if node["memento"]["file"] == file
     )
-    module = _enumerate(
-        "functions", workspace, at=file_key, options={"auditFrontier": True}
-    )["nodes"]
-    assert len(module) == 1
     return _enumerate(
         "facts",
         workspace,
-        at=module[0]["memento"],
+        at=file_key,
         seek=True,
         options={"auditFrontier": True},
     )["nodes"][0]["audit"]
+
+
+def test_audit_frontier_is_refused_below_facts(project: Path) -> None:
+    """`sugar lift --audit-frontier` walked functions under auditFrontier; the
+    Python kit answers auditFrontier at `facts` only (#7806)."""
+    file_key = _enumerate("source_files", project)["nodes"][0]["memento"]
+    captured = []
+    original_send = lift_rpc._send
+    lift_rpc._send = captured.append
+    try:
+        lift_rpc._dispatch_request(
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "sugar.enumerate",
+                "params": {
+                    "level": "functions",
+                    "workspace_root": str(project),
+                    "at": file_key,
+                    "seek": False,
+                    "options": {"auditFrontier": True},
+                },
+            },
+        )
+    finally:
+        lift_rpc._send = original_send
+    assert len(captured) == 1, captured
+    error = captured[0]["error"]
+    assert error["code"] == -32602
+    assert "auditFrontier is answered at level 'facts' only" in error["message"]
 
 
 def _audit_leaf(workspace: Path, file: str = "mathy.py") -> dict:

@@ -18,7 +18,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.idd.collect_panic_audit import (
+from sugar_lift_py_tests.idd.installed_package_workspace import (
     _resolve_installed_package_path,
 )
 from sugar_lift_py_tests.idd.lift_coverage_accounting import (

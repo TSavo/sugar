@@ -28,8 +28,6 @@ NIGHTLY_WINDOW = "nightly-window"
 HEAVY_ROSTER = {
     "python-package-suite": "Python package suite (authoritative)",
     "python-sole-construction-floors": "Python sole-construction floors (R>0 red)",
-    "numpy-wall": "NumPy Wall Ratchet",
-    "pandas-wall": "Pandas Wall Ratchet",
     "restored-suite-scoreboard": "Restored Suite Scoreboard",
     "control-effect-recensus": "Control-effect recensus (authoritative scoreboard)",
 }
@@ -37,8 +35,6 @@ HEAVY_ROSTER = {
 HEAVY_CADENCE = {
     "python-package-suite": PER_COMMIT,
     "python-sole-construction-floors": PER_COMMIT,
-    "numpy-wall": NIGHTLY_WINDOW,
-    "pandas-wall": NIGHTLY_WINDOW,
     "restored-suite-scoreboard": NIGHTLY_WINDOW,
     "control-effect-recensus": NIGHTLY_WINDOW,
 }
@@ -51,8 +47,6 @@ PATH_HINTS = {
         "floor-measurement.json",
         "python-sole-construction-floors",
     ),
-    "numpy-wall": ("numpy-wall", "frontier.json"),
-    "pandas-wall": ("pandas-wall", "frontier.json"),
     "restored-suite-scoreboard": ("restored-suite",),
     "control-effect-recensus": ("pandas-control-effect", "control-effect-recensus"),
 }
@@ -121,10 +115,11 @@ def _class_from_payload(path: Path, payload: dict) -> str | None:
         or payload.get("failedNodeIds") is not None
         or payload.get("totals") is not None
     )
-    if not identity_bound and "frontier" not in path.name:
-        # frontier.json is a wall body even without those keys
-        if path.name not in ("frontier.json", "suite-report.json", "floor-measurement.json"):
-            return None
+    if not identity_bound and path.name not in (
+        "suite-report.json",
+        "floor-measurement.json",
+    ):
+        return None
     text = str(path).replace("\\", "/")
     for cls, hints in PATH_HINTS.items():
         if any(h in text for h in hints):
