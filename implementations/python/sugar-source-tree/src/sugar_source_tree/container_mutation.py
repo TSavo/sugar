@@ -653,18 +653,68 @@ def _is_pure_call(call, scope) -> bool:
     return isinstance(func, Attribute) and isinstance(func.value, Constant)
 
 
-def _threaded_header(statement):
-    """The part of a compound ``statement`` that threads its own calls before
-    its body (``If.substitute``: the test), or None."""
-    if getattr(statement, "kind", None) == "If":
-        return statement.test
-    return None
+def threaded_header(statement) -> tuple:
+    """The expressions a compound ``statement`` evaluates before its body: an
+    ``if`` or ``while`` test, a ``for`` iterable, a ``with`` item's manager, a
+    ``match`` subject (a live loop's, its loop's).  Each is threaded before
+    what follows it reads the objects its calls reach (``thread_header``):
+    by the statement's own substitution, for its body, and by the block, for
+    the statements after it (``havoc_after``).  Empty for any other
+    statement: everything a simple statement evaluates (an ``assert`` test,
+    a ``return``, ``yield`` or ``raise`` operand, an assignment's value)
+    runs before what follows it, which the block threads after it."""
+    kind = getattr(statement, "kind", None)
+    if kind == "LoopRecurrenceStatement":
+        return threaded_header(statement.loop)
+    if kind in ("If", "While"):
+        return (statement.test,)
+    if kind == "For":
+        return (statement.iter,)
+    if kind == "Match":
+        return (statement.subject,)
+    if kind == "With":
+        return tuple(item.context_expr for item in statement.items)
+    return ()
 
 
-def _calls(statement, bound_refs, *, include_container_calls, threaded=None):
+def _repeats_header(statement) -> bool:
+    """Whether ``statement`` evaluates its header again before every item (a
+    ``while`` test, a live ``while``'s): what the header's calls did is then
+    the loop's, as every call in its body is (``havoc_after``)."""
+    kind = getattr(statement, "kind", None)
+    if kind == "LoopRecurrenceStatement":
+        return _repeats_header(statement.loop)
+    return kind == "While"
+
+
+def thread_header(header, pre_scope, scope, *, repeated=False):
+    """``scope`` with what the calls in ``header`` (one expression, or a
+    tuple of them in evaluation order) did to the objects they reach: the one
+    rule for an expression a statement evaluates before what follows reads
+    those objects (``havoc_after`` over it).  ``pre_scope`` is the scope the
+    header was substituted against.  ``repeated``: the header runs again
+    before every item of a loop (``_repeats_header``), so its calls take the
+    loop's rule.
+
+    A compound statement's substitution threads its header before its body
+    (``If``, ``While``, ``For``, ``With``, ``Match``, a comprehension's first
+    iterable), and the block threads it again before the rest of the
+    statement's calls (``havoc_after``, ``threaded_header``), as both bind a
+    walrus in it (``nodes._scope_after``)."""
+    nodes = header if isinstance(header, tuple) else (header,)
+    for node in nodes:
+        if node is not None:
+            scope = havoc_after(node, pre_scope, scope, loop=repeated)
+    return scope
+
+
+_ABSENT = object()
+
+
+def _calls(statement, bound_refs, *, include_container_calls, threaded=()):
     """Calls ``statement`` makes now: not inside a nested def, and not inside a
     value a name was already bound to (that value's calls ran earlier), nor in
-    ``threaded`` (a header the statement threaded itself, ``_threaded_header``).
+    ``threaded`` (the header the statement threads first, ``threaded_header``).
     An f-string's replacement field is one: it runs ``format`` on its value
     (``_call_targets``)."""
     from .nodes import (
@@ -679,13 +729,13 @@ def _calls(statement, bound_refs, *, include_container_calls, threaded=None):
 
     stack = [statement]
     seen = set()
-    header = None if threaded is None else _handle(threaded)
+    headers = tuple(_handle(node) for node in threaded if node is not None)
     while stack:
         current = stack.pop()
         if id(current) in seen:
             continue
         seen.add(id(current))
-        if header is not None and _handle(current) is header:
+        if headers and any(_handle(current) is header for header in headers):
             continue
         if current is not statement and _ref(current) in bound_refs:
             continue
@@ -707,11 +757,19 @@ def _calls(statement, bound_refs, *, include_container_calls, threaded=None):
                 stack.append(child)
 
 
-def havoc_after(statement, pre_scope, scope):
+def havoc_after(statement, pre_scope, scope, *, loop=None):
     """Rebind every object ``statement``'s calls may have changed to an unknown.
 
     ``pre_scope`` is the scope the statement was substituted against; the
-    statement's calls name objects by the nodes that scope bound.
+    statement's calls name objects by the nodes that scope bound.  ``loop``:
+    whether the statement may run its calls any number of times (by default,
+    whether it is a loop).
+
+    A compound statement's header (``threaded_header``) is evaluated before
+    the rest of it: its calls are threaded first (``thread_header``), and the
+    rest of the statement's calls, which its substitution read the header's
+    objects after (``If.substitute`` and the others), are threaded from what
+    the header left.  A name the statement itself bound keeps its binding.
     """
     from .nodes import (
         ContainerMutationStatement,
@@ -721,6 +779,21 @@ def havoc_after(statement, pre_scope, scope):
         PathContainerCall,
         While,
     )
+
+    header = threaded_header(statement)
+    if header:
+        threaded = thread_header(
+            header, pre_scope, pre_scope, repeated=_repeats_header(statement)
+        )
+        moved = {
+            name: state
+            for name, state in threaded.items()
+            if pre_scope.get(name, _ABSENT) is not state
+            and scope.get(name, _ABSENT) is pre_scope.get(name, _ABSENT)
+        }
+        if moved:
+            scope = {**scope, **moved}
+        pre_scope = threaded
 
     bound_refs = {
         _ref(_state(value))
@@ -765,14 +838,15 @@ def havoc_after(statement, pre_scope, scope):
     # mutation in that body changed unknown (when its value is one a
     # mutation changes); a branch's mutations are threaded by the branch and
     # joined.
-    loop = isinstance(statement, (For, While, LoopRecurrenceStatement))
+    if loop is None:
+        loop = isinstance(statement, (For, While, LoopRecurrenceStatement))
     targets = []
     applied = []
     for call in _calls(
         statement,
         bound_refs,
         include_container_calls=loop,
-        threaded=_threaded_header(statement),
+        threaded=header,
     ):
         helper = (
             None if loop else source_helper_actual_states(call, bound_refs, pre_scope)
