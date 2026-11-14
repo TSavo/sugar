@@ -14,20 +14,28 @@ is read at the call (#7757 item 7, residue of #7975).
    around that ``def`` (``_function_holding``): its body reads that
    function's locals through captured coordinates (#7975), and a global as
    in 1.
-3. A lambda a walrus lets escape a comprehension
-   (``[(g := lambda: x) for x in xs]``) reads the comprehension's cell, the
-   final member (#7944, ``final_member_coordinate``), unless the
-   comprehension also reads the walrus's name (it may be called while the
-   comprehension runs).
+3. A lambda a walrus lets escape a comprehension, from the element or a
+   condition (``[(g := lambda: x) for x in xs if g()]; g()``), reads the
+   comprehension's cell at each call: the member current at a call inside
+   the evaluation that made it (#7944's in-place rule), the final member at
+   a call after the comprehension (``final_member_coordinate``), refused by
+   name where the call is placed in neither.  Never the member current where
+   the lambda was made.
 """
 
 from __future__ import annotations
 
 import pytest
 
+from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.floor.call_site_value import _ctx_with_curried_args
+from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
+from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
 from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
@@ -43,8 +51,10 @@ from sugar_source_tree.nodes import (
     Name,
     NamedExpr,
     _function_holding,
+    comprehension_evaluation_coordinate,
     construct_at_module_execution_site,
     final_member_coordinate,
+    lambda_evaluation_coordinate,
 )
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -305,29 +315,192 @@ def _comprehension(source: str) -> ListComp:
     return comp
 
 
-def test_a_walrus_escaping_lambda_reads_the_final_member() -> None:
-    comp = _comprehension(
-        "def f(xs):\n    ys = [(g := lambda: x) for x in xs]\n    return g()\n"
+ESCAPES_FROM_THE_ELEMENT = (
+    "def f(xs):\n    ys = [(g := lambda: x) for x in xs]\n    return g()\n"
+)
+CALLED_INSIDE_AND_AFTER = (
+    "def f(xs, g):\n    ys = [(g := lambda: x) for x in xs if g()]\n    return g()\n"
+)
+ESCAPES_FROM_A_CONDITION = (
+    "def f(xs):\n    ys = [x for x in xs if (g := lambda: x)]\n    return g()\n"
+)
+
+
+def _assert_reads_the_cell_at_the_call(lam: Lambda, coordinate: str) -> None:
+    """The body reads the cell at the call: both the member coordinate and
+    its final one, never the member coordinate alone (the member current
+    where the lambda was made)."""
+    reads = [node for node in lam.body.walk() if isinstance(node, EvaluationRef)]
+    assert [read.evaluation for read in reads] == [final_member_coordinate(coordinate)]
+    assert all(read.cell is True for read in reads)
+    assert [read.current for read in reads] == [coordinate]
+    # The lambda value carries the final member and the evaluation it was
+    # made in.
+    assert lam._closure_coordinates() == (final_member_coordinate(coordinate),)
+    assert lam._evaluation_coordinates() == (
+        (
+            lambda_evaluation_coordinate(coordinate),
+            comprehension_evaluation_coordinate(coordinate),
+        ),
     )
+
+
+def test_a_walrus_escaping_lambda_reads_the_cell_at_the_call() -> None:
+    comp = _comprehension(ESCAPES_FROM_THE_ELEMENT)
     coordinate = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
     walrus = comp.elt
     assert isinstance(walrus, NamedExpr)
     lam = walrus.value
     assert isinstance(lam, Lambda)
-    reads = [node for node in lam.body.walk() if isinstance(node, EvaluationRef)]
-    assert [read.evaluation for read in reads] == [final_member_coordinate(coordinate)]
-    assert all(read.cell is True for read in reads)
-    # The lambda value carries the final member it reads.
-    assert lam._closure_coordinates() == (final_member_coordinate(coordinate),)
+    _assert_reads_the_cell_at_the_call(lam, coordinate)
 
 
-def test_a_walrus_lambda_the_comprehension_calls_reads_the_current_member() -> None:
+def test_a_lambda_the_comprehension_calls_reads_the_cell_at_the_call() -> None:
+    # ``g()`` in the condition runs while the comprehension runs, and the
+    # ``g()`` after it runs once it is done: one body serves both, so it is
+    # neither the creation-time member nor the final one alone.
+    comp = _comprehension(CALLED_INSIDE_AND_AFTER)
+    coordinate = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
+    (lam,) = _lambdas([comp.elt])
+    _assert_reads_the_cell_at_the_call(lam, coordinate)
+
+
+def test_a_walrus_in_a_condition_lets_its_lambda_escape() -> None:
+    comp = _comprehension(ESCAPES_FROM_A_CONDITION)
+    coordinate = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
+    (condition,) = comp.generators[0].ifs
+    (lam,) = _lambdas([condition])
+    _assert_reads_the_cell_at_the_call(lam, coordinate)
+
+
+def test_a_lambda_called_in_place_still_reads_the_current_member() -> None:
     comp = _comprehension(
-        "def f(xs):\n    ys = [((g := lambda: x), g()) for x in xs]\n    return ys\n"
+        "def f(xs):\n    ys = [(lambda: x)() for x in xs]\n    return ys\n"
     )
     coordinate = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
     (lam,) = _lambdas([comp.elt])
-    # ``g()`` runs while the comprehension runs: not the final member.
     assert isinstance(lam.body, EvaluationRef)
     assert lam.body.evaluation == coordinate
     assert getattr(lam.body, "cell", False) is not True
+    assert getattr(lam.body, "current", None) is None
+
+
+# -- 3. the call places the read ----------------------------------------------
+
+
+def _escaping(source: str = ESCAPES_FROM_THE_ELEMENT):
+    """The comprehension's sugar, its one generator, and the escaping
+    lambda's sugar."""
+    comp = _comprehension(source)
+    sugar = comp.sugar()
+    assert isinstance(sugar, ComprehensionSugar)
+    (lam,) = _lambdas([comp.elt, *comp.generators[0].ifs])
+    lam_sugar = lam.sugar()
+    assert isinstance(lam_sugar, LambdaSugar)
+    return sugar, sugar.generators[0], lam_sugar
+
+
+def _evaluation(sugar, generator, final):
+    """A context inside one evaluation of the comprehension, with ``final``
+    its final member."""
+    ctx = sugar._evaluation_ctx(ReduceContext.root(owner="walrus-escape"))
+    return sugar._final_member_ctx(generator, final, ctx)
+
+
+def _called(callable_, ctx):
+    """``ctx`` as the lambda's call binds it: the closure the value carries."""
+    return _ctx_with_curried_args(ctx, (), (), (), callable_.closure)
+
+
+def test_every_evaluation_of_the_comprehension_is_its_own() -> None:
+    sugar, generator, _lam = _escaping()
+    coordinate = comprehension_evaluation_coordinate(generator.binding_coordinate_cid)
+    root = ReduceContext.root(owner="walrus-escape")
+    first = sugar._evaluation_ctx(root).temporal.value_if_bound(coordinate)
+    second = sugar._evaluation_ctx(root).temporal.value_if_bound(coordinate)
+    assert first is not None
+    assert second is not None
+    assert first is not second
+    assert root.temporal.value_if_bound(coordinate) is None
+
+
+def test_the_lambda_carries_the_final_member_and_its_evaluation() -> None:
+    sugar, generator, lam = _escaping()
+    member = generator.binding_coordinate_cid
+    evaluation = _evaluation(sugar, generator, TermValue(3))
+    made_in = evaluation.temporal.value_if_bound(
+        comprehension_evaluation_coordinate(member)
+    )
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.desugar(made).completed_value()
+    assert callable_.closure[0] == (final_member_coordinate(member), TermValue(3))
+    carried, value = callable_.closure[1]
+    assert carried == lambda_evaluation_coordinate(member)
+    assert value is made_in
+
+
+def test_a_call_inside_reads_the_member_current_at_the_call() -> None:
+    sugar, generator, lam = _escaping()
+    evaluation = _evaluation(sugar, generator, TermValue(3))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.desugar(made).completed_value()
+    # Called by the member that made it: that member.
+    read = lam.body.desugar(_called(callable_, made))
+    assert read == ExitSet.completed(TermValue(1))
+    # Called by a later member of the same evaluation (``if g()``): the
+    # member current at the call, never the one it was made under.
+    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    read = lam.body.desugar(_called(callable_, later))
+    assert read == ExitSet.completed(TermValue(2))
+
+
+def test_a_call_after_the_comprehension_reads_the_final_member() -> None:
+    sugar, generator, lam = _escaping()
+    evaluation = _evaluation(sugar, generator, TermValue(3))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.desugar(made).completed_value()
+    after = ReduceContext.root(owner="after-the-comprehension")
+    read = lam.body.desugar(_called(callable_, after))
+    assert read == ExitSet.completed(TermValue(3))
+
+
+def test_a_call_inside_another_evaluation_is_refused_by_name() -> None:
+    sugar, generator, lam = _escaping()
+    first = _evaluation(sugar, generator, TermValue(3))
+    made = sugar._member_ctx(generator, TermValue(1), first)
+    callable_ = lam.desugar(made).completed_value()
+    # The comprehension runs again (a loop, a second call of ``f``) and the
+    # first evaluation's lambda is called inside it: neither that
+    # evaluation's current member nor this one's.
+    second = sugar._member_ctx(
+        generator, TermValue(5), _evaluation(sugar, generator, TermValue(6))
+    )
+    with pytest.raises(SugarNotWritten, match="not made in"):
+        lam.body.desugar(_called(callable_, second))
+
+
+def test_an_unplaced_read_of_the_cell_is_refused_by_name() -> None:
+    sugar, generator, lam = _escaping()
+    # No evaluation runs and the lambda carries no final member.
+    with pytest.raises(SugarNotWritten, match="no final member"):
+        lam.body.desugar(ReduceContext.root(owner="unplaced"))
+    # An evaluation runs, and the body is read with no lambda value around
+    # it: no evaluation it was made in.
+    inside = sugar._member_ctx(
+        generator, TermValue(1), _evaluation(sugar, generator, TermValue(3))
+    )
+    with pytest.raises(SugarNotWritten, match="carries none"):
+        lam.body.desugar(inside)
+
+
+def test_a_condition_walrus_lambda_is_placed_by_its_call() -> None:
+    sugar, generator, lam = _escaping(ESCAPES_FROM_A_CONDITION)
+    evaluation = _evaluation(sugar, generator, TermValue(3))
+    made = sugar._member_ctx(generator, TermValue(1), evaluation)
+    callable_ = lam.desugar(made).completed_value()
+    later = sugar._member_ctx(generator, TermValue(2), evaluation)
+    read = lam.body.desugar(_called(callable_, later))
+    assert read == ExitSet.completed(TermValue(2))
+    after = ReduceContext.root(owner="after-the-comprehension")
+    read = lam.body.desugar(_called(callable_, after))
+    assert read == ExitSet.completed(TermValue(3))

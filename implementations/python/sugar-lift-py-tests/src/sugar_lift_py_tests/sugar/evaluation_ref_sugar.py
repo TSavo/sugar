@@ -52,6 +52,16 @@ member of a symbolic iterable), and the reference reads it as it reads any
 member coordinate. A comprehension that dissolves at substitution carries the
 last member's projection itself.
 
+A lambda a walrus lets escape the comprehension (``[(g := lambda: x) for x in
+xs if g()]; g()``) may be called while the comprehension runs or after it.
+Its body's read names both coordinates (``current``: the member's; the
+evaluation: its final one), and the cell is read at each call: inside the
+evaluation of the comprehension that made the lambda -- the evaluation the
+lambda carries is the one running (``ComprehensionSugar._evaluation_ctx``) --
+the member current at the call; with no evaluation of the comprehension
+running, the final member the lambda carries; refused by name otherwise.
+Never the member current where the lambda was made.
+
 ``with pytest.raises(...) as e`` and ``except ... as e`` bind no name at
 reduce: substitution rewrites a read of ``e`` to the statement's observation
 (``ObservationRef``) or the handler's effect (``EffectRef``), one slot per
@@ -176,6 +186,9 @@ class EvaluationRefSugar(ConstructedTermSugar):
     # the lambda reads.  Read here, where the argument is evaluated, and
     # carried on the lambda value (``carry_captured_values``).
     captured: tuple = dataclass_field(default=(), compare=False)
+    # A comprehension cell read at the call by a lambda a walrus lets escape:
+    # the member coordinate; ``evaluation`` is its final coordinate.
+    current: str | None = None
 
     @classmethod
     def witnesses(cls):
@@ -321,6 +334,8 @@ class EvaluationRefSugar(ConstructedTermSugar):
         binding before the comprehension read again."""
         from sugar_lift_py_tests.outcome import ExitSet
 
+        if self.current is not None:
+            return self._cell_at_the_call(temporal)
         bound = (
             temporal.value_if_bound(self.evaluation) if temporal is not None else None
         )
@@ -366,3 +381,65 @@ class EvaluationRefSugar(ConstructedTermSugar):
                 ),
             )
         return ExitSet.completed(bound)
+
+    def _cell_at_the_call(self, temporal) -> ExitSet:
+        """The comprehension cell a lambda a walrus lets escape reads, as it
+        is at this call.  The call is placed by the evaluation of the
+        comprehension running at it (``comprehension_evaluation_coordinate``)
+        and the one the lambda carries (``lambda_evaluation_coordinate``):
+
+        - the same evaluation: the call is inside the comprehension that made
+          the lambda, and reads the member current at the call (``current``);
+        - none running: the call is after the comprehension, and reads the
+          final member the lambda carries (``evaluation``);
+        - any other: the call is placed inside neither, and is refused by
+          name (``SugarNotWritten``), as is a placed read whose member is not
+          bound.  The member current where the lambda was made is never
+          read."""
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_source_tree.nodes import (
+            comprehension_evaluation_coordinate,
+            lambda_evaluation_coordinate,
+        )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        running = None
+        if temporal is not None:
+            running = temporal.value_if_bound(
+                comprehension_evaluation_coordinate(self.current)
+            )
+        if running is None:
+            final = None
+            if temporal is not None:
+                final = temporal.value_if_bound(self.evaluation)
+            if final is not None:
+                return ExitSet.completed(final)
+            placement = "after the comprehension, with no final member carried"
+        else:
+            made = temporal.value_if_bound(lambda_evaluation_coordinate(self.current))
+            if made is running:
+                current = temporal.value_if_bound(self.current)
+                if current is not None:
+                    return ExitSet.completed(current)
+                placement = "inside the evaluation that made it, with no member"
+            else:
+                placement = (
+                    "inside an evaluation it was not made in, or by a lambda "
+                    "that carries none"
+                )
+        raise SugarNotWritten(
+            owner="EvaluationRefSugar",
+            blame=self.site,
+            observed=(
+                f"call of a lambda that reads comprehension cell `{self.name}` "
+                f"(member {self.current}) placed {placement}"
+            ),
+            requested=(
+                "the call inside the evaluation that made the lambda (the "
+                "current member) or after the comprehension (the final member)"
+            ),
+            fix=(
+                "place the call inside or after the comprehension the lambda "
+                "escapes; never read the member current where it was made"
+            ),
+        )

@@ -361,6 +361,12 @@ _CLOSURE_CELLS = object()
 # it is made (``NamedExpr.substitute`` marks it ``deferred``).
 _DEFERRED_WALRUS = object()
 
+# The source positions of the lambdas in the value of each walrus enclosing a
+# substitution (``NamedExpr.substitute``): such a lambda escapes every
+# comprehension around the walrus through the walrus's name, and reads each
+# comprehension cell at its call (``Lambda._cells_read_at_the_call``).
+_WALRUS_ESCAPES = object()
+
 
 class TargetPatternConstructionGapV1(TypeError):
     """A target-pattern coordinate does not belong to its eager source owner."""
@@ -3965,6 +3971,7 @@ def _evaluation_ref(
     place: bool = False,
     of: "Optional[Node]" = None,
     recurrence: bool = False,
+    current: "Optional[str]" = None,
 ) -> "Node":
     """``EvaluationRef(evaluation, name)`` at ``span``: a read of ``name``
     rewritten to a reference to the evaluation bound under ``evaluation``
@@ -3989,6 +3996,14 @@ def _evaluation_ref(
     member reference to a comprehension's running value of a name a walrus
     in it writes (``ListComp._walrus_recurrence``): where the comprehension
     bound no running value, the read is refused by name.
+
+    ``current`` (with ``cell``) is the member coordinate of a comprehension
+    cell read by a lambda a walrus lets escape the comprehension
+    (``Lambda._cells_read_at_the_call``): ``evaluation`` is that member's
+    final coordinate, and the read is decided at each call
+    (``EvaluationRefSugar``) -- the member current at the call while the
+    evaluation that made the lambda runs, the final member once no
+    evaluation of the comprehension runs, refused by name otherwise.
 
     ``place`` marks a read of what a store put in a place: ``o.x`` after
     ``o.x = v`` (``_ReceiverFieldProjection``, ``ReceiverFieldStoreState``),
@@ -4025,6 +4040,8 @@ def _evaluation_ref(
         slots = (*slots, ("of", Leaf(of)))
     if recurrence:
         slots = (*slots, ("recurrence", Leaf(True)))
+    if current is not None:
+        slots = (*slots, ("current", Leaf(current)))
     return materialize(
         owner.unit,
         ShadowNode("EvaluationRef", span, slots),
@@ -4436,6 +4453,50 @@ def final_member_coordinate(member_coordinate: str) -> str:
     )
 
 
+def comprehension_evaluation_coordinate(member_coordinate: str) -> str:
+    """The coordinate an eager comprehension binds its running evaluation
+    under, for ``member_coordinate``: one value per evaluation, bound before
+    any member and on the context every member reduces in
+    (``ComprehensionSugar._evaluation_ctx``).  Bound, a call runs inside an
+    evaluation of the comprehension; unbound, no evaluation of it runs."""
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    return cid_of_json(
+        {
+            "kind": "comprehension-evaluation",
+            "schemaVersion": "1",
+            "memberCoordinate": member_coordinate,
+        }
+    )
+
+
+def lambda_evaluation_coordinate(member_coordinate: str) -> str:
+    """The coordinate a lambda's closure carries, under it, the evaluation
+    of the comprehension it was made in (the value of
+    ``comprehension_evaluation_coordinate`` where the lambda was made,
+    ``LambdaSugar.evaluation_coordinates``).  A call binds it with the rest
+    of the closure; the caller's own evaluation stays under the
+    comprehension's coordinate, so the two are compared at the call."""
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    return cid_of_json(
+        {
+            "kind": "lambda-made-in-comprehension-evaluation",
+            "schemaVersion": "1",
+            "memberCoordinate": member_coordinate,
+        }
+    )
+
+
+def _walrus_lambdas(value) -> frozenset:
+    """The source positions of the lambdas in a walrus's value
+    (``_WALRUS_ESCAPES``): each may be bound to the walrus's name, or held
+    in what is."""
+    return frozenset(
+        _source_position(node) for node in value.walk() if isinstance(node, Lambda)
+    )
+
+
 def _source_position(node: "Node") -> tuple:
     """The source occurrence a node is recognised by across substitution (a
     rewrite borrows its origin's span): a stored lambda, a module statement
@@ -4443,35 +4504,29 @@ def _source_position(node: "Node") -> tuple:
     return (node.kind, node.span.start, node.span.end)
 
 
-def _stored_closures(roots, owner=None) -> frozenset:
-    """The lambdas an eager comprehension (``owner``) stores unevaluated in
-    what it produces: an element (a dict comprehension's key or value) that
-    is a lambda, a lambda inside a list, tuple, set or dict display there, a
+def _stored_closures(roots) -> frozenset:
+    """The lambdas an eager comprehension stores unevaluated in what it
+    produces: an element (a dict comprehension's key or value) that is a
+    lambda, a lambda inside a list, tuple, set or dict display there, or a
     lambda an eager comprehension there stores in its own result
     (``[[lambda: x for _ in ys] for x in xs]``): that result is stored in
-    this one, so the lambda escapes both -- or a lambda a walrus there binds
-    (``[(f := lambda: x) for x in xs]; f()``): it escapes through the
-    walrus's name as well as the result.
+    this one, so the lambda escapes both.
 
     Nothing calls such a lambda before the comprehension is done, so it reads
     the comprehension's final member.  A lambda anywhere else (called in
     place, handed to a call, read by a condition, produced by a lazy
     generator expression) may be called while the comprehension runs, when
-    the cell holds the current member, and is not one of these; nor is a
-    lambda a walrus binds to a name the comprehension also reads (or with
-    no comprehension to look in), which may be called through that name
-    while the comprehension runs."""
+    the cell holds the current member, and is not one of these.  Nor is a
+    lambda in a walrus's value (``[(g := lambda: x) for x in xs]``): it
+    escapes through the walrus's name and may be called while the
+    comprehension runs or after it, so it reads the cell at each call
+    (``Lambda._cells_read_at_the_call``)."""
     found = set()
     pending = list(roots)
     while pending:
         node = pending.pop()
         if isinstance(node, Lambda):
             found.add(_source_position(node))
-        elif isinstance(node, NamedExpr):
-            if isinstance(node.target, Name) and not _comprehension_reads(
-                owner, node.target
-            ):
-                pending.append(node.value)
         elif isinstance(node, (List, Tuple_, Set)):
             pending.extend(node.elts)
         elif isinstance(node, Dict):
@@ -4486,21 +4541,7 @@ def _stored_closures(roots, owner=None) -> frozenset:
     return frozenset(found)
 
 
-def _comprehension_reads(owner, target) -> bool:
-    """Whether comprehension ``owner`` reads the name walrus ``target``
-    binds anywhere but at ``target`` itself (its element, key, value,
-    conditions or iterables); True with no comprehension to look in."""
-    if owner is None:
-        return True
-    return any(
-        isinstance(node, Name)
-        and node.id == target.id
-        and (node.span.start, node.span.end) != (target.span.start, target.span.end)
-        for node in owner.walk()
-    )
-
-
-def _closure_cell_scope(scope, roots, cells, owner=None) -> "BindingMap":
+def _closure_cell_scope(scope, roots, cells) -> "BindingMap":
     """``scope`` for substituting ``roots`` (an eager comprehension's element,
     or a dict comprehension's key and value) with ``cells``: each name the
     comprehension's targets bind, to what the comprehension's cell for it
@@ -4517,7 +4558,7 @@ def _closure_cell_scope(scope, roots, cells, owner=None) -> "BindingMap":
     is stored or no name has a cell."""
     if not cells:
         return scope
-    stored = _stored_closures(roots, owner)
+    stored = _stored_closures(roots)
     if not stored:
         return scope
     return {
@@ -4547,10 +4588,10 @@ def _member_closure_scope(owner, inner, roots) -> "BindingMap":
     dissolve substitutes ``roots`` in) with the comprehension's cells: each
     target name, to a member reference to its final member coordinate
     (``_final_member_cells``)."""
-    if not _stored_closures(roots, owner):
+    if not _stored_closures(roots):
         return inner
     return _closure_cell_scope(
-        inner, roots, _final_member_cells(owner, owner.generators, inner), owner
+        inner, roots, _final_member_cells(owner, owner.generators, inner)
     )
 
 
@@ -15986,7 +16027,15 @@ class NamedExpr(Expression):
         mints a statement's, with the exit path it is keyed under):
         ``NamedExpressionValue`` binds the assigned value under it, and every
         later read substitution rewrites is an ``EvaluationRef`` to it
-        (temporal choice 1, #7661)."""
+        (temporal choice 1, #7661).
+
+        A lambda in the value of a Name-target walrus escapes every
+        comprehension around the walrus through its name, so the value is
+        substituted with that lambda marked (``_WALRUS_ESCAPES``): it reads
+        each comprehension cell at its call
+        (``Lambda._cells_read_at_the_call``).  Not in a generator
+        expression's element or conditions (``_DEFERRED_WALRUS``): no
+        evaluation of it is placed there."""
         from .backend import Leaf, materialize
         from .shadow import (
             OccurrenceShadowNode,
@@ -15995,7 +16044,13 @@ class NamedExpr(Expression):
             rewrite,
         )
 
-        new_value, d = self._substitute_field(self.value, scope)
+        value_scope = scope
+        if isinstance(self.target, Name) and not scope.get(_DEFERRED_WALRUS):
+            escaping = _walrus_lambdas(self.value)
+            if escaping:
+                escapes = scope.get(_WALRUS_ESCAPES, frozenset()) | escaping
+                value_scope = {**scope, _WALRUS_ESCAPES: escapes}
+        new_value, d = self._substitute_field(self.value, value_scope)
         rewritten = self if not d else rewrite(self, value=new_value)
         if not isinstance(rewritten.target, Name):
             return rewritten
@@ -16332,6 +16387,15 @@ class Lambda(Expression):
         formals' defaults are evaluated when the lambda is built and read the
         current member.
 
+        A lambda in a walrus's value (``_WALRUS_ESCAPES``: ``[(g := lambda:
+        x) for x in xs if g()]; g()``) escapes through the walrus's name and
+        may be called while the comprehension runs or after it.  Its body
+        reads each comprehension cell at the call
+        (``_cells_read_at_the_call``): the member current at a call inside
+        the evaluation that made it, the final member at a call after the
+        comprehension, refused by name where the call is placed in neither.
+        Never the member current where the lambda was made.
+
         Every other enclosing function's local the body reads is read the
         same way a nested ``def`` reads one: through a captured coordinate
         (``_captured_bindings``, carried as the ``captured_bindings`` leaf),
@@ -16366,13 +16430,18 @@ class Lambda(Expression):
         )
         position = _source_position(self)
         held: set = set()
-        for stored, cells in layers or ():
-            if position in stored:
-                cell_reads = {
-                    name: cell for name, cell in cells.items() if name not in bound
-                }
-                held.update(cell_reads)
-                bs = {**bs, **cell_reads}
+        if position in scope.get(_WALRUS_ESCAPES, ()):
+            cell_reads = self._cells_read_at_the_call(bs, bound)
+            held.update(cell_reads)
+            bs = {**bs, **cell_reads}
+        else:
+            for stored, cells in layers or ():
+                if position in stored:
+                    cell_reads = {
+                        name: cell for name, cell in cells.items() if name not in bound
+                    }
+                    held.update(cell_reads)
+                    bs = {**bs, **cell_reads}
         prior = tuple(getattr(self, "captured_bindings", None) or ())
         fresh = tuple(
             (name, self._captured_coordinate(name))
@@ -16410,6 +16479,42 @@ class Lambda(Expression):
             params=new_params,
             body=new_body,
         )
+
+    def _cells_read_at_the_call(self, scope, bound) -> dict:
+        """Each name this body reads (not a formal in ``bound``) that ``scope``
+        binds to a comprehension member reference
+        (``ListComp._target_references``), to a reference to that
+        comprehension's cell read at the call: marked ``cell``, its
+        ``evaluation`` the member's final
+        coordinate (``final_member_coordinate``), its ``current`` the member
+        coordinate.  The lambda carries the final member and the evaluation
+        it was made in (``_closure_coordinates``, ``_evaluation_coordinates``);
+        each call reads the cell as it is then (``EvaluationRefSugar``).
+
+        Every comprehension whose member ``scope`` holds encloses the walrus
+        the lambda escapes through, so every one of them is a cell the lambda
+        outlives.  A running value of a walrus name (``recurrence``) and a
+        cell already read at the call are left as they are."""
+        names = {node.id for node in self.body.walk() if isinstance(node, Name)}
+        cells = {}
+        for name in sorted(names - set(bound)):
+            reference = unwrap_binding_state(scope.get(name))
+            if (
+                isinstance(reference, EvaluationRef)
+                and getattr(reference, "member", False) is True
+                and getattr(reference, "recurrence", False) is not True
+                and getattr(reference, "cell", False) is not True
+            ):
+                cells[name] = _evaluation_ref(
+                    self,
+                    reference.span,
+                    final_member_coordinate(reference.evaluation),
+                    reference.name,
+                    member=True,
+                    cell=True,
+                    current=reference.evaluation,
+                )
+        return cells
 
     def _captured_coordinate(self, name: str):
         """The coordinate this lambda's body reads enclosing local ``name``
@@ -16672,14 +16777,15 @@ class Lambda(Expression):
                 frame.captured_names,
                 frame.captured_coordinates,
             ),
+            evaluation_coordinates=self._evaluation_coordinates(),
         )
 
     def _closure_coordinates(self) -> tuple:
         """The final-member coordinates this lambda's body reads through an
         enclosing comprehension's cell (``cell`` references,
-        ``_final_member_cells``), in pre-order.  ``LambdaSugar`` carries
-        their bindings in the lambda value, so its body reduces after the
-        comprehension is done."""
+        ``_final_member_cells``, ``_cells_read_at_the_call``), in pre-order.
+        ``LambdaSugar`` carries their bindings in the lambda value, so its
+        body reduces after the comprehension is done."""
         found = []
         for node in self.body.walk():
             if (
@@ -16688,6 +16794,31 @@ class Lambda(Expression):
                 and node.evaluation not in found
             ):
                 found.append(node.evaluation)
+        return tuple(found)
+
+    def _evaluation_coordinates(self) -> tuple:
+        """``((lambda's coordinate, comprehension's coordinate), ...)`` for
+        each comprehension cell this body reads at the call (``current``
+        references, ``_cells_read_at_the_call``), in pre-order:
+        ``LambdaSugar`` carries, under the first, the evaluation of the
+        comprehension it was made in, read under the second
+        (``lambda_evaluation_coordinate``,
+        ``comprehension_evaluation_coordinate``)."""
+        found = []
+        for node in self.body.walk():
+            current = (
+                getattr(node, "current", None)
+                if isinstance(node, EvaluationRef)
+                else None
+            )
+            if not isinstance(current, str):
+                continue
+            pair = (
+                lambda_evaluation_coordinate(current),
+                comprehension_evaluation_coordinate(current),
+            )
+            if pair not in found:
+                found.append(pair)
         return tuple(found)
 
 
@@ -20370,6 +20501,7 @@ class Name(Expression):
                     place=getattr(bound, "place", False) is True,
                     of=getattr(bound, "of", None),
                     recurrence=getattr(bound, "recurrence", False) is True,
+                    current=getattr(bound, "current", None),
                 )
             return bound
         span = self.line_col_span()
@@ -20529,7 +20661,10 @@ class EvaluationRef(Expression):
     ``member``: it reads that coordinate only.  In the body of a lambda the
     comprehension stores, the read is a member reference to the final
     member's coordinate (``final_member_coordinate``, ``_closure_cell_scope``),
-    marked ``cell``: the lambda carries that binding in its closure.
+    marked ``cell``: the lambda carries that binding in its closure.  In the
+    body of a lambda a walrus lets escape, a ``cell`` reference also names the
+    member coordinate (``current``): the cell is read at each call
+    (``Lambda._cells_read_at_the_call``).
     A walrus's reference is marked
     ``walrus``: it resolves through the key only, and is refused where the
     key was never bound (undecided by name where it is also ``deferred``: a
@@ -20581,6 +20716,7 @@ class EvaluationRef(Expression):
             recurrence=getattr(self, "recurrence", False) is True,
             place=getattr(self, "place", False) is True,
             captured=self._carried_captures(),
+            current=getattr(self, "current", None),
         )
 
     def _carried_captures(self) -> tuple:
