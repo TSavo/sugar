@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import builtins
 from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeAlias
@@ -82,6 +81,10 @@ def _import_bound_unanswered_call(sugar):
 
 _OFF_POPULATION = "call-target-off-population:"
 
+# The target-symbol prefix of a binding to the builtin namespace
+# (``SourceUnit.builtin_reference_at``).
+_BUILTINS_PREFIX = "python:builtins."
+
 
 def _off_population_unanswered_call(sugar):
     """The may-raise testimony for a call cited off the enrolled population.
@@ -106,7 +109,11 @@ def _lexically_unknown_callee(sugar) -> bool:
 
 
 def _lexically_unknown_head(site, head: str) -> bool:
-    """``head`` is bound nowhere in ``site``'s module, or only by an import."""
+    """``head`` is bound nowhere in ``site``'s module, or only by an import.
+
+    A head bound nowhere is known only when its read at ``site`` falls through
+    to the builtin namespace (``SourceUnit.builtin_reference_at``, the read's
+    binding); the spelling is never asked whether some builtin has it."""
     unit = getattr(site, "unit", None)
     table = getattr(unit, "module_symtable", None)
     if table is None:
@@ -128,7 +135,7 @@ def _lexically_unknown_head(site, head: str) -> bool:
 
     if visit(table):
         return False
-    return imported or not hasattr(builtins, head)
+    return imported or unit.builtin_reference_at(head, site.line_col_span) is None
 
 
 def _resolved_manager_construction(sugar) -> bool:
@@ -504,74 +511,72 @@ class CallSiteSugar(ConstructedTermSugar):
             )
         return self._collect(self.args, (), ctx)
 
-    def _applied_builtin_exception_class(self, ctx, source_call_frame):
-        """The builtin exception class this call applies, by its bound value.
+    def _builtin_reference(self) -> str | None:
+        """``python:builtins.<name>``: the builtin this call's callee is
+        bound to, else None.
 
-        Read from the callee's temporal binding, never its spelling: a user
-        class or rebinding named ``ValueError`` is not a builtin exception.
+        Read from the callee's binding at its own coordinate
+        (``SourceUnit.name_reference_at``: the one import reference table,
+        then the builtin namespace nothing rebinds), never its spelling: a
+        user class, parameter or rebinding named ``ValueError`` or ``len``
+        reaches no builtin, and ``from builtins import len as L`` does.
         """
-        if ctx is None or source_call_frame is not None:
-            return None
-        from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
-
-        temporal = getattr(ctx, "temporal", None)
-        if temporal is None:
-            return None
-        receiver = temporal.value_if_bound(self.target_name)
-        if not isinstance(receiver, BuiltinExceptionClassValue):
-            return None
-        # The reduce scope's builtin seat is necessary, not sufficient: the
-        # unit's lexical exception-type authority must agree that the exact
-        # callee occurrence reaches the builtin class, so a same-spelled
-        # module or enclosing class never borrows builtin semantics.
         from sugar_source_tree.nodes import Name
 
-        node = getattr(self.site, "node", None)
-        callee = getattr(node, "func", None)
+        callee = getattr(getattr(self.site, "node", None), "func", None)
         unit = getattr(self.site, "unit", None)
-        if (
-            not isinstance(callee, Name)
-            or callee.id != self.target_name
-            or getattr(unit, "typed_module", None) is None
-        ):
-            # No typed Module bound: no lexical authority, so no decision.
+        if not isinstance(callee, Name) or unit is None:
             return None
-        lexical = unit.exception_type_identity(callee)
-        if lexical is None or lexical != receiver.exception_type_identity():
+        target = unit.name_reference_at(callee.id, callee.line_col_span())
+        if target is None or not target.startswith(_BUILTINS_PREFIX):
+            return None
+        return target
+
+    def _applied_builtin_exception_class(self, source_call_frame):
+        """The builtin exception class this call applies, by its binding.
+
+        The builtin floor's class under the name the callee's binding
+        (``_builtin_reference``) names, never the call's spelling: a user
+        class or rebinding named ``ValueError`` is not a builtin exception.
+        """
+        if source_call_frame is not None:
+            return None
+        target = self._builtin_reference()
+        if target is None:
+            return None
+        from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            builtin_name_temporal,
+        )
+
+        receiver = builtin_name_temporal().value_if_bound(
+            target[len(_BUILTINS_PREFIX) :]
+        )
+        if not isinstance(receiver, BuiltinExceptionClassValue):
             return None
         return receiver
 
     def _applied_builtin_type_of(
-        self, ctx, source_call_frame, positional, kw_values, term
+        self, source_call_frame, positional, kw_values, term
     ):
         """The class coordinate ``type(obj)`` returns, by the callee's binding.
 
         One positional actual applied through the language-owned ``type``
         binding returns ``obj``'s class: a type object on every evaluation,
         never a non-class and never a raise.  The coordinate is the call term
-        itself (which class is undecided).  Read from the temporal binding the
-        builtin dispatch above reads (``isinstance``/``issubclass``), never
-        the spelling: a rebound, source-defined or contracted ``type`` and the
-        three-argument class constructor get no coordinate.
+        itself (which class is undecided).  Read from the callee's binding
+        (``LanguageCallee.BUILTIN_TYPE``), never the spelling: a rebound,
+        source-defined or contracted ``type`` and the three-argument class
+        constructor get no coordinate.
         """
+        from sugar_source_tree.nodes import LanguageCallee
+
         if (
-            ctx is None
+            self.language_callee is not LanguageCallee.BUILTIN_TYPE
             or source_call_frame is not None
             or len(positional) != 1
             or kw_values
         ):
-            return None
-        temporal = getattr(ctx, "temporal", None)
-        if temporal is None:
-            return None
-        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
-            builtin_name_temporal,
-        )
-
-        builtin_type = builtin_name_temporal().value_if_bound("type")
-        if builtin_type is None or temporal.value_if_bound(
-            self.target_name
-        ) is not builtin_type:
             return None
         return term
 
@@ -696,13 +701,16 @@ class CallSiteSugar(ConstructedTermSugar):
             ctor("py.closure", [str_const(name), value.to_term(owner=owner)])
             for name, _cid, value in captured_values
         ]
-        spelled = self.spelled_target
+        # The head is classified by the callee's binding, never its spelling:
+        # a ``len`` the module rebinds is a coordinate, not the builtin.
         term = ctor(
-            call_symbol(spelled),
+            call_symbol(self.spelled_target),
             [value.to_term(owner=owner) for value in positional]
             + kwarg_terms
             + closure_terms,
-            symbol_kind=("builtin" if hasattr(builtins, spelled) else "coordinate"),
+            symbol_kind=(
+                "builtin" if self._builtin_reference() is not None else "coordinate"
+            ),
         )
         source_call_frame = self.source_call_frame
         if self.source_call_frame_table is not None:
@@ -754,10 +762,10 @@ class CallSiteSugar(ConstructedTermSugar):
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
             builtin_exception_class=self._applied_builtin_exception_class(
-                ctx, source_call_frame
+                source_call_frame
             ),
             python_type_coordinate=self._applied_builtin_type_of(
-                ctx, source_call_frame, positional, kw_values, term
+                source_call_frame, positional, kw_values, term
             ),
             language_callee=self.language_callee,
         )
@@ -831,9 +839,8 @@ class CallSiteSugar(ConstructedTermSugar):
                 )
 
                 unprojected = builtin_dunder_call(
-                    self.target_name,
+                    self.language_callee,
                     callsite.arg_values,
-                    ctx,
                     getattr(callsite, "keyword_names", ()) or (),
                 )
                 if unprojected is None:
@@ -842,9 +849,8 @@ class CallSiteSugar(ConstructedTermSugar):
                     )
 
                     constructed = builtin_list_construct(
-                        self.target_name,
+                        self.language_callee,
                         callsite.arg_values,
-                        ctx,
                         getattr(callsite, "keyword_names", ()) or (),
                     )
                     if constructed is not None:

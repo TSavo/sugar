@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 
 def _occurrence_result(callsite, site):
@@ -417,42 +418,56 @@ def _comparable(members) -> bool:
     )
 
 
-def builtin_call_total(target_name, arg_values, keyword_names=()) -> bool:
-    """Whether CPython documents ``target_name(*arg_values)`` over decided
-    builtin operands as never raising.  Anything not listed may raise."""
+def builtin_call_total(language_callee, arg_values, keyword_names=()) -> bool:
+    """Whether CPython documents the builtin ``language_callee`` (the
+    ``LanguageCallee`` the call's callee is bound to, never its spelling)
+    applied to ``arg_values`` over decided builtin operands as never raising.
+    Anything not listed may raise."""
+    from sugar_source_tree.nodes import LanguageCallee as L
+
     from .floor.dict_value import DictValue
 
     if keyword_names:
         return False
     args = tuple(arg_values)
     n = len(args)
-    if target_name == "print":
+    if language_callee is L.BUILTIN_PRINT:
         return True
-    if target_name in ("str", "bool"):
+    if language_callee in (L.BUILTIN_STR, L.BUILTIN_BOOL):
         return n <= 1
-    if target_name == "repr":
+    if language_callee is L.BUILTIN_REPR:
         return n == 1
-    if target_name == "len":
+    if language_callee is L.BUILTIN_LEN:
         return n == 1 and _iterable(args[0])
-    if target_name in ("list", "tuple"):
+    if language_callee in (L.BUILTIN_LIST, L.BUILTIN_TUPLE):
         return n == 0 or (n == 1 and _iterable(args[0]))
-    if target_name in ("iter", "enumerate", "all", "any"):
+    if language_callee in (
+        L.BUILTIN_ITER,
+        L.BUILTIN_ENUMERATE,
+        L.BUILTIN_ALL,
+        L.BUILTIN_ANY,
+    ):
         return n == 1 and _iterable(args[0])
-    if target_name == "zip":
+    if language_callee is L.BUILTIN_ZIP:
         return all(_iterable(value) for value in args)
-    if target_name in ("set", "frozenset"):
+    if language_callee in (L.BUILTIN_SET, L.BUILTIN_FROZENSET):
         return n == 0 or (n == 1 and _hashable_members(args[0]))
-    if target_name == "dict":
+    if language_callee is L.BUILTIN_DICT:
         return n == 0 or (n == 1 and type(args[0]) is DictValue)
-    if target_name == "hash":
+    if language_callee is L.BUILTIN_HASH:
         return n == 1 and _scalar(args[0])
-    if target_name == "abs":
+    if language_callee is L.BUILTIN_ABS:
         return n == 1 and _ground_number(args[0])
-    if target_name == "int":
+    if language_callee is L.BUILTIN_INT:
         return n == 0 or (n == 1 and _ground_number(args[0]))
-    if target_name == "float":
+    if language_callee is L.BUILTIN_FLOAT:
         return n == 0 or (n == 1 and _ground_number(args[0]))
-    if target_name in ("sum", "sorted", "min", "max"):
+    if language_callee in (
+        L.BUILTIN_SUM,
+        L.BUILTIN_SORTED,
+        L.BUILTIN_MIN,
+        L.BUILTIN_MAX,
+    ):
         if n == 1:
             members = _finite_members(args[0])
             if members is None:
@@ -461,62 +476,68 @@ def builtin_call_total(target_name, arg_values, keyword_names=()) -> bool:
             members = args
         if not _comparable(members):
             return False
-        if target_name == "sum":
+        if language_callee is L.BUILTIN_SUM:
             return n == 1 and all(_ground_number(v) for v in members)
-        if target_name == "sorted":
+        if language_callee is L.BUILTIN_SORTED:
             return n == 1
         return n >= 1 and len(members) > 0
-    if target_name == "round":
+    if language_callee is L.BUILTIN_ROUND:
         return n == 1 and _ground_number(args[0])
-    if target_name == "range":
+    if language_callee is L.BUILTIN_RANGE:
         if not (1 <= n <= 3) or not all(_ground_number(v, (int,)) for v in args):
             return False
         return n < 3 or args[2].value != 0
     return False
 
 
-# Cited pure builtins that invoke a dunder of (or iterate) their operands.
-DUNDER_BUILTINS = frozenset(
-    {
-        "abs",
-        "all",
-        "any",
-        "bool",
-        "chr",
-        "dict",
-        "divmod",
-        "enumerate",
-        "float",
-        "format",
-        "frozenset",
-        "hash",
-        "int",
-        "iter",
-        "len",
-        "list",
-        "max",
-        "min",
-        "ord",
-        "print",
-        "range",
-        "repr",
-        "reversed",
-        "round",
-        "set",
-        "sorted",
-        "str",
-        "sum",
-        "tuple",
-        "zip",
-    }
-)
+@lru_cache(maxsize=1)
+def _dunder_builtins():
+    """``(dunder, shallow)``: the cited pure builtins that invoke a dunder of
+    (or iterate) their operands, and of those the ones that invoke only the
+    operand's OWN iteration/length (``list.__iter__``, ``len``: the items
+    are handed on, never asked anything).  Each is its ``LanguageCallee``
+    member: a call reaches one only through its callee's binding."""
+    from sugar_source_tree.nodes import LanguageCallee as L
 
-
-# Of those, the builtins that invoke only the operand's OWN iteration/length
-# (``list.__iter__``, ``len``): the items are handed on, never asked anything.
-SHALLOW_DUNDER_BUILTINS = frozenset(
-    {"enumerate", "iter", "len", "list", "reversed", "tuple", "zip"}
-)
+    shallow = frozenset(
+        {
+            L.BUILTIN_ENUMERATE,
+            L.BUILTIN_ITER,
+            L.BUILTIN_LEN,
+            L.BUILTIN_LIST,
+            L.BUILTIN_REVERSED,
+            L.BUILTIN_TUPLE,
+            L.BUILTIN_ZIP,
+        }
+    )
+    dunder = shallow | frozenset(
+        {
+            L.BUILTIN_ABS,
+            L.BUILTIN_ALL,
+            L.BUILTIN_ANY,
+            L.BUILTIN_BOOL,
+            L.BUILTIN_CHR,
+            L.BUILTIN_DICT,
+            L.BUILTIN_DIVMOD,
+            L.BUILTIN_FLOAT,
+            L.BUILTIN_FORMAT,
+            L.BUILTIN_FROZENSET,
+            L.BUILTIN_HASH,
+            L.BUILTIN_INT,
+            L.BUILTIN_MAX,
+            L.BUILTIN_MIN,
+            L.BUILTIN_ORD,
+            L.BUILTIN_PRINT,
+            L.BUILTIN_RANGE,
+            L.BUILTIN_REPR,
+            L.BUILTIN_ROUND,
+            L.BUILTIN_SET,
+            L.BUILTIN_SORTED,
+            L.BUILTIN_STR,
+            L.BUILTIN_SUM,
+        }
+    )
+    return dunder, shallow
 
 
 def _builtin_container(value) -> bool:
@@ -571,23 +592,12 @@ def builtin_typed_value(value, depth=0, *, shallow=False) -> bool:
     return False
 
 
-def _is_the_builtin(target_name, ctx) -> bool:
-    """Whether ``target_name`` at this call is bound to Python's own builtin:
-    its temporal binding is the very one the builtin floor seats (a lexical
-    rebinding, ``tuple = 7``, replaces it)."""
-    temporal = getattr(ctx, "temporal", None)
-    if temporal is None:
-        return False
-    from .temporal.builtin_name_bindings import builtin_name_temporal
-
-    seated = builtin_name_temporal().value_if_bound(target_name)
-    return seated is not None and temporal.value_if_bound(target_name) is seated
-
-
-def builtin_list_construct(target_name, arg_values, ctx=None, keyword_names=()):
+def builtin_list_construct(language_callee, arg_values, keyword_names=()):
     """``list(xs)`` over a sequence whose members and order are decided.
 
-    The builtin ``list`` (not a rebinding) with no keywords builds a new list
+    The callee bound to the builtin ``list`` (``LanguageCallee.BUILTIN_LIST``,
+    read from its binding: a rebinding, ``list = f``, reaches no member) with
+    no keywords builds a new list
     of its iterable's members in iteration order: ``list()`` is ``[]``, a
     tuple or list gives its elements, a dict gives its keys in insertion
     order, and a finite comprehension gives its projected members.  It never
@@ -595,13 +605,15 @@ def builtin_list_construct(target_name, arg_values, ctx=None, keyword_names=()):
     hashing, so it is not decided here, and neither is any other operand;
     those stay the ordinary bodiless call.
     """
+    from sugar_source_tree.nodes import LanguageCallee
+
     from .floor.comprehension_value import ComprehensionValue
     from .floor.dict_value import DictValue
     from .floor.list_value import ListValue
     from .floor.tuple_value import TupleValue
     from .outcome import ExitSet
 
-    if target_name != "list" or keyword_names or not _is_the_builtin("list", ctx):
+    if language_callee is not LanguageCallee.BUILTIN_LIST or keyword_names:
         return None
     if not arg_values:
         return ExitSet.completed(ListValue(()))
@@ -617,20 +629,25 @@ def builtin_list_construct(target_name, arg_values, ctx=None, keyword_names=()):
     return None
 
 
-def builtin_dunder_call(target_name, arg_values, ctx=None, keyword_names=()):
+def builtin_dunder_call(language_callee, arg_values, keyword_names=()):
     """The may-raise testimony for a dunder-invoking builtin, or None.
 
+    ``language_callee`` is the ``LanguageCallee`` the call's callee is bound
+    to (its binding, never its spelling: ``len = my_len`` reaches no member).
     An operand whose type is not a decided builtin may run user code
     (``BuiltinDunderCallV1``); decided operands may still be refused by value
-    (``BuiltinValueCallV1``) unless ``builtin_call_total`` lists the shape."""
-    if target_name not in DUNDER_BUILTINS or not _is_the_builtin(target_name, ctx):
+    (``BuiltinValueCallV1``) unless ``builtin_call_total`` lists the shape.
+    Each names the builtin its binding's target symbol names."""
+    dunder, shallow = _dunder_builtins()
+    if language_callee not in dunder:
         return None
-    if target_name in SHALLOW_DUNDER_BUILTINS:
+    builtin_name = language_callee.value.rsplit(".", 1)[1]
+    if language_callee in shallow:
         decided = all(_builtin_container(value) for value in arg_values)
     else:
         decided = all(builtin_typed_value(value) for value in arg_values)
     if not decided:
-        return BuiltinDunderCallV1(target_name)
-    if builtin_call_total(target_name, arg_values, keyword_names):
+        return BuiltinDunderCallV1(builtin_name)
+    if builtin_call_total(language_callee, arg_values, keyword_names):
         return None
-    return BuiltinValueCallV1(target_name)
+    return BuiltinValueCallV1(builtin_name)

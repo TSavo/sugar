@@ -211,6 +211,40 @@ class LanguageCallee(_enum.Enum):
     # the module attribute ``__builtins__`` the interpreter sets to it (or to
     # its ``__dict__``).
     BUILTIN_NAMESPACE = "python:builtins"
+    # ``type(obj)``: the builtin whose one-operand call returns ``obj``'s
+    # class.
+    BUILTIN_TYPE = "python:builtins.type"
+    # The pure builtins that invoke a dunder of (or iterate) their operands;
+    # what CPython documents each as doing over decided builtin operands is
+    # dispatched on these members (``source_call_resolution``).
+    BUILTIN_ABS = "python:builtins.abs"
+    BUILTIN_ALL = "python:builtins.all"
+    BUILTIN_ANY = "python:builtins.any"
+    BUILTIN_BOOL = "python:builtins.bool"
+    BUILTIN_CHR = "python:builtins.chr"
+    BUILTIN_DICT = "python:builtins.dict"
+    BUILTIN_DIVMOD = "python:builtins.divmod"
+    BUILTIN_ENUMERATE = "python:builtins.enumerate"
+    BUILTIN_FLOAT = "python:builtins.float"
+    BUILTIN_FORMAT = "python:builtins.format"
+    BUILTIN_FROZENSET = "python:builtins.frozenset"
+    BUILTIN_HASH = "python:builtins.hash"
+    BUILTIN_INT = "python:builtins.int"
+    BUILTIN_ITER = "python:builtins.iter"
+    BUILTIN_LEN = "python:builtins.len"
+    BUILTIN_MAX = "python:builtins.max"
+    BUILTIN_MIN = "python:builtins.min"
+    BUILTIN_ORD = "python:builtins.ord"
+    BUILTIN_PRINT = "python:builtins.print"
+    BUILTIN_REPR = "python:builtins.repr"
+    BUILTIN_REVERSED = "python:builtins.reversed"
+    BUILTIN_ROUND = "python:builtins.round"
+    BUILTIN_SET = "python:builtins.set"
+    BUILTIN_SORTED = "python:builtins.sorted"
+    BUILTIN_STR = "python:builtins.str"
+    BUILTIN_SUM = "python:builtins.sum"
+    BUILTIN_TUPLE = "python:builtins.tuple"
+    BUILTIN_ZIP = "python:builtins.zip"
     # ``typing.final(f)``: sets ``f.__final__`` if it can and returns ``f``.
     TYPING_FINAL = "python:typing.final"
     # ``re.search`` / ``re.match`` / ``re.fullmatch``: the C-floor matchers.
@@ -2014,13 +2048,15 @@ class SourceUnit:
             answers[name] = _module_reference_state(recorded[0].get(name))
         return answers
 
-    def language_callee_at(self, name: str, span) -> Optional["LanguageCallee"]:
-        """The language-fixed callee a bare name read at ``span`` is bound to.
+    def name_reference_at(self, name: str, span) -> Optional[str]:
+        """The target symbol a bare name read at ``span`` is bound to.
 
-        The import reference table first (``from typing import cast``), then
-        the builtin namespace (``getattr`` nothing rebinds), then the module
-        attributes the interpreter binds (``__builtins__`` nothing rebinds).
-        ``None`` for any other binding, whatever the name is spelled.
+        The import reference table first (``from typing import cast`` ->
+        ``python:typing.cast``), then the builtin namespace (``getattr``
+        nothing rebinds -> ``python:builtins.getattr``), then the module
+        attributes the interpreter binds (``__builtins__`` nothing rebinds ->
+        ``python:builtins``).  ``None`` for any other binding, whatever the
+        name is spelled.
         """
         target = self.import_reference_target(
             (span.start_line, span.start_col, span.end_line, span.end_col)
@@ -2029,7 +2065,12 @@ class SourceUnit:
             target = self.builtin_reference_at(name, span)
         if target is None:
             target = self.interpreter_reference_at(name, span)
-        return LanguageCallee.of(target)
+        return target
+
+    def language_callee_at(self, name: str, span) -> Optional["LanguageCallee"]:
+        """The language-fixed callee a bare name read at ``span`` is bound to
+        (``name_reference_at``'s target, when it is a ``LanguageCallee``)."""
+        return LanguageCallee.of(self.name_reference_at(name, span))
 
     def language_callee_of(self, node) -> Optional["LanguageCallee"]:
         """The language-fixed binding the expression ``node`` reads.
