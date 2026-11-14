@@ -3640,16 +3640,17 @@ def _holds_evaluation(statements) -> bool:
     )
 
 
-def _arm_walruses(arm):
+def _arm_walruses(arm, *, deferred: bool = False):
     """The keyed walruses (plain name target, ``evaluation`` minted) a
     conditional expression's arm runs when it runs: every one under ``arm``
     except those in a lambda or a generator expression, which run later if
-    at all."""
+    at all.  With ``deferred``, a generator expression's walruses too: their
+    references are ``deferred`` (``NamedExpr.substitution_binding``)."""
     found = []
     stack = [arm]
     while stack:
         node = stack.pop()
-        if node.kind in ("Lambda", "GeneratorExp"):
+        if node.kind == "Lambda" or (node.kind == "GeneratorExp" and not deferred):
             continue
         if (
             node.kind == "NamedExpr"
@@ -3659,6 +3660,23 @@ def _arm_walruses(arm):
             found.append(node)
         stack.extend(child for _field, _index, child in reversed(node.children()))
     return found
+
+
+def _scope_after_test(test, scope):
+    """``scope`` with each keyed walrus in the substituted ``test`` of an
+    ``if`` (an ``elif`` is one), a ``while`` or a conditional expression
+    bound, in evaluation order, to a reference to its evaluation
+    (``NamedExpr.substitution_binding``), as the block binds a read after a
+    walrus statement (#7911).  The test runs before either branch, so a
+    branch reads the walrus's key, never the name as it stood before the
+    test: ``if (t := f(v)): return t``.  A walrus in a lambda does not run
+    with the test; one in a generator expression binds its ``deferred``
+    reference.  ``scope`` itself when the test holds none."""
+    for walrus in _arm_walruses(test, deferred=True):
+        binding = walrus.substitution_binding(scope)
+        if binding:
+            scope = {**scope, **walrus._binding_entries(binding, scope)}
+    return scope
 
 
 def _reads_precede_writes(segment, name: str, in_lambda: set) -> bool:
@@ -11720,15 +11738,22 @@ class While(Statement):
         # names (any name the body rebinds) so the update stays symbolic.  In
         # the body a carried name reads the loop header's evaluation of it, as
         # in a live ``for`` (``_loop_header_bindings``); the test and the
-        # ``else`` read names as before.
+        # ``else`` read names as before.  The body and the ``else`` run after
+        # an evaluation of the test: a walrus in it is read through its key
+        # (``_scope_after_test``), never the name as it stood before the test.
         bound = For._stmts_bound_names(self.body)
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
-        body_scope = {**bs, **_loop_header_bindings(self, bound, scope)}
         changed = {}
         new_test, d = self._substitute_field(self.test, bs)
         if d:
             changed["test"] = new_test
-        for f, field_scope in (("body", body_scope), ("orelse", bs)):
+        body_scope = _scope_after_test(
+            new_test, {**bs, **_loop_header_bindings(self, bound, scope)}
+        )
+        for f, field_scope in (
+            ("body", body_scope),
+            ("orelse", _scope_after_test(new_test, bs)),
+        ):
             new, d = self._substitute_body(getattr(self, f), field_scope)
             if d:
                 changed[f] = new
@@ -11865,6 +11890,11 @@ class If(Statement):
         new_test, d = self._substitute_field(self.test, scope)
         if d:
             changed["test"] = new_test
+        # The test runs before either branch: a walrus in it is read in both
+        # through its key (``_scope_after_test``), and a name an arm rebinds
+        # joins against that reference.  The block binds it after the ``if``
+        # from the test itself (``_substitute_body_tracked``).
+        scope = _scope_after_test(new_test, scope)
         new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
         if d:
             changed["body"] = new_body
@@ -15800,8 +15830,24 @@ class IfExp(Expression):
         the walrus did not run on holds it under the walrus's key
         (``IfExpSugar._holding``).  A walrus in a lambda or a generator
         expression inside an arm does not run with the arm and is not
-        listed."""
-        rewritten = self._substitute_children(scope)
+        listed.
+
+        The test runs before either arm: a walrus in it (``t if (t := f())
+        else 0``) is read in both through its key (``_scope_after_test``),
+        and an arm's walrus of the same name holds that reference's value on
+        the other arm."""
+        from .shadow import rewrite
+
+        changed = {}
+        new_test, d = self._substitute_field(self.test, scope)
+        if d:
+            changed["test"] = new_test
+        scope = _scope_after_test(new_test, scope)
+        for field_name in ("body", "orelse"):
+            new, d = self._substitute_field(getattr(self, field_name), scope)
+            if d:
+                changed[field_name] = new
+        rewritten = rewrite(self, **changed) if changed else self
         keys = []
         priors = []
         for arm in (rewritten.body, rewritten.orelse):

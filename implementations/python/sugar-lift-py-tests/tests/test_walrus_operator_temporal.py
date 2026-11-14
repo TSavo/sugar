@@ -10,7 +10,8 @@ Concrete:
 Acceptance (this PR only):
 
   - condition evaluates once
-  - successful walrus binding is visible to BOTH selected branches
+  - successful walrus binding is visible to BOTH selected branches, read
+    through the walrus's evaluation key (the walrus never writes the name)
   - true/false selection preserves the same bound Floor value
   - condition value halt bypasses both arms (no bind; branches do not run)
   - comparison is Floor-owned: presented face owns the op; bind rides ``_carry``
@@ -35,12 +36,14 @@ from sugar_lift_py_tests.floor.branch_result_coordinate import BranchResultSlot
 from sugar_lift_py_tests.floor.named_expression_value import NamedExpressionValue
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
+from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
 from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
+from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -71,8 +74,22 @@ def _ret(value: Sugar) -> ReturnSugar:
     return ReturnSugar(value, site=SITE)
 
 
+def _key(name: str) -> str:
+    return EVALUATION_PREFIX + "blake3-512:test-walrus-if/" + name
+
+
 def _walrus(name: str, value: ConstructedTermSugar) -> NamedExprSugar:
-    return NamedExprSugar(name=name, value=value, site=SITE)
+    return NamedExprSugar(name=name, value=value, site=SITE, evaluation=_key(name))
+
+
+def _read(name: str) -> EvaluationRefSugar:
+    """A branch's read of the walrus's name: a reference to its evaluation
+    (``If.substitute`` passes the test's walrus into the branches)."""
+    return EvaluationRefSugar(evaluation=_key(name), name=name, site=SITE, walrus=True)
+
+
+def _nev(name: str, value) -> NamedExpressionValue:
+    return NamedExpressionValue(name, value, evaluation=_key(name))
 
 
 def _gt(left: ConstructedTermSugar, right: ConstructedTermSugar) -> ComparisonOpSugar:
@@ -149,7 +166,7 @@ def test_condition_evaluates_once() -> None:
     counted = _CountingValue(5)
     sugar = _if(
         _walrus("n", counted),
-        then_body=(_ret(_name("n")),),
+        then_body=(_ret(_read("n")),),
         else_body=(_ret(_int(0)),),
     )
     sugar.desugar(_root("once"))
@@ -165,7 +182,7 @@ def test_true_branch_sees_walrus_bind() -> None:
     """``if (n := 5): return n`` → TermValue(5)."""
     outcome = _if(
         _walrus("n", _int(5)),
-        then_body=(_ret(_name("n")),),
+        then_body=(_ret(_read("n")),),
         else_body=(_ret(_int(0)),),
     ).desugar(_root("true"))
     terms = _return_terms(outcome)
@@ -177,7 +194,7 @@ def test_false_branch_sees_same_bound_floor() -> None:
     outcome = _if(
         _walrus("n", _int(0)),
         then_body=(_ret(_int(-1)),),
-        else_body=(_ret(_name("n")),),
+        else_body=(_ret(_read("n")),),
     ).desugar(_root("false"))
     terms = _return_terms(outcome)
     assert TermValue(0) in terms, terms
@@ -189,14 +206,14 @@ def test_true_and_false_arms_share_identical_bound_term() -> None:
     # True path
     true_out = _if(
         _walrus("n", _int(7)),
-        then_body=(_ret(_name("n")),),
+        then_body=(_ret(_read("n")),),
         else_body=(_ret(_int(0)),),
     ).desugar(_root("t"))
     # False path — same assigned value 0 is falsy; use 0 for false
     false_out = _if(
         _walrus("n", _int(0)),
         then_body=(_ret(_int(99)),),
-        else_body=(_ret(_name("n")),),
+        else_body=(_ret(_read("n")),),
     ).desugar(_root("f"))
     assert TermValue(7) in _return_terms(true_out)
     assert TermValue(0) in _return_terms(false_out)
@@ -268,7 +285,7 @@ def test_condition_halt_has_no_branch_returns() -> None:
     effect = NameErrorEffect(name="missing", site=SITE)
     out = _if(
         _walrus("n", _HaltValue(effect)),
-        then_body=(_ret(_name("n")),),
+        then_body=(_ret(_read("n")),),
         else_body=(_ret(_int(0)),),
     ).desugar(_root("halt-ret"))
     assert out.exits and out.halts() == out.exits
@@ -282,14 +299,14 @@ def test_condition_halt_has_no_branch_returns() -> None:
 
 def test_left_hand_comparison_presented_owns_and_carry_binds() -> None:
     """``(n := 5) > 0`` — greater_than on presented; carry keeps n → 5."""
-    nev = NamedExpressionValue("n", TermValue(5))
+    nev = _nev("n", TermValue(5))
     cmp_out = nev.greater_than(TermValue(0), SITE, None)
     assert cmp_out.completed_value() is not None
     assert isinstance(cmp_out.completed_value(), NamedExpressionValue)
     assert cmp_out.completed_value().name == "n"
     assert cmp_out.completed_value().assigned_value == TermValue(5)
     scoped = cmp_out.completed_value().extend_scope(_root("cmp"))
-    assert _name("n").desugar(scoped).completed_value() == TermValue(5)
+    assert _read("n").desugar(scoped).completed_value() == TermValue(5)
 
 
 def test_no_string_predicate_from_left_door() -> None:
@@ -302,7 +319,7 @@ def test_no_string_predicate_from_left_door() -> None:
 def test_right_hand_zero_lt_walrus_reaches_typed_method() -> None:
     """Production tooth: ``0 < (n := 5)`` → Floor protocol less_than_from_left."""
     left = TermValue(0)
-    right = NamedExpressionValue("n", TermValue(5))
+    right = _nev("n", TermValue(5))
     # General double-dispatch: left.less_than → other.less_than_from_left.
     out = left.less_than(right, SITE, None)
     assert out.completed_value() is not None
@@ -314,7 +331,7 @@ def test_right_hand_zero_lt_walrus_reaches_typed_method() -> None:
     assert isinstance(direct.completed_value(), NamedExpressionValue)
     assert direct.completed_value().assigned_value == TermValue(5)
     scoped = out.completed_value().extend_scope(_root("rhs"))
-    assert _name("n").desugar(scoped).completed_value() == TermValue(5)
+    assert _read("n").desugar(scoped).completed_value() == TermValue(5)
 
 
 def test_ordinary_rhs_term_uses_default_less_than_from_left() -> None:
@@ -350,7 +367,7 @@ def test_rhs_walrus_via_comparison_op_sugar_lt() -> None:
     if isinstance(val, NamedExpressionValue):
         assert val.assigned_value == TermValue(5)
         scoped = val.extend_scope(_root("cmp-lt-bind"))
-        assert _name("n").desugar(scoped).completed_value() == TermValue(5)
+        assert _read("n").desugar(scoped).completed_value() == TermValue(5)
     else:
         # Ground fold may present a bool-ish predicate; bind still carried if NEV.
         assert type(val).__name__ in (
@@ -365,7 +382,7 @@ def test_if_comparison_left_carries_bind_through_if_sugar() -> None:
     """``if (n := 5) > 0: return n`` via ComparisonOpSugar + IfSugar."""
     sugar = _if(
         _gt(_walrus("n", _int(5)), _int(0)),
-        then_body=(_ret(_name("n")),),
+        then_body=(_ret(_read("n")),),
         else_body=(_ret(_int(-1)),),
     )
     terms = _return_terms(sugar.desugar(_root("if-cmp")))
@@ -392,7 +409,7 @@ def test_lying_comparison_twin_refuses_wrong_return() -> None:
     """Truthful then returns bound 5; claiming else -1 as sole winner refuses."""
     sugar = _if(
         _gt(_walrus("n", _int(5)), _int(0)),
-        then_body=(_ret(_name("n")),),
+        then_body=(_ret(_read("n")),),
         else_body=(_ret(_int(-1)),),
     )
     terms = _return_terms(sugar.desugar(_root("twin")))
@@ -458,14 +475,13 @@ def test_source_constructs_comparison_with_named_expr_left() -> None:
         assert type(test.left).__name__ == "NamedExprSugar"
 
 
-def test_source_body_read_after_condition_walrus_is_honorably_red_until_gbr() -> None:
-    """Source ``return n`` after condition walrus is GuardedBindingRead+Unbound.
+def test_source_body_reads_the_condition_walrus_through_its_key() -> None:
+    """Source ``return n`` after a condition walrus reads the walrus's key.
 
-    IfSugar + NamedExpressionValue.bind is green on the NameSugar door (above).
-    Production body reads are stamped ``UnboundProjection`` at construction and
-    do not yet consult ``branch_ctx`` temporal. Residual owner:
-    ``GuardedBindingReadSugar`` / substitute walrus-into-if-body projection.
-    fix=consult temporal after IfSugar.extend_scope, or rewrite body via substitute.
+    ``If.substitute`` passes the test's walrus into both branches as a
+    reference to its evaluation, so the body's read is no longer stamped
+    ``UnboundProjection`` (``n`` had no binding before the ``if``): it
+    reads what ``IfSugar`` bound under the key in ``branch_ctx``.
     """
     from sugar_lift_py_tests.effect import NameErrorEffect
     from sugar_lift_py_tests.outcome import ExitSet, Halted
@@ -475,14 +491,16 @@ def test_source_body_read_after_condition_walrus_is_honorably_red_until_gbr() ->
     )
     sugar = function.sugar()
     if_stmt = next(s for s in sugar.statements if type(s).__name__ == "IfSugar")
-    # Body is GuardedBindingReadSugar over UnboundProjection — not NameSugar.
     body0 = if_stmt.then_body[0]
     assert type(body0).__name__ == "ReturnSugar"
-    assert type(body0.value).__name__ == "GuardedBindingReadSugar"
+    assert isinstance(body0.value, EvaluationRefSugar)
+    assert body0.value.walrus is True
+    assert body0.value.evaluation == if_stmt.test.evaluation
     out = sugar.desugar(None)
     assert isinstance(out, ExitSet)
-    halted = [e for e in out.exits if isinstance(e, Halted)]
-    assert halted, out.exits
-    assert any(
-        isinstance(e.effect, NameErrorEffect) and e.effect.name == "n" for e in halted
-    ), halted
+    assert not any(
+        isinstance(e, Halted)
+        and isinstance(e.effect, NameErrorEffect)
+        and e.effect.name == "n"
+        for e in out.exits
+    ), out.exits

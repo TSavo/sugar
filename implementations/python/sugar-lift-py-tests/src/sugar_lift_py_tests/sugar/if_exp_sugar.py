@@ -101,16 +101,24 @@ class IfExpSugar(ConstructedTermSugar):
         # call is unresolvable, `(a if (d[k] := c) else b)`): thread it through
         # `and_then` rather than reading `cond.value`.  The test is an operand:
         # a walrus in it (`a if (n := c) else b`) runs before either arm, so
-        # through the one operand door its bind rides both arms' values.  An
-        # arm's own walrus rides that arm's value only; the other arm holds
-        # the name's earlier value under that walrus's key (``_holding``).
-        from sugar_lift_py_tests.floor.named_expression_value import consume_operands
-
-        return self.test.desugar(ctx).and_then(
-            lambda cond_value: consume_operands(
-                lambda presented: self._join(presented, ctx), cond_value
-            )
+        # through the one operand door its bind rides both arms' values, and
+        # both arms are reduced with it bound: an arm reads it through its
+        # key (``IfExp.substitute``), never the name.  An arm's own walrus
+        # rides that arm's value only; the other arm holds the name's earlier
+        # value under that walrus's key (``_holding``).
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            bind_walrus_binds,
+            consume_operands,
+            peel_walrus_binds,
         )
+
+        def join(cond_value):
+            arm_ctx = bind_walrus_binds(peel_walrus_binds(cond_value)[0], ctx)
+            return consume_operands(
+                lambda presented: self._join(presented, arm_ctx), cond_value
+            )
+
+        return self.test.desugar(ctx).and_then(join)
 
     def _join(self, cond_value, ctx) -> ExitSet:
         from sugar_lift_py_tests.ir import not_

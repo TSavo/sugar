@@ -174,6 +174,7 @@ def test_live_pair_target_arity_halt_retains_exact_pre_assignment_state() -> Non
         recurrence.construction.loop_runtime,
         ctx,
         entries=(),
+        carried=(result,),
     )
 
     assert isinstance(outcome, ExitSet)
@@ -185,6 +186,86 @@ def test_live_pair_target_arity_halt_retains_exact_pre_assignment_state() -> Non
     assert halted[0].state.temporal.value_if_bound("result") is result
     assert halted[0].state.temporal.value_if_bound("left") is None
     assert halted[0].state.temporal.value_if_bound("right") is None
+
+
+_RUNNING_LOOP = (
+    "def helper(items):\n"
+    "    total = 5\n"
+    "    for left, right in items:\n"
+    "        total = total + left\n"
+    "    return total\n"
+)
+
+
+def test_live_first_item_reads_the_pre_loop_value_through_its_header() -> None:
+    # ``total = 5`` before the loop: the first item's ``total + left`` reads
+    # it through the header's key, handed in as what the item carries; the
+    # name is never written, so a read of it by name would find nothing.
+    source = _RUNNING_LOOP.replace("def helper(items)", "def helper()").replace(
+        "in items", "in [(1, 2), (3, 4)]"
+    )
+
+    post = _completed_post(_function(source).sugar().desugar())
+
+    assert post.args[1].value == 9
+
+
+def test_live_item_reads_what_it_carries_with_the_name_unbound() -> None:
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
+
+    recurrence = _loop_sugar(_RUNNING_LOOP)
+    runtime = recurrence.construction.loop_runtime
+    assert runtime.carried_names == ("total",)
+    [(header, _writes, _else_writes)] = runtime.carried_evaluations
+    [assign] = runtime.body_sugars
+    # The body reads ``total`` through the header, not by spelling.
+    reads = [
+        sugar
+        for sugar in (assign.value.left, assign.value.right)
+        if isinstance(sugar, EvaluationRefSugar) and sugar.name == "total"
+    ]
+    assert [read.evaluation for read in reads] == [header]
+
+    ctx = ReduceContext.root(owner="live-pre-loop")
+    outcome = recurrence._advance_iterator(
+        TupleIteratorValue((TupleValue((TermValue(1), TermValue(2))),)),
+        runtime,
+        ctx,
+        entries=(),
+        carried=(TermValue(5),),
+    )
+
+    assert isinstance(outcome, ExitSet)
+    block = outcome.completed_value()
+    assert block is not None, outcome.exits
+    [published] = [
+        entry for entry in block.statements if isinstance(entry, ScopeRebind)
+    ]
+    assert published.name == recurrence.binding_coordinate_cids[0]
+
+
+def test_live_item_handed_nothing_it_carries_is_refused_by_name() -> None:
+    from sugar_source_tree.panic import SugarNotWritten
+
+    recurrence = _loop_sugar(_RUNNING_LOOP)
+    ctx = bind_temporal(
+        ReduceContext.root(owner="live-nothing-carried"),
+        "total",
+        TermValue(5),
+        owner="live-nothing-carried",
+        blame=str(recurrence.site),
+    )
+
+    # The name holds 5, and is not read in place of what the item carries.
+    with pytest.raises(SugarNotWritten):
+        recurrence._advance_iterator(
+            TupleIteratorValue((TupleValue((TermValue(1), TermValue(2))),)),
+            recurrence.construction.loop_runtime,
+            ctx,
+            entries=(),
+            carried=None,
+        )
 
 
 def test_live_pair_target_rejects_reordered_coordinates() -> None:
