@@ -418,7 +418,7 @@ def evaluated_after(earlier, operand, ctx, *, inside=()):
     return halted_after_writes(outcome, operand, ctx, stores)
 
 
-def reduce_operands(operands, ctx, *, factored: bool = False):
+def reduce_operands(operands, ctx, *, factored: bool = False, earlier=()):
     """``operands`` (sugars) reduced left to right, each in the context the
     ones before it leave (``written_by`` of each in turn), completed as the
     tuple of their values: ``[(b := 2), b]`` reads ``b`` as 2.  Each value
@@ -438,17 +438,21 @@ def reduce_operands(operands, ctx, *, factored: bool = False):
     it is evaluated after them (``evaluated_after``), so its halt is
     recorded where it was evaluated, in the context they wrote, with their
     callee stores first in its entries: ``[(a := 1), d[k]]``'s
-    ``KeyError`` carries ``a``, and ``[f(o), d[k]]``'s what ``f`` stored."""
+    ``KeyError`` carries ``a``, and ``[f(o), d[k]]``'s what ``f`` stored.
+    ``earlier``: the values of operands of the same expression evaluated
+    before the first of ``operands`` (a container call's receiver, before
+    its arguments): every operand is evaluated after them too."""
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
     def reduce_next(collected, operand):
         if operand is None:
             return ExitSet.completed((*collected, None))
+        before = (*earlier, *collected)
         operand_ctx = ctx
-        for earlier in collected:
-            operand_ctx = written_by(earlier, operand_ctx)
-        outcome = evaluated_after(collected, operand, operand_ctx)
+        for value in before:
+            operand_ctx = written_by(value, operand_ctx)
+        outcome = evaluated_after(before, operand, operand_ctx)
         if factored:
             outcome = factored_operand(outcome)
         return outcome.and_then(

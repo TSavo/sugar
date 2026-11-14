@@ -19048,24 +19048,19 @@ class Assert(Statement):
     def _construct_sugar(self):
         """`assert <test>[, <msg>]` constructs AssertSugar WITH the test's
         sugar. The test recognizes itself (self.test.sugar()) — the recursion.
-        The message is not part of the proposition (#4593/#4594): its pinned
-        fragment rides separately from the condition. CPython runs it only
-        where the assert fails, before it raises, so its sugar is built
-        there and nowhere else (``message_sugar``: the message node's own
-        ``sugar``, which the failing arm calls); a walrus in it is bound when
-        the assert fails, and the sugar says so (``message_holds_a_walrus``).
+        The message is not part of the proposition (#4593/#4594), but it is
+        a child the statement runs (CPython runs it where the assert fails,
+        before it raises): its sugar is built here with the test's, and a
+        message that has none refuses the assert by name, here, whether or
+        not the assert can fail. Its spelling rides ``assertMessage``
+        provenance on the site's memento.
         """
         from sugar_lift_py_tests.sugar.assert_sugar import AssertSugar
 
         return AssertSugar(
             test=self.test.sugar(),
-            message=self.msg.fragment if self.msg is not None else None,
+            message=self.msg.sugar() if self.msg is not None else None,
             site=self.fragment,
-            message_holds_a_walrus=(
-                self.msg is not None
-                and any(node.kind == "NamedExpr" for node in self.msg.walk())
-            ),
-            message_sugar=self.msg.sugar if self.msg is not None else None,
         )
 
 

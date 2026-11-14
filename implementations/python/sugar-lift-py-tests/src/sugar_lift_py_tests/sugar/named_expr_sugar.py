@@ -109,11 +109,9 @@ def holds_a_walrus(sugar: object) -> bool:
     It reads what each sugar is -- its compared fields, and the parts of
     them built in this package (an unpack target) -- never what is held out
     of equality as a lookup aid (a site, a callee's body, a frame table):
-    a walrus in a callee runs in the callee's frame. An operand a sugar
-    holds out of its equality still runs where Python runs it (an
-    ``assert``'s message, built and evaluated only where the assert fails,
-    before the ``AssertionError``): the sugar answers for it
-    (``AssertSugar.message_holds_a_walrus``).
+    a walrus in a callee runs in the callee's frame. Every operand a
+    sugar runs is a compared child (an ``assert``'s message, evaluated
+    only where the assert fails, is ``AssertSugar.message``).
 
     Every evaluation asks it of the sugar that evaluated a halting operand
     (``sugar_base._recorded_at_its_head``), so the answer is kept on each
@@ -176,10 +174,6 @@ def _reaches_a_walrus(sugar: object) -> bool:
                 if memo[_HOLDS]:
                     return True
                 continue
-        if getattr(item, "message_holds_a_walrus", False):
-            # An operand held out of equality that still runs (an
-            # ``assert``'s message).
-            return True
         if is_dataclass(item):
             # What the sugar is (its compared fields): never a lookup aid
             # out of its equality (a site, a callee's body, a frame table).

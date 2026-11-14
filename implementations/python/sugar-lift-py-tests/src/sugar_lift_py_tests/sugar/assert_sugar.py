@@ -19,36 +19,27 @@ class AssertSugar(Sugar):
 
     Message disposition (#4593 / #4594): the optional second operand is
     diagnostic packaging for AssertionError, not part of the proposition.
-    CPython evaluates it only on the failing path, before it raises: so
-    here too it is evaluated only beneath the assert's own failure (the
+    Its sugar is built with the statement, as every child's is (a message
+    that has none refuses the assert by name at construction); CPython
+    evaluates it only on the failing path, before it raises: so here too
+    it is evaluated only beneath the assert's own failure (the
     ``AssertionError`` a test stated False raises), through the one
     expression evaluation, after the test's writes. What it does there is
     what the halt leaves with: a call's stores and a walrus's bind in the
     halt's record (``_stated``), a halt of its own in place of the
     ``AssertionError``. The lift never invents a conditional py.* effect
     gated on ¬test: a symbolic test states its inv and has no failing arm
-    here, and the success path never builds or evaluates the message.
+    here, and the success path never evaluates the message.
     Spelling rides `assertMessage` provenance on the source memento.
     """
 
     test: Sugar
     site: object = dataclass_field(compare=False)
-    message: object | None = dataclass_field(compare=False, default=None)
-    # Whether the message holds a walrus (``assert c, (m := f())``). CPython
-    # runs the message before it raises ``AssertionError``, so its walrus is
-    # bound when the assert halts: ``holds_a_walrus`` reads this, and a
-    # failure that offers no record holding the bind is refused by name
-    # (``_require_recorded_halts``), never given the prefix that drops it.
-    message_holds_a_walrus: bool = dataclass_field(compare=False, default=False)
-    # The message's sugar, constructed where the assert fails and nowhere
-    # else (``Assert._construct_sugar``: the node's own ``sugar``): a
-    # message the success path never runs (``assert c, (yield 1)``) is never
-    # built, and one that cannot be built is refused where it would run.  A
-    # lookup aid, never testimony: the message is testified by its fragment
-    # (``message``), and this reads its sugar out of the node it names.
-    message_sugar: object | None = dataclass_field(
-        compare=False, default=None, metadata={"testimony": "lookup"}
-    )
+    # The message's sugar, built at construction with the test's
+    # (``Assert._construct_sugar``). It is part of what the statement is: a
+    # walrus in it is bound when the assert fails, and ``holds_a_walrus``
+    # reads it here as it reads every compared child.
+    message: Sugar | None = None
     # A simple statement: it evaluates its test, then completes or halts,
     # binding nothing before its own halt but what a walrus in its test or
     # message binds. A halted arm of a walrus-free test halted at the head of
@@ -117,7 +108,7 @@ class AssertSugar(Sugar):
         it is."""
         stated = presented.stated(self.site)
         if (
-            self.message_sugar is None
+            self.message is None
             or not isinstance(stated, ExitSet)
             or not stated.halts()
         ):
@@ -152,7 +143,7 @@ class AssertSugar(Sugar):
         def failing(halt):
             if halt.effect != failure.effect:
                 return None
-            return self.message_sugar().desugar(ctx).and_then(
+            return self.message.desugar(ctx).and_then(
                 lambda value: raised(halt, value)
             )
 
