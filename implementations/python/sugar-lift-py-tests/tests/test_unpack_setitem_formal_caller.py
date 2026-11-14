@@ -41,6 +41,7 @@ import inspect
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
@@ -152,13 +153,13 @@ def test_mutable_receiver_completes_with_x_and_correct_store() -> None:
     universe = _completed_universe(
         pending,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(0),
             q_cid: TermValue(9),
         },
     )
     # Correct store: a[0] becomes 9.
-    assert _stored_list(universe) == ListValue((TermValue(9),))
+    assert _stored_list(universe) == fresh(ListValue, (TermValue(9),))
     # x bound to p: Name is spent as formal p; return carries SymbolicValue(p).
     returned = _returned(universe)
     assert isinstance(returned.value, SymbolicValue)
@@ -176,7 +177,7 @@ def test_source_caller_mutable_receiver_completes() -> None:
     assert isinstance(face, Completed)
     # Call presentation carries authenticated actuals for a, i, p, q.
     assert face.value.arg_values == (
-        ListValue((TermValue(0),)),
+        fresh(ListValue, (TermValue(0),)),
         TermValue(0),
         TermValue(1),
         TermValue(9),
@@ -187,7 +188,7 @@ def test_mutable_receiver_completes_discrimination_wrong_cell() -> None:
     """Bite: storing at index 0 is not the same face as storing at index 1."""
     _, pending = _helper()
     a_cid, i_cid, q_cid = pending.demand.operand_coordinate_cids
-    base = ListValue((TermValue(0), TermValue(1)))
+    base = fresh(ListValue, (TermValue(0), TermValue(1)))
     at_zero = _completed_universe(
         pending, {a_cid: base, i_cid: TermValue(0), q_cid: TermValue(9)}
     )
@@ -196,8 +197,8 @@ def test_mutable_receiver_completes_discrimination_wrong_cell() -> None:
     )
     zero_list = _stored_list(at_zero)
     one_list = _stored_list(at_one)
-    assert zero_list == ListValue((TermValue(9), TermValue(1)))
-    assert one_list == ListValue((TermValue(0), TermValue(9)))
+    assert zero_list == fresh(ListValue, (TermValue(9), TermValue(1)))
+    assert one_list == fresh(ListValue, (TermValue(0), TermValue(9)))
     with pytest.raises(AssertionError):
         assert zero_list == one_list
 
@@ -221,7 +222,7 @@ def test_invalid_index_named_indexerror_no_statement_completion() -> None:
     exits = pending.discharge(
         None,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(5),
             q_cid: TermValue(9),
         },
@@ -274,7 +275,7 @@ def test_invalid_index_discrimination_is_not_completed() -> None:
     exits = pending.discharge(
         None,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(5),
             q_cid: TermValue(9),
         },
@@ -366,13 +367,17 @@ def test_lying_swapped_index_value_mint_is_not_truthful_store() -> None:
         coordinates=(obj_c, value_c, key_c),
     )
     actuals = {
-        obj_c.coordinate_cid: ListValue((TermValue(0), TermValue(1), TermValue(2))),
+        obj_c.coordinate_cid: fresh(
+            ListValue, (TermValue(0), TermValue(1), TermValue(2))
+        ),
         key_c.coordinate_cid: TermValue(1),
         value_c.coordinate_cid: TermValue(99),
     }
     truthful_universe = _completed_universe(truthful, actuals)
     truthful_list = _stored_list(truthful_universe)
-    assert truthful_list == ListValue((TermValue(0), TermValue(99), TermValue(2)))
+    assert truthful_list == fresh(
+        ListValue, (TermValue(0), TermValue(99), TermValue(2))
+    )
 
     lying_exits = lying.discharge(None, actuals)
     lying_face = lying_exits.exits[0]

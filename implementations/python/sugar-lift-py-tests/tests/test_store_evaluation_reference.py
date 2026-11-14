@@ -67,6 +67,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.formal_selected_manager import (
@@ -846,7 +847,7 @@ def test_a_chained_item_store_is_read_after_it(tmp_path: Path) -> None:
 
 def test_a_chained_list_store_is_in_the_list_read_after_it(tmp_path: Path) -> None:
     returned = _returned(_outcome(tmp_path, CHAIN_LIST, "chain_list"))
-    assert returned == [ListValue((TermValue(9),))], returned
+    assert returned == [fresh(ListValue, (TermValue(9),))], returned
 
 
 def test_an_unpack_field_store_is_read_after_it(tmp_path: Path) -> None:

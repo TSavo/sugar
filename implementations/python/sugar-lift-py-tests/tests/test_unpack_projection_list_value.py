@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
@@ -60,7 +61,7 @@ def _guarded(true_face):
 
 def test_guarded_list_face_binds_its_authenticated_members() -> None:
     outcome = _operation("a", "b").submit(
-        _guarded(ListValue((TermValue(1), TermValue(2)))), None
+        _guarded(fresh(ListValue, (TermValue(1), TermValue(2)))), None
     )
     assert outcome.completed_value() is not None, outcome
     assert outcome.completed_value() == ScopeRebinds(
@@ -78,7 +79,9 @@ def test_guarded_tuple_twin_answers_identically() -> None:
     is doing something other than what its sibling does.
     """
     names = _operation("a", "b")
-    from_list = names.submit(_guarded(ListValue((TermValue(1), TermValue(2)))), None)
+    from_list = names.submit(
+        _guarded(fresh(ListValue, (TermValue(1), TermValue(2)))), None
+    )
     from_tuple = names.submit(
         _guarded(TupleLiteralValue((TermValue(1), TermValue(2)))), None
     )
@@ -93,7 +96,9 @@ def test_direct_submit_binds_from_the_value_s_own_members() -> None:
     asserts the narrower thing it actually shows: submitted directly, the list
     answers from the members it holds and does not consult anything else.
     """
-    outcome = _operation("a", "b").submit(ListValue((TermValue(7), TermValue(8))), None)
+    outcome = _operation("a", "b").submit(
+        fresh(ListValue, (TermValue(7), TermValue(8))), None
+    )
     assert outcome.completed_value() is not None, outcome
     assert outcome.completed_value() == ScopeRebinds(
         (("a", TermValue(7)), ("b", TermValue(8)))
@@ -107,7 +112,7 @@ def test_direct_submit_binds_from_the_value_s_own_members() -> None:
 
 def test_list_arity_mismatch_is_loud_and_names_the_array_arm() -> None:
     with pytest.raises(ConstructionPanic) as raised:
-        _operation("a", "b").submit(_guarded(ListValue((TermValue(1),))), None)
+        _operation("a", "b").submit(_guarded(fresh(ListValue, (TermValue(1),))), None)
     info = raised.value.info
     assert "not enough" in info.observed
     assert "ListValue of 1 members" in info.observed
@@ -122,6 +127,7 @@ def test_list_members_are_never_fabricated_or_padded() -> None:
     """Too many members is equally loud -- no truncation to fit the targets."""
     with pytest.raises(ConstructionPanic) as raised:
         _operation("a", "b").submit(
-            _guarded(ListValue((TermValue(1), TermValue(2), TermValue(3)))), None
+            _guarded(fresh(ListValue, (TermValue(1), TermValue(2), TermValue(3)))),
+            None,
         )
     assert "too many" in raised.value.info.observed

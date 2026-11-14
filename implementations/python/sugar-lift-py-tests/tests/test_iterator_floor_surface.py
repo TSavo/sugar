@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.caller_parameter_contract import project_iter, project_next
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -86,7 +87,7 @@ def _next_op(*, owner: str = "test_next", site=None) -> NextOperation:
 
 def test_list_iter_with_yields_list_iterator() -> None:
     members = (TermValue(1), TermValue(2), TermValue(3))
-    outcome = _iter_op().submit(ListValue(members), None)
+    outcome = _iter_op().submit(fresh(ListValue, members), None)
     assert outcome.completed_value() is not None, outcome
     assert outcome.completed_value() == ListIteratorValue(members, index=0)
 
@@ -101,7 +102,7 @@ def test_tuple_iter_with_yields_tuple_iterator() -> None:
 def test_project_iter_is_the_production_edge_for_list() -> None:
     site = _site()
     members = (TermValue(7),)
-    outcome = project_iter(ListValue(members), site, None)
+    outcome = project_iter(fresh(ListValue, members), site, None)
     assert outcome.completed_value() is not None
     assert outcome.completed_value() == ListIteratorValue(members, index=0)
 
@@ -258,7 +259,7 @@ def test_term_has_no_iter_authority() -> None:
 def test_list_has_no_next_authority() -> None:
     """A list is iterable, not an iterator — ``next(list)`` is a gap here."""
     with pytest.raises(ConstructionPanic) as caught:
-        _next_op().submit(ListValue((TermValue(1),)), None)
+        _next_op().submit(fresh(ListValue, (TermValue(1),)), None)
     assert "next_with" in str(caught.value)
 
 
@@ -296,7 +297,7 @@ def test_next_does_not_mutate_prior_iterator() -> None:
 def test_full_list_walk_via_projectors() -> None:
     site = _site()
     members = (TermValue(1), TermValue(2), TermValue(3))
-    it_out = project_iter(ListValue(members), site, None)
+    it_out = project_iter(fresh(ListValue, members), site, None)
     assert it_out.completed_value() is not None
     cursor = it_out.completed_value()
     seen: list[object] = []
@@ -379,7 +380,7 @@ def test_cross_wired_list_iterator_is_not_tuple_iterator() -> None:
     """List and tuple iterators are distinct authenticated Floors."""
     site = _site()
     members = (TermValue(1), TermValue(2))
-    list_it = project_iter(ListValue(members), site, None).completed_value()
+    list_it = project_iter(fresh(ListValue, members), site, None).completed_value()
     tuple_it = project_iter(TupleValue(members), site, None).completed_value()
     assert isinstance(list_it, ListIteratorValue)
     assert isinstance(tuple_it, TupleIteratorValue)
@@ -397,10 +398,10 @@ def test_cross_wired_iter_and_next_methods_are_distinct() -> None:
     assert IteratorOperation.method_name == "iter_with"
     assert NextOperation.method_name == "next_with"
     assert IteratorOperation.method_name != NextOperation.method_name
-    started = project_iter(ListValue((TermValue(1),)), site, None)
+    started = project_iter(fresh(ListValue, (TermValue(1),)), site, None)
     assert started.completed_value() is not None
     with pytest.raises(ConstructionPanic):
-        project_next(ListValue((TermValue(1),)), site, None)
+        project_next(fresh(ListValue, (TermValue(1),)), site, None)
     stop = project_next(ListIteratorValue((), index=0), site, None)
     _only_halt(stop)
     with pytest.raises(ConstructionPanic):
@@ -476,7 +477,9 @@ def test_iter_on_a_formal_resolves_with_a_list_actual() -> None:
     members = (TermValue(1), TermValue(2))
     pending = _iter_op(owner="project_iter", site=site).submit(formal, None)
 
-    exits = pending.discharge(None, {coordinate.coordinate_cid: ListValue(members)})
+    exits = pending.discharge(
+        None, {coordinate.coordinate_cid: fresh(ListValue, members)}
+    )
 
     assert len(exits.exits) == 1, exits
     assert exits.completed_value() == ListIteratorValue(members, index=0)

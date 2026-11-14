@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.floor.block_value import BlockValue
@@ -102,7 +103,7 @@ def test_guarded_length_distributes_over_both_authenticated_arms() -> None:
     guarded = GuardedValue(
         GUARD,
         TupleValue((TermValue(1), TermValue(2))),
-        ListValue((TermValue(3),)),
+        fresh(ListValue, (TermValue(3),)),
     )
 
     outcome = guarded.length("renamed-length-site")

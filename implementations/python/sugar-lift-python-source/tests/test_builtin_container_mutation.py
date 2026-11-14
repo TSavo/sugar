@@ -30,6 +30,7 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 
+from frame_fresh import fresh
 from test_assignment_evaluates_rhs import _rows
 from test_undetermined_raise_except_matching import _exits
 
@@ -67,17 +68,17 @@ def _halt_names(halts):
 
 def test_append_then_return_is_the_appended_list(tmp_path):
     source = "def f():\n    r = []\n    r.append(1)\n    return r\n"
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_an_alias_sees_the_append(tmp_path):
     source = "def f():\n    r = []\n    a = r\n    r.append(1)\n    return a\n"
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_a_subscript_store_is_seen_through_an_alias(tmp_path):
     source = "def f():\n    r = [0]\n    a = r\n    r[0] = 5\n    return a\n"
-    assert _only_return(tmp_path, source) == ListValue(_ints(5))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(5))
 
 
 def test_pop_from_an_empty_list_raises_index_error_inside_the_try(tmp_path):
@@ -103,20 +104,20 @@ def test_pop_from_an_empty_list_is_the_calls_index_error(tmp_path):
 def test_pop_returns_the_element_and_shortens_the_list(tmp_path):
     source = "def f():\n    r = [1, 2]\n    x = r.pop()\n    return (x, r)\n"
     assert _only_return(tmp_path, source) == TupleValue(
-        (TermValue(2), ListValue(_ints(1)))
+        (TermValue(2), fresh(ListValue, _ints(1)))
     )
 
 
 def test_append_returns_none(tmp_path):
     source = "def f():\n    r = []\n    x = r.append(1)\n    return (x, r)\n"
     assert _only_return(tmp_path, source) == TupleValue(
-        (NoneValue(), ListValue(_ints(1)))
+        (NoneValue(), fresh(ListValue, _ints(1)))
     )
 
 
 def test_extend_with_a_list(tmp_path):
     source = "def f():\n    r = [1]\n    r.extend([2, 3])\n    return r\n"
-    assert _only_return(tmp_path, source) == ListValue(_ints(1, 2, 3))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1, 2, 3))
 
 
 def test_insert_remove_reverse_clear(tmp_path):
@@ -131,7 +132,7 @@ def test_insert_remove_reverse_clear(tmp_path):
         "    return (a, r)\n"
     )
     value = _only_return(tmp_path, source)
-    assert value.elements[1] == ListValue(())
+    assert value.elements[1] == fresh(ListValue, ())
 
 
 def test_remove_of_a_missing_member_is_value_error(tmp_path):
@@ -149,7 +150,7 @@ def test_remove_of_a_missing_member_is_value_error(tmp_path):
 
 def test_augmented_add_mutates_the_object_every_alias_names(tmp_path):
     source = "def f():\n    r = [1]\n    a = r\n    r += [2]\n    return a\n"
-    assert _only_return(tmp_path, source) == ListValue(_ints(1, 2))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1, 2))
 
 
 def test_unrolled_loop_appends_one_distinct_unknown_per_iteration(tmp_path):
@@ -200,7 +201,7 @@ def test_a_list_passed_to_a_helper_is_what_its_body_leaves(tmp_path):
         "    v = g(r)\n"
         "    return r\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_a_list_passed_to_unprojected_code_is_unknown_after_the_call(tmp_path):
@@ -218,7 +219,7 @@ def test_a_list_passed_to_unprojected_code_is_unknown_after_the_call(tmp_path):
 def test_a_pure_builtin_does_not_change_its_argument(tmp_path):
     source = "def f():\n    r = [1]\n    n = len(r)\n    return (n, r)\n"
     assert _only_return(tmp_path, source) == TupleValue(
-        (TermValue(1), ListValue(_ints(1)))
+        (TermValue(1), fresh(ListValue, _ints(1)))
     )
 
 
@@ -250,7 +251,7 @@ def test_a_name_rebound_from_the_list_constructor_builds_no_decided_list(
         "    return r\n"
     )
     returns, _halts = _returns(tmp_path, source)
-    assert ListValue(_ints(1)) not in returns
+    assert fresh(ListValue, _ints(1)) not in returns
 
 
 def test_an_undecided_receiver_stays_opaque_and_is_unknown_after(tmp_path):
@@ -259,7 +260,7 @@ def test_an_undecided_receiver_stays_opaque_and_is_unknown_after(tmp_path):
     from test_formal_method_call_defers import _carrier, _discharge
 
     source = "def f(x):\n    x.append(1)\n    return x\n"
-    exits = _discharge(_carrier(tmp_path, source), ListValue(()))
+    exits = _discharge(_carrier(tmp_path, source), fresh(ListValue, ()))
     (value,) = [payload for kind, payload, _ in _rows(exits) if kind == "return"]
     assert _is_unknown_after_call(value, "x")
 
@@ -269,7 +270,7 @@ def test_a_value_that_holds_the_list_is_unknown_after_its_mutation(tmp_path):
         "def f():\n    r = []\n    outer = [r]\n    r.append(1)\n    return outer\n"
     )
     value = _only_return(tmp_path, source)
-    assert value != ListValue((ListValue(()),))
+    assert value != fresh(ListValue, (fresh(ListValue, ()),))
     assert _is_unknown_after_call(value, "outer")
 
 
@@ -278,7 +279,7 @@ def test_a_symbolic_loop_leaves_the_list_unknown(tmp_path):
         "def f(xs):\n    r = []\n    for x in xs:\n        r.append(x)\n    return r\n"
     )
     value = _only_return(tmp_path, source)
-    assert value != ListValue(())
+    assert value != fresh(ListValue, ())
     assert _is_unknown_after_call(value, "r")
 
 
@@ -306,11 +307,12 @@ def test_dict_store_update_setdefault_and_delete(tmp_path):
     )
     assert _only_return(tmp_path, source) == TupleValue(
         (
-            DictValue(
+            fresh(
+                DictValue,
                 (
                     (StringValue("a"), TermValue(1)),
                     (StringValue("c"), TermValue(3)),
-                )
+                ),
             ),
             TermValue(3),
             TermValue(1),
@@ -340,7 +342,7 @@ def test_set_add_discard_and_an_unhashable_member(tmp_path):
         "    s.discard(2)\n"
         "    return s\n"
     )
-    assert _only_return(tmp_path / "a", source) == SetValue(_ints(1))
+    assert _only_return(tmp_path / "a", source) == fresh(SetValue, _ints(1))
     source = "def f():\n    s = set()\n    s.add([1])\n    return s\n"
     returns, halts = _returns(tmp_path / "b", source)
     assert returns == []
@@ -350,7 +352,7 @@ def test_set_add_discard_and_an_unhashable_member(tmp_path):
 def test_a_bool_member_is_the_equal_int(tmp_path):
     source = "def f():\n    s = {1}\n    s.add(True)\n    r = [0]\n    r.remove(False)\n    return (s, r)\n"
     assert _only_return(tmp_path, source) == TupleValue(
-        (SetValue(_ints(1)), ListValue(()))
+        (fresh(SetValue, _ints(1)), fresh(ListValue, ()))
     )
 
 
@@ -365,7 +367,7 @@ def test_extend_from_a_multi_member_set_is_unknown_order(tmp_path):
 def test_set_ior_with_a_list_is_not_update(tmp_path):
     source = "def f():\n    s = set()\n    s |= [1]\n    return s\n"
     returns, _halts = _returns(tmp_path, source)
-    assert SetValue(_ints(1)) not in returns
+    assert fresh(SetValue, _ints(1)) not in returns
 
 
 def test_augmented_add_on_an_opaque_operand_leaves_one_object(tmp_path):

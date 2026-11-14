@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
@@ -323,7 +324,7 @@ def test_caller_actuals_can_complete_the_original_subscript() -> None:
     exits = carrier.discharge(
         None,
         {
-            obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
+            obj_coordinate.coordinate_cid: fresh(ListValue, (TermValue(7),)),
             key_coordinate.coordinate_cid: TermValue(0),
         },
     )
@@ -337,7 +338,7 @@ def test_caller_actuals_can_name_an_exception_at_the_original_subscript() -> Non
     exits = carrier.discharge(
         None,
         {
-            obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
+            obj_coordinate.coordinate_cid: fresh(ListValue, (TermValue(7),)),
             key_coordinate.coordinate_cid: TermValue(1),
         },
     )
@@ -367,7 +368,7 @@ def test_lying_boundary_exception_type_leaves_operation_halted_and_unconsumed() 
     exits = carrier.discharge(
         None,
         {
-            obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
+            obj_coordinate.coordinate_cid: fresh(ListValue, (TermValue(7),)),
             key_coordinate.coordinate_cid: TermValue(1),
         },
     )
@@ -409,7 +410,7 @@ def test_undecided_caller_key_is_the_two_faced_unanswered_read() -> None:
     exits = carrier.discharge(
         None,
         {
-            obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
+            obj_coordinate.coordinate_cid: fresh(ListValue, (TermValue(7),)),
             key_coordinate.coordinate_cid: SymbolicValue(make_var("actual_key")),
         },
     )
@@ -511,7 +512,7 @@ def test_a_formal_index_on_a_known_list_defers_to_the_caller() -> None:
     index = SymbolicValue(make_var("key"), key_coordinate)
 
     pending = discharge_subscript(
-        ListValue((TermValue(1), TermValue(2))),
+        fresh(ListValue, (TermValue(1), TermValue(2))),
         index,
         carrier.site,
         None,
@@ -533,7 +534,7 @@ def test_a_formal_index_resolves_with_the_callers_actual() -> None:
 
     carrier, _, key_coordinate = _synthetic_carrier()
     pending = discharge_subscript(
-        ListValue((TermValue(1), TermValue(2))),
+        fresh(ListValue, (TermValue(1), TermValue(2))),
         SymbolicValue(make_var("key"), key_coordinate),
         carrier.site,
         None,

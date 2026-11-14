@@ -31,6 +31,7 @@ routing, parameter-name maps, chained-comparison lane.
 
 from __future__ import annotations
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
@@ -274,7 +275,7 @@ def test_discrimination_method_alone_is_not_completed_membership() -> None:
 def test_bound_self_does_not_shift_container_item_coordinates() -> None:
     site = _method_callsite(METHOD_BODY + "\nChecker().has([1, 2], 1)\n")
     _assert_bound_self_first(site)
-    assert site.arg_values[1] == ListValue((TermValue(1), TermValue(2)))
+    assert site.arg_values[1] == fresh(ListValue, (TermValue(1), TermValue(2)))
     assert site.arg_values[2] == TermValue(1)
     outcome = site.producer_outcome(None)
     assert _membership_bool(outcome) is True
@@ -300,7 +301,7 @@ def test_positional_keyword_and_default_calls_discharge() -> None:
     )
     for site in sites:
         _assert_bound_self_first(site)
-        assert site.arg_values[1] == ListValue((TermValue(1), TermValue(2)))
+        assert site.arg_values[1] == fresh(ListValue, (TermValue(1), TermValue(2)))
         assert site.arg_values[2] == TermValue(1)
         assert _membership_bool(site.producer_outcome(None)) is True
 
@@ -457,7 +458,7 @@ def test_swapped_container_item_twins_fail_against_truthful_membership() -> None
     """
     _, _method, pending = _method_definition()
     container_cid, item_cid = _container_item_cids(pending)
-    container = ListValue((TermValue(1), TermValue(2)))
+    container = fresh(ListValue, (TermValue(1), TermValue(2)))
     item = TermValue(1)
 
     truthful = pending.discharge(None, {container_cid: container, item_cid: item})
@@ -483,7 +484,7 @@ def test_discrimination_truthful_container_item_order_completes_present() -> Non
     exits = pending.discharge(
         None,
         {
-            container_cid: ListValue((TermValue(1), TermValue(2))),
+            container_cid: fresh(ListValue, (TermValue(1), TermValue(2))),
             item_cid: TermValue(1),
         },
     )

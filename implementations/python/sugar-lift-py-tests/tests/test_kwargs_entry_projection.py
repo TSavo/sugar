@@ -17,6 +17,7 @@ from dataclasses import replace
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import DictValue, StringValue, TermValue, TupleValue
 from sugar_lift_py_tests.source_call_frame import (
@@ -51,8 +52,9 @@ def test_each_collected_keyword_is_paired_with_its_variadic_keyword_projection()
 
     rest_root, named_root = frame.formal_coordinates[1], frame.formal_coordinates[2]
     assert bound.actuals[1] == TupleValue((extra,))
-    assert bound.actuals[2] == DictValue(
-        ((StringValue("precision"), precision), (StringValue("legacy"), legacy))
+    assert bound.actuals[2] == fresh(
+        DictValue,
+        ((StringValue("precision"), precision), (StringValue("legacy"), legacy)),
     )
     assert tuple(pair.coordinate for pair in bound.projected_pairs) == (
         rest_root.project("variadic", 0),
@@ -69,7 +71,7 @@ def test_a_double_star_expansion_entry_is_projected_too():
     precision = TermValue(3)
     bound = frame.bind_actuals(
         (TermValue(1),),
-        (("**", DictValue(((StringValue("precision"), precision),))),),
+        (("**", fresh(DictValue, ((StringValue("precision"), precision),))),),
     )
     (pair,) = bound.projected_pairs
     assert pair.coordinate == frame.formal_coordinates[2].project("variadic-keyword", 0)
@@ -81,7 +83,7 @@ def test_a_named_formal_takes_its_keyword_before_kwargs_collects():
     first = TermValue(1)
     bound = frame.bind_actuals((), (("first", first),))
     assert bound.actuals[0] is first
-    assert bound.actuals[2] == DictValue(())
+    assert bound.actuals[2] == fresh(DictValue, ())
     assert bound.projected_pairs == ()
 
 

@@ -1,3 +1,4 @@
+from frame_fresh import fresh
 from sugar_lift_py_tests.floor import DictValue, GuardedValue, StringValue, TermValue
 from sugar_lift_py_tests.ir import atomic, not_
 from sugar_lift_py_tests.outcome import ExitSet
@@ -15,7 +16,7 @@ def _entry_map(value):
 def test_guarded_index_distributes_store_under_complementary_guards() -> None:
     guard = atomic("selected", [])
     outcome = _store(
-        DictValue(()),
+        fresh(DictValue, ()),
         GuardedValue(guard, StringValue("left"), StringValue("right")),
         TermValue(7),
     )
@@ -32,7 +33,7 @@ def test_guarded_index_distributes_store_under_complementary_guards() -> None:
 def test_guarded_value_distributes_without_choosing_one_face() -> None:
     guard = atomic("selected", [])
     outcome = _store(
-        DictValue(()),
+        fresh(DictValue, ()),
         StringValue("member"),
         GuardedValue(guard, TermValue(1), TermValue(2)),
     )
@@ -46,7 +47,7 @@ def test_guarded_value_distributes_without_choosing_one_face() -> None:
 def test_guarded_index_never_mints_a_runtime_store_effect() -> None:
     guard = atomic("selected", [])
     outcome = _store(
-        DictValue(()),
+        fresh(DictValue, ()),
         GuardedValue(guard, StringValue("left"), StringValue("right")),
         TermValue(7),
     )

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.floor import (
     GroundSequenceRepetitionValue,
     ListValue,
@@ -42,7 +43,7 @@ SITE = "repetition-site"
 def test_repetition_at_the_budget_materializes_every_element(sequence_type) -> None:
     element = TermValue(7)
 
-    outcome = sequence_type((element,)).multiply(
+    outcome = fresh(sequence_type, (element,)).multiply(
         TermValue(EAGER_MATERIALIZATION_BUDGET), SITE, None
     )
 
@@ -60,7 +61,7 @@ def test_repetition_at_the_budget_materializes_every_element(sequence_type) -> N
 def test_one_element_past_the_budget_folds_instead_of_panicking(
     sequence_type,
 ) -> None:
-    sequence = sequence_type((TermValue(7),))
+    sequence = fresh(sequence_type, (TermValue(7),))
     count = TermValue(EAGER_MATERIALIZATION_BUDGET + 1)
 
     outcome = sequence.multiply(count, SITE, None)
@@ -77,7 +78,7 @@ def test_a_cardinality_no_machine_could_materialize_still_constructs(
     sequence_type,
 ) -> None:
     """The old arm panicked here; nothing about the VALUE is unknown."""
-    sequence = sequence_type((TermValue(7),))
+    sequence = fresh(sequence_type, (TermValue(7),))
     count = TermValue(10**12)
 
     outcome = sequence.multiply(count, SITE, None)
@@ -93,7 +94,7 @@ def test_a_cardinality_no_machine_could_materialize_still_constructs(
 @pytest.mark.parametrize("sequence_type", SEQUENCES)
 def test_no_cardinality_makes_repetition_panic(sequence_type) -> None:
     """The discrimination that names the law: NO count is a construction gap."""
-    sequence = sequence_type((TermValue(1), TermValue(2)))
+    sequence = fresh(sequence_type, (TermValue(1), TermValue(2)))
 
     for count in (0, 1, 63, 64, 65, 128, 129, 10**6, 10**15):
         outcome = sequence.multiply(TermValue(count), SITE, None)
@@ -108,7 +109,7 @@ def test_folded_concrete_count_is_the_same_construction_as_an_opaque_count(
     sequence_type,
 ) -> None:
     """One coordinate, not a second parallel spelling for large concretes."""
-    sequence = sequence_type((TermValue(7),))
+    sequence = fresh(sequence_type, (TermValue(7),))
     opaque = SymbolicValue(TermValue(3).to_term(owner=SITE))
 
     folded = sequence.multiply(TermValue(10**9), SITE, None).value.to_term(owner=SITE)
@@ -149,7 +150,9 @@ def test_a_known_invalid_count_does_not_reach_either_repetition_arm(
         ).functions()
     ).fragment
 
-    outcome = sequence_type((TermValue(1),)).multiply(TermValue(1.5), fragment, None)
+    outcome = fresh(sequence_type, (TermValue(1),)).multiply(
+        TermValue(1.5), fragment, None
+    )
 
     assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
@@ -164,7 +167,7 @@ def test_each_sequence_category_rebuilds_its_own_shape() -> None:
     """One shared law, but a list never materializes as a tuple."""
     element = TermValue(7)
 
-    from_list = ListValue((element,)).multiply(TermValue(3), SITE, None).value
+    from_list = fresh(ListValue, (element,)).multiply(TermValue(3), SITE, None).value
     from_tuple = TupleValue((element,)).multiply(TermValue(3), SITE, None).value
 
     assert type(from_list) is ListValue
@@ -179,7 +182,7 @@ def test_each_sequence_category_rebuilds_its_own_shape() -> None:
 @pytest.mark.parametrize("sequence_type", SEQUENCES)
 def test_an_empty_sequence_repeats_to_empty_at_any_count(sequence_type) -> None:
     """len 0 * huge n is 0, materializable -- never folded, never a panic."""
-    outcome = sequence_type(()).multiply(TermValue(10**12), SITE, None)
+    outcome = fresh(sequence_type, ()).multiply(TermValue(10**12), SITE, None)
 
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), sequence_type)
@@ -188,7 +191,7 @@ def test_an_empty_sequence_repeats_to_empty_at_any_count(sequence_type) -> None:
 
 @pytest.mark.parametrize("sequence_type", SEQUENCES)
 def test_a_negative_count_repeats_to_empty(sequence_type) -> None:
-    outcome = sequence_type((TermValue(7),)).multiply(TermValue(-4), SITE, None)
+    outcome = fresh(sequence_type, (TermValue(7),)).multiply(TermValue(-4), SITE, None)
 
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), sequence_type)

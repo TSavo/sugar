@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
@@ -164,7 +165,7 @@ def test_kw_values_reach_declared_stored_value() -> None:
     helper, pending, receiver = _source_class_and_helper("    pass\n", HELPER_KW)
     obj_cid, name_cid, values_cid = pending.demand.operand_coordinate_cids
     assert name_cid is None
-    mapping = DictValue(((StringValue("a"), TermValue(1)),))
+    mapping = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
     exits = pending.discharge(None, {obj_cid: receiver, values_cid: mapping})
     assert isinstance(exits.exits[0], Completed)
     record = exits.exits[0].value.record
@@ -204,11 +205,11 @@ def test_bind_actuals_packs_star_without_self_name_shift() -> None:
     assert frame.parameters == ("obj", "values")
     assert frame.parameter_kinds == ("positional_or_keyword", "vararg")
     bound = frame.bind_actuals(
-        (ListValue((TermValue(0),)), TermValue(1), TermValue(2), TermValue(3)),
+        (fresh(ListValue, (TermValue(0),)), TermValue(1), TermValue(2), TermValue(3)),
         (),
     )
     assert bound.actuals == (
-        ListValue((TermValue(0),)),
+        fresh(ListValue, (TermValue(0),)),
         TupleValue((TermValue(1), TermValue(2), TermValue(3))),
     )
     # Two bound slots only — pack is values, not shifted by self/name.
@@ -225,16 +226,17 @@ def test_bind_actuals_packs_kw_without_self_name_shift() -> None:
     assert frame.parameters == ("obj", "values")
     assert frame.parameter_kinds == ("positional_or_keyword", "kwarg")
     bound = frame.bind_actuals(
-        (ListValue((TermValue(0),)),),
+        (fresh(ListValue, (TermValue(0),)),),
         (("a", TermValue(1)), ("b", TermValue(2))),
     )
     assert bound.actuals == (
-        ListValue((TermValue(0),)),
-        DictValue(
+        fresh(ListValue, (TermValue(0),)),
+        fresh(
+            DictValue,
             (
                 (StringValue("a"), TermValue(1)),
                 (StringValue("b"), TermValue(2)),
-            )
+            ),
         ),
     )
     assert len(bound.actuals) == 2
@@ -282,7 +284,7 @@ def test_getter_only_discrimination_not_completed() -> None:
         None,
         {
             obj_cid: receiver,
-            values_cid: DictValue(((StringValue("a"), TermValue(1)),)),
+            values_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
         },
     )
     with pytest.raises(AssertionError):

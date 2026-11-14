@@ -28,6 +28,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
@@ -147,7 +148,7 @@ def test_partial_caller_actual_is_undischarged_discrimination() -> None:
     completed = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
         },
@@ -157,7 +158,7 @@ def test_partial_caller_actual_is_undischarged_discrimination() -> None:
     _unanswered(
         pending,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(0),
             # value_cid deliberately omitted
         },
@@ -238,7 +239,7 @@ def test_mint_setitem_carrier_rejects_no_formal_coordinate() -> None:
     with pytest.raises(ValueError, match="at least one formal_coordinate"):
         SubscriptStoreEffectSugar.mint_setitem_carrier(
             site=site,
-            receiver=ListValue((TermValue(0),)),
+            receiver=fresh(ListValue, (TermValue(0),)),
             index=TermValue(0),
             value=TermValue(9),
         )
@@ -255,7 +256,7 @@ def test_mutable_receiver_completes_store_via_setitem() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0), TermValue(1))),
+            obj_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
         },
@@ -263,7 +264,9 @@ def test_mutable_receiver_completes_store_via_setitem() -> None:
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
-    assert _stored_list(exits.exits[0]) == ListValue((TermValue(9), TermValue(1)))
+    assert _stored_list(exits.exits[0]) == fresh(
+        ListValue, (TermValue(9), TermValue(1))
+    )
 
 
 def test_positional_keyword_and_default_callers_complete_same_demand() -> None:
@@ -288,7 +291,7 @@ def test_discrimination_wrong_cell_is_not_the_completed_store() -> None:
     """Positive stores at key 0; discrimination at key 1 must not match."""
     _, pending = _helper_definition()
     obj_cid, key_cid, value_cid = pending.demand.operand_coordinate_cids
-    base = ListValue((TermValue(0), TermValue(1)))
+    base = fresh(ListValue, (TermValue(0), TermValue(1)))
     positive = pending.discharge(
         None, {obj_cid: base, key_cid: TermValue(0), value_cid: TermValue(9)}
     )
@@ -300,8 +303,8 @@ def test_discrimination_wrong_cell_is_not_the_completed_store() -> None:
     pos_list = _stored_list(positive.exits[0])
     other_list = _stored_list(other.exits[0])
     assert pos_list != other_list
-    assert pos_list == ListValue((TermValue(9), TermValue(1)))
-    assert other_list == ListValue((TermValue(0), TermValue(9)))
+    assert pos_list == fresh(ListValue, (TermValue(9), TermValue(1)))
+    assert other_list == fresh(ListValue, (TermValue(0), TermValue(9)))
 
 
 # ---------------------------------------------------------------------------
@@ -315,7 +318,7 @@ def test_invalid_index_halts_with_named_indexerror() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(4),
             value_cid: TermValue(9),
         },
@@ -339,7 +342,7 @@ def test_discrimination_valid_index_is_not_indexerror() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
         },
@@ -399,7 +402,9 @@ def test_swapped_key_value_coordinates_rejected_against_truthful_store() -> None
     )
 
     actuals = {
-        obj_c.coordinate_cid: ListValue((TermValue(0), TermValue(1), TermValue(2))),
+        obj_c.coordinate_cid: fresh(
+            ListValue, (TermValue(0), TermValue(1), TermValue(2))
+        ),
         key_c.coordinate_cid: TermValue(1),
         value_c.coordinate_cid: TermValue(99),
     }
@@ -408,7 +413,9 @@ def test_swapped_key_value_coordinates_rejected_against_truthful_store() -> None
 
     assert isinstance(truthful_exits.exits[0], Completed)
     truthful_list = _stored_list(truthful_exits.exits[0])
-    assert truthful_list == ListValue((TermValue(0), TermValue(99), TermValue(2)))
+    assert truthful_list == fresh(
+        ListValue, (TermValue(0), TermValue(99), TermValue(2))
+    )
     lying_face = lying_exits.exits[0]
     if isinstance(lying_face, Completed):
         # Lying mint has no function-universe continuation — compare ListValue
@@ -429,14 +436,16 @@ def test_discrimination_truthful_order_completes_at_correct_cell() -> None:
     exits = truthful.discharge(
         None,
         {
-            obj_c.coordinate_cid: ListValue((TermValue(0), TermValue(1), TermValue(2))),
+            obj_c.coordinate_cid: fresh(
+                ListValue, (TermValue(0), TermValue(1), TermValue(2))
+            ),
             key_c.coordinate_cid: TermValue(1),
             value_c.coordinate_cid: TermValue(99),
         },
     )
     assert isinstance(exits.exits[0], Completed)
-    assert _stored_list(exits.exits[0]) == ListValue(
-        (TermValue(0), TermValue(99), TermValue(2))
+    assert _stored_list(exits.exits[0]) == fresh(
+        ListValue, (TermValue(0), TermValue(99), TermValue(2))
     )
 
 
@@ -471,14 +480,14 @@ def test_source_evaluation_order_independent_of_discharge_order() -> None:
     function, _ = _helper_definition()
     site = function.body[0].fragment
     outcome = SubscriptStoreEffectSugar(
-        receiver=_Probe("receiver", ListValue((TermValue(0),))),
+        receiver=_Probe("receiver", fresh(ListValue, (TermValue(0),))),
         index=_Probe("index", TermValue(0)),
         value=_Probe("value", TermValue(9)),
         site=site,
     ).desugar()
 
     assert order == ["value", "receiver", "index"]
-    assert outcome.completed_value() == ListValue((TermValue(9),))
+    assert outcome.completed_value() == fresh(ListValue, (TermValue(9),))
 
     import inspect
 

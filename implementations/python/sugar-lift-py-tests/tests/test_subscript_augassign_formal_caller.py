@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from frame_fresh import FRAME_FRESH, fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
@@ -271,12 +272,12 @@ def test_discrimination_circular_tooth_would_hide_missing_projector() -> None:
 
 def test_production_desugar_list_augassign_completes_with_updated_cell() -> None:
     out = _production_desugar(
-        ListValue((TermValue(1), TermValue(2))),
+        fresh(ListValue, (TermValue(1), TermValue(2))),
         TermValue(0),
         TermValue(10),
     )
     assert out.completed_value() is not None, out
-    assert out.completed_value() == ListValue((TermValue(11), TermValue(2)))
+    assert out.completed_value() == fresh(ListValue, (TermValue(11), TermValue(2)))
 
 
 def test_formal_helper_desugars_without_legacy_incomplete_only() -> None:
@@ -307,6 +308,7 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
     class _HaltList(ListValueCls):
         def __init__(self, elements):
             object.__setattr__(self, "elements", tuple(elements))
+            object.__setattr__(self, "allocation", FRAME_FRESH)
 
         def setitem(self, index, value, site_, ctx):
             box["set"] += 1
@@ -338,6 +340,7 @@ def test_production_arithmetic_halt_blocks_store() -> None:
     class _CountingList(ListValueCls):
         def __init__(self, elements):
             object.__setattr__(self, "elements", tuple(elements))
+            object.__setattr__(self, "allocation", FRAME_FRESH)
 
         def setitem(self, index, value, site, ctx):
             box["set"] += 1
@@ -369,6 +372,7 @@ def test_production_store_halt_preserves_prior_state_without_fabricated_completi
 class _CountingList(ListValueCls):
     def __init__(self, elements, box=None):
         object.__setattr__(self, "elements", tuple(elements))
+        object.__setattr__(self, "allocation", FRAME_FRESH)
         object.__setattr__(
             self, "_box", box if box is not None else {"get": 0, "set": 0}
         )
@@ -412,6 +416,7 @@ def test_production_getitem_before_rhs_order() -> None:
     class _OrderList(ListValueCls):
         def __init__(self, elements):
             object.__setattr__(self, "elements", tuple(elements))
+            object.__setattr__(self, "allocation", FRAME_FRESH)
 
         def subscript(self, index, site_):
             order.append("get")
@@ -450,7 +455,7 @@ def test_production_getitem_before_rhs_order() -> None:
     out = sugar.desugar(None)
     assert out.completed_value() is not None
     assert order == ["get", "rhs", "op", "set"]
-    assert out.completed_value() == ListValue((TermValue(7),))
+    assert out.completed_value() == fresh(ListValue, (TermValue(7),))
 
 
 def test_discrimination_wrong_order_rhs_before_get() -> None:
@@ -637,7 +642,7 @@ def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> N
     exits = pending.discharge(
         None,
         {
-            coords["obj"]: ListValue((TermValue(1), TermValue(2))),
+            coords["obj"]: fresh(ListValue, (TermValue(1), TermValue(2))),
             coords["key"]: TermValue(0),
             coords["rhs"]: TermValue(10),
         },
@@ -645,7 +650,9 @@ def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> N
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
-    assert _post_list(exits.exits[0]) == ListValue((TermValue(11), TermValue(2)))
+    assert _post_list(exits.exits[0]) == fresh(
+        ListValue, (TermValue(11), TermValue(2))
+    )
 
 
 def test_authenticated_get_halt_blocks_store_on_formal_discharge() -> None:
@@ -656,7 +663,7 @@ def test_authenticated_get_halt_blocks_store_on_formal_discharge() -> None:
     exits = pending.discharge(
         None,
         {
-            coords["obj"]: ListValue((TermValue(1),)),
+            coords["obj"]: fresh(ListValue, (TermValue(1),)),
             coords["key"]: TermValue(4),
             coords["rhs"]: TermValue(10),
         },

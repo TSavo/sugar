@@ -40,6 +40,8 @@ from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralS
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source import manager_summary_derivation as derivation
 
+from frame_fresh import fresh
+
 
 @dataclass(frozen=True)
 class _Method:
@@ -185,7 +187,7 @@ def test_raises_spelled_receiver_with_none_match_is_not_raises_exc():
 
 
 def test_raises_spelled_receiver_with_kwargs_match_is_not_raises_exc():
-    kwargs = DictValue(((StringValue("match"), StringValue("boom")),))
+    kwargs = fresh(DictValue, ((StringValue("match"), StringValue("boom")),))
     behavior, protocol, exit_set = _nested_did_not_raise_exit(
         _matches_formula(), extra_actuals=(kwargs,)
     )

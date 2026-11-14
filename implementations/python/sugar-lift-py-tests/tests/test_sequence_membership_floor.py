@@ -8,11 +8,13 @@ cannot regress to the default FloorValue.contains panic.
 
 import pytest
 
+from frame_fresh import fresh
+
 
 def _list(*values):
     from sugar_lift_py_tests.floor import ListValue, TermValue
 
-    return ListValue(tuple(TermValue(value) for value in values))
+    return fresh(ListValue, tuple(TermValue(value) for value in values))
 
 
 def _tuple(*values):
@@ -37,7 +39,7 @@ def test_empty_list_membership_is_false():
     from sugar_lift_py_tests.floor import ListValue, TermValue
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 
-    empty = ListValue(())
+    empty = fresh(ListValue, ())
     assert isinstance(empty.contains(TermValue(1), "site").value, FalseBoolLiteralSugar)
 
 
@@ -58,7 +60,7 @@ def test_symbolic_list_membership_emits_typed_obligation():
     from sugar_lift_py_tests.ir import _Atomic, make_var
 
     result = (
-        ListValue((TermValue(1),))
+        fresh(ListValue, (TermValue(1),))
         .contains(SymbolicValue(make_var("member")), "site")
         .value
     )
@@ -94,14 +96,15 @@ def test_nested_list_membership_is_decided_from_constructed_members():
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
-    container = ListValue(
+    container = fresh(
+        ListValue,
         (
-            ListValue((TermValue(1),)),
-            ListValue((TermValue(2),)),
-        )
+            fresh(ListValue, (TermValue(1),)),
+            fresh(ListValue, (TermValue(2),)),
+        ),
     )
-    needle = ListValue((TermValue(1),))
-    missing = ListValue((TermValue(3),))
+    needle = fresh(ListValue, (TermValue(1),))
+    missing = fresh(ListValue, (TermValue(3),))
     assert isinstance(container.contains(needle, "site").value, TrueBoolLiteralSugar)
     assert isinstance(container.contains(missing, "site").value, FalseBoolLiteralSugar)
 
@@ -211,7 +214,7 @@ def test_comparison_op_routes_membership_to_list_contains():
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
     # Mimic `2 in [1, 2, 3]` after both sides have reduced to floors.
-    container = ListValue((TermValue(1), TermValue(2), TermValue(3)))
+    container = fresh(ListValue, (TermValue(1), TermValue(2), TermValue(3)))
     member = TermValue(2)
     # Direct floor path used by ComparisonOpSugar for In/NotIn.
     outcome = container.contains(member, "site")

@@ -47,11 +47,15 @@ class MappingObjectValue(ObjectValue):
         return replace(self, entries=entries)
 
     def _builtin_dict(self):
-        """The authenticated ``dict`` base state as the builtin dict it is:
-        this object's own state, made with the object (its ``identity``).
-        Its currency is the object's, which ``arrived`` does not take off
-        an instance (``object_identity``)."""
-        return DictValue(self.entries, allocation=self.identity or None)
+        """The authenticated ``dict`` base state as the builtin dict it is.
+
+        Not current (``allocation=None``): an instance's currency is not
+        tracked (``arrived`` does not take it off an instance), so whether
+        this state is the object's state now -- the instance made in this
+        frame, or one that arrived by binding and changed out of sight -- is
+        not decided here.  Every read of it takes its undecided form
+        (``object_identity.contents_current``)."""
+        return DictValue(self.entries, allocation=None)
 
     def protocol_owner(self, name: str, site) -> str | None:
         """Who answers ``name`` read on this receiver's class (#7757):

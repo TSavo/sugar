@@ -1,5 +1,6 @@
 """Builtin isinstance / len / tuple construction for returned-manager factories."""
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.callable_application import CallableApplication
 from sugar_lift_py_tests.floor import (
     BuiltinSemanticCallable,
@@ -76,7 +77,7 @@ def test_tuple_construct_from_tuple_value_is_identity():
 
 def test_dict_items_then_dict_construct_preserves_exact_entries():
     temporal = builtin_name_temporal()
-    source = DictValue(((StringValue("key"), TermValue(3)),))
+    source = fresh(DictValue, ((StringValue("key"), TermValue(3)),))
     items = source.call_method_value("items", (), owner="test", blame="site")
     assert items.completed_value() is not None
 
@@ -92,7 +93,7 @@ def test_dict_items_then_dict_construct_preserves_exact_entries():
 def test_constructed_dict_support_rides_under_control_without_new_identity():
     from sugar_lift_py_tests.ir import atomic
 
-    source = DictValue(((StringValue("key"), TermValue(3)),))
+    source = fresh(DictValue, ((StringValue("key"), TermValue(3)),))
     assert source.guarded(atomic("left", ())) is source
     assert source.guarded(atomic("right", ())) is source
     assert source.inv_contribution() == ()

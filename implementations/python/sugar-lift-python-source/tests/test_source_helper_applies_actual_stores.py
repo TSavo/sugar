@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from sugar_lift_py_tests.floor import ListValue, SymbolicValue
 
+from frame_fresh import fresh
 from test_builtin_container_mutation import _halt_names, _ints, _only_return, _returns
 
 
@@ -36,12 +37,12 @@ ADD = "def add(l):\n    l.append(1)\n"
 
 def test_a_helper_append_changes_the_callers_list(tmp_path):
     source = ADD + "def f():\n    r = []\n    add(r)\n    return r\n"
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_every_alias_sees_the_helpers_store(tmp_path):
     source = ADD + "def f():\n    r = []\n    a = r\n    add(r)\n    return a\n"
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_the_helpers_operands_come_from_the_call(tmp_path):
@@ -49,12 +50,12 @@ def test_the_helpers_operands_come_from_the_call(tmp_path):
         "def add(l, x):\n    l.append(x)\n    l.append(x)\n"
         "def f():\n    r = [0]\n    add(r, 5)\n    return r\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(0, 5, 5))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(0, 5, 5))
 
 
 def test_a_later_store_in_the_caller_builds_on_the_helpers(tmp_path):
     source = ADD + "def f():\n    r = []\n    add(r)\n    r.append(2)\n    return r\n"
-    assert _only_return(tmp_path, source) == ListValue(_ints(1, 2))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1, 2))
 
 
 def test_an_assigned_call_still_applies_the_store(tmp_path):
@@ -62,7 +63,7 @@ def test_an_assigned_call_still_applies_the_store(tmp_path):
         "def add(l):\n    l.append(1)\n    return 7\n"
         "def f():\n    r = []\n    y = add(r)\n    return r\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_a_helper_that_does_not_touch_the_list_leaves_it(tmp_path):
@@ -70,7 +71,7 @@ def test_a_helper_that_does_not_touch_the_list_leaves_it(tmp_path):
         "def look(l):\n    n = len(l)\n    return n\n"
         "def f():\n    r = [3]\n    look(r)\n    return r\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(3))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(3))
 
 
 def test_a_name_that_only_contains_the_list_is_unknown(tmp_path):

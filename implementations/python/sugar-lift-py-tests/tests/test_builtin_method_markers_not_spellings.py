@@ -23,6 +23,7 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
@@ -206,7 +207,7 @@ def test_ground_split_is_the_list_floor_a_display_is() -> None:
     from sugar_lift_py_tests.floor.list_value import ListValue
 
     parts = _split("a b")
-    display = ListValue((StringValue("a"), StringValue("b")))
+    display = fresh(ListValue, (StringValue("a"), StringValue("b")))
 
     assert type(parts) is ListValue
     assert parts == display
@@ -225,9 +226,9 @@ def test_append_to_a_ground_split_takes_the_list_display_law() -> None:
     from sugar_lift_py_tests.sugar.method_call_sugar import dispatch_method_call
 
     parts = _split("a b")
-    display = ListValue((StringValue("a"), StringValue("b")))
+    display = fresh(ListValue, (StringValue("a"), StringValue("b")))
     appended = StringValue("c")
-    expected = ListValue((StringValue("a"), StringValue("b"), appended))
+    expected = fresh(ListValue, (StringValue("a"), StringValue("b"), appended))
 
     for receiver in (parts, display):
         pair = law.apply("list", "append", receiver, (appended,), "append", None)
@@ -264,7 +265,7 @@ def test_splitlines_with_a_bool_keepends_folds_to_the_list_floor() -> None:
     )
 
     def lines(*parts):
-        return ListValue(tuple(StringValue(part) for part in parts))
+        return fresh(ListValue, tuple(StringValue(part) for part in parts))
 
     source = "a\nb\r\nc"
     kept = _splitlines(source, TrueBoolLiteralSugar(site="keep"))

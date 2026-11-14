@@ -9,6 +9,7 @@ import subprocess
 from dataclasses import dataclass
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -669,7 +670,7 @@ def test_ground_decided_membership_still_completes() -> None:
     outcome = ComparisonOpSugar(
         "In",
         _ValueSugar(TermValue(1)),
-        _ValueSugar(ListValue((TermValue(1),))),
+        _ValueSugar(fresh(ListValue, (TermValue(1),))),
         "compare-site",
     ).desugar(None)
     assert outcome.completed_value() is not None

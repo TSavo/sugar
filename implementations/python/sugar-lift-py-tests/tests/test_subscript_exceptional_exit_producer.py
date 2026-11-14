@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -378,7 +379,7 @@ def test_real_pandas_unknown_receiver_is_two_faced(authenticated_site) -> None:
 def test_truthful_out_of_range_concrete_list_emits_index_error(
     local_site,
 ) -> None:
-    outcome = ListValue((TermValue(7),)).subscript(TermValue(1), local_site)
+    outcome = fresh(ListValue, (TermValue(7),)).subscript(TermValue(1), local_site)
 
     assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
@@ -389,7 +390,7 @@ def test_truthful_out_of_range_concrete_list_emits_index_error(
 def test_lying_in_range_concrete_list_does_not_emit_exception(
     local_site,
 ) -> None:
-    outcome = ListValue((TermValue(7),)).subscript(TermValue(0), local_site)
+    outcome = fresh(ListValue, (TermValue(7),)).subscript(TermValue(0), local_site)
 
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), TermValue)
@@ -397,7 +398,7 @@ def test_lying_in_range_concrete_list_does_not_emit_exception(
 
 
 def test_known_non_integer_list_index_emits_type_error(local_site) -> None:
-    outcome = ListValue((TermValue(7),)).subscript(TermValue(1.5), local_site)
+    outcome = fresh(ListValue, (TermValue(7),)).subscript(TermValue(1.5), local_site)
 
     assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
@@ -406,7 +407,7 @@ def test_known_non_integer_list_index_emits_type_error(local_site) -> None:
 
 
 def test_unknown_list_index_is_the_two_faced_unanswered_read(local_site) -> None:
-    outcome = ListValue((TermValue(7),)).subscript(
+    outcome = fresh(ListValue, (TermValue(7),)).subscript(
         SymbolicValue(make_var("index")), local_site
     )
 
@@ -416,7 +417,7 @@ def test_unknown_list_index_is_the_two_faced_unanswered_read(local_site) -> None
 @pytest.mark.parametrize(
     "receiver",
     (
-        ListValue((TermValue(7),)),
+        fresh(ListValue, (TermValue(7),)),
         TupleValue((TermValue(7),)),
         StringValue("x"),
     ),
@@ -453,7 +454,7 @@ def test_lying_nested_tuple_key_must_not_be_guessed_for_unknown_receiver(
 
 
 def test_truthful_missing_dict_key_emits_key_error(local_site) -> None:
-    outcome = DictValue(((StringValue("a"), TermValue(1)),)).subscript(
+    outcome = fresh(DictValue, ((StringValue("a"), TermValue(1)),)).subscript(
         StringValue("missing"), local_site
     )
 
@@ -464,7 +465,7 @@ def test_truthful_missing_dict_key_emits_key_error(local_site) -> None:
 
 
 def test_lying_present_dict_key_does_not_emit_exception(local_site) -> None:
-    outcome = DictValue(((StringValue("a"), TermValue(1)),)).subscript(
+    outcome = fresh(DictValue, ((StringValue("a"), TermValue(1)),)).subscript(
         StringValue("a"), local_site
     )
 
@@ -474,7 +475,9 @@ def test_lying_present_dict_key_does_not_emit_exception(local_site) -> None:
 
 
 def test_unhashable_dict_key_emits_type_error(local_site) -> None:
-    outcome = DictValue(()).subscript(ListValue((TermValue(1),)), local_site)
+    outcome = fresh(DictValue, ()).subscript(
+        fresh(ListValue, (TermValue(1),)), local_site
+    )
 
     assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
@@ -492,7 +495,7 @@ def test_number_receiver_emits_type_error(local_site) -> None:
 
 
 def test_set_receiver_emits_type_error(local_site) -> None:
-    outcome = SetValue((TermValue(1),)).subscript(TermValue(0), local_site)
+    outcome = fresh(SetValue, (TermValue(1),)).subscript(TermValue(0), local_site)
 
     assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()

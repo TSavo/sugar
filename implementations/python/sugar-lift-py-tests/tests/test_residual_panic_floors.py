@@ -10,6 +10,7 @@ Covers the next measured owners:
 
 import tempfile
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.floor import (
     DictValue,
     StringValue,
@@ -40,7 +41,7 @@ def test_predicate_attribute_is_py_getattr_coordinate():
 
 
 def test_dict_key_membership_folds():
-    d = DictValue(((TermValue(1), TermValue(10)), (TermValue(2), TermValue(20))))
+    d = fresh(DictValue, ((TermValue(1), TermValue(10)), (TermValue(2), TermValue(20))))
     assert isinstance(d.contains(TermValue(2), "site").value, TrueBoolLiteralSugar)
     assert isinstance(d.contains(TermValue(9), "site").value, FalseBoolLiteralSugar)
 

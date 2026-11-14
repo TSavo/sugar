@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import GuardedValue, SymbolicValue, TermValue
@@ -89,12 +90,12 @@ def test_guarded_bitwise_or_distributes_exact_set_union_to_both_faces() -> None:
     guard = atomic("choose", [])
     value = GuardedValue(
         guard,
-        SetValue((TermValue(1),)),
-        SetValue((TermValue(2),)),
+        fresh(SetValue, (TermValue(1),)),
+        fresh(SetValue, (TermValue(2),)),
     )
 
     outcome = value.bitwise_or(
-        SetValue((TermValue(3),)),
+        fresh(SetValue, (TermValue(3),)),
         "t.py:1",
         None,
     )
@@ -102,8 +103,8 @@ def test_guarded_bitwise_or_distributes_exact_set_union_to_both_faces() -> None:
     assert outcome == ExitSet.completed(
         GuardedValue(
             guard,
-            SetValue((TermValue(1), TermValue(3))),
-            SetValue((TermValue(2), TermValue(3))),
+            fresh(SetValue, (TermValue(1), TermValue(3))),
+            fresh(SetValue, (TermValue(2), TermValue(3))),
         )
     )
 

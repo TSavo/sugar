@@ -16,6 +16,7 @@ import importlib.util
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.floor import (
     GroundSequenceRepetitionValue,
     ListValue,
@@ -121,7 +122,9 @@ def test_the_deleted_array_literal_floor_is_not_quietly_back() -> None:
 def test_list_repetition_folds_the_one_repetition_law() -> None:
     element = TermValue(7)
 
-    outcome = ListValue((element,)).multiply(TermValue(64), "multiply-site", None)
+    outcome = fresh(ListValue, (element,)).multiply(
+        TermValue(64), "multiply-site", None
+    )
 
     assert outcome.completed_value() is not None
     assert isinstance(outcome.completed_value(), ListValue)
@@ -131,7 +134,7 @@ def test_list_repetition_folds_the_one_repetition_law() -> None:
 @pytest.mark.parametrize(
     "sequence, count",
     [
-        (ListValue((TermValue(7),)), 1000),
+        (fresh(ListValue, (TermValue(7),)), 1000),
         (TupleValue((TermValue(7),)), 1000),
     ],
 )
@@ -154,7 +157,7 @@ def test_no_cardinality_refuses_a_concrete_repetition(sequence, count) -> None:
 
 def test_a_symbolic_count_is_the_same_closed_coordinate() -> None:
     """A symbolic count repeats to the one closed `python:sequence_repeat`."""
-    outcome = ListValue((TermValue(7),)).multiply(
+    outcome = fresh(ListValue, (TermValue(7),)).multiply(
         SymbolicValue(make_var("n")), "multiply-site", None
     )
 
@@ -177,7 +180,7 @@ def test_static_join_folds_at_any_cardinality() -> None:
     """`",".join([...])` over more parts than the abolished cap allowed."""
     from sugar_lift_py_tests.floor.string_value import _fold_string_method
 
-    parts = ListValue(tuple(StringValue(str(n)) for n in range(300)))
+    parts = fresh(ListValue, tuple(StringValue(str(n)) for n in range(300)))
 
     outcome = _fold_string_method(
         StringValue(","), _MethodCallOperation("join", (parts,))

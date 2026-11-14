@@ -113,17 +113,9 @@ def site_coordinate_cid(site) -> str:
 
     Anything else is refused by name, never spelled some other way (#7808).
     """
-    from sugar_lift_py_tests.caller_parameter_contract import source_coordinate
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceFragmentCoordinateV1,
-    )
-
-    if isinstance(site, SourceFragmentCoordinateV1):
-        return site.cid
-    if hasattr(site, "line_col_span") and hasattr(site, "source_cid"):
-        return source_coordinate(site).cid
-    if isinstance(site, str) and site and not site.startswith("<SourceFragment"):
-        return site
+    named = named_site_cid(site)
+    if named is not None:
+        return named
     from sugar_lift_py_tests.gap.info import GapKind, GapLocus
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -136,6 +128,27 @@ def site_coordinate_cid(site) -> str:
         gap_kind=GapKind.FLOOR,
         gap_locus=GapLocus.CONSTRUCTION,
     )
+
+
+def named_site_cid(site) -> str | None:
+    """``site_coordinate_cid`` of a site that names a source coordinate (a
+    source fragment, its ``SourceFragmentCoordinateV1``, or a
+    content-addressed slot id), else None.  The one test of whether a site
+    names one: ``site_coordinate_cid`` refuses the None by name;
+    ``object_identity.made_at`` leaves a construction at such a site
+    unnamed."""
+    from sugar_lift_py_tests.caller_parameter_contract import source_coordinate
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+
+    if isinstance(site, SourceFragmentCoordinateV1):
+        return site.cid
+    if hasattr(site, "line_col_span") and hasattr(site, "source_cid"):
+        return source_coordinate(site).cid
+    if isinstance(site, str) and site and not site.startswith("<SourceFragment"):
+        return site
+    return None
 
 
 def call_frame_path(call_site, call_path: tuple[str, ...]) -> tuple[str, ...]:

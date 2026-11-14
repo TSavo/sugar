@@ -26,6 +26,7 @@ import inspect
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
@@ -122,7 +123,7 @@ def test_positional_only_receiver_and_keyword_only_value_complete() -> None:
     face = _call("[0], 0, value=9").exits[0]
     assert isinstance(face, Completed)
     assert face.value.arg_values == (
-        ListValue((TermValue(0),)),
+        fresh(ListValue, (TermValue(0),)),
         TermValue(0),
         TermValue(9),
     )
@@ -134,7 +135,7 @@ def test_default_key_and_keyword_only_value_complete() -> None:
     face = _call("[0], value=9").exits[0]
     assert isinstance(face, Completed)
     assert face.value.arg_values == (
-        ListValue((TermValue(0),)),
+        fresh(ListValue, (TermValue(0),)),
         TermValue(0),
         TermValue(9),
     )
@@ -165,13 +166,15 @@ def test_callers_bind_to_exact_native_operation_coordinates() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0), TermValue(1))),
+            obj_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
         },
     )
     assert isinstance(exits.exits[0], Completed)
-    assert _stored_list(exits.exits[0]) == ListValue((TermValue(9), TermValue(1)))
+    assert _stored_list(exits.exits[0]) == fresh(
+        ListValue, (TermValue(9), TermValue(1))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -185,14 +188,14 @@ def test_mutable_store_completes_via_kinds() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
         },
     )
     assert isinstance(exits, ExitSet)
     assert isinstance(exits.exits[0], Completed)
-    assert _stored_list(exits.exits[0]) == ListValue((TermValue(9),))
+    assert _stored_list(exits.exits[0]) == fresh(ListValue, (TermValue(9),))
 
 
 def test_invalid_index_named_indexerror_with_exact_pre_effect_state() -> None:
@@ -202,7 +205,7 @@ def test_invalid_index_named_indexerror_with_exact_pre_effect_state() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(1),
             value_cid: TermValue(9),
         },
@@ -238,7 +241,7 @@ def test_invalid_index_discrimination_not_completed() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(1),
             value_cid: TermValue(9),
         },
@@ -313,7 +316,9 @@ def test_swapped_key_value_coordinates_rejected() -> None:
         coordinates=(obj_c, value_c, key_c),
     )
     actuals = {
-        obj_c.coordinate_cid: ListValue((TermValue(0), TermValue(1), TermValue(2))),
+        obj_c.coordinate_cid: fresh(
+            ListValue, (TermValue(0), TermValue(1), TermValue(2))
+        ),
         key_c.coordinate_cid: TermValue(1),
         value_c.coordinate_cid: TermValue(99),
     }
@@ -321,7 +326,7 @@ def test_swapped_key_value_coordinates_rejected() -> None:
     l_face = lying.discharge(None, actuals).exits[0]
     assert isinstance(t_face, Completed)
     t_list = _stored_list(t_face)
-    assert t_list == ListValue((TermValue(0), TermValue(99), TermValue(2)))
+    assert t_list == fresh(ListValue, (TermValue(0), TermValue(99), TermValue(2)))
     if isinstance(l_face, Completed) and isinstance(l_face.value, UniverseValue):
         l_list = _stored_list(l_face)
         assert l_list != t_list

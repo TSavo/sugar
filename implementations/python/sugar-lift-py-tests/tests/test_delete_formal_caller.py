@@ -41,6 +41,7 @@ import inspect
 from dataclasses import dataclass
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
@@ -377,10 +378,10 @@ def test_partial_caller_actual_is_undischarged_discrimination() -> None:
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     completed = pending.discharge(
         None,
-        {obj_cid: ListValue((TermValue(0),)), key_cid: TermValue(0)},
+        {obj_cid: fresh(ListValue, (TermValue(0),)), key_cid: TermValue(0)},
     )
     assert isinstance(completed.exits[0], Completed)
-    _unanswered(pending, {obj_cid: ListValue((TermValue(0),))})
+    _unanswered(pending, {obj_cid: fresh(ListValue, (TermValue(0),))})
 
 
 # ===========================================================================
@@ -396,14 +397,14 @@ def test_mutable_list_receiver_completes_delete_with_element_gone() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0), TermValue(1))),
+            obj_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
             key_cid: TermValue(0),
         },
     )
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
     assert isinstance(exits.exits[0], Completed)
-    assert _deleted_list(exits.exits[0]) == ListValue((TermValue(1),))
+    assert _deleted_list(exits.exits[0]) == fresh(ListValue, (TermValue(1),))
 
 
 def test_mutable_dict_receiver_completes_delete_with_key_gone() -> None:
@@ -414,7 +415,7 @@ def test_mutable_dict_receiver_completes_delete_with_key_gone() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: DictValue(((StringValue("a"), TermValue(1)),)),
+            obj_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
             key_cid: StringValue("a"),
         },
     )
@@ -458,7 +459,7 @@ def test_discrimination_completed_delete_is_not_halted() -> None:
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
         None,
-        {obj_cid: ListValue((TermValue(0),)), key_cid: TermValue(0)},
+        {obj_cid: fresh(ListValue, (TermValue(0),)), key_cid: TermValue(0)},
     )
     with pytest.raises(AssertionError):
         assert isinstance(exits.exits[0], Halted)
@@ -481,7 +482,7 @@ def test_missing_dict_key_halts_with_named_keyerror_and_pre_effect_state() -> No
     exits = pending.discharge(
         None,
         {
-            obj_cid: DictValue(((StringValue("a"), TermValue(1)),)),
+            obj_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
             key_cid: StringValue("missing"),
         },
     )
@@ -495,7 +496,7 @@ def test_missing_list_index_halts_with_named_indexerror_and_pre_effect_state() -
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge(
         None,
-        {obj_cid: ListValue((TermValue(0),)), key_cid: TermValue(4)},
+        {obj_cid: fresh(ListValue, (TermValue(0),)), key_cid: TermValue(4)},
     )
     halted = _assert_named_halt(exits, "IndexError")
     assert halted.state is not None
@@ -522,7 +523,7 @@ def test_discrimination_present_key_is_not_keyerror() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: DictValue(((StringValue("a"), TermValue(1)),)),
+            obj_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
             key_cid: StringValue("a"),
         },
     )
@@ -549,7 +550,7 @@ def test_deletion_does_not_roll_back_earlier_bindings_on_keyerror() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: DictValue(((StringValue("kept"), TermValue(1)),)),
+            obj_cid: fresh(DictValue, ((StringValue("kept"), TermValue(1)),)),
             key_cid: StringValue("missing"),
         },
     )
@@ -584,13 +585,13 @@ def test_swapped_receiver_index_coordinates_rejected_against_truthful_delete() -
         coordinates=(key_c, obj_c),
     )
     actuals = {
-        obj_c.coordinate_cid: ListValue((TermValue(0), TermValue(1))),
+        obj_c.coordinate_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
         key_c.coordinate_cid: TermValue(0),
     }
     truthful_exits = truthful.discharge(None, actuals)
     assert isinstance(truthful_exits.exits[0], Completed)
     truthful_list = _deleted_list(truthful_exits.exits[0])
-    assert truthful_list == ListValue((TermValue(1),))
+    assert truthful_list == fresh(ListValue, (TermValue(1),))
     try:
         lying_exits = lying.discharge(None, actuals)
     except ConstructionPanic:
@@ -729,17 +730,19 @@ def test_immutable_slice_delete_cannot_fabricate_mutated_receiver(receiver):
 
 def test_floor_list_delitem_completes_with_element_gone() -> None:
     """Floor ``ListValue.delitem`` already implements the delete post-state law."""
-    result = ListValue((TermValue(0), TermValue(1))).delitem(
+    result = fresh(ListValue, (TermValue(0), TermValue(1))).delitem(
         TermValue(0), _floor_site(), None
     )
     assert result.completed_value() is not None
-    assert result.completed_value() == ListValue((TermValue(1),))
+    assert result.completed_value() == fresh(ListValue, (TermValue(1),))
 
 
 def test_floor_list_delitem_out_of_range_is_named_indexerror() -> None:
     """Floor list delete IndexError (ground_index_error) — named exceptional face."""
     from sugar_lift_py_tests.effect import RaiseEffect
-    result = ListValue((TermValue(0),)).delitem(TermValue(5), _floor_site(), None)
+    result = fresh(ListValue, (TermValue(0),)).delitem(
+        TermValue(5), _floor_site(), None
+    )
     assert len(result.exits) == 1 and result.halts() == result.exits
     (halt,) = result.halts()
     assert isinstance(halt.effect, RaiseEffect)
@@ -748,7 +751,7 @@ def test_floor_list_delitem_out_of_range_is_named_indexerror() -> None:
 
 def test_floor_delete_is_not_the_formal_carrier_twin() -> None:
     """Discrimination: a floor completion is not helper-alone undischarged demand."""
-    floor = ListValue((TermValue(0),)).delitem(TermValue(0), _floor_site(), None)
+    floor = fresh(ListValue, (TermValue(0),)).delitem(TermValue(0), _floor_site(), None)
     assert floor.completed_value() is not None
     _, pending = _delitem_helper()
     # Formal demand (when present) is a carrier, not a floor completion.

@@ -24,6 +24,7 @@ Three laws, each with both faces and an exact cardinality:
 from __future__ import annotations
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.floor import DictValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.list_value import ListValue
@@ -41,8 +42,8 @@ from sugar_lift_py_tests.ir import atomic, implies
 def _container(kind):
     entries = (TermValue(1), TermValue(2))
     if kind is DictValue:
-        return DictValue(((TermValue(1), TermValue(10)),))
-    return kind(entries)
+        return fresh(DictValue, ((TermValue(1), TermValue(10)),))
+    return fresh(kind, entries)
 
 
 @pytest.mark.parametrize("kind", [DictValue, ListValue, TupleValue, SetValue])
@@ -64,13 +65,13 @@ def test_the_coordinate_names_the_attribute_that_was_asked_for(kind) -> None:
 def test_the_coordinate_carries_the_receivers_own_term() -> None:
     """Two receivers of one attribute do not collapse into one coordinate."""
     short = (
-        ListValue((TermValue(1),))
+        fresh(ListValue, (TermValue(1),))
         .attribute("renamed_member", "site", None)
         .completed_value()
         .term
     )
     long = (
-        ListValue((TermValue(1), TermValue(2)))
+        fresh(ListValue, (TermValue(1), TermValue(2)))
         .attribute("renamed_member", "site", None)
         .completed_value()
         .term
@@ -158,12 +159,14 @@ def test_a_guarded_string_needle_distributes_and_rejoins() -> None:
 @pytest.mark.parametrize("kind", [ListValue, TupleValue, SetValue])
 def test_a_guarded_sequence_needle_distributes(kind) -> None:
     members = (TermValue(1), TermValue(2))
-    outcome = kind(members).contains(_guarded(TermValue(1), TermValue(9)), "site")
+    outcome = fresh(kind, members).contains(
+        _guarded(TermValue(1), TermValue(9)), "site"
+    )
     assert outcome.completed_value() is not None
 
 
 def test_a_guarded_dict_key_distributes() -> None:
-    d = DictValue(((TermValue(1), TermValue(10)),))
+    d = fresh(DictValue, ((TermValue(1), TermValue(10)),))
     assert (
         d.contains(_guarded(TermValue(1), TermValue(9)), "site").completed_value()
         is not None

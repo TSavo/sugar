@@ -3,6 +3,7 @@
 from dataclasses import dataclass, replace
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -159,8 +160,8 @@ def test_real_source_element_halt_keeps_exact_pre_comprehension_state():
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.state is not None
-    assert halted.state.entries == (ListValue((TermValue(7),)),)
-    assert halted.state.entries != (ListValue((TermValue(0),)),)
+    assert halted.state.entries == (fresh(ListValue, (TermValue(7),)),)
+    assert halted.state.entries != (fresh(ListValue, (TermValue(0),)),)
     assert not any(isinstance(face, Completed) for face in outcome.exits)
 
 

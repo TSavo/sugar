@@ -26,6 +26,7 @@ from pathlib import Path
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.none_value import NoneValue
 from sugar_lift_py_tests.floor.string_value import StringValue
@@ -240,7 +241,9 @@ def test_decided_default_pair_without_sugar_arm_panics_not_refuses() -> None:
 
     # ListValue has no ordering arm; both types are source-decided.
     with pytest.raises(ConstructionPanic) as raised:
-        ListValue((TermValue(1),)).less_than(ListValue((TermValue(2),)), SITE, None)
+        fresh(ListValue, (TermValue(1),)).less_than(
+            fresh(ListValue, (TermValue(2),)), SITE, None
+        )
     msg = str(raised.value)
     assert "no Sugar arm" in msg or "SOURCEFILE_CONSTRUCTION_DOOR" in msg
     assert "PredicateValue" in msg

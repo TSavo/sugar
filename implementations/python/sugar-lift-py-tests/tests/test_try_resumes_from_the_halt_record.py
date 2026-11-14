@@ -25,6 +25,7 @@ raised it.
 
 from __future__ import annotations
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.list_value import ListValue
@@ -80,7 +81,7 @@ def _returned_value(outcome):
     return returned.value
 
 
-_ONE = ListValue((TermValue(1),))
+_ONE = fresh(ListValue, (TermValue(1),))
 
 
 def test_a_handler_reads_an_append_made_before_the_raise() -> None:
@@ -194,7 +195,7 @@ def test_a_handler_after_a_loop_that_raised_carries_what_the_items_did() -> None
     records = _records(outcome)
     assert records, outcome
     assert _holds(records, _ONE), records
-    assert _holds(records, ListValue((TermValue(1), TermValue(2)))), records
+    assert _holds(records, fresh(ListValue, (TermValue(1), TermValue(2)))), records
 
 
 def test_a_finally_after_a_completed_body_reads_its_store() -> None:
@@ -247,7 +248,7 @@ def test_a_return_the_body_took_follows_a_finally_that_falls_through() -> None:
     assert _returned_value(outcome) == TermValue(7)
     records = _records(outcome)
     assert _holds(records, _ONE), records
-    assert _holds(records, ListValue((TermValue(1), TermValue(2)))), records
+    assert _holds(records, fresh(ListValue, (TermValue(1), TermValue(2)))), records
 
 
 def test_a_handler_reads_the_callers_name_not_the_callees() -> None:

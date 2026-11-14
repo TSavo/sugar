@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 from sugar_lift_py_tests.floor import (
     BytesValue,
@@ -61,11 +62,15 @@ def _store(receiver, key, value, log, site):
 def test_subscript_store_evaluates_rhs_receiver_and_key_once_in_python_order(tmp_path):
     log: list[str] = []
     outcome = _store(
-        ListValue((TermValue(1),)), TermValue(0), TermValue(7), log, _site(tmp_path)
+        fresh(ListValue, (TermValue(1),)),
+        TermValue(0),
+        TermValue(7),
+        log,
+        _site(tmp_path),
     ).desugar()
 
     assert log == ["value", "receiver", "key"]
-    assert outcome == ExitSet.completed(ListValue((TermValue(7),)))
+    assert outcome == ExitSet.completed(fresh(ListValue, (TermValue(7),)))
 
 
 def test_readable_immutable_receiver_raises_on_store(tmp_path):
@@ -99,7 +104,7 @@ def test_immutable_slice_store_has_exact_typeerror_occurrence(
     outcome = _store(
         receiver,
         SliceValue(TermValue(1), TermValue(2), None),
-        ListValue((TermValue(9),)),
+        fresh(ListValue, (TermValue(9),)),
         [],
         site,
     ).desugar()
@@ -126,7 +131,7 @@ def test_immutable_slice_store_cannot_fabricate_mutated_receiver(
     outcome = _store(
         receiver,
         SliceValue(TermValue(1), TermValue(2), None),
-        ListValue((TermValue(9),)),
+        fresh(ListValue, (TermValue(9),)),
         [],
         site,
     ).desugar()
@@ -151,7 +156,7 @@ def test_immutable_slice_store_halt_preserves_exact_prior_state(tmp_path, receiv
     store = _store(
         receiver,
         SliceValue(TermValue(1), TermValue(2), None),
-        ListValue((TermValue(9),)),
+        fresh(ListValue, (TermValue(9),)),
         [],
         _site(tmp_path),
     )
@@ -212,7 +217,7 @@ def test_rhs_halt_wins_before_receiver_or_key_evaluation(tmp_path):
             raise AssertionError
 
     store = SubscriptStoreEffectSugar(
-        receiver=_ObservedSugar("receiver", ListValue(()), log),
+        receiver=_ObservedSugar("receiver", fresh(ListValue, ()), log),
         index=_ObservedSugar("key", TermValue(0), log),
         value=_RaisingValue(),
         site=_site(tmp_path),

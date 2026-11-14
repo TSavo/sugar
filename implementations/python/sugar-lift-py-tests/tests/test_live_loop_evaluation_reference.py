@@ -29,6 +29,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
@@ -1511,7 +1512,7 @@ def test_a_concrete_items_append_before_its_loop_control_leaves_with_it(
     outcome = function_universe_outcome(_function(_append_then(control, items)))
     records = _records(outcome)
     assert records, outcome
-    assert _holds(records, ListValue((TermValue(1),))), records
+    assert _holds(records, fresh(ListValue, (TermValue(1),))), records
 
 
 def test_a_symbolic_items_append_before_its_break_leaves_with_it() -> None:
@@ -1892,8 +1893,8 @@ def test_a_raise_leaving_a_concrete_item_carries_the_earlier_items_appends() -> 
     )
     records = _halt_records(outcome)
     assert records, outcome
-    assert _holds(records, ListValue((TermValue(1),))), records
-    assert _holds(records, ListValue((TermValue(1), TermValue(2)))), records
+    assert _holds(records, fresh(ListValue, (TermValue(1),))), records
+    assert _holds(records, fresh(ListValue, (TermValue(1), TermValue(2)))), records
 
 
 def _recurrence_facts(records, head) -> list:
@@ -1955,8 +1956,8 @@ def test_a_raise_leaving_a_concrete_else_carries_the_items_and_publication() -> 
         _function(_RAISE_IN_THE_ELSE.format(iterable="g()"))
     )
     records = _halt_records(outcome)
-    assert _holds(records, ListValue((TermValue(1),))), records
-    assert _holds(records, ListValue((TermValue(1), TermValue(2)))), records
+    assert _holds(records, fresh(ListValue, (TermValue(1),))), records
+    assert _holds(records, fresh(ListValue, (TermValue(1), TermValue(2)))), records
     assert _publishes(records, TermValue(2)), records
 
 
@@ -2000,8 +2001,8 @@ def test_an_outer_break_in_a_concrete_loops_else_carries_the_items() -> None:
     )
     records = _records(outcome)
     assert records, outcome
-    assert _holds(records, ListValue((TermValue(1),))), records
-    assert _holds(records, ListValue((TermValue(1), TermValue(2)))), records
+    assert _holds(records, fresh(ListValue, (TermValue(1),))), records
+    assert _holds(records, fresh(ListValue, (TermValue(1), TermValue(2)))), records
     assert TermValue(0) not in _flattened(_returned_values(outcome))
 
 

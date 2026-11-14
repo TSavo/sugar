@@ -36,6 +36,7 @@ MUST NOT TOUCH: production, carrier/ExitSet.
 from __future__ import annotations
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -178,11 +179,12 @@ def test_completed_delitem_readback_yields_named_keyerror_with_delete_lineage() 
     function, pending = _delitem_pending()
     delete_site = function.body[0].fragment
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    original = DictValue(
+    original = fresh(
+        DictValue,
         (
             (StringValue("a"), TermValue(1)),
             (StringValue("b"), TermValue(2)),
-        )
+        ),
     )
     exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
     assert isinstance(exits.exits[0], Completed)
@@ -207,7 +209,7 @@ def test_discrimination_completed_delitem_does_not_fabricate_deleted_value() -> 
     function, pending = _delitem_pending()
     site = function.body[0].fragment
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    original = DictValue(((StringValue("a"), TermValue(1)),))
+    original = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
     exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), site)
@@ -290,7 +292,7 @@ def test_delete_then_restore_setitem_reads_new_value() -> None:
     function, pending = _delitem_pending()
     site = function.body[0].fragment
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    original = DictValue(((StringValue("a"), TermValue(1)),))
+    original = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
     deleted = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(deleted.exits[0])
     restored = post.setitem(StringValue("a"), TermValue(99), site, None)
@@ -335,11 +337,12 @@ def test_readback_after_halted_delete_still_sees_original() -> None:
     site = function.body[0].fragment
     assert pending.pre_effect_state is not None, f"{CODEX1}: missing pre_effect_state"
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    original = DictValue(
+    original = fresh(
+        DictValue,
         (
             (StringValue("a"), TermValue(1)),
             (StringValue("b"), TermValue(2)),
-        )
+        ),
     )
     exits = pending.discharge(
         None, {obj_cid: original, key_cid: StringValue("missing")}
@@ -362,7 +365,7 @@ def test_readback_after_halted_delete_still_sees_original() -> None:
 def test_discrimination_halted_delete_is_not_a_completed_empty_dict() -> None:
     function, pending = _delitem_pending()
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    original = DictValue(((StringValue("a"), TermValue(1)),))
+    original = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
     exits = pending.discharge(
         None, {obj_cid: original, key_cid: StringValue("missing")}
     )
@@ -384,7 +387,7 @@ def test_lying_keyerror_wrong_occurrence_refuses() -> None:
     function, pending = _delitem_pending()
     delete_site = function.body[0].fragment
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    original = DictValue(((StringValue("a"), TermValue(1)),))
+    original = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
     exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), delete_site)
@@ -401,7 +404,7 @@ def test_lying_fabricated_deleted_value_refuses_against_keyerror() -> None:
     function, pending = _delitem_pending()
     site = function.body[0].fragment
     obj_cid, key_cid = pending.demand.operand_coordinate_cids
-    original = DictValue(((StringValue("a"), TermValue(1)),))
+    original = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
     exits = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(exits.exits[0])
     missing = post.subscript(StringValue("a"), site)
@@ -420,7 +423,7 @@ def test_list_delitem_readback_indexerror_after_completed_delete() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0), TermValue(1))),
+            obj_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
             key_cid: TermValue(0),
         },
     )
@@ -433,7 +436,7 @@ def test_list_delitem_readback_indexerror_after_completed_delete() -> None:
         lists = [s for s in record.statements if isinstance(s, ListValue)]
         assert lists
         post = lists[-1]
-    assert post == ListValue((TermValue(1),))
+    assert post == fresh(ListValue, (TermValue(1),))
     # Remaining element readable at 0.
     ok = post.subscript(TermValue(0), site)
     assert ok.completed_value() is not None

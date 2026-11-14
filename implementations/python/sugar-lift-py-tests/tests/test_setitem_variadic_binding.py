@@ -30,6 +30,7 @@ import inspect
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
@@ -150,7 +151,7 @@ def test_remaining_positionals_become_authenticated_tuple_store_value() -> None:
     face = _call(HELPER_STAR, "[0], 0, 1, 2, 3").exits[0]
     assert isinstance(face, Completed)
     assert face.value.arg_values == (
-        ListValue((TermValue(0),)),
+        fresh(ListValue, (TermValue(0),)),
         TermValue(0),
         TupleValue((TermValue(1), TermValue(2), TermValue(3))),
     )
@@ -163,15 +164,15 @@ def test_star_values_discharge_stores_tuple_at_index() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(0),
             values_cid: TupleValue((TermValue(1), TermValue(2))),
         },
     )
     assert isinstance(exits, ExitSet)
     assert isinstance(exits.exits[0], Completed)
-    assert _stored_list(exits.exits[0]) == ListValue(
-        (TupleValue((TermValue(1), TermValue(2))),)
+    assert _stored_list(exits.exits[0]) == fresh(
+        ListValue, (TupleValue((TermValue(1), TermValue(2))),)
     )
 
 
@@ -185,13 +186,14 @@ def test_extra_keywords_become_authenticated_mapping_store_value() -> None:
     face = _call(HELPER_KW, "[0], 0, a=1, b=2").exits[0]
     assert isinstance(face, Completed)
     assert face.value.arg_values == (
-        ListValue((TermValue(0),)),
+        fresh(ListValue, (TermValue(0),)),
         TermValue(0),
-        DictValue(
+        fresh(
+            DictValue,
             (
                 (StringValue("a"), TermValue(1)),
                 (StringValue("b"), TermValue(2)),
-            )
+            ),
         ),
     )
     assert face.value.parameters == ("obj", "key", "values")
@@ -200,17 +202,17 @@ def test_extra_keywords_become_authenticated_mapping_store_value() -> None:
 def test_kw_values_discharge_stores_dict_at_index() -> None:
     _, pending = _helper(HELPER_KW)
     obj_cid, key_cid, values_cid = pending.demand.operand_coordinate_cids
-    mapping = DictValue(((StringValue("a"), TermValue(1)),))
+    mapping = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(0),
             values_cid: mapping,
         },
     )
     assert isinstance(exits.exits[0], Completed)
-    assert _stored_list(exits.exits[0]) == ListValue((mapping,))
+    assert _stored_list(exits.exits[0]) == fresh(ListValue, (mapping,))
 
 
 # ---------------------------------------------------------------------------
@@ -230,7 +232,7 @@ def test_empty_kw_is_honest_empty_dict() -> None:
     """``helper([0], 0)`` with **values — empty mapping, not None / omitted."""
     face = _call(HELPER_KW, "[0], 0").exits[0]
     assert isinstance(face, Completed)
-    assert face.value.arg_values[2] == DictValue(())
+    assert face.value.arg_values[2] == fresh(DictValue, ())
     assert face.value.arg_values[2] is not None
 
 
@@ -240,13 +242,13 @@ def test_empty_star_discharge_stores_empty_tuple() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(0),
             values_cid: TupleValue(()),
         },
     )
     assert isinstance(exits.exits[0], Completed)
-    assert _stored_list(exits.exits[0]) == ListValue((TupleValue(()),))
+    assert _stored_list(exits.exits[0]) == fresh(ListValue, (TupleValue(()),))
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +263,7 @@ def test_invalid_index_named_indexerror_with_exact_pre_effect_state() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(1),
             values_cid: TupleValue((TermValue(9),)),
         },
@@ -297,7 +299,7 @@ def test_invalid_index_discrimination_not_completed() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(1),
             values_cid: TupleValue((TermValue(9),)),
         },
@@ -323,7 +325,7 @@ def test_dropped_variadic_value_coordinate_is_undischarged() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(0),
             # values_cid deliberately omitted
         },
@@ -356,14 +358,16 @@ def test_reordered_variadic_twin_fails() -> None:
     )
     pack = TupleValue((TermValue(9), TermValue(8)))
     actuals = {
-        obj_c.coordinate_cid: ListValue((TermValue(0), TermValue(1), TermValue(2))),
+        obj_c.coordinate_cid: fresh(
+            ListValue, (TermValue(0), TermValue(1), TermValue(2))
+        ),
         key_c.coordinate_cid: TermValue(1),
         values_c.coordinate_cid: pack,
     }
     t_face = truthful.discharge(None, actuals).exits[0]
     assert isinstance(t_face, Completed)
     t_list = _stored_list(t_face)
-    assert t_list == ListValue((TermValue(0), pack, TermValue(2)))
+    assert t_list == fresh(ListValue, (TermValue(0), pack, TermValue(2)))
     try:
         l_face = lying.discharge(None, actuals).exits[0]
     except ConstructionPanic:

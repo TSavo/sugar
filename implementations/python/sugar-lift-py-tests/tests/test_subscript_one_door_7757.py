@@ -21,6 +21,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
 )
@@ -314,7 +315,7 @@ def test_a_match_mapping_read_with_a_parameter_key_defers_to_the_caller() -> Non
 
     site = _site()
     key, coordinate = _formal(site)
-    subject = DictValue(((StringValue("a"), TermValue(1)),))
+    subject = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
 
     pending = _read(subject, key, site, None)
 
@@ -331,7 +332,7 @@ def test_a_match_projection_composes_a_deferred_read() -> None:
 
     site = _site()
     key, coordinate = _formal(site)
-    subject = DictValue(((StringValue("a"), TermValue(1)),))
+    subject = fresh(DictValue, ((StringValue("a"), TermValue(1)),))
 
     pending = _each(
         _read(subject, key, site, None),
@@ -350,7 +351,7 @@ def test_a_walrus_read_with_a_parameter_index_defers_to_the_caller() -> None:
 
     site = _site()
     index, coordinate = _formal(site)
-    walrus = NamedExpressionValue("ys", ListValue((TermValue(1), TermValue(2))))
+    walrus = NamedExpressionValue("ys", fresh(ListValue, (TermValue(1), TermValue(2))))
 
     pending = walrus.subscript(index, site)
 

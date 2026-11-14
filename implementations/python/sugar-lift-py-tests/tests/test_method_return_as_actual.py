@@ -36,6 +36,7 @@ Does not touch: production, binder, carrier/ExitSet; no helper/method spelling.
 
 from __future__ import annotations
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
@@ -485,4 +486,4 @@ def test_discrimination_list_literal_is_not_make_return() -> None:
     value = _store_value_actual(direct)
     assert value == TermValue(41)
     assert not isinstance(value, CallSiteValue)
-    assert value != ListValue((TermValue(0),))
+    assert value != fresh(ListValue, (TermValue(0),))
