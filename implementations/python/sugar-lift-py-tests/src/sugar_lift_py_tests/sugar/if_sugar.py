@@ -119,6 +119,8 @@ def _is_linear(exits) -> bool:
         and isinstance(exits.exits[0], Completed)
         and exits.exits[0].guard == true_guard()
         and not exits.exits[0].faces
+        # An owing arm is not flattened: the flattening drops ``owed``.
+        and not exits.exits[0].owed
     )
 
 
@@ -400,6 +402,7 @@ class IfSugar(Sugar):
         from sugar_lift_py_tests.outcome.exit_set import (
             _or_guards,
             false_guard,
+            owed_union,
             true_guard,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
@@ -426,6 +429,11 @@ class IfSugar(Sugar):
         halted = []
         entries = []
         completed_guard = None
+        # The one completed arm stands for every completed arm of both suites,
+        # so it owes all of their debts (``owed_union``).
+        completed_owed = owed_union(
+            *(exit_.owed for exit_ in exits.exits if isinstance(exit_, Completed))
+        )
         for exit_ in exits.exits:
             if isinstance(exit_, Halted):
                 inner = exit_.state
@@ -437,7 +445,9 @@ class IfSugar(Sugar):
                     state = _ReducedBlock(tuple(unconditional_entries), True, ())
                 else:
                     state = inner
-                halted.append(Halted(exit_.guard, exit_.effect, state, exit_.faces))
+                halted.append(
+                    Halted(exit_.guard, exit_.effect, state, exit_.faces, exit_.owed)
+                )
                 continue
             entries.extend(entry.guarded(exit_.guard) for entry in exit_.value.entries)
             completed_guard = (
@@ -489,8 +499,11 @@ class IfSugar(Sugar):
             unconditional_entries=unconditional_entries,
             evaluations=_arm_evaluations((then_exits, else_exits), incoming),
         )
-        if not halted:
+        if not halted and not completed_owed:
             return Complete(faces)
         if completed_guard is None:
             return ExitSet(tuple(halted)).normalize()
-        return ExitSet((*halted, Completed(completed_guard, faces))).normalize()
+        # ``Complete`` has no owed slot: an owing completed face stays an arm.
+        return ExitSet(
+            (*halted, Completed(completed_guard, faces, owed=completed_owed))
+        ).normalize()

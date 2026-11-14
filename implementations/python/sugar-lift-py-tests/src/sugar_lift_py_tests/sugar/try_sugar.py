@@ -221,6 +221,7 @@ def _and_finally_with_raise_context(
         ExitSet,
         Halted,
         _and_guards,
+        owed_union,
     )
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
@@ -261,6 +262,7 @@ def _and_finally_with_raise_context(
         for clean in cleanup_es.exits:
             guard = _and_guards(incoming.guard, clean.guard)
             faces = incoming.faces | clean.faces
+            owed = owed_union(incoming.owed, clean.owed)
             if isinstance(clean, Halted):
                 effect = clean.effect
                 # Supersede: cleanup halt wins; retain body raise as context.
@@ -272,11 +274,11 @@ def _and_finally_with_raise_context(
                     and effect is not incoming.effect
                 ):
                     effect = replace(effect, context_effect=incoming.effect)
-                exits.append(Halted(guard, effect, clean.state, faces))
+                exits.append(Halted(guard, effect, clean.state, faces, owed))
                 continue
             if _finally_restores(clean.value):
                 if isinstance(incoming, Completed):
-                    exits.append(Completed(guard, incoming.value, faces))
+                    exits.append(Completed(guard, incoming.value, faces, owed))
                 else:
                     exits.append(
                         Halted(
@@ -284,10 +286,11 @@ def _and_finally_with_raise_context(
                             incoming.effect,
                             incoming.state,
                             faces,
+                            owed,
                         )
                     )
             else:
-                exits.append(Completed(guard, clean.value, faces))
+                exits.append(Completed(guard, clean.value, faces, owed))
     return ExitSet(tuple(exits)).normalize()
 
 

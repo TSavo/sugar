@@ -650,7 +650,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     from sugar_lift_py_tests import tree_enumerate as _tree
     from sugar_lift_py_tests import unanswered_calls as _unanswered
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import Complete, ExitSet
     from sugar_source_tree.panic import SugarNotWritten
 
     global _RETAINED_LINK_UNITS, _RETAINED_BY_MEMENTO
@@ -668,18 +668,25 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
         sf = _open_enumerated_file(source_path, root=root, locus_root=None)
         for fn in sf.functions():
             try:
-                # The one reduction a resumed function gets: its unanswered
-                # calls are retained with the unit (see the resume rows).
-                with _unanswered.collecting() as calls:
-                    outcome = _tree.owner_reduction(fn).outcome
+                # The one reduction a resumed function gets: the unanswered
+                # calls its arms owe are retained with the unit (see the
+                # resume rows).
+                outcome = _tree.owner_reduction(fn).outcome
             except SugarNotWritten:
                 # Typed tree frontier: no link unit to enroll. Gap remains
                 # visible on the universe/audit scan; never catch
                 # ConstructionPanic to soft-continue.
                 continue
-            if not isinstance(outcome, Complete):
+            # One unconditional completed arm. An arm that owes something
+            # stays an ``ExitSet`` (``collapse`` keeps it), and is the same
+            # one arm (``ExitSet.completed_value``); any other ``ExitSet``
+            # enrolls nothing, as before.
+            if isinstance(outcome, ExitSet) and outcome.owed_items():
+                universe = outcome.completed_value()
+            elif isinstance(outcome, Complete):
+                universe = outcome.value
+            else:
                 continue
-            universe = outcome.value
             if not isinstance(universe, UniverseValue):
                 continue
             def_memento_dto = _tree.function_def_memento(fn, file_rel)
@@ -694,7 +701,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
                 def_memento_dto,
                 def_memento,
                 unit,
-                _tree.unanswered_call_rows(calls, file_rel),
+                _tree.unanswered_call_rows(_unanswered.owed_calls(outcome), file_rel),
             )
             _RETAINED_BY_MEMENTO[_memento_continuation_key(def_memento)] = (
                 unit.link_unit_cid
@@ -2695,21 +2702,19 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         in resolved_mementos
                     ):
                         continue
-                    calls = []
+                    calls = ()
                     try:
-                        if seek:
-                            # A seek packages nothing: it records no call.
-                            def_memento, rows = _tree.function_contract_rows(
-                                fn, file_rel
+                        def_memento, rows = _tree.function_contract_rows(
+                            fn, file_rel
+                        )
+                        if not seek:
+                            # The full scan mint packages: every call the
+                            # reduction's final arms owe is written once, as
+                            # an `undecided` row (step 8; PR B on #7766). A
+                            # seek packages nothing: it reads no call.
+                            calls = _unanswered.owed_calls(
+                                _tree.owner_reduction(fn).outcome
                             )
-                        else:
-                            # The full scan mint packages: every call this
-                            # reduction leaves unanswered is recorded once, as
-                            # an `undecided` row (step 8; PR B on #7766).
-                            with _unanswered.collecting() as calls:
-                                def_memento, rows = _tree.function_contract_rows(
-                                    fn, file_rel
-                                )
                     except FreeVariableRefusal as refusal:
                         # A row of this function, or the formula its outcome
                         # carries, names a variable outside its declared scope

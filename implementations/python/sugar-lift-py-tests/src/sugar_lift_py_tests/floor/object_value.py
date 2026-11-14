@@ -286,12 +286,14 @@ class ObjectValue(FloorValue):
                                 ),
                                 face.state,
                                 face.faces,
+                                face.owed,
                             )
                             if isinstance(face, Halted)
                             else Completed(
                                 face.guard,
                                 face.value,
                                 face.faces,
+                                face.owed,
                             )
                         )
                         for face in outcome.exits

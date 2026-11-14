@@ -209,16 +209,16 @@ class OwnerReduction:
 
     ``outcome`` is the reduction's outcome; ``asserts`` is every
     ``(coordinate, outcome)`` an assert inside it reduced to, in reduction
-    order; ``calls`` its unanswered calls.
+    order. Its unanswered calls are owed by the outcome's own arms
+    (``unanswered_calls.owed_calls``).
     """
 
-    __slots__ = ("unit", "outcome", "asserts", "calls")
+    __slots__ = ("unit", "outcome", "asserts")
 
-    def __init__(self, unit, outcome, asserts, calls):
+    def __init__(self, unit, outcome, asserts):
         self.unit = unit
         self.outcome = outcome
         self.asserts = asserts
-        self.calls = calls
 
 
 _OWNER_REDUCTIONS: dict = {}
@@ -232,28 +232,25 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     Every reader of a function's reduction reads this one: the universe rows,
     the link-unit enrollment, and the ``facts`` row of each assert in it. An assert is therefore reduced once, in context, and
     never alone. A refusal is not kept: it propagates to the reader, named.
-    The unanswered calls the reduction recorded reach the reader's open
-    collector whether the reduction ran now or earlier.
+    The unanswered calls the reduction left are owed by its outcome's arms,
+    so a reduction read back from here carries them as the first one did.
     """
     from sugar_lift_py_tests import assert_reductions
-    from sugar_lift_py_tests import unanswered_calls
 
     node = owner if owner is not None else sf.root
     lc = node.line_col_span()
     key = (id(node.unit), node.kind, lc.start_line, lc.start_col, lc.end_line, lc.end_col)
     held = _OWNER_REDUCTIONS.get(key)
     if held is None or held.unit is not node.unit:
-        with unanswered_calls.collecting() as calls:
-            with assert_reductions.collecting() as asserts:
-                if owner is not None:
-                    outcome = function_universe_outcome(owner)
-                else:
-                    outcome = sf.root.sugar().desugar(None)
+        with assert_reductions.collecting() as asserts:
+            if owner is not None:
+                outcome = function_universe_outcome(owner)
+            else:
+                outcome = sf.root.sugar().desugar(None)
         if len(_OWNER_REDUCTIONS) >= _OWNER_REDUCTIONS_BOUND:
             _OWNER_REDUCTIONS.clear()
-        held = OwnerReduction(node.unit, outcome, tuple(asserts), tuple(calls))
+        held = OwnerReduction(node.unit, outcome, tuple(asserts))
         _OWNER_REDUCTIONS[key] = held
-    unanswered_calls.replay(held.calls)
     return held
 
 
@@ -491,15 +488,24 @@ def unanswered_call_row(symbol, coordinate, file_rel: str) -> UndecidedRow:
 
 
 def unanswered_call_rows(calls, file_rel: str) -> list:
-    """One ``undecided`` row per distinct (symbol, site) a reduction recorded.
+    """One ``undecided`` row per distinct (symbol, site) a reduction owes.
 
-    ``calls`` is what ``unanswered_calls.collecting`` gathered, in reduction
-    order. A site reduced more than once (an unrolled loop, a re-reduction
-    under another guard) is one call, so one row.
+    ``calls`` is ``unanswered_calls.owed_calls`` of the reduction's final
+    outcome: ``UnansweredCallV1`` items, in arm order. A site reduced more
+    than once (an unrolled loop, a re-reduction under another guard) is one
+    call, so one row. A call with no site cannot be a member, and is refused
+    by name rather than dropped.
     """
     rows = []
     seen = set()
-    for symbol, coordinate in calls:
+    for call in calls:
+        symbol, coordinate = call.symbol, call.site
+        if coordinate is None:
+            raise ValueError(
+                "an unanswered call reached the proof with no site: "
+                f"owner=unanswered_call_rows symbol={symbol!r} "
+                "replacement=carry the call's fragment to UnknownCalleeCallV1"
+            )
         key = (symbol, tuple(sorted(coordinate.wire().items())))
         if key in seen:
             continue
