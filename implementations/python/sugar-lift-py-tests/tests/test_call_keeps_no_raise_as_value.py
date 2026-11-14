@@ -87,13 +87,13 @@ def callee_raises(monkeypatch):
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
-    def reduce_source_outcome(self, ctx=None):
+    def _reduce_source_outcome(self, ctx=None):
         del ctx
         return ground_exceptional_exit(
             exception_name="ZeroDivisionError", site=self.site, owner="BinOp"
         )
 
-    monkeypatch.setattr(CallSiteValue, "reduce_source_outcome", reduce_source_outcome)
+    monkeypatch.setattr(CallSiteValue, "_reduce_source_outcome", _reduce_source_outcome)
 
 
 # ---------------------------------------------------------------------------

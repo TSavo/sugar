@@ -95,17 +95,17 @@ def test_retained_source_completion_refuses_different_producer_replay(
     assert projected.completed_value() is original
 
 
-@pytest.mark.parametrize("door", ("producer_outcome", "reduce_source_outcome"))
-def test_retained_source_completion_refuses_every_second_reduction_door(
-    door: str,
-) -> None:
-    """A retained wrapper is a consumer value, never a second producer handle."""
+def test_retained_source_completion_refuses_a_second_reduction() -> None:
+    """A retained wrapper is a consumer value, never a second producer handle.
+
+    ``producer_outcome`` is the one door that reduces a call's body (#7757
+    entry 6); its inner half is private and called only by it."""
     retained, body, original = _retained_source_call()
     testimony = retained._retained_source_completion
     identity_before = retained._identity()
 
     with pytest.raises(BackendDefect, match="retained|replay|producer"):
-        getattr(retained, door)(None)
+        retained.producer_outcome(None)
 
     assert body.reductions == 1
     assert retained._retained_source_completion is testimony

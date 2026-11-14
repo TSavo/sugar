@@ -42,7 +42,7 @@ An offender is a function definition (or module-level callable alias) that has:
      construction logic beyond the call);
    - **construction-class call**: body walks to a call of ``sugar``,
      ``from_path``, ``open_source_file_for_construction``, ``force_floor``,
-     ``construct_*``, ``build_proof_envelope``, ``reduce_source_outcome``,
+     ``construct_*``, ``build_proof_envelope``, ``_reduce_source_outcome``,
      ``to_term``, or attribute tails in ``_MEANING_CALL_TAILS``.
 
 Marker alone is prose. Construction alone is the sole door doing its job.
@@ -119,7 +119,7 @@ _MEANING_CALL_TAILS = frozenset(
         "open_source_file_for_construction",
         "force_floor",
         "build_proof_envelope",
-        "reduce_source_outcome",
+        "_reduce_source_outcome",
         "to_term",
         "lift_source",
         "lift_paths",

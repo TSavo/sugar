@@ -210,7 +210,7 @@ _CONSTRUCTION_DOOR_LEAVES = frozenset(
         "force_floor",
         "to_term",
         "require_narrow_cm_ref",
-        "reduce_source_outcome",
+        "_reduce_source_outcome",
     }
 )
 
