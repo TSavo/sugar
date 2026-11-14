@@ -67,33 +67,19 @@ def _tree(source: str):
 
 
 def _link_unit_of_f(source: str):
-    """The link unit the ``parameter-contract-link-units`` level would enrol for
-    ``f``, or ``None`` where that level enrols none (a refusal, or not a
-    completed universe)."""
-    from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.tree_enumerate import (
-        function_def_memento,
-        function_universe_outcome,
-    )
+    """The link unit the ``parameter-contract-link-units`` level enrols for
+    ``f``: read off the def itself, whatever its body reduces to."""
+    from sugar_lift_py_tests.caller_parameter_contract import function_link_unit
+    from sugar_lift_py_tests.tree_enumerate import function_def_memento
     from sugar_source_tree import nodes
-    from sugar_source_tree.panic import LifterRefusal
 
     (fn,) = [
         node
         for node in _tree(source).nodes()
         if isinstance(node, nodes.FunctionDef) and node.name == "f"
     ]
-    try:
-        outcome = function_universe_outcome(fn)
-    except (Exception, LifterRefusal):  # noqa: BLE001 - a refusal owes nothing
-        return None
-    value = outcome.completed_value() if isinstance(outcome, ExitSet) else None
-    if not isinstance(value, UniverseValue):
-        return None
-    return value.link_unit_projection(
-        function_def_memento(fn, "test_witness.py").to_rpc()
-    )
+    memento = function_def_memento(fn, "test_witness.py").to_rpc()
+    return function_link_unit(fn, memento)
 
 
 # One program per family of #7840. A parameter contract would have been owed
@@ -122,8 +108,7 @@ _FAMILIES = {
 @pytest.mark.parametrize("family", sorted(_FAMILIES))
 def test_no_family_link_unit_owes_a_parameter_contract(family: str) -> None:
     unit = _link_unit_of_f(_FAMILIES[family])
-    if unit is None:
-        return
+    assert unit is not None
     assert unit.candidates == ()
     assert unit.parameter_owned_contract.declared_demand_cids == ()
     assert unit.to_value()["candidates"] == []

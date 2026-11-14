@@ -66,11 +66,10 @@ _ENUMERATION_PHASES: Dict[str, tuple[int, float, float]] = {}
 _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
 _BOUND_CONTRACT_REFS = None
-# Phase-1->3 cross-request continuation: retained immutable universes keyed
-# by linkUnitCid, and a def-memento index so resume reuses the SAME universe
-# object (materialize-once) instead of reconstructing the function.
+# Phase-1->3 cross-request continuation: the link units enrolled in phase 1,
+# keyed by linkUnitCid, so resume checks a resolution set against the unit it
+# was folded for.
 _RETAINED_LINK_UNITS = {}
-_RETAINED_BY_MEMENTO = {}
 # Provisional With/call demand table by resolved workspace root. Deriving it
 # walks every enrolled ``*.py`` (authenticated import uses + With sites) —
 # measured multi-minute on pandas (1421 files). Recensus builds it "once" in
@@ -760,34 +759,14 @@ def _call_use_rows_for_units(
     return rows
 
 
-def _memento_continuation_key(memento: Dict[str, Any]) -> str:
-    """The retained-universe index key: a function's stable source identity
-    (source_cid + span). Lets the resume path reuse the SAME retained universe
-    without reconstructing the function."""
-    span = memento.get("span") or {}
-    return "|".join(
-        str(part)
-        for part in (
-            memento.get("source_cid"),
-            span.get("start_line"),
-            span.get("start_col"),
-            span.get("end_line"),
-            span.get("end_col"),
-        )
-    )
+def _parameter_contract_resume(options: Dict[str, Any]) -> None:
+    """Phase-3 resume: verify the presented resolution set is bound to the
+    link unit retained for this linkUnitCid and names no demand. A lost
+    continuation or any stale/foreign set raises a loud ConstructionPanic.
 
-
-def _parameter_contract_resume_rows(
-    options: Dict[str, Any],
-) -> tuple[List[Dict[str, Any]], Dict[str, Dict[str, Any]]]:
-    """Phase-3 resume: reuse the RETAINED universe for this linkUnitCid
-    (materialize-once, NEVER reconstruct), verify the presented resolution set is
-    bound to THIS continuation and forms the exact-complete bijection, attach the
-    authenticated resolutions, and project post(). A lost continuation or any
-    stale/foreign/incomplete set raises a loud ConstructionPanic; it never
-    silently reconstructs through another path."""
-    import dataclasses
-
+    The resume answers the resolution only; it states no row. Every
+    function's rows, its refused member and its undecided members come from
+    the universe full scan, the one door (#7757)."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         ParameterContractResolutionSetV1,
         ResumeStalePanic,
@@ -804,124 +783,60 @@ def _parameter_contract_resume_rows(
             owner="parameter-contract-resume",
             blame=str(link_unit_cid),
             observed="no retained continuation for this linkUnitCid",
-            requested="the retained universe enrolled in phase 1",
+            requested="the link unit enrolled in phase 1",
             fix="resume in the SAME server session that enrolled the link unit",
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-    outcome, universe, def_memento_dto, def_memento, unit, unanswered = retained
     try:
         resolution_set = ParameterContractResolutionSetV1.from_value(raw_set)
-        resume_apply_resolutions(unit, resolution_set)
+        resume_apply_resolutions(retained, resolution_set)
     except (ResumeStalePanic, ValueError) as exc:
         construction_panic_gap(
             owner="parameter-contract-resume",
-            blame=unit.parameter_owned_contract.contract_cid,
+            blame=retained.parameter_owned_contract.contract_cid,
             observed=str(exc),
             requested="an exact, replay-bound ParameterContractResolutionSetV1",
             fix="present the fold's authenticated resolution set for THIS continuation",
             gap_kind=GapKind.FLOOR,
             gap_locus=GapLocus.CONSTRUCTION,
         )
-    # No candidate is ever enrolled (inventory item 43), so the retained
-    # reduction projects as it stands. Its rows are read off the retained
-    # outcome, every arm of it, through the one projection the full scan
-    # uses (``reduction_rows``): completions in the post, each halt as its
-    # panic locus. A resumed function states what the full scan states.
-    from sugar_lift_py_tests.ir import TermTableBuilder
-
-    term_table = TermTableBuilder()
-    from sugar_lift_py_tests.tree_enumerate import reduction_rows
-
-    rows = reduction_rows(
-        outcome,
-        owner=universe,
-        blame=None,
-        def_memento=def_memento_dto,
-    )
-    # A resumed function is skipped by the universe scan, so the calls its
-    # one reduction (phase 1) left unanswered ride here: one `undecided` row
-    # each, as the scan writes them (step 8).
-    rows = [*rows, *unanswered]
-    nodes = [
-        {
-            "memento": def_memento,
-            "audit": dto.to_rpc_with_term_table(term_table),
-            "payload": None,
-        }
-        for dto in rows
-    ]
-    # The audits state their terms by reference into THIS table; the answer
-    # carries it, so the reader resolves every term inline (#7843).
-    return nodes, term_table.nodes
 
 
 def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     """Phase-1 enrollment: one closed ParameterContractLinkUnitV1 per function
-    that enrolled a parameter-contract demand. Builds each function's universe
-    (never calls post()), projects its link unit, and RETAINS the immutable
-    universe keyed by linkUnitCid + def-memento so Phase-3 resume reuses it.
+    with a formal, read off the def itself (``function_link_unit``): its name
+    and formal coordinates. Nothing of the body is reduced here, so nothing
+    here refuses a function or states a row of it: the universe full scan is
+    the one door for those (#7757). Each unit is retained keyed by
+    linkUnitCid so Phase-3 resume checks its resolution set against it.
 
-    Nothing is soft-skipped: neither ``SugarNotWritten`` nor
-    ``ConstructionPanic`` is caught here — the sole production soft membranes
-    are audit enumeration and ``_production_lift_child``; refusals propagate
-    to the typed-loud JSON-RPC error handler. Halting / non-Universe outcomes
-    simply enroll no link unit (no owned demand).
+    Nothing is soft-skipped: a refusal propagates to the typed-loud JSON-RPC
+    error handler.
     """
     from sugar_lift_py_tests import tree_enumerate as _tree
-    from sugar_lift_py_tests import unanswered_calls as _unanswered
-    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+    from sugar_lift_py_tests.caller_parameter_contract import function_link_unit
     from sugar_source_tree.reporter import CollectingReporter
 
-    global _RETAINED_LINK_UNITS, _RETAINED_BY_MEMENTO
+    global _RETAINED_LINK_UNITS
     _RETAINED_LINK_UNITS = {}
-    _RETAINED_BY_MEMENTO = {}
     rows: List[Dict[str, Any]] = []
     for source_path in sorted(root.rglob("*.py")):
         file_rel = str(source_path.relative_to(root))
         # No broad skip: a source that cannot be read is a LOUD failure, never a
-        # silently omitted file. Building each function's universe constructs
-        # (fn.sugar()), so the tree opens through the construction door: the
-        # bare door has no construction context and every Call refuses
-        # (BareConstructionDoor), which failed every mint that reached a call.
-        # Same door as the `functions` level, populated the same way.
+        # silently omitted file. The tree opens through the one construction
+        # door every enumerate level opens it through.
         sf = open_source_file_for_construction(
             source_path, root=root, reporter=CollectingReporter()
         )
         for fn in sf.functions():
-            # The one reduction a resumed function gets: the unanswered
-            # calls its arms owe are retained with the unit (see the
-            # resume rows). A refusal (SugarNotWritten or ConstructionPanic)
-            # propagates by name; it never skips the function.
-            outcome = _tree.owner_reduction(fn).outcome
-            # One unconditional completed arm (``ExitSet.completed_value``),
-            # owing or not: what it owes is retained with the unit below. Any
-            # other arm set enrolls nothing. The outcome is always a set of
-            # arms (``tree_enumerate.as_its_own_proof_states``).
-            universe = outcome.completed_value()
-            if not isinstance(universe, UniverseValue):
-                continue
-            def_memento_dto = _tree.function_def_memento(fn, file_rel)
-            def_memento = def_memento_dto.to_rpc()
+            def_memento = _tree.function_def_memento(fn, file_rel).to_rpc()
             # No broad skip: a projection failure is LOUD (it escapes), never a
-            # silently dropped link unit. `None` is the typed "no owned demand".
-            unit = universe.link_unit_projection(def_memento)
+            # silently dropped link unit. `None` is a def with no formal.
+            unit = function_link_unit(fn, def_memento)
             if unit is None:
                 continue
-            # The reduction's own outcome is retained, every arm of it: the
-            # resume reads its rows off this one outcome through the one
-            # projection the full scan uses (``reduction_rows``).
-            _RETAINED_LINK_UNITS[unit.link_unit_cid] = (
-                outcome,
-                universe,
-                def_memento_dto,
-                def_memento,
-                unit,
-                _tree.unanswered_call_rows(_unanswered.owed_calls(outcome), file_rel),
-            )
-            _RETAINED_BY_MEMENTO[_memento_continuation_key(def_memento)] = (
-                unit.link_unit_cid
-            )
+            _RETAINED_LINK_UNITS[unit.link_unit_cid] = unit
             rows.append(unit.to_value())
     return rows
 
@@ -2433,8 +2348,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
             )
             return
         if level == "parameter-contract-resume":
-            nodes, term_table = _parameter_contract_resume_rows(options)
-            _send_enumerate_result(msg_id, nodes, [], term_tables=[term_table])
+            # The answer keeps the enumeration wire shape and carries no
+            # node: the function's rows are the universe scan's.
+            _parameter_contract_resume(options)
+            _send_enumerate_result(msg_id, [], [])
             return
         if level == "source_files":
             # The source_files level IS SourceTree.fragments(): whole-file
@@ -2810,23 +2727,10 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 # call inlined into several functions' reductions is one call.
                 recorded_calls: set = set()
                 gaps = []
-                # Phase-3: functions whose parameter-contract demands the caller
-                # already discharged (fold -> resume) are served from the resume
-                # path, not reconstructed here. Skipping them keeps post()
-                # resume-exclusive: a plain universe enumerate (empty skip set)
-                # of a pending-demand function STILL panics.
-                resolved_mementos = set(
-                    options.get("resolvedContinuationMementos") or []
-                )
+                # Every function's rows, refused member and undecided members
+                # come from this one scan (#7757): no function is skipped for
+                # another door to state.
                 for fn in sf.functions():
-                    if (
-                        resolved_mementos
-                        and _memento_continuation_key(
-                            _tree.function_def_memento(fn, file_rel).to_rpc()
-                        )
-                        in resolved_mementos
-                    ):
-                        continue
                     calls = ()
                     try:
                         def_memento, rows = _tree.function_contract_rows(

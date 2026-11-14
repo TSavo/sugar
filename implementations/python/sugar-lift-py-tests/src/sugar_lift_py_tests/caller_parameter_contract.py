@@ -1443,3 +1443,29 @@ def resume_apply_resolutions(link_unit, resolution_set) -> dict[str, dict]:
             f"resolution for a foreign demand {resolution['demandCid']}"
         )
     return {}
+
+
+def function_link_unit(fn, def_memento):
+    """A function's ParameterContractLinkUnitV1, read off the def itself.
+
+    The unit is the callee's structural identity: its name and its own formal
+    coordinates (``FunctionDef.formal_coordinates``), no owned demand and no
+    candidate. Nothing in the lift owes a parameter contract (inventory item
+    43), so nothing of the body is read: no reduction, no outcome, no arm.
+    ``None`` for a def with no formal (no unit to link).
+    """
+    coords = tuple(fn.formal_coordinates())
+    if not coords:
+        return None
+    owned = ParameterOwnedContractV1.mint(
+        name=fn.name,
+        owner_source_identity_cid=coords[0].owner_source_identity_cid,
+        owner_definition_locus=coords[0].owner_definition_locus,
+        formal_coordinates=coords,
+        declared_demand_cids=[],
+    )
+    return ParameterContractLinkUnitV1.mint(
+        source_memento=def_memento,
+        parameter_owned_contract=owned,
+        candidates=(),
+    )
