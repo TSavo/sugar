@@ -67,7 +67,10 @@ class LiveForRuntimeV1:
     # Per carried name, in ``carried_names`` order: ``(header, writes,
     # else_writes)``.  ``header`` is the loop header's evaluation key the body
     # and the ``else`` suite read the name through
-    # (``nodes._loop_header_evaluation_key``); for a loop target it is the
+    # (``nodes._loop_header_evaluation_key``), and the key the recurrence
+    # binds the name's pre-loop value (``initial_value_sugars``) under where
+    # the loop stands, before its first item: the name is never written and
+    # an item handed no value refuses by name; for a loop target it is the
     # target's per-item key (``nodes._loop_target_evaluation_key``), which the
     # recurrence binds to the item's projection after the header;
     # ``writes`` (``else_writes``) are the keys every write of the name in the

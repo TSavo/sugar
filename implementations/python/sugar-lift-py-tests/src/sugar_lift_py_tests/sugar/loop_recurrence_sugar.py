@@ -157,6 +157,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             from sugar_lift_py_tests.operations.iterator_operation import (
                 IteratorOperation,
             )
+            from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
+                evaluation_here,
+            )
             from sugar_lift_py_tests.temporal import bind_temporal
 
             from dataclasses import replace
@@ -173,8 +176,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     ),
                 )
             initial_values = []
-            for name, sugar in zip(
-                runtime.carried_names, runtime.initial_value_sugars, strict=True
+            for (header, _writes, _else_writes), sugar in zip(
+                self._carried_evaluations(runtime),
+                runtime.initial_value_sugars,
+                strict=True,
             ):
                 initial = sugar.desugar(runtime_ctx)
                 if isinstance(initial, NativeOperationExitCarrierV1):
@@ -185,13 +190,19 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 # that owes) is returned whole, with every arm it has.
                 if initial_value is None or initial.owed_items():
                     return initial
-                runtime_ctx = bind_temporal(
-                    runtime_ctx,
-                    name,
-                    initial_value,
-                    owner="LoopRecurrenceSugar",
-                    blame=str(self.site),
-                )
+                # The pre-loop value is bound under the header's key where
+                # the loop stands (``evaluation_here``), outside every item of
+                # it: the header's evaluation before the first item.  The
+                # name is never written; each item binds its own header to
+                # what it begins with (``_enter_header``).
+                if header is not None:
+                    runtime_ctx = bind_temporal(
+                        runtime_ctx,
+                        evaluation_here(header),
+                        initial_value,
+                        owner="LoopRecurrenceSugar.pre-loop",
+                        blame=str(self.site),
+                    )
                 initial_values.append(initial_value)
             # The first item begins with the pre-loop values.
             carried = tuple(initial_values)
@@ -284,15 +295,14 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
         return ExitSet(tuple(exits)).normalize()
 
-    def _advance_iterator(
-        self, iterator, runtime, ctx, *, entries, carried=None, index=0
-    ):
+    def _advance_iterator(self, iterator, runtime, ctx, *, entries, carried, index=0):
         """Run item ``index`` of the live loop.
 
         ``carried`` is the value of each carried name (``runtime.carried_names``
         order) the item begins with: the pre-loop values for the first item,
-        the previous item's latch (``_latched``) after it.  None means the
-        values ``ctx`` holds under the names (an item entered directly).
+        the previous item's latch (``_latched``) after it.  An item handed
+        nothing for the names it carries is refused by name
+        (``_require_carried``): the names are never read in its place.
         """
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
@@ -479,6 +489,36 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             return tuple((None, (), ()) for _ in runtime.carried_names)
         return triples
 
+    def _require_carried(self, runtime, carried):
+        """``carried``: the value of each carried name an item begins with or
+        the loop leaves with (the pre-loop values, an item's latch, what the
+        ``else`` suite left).  Handed nothing, a loop that carries no name
+        carries the empty tuple; one that carries names is refused by name.
+        The names are never read in its place: nothing writes them."""
+        if carried is not None:
+            return carried
+        if not runtime.carried_names:
+            return ()
+        from sugar_source_tree.panic import SugarNotWritten
+
+        names = ", ".join(f"`{name}`" for name in runtime.carried_names)
+        raise SugarNotWritten(
+            owner="LoopRecurrenceSugar",
+            blame=self.site,
+            observed=(
+                f"a live loop item entered or left with no value handed on for "
+                f"the names it carries ({names})"
+            ),
+            requested=(
+                "the pre-loop values, the previous item's latch, or what the "
+                "else suite left, handed to the item"
+            ),
+            fix=(
+                "enter every item through the recurrence, which hands it what "
+                "it carries; never read the carried names in its place"
+            ),
+        )
+
     def _enter_header(self, runtime, ctx, carried):
         """Bind the header evaluation of each carried name: the value an item
         begins with (``carried``), under the header's key qualified by where
@@ -489,14 +529,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
         from sugar_lift_py_tests.temporal import bind_temporal
 
+        carried = self._require_carried(runtime, carried)
         if ctx is None:
             return ctx
-        if carried is None:
-            temporal = getattr(ctx, "temporal", None)
-            carried = tuple(
-                None if temporal is None else temporal.value_if_bound(name)
-                for name in runtime.carried_names
-            )
         for (header, _writes, _else_writes), value in zip(
             self._carried_evaluations(runtime), carried, strict=True
         ):
@@ -596,8 +631,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
         temporal = getattr(ctx, "temporal", None)
         if temporal is None:
-            # Nothing to latch from: the next item and the publication read
-            # the names, as they did (and refuse there, by name, if unbound).
+            # Nothing to latch from: the next item and the publication are
+            # handed nothing, and refuse by name (``_require_carried``).
             return None
         with entered(loop_iteration_segment(self.target_cid, index)):
             return self._latest_written(runtime, temporal, else_suite=False)
@@ -717,7 +752,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 )
         return state
 
-    def _finish_iterator(self, runtime, ctx, *, entries, carried=None, items=0):
+    def _finish_iterator(self, runtime, ctx, *, entries, carried, items=0):
         """The loop's outcome after its ``items`` items were exhausted."""
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
@@ -765,32 +800,28 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         ctx,
         *,
         entries,
-        carried=None,
+        carried,
         fall_through=(),
         can_fall_through=True,
     ):
         """Publish each carried name's value as the loop leaves: ``carried``,
         what the leaving item (``_latched``) or the ``else`` suite
-        (``_after_else``) left it with; without it (an item entered directly,
-        with no values handed to it) the name.  The value is published under
-        the name's binding coordinate only: every read after the loop is a
+        (``_after_else``) left it with; handed nothing, refused by name
+        (``_require_carried``).  The value is published under the name's
+        binding coordinate only: every read after the loop is a
         ``LoopBindingRef`` to it (``project_loop_post_binding``), and the
-        name is never written."""
+        name is never written nor read."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 
         temporal = getattr(ctx, "temporal", None)
         if temporal is None:
             raise TypeError("loop recurrence omitted its temporal context")
+        carried = self._require_carried(runtime, carried)
         projected = []
-        for position, (name, coordinate_cid) in enumerate(
-            zip(runtime.carried_names, self.binding_coordinate_cids, strict=True)
+        for value, coordinate_cid in zip(
+            carried, self.binding_coordinate_cids, strict=True
         ):
-            value = (
-                carried[position]
-                if carried is not None
-                else temporal.value_if_bound(name)
-            )
             if value is None:
                 raise TypeError("loop recurrence omitted a carried binding")
             projected.append(ScopeRebind(coordinate_cid, value))

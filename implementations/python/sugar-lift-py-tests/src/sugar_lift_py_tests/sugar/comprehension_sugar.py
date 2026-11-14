@@ -733,7 +733,7 @@ class ComprehensionSugar(ConstructedTermSugar):
 
     def _written(self, binds, ctx):
         """``ctx`` with the walrus writes ``binds`` applied in evaluation
-        order, for what is evaluated after them: each walrus's name and key
+        order, for what is evaluated after them: each walrus's key
         (``bind_walrus_binds``), and the running value of its name
         (``_running_coordinates``), so a later read of the name in the
         comprehension reads the last write before it.  ``ctx`` itself when

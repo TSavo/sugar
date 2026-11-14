@@ -19,9 +19,10 @@ class NamedExpressionValue(FloorValue):
     assigned_value: FloorValue
     presented_value: FloorValue = field(init=False)
     # The coordinate of the walrus's one evaluation (``NamedExpr.substitute``).
-    # ``extend_scope`` binds the assigned value under it as well as under the
+    # ``extend_scope`` binds the assigned value under it, never under the
     # name: every later read substitution rewrote is an ``EvaluationRef`` to it
-    # (temporal choice 1, #7661).
+    # (temporal choice 1, #7661), a branch of the ``if``, ``while`` or
+    # conditional expression whose test holds the walrus included.
     evaluation: str | None = None
     # The walrus did not run on this arm of a conditional expression
     # (``a if c else (x := 5)`` where ``c`` held): under its key the name
@@ -52,37 +53,35 @@ class NamedExpressionValue(FloorValue):
         return presented.extend_scope(bind_walrus_binds(binds, ctx))
 
     def bind(self, ctx):
-        """``ctx`` with this walrus's bind: the assigned value under the name
-        and under the evaluation key.  The one place a walrus writes the
-        temporal; ``extend_scope`` and every carrier (``bind_walrus_binds``)
-        apply it."""
+        """``ctx`` with this walrus's bind: the assigned value under the
+        evaluation key, never under the name.  Every read of the name after
+        the walrus is a reference to the key (``NamedExpr.substitution_binding``;
+        a branch of the test that holds it, ``nodes._scope_after_test``).
+        The one place a walrus writes the temporal; ``extend_scope`` and every
+        carrier (``bind_walrus_binds``) apply it.  A walrus substitution never
+        keyed has no read that refers to it (its reads were given its value),
+        and writes nothing."""
         # Root mint is Floor-owned when the reducer has no ambient context yet
         # (function desugar(None) / SourceFile production tooth).
         if ctx is None:
             from sugar_lift_py_tests.context import ReduceContext
 
             ctx = ReduceContext.root(owner="NamedExpressionValue")
-        key = None
-        if self.evaluation is not None:
-            from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
-                evaluation_here,
-            )
+        if self.evaluation is None:
+            return ctx
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
 
-            # In a live loop each item's evaluation is its own key.
-            key = evaluation_here(self.evaluation)
-            if ctx.temporal.value_if_bound(key) == self.assigned_value:
-                # This evaluation's bind is already in the temporal: a later
-                # read of a value that carries it (a name substitution
-                # inlined the walrus's right-hand side, an assignment's record
-                # answered it) is not the walrus evaluating again, and binding
-                # the name again would shadow a write of it made since.
-                return ctx
-        # The name first, the evaluation last: a read of the evaluation is the
-        # latest of the two until something rebinds the name.
-        temporal = ctx.temporal.bind_value(self.name, self.assigned_value)
-        if key is not None:
-            temporal = temporal.bind_value(key, self.assigned_value)
-        return replace(ctx, temporal=temporal)
+        # In a live loop each item's evaluation is its own key.
+        key = evaluation_here(self.evaluation)
+        if ctx.temporal.value_if_bound(key) == self.assigned_value:
+            # This evaluation's bind is already in the temporal: a later read
+            # of a value that carries it (a name substitution inlined the
+            # walrus's right-hand side, an assignment's record answered it) is
+            # not the walrus evaluating again, and binding the key again would
+            # shadow a write of the name made since (a reference reads the
+            # later of the two, ``EvaluationRefSugar``).
+            return ctx
+        return replace(ctx, temporal=ctx.temporal.bind_value(key, self.assigned_value))
 
     def as_expression_statement(self):
         """A bare ``(name := value)`` statement still binds ``name`` afterward."""

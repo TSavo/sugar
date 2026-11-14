@@ -8,7 +8,9 @@ Two hazards are pinned here:
 
 1. A walrus in an ``if`` condition binds its key into the context both suites
    start from.  The join measures what the arms bound against the context
-   before the condition, so the key is carried out of the ``if``.
+   before the condition, so the key is carried out of the ``if``.  The
+   branches of an ``if``, an ``elif``, a ``while`` or a conditional
+   expression read it through that key: the walrus never writes the name.
 2. A walrus nested in a larger expression (an assignment's right-hand side, a
    call's actual, any operand) carries its bind out to the enclosing statement
    on the value, through the one operand door (``consume_operands``), and a
@@ -149,12 +151,12 @@ def test_each_unrolled_iteration_is_its_own_walrus_evaluation() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_walrus_value_binds_its_evaluation_and_its_name() -> None:
+def test_walrus_value_binds_its_evaluation_never_its_name() -> None:
     value = NamedExpressionValue("x", TermValue(5), evaluation=KEY)
     ctx = value.extend_scope(_root())
     assert ctx.temporal.value_if_bound(KEY) == TermValue(5)
-    assert ctx.temporal.value_if_bound("x") == TermValue(5)
-    read = EvaluationRefSugar(evaluation=KEY, name="x", site=None)
+    assert ctx.temporal.value_if_bound("x") is None
+    read = EvaluationRefSugar(evaluation=KEY, name="x", site=None, walrus=True)
     assert _value(read.desugar(ctx)) == TermValue(5)
 
 
@@ -826,3 +828,148 @@ def test_a_ground_conditional_reads_the_arm_it_took(
         )
     )
     assert returned == TermValue(expected)
+
+
+# ---------------------------------------------------------------------------
+# A walrus in an if / elif / while / conditional-expression test: the
+# branches read it through its key, never the name
+# ---------------------------------------------------------------------------
+
+
+def _references(node, name: str) -> list:
+    return [
+        child
+        for child in node.walk()
+        if child.kind == "EvaluationRef" and child.name == name
+    ]
+
+
+def _assert_walrus_reference(read, walrus) -> None:
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == walrus.evaluation
+    assert read.walrus is True
+
+
+def test_an_if_branch_reads_the_tests_walrus_through_its_key() -> None:
+    rewritten = _function(
+        "def f(g, v):\n"
+        "    t = 1\n"
+        "    if (t := g(v)):\n"
+        "        return t\n"
+        "    return 0\n"
+    ).substitute({})
+    (walrus,) = _walruses(rewritten)
+    statement = next(node for node in rewritten.body if node.kind == "If")
+    ret = statement.body[0]
+    assert isinstance(ret, Return)
+    # Not the `t = 1` binding the scope held before the test.
+    _assert_walrus_reference(ret.value, walrus)
+
+
+def test_an_elif_branch_reads_its_tests_walrus_through_its_key() -> None:
+    rewritten = _function(
+        "def f(g, v, c):\n"
+        "    if c:\n"
+        "        return 1\n"
+        "    elif (t := g(v)):\n"
+        "        return t\n"
+        "    return 0\n"
+    ).substitute({})
+    (walrus,) = _walruses(rewritten)
+    outer = next(node for node in rewritten.body if node.kind == "If")
+    inner = next(node for node in outer.orelse if node.kind == "If")
+    _assert_walrus_reference(inner.body[0].value, walrus)
+
+
+def test_a_while_body_reads_the_tests_walrus_through_its_key() -> None:
+    rewritten = _function(
+        "def f(next_line, use):\n"
+        "    while (line := next_line()):\n"
+        "        use(line)\n"
+    ).substitute({})
+    walruses = _walruses(rewritten)
+    assert walruses
+    reads = _references(rewritten, "line")
+    assert reads
+    for read in reads:
+        assert read.walrus is True
+        assert read.evaluation in {walrus.evaluation for walrus in walruses}
+
+
+def test_a_conditional_arm_reads_the_tests_walrus_through_its_key() -> None:
+    rewritten = _function(
+        "def f(g):\n    t = 1\n    return t + 1 if (t := g()) else 0\n"
+    ).substitute({})
+    (walrus,) = _walruses(rewritten)
+    conditional = next(node for node in rewritten.walk() if node.kind == "IfExp")
+    _assert_walrus_reference(conditional.body.left, walrus)
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        # The branch reads the walrus, not the `t = 1` before the test.
+        ("    t = 1\n    if (t := 5):\n        return t\n    return 0\n", 5),
+        # Both arms: the else reads the same evaluation.
+        (
+            "    t = 1\n"
+            "    if (t := 0):\n"
+            "        return 9\n"
+            "    else:\n"
+            "        return t\n",
+            0,
+        ),
+        # An elif's test runs after the if's: it reads the if's walrus, and
+        # its branch reads its own.
+        (
+            "    if (s := 0):\n"
+            "        return 9\n"
+            "    elif (t := s + 7):\n"
+            "        return t\n"
+            "    return 8\n",
+            7,
+        ),
+        # A conditional expression's arm.
+        ("    t = 1\n    return t + 1 if (t := 5) else 0\n", 6),
+    ],
+)
+def test_a_branch_reads_the_value_its_tests_walrus_wrote(
+    body: str, expected: int
+) -> None:
+    returned = _returned_value(_call_outcome("def f():\n" + body + "\nf()\n"))
+    assert returned == TermValue(expected)
+
+
+_LIVE_TEST = (
+    "def f(g, xs):\n"
+    "    for v in xs:\n"
+    "        if (t := g(v)):\n"
+    "            return t\n"
+    "    return 0\n"
+)
+
+
+def test_a_live_loops_branch_reads_its_tests_walrus_through_its_key() -> None:
+    rewritten = _function(_LIVE_TEST).substitute({})
+    (walrus,) = _walruses(rewritten)
+    (read,) = _references(rewritten, "t")
+    # A reference to the walrus's evaluation, which each item binds under
+    # its own key (``evaluation_here``): the read in an item is that item's.
+    _assert_walrus_reference(read, walrus)
+
+
+def test_a_live_loops_branch_reads_this_items_value() -> None:
+    # The first item's test writes 0 and falls through; the second's writes
+    # 2 and returns it.  An earlier item's write, or the name, is not read.
+    returned = _returned_value(
+        _call_outcome(
+            "def f():\n"
+            "    for left, right in [(1, 2), (3, 4)]:\n"
+            "        if (t := left - 1):\n"
+            "            return t\n"
+            "    return 9\n"
+            "\n"
+            "f()\n"
+        )
+    )
+    assert returned == TermValue(2)
