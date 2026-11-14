@@ -40,14 +40,14 @@ class ReceiverOwnedMutationResult(FloorValue):
         identity = getattr(self.receiver_before, "identity", None)
         if not isinstance(identity, str) or not identity:
             return ctx
-        from sugar_lift_py_tests.sugar.call_site_sugar import settled_binding_value
+        from sugar_lift_py_tests.sugar.call_site_sugar import bound_value_read
 
         temporal = ctx.temporal
         matched = False
         for binding in ctx.temporal.bindings:
-            # A module-final key not yet read holds no receiver the mutation
-            # could have reached; one whose run answered holds its value.
-            candidate = settled_binding_value(binding.value)
+            # Every binding is read as any read reads it: a module-final
+            # key demands its module run, whether or not a read asked first.
+            candidate = bound_value_read(binding.value)
             if (
                 type(candidate) is type(self.receiver_before)
                 and getattr(candidate, "identity", None) == identity

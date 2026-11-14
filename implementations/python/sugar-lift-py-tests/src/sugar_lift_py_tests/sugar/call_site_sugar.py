@@ -1332,11 +1332,12 @@ def with_module_final_globals(ctx, readers, *, site):
     (``branch_result_read``), never at the frame entry.  A body that reads
     no key and selects by no slot on the path it takes never asks for the
     run, so a module whose run refuses refuses only the reads of its final
-    bindings, each at the read, by the run's own gap.  A key the completed
-    arms bound to different values has no one value; where the run
-    completes on no arm, or no completed arm bound the key, it has none
-    either: each such read is refused by name, naming the key
-    (``EvaluationRefSugar._unbound``).  A slot they decided differently, or
+    bindings, each at the read, by the run's own gap.  A key exclusive
+    completed arms bound to different values reads each arm's value under
+    its guard; one that arms not provably exclusive bound to different
+    values has no value, and where the run completes on no arm, or no
+    completed arm bound the key, it has none either: each such read is
+    refused by name, naming the key (``EvaluationRefSugar._unbound``).  A slot they decided differently, or
     that none decided, reads as undecided.  A global the module body does not
     decide was refused by name when the body was constructed.  The name is
     never bound.
@@ -1414,13 +1415,13 @@ class ModuleFinalValue:
 
     ``read`` asks for the run (``tree_enumerate.module_end_contexts``, run
     once per unit, its refusal remembered as loudly as its answer): the
-    value every completed arm that bound the key agrees on, else None, and
-    the run's refusal raised at this read.  Every read of a key reads it
-    through ``TemporalContext.value_read``, which reads this.  ``settled``
-    is the same value only where the run has already answered, and asks
-    for nothing: what a scan over every binding reads (a store's alias
-    advance, ``ReceiverFieldStoreValue.extend_scope``), so a scan is never
-    a read of the module.
+    arms that bound the key joined by the one rule (``_module_end_value``),
+    else None, and the run's refusal raised at this read.  Every read of a
+    bound value reads it through ``bound_value_read``: a read of a key
+    (``TemporalContext.value_read``) and a scan over every binding (a
+    store's alias advance, ``ReceiverFieldStoreValue.extend_scope``) alike,
+    so what a binding holds never depends on whether the run was asked for
+    before.
     """
 
     __slots__ = ("unit", "key")
@@ -1437,19 +1438,21 @@ class ModuleFinalValue:
 
         return _module_end_value(module_end_contexts(self.unit), self.key)
 
-    def settled(self):
-        from sugar_lift_py_tests.tree_enumerate import held_module_end_contexts
 
-        ends = held_module_end_contexts(self.unit)
-        return None if ends is None else _module_end_value(ends, self.key)
+def bound_value_read(value):
+    """``value``, held by a binding of a temporal, as a read of it reads it:
+    a ``ModuleFinalValue`` asked for here (``ModuleFinalValue.read``: the
+    module run demanded, its refusal raised), anything else as it is.
 
-
-def settled_binding_value(value):
-    """``value`` as a scan over every binding of a temporal reads it: a
-    ``ModuleFinalValue`` only where its module run has already answered
-    (``ModuleFinalValue.settled``, else None), anything else as it is."""
+    The one read of a bound value.  A read of a key
+    (``TemporalContext.value_read``) and a scan over every binding (a
+    store's or a mutation's alias advance, ``ReceiverFieldStoreValue`` /
+    ``ReceiverOwnedMutationResult.extend_scope``) both read here, so a
+    module-final binding answers one value wherever it is read and
+    whatever was read before: a scan that skipped an unasked run and used
+    an answered one gave one file two answers by order (#7757, entry 4)."""
     if isinstance(value, ModuleFinalValue):
-        return value.settled()
+        return value.read()
     return value
 
 
@@ -1490,28 +1493,37 @@ def branch_result_read(table, slot_id):
 
 def _module_end_value(ends, key):
     """The value the module run bound ``key`` to, read off ``ends`` (the
-    context each completed arm of the run ended with): the one value every
-    completed arm that bound it agrees on, else None.  An arm that never
-    reached the write (a route the write's ``if``/``try`` arm did not take)
-    binds nothing under the key, and a read of the key stands only on the
-    route that wrote it (the phi over that route, ``IfExp`` on a
-    ``BranchResultRef``)."""
-    values = [
-        value
-        for value in (end.temporal.value_if_bound(key) for end in ends)
-        if value is not None
-    ]
-    if not values:
+    run's completed arms, each holding the context it ended with under its
+    own guard and faces, ``ModuleBlockSugar.run``), else None.
+
+    The arms that bound the key are joined by the one rule a join of a key
+    over arms has (``if_sugar._joined_evaluation``, the rule an ``if``
+    carries its keys out by): arms that bound it to one value answer that
+    value; exclusive arms that bound it to different values answer each
+    arm's value under that arm's guard (one ``GuardedValue``); arms that
+    cannot be proved exclusive hold it at two values on one path, so there
+    is no value and the read is refused by name (``EvaluationRefSugar``).
+    An arm that never reached the write (a route the write's ``if``/``try``
+    arm did not take) binds nothing under the key, and a read of the key
+    stands only on the route that wrote it (the phi over that route,
+    ``IfExp`` on a ``BranchResultRef``)."""
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.sugar.if_sugar import _joined_evaluation
+
+    bound = []
+    for end in ends:
+        value = end.value.temporal.value_if_bound(key)
+        if value is not None:
+            bound.append(Completed(end.guard, value, end.faces))
+    if not bound:
         return None
-    first = values[0]
-    if any(value is not first and value != first for value in values[1:]):
-        return None
-    return first
+    return _joined_evaluation(bound)
 
 
 def _module_end_decision(ends, slot_id):
     """How the module run decided the slot ``slot_id``, read off ``ends``
-    (``ground_branch_results``, a ``TrueBoolLiteralSugar`` or a
+    (the context each completed arm holds, its ``ground_branch_results``:
+    a ``TrueBoolLiteralSugar`` or a
     ``FalseBoolLiteralSugar``): the one decision every completed arm that
     decided it agrees on, else None.  An arm that never reached the slot's
     owner (a loop or an ``if`` in a route it did not take) decides nothing;
@@ -1527,7 +1539,8 @@ def _module_end_decision(ends, slot_id):
     decisions = [
         decided
         for decided in (
-            getattr(end, "ground_branch_results", {}).get(slot_id) for end in ends
+            getattr(end.value, "ground_branch_results", {}).get(slot_id)
+            for end in ends
         )
         if decided is not None
     ]

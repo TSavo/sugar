@@ -57,15 +57,14 @@ class TemporalContext:
         none.  A module-final key a frame entry bound
         (``call_site_sugar.ModuleFinalValue``) is demanded here, at its read:
         the module run is asked for by a read of one of its keys only, and
-        its refusal is this read's.  Anything else is ``value_if_bound``."""
+        its refusal is this read's (``call_site_sugar.bound_value_read``, the
+        one read of a bound value).  Anything else is ``value_if_bound``."""
         value = self.value_if_bound(name)
         if value is None:
             return None
-        from sugar_lift_py_tests.sugar.call_site_sugar import ModuleFinalValue
+        from sugar_lift_py_tests.sugar.call_site_sugar import bound_value_read
 
-        if isinstance(value, ModuleFinalValue):
-            return value.read()
-        return value
+        return bound_value_read(value)
 
     def latest(self, *names: str) -> TemporalBinding | None:
         """The binding of whichever of ``names`` was bound last, or None."""

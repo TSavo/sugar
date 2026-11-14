@@ -1329,7 +1329,7 @@ def _module_end_value(tree: SourceFile, key: str):
     from sugar_lift_py_tests.tree_enumerate import module_end_contexts
 
     (end,) = module_end_contexts(_function(tree).unit)
-    value = end.temporal.value_if_bound(key)
+    value = end.value.temporal.value_if_bound(key)
     assert value is not None
     return value
 
@@ -1640,4 +1640,152 @@ def test_two_readers_of_a_refused_module_ask_for_one_run(monkeypatch) -> None:
     with pytest.raises(ConstructionPanic) as second:
         function_universe_outcome(_function(tree, "h"))
     assert second.value is first.value
+    assert len(runs) == 1
+
+
+# -- the module run's ends are its arms, each under its guard ------------------
+#
+# ``module_end_contexts`` hands the run's completed arms, each holding the
+# context it ended with under its own guard and faces (``ModuleBlockSugar.
+# run``), and a key is decided off them by the one join of a key over arms
+# (``if_sugar._joined_evaluation``): one value; each exclusive arm's value
+# under its guard; or, on arms not provably exclusive, no value.  Each test
+# below runs a module whose run is replaced by the arms it hands, through
+# the real memo door, so the read is the frame entry's own.
+
+
+def _module_run_ending_on(monkeypatch, ends_for) -> list:
+    """Every module body's run hands the completed arms ``ends_for(sf)``;
+    each run is counted."""
+    from sugar_lift_py_tests import tree_enumerate
+
+    runs: list = []
+    reduce = tree_enumerate.owner_reduction
+
+    def ending(owner, sf=None):
+        if owner is not None:
+            return reduce(owner, sf)
+        runs.append(sf)
+        return SimpleNamespace(ends=ends_for(sf))
+
+    monkeypatch.setattr(tree_enumerate, "owner_reduction", ending)
+    return runs
+
+
+def _ended_binding(key: str, value):
+    """The context a module run's arm ends with, ``key`` bound to
+    ``value``."""
+    base = ReduceContext.root(owner="module-end-join")
+    return base.with_temporal(base.temporal.bind_value(key, value))
+
+
+def test_a_module_if_read_by_a_function_gives_each_value_under_its_guard(
+    monkeypatch,
+) -> None:
+    # ``if c: X = 1 else: X = 2`` whose suites end the run apart: the two
+    # arms are the two faces of the if's own split, each binding X's final
+    # key to its suite's value.  The function's read is each value under
+    # its guard -- never refused, never one suite's value on both.
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.ir import atomic, not_
+    from sugar_lift_py_tests.outcome.exit_set import partition
+
+    tree = _source("X = 1\ndef f():\n    return X\n# the if's two arms\n")
+    (key,) = _assignment_keys(tree, "X")
+    guard = atomic("c", [])
+    then_face, else_face = partition(("module-end-join", "c"))
+    ends = (
+        Completed(guard, _ended_binding(key, TermValue(1)), frozenset({then_face})),
+        Completed(
+            not_(guard), _ended_binding(key, TermValue(2)), frozenset({else_face})
+        ),
+    )
+    runs = _module_run_ending_on(monkeypatch, lambda _sf: ends)
+    ctx = _entered(tree)
+    assert ctx.temporal.value_read(key) == GuardedValue(
+        guard, TermValue(1), TermValue(2)
+    )
+    assert len(runs) == 1
+
+
+def test_a_module_key_overlapping_arms_bound_differently_is_not_read(
+    monkeypatch,
+) -> None:
+    # Both arms hold under truth with no split between them: the key is at
+    # two values on one path, so it reads no value and its read is refused
+    # by name, never answered with one of the two.
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    tree = _source("X = 1\ndef f():\n    return X\n# two overlapping arms\n")
+    (key,) = _assignment_keys(tree, "X")
+    ends = (
+        Completed(true_guard(), _ended_binding(key, TermValue(1))),
+        Completed(true_guard(), _ended_binding(key, TermValue(2))),
+    )
+    _module_run_ending_on(monkeypatch, lambda _sf: ends)
+    ctx = _entered(tree)
+    assert ctx.temporal.value_read(key) is None
+
+
+def test_a_module_key_its_arms_agree_on_reads_the_one_value(monkeypatch) -> None:
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    tree = _source("X = 1\ndef f():\n    return X\n# two agreeing arms\n")
+    (key,) = _assignment_keys(tree, "X")
+    ends = (
+        Completed(true_guard(), _ended_binding(key, TermValue(1))),
+        Completed(true_guard(), _ended_binding(key, TermValue(1))),
+    )
+    _module_run_ending_on(monkeypatch, lambda _sf: ends)
+    ctx = _entered(tree)
+    assert ctx.temporal.value_read(key) == TermValue(1)
+
+
+# -- an alias scan reads a module-final key as any read does -------------------
+#
+# A store's or a mutation's alias advance scans every binding of the frame
+# (``ReceiverFieldStoreValue`` / ``ReceiverOwnedMutationResult.
+# extend_scope``).  It reads a module-final binding through the one read of
+# a bound value (``call_site_sugar.bound_value_read``): the module run is
+# demanded there as at any read, so the scan answers the same whether or
+# not a read asked for the run first (#7757, entry 4: cold vs warm).
+
+
+def _alias_scans():
+    from sugar_lift_py_tests.floor import ObjectValue, ReceiverFieldStoreValue
+    from sugar_lift_py_tests.floor.receiver_owned_mutation_result import (
+        ReceiverOwnedMutationResult,
+    )
+
+    receiver = ObjectValue("Box", (), identity="module-box")
+    stored = receiver.with_field_store("attr", TermValue(7))
+    return receiver, (
+        (ReceiverFieldStoreValue(receiver, "attr", TermValue(7)), stored),
+        (ReceiverOwnedMutationResult(receiver, stored, TermValue(0)), stored),
+    )
+
+
+@pytest.mark.parametrize("scan_index", [0, 1])
+@pytest.mark.parametrize("warm", [False, True])
+def test_an_alias_scan_answers_the_same_with_and_without_a_prior_run(
+    monkeypatch, scan_index: int, warm: bool
+) -> None:
+    receiver, scans = _alias_scans()
+    scan, advanced = scans[scan_index]
+    tree = _source(
+        "X = 1\ndef f():\n    return X\n"
+        f"# alias scan {scan_index}, warm={warm}\n"
+    )
+    (key,) = _assignment_keys(tree, "X")
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
+
+    ends = (Completed(true_guard(), _ended_binding(key, receiver)),)
+    runs = _module_run_ending_on(monkeypatch, lambda _sf: ends)
+    ctx = _entered(tree)
+    if warm:
+        # A read asked for the run before the scan.
+        assert ctx.temporal.value_read(key) == receiver
+    after = scan.extend_scope(ctx)
+    assert after.temporal.value_if_bound(key) == advanced
+    assert after.temporal.value_read(key) == advanced
     assert len(runs) == 1

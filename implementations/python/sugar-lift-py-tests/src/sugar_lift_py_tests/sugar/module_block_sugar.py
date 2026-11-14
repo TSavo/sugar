@@ -34,17 +34,21 @@ class ModuleBlockSugar(Sugar):
         """``(outcome, ends)``: the module body's one run.
 
         ``outcome`` is what ``desugar`` answers (the ordinary block,
-        ``reduce_body``).  ``ends`` is the reducer context each completed arm
-        of the run ended with, in arm order: the module-end state, the one
-        source of the value of each module-final binding a function called
-        after import reads (``tree_enumerate.module_end_contexts``).  A
+        ``reduce_body``).  ``ends`` is the run's completed arms, in arm
+        order, each holding the reducer context it ended with under its own
+        guard and partition faces: the module-end state, the one source of
+        the value of each module-final binding a function called after
+        import reads (``tree_enumerate.module_end_contexts``).  The guard
+        and faces are the arm's, so a key two arms bound to different values
+        is decided by the one join of a key over arms
+        (``if_sugar._joined_evaluation``), never by the values alone.  A
         halted arm ends no import, so it has no end here.  A run still
         waiting on a caller's actuals (a deferred native operation) has no
         end either.
         """
         exits = reduce_block_to_exitset(self.statements, ctx)
         ends = tuple(
-            exit_.value.context
+            Completed(exit_.guard, exit_.value.context, exit_.faces)
             for exit_ in (exits.exits if isinstance(exits, ExitSet) else ())
             if isinstance(exit_, Completed)
             and isinstance(exit_.value, _ReducedBlock)
