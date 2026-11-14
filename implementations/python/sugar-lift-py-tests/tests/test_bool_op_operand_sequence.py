@@ -18,7 +18,7 @@ from sugar_lift_py_tests.floor import FloorValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import ExitSet, Halted, outcome_to_exitset
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -68,7 +68,7 @@ class _ProbeSugar(ConstructedTermSugar):
     def desugar(self, ctx=None):
         del ctx
         self.evaluations.append(self.label)
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner: str):
         del owner
@@ -96,7 +96,7 @@ class _ExceptionalTruth(FloorValue):
 def _truth(value: bool):
     site = _Site()
     literal = TrueBoolLiteralSugar(site) if value else FalseBoolLiteralSugar(site)
-    return Complete(literal)
+    return ExitSet.completed(literal)
 
 
 def _completed_value(outcome):

@@ -12,7 +12,6 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Complete
 
 
 def _super_value():
@@ -47,12 +46,13 @@ def test_type_new_result_carries_the_exact_namespace_as_class_dict() -> None:
         keywords=(("**", MappingObjectValue("Kwds", (), entries=())),),
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, RuntimeClassValue)
-    assert outcome.value.name == "Made"
-    projected = outcome.value.attribute("__dict__", "dict-site")
-    assert isinstance(projected, Complete)
-    assert projected.value.entries == namespace.entries
+    made = outcome.completed_value()
+    assert made is not None
+    assert isinstance(made, RuntimeClassValue)
+    assert made.name == "Made"
+    projected = made.attribute("__dict__", "dict-site")
+    assert projected.completed_value() is not None
+    assert projected.completed_value().entries == namespace.entries
 
 
 def test_type_new_refuses_a_non_mapping_namespace() -> None:

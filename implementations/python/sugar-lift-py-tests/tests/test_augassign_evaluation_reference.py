@@ -11,7 +11,7 @@ from __future__ import annotations
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import GuardedFaces, SymbolicValue, TermValue
-from sugar_lift_py_tests.outcome import Complete, ExitSet, true_guard
+from sugar_lift_py_tests.outcome import ExitSet, true_guard
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
@@ -86,7 +86,7 @@ def test_the_same_source_gives_the_same_keys() -> None:
 def test_a_reference_reads_the_evaluation() -> None:
     ctx = ReduceContext.root(owner="evaluation-ref")
     ctx = ctx.with_temporal(ctx.temporal.bind_value(KEY, TermValue(5)))
-    assert _ref().desugar(ctx) == Complete(TermValue(5))
+    assert _ref().desugar(ctx) == ExitSet.completed(TermValue(5))
 
 
 def test_a_later_write_of_the_name_is_read_instead() -> None:
@@ -94,20 +94,20 @@ def test_a_later_write_of_the_name_is_read_instead() -> None:
     ctx = ReduceContext.root(owner="evaluation-ref")
     ctx = ctx.with_temporal(ctx.temporal.bind_value(KEY, TermValue(5)))
     ctx = ctx.with_temporal(ctx.temporal.bind_value("x", TermValue(7)))
-    assert _ref().desugar(ctx) == Complete(TermValue(7))
+    assert _ref().desugar(ctx) == ExitSet.completed(TermValue(7))
 
 
 def test_an_evaluation_written_after_the_name_is_read() -> None:
     ctx = ReduceContext.root(owner="evaluation-ref")
     ctx = ctx.with_temporal(ctx.temporal.bind_value("x", TermValue(7)))
     ctx = ctx.with_temporal(ctx.temporal.bind_value(KEY, TermValue(5)))
-    assert _ref().desugar(ctx) == Complete(TermValue(5))
+    assert _ref().desugar(ctx) == ExitSet.completed(TermValue(5))
 
 
 def test_no_evaluation_is_the_name_read() -> None:
     outcome = _ref().desugar(ReduceContext.root(owner="evaluation-ref"))
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, SymbolicValue)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), SymbolicValue)
 
 
 def _arm(ctx) -> ExitSet:

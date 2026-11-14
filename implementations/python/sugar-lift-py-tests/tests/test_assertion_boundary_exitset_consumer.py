@@ -124,7 +124,7 @@ def _boundary_from_exitset(
         RaiseEffectKindV1,
     )
     from sugar_lift_py_tests.ir import PrimitiveSort
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
         WithEffectBoundarySugar,
@@ -175,7 +175,7 @@ def _boundary_from_exitset(
         keyword_names=("match",) if pattern is not None else (),
     )
     return WithEffectBoundarySugar(
-        manager=Fixed(Complete(manager_value)),
+        manager=Fixed(ExitSet.completed(manager_value)),
         body=(Fixed(body),),
         semantics=EffectBoundarySemanticsV1(
             ExpectsModeV1(),
@@ -558,7 +558,7 @@ def _factored_boundary_from_exitset(
         PositionalOrKeywordV1,
     )
     from sugar_lift_py_tests.ir import PrimitiveSort
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
         WithEffectBoundarySugar,
@@ -607,7 +607,7 @@ def _factored_boundary_from_exitset(
         keyword_names=(),
     )
     return WithEffectBoundarySugar(
-        manager=Fixed(Complete(manager_value)),
+        manager=Fixed(ExitSet.completed(manager_value)),
         body=(Fixed(body),),
         semantics=None,
         contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),

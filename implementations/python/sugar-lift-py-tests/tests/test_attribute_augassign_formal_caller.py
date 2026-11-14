@@ -22,7 +22,7 @@ from sugar_lift_py_tests.floor import (
     ObjectValue,
     TermValue,
 )
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.augassign_sugar import (
     AttributeAugAssignSugar,
     SubscriptAugAssignSugar,
@@ -72,7 +72,7 @@ class _FloorSugar(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     @classmethod
     def witnesses(cls):
@@ -146,9 +146,9 @@ def test_discrimination_not_plain_attribute_store_effect() -> None:
 def test_production_desugar_object_field_augassign_completes() -> None:
     """``obj.field += 10`` on field=1 → field=11."""
     out = _production_desugar(_obj_with_field(1), TermValue(10))
-    assert isinstance(out, Complete), out
-    assert isinstance(out.value, ObjectValue)
-    fields = {f.name: f.value for f in out.value.fields}
+    assert out.completed_value() is not None, out
+    assert isinstance(out.completed_value(), ObjectValue)
+    fields = {f.name: f.value for f in out.completed_value().fields}
     assert fields["field"] == TermValue(11)
 
 
@@ -172,10 +172,10 @@ def test_production_receiver_evaluated_once_for_get_and_set() -> None:
         "c0",
     )
     out = _production_desugar(receiver, TermValue(3))
-    assert isinstance(out, Complete)
+    assert out.completed_value() is not None
     assert box["get"] == 1
     assert box["set"] == 1
-    fields = {f.name: f.value for f in out.value.fields}
+    fields = {f.name: f.value for f in out.completed_value().fields}
     assert fields["field"] == TermValue(5)
 
 
@@ -213,7 +213,7 @@ def test_production_getattr_before_rhs_order() -> None:
         def desugar(self, ctx=None):
             del ctx
             order.append("rhs")
-            return Complete(TermValue(4))
+            return ExitSet.completed(TermValue(4))
 
         @classmethod
         def witnesses(cls):
@@ -243,8 +243,8 @@ def test_production_getattr_before_rhs_order() -> None:
         site=site,
     )
     out = sugar.desugar(None)
-    assert isinstance(out, Complete)
-    assert order == ["get", "rhs", "op", "set"]
+    assert out.completed_value() is not None
+    assert order ==["get", "rhs", "op", "set"]
 
 
 def test_discrimination_wrong_order_rhs_before_get() -> None:
@@ -263,7 +263,7 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
         def desugar(self, ctx=None):
             del ctx
             box["rhs"] += 1
-            return Complete(TermValue(99))
+            return ExitSet.completed(TermValue(99))
 
         @classmethod
         def witnesses(cls):
@@ -314,12 +314,14 @@ def test_production_arithmetic_halt_blocks_store() -> None:
     out = _production_desugar(receiver, NoneValue())
     assert box["set"] == 0
     assert not (
-        isinstance(out, Complete) and isinstance(out.value, ObjectValue) and box["set"]
+        out.completed_value() is not None
+        and isinstance(out.completed_value(), ObjectValue)
+        and box["set"]
     )
 
 
 def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
-    """Store AttributeError via shared project_setattr: Incomplete(effect), never a completion."""
+    """Store AttributeError via shared project_setattr: one halted arm, never a completion."""
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
     class _RefuseSet(ObjectValue):
@@ -339,13 +341,16 @@ def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
     )
     out = _production_desugar(receiver, TermValue(1))
     # Shared AttributeStoreEffectSugar.project_setattr hands the floor's halt on.
-    assert isinstance(
-        out, Incomplete
-    ), f"store halt must be Incomplete (halted store face), not {type(out).__name__}: {out}"
-    assert isinstance(out.effect, RaiseEffect)
+    assert (
+        len(out.exits) == 1 and out.halts() == out.exits
+    ), f"store halt must be one halted arm (halted store face), not {out}"
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
     # Discrimination: a completed store would greenwash statement completion.
     with pytest.raises(AssertionError):
-        assert isinstance(out, Complete) and isinstance(out.value, ObjectValue)
+        assert out.completed_value() is not None and isinstance(
+            out.completed_value(), ObjectValue
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -532,7 +537,7 @@ def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
 
 
 def test_notimplemented_fallback_twins_via_production_projector() -> None:
-    """Same NotImplemented law as subscript: raw / Complete(NI) → binary."""
+    """Same NotImplemented law as subscript: raw / ExitSet.completed(NI) → binary."""
     from sugar_lift_py_tests.floor.floor_value import FloorValue
 
     calls: list[str] = []
@@ -545,9 +550,9 @@ def test_notimplemented_fallback_twins_via_production_projector() -> None:
 
         def add(self, other, site):
             calls.append("add")
-            return Complete(TermValue(3))
+            return ExitSet.completed(TermValue(3))
 
-    assert project_iadd(_RawNI(), TermValue(1), "op").value == TermValue(3)
+    assert project_iadd(_RawNI(), TermValue(1), "op").completed_value() == TermValue(3)
     assert calls == ["inplace", "add"]
     calls.clear()
 
@@ -555,13 +560,15 @@ def test_notimplemented_fallback_twins_via_production_projector() -> None:
         def inplace_binary_operator_with(self, operation, ctx):
             del operation, ctx
             calls.append("inplace")
-            return Complete(NotImplemented)  # type: ignore[arg-type]
+            return ExitSet.completed(NotImplemented)  # type: ignore[arg-type]
 
         def add(self, other, site):
             calls.append("add")
-            return Complete(TermValue(4))
+            return ExitSet.completed(TermValue(4))
 
-    assert project_iadd(_CompleteNI(), TermValue(1), "op").value == TermValue(4)
+    assert project_iadd(_CompleteNI(), TermValue(1), "op").completed_value() == TermValue(
+        4
+    )
     assert calls == ["inplace", "add"]
 
 
@@ -569,7 +576,9 @@ def test_discrimination_incomplete_does_not_fall_through() -> None:
     from sugar_lift_py_tests.effect import CoverageGapEffect
     from sugar_lift_py_tests.floor.floor_value import FloorValue
 
-    face = Incomplete(CoverageGapEffect(boundary="iadd", reason="unresolved inplace"))
+    face = ExitSet.halted(
+        CoverageGapEffect(boundary="iadd", reason="unresolved inplace")
+    )
 
     class _Inc(FloorValue):
         def inplace_binary_operator_with(self, operation, ctx):
@@ -577,6 +586,6 @@ def test_discrimination_incomplete_does_not_fall_through() -> None:
             return face
 
         def add(self, other, site):
-            return Complete(TermValue(0))
+            return ExitSet.completed(TermValue(0))
 
     assert project_iadd(_Inc(), TermValue(1), "op") is face

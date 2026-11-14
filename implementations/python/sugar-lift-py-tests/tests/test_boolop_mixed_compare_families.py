@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import BoolOp, Call, Compare
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.effect import RaiseEffect
 
 
@@ -25,19 +24,12 @@ def _expression(source_expression: str):
 
 
 def _raise_occurrence(outcome) -> str:
-    if isinstance(outcome, Incomplete):
-        assert isinstance(outcome.effect, RaiseEffect)
-        assert (
-            isinstance(outcome.effect.occurrence_id, str)
-            and ":" in outcome.effect.occurrence_id
-        ), (
-            "authenticated raise locus must be a file:line:col occurrence id, "
-            f"not presence-only; got {outcome.effect.occurrence_id!r}"
-        )
-        return outcome.effect.occurrence_id
     assert isinstance(outcome, ExitSet)
     halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
     assert len(halted) == 1
+    if len(outcome.exits) == 1:
+        # A sole halt is the raise itself.
+        assert isinstance(halted[0].effect, RaiseEffect)
     assert (
         isinstance(halted[0].effect.occurrence_id, str)
         and ":" in halted[0].effect.occurrence_id
@@ -51,10 +43,10 @@ def _raise_occurrence(outcome) -> str:
 def test_false_ordering_short_circuits_membership_and_returns_first_operand() -> None:
     outcome, comparisons = _expression("2 < 1 and None in 3")
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, FalseBoolLiteralSugar)
-    assert str(outcome.value.site) == str(comparisons[0].sugar().site)
-    assert str(outcome.value.site) != str(comparisons[1].sugar().site)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), FalseBoolLiteralSugar)
+    assert str(outcome.completed_value().site) == str(comparisons[0].sugar().site)
+    assert str(outcome.completed_value().site) != str(comparisons[1].sugar().site)
 
 
 def test_truthful_ordering_evaluates_membership_exception_at_second_site() -> None:

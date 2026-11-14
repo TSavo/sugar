@@ -1,13 +1,13 @@
 """Plan row 7 (step 6), #7821: a raise is never a completion.
 
-A raise had two representations in the floor: a halted face (an
-``Incomplete`` whose effect is a ``RaiseEffect``, or a ``Halted`` arm), and a
-``Complete`` whose value was a ``RaiseValue``.  The second came from one
-producer, ``ground_exceptional_exit`` (``1 // 0``, ``1 < "a"``), and every
-reader that asked only "is it one ``Complete``" and used the value could drop
-the raise (#7799, #7820).
+A raise had two representations in the floor: a halted face (a ``Halted``
+arm whose effect is a ``RaiseEffect``), and a completed value that was a
+``RaiseValue``.  The second came from one producer,
+``ground_exceptional_exit`` (``1 // 0``, ``1 < "a"``), and every reader that
+asked only "is it one completed value" and used the value could drop the raise
+(#7799, #7820).
 
-``ground_exceptional_exit`` now returns the halt, ``Incomplete(effect)``, and
+``ground_exceptional_exit`` now returns the halt, ``ExitSet.halted(effect)``, and
 ``RaiseValue`` is gone.  The effect carries the exception value it raises
 (``raised_value``), which is what an ``except`` clause tests and an ``as``
 name binds.
@@ -68,12 +68,13 @@ def _function(source: str, name: str = "test_f"):
 
 def _faces(outcome) -> tuple[int, tuple[str, ...]]:
     """(completed faces, the exception name of each halted face)."""
-    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
-    if isinstance(outcome, Complete):
-        assert outcome.follow().continues, outcome
-        return 1, ()
     assert isinstance(outcome, ExitSet), outcome
+    value = outcome.completed_value()
+    if value is not None:
+        assert value.follow_rest().continues, outcome
+        return 1, ()
     return (
         sum(isinstance(face, Completed) for face in outcome.exits),
         tuple(
@@ -92,7 +93,6 @@ def _faces(outcome) -> tuple[int, tuple[str, ...]]:
 def test_a_ground_exit_is_a_halt_carrying_the_exception_it_raises() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.floor import ExceptionValue
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_source_tree import nodes
 
     (division,) = tuple(
@@ -101,13 +101,15 @@ def test_a_ground_exit_is_a_halt_carrying_the_exception_it_raises() -> None:
 
     outcome = division.sugar().desugar(None)
 
-    assert isinstance(outcome, Incomplete), outcome
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "ZeroDivisionError"
-    assert isinstance(outcome.effect.raised_value, ExceptionValue)
-    assert not outcome.follow().continues
+    # One arm, and it halts: nothing completes, so nothing continues.
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits, outcome
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "ZeroDivisionError"
+    assert isinstance(halt.effect.raised_value, ExceptionValue)
+    assert outcome.completed_value() is None
     # No step runs after a raise.
-    assert outcome.and_then(lambda value: pytest.fail("stepped")) is outcome
+    assert outcome.and_then(lambda value: pytest.fail("stepped")) == outcome
 
 
 def test_the_floor_has_no_raise_value() -> None:

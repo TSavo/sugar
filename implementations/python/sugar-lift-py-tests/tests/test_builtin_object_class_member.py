@@ -9,7 +9,7 @@ from sugar_lift_py_tests.floor import (
     ClassValue,
     StringValue,
 )
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.temporal import builtin_name_bindings
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute
@@ -36,10 +36,11 @@ def test_builtin_object_is_static_and_owns_only_its_closed_callable_member(
 
     assert type(receiver) is BuiltinObjectClassValue
     outcome = receiver.attribute("__str__", member_site)
-    assert isinstance(outcome, Complete)
-    assert type(outcome.value) is BuiltinSemanticCallable
-    assert outcome.value.operation == "python.object.__str__"
-    assert outcome.value.to_term(owner="test") == BuiltinSemanticCallable(
+    member = outcome.completed_value()
+    assert member is not None
+    assert type(member) is BuiltinSemanticCallable
+    assert member.operation == "python.object.__str__"
+    assert member.to_term(owner="test") == BuiltinSemanticCallable(
         operation="python.object.__str__"
     ).to_term(owner="test")
     with pytest.raises(ConstructionPanic):
@@ -50,5 +51,5 @@ def test_builtin_object_is_static_and_owns_only_its_closed_callable_member(
         ordinary.attribute("__str__", member_site)
     name = receiver.attribute("__name__", member_site)
     qualname = receiver.attribute("__qualname__", member_site)
-    assert name == Complete(StringValue("object"))
-    assert qualname == Complete(StringValue("object"))
+    assert name == ExitSet.completed(StringValue("object"))
+    assert qualname == ExitSet.completed(StringValue("object"))

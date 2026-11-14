@@ -22,7 +22,7 @@ everything is exactly as wrong as one that says no to everything.
 from __future__ import annotations
 
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
+from sugar_lift_py_tests.outcome import outcome_to_exitset
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
@@ -47,8 +47,7 @@ def _residual_raises(source: str) -> tuple[str, ...]:
         if key in seen:
             return
         seen.add(key)
-        if isinstance(value, Incomplete) and isinstance(value.effect, RaiseEffect):
-            names.append(value.effect.exception_name)
+        # A halted arm, or any value carrying a raise effect.
         effect = getattr(value, "effect", None)
         if isinstance(effect, RaiseEffect):
             names.append(effect.exception_name)

@@ -57,7 +57,7 @@ from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, make_var, str_const
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Halted
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
 from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
@@ -105,7 +105,7 @@ class _ObservedSugar(Sugar):
     def desugar(self, ctx=None):
         del ctx
         self.log.append(self.label)
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
 
 def _store(receiver, value, log, site, attr: str = "attr"):
@@ -163,8 +163,8 @@ def test_attribute_store_evaluates_rhs_and_receiver_once_in_python_order(tmp_pat
     outcome = _store(receiver, TermValue(7), log, _site(tmp_path)).desugar()
 
     assert log == ["value", "receiver"]
-    assert isinstance(outcome, Complete)
-    assert outcome.value.fields[-1].value == TermValue(7)
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().fields[-1].value == TermValue(7)
 
 
 def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
@@ -177,7 +177,7 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
         def desugar(self, ctx=None):
             del ctx
             log.append("value")
-            return Incomplete(
+            return ExitSet.halted(
                 RaiseEffect(
                     exception_type_coordinate=str_const("ValueError"),
                     occurrence=AuthenticatedRaiseLocus.of("attr_store.py:2:16"),
@@ -197,7 +197,9 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
     outcome = store.desugar()
 
     assert log == ["value"]
-    assert outcome.effect.exception_type_coordinate == str_const("ValueError")
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_type_coordinate == str_const("ValueError")
 
 
 # ---------------------------------------------------------------------------
@@ -208,17 +210,18 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
 def test_ground_object_field_store_completes(tmp_path):
     receiver = ObjectValue("R", (ObjectField("attr", TermValue(0)),))
     outcome = _store(receiver, TermValue(9), [], _site(tmp_path)).desugar()
-    assert isinstance(outcome, Complete)
-    assert outcome.value.fields[-1].value == TermValue(9)
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().fields[-1].value == TermValue(9)
 
 
 def test_readable_immutable_receiver_raises_on_store(tmp_path):
     receiver = TupleValue((TermValue(1),))
     outcome = _store(receiver, TermValue(7), [], _site(tmp_path)).desugar()
 
-    assert isinstance(outcome, Incomplete)
-    assert outcome.effect.exception_name == "AttributeError"
-    assert outcome.effect.producer_node_owner == "TupleValue.setattr"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "AttributeError"
+    assert halt.effect.producer_node_owner == "TupleValue.setattr"
 
 
 @pytest.mark.parametrize(
@@ -233,10 +236,11 @@ def test_immutable_scalar_attribute_store_has_exact_owner_occurrence(
 ):
     site = _site(tmp_path)
     outcome = _store(receiver, TermValue(7), [], site).desugar()
-    assert isinstance(outcome, Incomplete)
-    assert outcome.effect.exception_name == "AttributeError"
-    assert outcome.effect.producer_node_owner == owner
-    assert outcome.effect.occurrence_id == str(site)
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "AttributeError"
+    assert halt.effect.producer_node_owner == owner
+    assert halt.effect.occurrence_id == str(site)
 
 
 @pytest.mark.parametrize("receiver", (StringValue("abc"), BytesValue(b"abc")))
@@ -244,14 +248,15 @@ def test_immutable_scalar_attribute_store_cannot_fabricate_completion(
     tmp_path, receiver
 ):
     outcome = _store(receiver, TermValue(7), [], _site(tmp_path)).desugar()
-    assert not isinstance(outcome, Complete)
+    assert outcome.completed_value() is None
 
 
 def test_none_setattr_is_attribute_error_on_store_path(tmp_path):
     outcome = _store(NoneValue(), TermValue(1), [], _site(tmp_path)).desugar()
-    assert isinstance(outcome, Incomplete)
-    assert outcome.effect.exception_name == "AttributeError"
-    assert outcome.effect.producer_node_owner == "NoneValue.setattr"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "AttributeError"
+    assert halt.effect.producer_node_owner == "NoneValue.setattr"
 
 
 def test_list_read_path_does_not_license_list_setattr(tmp_path):
@@ -259,9 +264,10 @@ def test_list_read_path_does_not_license_list_setattr(tmp_path):
     outcome = _store(
         receiver, TermValue(7), [], _site(tmp_path), attr="append"
     ).desugar()
-    assert isinstance(outcome, Incomplete)
-    assert outcome.effect.exception_name == "AttributeError"
-    assert outcome.effect.producer_node_owner == "ListValue.setattr"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "AttributeError"
+    assert halt.effect.producer_node_owner == "ListValue.setattr"
 
 
 def test_property_without_setter_raises_attribute_error_not_completed(tmp_path):
@@ -271,7 +277,7 @@ def test_property_without_setter_raises_attribute_error_not_completed(tmp_path):
     class _GetterBody(Sugar):
         def desugar(self, ctx=None):
             del ctx
-            return Complete(
+            return ExitSet.completed(
                 BlockValue((ReturnValue(TermValue(1)),), can_fall_through=False)
             )
 
@@ -292,9 +298,10 @@ def test_property_without_setter_raises_attribute_error_not_completed(tmp_path):
         ),
     )
     outcome = _store(receiver, TermValue(7), [], _site(tmp_path)).desugar()
-    assert isinstance(outcome, Incomplete)
-    assert outcome.effect.exception_name == "AttributeError"
-    assert outcome.effect.producer_node_owner == "ObjectValue.setattr"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "AttributeError"
+    assert halt.effect.producer_node_owner == "ObjectValue.setattr"
 
 
 def test_undecided_retains_dual_face_runtime_effect(tmp_path):
@@ -302,8 +309,9 @@ def test_undecided_retains_dual_face_runtime_effect(tmp_path):
     outcome = _store(
         SymbolicValue(make_var("obj")), TermValue(7), [], _site(tmp_path)
     ).desugar()
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, AttributeStoreRuntimeEffect)
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, AttributeStoreRuntimeEffect)
 
 
 def test_formal_parameter_store_mints_setattr_named_carrier(tmp_path):
@@ -381,7 +389,7 @@ def test_property_read_does_not_license_completed_store(tmp_path):
     class _GetterBody(Sugar):
         def desugar(self, ctx=None):
             del ctx
-            return Complete(
+            return ExitSet.completed(
                 BlockValue((ReturnValue(TermValue(1)),), can_fall_through=False)
             )
 
@@ -403,15 +411,18 @@ def test_property_read_does_not_license_completed_store(tmp_path):
     )
     outcome = _store(receiver, TermValue(7), [], _site(tmp_path)).desugar()
     assert not (
-        isinstance(outcome, Complete) and isinstance(outcome.value, ObjectValue)
+        outcome.completed_value() is not None
+        and isinstance(outcome.completed_value(), ObjectValue)
     )
 
 
 def test_exception_type_originates_in_store_dispatch_not_boundary(tmp_path):
     outcome = _store(NoneValue(), TermValue(1), [], _site(tmp_path)).desugar()
-    assert outcome.effect.exception_name == "AttributeError"
-    assert outcome.effect.producer_node_owner == "NoneValue.setattr"
-    assert "setattr" in outcome.effect.producer_node_owner
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "AttributeError"
+    assert halt.effect.producer_node_owner == "NoneValue.setattr"
+    assert "setattr" in halt.effect.producer_node_owner
 
 
 # ---------------------------------------------------------------------------
@@ -508,7 +519,7 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
             del ctx
             from sugar_lift_py_tests.floor.return_value import ReturnValue
 
-            return Complete(
+            return ExitSet.completed(
                 BlockValue((ReturnValue(NoneValue()),), can_fall_through=False)
             )
 
@@ -548,10 +559,11 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
         (TupleValue((TermValue(1),)), "TupleValue.setattr"),
     ):
         direct = receiver.setattr("name", StringValue("foo"), store.site)
-        assert isinstance(direct, Incomplete)
-        assert isinstance(direct.effect, RaiseEffect)
-        assert direct.effect.exception_name == "AttributeError"
-        assert direct.effect.producer_node_owner == owner
+        assert len(direct.exits) == 1 and direct.halts() == direct.exits
+        (direct_halt,) = direct.halts()
+        assert isinstance(direct_halt.effect, RaiseEffect)
+        assert direct_halt.effect.exception_name == "AttributeError"
+        assert direct_halt.effect.producer_node_owner == owner
 
     # A getter spelling is neither store authority nor permission to invent a
     # readable value: its deliberately unconstructed body remains loud.

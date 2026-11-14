@@ -581,14 +581,13 @@ def test_star_against_opaque_iterable_stays_loud(tmp_path: Path) -> None:
     nothing. Display twins still construct via MultiAssignSugar.
     """
     from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
-
     outcome = _function_sugar(
         tmp_path, "def f(xs):\n    a, *rest = xs\n    return a\n", "star"
     ).desugar(None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, SequenceUnpackRuntimeEffect)
-    assert not isinstance(outcome, Complete)
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    assert outcome.completed_value() is None
 
     # Discrimination arm: a starred unpack against a CONCRETE display is a
     # different shape and must still construct -- "loud" is about the opaque
@@ -655,7 +654,7 @@ def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
     """The admitted shape constructs: two store leaves, both authenticated.
 
     This asserts nothing about the OUTCOME shape. It used to assert
-    ``isinstance(out, Complete)``, which is the current single-unconditional-
+    a sole completed value, which is the current single-unconditional-
     exit behaviour -- i.e. it asserted that a store cannot fail, the very
     thing ``test_assign_unpack_store_outcome_composition`` names as the
     remaining defect. Two committed twins cannot disagree about whether a
@@ -681,7 +680,7 @@ def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:
 #   * the OUTCOME SHAPE. How many exits a store body has is owned by
 #     test_assign_unpack_store_outcome_composition. Asserting the current shape
 #     here -- in either direction -- is asserting whatever that shape currently
-#     is, which is how `isinstance(out, Complete)` came to state that a store
+#     is, which is how asserting a sole completed value came to state that a store
 #     cannot fail. Two committed twins must never disagree about it.
 #
 #   * a retained artifact for a Name target on the halted arm. substitute spends
