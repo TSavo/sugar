@@ -1075,16 +1075,6 @@ fn bound_generation_options(conn: &KitConn) -> Result<Vec<(String, Value)>, Enum
             json!({"catalogCid": catalog_cid, "tableCid": table_cid}),
         ));
     }
-    if let Some((catalog_cid, table_cid)) = conn
-        .transport
-        .call_contract_ref_generation()
-        .map_err(|error| unavailable(error.to_string()))?
-    {
-        options.push((
-            "callContractRefs".to_string(),
-            json!({"catalogCid": catalog_cid, "tableCid": table_cid}),
-        ));
-    }
     Ok(options)
 }
 
@@ -1815,13 +1805,6 @@ fn merge_recovered_audit_core(
 }
 
 impl Kit {
-    pub fn context_manager_demands(&self, workspace_root: &Path) -> Result<Vec<Value>, KitError> {
-        Ok(preconstruction_rows_rpc(
-            &self.enumerate_conn(workspace_root),
-            Level::ContractDemands,
-        )?)
-    }
-
     /// Scan the producer surface. Export answers reuse the existing linker
     /// contract type; malformed or identity-mismatched answers are loud wire
     /// errors, never silently omitted exports.

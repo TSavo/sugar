@@ -416,8 +416,8 @@ class UnknownCalleeCallV1:
         from .unanswered_calls import record
 
         # Nothing here answers this call: it is recorded once, as the
-        # proof's `undecided` member (step 8), with the import door's target
-        # symbol when it is an enrolled imported call, else none (Q5).
+        # proof's `undecided` member (step 8), with the one import table's
+        # target symbol when the callee is import-bound, else none (Q5).
         record(getattr(callsite, "authenticated_target_symbol", None), site)
         key = occurrence_key(site)
         # The call term names its occurrence by coordinate (#7808); `key`

@@ -1,145 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from types import MappingProxyType
 
 import pytest
 
-from sugar_lift_py_tests.call_contract_resolution import (
-    CallContractRefProtocolError,
-    ResolvedCallContractRefV1,
-    ResolvedCallContractRefsV1,
-    decode_resolved_call_contract_refs,
-)
-from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests import lift_rpc
-from sugar_source_tree.panic import BackendDefect, SugarNotWritten
+from sugar_source_tree.panic import SugarNotWritten
 
-CID = "blake3-512:" + "1" * 128
-MEMBER_CID = "blake3-512:" + "2" * 128
 CATALOG_CID = "blake3-512:" + "3" * 128
-DEMAND_CID = "blake3-512:" + "4" * 128
-RESOLUTION_CID = "blake3-512:" + "5" * 128
 TABLE_CID = "blake3-512:" + "6" * 128
-
-
-def _site(line: int = 2) -> dict:
-    return {
-        "sourceCid": CID,
-        "startLine": line,
-        "startCol": 4,
-        "endLine": line,
-        "endCol": 11,
-    }
-
-
-def _gap_row(line: int = 2) -> dict:
-    return {
-        "useSite": _site(line),
-        "resolution": {
-            "kind": "unresolved",
-            "gap": {
-                "demandCid": DEMAND_CID,
-                "useSite": _site(line),
-                "importBindingCid": CATALOG_CID,
-                "targetSymbol": "python:producer.pair",
-                "kind": "no-authenticated-contract",
-                "candidateMemberCids": [],
-            },
-        },
-    }
-
-
-def _table(rows: list[dict], enrolled: list[dict] | None = None) -> dict:
-    from sugar_lift_py_tests.call_contract_resolution import _hash_json
-
-    value = {
-        "kind": "resolved-call-contract-refs",
-        "schemaVersion": "1",
-        "catalogCid": CATALOG_CID,
-        "enrolledUseSites": (
-            enrolled if enrolled is not None else [row["useSite"] for row in rows]
-        ),
-        "byUseSite": rows,
-    }
-    return {**value, "tableCid": _hash_json(value)}
-
-
-def test_decoder_rejects_duplicate_rows_and_row_identity_mismatches():
-    row = _gap_row()
-    with pytest.raises(CallContractRefProtocolError, match="duplicate use-site"):
-        decode_resolved_call_contract_refs(_table([row, row], enrolled=[_site()]))
-
-    mismatched_gap = _gap_row()
-    mismatched_gap["resolution"]["gap"]["useSite"] = _site(3)
-    with pytest.raises(CallContractRefProtocolError, match="row use-site"):
-        decode_resolved_call_contract_refs(_table([mismatched_gap]))
-
-
-def test_decoder_rejects_missing_enrolled_row():
-    with pytest.raises(
-        CallContractRefProtocolError, match="enrolled call demand missing"
-    ):
-        decode_resolved_call_contract_refs(_table([], enrolled=[_site()]))
-
-
-def test_call_distinguishes_non_enrolled_local_call_from_missing_enrolled_row(tmp_path):
-    from sugar_lift_python_source.source_oracle import path_source
-    from sugar_lift_py_tests.context_manager_resolution import (
-        ResolvedContractRefsV1,
-        SourceFragmentCoordinateV1,
-        TreeConstructionContextV1,
-    )
-    from sugar_source_tree.nodes import Call
-    from sugar_source_tree.tree import SourceFile
-
-    path = tmp_path / "consumer.py"
-    path.write_text("local(value)\nimported(value)\n")
-    source = path_source(str(path))
-    source_cid = source[2]
-    local_site = SourceFragmentCoordinateV1(source_cid, 1, 0, 1, 12)
-    imported_site = SourceFragmentCoordinateV1(source_cid, 2, 0, 2, 15)
-    call_refs = ResolvedCallContractRefsV1(
-        CATALOG_CID,
-        TABLE_CID,
-        MappingProxyType({}),
-        frozenset({imported_site}),
-    )
-    cm_refs = ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({}))
-    tree = SourceFile(
-        source,
-        construction_context=TreeConstructionContextV1(
-            cm_refs, call_contract_refs=call_refs
-        ),
-    )
-    calls = list(node for node in tree.nodes() if isinstance(node, Call))
-
-    assert local_site not in call_refs.enrolled_use_sites
-    local = calls[0].sugar()
-    assert local.contract_resolution_gap is None
-    assert local.import_target_symbol is None
-    with pytest.raises(BackendDefect, match="enrolled call demand missing"):
-        calls[1].sugar()
-
-
-def _reference() -> ResolvedCallContractRefV1:
-    return ResolvedCallContractRefV1(
-        resolution_cid=RESOLUTION_CID,
-        demand_cid=DEMAND_CID,
-        use_site=None,
-        import_binding_cid=CATALOG_CID,
-        catalog_cid=CATALOG_CID,
-        member_cid=MEMBER_CID,
-        contract_cid=CID,
-        bridge_source_symbol="python:pandas.fixture.pair",
-        formals=("x",),
-        sorts=(PrimitiveSort("Value"),),
-        return_term=ctor("python:tuple", [make_var("x"), make_var("x")]),
-        source_warrant_cids=(),
-        contract_decl=MappingProxyType({"kind": "contract"}),
-    )
 
 
 def test_an_unresolved_reference_stays_loud():
@@ -183,92 +53,6 @@ def test_off_population_call_desugars_to_a_callsite_not_a_gap():
     assert halt.guard == complement_guard(done.guard)
     assert isinstance(halt.effect, UndeterminedRaiseEffect)
     assert halt.effect.producer_node_owner == "OffPopulationCall:python:re.compile"
-
-
-def test_fabricated_or_unauthenticated_reference_fails_decode():
-    wire = {
-        "kind": "resolved-call-contract-refs",
-        "schemaVersion": "1",
-        "catalogCid": CATALOG_CID,
-        "tableCid": TABLE_CID,
-        "enrolledUseSites": [_site()],
-        "byUseSite": [
-            {
-                "useSite": {
-                    "sourceCid": CID,
-                    "startLine": 2,
-                    "startCol": 4,
-                    "endLine": 2,
-                    "endCol": 11,
-                },
-                "resolution": {
-                    "kind": "resolved",
-                    "reference": {
-                        "kind": "resolved-call-contract-ref",
-                        "schemaVersion": "1",
-                        "resolutionCid": RESOLUTION_CID,
-                        "demandCid": DEMAND_CID,
-                        "useSite": {
-                            "sourceCid": CID,
-                            "startLine": 2,
-                            "startCol": 4,
-                            "endLine": 2,
-                            "endCol": 11,
-                        },
-                        "importBindingCid": CATALOG_CID,
-                        "catalogCid": CATALOG_CID,
-                        "memberCid": "fabricated:member",
-                        "contractCid": CID,
-                        "bridgeSourceSymbol": "python:pandas.fixture.pair",
-                        "importSignature": {
-                            "formals": ["x"],
-                            "sorts": [{"kind": "primitive", "name": "Value"}],
-                        },
-                        "returnTerm": {
-                            "kind": "ctor",
-                            "name": "python:tuple",
-                            "args": [{"kind": "var", "name": "x"}],
-                        },
-                        "sourceWarrantCids": [],
-                        "contractDecl": {"kind": "contract"},
-                    },
-                },
-            }
-        ],
-    }
-    with pytest.raises(CallContractRefProtocolError, match="memberCid must be a CID"):
-        decode_resolved_call_contract_refs(wire)
-
-
-def test_python_intake_rejects_stale_semantic_contract_cid():
-    from sugar_lift_py_tests.call_contract_resolution import _decode_ref
-
-    raw = {
-        "kind": "resolved-call-contract-ref",
-        "schemaVersion": "1",
-        "resolutionCid": RESOLUTION_CID,
-        "demandCid": DEMAND_CID,
-        "useSite": {
-            "sourceCid": CID,
-            "startLine": 2,
-            "startCol": 0,
-            "endLine": 2,
-            "endCol": 7,
-        },
-        "importBindingCid": CATALOG_CID,
-        "catalogCid": CATALOG_CID,
-        "memberCid": MEMBER_CID,
-        "contractCid": CID,
-        "bridgeSourceSymbol": "python:producer.pair",
-        "importSignature": {"formals": [], "sorts": []},
-        "returnTerm": None,
-        "sourceWarrantCids": [],
-        "contractDecl": {"kind": "contract", "name": "changed"},
-    }
-    with pytest.raises(
-        CallContractRefProtocolError, match="stale semantic contract CID"
-    ):
-        _decode_ref(raw)
 
 
 def test_import_demand_enrollment_has_positional_arity_and_module_identity(tmp_path):
@@ -512,87 +296,51 @@ def test_shadowed_local_raises_does_not_inherit_pytest_provider_contract(tmp_pat
     assert "importBindingCid" not in row
 
 
-def test_an_imported_call_has_one_form_whether_or_not_a_contract_answers(tmp_path):
-    """Step 6, as amended 2026-11-11: a call stands as its coordinate with an
-    edge carrying its target symbol, bound or not; a contract is applied in one
-    place, step 9. (This test pinned the opposite until then: the kit
-    substituting the bound contract's return term into the consumer's value.)
-
-    Twin: the same call, once answered by a contract and once by a gap that
-    names a target nothing answers. The term and the edge are identical. The
-    edge carries the DEMAND's symbol, what this source imported as written
-    (``python:producer.pair``), never the answering contract's
-    (``python:pandas.fixture.pair``), and names no target contract.
+def test_an_imported_call_takes_its_symbol_from_the_one_import_table(tmp_path):
+    """Inventory item 26: there is one way to bind a call. The call carries
+    the target symbol the one import table (#7837) holds at its callee's own
+    coordinate, with nothing bound into the kit before construction; prove's
+    join binds it to the imported proof (step 9). The symbol is what this
+    source imported as written, so a keyword call (which makes no
+    call-contract demand) carries it too. A local call carries none.
     """
     from sugar_lift_python_source.source_oracle import path_source
-    from sugar_lift_py_tests.call_contract_resolution import (
-        CallContractResolutionGapKindV1,
-        CallContractResolutionGapV1,
-    )
     from sugar_lift_py_tests.context_manager_resolution import (
         ResolvedContractRefsV1,
-        SourceFragmentCoordinateV1,
         TreeConstructionContextV1,
     )
-    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_source_tree.nodes import Call
     from sugar_source_tree.tree import SourceFile
 
     consumer = tmp_path / "consumer.py"
-    consumer.write_text("from producer import pair\nvalue = pair(v)\n")
-    row = next(
-        row
-        for row in lift_rpc._call_contract_demand_rows(tmp_path)
-        if row["kind"] == "call-contract-demand"
+    consumer.write_text(
+        "from producer import pair\n"
+        "import producer as p\n"
+        "value = pair(v)\n"
+        "keyword = pair(x=v)\n"
+        "dotted = p.pair(v)\n"
+        "local(v)\n"
     )
-    assert row["targetSymbol"] == "python:producer.pair"
-    coordinate = SourceFragmentCoordinateV1.decode(row["useSite"])
-    answered = replace(
-        _reference(),
-        use_site=coordinate,
-        import_binding_cid=row["importBindingCid"],
+    cm_refs = ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({}))
+    tree = SourceFile(
+        path_source(str(consumer)),
+        construction_context=TreeConstructionContextV1(
+            cm_refs, workspace_root=str(tmp_path)
+        ),
     )
-    unanswered = CallContractResolutionGapV1(
-        demand_cid=DEMAND_CID,
-        use_site=coordinate,
-        import_binding_cid=row["importBindingCid"],
-        target_symbol=row["targetSymbol"],
-        kind=CallContractResolutionGapKindV1.TARGET_NOT_IN_CORPUS,
-        candidate_member_cids=(),
+    calls = sorted(
+        (node for node in tree.nodes() if isinstance(node, Call)),
+        key=lambda node: node.line_col_span().start_line,
     )
+    symbols = [call.sugar().import_target_symbol for call in calls]
 
-    def reduced(resolution):
-        table = ResolvedCallContractRefsV1(
-            CATALOG_CID,
-            TABLE_CID,
-            MappingProxyType({coordinate: resolution}),
-            demand_target_symbols=MappingProxyType({coordinate: row["targetSymbol"]}),
-        )
-        cm_refs = ResolvedContractRefsV1(CATALOG_CID, TABLE_CID, MappingProxyType({}))
-        tree = SourceFile(
-            path_source(str(consumer)),
-            construction_context=TreeConstructionContextV1(
-                cm_refs, call_contract_refs=table, workspace_root=str(tmp_path)
-            ),
-        )
-        call = next(node for node in tree.nodes() if isinstance(node, Call))
-        outcome = call.sugar().desugar(None)
-        assert isinstance(outcome, Complete)
-        assert isinstance(outcome.value, CallSiteValue)
-        return (
-            outcome.value.to_term(owner="test"),
-            outcome.value.edge_contribution("caller"),
-        )
-
-    answered_term, answered_edges = reduced(answered)
-    unanswered_term, unanswered_edges = reduced(unanswered)
-
-    assert answered_term == unanswered_term
-    assert answered_term.name == "call:pair"
-    assert answered_edges == unanswered_edges
-    (edge,) = answered_edges
-    assert edge["targetSymbol"] == "python:producer.pair"
-    assert "targetContractCid" not in edge
+    assert symbols == [
+        "python:producer.pair",
+        "python:producer.pair",
+        "python:producer.pair",
+        None,
+    ]
+    assert all(call.sugar().contract_resolution_gap is None for call in calls)
 
 
 def test_producer_contract_exports_the_same_module_qualified_symbol(tmp_path):

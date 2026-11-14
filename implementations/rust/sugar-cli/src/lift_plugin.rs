@@ -429,18 +429,11 @@ pub(crate) fn dispatch_lift_path(
     // sugar.enumerate. Sending method "lift" is the retired factory door.
     let claim = if kit.supports_rpc_method("sugar.enumerate") {
         let root = project_root_for_enumerate(project_root, &lift_params);
-        // Step 3 of the nine: imports are resolved BEFORE construction, by the
-        // one linker round prove's fold runs. A kit that does not answer the
-        // round is asked nothing.
-        let speaker = sugar_verifier::Speaker::consumer("sugar-cli:mint");
-        let imports =
-            sugar_compiler::orchestrate::resolve_imports_for_walk(&kit, root.as_path(), &speaker)
-                .map_err(lift_error_from_import_resolution)?;
+        // Mint binds nothing before construction: an imported call's target
+        // symbol is the kit's own import table's, and prove's join binds the
+        // call to the imported proof (step 9).
         let response = sugar_compiler::tree::fold_enumerate_source_tree(&kit, root.as_path())
             .map_err(lift_error_from_kit)?;
-        imports
-            .final_check()
-            .map_err(lift_error_from_import_resolution)?;
         claim_from_enumerate_response(surface, &lift_params, response)?
     } else if let Some(method) = manifest.method.as_deref().filter(|m| *m != "lift") {
         // Consumer plugins (e.g. sugar.plugin.lift_implications) keep an
@@ -778,17 +771,6 @@ fn lift_error_from_rendezvous(error: RendezvousError) -> LiftPluginError {
         "lift.rendezvous",
         error.to_string(),
         "Inspect the lift manifest's resolved command and working_dir; rendezvous failures mean the kit process never answered its declaration handshake.",
-    )
-}
-
-fn lift_error_from_import_resolution(
-    error: sugar_compiler::orchestrate::ProveFromKitError,
-) -> LiftPluginError {
-    LiftPluginError::diagnostic(
-        LiftPluginDiagnosticKind::PathExecution,
-        "lift.imports",
-        error.to_string(),
-        "Import resolution runs before construction: inspect the proofs staged in .sugar/imports and the kit's contract-demands rows.",
     )
 }
 

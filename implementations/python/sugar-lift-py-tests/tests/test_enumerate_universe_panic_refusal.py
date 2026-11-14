@@ -51,7 +51,6 @@ def test_full_tree_universe_scan_preserves_sugar_not_written_as_typed_loud(
     requests = iter([request])
     sent = []
     monkeypatch.setattr(lift_rpc, "_BOUND_CONTRACT_REFS", None)
-    monkeypatch.setattr(lift_rpc, "_BOUND_CALL_CONTRACT_REFS", None)
     monkeypatch.setattr(tree_enumerate, "function_contract_rows", refuse_contract_rows)
     monkeypatch.setattr(lift_rpc, "_recv", lambda: next(requests, None))
     monkeypatch.setattr(lift_rpc, "_send", sent.append)

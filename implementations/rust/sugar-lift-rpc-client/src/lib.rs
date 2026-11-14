@@ -563,19 +563,19 @@ mod tests {
             "method": "sugar.plugin.bind_contract_refs",
             "params": params,
         });
-        let call_contract = json!({
-            "method": "sugar.plugin.bind_call_contract_refs",
+        let enumerate = json!({
+            "method": "sugar.enumerate",
             "params": params,
         });
         let first = cache
             .ask(&context_manager, || Ok::<_, ()>(json!({"tableCid": "cm"})))
             .unwrap();
         let second = cache
-            .ask(&call_contract, || Ok::<_, ()>(json!({"tableCid": "call"})))
+            .ask(&enumerate, || Ok::<_, ()>(json!({"tableCid": "enumerate"})))
             .unwrap();
 
         assert_eq!(first["tableCid"], "cm");
-        assert_eq!(second["tableCid"], "call");
+        assert_eq!(second["tableCid"], "enumerate");
         assert_eq!(cache.misses(), 2);
     }
 
