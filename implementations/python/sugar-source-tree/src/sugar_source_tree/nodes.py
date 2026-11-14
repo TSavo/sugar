@@ -8920,9 +8920,13 @@ class Node(Typed):
         row["__child_edges__"] = frozen
         return frozen
 
-    def children(self) -> Iterator[tuple[str, Optional[int], "Node"]]:
-        """Yield (field_name, index-or-None, child) in declared grammar order."""
-        yield from self._child_edges()
+    def children(self) -> tuple[tuple[str, Optional[int], "Node"], ...]:
+        """The (field_name, index-or-None, child) edges in declared grammar
+        order: the memoized ``_child_edges()`` sequence itself, so a reader
+        that walks them last-first (``reversed(node.children())``, a stack
+        that pops the first child first) reads the one ordered sequence, never
+        a one-shot generator over it."""
+        return self._child_edges()
 
     def walk(self, *, unique: bool = True) -> Iterator["Node"]:
         """Pre-order walk over the constructed graph. Iterative — never recursive.
