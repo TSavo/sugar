@@ -2748,9 +2748,11 @@ mod tests {
         );
         assert!(!sugar_proof_envelope::contains_term_ref(audit));
 
-        let error = decode_enumerate_result("fixture-kit", &json!({"nodes": [node], "gaps": []}))
-            .expect_err("a term-ref without its table");
-        assert!(matches!(error, EnumerateError::Malformed { .. }));
+        let refused = decode_enumerate_result("fixture-kit", &json!({"nodes": [node], "gaps": []}));
+        assert!(
+            matches!(refused, Err(EnumerateError::Malformed { .. })),
+            "a term-ref without its table is malformed"
+        );
     }
 
     #[test]
