@@ -30,7 +30,7 @@ tools/perf/verify-rss.sh --project-root /tmp/sugar-rss-synthetic-120 --sugar imp
 The harness calls the host `/usr/bin/time` around:
 
 ```bash
-sugar verify --project <project-root>
+sugar prove <project-root>
 ```
 
 It handles both supported time formats:
@@ -62,7 +62,7 @@ start dhat. To profile heap allocations for a verify run:
 
 ```bash
 cd implementations/rust
-cargo run -p sugar-cli --features dhat-heap --bin sugar -- verify --project ../../examples/std-core-showcase/.work/proof-scope --quiet
+cargo run -p sugar-cli --features dhat-heap --bin sugar -- prove ../../examples/std-core-showcase/.work/proof-scope --quiet
 ```
 
 The run writes `dhat-heap.json` in the current directory. Open it with DHAT's

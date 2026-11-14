@@ -78,7 +78,7 @@ adapter walks via the syn AST. The substrate just signed them.
 
 ## The honest gap
 
-`sugar verify --project .` from the same dir reports
+`sugar verify` (since removed; `sugar prove` is the door) from the same dir reported
 
 ```
 verify: lifting contract claims from `.`
