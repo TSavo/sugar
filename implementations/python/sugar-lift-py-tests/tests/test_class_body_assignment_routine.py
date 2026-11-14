@@ -185,9 +185,10 @@ def test_naming_the_raising_class_without_calling_it_completes() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The second dropped halt: a class statement reduced with no context.
-# ``tree_enumerate.function_universe_outcome`` (an ``__init__`` universe) and
-# ``Assign._constructed_floor_value`` reduce it that way.
+# The second dropped halt: a class statement reduced with no context
+# (``Assign._constructed_floor_value`` reduces it that way).  An ``__init__``
+# universe reads its class statement through the class call's one
+# constructor, and carries the halt.
 # ---------------------------------------------------------------------------
 
 _MAY_RAISE_CALLS = ['int("x")', "float(S)", "os.getcwd()", "frozenset(S)"]
@@ -206,23 +207,57 @@ def test_a_field_call_that_may_raise_is_two_faces_with_or_without_a_context(
     assert len(halts) == 1
 
 
-def test_the_initializer_universe_of_a_may_raise_class_refuses_by_name() -> None:
-    """An ``__init__`` universe reduces its class statement with no context
-    and wants one completion.  With ``limit = int("x")`` it used to get one,
-    the halt dropped; it now gets two faces and refuses by name."""
+def _initializer_universe(source: str):
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
     from sugar_source_tree import nodes
-    from sugar_source_tree.panic import SugarNotWritten
 
-    tree = _tree(_PRELUDE + 'class Box:\n    limit = int("x")\n' + _INIT)
+    tree = _tree(_PRELUDE + source)
     (initializer,) = tuple(
         node
         for node in tree.nodes()
         if isinstance(node, nodes.FunctionDef) and node.name == "__init__"
     )
+    return function_universe_outcome(initializer)
 
-    with pytest.raises(SugarNotWritten, match="function_universe_outcome"):
-        function_universe_outcome(initializer)
+
+def test_the_initializer_universe_of_a_may_raise_class_carries_its_halt() -> None:
+    """An ``__init__`` universe runs on the receiver its class call makes
+    (``ClassConstructorBodySugar.enter_initializer``), so the class
+    statement's halt is the universe's halt.  With ``limit = int("x")`` it
+    used to refuse by name; it is now one completed face and that halt."""
+    completed, halts = _faces(
+        _initializer_universe('class Box:\n    limit = int("x")\n' + _INIT)
+    )
+
+    assert completed == 1
+    assert len(halts) == 1
+
+
+def test_the_initializer_universe_of_a_raising_class_is_its_halt() -> None:
+    """``limit = 1 // 0``: no class exists, so ``__init__`` never runs; its
+    universe is the class statement's one halt and no completion."""
+    completed, halts = _faces(
+        _initializer_universe("class Box:\n" + _ALWAYS_RAISES["only-field"] + _INIT)
+    )
+
+    assert completed == 0
+    assert len(halts) == 1 and "ZeroDivisionError" in halts[0]
+
+
+def test_the_initializer_universe_under_an_unrun_source_new_refuses() -> None:
+    """``Box(n)`` runs ``Box.__new__`` before ``__init__``; the class call
+    refuses a source ``__new__`` it does not run, and the ``__init__``
+    universe gets the same refusal from the same constructor."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(
+        SugarNotWritten, match="__new__ is source the class call does not run"
+    ):
+        _initializer_universe(
+            "class Box:\n"
+            "    def __new__(cls, n):\n"
+            "        return object.__new__(cls)\n" + _INIT
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -409,9 +444,10 @@ def test_an_assert_after_a_call_of_a_raising_class_is_unsat(tmp_path: Path) -> N
     assert lying.verdict == "unsat"
 
 
-# #7799's own program: the class has an ``__init__``.  Its universe is built
-# over the class statement (``tree_enumerate.function_universe_outcome``), so
-# when the statement halts, mint refuses the file by name.
+# #7799's own program: the class has an ``__init__``.  Its universe runs on the
+# receiver the class call makes (``tree_enumerate.function_universe_outcome``),
+# so when the statement halts, the universe is that halt, as the call in
+# ``test_box`` is: no arm reaches the assert, and there are no assertion rows.
 _TWIN_WITH_INITIALIZER = (
     "class Box:\n"
     "    limit = {field}\n"
@@ -434,8 +470,10 @@ def test_a_field_of_an_object_of_a_class_that_exists_is_sat(tmp_path: Path) -> N
     assert truthful.verdict == "sat"
 
 
-def test_a_raising_class_with_an_initializer_is_refused_by_name(tmp_path: Path) -> None:
-    with pytest.raises(WitnessPipelineError, match="function_universe_outcome"):
-        run_source_through_real_solver(
-            tmp_path / "l", _TWIN_WITH_INITIALIZER.format(field="1 // 0")
-        )
+def test_a_raising_class_with_an_initializer_is_not_sat(tmp_path: Path) -> None:
+    lying = run_source_through_real_solver(
+        tmp_path / "l", _TWIN_WITH_INITIALIZER.format(field="1 // 0")
+    )
+
+    with pytest.raises(WitnessPipelineError, match="no assertion rows"):
+        lying.verdict

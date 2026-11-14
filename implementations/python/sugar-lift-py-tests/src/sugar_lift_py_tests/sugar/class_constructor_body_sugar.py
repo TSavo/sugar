@@ -127,23 +127,7 @@ class ClassConstructorBodySugar(Sugar):
                 fix="preserve the shadow receiver binding through the source return",
             )
 
-        def construct(value):
-            refuse_unrun_source_new(
-                value,
-                new_method=self.constructed_new_method,
-                runs_new=(
-                    getattr(value, "initializer", None) is None
-                    and self.initializer_body is not None
-                ),
-                site=self.site,
-                owner="ClassConstructorBodySugar.__new__",
-            )
-            if self.initializer_body is None:
-                return ExitSet.completed(
-                    value.construct_receiver_state_from_block(
-                        None, self.receiver_coordinate_cid
-                    )
-                )
+        def initialize(value, initializer_ctx):
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
             )
@@ -159,39 +143,6 @@ class ClassConstructorBodySugar(Sugar):
             # wrapper; after store ExitSet composition, that path left
             # BindingCoordinateRef formals unbound and raised bare
             # SugarNotWritten during source-derived manager construction.
-            receiver = value.construct_receiver_state_from_block(
-                None, self.receiver_coordinate_cid
-            )
-            # Constructor CallSiteValue formals omit ``self`` — they are the
-            # class-call arguments. Zero-argument ``super()`` still needs the
-            # PEP 3135 ``__class__`` cell and the bound first formal.
-            # ``ClassDefinitionValue`` already carries both when ``__init__``
-            # is invoked as a method; this door is the class call
-            # ``RaisesExc(...)`` used by a factory ``return``.
-            temporal = ctx.temporal.bind_value(
-                self.receiver_coordinate_cid, receiver
-            )
-            from sugar_lift_py_tests.floor.class_definition_value import (
-                ClassDefinitionValue,
-            )
-
-            if isinstance(value, ClassDefinitionValue):
-                temporal = temporal.bind_value(
-                    "__class__",
-                    value,
-                    blame=f"{value.class_name}.__init__",
-                )
-            if temporal.value_if_bound("self") is None:
-                temporal = temporal.bind_value(
-                    "self",
-                    receiver,
-                    blame=(
-                        f"{value.class_name}.__init__"
-                        if isinstance(value, ClassDefinitionValue)
-                        else "ClassConstructorBodySugar.receiver"
-                    ),
-                )
-            initializer_ctx = ctx.with_temporal(temporal)
             outcome = self.initializer_body.desugar(initializer_ctx)
             if isinstance(outcome, NativeOperationExitCarrierV1):
                 return outcome
@@ -235,6 +186,73 @@ class ClassConstructorBodySugar(Sugar):
             return outcome.sequence(
                 lambda block: ExitSet.completed(receiver_of(block))
             )
+
+        return self.enter_initializer(ctx, initialize)
+
+    def enter_initializer(self, ctx, initialize) -> Outcome:
+        """THE class call up to its ``__init__``: the one place a receiver is
+        made for an initializer to run on.
+
+        The class statement's one outcome is read (#7794): its halted faces
+        and what its arms owe are the call's, never dropped.  On each
+        completed face, an unrun source ``__new__`` is refused by name, the
+        fresh receiver is seated at the receiver coordinate with the PEP 3135
+        ``__class__`` cell and ``self``, and ``initialize(value, ctx)`` runs
+        the initializer in that context.  A class with no initializer
+        completes with the fresh receiver itself.
+
+        ``desugar`` passes the class call's initializer body; an ``__init__``
+        universe (``tree_enumerate.function_universe_outcome``) passes the
+        initializer's own universe, so it runs on the receiver the class call
+        makes and carries every halt the class call has before ``__init__``.
+        """
+
+        def construct(value):
+            refuse_unrun_source_new(
+                value,
+                new_method=self.constructed_new_method,
+                runs_new=(
+                    getattr(value, "initializer", None) is None
+                    and self.initializer_body is not None
+                ),
+                site=self.site,
+                owner="ClassConstructorBodySugar.__new__",
+            )
+            receiver = value.construct_receiver_state_from_block(
+                None, self.receiver_coordinate_cid
+            )
+            if self.initializer_body is None:
+                return ExitSet.completed(receiver)
+            # Constructor CallSiteValue formals omit ``self`` — they are the
+            # class-call arguments. Zero-argument ``super()`` still needs the
+            # PEP 3135 ``__class__`` cell and the bound first formal.
+            # ``ClassDefinitionValue`` already carries both when ``__init__``
+            # is invoked as a method; this door is the class call
+            # ``RaisesExc(...)`` used by a factory ``return``.
+            temporal = ctx.temporal.bind_value(
+                self.receiver_coordinate_cid, receiver
+            )
+            from sugar_lift_py_tests.floor.class_definition_value import (
+                ClassDefinitionValue,
+            )
+
+            if isinstance(value, ClassDefinitionValue):
+                temporal = temporal.bind_value(
+                    "__class__",
+                    value,
+                    blame=f"{value.class_name}.__init__",
+                )
+            if temporal.value_if_bound("self") is None:
+                temporal = temporal.bind_value(
+                    "self",
+                    receiver,
+                    blame=(
+                        f"{value.class_name}.__init__"
+                        if isinstance(value, ClassDefinitionValue)
+                        else "ClassConstructorBodySugar.receiver"
+                    ),
+                )
+            return initialize(value, ctx.with_temporal(temporal))
 
         # The class statement's one outcome: a module-level statement is
         # reduced once, and this call reads it (#7794).
