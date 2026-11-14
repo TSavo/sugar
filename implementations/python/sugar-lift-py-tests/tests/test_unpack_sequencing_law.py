@@ -286,9 +286,12 @@ def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> Non
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "setitem"
     assert not (isinstance(outcome, ExitSet) and outcome.completed_value() is not None)
-    # Missing actuals stay undischarged.
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        outcome.discharge(None, {})
+    # Missing actuals: the store is the cited unanswered face (#7825).
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    exits = outcome.discharge(None, {})
+    assert outcome.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
 
 
 # ---------------------------------------------------------------------------

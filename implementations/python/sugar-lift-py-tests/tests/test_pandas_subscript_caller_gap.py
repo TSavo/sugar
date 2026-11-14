@@ -297,8 +297,12 @@ def test_coordinate_free_subscript_retains_existing_named_symbolic_refusal() -> 
 def test_helper_alone_stays_named_undischarged() -> None:
     carrier, _, _ = _synthetic_carrier()
 
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        carrier.discharge(None, {})
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    # No caller actual: the subscript is the cited unanswered face (#7825).
+    exits = carrier.discharge(None, {})
+    assert carrier.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
 
 
 def test_caller_actuals_can_complete_the_original_subscript() -> None:

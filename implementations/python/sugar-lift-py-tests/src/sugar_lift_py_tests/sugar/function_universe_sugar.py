@@ -405,10 +405,10 @@ def reduce_block_to_exitset(
             # smuggle an undischarged carrier through a guard.
             exits = reduce_next(exits.exits[0].value)
         else:
-            # A completed prefix may expose a deferred native operation. Keep
-            # that carrier outside ExitSet until caller actuals discharge it;
-            # no ExitSet ever holds a carrier as an arm.
-            exits = NativeOperationExitCarrierV1.compose_prefix(exits, reduce_next)
+            # A completed prefix may expose a deferred native operation.
+            # ``sequence`` keeps that carrier outside ExitSet until caller
+            # actuals discharge it; no ExitSet ever holds a carrier as an arm.
+            exits = exits.sequence(reduce_next)
 
     # The block boundary is where an obligation stops being in flight, so it is
     # the one door that consumes the carriers. Doing it here rather than per

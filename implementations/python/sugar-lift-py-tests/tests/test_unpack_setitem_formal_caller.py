@@ -51,7 +51,6 @@ from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 PROGRAM = "def f(a, i, p, q):\n    x, a[i] = p, q\n    return x\n"
@@ -394,6 +393,10 @@ def test_lying_swapped_index_value_mint_is_not_truthful_store() -> None:
 
 
 def test_missing_actuals_stay_undischarged() -> None:
+    """Missing actuals: the store is the cited unanswered face (#7825)."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
     _, pending = _helper()
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(None, {})
+    exits = pending.discharge(None, {})
+    assert pending.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None

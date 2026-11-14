@@ -63,7 +63,6 @@ from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_ex
 from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.source_oracle import workspace_path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.lift_rpc import tree_construction_context_for_workspace
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
@@ -613,12 +612,17 @@ def test_same_spelled_foreign_provider_cannot_discharge_real_store() -> None:
     foreign_formal = _formal(foreign.fragment)
     assert foreign_formal.coordinate_cid != receiver_cid
 
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(
-            None,
-            {
-                foreign_formal.coordinate_cid: ObjectValue(
-                    "ForeignIndex", (ObjectField("name", NoneValue()),)
-                )
-            },
-        )
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    # The foreign actual answers no formal of the store: it stays the cited
+    # unanswered face (#7825), never a store the foreign object performed.
+    exits = pending.discharge(
+        None,
+        {
+            foreign_formal.coordinate_cid: ObjectValue(
+                "ForeignIndex", (ObjectField("name", NoneValue()),)
+            )
+        },
+    )
+    assert pending.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None

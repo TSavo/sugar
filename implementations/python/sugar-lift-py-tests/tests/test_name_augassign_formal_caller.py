@@ -36,7 +36,6 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import AugAssign, Call, FunctionDef
 from sugar_source_tree.operators import Add, BinaryOperator
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -414,8 +413,12 @@ def test_helper_alone_is_undischarged_iadd_carrier() -> None:
     _, pending = _helper_definition()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "iadd"
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(None, {})
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    # No caller actual: the iadd is the cited unanswered face (#7825).
+    exits = pending.discharge(None, {})
+    assert pending.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
 
 
 def test_authenticated_formal_discharge_updates_binding() -> None:

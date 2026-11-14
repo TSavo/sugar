@@ -56,9 +56,9 @@ def owed_calls(outcome) -> tuple[UnansweredCallV1, ...]:
 
     Read off the arms' ``owed`` slot. A deferred native operation
     (``NativeOperationExitCarrierV1``) has no arms of its own until a caller
-    discharges it, but the arms of its composed prefix and the stopping faces
-    of its short circuits were reduced: their items are read there, and a
-    deferred carrier beneath the prefix is read the same way.
+    discharges it, but the arms ``ExitSet.sequence`` composed beside it and
+    the stopping faces of its short circuits were reduced: their items are
+    read there, and a later carrier waiting beside it is read the same way.
     """
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
@@ -70,9 +70,11 @@ def _reduced_arms(outcome) -> tuple:
     """Every reduced arm of ``outcome``, in arm order, for ``owed_calls``.
 
     The arms of an ``ExitSet``; for a deferred carrier, the stopping faces of
-    its short circuits, then the arms of its composed prefix, each deferred
-    prefix arm followed by the reduced arms of the carrier beneath it. Their
-    debts are joined by the one reader, ``ExitSet.owed_items``.
+    its short circuits, then for each ``sequence`` composition enrolled on it
+    (``composed_beside``) the arms already resolved, the prefix arm its exits
+    go beneath, and each later waiting prefix arm followed by the reduced
+    arms of its carrier. Their debts are joined by the one reader,
+    ``ExitSet.owed_items``.
     """
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
@@ -86,10 +88,10 @@ def _reduced_arms(outcome) -> tuple:
     arms = [
         arm for _g, stopped, _c, _s in outcome.short_circuits for arm in stopped.exits
     ]
-    if outcome.prefix_composition is not None:
-        resolved, deferred = outcome.prefix_composition[:2]
-        arms.extend(resolved)
-        for prefix_exit, carrier in deferred:
+    for beside in outcome.composed_beside():
+        arms.extend(beside.resolved)
+        arms.append(beside.prefix)
+        for _position, prefix_exit, carrier in beside.rest:
             arms.append(prefix_exit)
             if carrier is not outcome:
                 arms.extend(_reduced_arms(carrier))

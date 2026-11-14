@@ -415,8 +415,8 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     1. Positional roster members zip by source leaf index, never by name keys.
     2. Formal setitem store leaf mints discharge coordinates (receiver, index,
        value); a lying twin with swapped index/value slots is distinguishable.
-    3. A formal missing from discharge actuals is the typed SugarNotWritten
-       undischarged refusal — never a silent completion.
+    3. A formal missing from discharge actuals is the cited unanswered face
+       (#7825) — never a silent completion.
     """
     from types import SimpleNamespace
 
@@ -429,7 +429,6 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
         PositionalUnpackOperation,
         UnpackMemberRoster,
     )
-    from sugar_source_tree.panic import SugarNotWritten
 
     site = _site("def f(a, i, xs):\n    a[i], name = xs\n")
     # --- positional roster: members by index, no string keys ---
@@ -499,24 +498,18 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     assert lying.demand.operand_coordinate_cids != cids
     with pytest.raises(AssertionError):
         assert lying.demand.operand_coordinate_cids == cids
-    # Missing formals → typed undischarged refusal, never a completion.
-    with pytest.raises(
-        SugarNotWritten, match="authenticated caller actual absent"
-    ) as missing:
-        projected.discharge(None, {})
-    assert "cid:a" in str(missing.value)
-    # Lying twin: claiming missing actuals greened a completion is impossible.
-    with pytest.raises(SugarNotWritten, match="authenticated caller actual absent"):
-        out = projected.discharge(None, {})
-        assert out.completed_value() is not None
-    with pytest.raises(
-        SugarNotWritten, match="authenticated caller actual absent"
-    ) as partial:
-        projected.discharge(None, {"cid:a": ListValue((TermValue(0),))})
-    assert "cid:i" in str(partial.value)
-    with pytest.raises(SugarNotWritten, match="authenticated caller actual absent"):
-        out = projected.discharge(None, {"cid:a": ListValue((TermValue(0),))})
-        assert out.completed_value() is not None
+    # Missing formals → the cited unanswered face (#7825), never a completion:
+    # it owes the store as an ``undecided`` member and its halt names the
+    # first formal no actual answers.
+    for actuals, absent in (
+        ({}, "cid:a"),
+        ({"cid:a": ListValue((TermValue(0),))}, "cid:i"),
+    ):
+        out = projected.discharge(None, actuals)
+        assert out.completed_value() is None
+        assert {arm.owed for arm in out.exits} == {(projected.unanswered_call(),)}
+        (halted,) = out.halts()
+        assert halted.effect.blame == f"authenticated caller actual absent for {absent}"
 
 
 def test_successful_roster_carries_authenticated_unpack_occurrence() -> None:

@@ -158,8 +158,17 @@ def test_helper_alone_is_undischarged_unary_carrier(source: str, operator: str) 
     _, pending = _helper(source)
     assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
     assert pending.demand.operator == operator
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(None, {})
+    _unanswered(pending, {})
+
+
+def _unanswered(pending, actuals) -> None:
+    """An absent actual leaves the operation the cited unanswered face
+    (#7825): owed as an ``undecided`` member, never a completed fold."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    exits = pending.discharge(None, actuals)
+    assert pending.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
 
 
 def test_discrimination_helper_alone_is_not_completed() -> None:
@@ -242,20 +251,14 @@ def test_wrong_coordinate_actual_cannot_discharge_pending_unary() -> None:
     function, pending = _helper("def helper(x):\n    return -x\n")
     assert isinstance(pending, NativeOperationExitCarrierV1)
     (coord,) = function.formal_coordinates()
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(None, {f"wrong:{coord.coordinate_cid}": TermValue(3)})
+    _unanswered(pending, {f"wrong:{coord.coordinate_cid}": TermValue(3)})
 
 
 def test_missing_actual_does_not_fabricate_completed_neg() -> None:
     """Empty discharge stays undischarged — never Completed TermValue(0) etc."""
     _, pending = _helper("def helper(x):\n    return -x\n")
     assert isinstance(pending, NativeOperationExitCarrierV1)
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        fabricated = pending.discharge(None, {})
-        # If discharge ever went soft, a lying complete would look like this:
-        assert isinstance(fabricated, ExitSet) and isinstance(
-            fabricated.exits[0], Completed
-        )
+    _unanswered(pending, {})
 
 
 # ---------------------------------------------------------------------------

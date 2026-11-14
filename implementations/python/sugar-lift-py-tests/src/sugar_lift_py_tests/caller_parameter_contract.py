@@ -713,6 +713,11 @@ class NativeOperationExitCarrierV1:
     names its Floor signature explicitly so n-ary stores (``setitem``,
     ``setattr_named``) are first-class, and a missing projector stays
     undischarged rather than panicking.
+
+    A caller that has no actual for one of its formals still discharges it:
+    the operation's own position is the cited unanswered face
+    (:meth:`_unanswered_exits`), and every step enrolled after it runs, so no
+    arm composed beside the carrier is dropped (#7825).
     """
 
     demand: NativeOperationDemandV1
@@ -721,9 +726,10 @@ class NativeOperationExitCarrierV1:
     site: object = dataclass_field(compare=False, repr=False)
     continuations: tuple = dataclass_field(default=(), compare=False, repr=False)
     guards: tuple = dataclass_field(default=(), repr=False)
-    prefix_composition: object | None = dataclass_field(
-        default=None, compare=False, repr=False
-    )
+    # ``(continuations, guards, step)``: each ExitSet-wide step with the
+    # continuation and guard counts at its enrollment. The guards enrolled
+    # before a step restrict the exits that step is handed, never what it
+    # composes beside them (``ExitSet.sequence``'s sibling arms).
     exitset_continuations: tuple = dataclass_field(
         default=(), compare=False, repr=False
     )
@@ -829,71 +835,79 @@ class NativeOperationExitCarrierV1:
         return replace(self, guards=(*self.guards, guard))
 
     def after_discharge(self, step) -> "NativeOperationExitCarrierV1":
-        """Defer an ExitSet-wide consumer until authenticated discharge."""
+        """Defer an ExitSet-wide consumer until authenticated discharge.
+
+        The guards enrolled so far restrict the exits ``step`` is handed;
+        guards enrolled after it restrict what it answers."""
         return replace(
             self,
             exitset_continuations=(
                 *self.exitset_continuations,
-                (len(self.continuations), step),
+                (len(self.continuations), len(self.guards), step),
             ),
         )
 
-    @classmethod
-    def compose_prefix(cls, prefix, step):
-        """Sequence a prefix without exposing a deferred carrier to ExitSet.
+    def composed_beside(self):
+        """Every ``ExitSet.sequence`` composition enrolled on this carrier.
 
-        Each completed prefix arm retains its own carrier instance because its
-        continuations and pre-effect state belong to that arm.  Halted and
-        already-resolved arms are retained verbatim.  Compatible carrier arms
-        share one authenticated demand; different demands are not mergeable.
+        Each is the step that composes the arms already resolved beside the
+        carrier (``resolved``) with the carrier's exits once it discharges, in
+        the order enrolled. A reader of what a deferred outcome already
+        reduced (``unanswered_calls.owed_calls``) reads those arms here.
         """
-        from sugar_lift_py_tests.outcome import ExitSet, Halted
-        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+        from sugar_lift_py_tests.outcome.exit_set import _SequencedBeside
 
-        resolved = []
-        deferred = []
-        for prefix_exit in prefix.exits:
-            if isinstance(prefix_exit, Halted):
-                resolved.append(prefix_exit)
-                continue
-            following = step(prefix_exit.value)
-            if isinstance(following, cls):
-                deferred.append((prefix_exit, following))
-                continue
-            following = _require_exit_set(
-                following, owner="NativeOperationExitCarrierV1.compose_prefix"
-            )
-            sequenced = ExitSet((prefix_exit,)).sequence(
-                lambda _value, *, exits=following: exits
-            )
-            resolved.extend(sequenced.exits)
+        return tuple(
+            step
+            for _count, _guards, step in self.exitset_continuations
+            if isinstance(step, _SequencedBeside)
+        )
 
-        if not deferred:
-            return ExitSet(tuple(resolved)).normalize()
+    def unanswered_call(self):
+        """The ``undecided`` member (``reason: unanswered``) this operation is
+        owed as when its caller has no actual: no symbol, the operation's
+        site."""
+        from sugar_lift_py_tests.unanswered_calls import UnansweredCallV1
 
-        demand_cids = {carrier.demand.demand_cid for _, carrier in deferred}
-        if len(demand_cids) != 1:
-            from sugar_lift_py_tests.gap.info import GapKind
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
+        return UnansweredCallV1(None, self.demand.source_node)
 
-            construction_panic_gap(
-                owner="NativeOperationExitCarrierV1.compose_prefix",
-                blame=tuple(sorted(demand_cids)),
-                observed="incompatible native-operation demands beneath one prefix",
-                requested="one authenticated demand shared by every deferred prefix arm",
-                fix="keep distinct native-operation demands in separate control-flow joins",
-                gap_kind=GapKind.FLOOR,
-            )
+    def _unanswered_exits(self, absent):
+        """This operation's own position when the caller has no actual.
 
-        representative = deferred[0][1]
-        return replace(
-            representative,
-            prefix_composition=(
-                tuple(resolved),
-                tuple(deferred),
-                len(representative.continuations),
-                len(representative.guards),
-                len(representative.exitset_continuations),
+        ``absent`` is the formal coordinate no actual answers. The operation
+        was not evaluated, so it completes only under
+        ``python:unanswered_native_operation.completes`` with the value
+        ``python:native_operation_result(..)``, and halts with an
+        ``UndeterminedRaiseEffect`` under the complement: the two-faced law
+        (``ExitSet.two_faced``). Both faces owe the operation as an
+        ``undecided`` member (``reason: unanswered``) at its site, and the
+        halt leaves from the reducer's pre-effect state when one was enrolled.
+        The terms name the operator and the occurrence, never a formal of the
+        callee, which is not in the caller's scope.
+        """
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.occurrence import occurrence_key, occurrence_term
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        site = self.demand.source_node
+        operation = ctor(
+            "python:unanswered_native_operation",
+            (str_const(self.demand.operator), occurrence_term(site)),
+        )
+        return ExitSet.two_faced(
+            SymbolicValue(ctor("python:native_operation_result", (operation,))),
+            UndeterminedRaiseEffect(
+                blame=f"authenticated caller actual absent for {absent}",
+                occurrence=occurrence_key(site),
+                producer_node_owner=(
+                    f"UnansweredNativeOperation:{self.demand.operator}"
+                ),
+            ),
+            guard=atomic("python:unanswered_native_operation.completes", [operation]),
+            owed=(self.unanswered_call(),),
+            state=(
+                None if self.pre_effect_state is None else self.pre_effect_state.state
             ),
         )
 
@@ -941,93 +955,25 @@ class NativeOperationExitCarrierV1:
         known = tuple(self.short_circuit_positions)
         return known + (end,) * (len(self.short_circuits) - len(known))
 
-    def discharge(self, ctx, actuals_by_formal_coordinate):
-        """Evaluate against authenticated actual operands and project exits.
+    def _projected_exits(self, actual_operands, ctx):
+        """The operation's own exits over the caller's actual operands.
 
-        ``ctx`` is the context of the caller whose actuals fill the
-        placeholder operands: the operation, and every carrier its
-        continuations mint, discharges under it (a body the operation applies
-        keeps that caller's temporal and halts).
-
-        Coordinate-length and coordinate-identity invariants are owned by
-        :meth:`__post_init__` (#6613).  Missing authenticated evidence, an
-        operator absent from the projector table, and projector arity mismatch
-        remain undischarged — never a construction panic.
+        An operator absent from the projector table and a projector arity
+        mismatch remain undischarged, refused by name: the lifter has no
+        floor for the operation, which is not the caller's absence of an
+        actual (:meth:`_unanswered_exits`).
         """
         from sugar_lift_py_tests.effect import RaiseEffect, effect_reason
-        from sugar_lift_py_tests.outcome import (
-            ExitSet,
-            Halted,
-            true_guard,
-        )
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.outcome.exit_set import (
             _is_true,
             _require_exit_set,
         )
 
-        def apply_exitset_step(projected, step):
-            projected = step(projected)
-            if isinstance(projected, NativeOperationExitCarrierV1):
-                projected = projected.discharge(ctx, actuals_by_formal_coordinate)
-            return _require_exit_set(
-                projected, owner="NativeOperationExitCarrierV1.discharge"
-            )
-
-        def apply_exitset_steps(projected, continuation_count):
-            for enrolled_count, step in self.exitset_continuations:
-                if enrolled_count != continuation_count:
-                    continue
-                projected = apply_exitset_step(projected, step)
-            return projected
-
-        if self.prefix_composition is not None:
-            (
-                resolved,
-                deferred,
-                continuation_count,
-                guard_count,
-                exitset_count,
-            ) = self.prefix_composition
-            exits = list(resolved)
-            for prefix_exit, carrier in deferred:
-                following = carrier.discharge(ctx, actuals_by_formal_coordinate)
-                sequenced = ExitSet((prefix_exit,)).sequence(
-                    lambda _value, *, result=following: result
-                )
-                exits.extend(sequenced.exits)
-            # Do not normalize across prefix arms: each arm's partition faces,
-            # obligations, and temporal state remain independently testified.
-            projected = ExitSet(tuple(exits))
-            for continuation in self.continuations[continuation_count:]:
-                projected = type(self).compose_prefix(projected, continuation)
-                if isinstance(projected, NativeOperationExitCarrierV1):
-                    projected = projected.discharge(ctx, actuals_by_formal_coordinate)
-            guard = _conjoin_guards(self.guards[guard_count:])
-            if guard is not None:
-                projected = projected.guarded(guard)
-            # Only steps enrolled after the prefix: the deferred arms'
-            # carriers already ran their own when they discharged.
-            for _enrolled_count, step in self.exitset_continuations[exitset_count:]:
-                projected = apply_exitset_step(projected, step)
-            return projected
-
         def undischarged(reason):
             return NativeOperationResolutionV1.undischarged(reason).project(
                 source_node=self.demand.source_node
             )
-
-        actual_operands = []
-        for original, coordinate_cid in zip(
-            self.operands, self.demand.operand_coordinate_cids, strict=True
-        ):
-            if coordinate_cid is None:
-                actual_operands.append(original)
-                continue
-            if coordinate_cid not in actuals_by_formal_coordinate:
-                return undischarged(
-                    "authenticated caller actual absent for " f"{coordinate_cid}"
-                )
-            actual_operands.append(actuals_by_formal_coordinate[coordinate_cid])
 
         projector = _NATIVE_OPERATION_PROJECTORS.get(self.demand.operator)
         if projector is None:
@@ -1104,6 +1050,55 @@ class NativeOperationExitCarrierV1:
             )
         # Otherwise the projected arms stand as they are: a completion is
         # already its one completed arm, and its ``owed`` rides on it.
+        return exits
+
+    def discharge(self, ctx, actuals_by_formal_coordinate):
+        """Evaluate against authenticated actual operands and project exits.
+
+        ``ctx`` is the context of the caller whose actuals fill the
+        placeholder operands: the operation, and every carrier its
+        continuations mint, discharges under it (a body the operation applies
+        keeps that caller's temporal and halts).
+
+        Coordinate-length and coordinate-identity invariants are owned by
+        :meth:`__post_init__` (#6613). A formal the caller has no actual for
+        leaves the operation unanswered (:meth:`_unanswered_exits`): its
+        position is the cited two-faced arm, and every continuation and
+        ExitSet-wide step still runs, so the arms composed beside it stand. A
+        halt is never dropped (#7825).
+        """
+        from sugar_lift_py_tests.outcome import (
+            ExitSet,
+            Halted,
+            true_guard,
+        )
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+        def apply_exitset_step(projected, step):
+            projected = step(projected)
+            if isinstance(projected, NativeOperationExitCarrierV1):
+                projected = projected.discharge(ctx, actuals_by_formal_coordinate)
+            return _require_exit_set(
+                projected, owner="NativeOperationExitCarrierV1.discharge"
+            )
+
+        actual_operands = []
+        absent = None
+        for original, coordinate_cid in zip(
+            self.operands, self.demand.operand_coordinate_cids, strict=True
+        ):
+            if coordinate_cid is None:
+                actual_operands.append(original)
+                continue
+            if coordinate_cid not in actuals_by_formal_coordinate:
+                absent = coordinate_cid
+                break
+            actual_operands.append(actuals_by_formal_coordinate[coordinate_cid])
+        exits = (
+            self._projected_exits(actual_operands, ctx)
+            if absent is None
+            else self._unanswered_exits(absent)
+        )
 
         # A short circuit recorded before later work (``return a if c else
         # -x``: the return, the block projection, an enclosing ``if``'s join)
@@ -1146,11 +1141,12 @@ class NativeOperationExitCarrierV1:
 
         def at_point(exits, continuation_count):
             # Exit-set steps and short circuits enrolled at this continuation
-            # count, in the order they were enrolled.
+            # count, in the order they were enrolled. The guards enrolled
+            # before each restrict the exits it is handed.
             nonlocal guards_applied
             events = [
-                (index, 1, step)
-                for index, (enrolled_count, step) in enumerate(
+                (index, 1, (guard_count, step))
+                for index, (enrolled_count, guard_count, step) in enumerate(
                     self.exitset_continuations
                 )
                 if enrolled_count == continuation_count
@@ -1160,21 +1156,20 @@ class NativeOperationExitCarrierV1:
                 for (count, exitset_count, guard_count), short in positional
                 if count == continuation_count
             )
-            for _order, kind, event in sorted(events, key=lambda e: (e[0], e[1])):
+            for _order, kind, (guard_count, event) in sorted(
+                events, key=lambda e: (e[0], e[1])
+            ):
+                before = _conjoin_guards(self.guards[guards_applied:guard_count])
+                if before is not None:
+                    exits = exits.guarded(before)
+                guards_applied = max(guards_applied, guard_count)
                 if kind == 1:
                     exits = apply_exitset_step(exits, event)
                     continue
-                guard_count, short = event
-                pre_split = _conjoin_guards(self.guards[guards_applied:guard_count])
-                if pre_split is not None:
-                    exits = exits.guarded(pre_split)
-                guards_applied = max(guards_applied, guard_count)
-                exits = union_short_circuit(exits, short)
+                exits = union_short_circuit(exits, event)
             return exits
 
-        step_point = at_point if positional else apply_exitset_steps
-
-        exits = step_point(exits, 0)
+        exits = at_point(exits, 0)
         for index, continuation in enumerate(self.continuations, start=1):
 
             def resume(value, *, step=continuation):
@@ -1195,7 +1190,7 @@ class NativeOperationExitCarrierV1:
                 return next_outcome
 
             exits = exits.and_then(resume)
-            exits = step_point(exits, index)
+            exits = at_point(exits, index)
         guard = _conjoin_guards(self.guards[guards_applied:])
         if guard is not None:
             exits = exits.guarded(guard)

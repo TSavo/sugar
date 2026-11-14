@@ -314,20 +314,22 @@ def test_invalid_index_discrimination_not_completed() -> None:
 
 
 def test_dropped_variadic_value_coordinate_is_undischarged() -> None:
-    """Omitting the *values formal from discharge stays loud — no green store."""
+    """Omitting the *values formal from discharge stays loud — no green store:
+    the store is the cited unanswered face (#7825)."""
     _, pending = _helper(HELPER_STAR)
     obj_cid, key_cid, _values_cid = pending.demand.operand_coordinate_cids
-    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
 
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(
-            None,
-            {
-                obj_cid: ListValue((TermValue(0),)),
-                key_cid: TermValue(0),
-                # values_cid deliberately omitted
-            },
-        )
+    exits = pending.discharge(
+        None,
+        {
+            obj_cid: ListValue((TermValue(0),)),
+            key_cid: TermValue(0),
+            # values_cid deliberately omitted
+        },
+    )
+    assert pending.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
 
 
 def test_reordered_variadic_twin_fails() -> None:

@@ -2723,9 +2723,7 @@ class GeneratorConstructionV1:
                     return transitioned
                 return ExitSet.completed(transitioned)
 
-            transitioned = NativeOperationExitCarrierV1.compose_prefix(
-                branches, _transition_branch_machine
-            )
+            transitioned = branches.sequence(_transition_branch_machine)
             if isinstance(transitioned, ExitSet):
                 factored = transitioned.factor_completed()
                 branch_faces = frozenset({then_face, else_face})
@@ -2774,17 +2772,13 @@ class GeneratorConstructionV1:
         ):
             return _transition_truth(guard_outcome.completed_value())
         if isinstance(guard_outcome, ExitSet):
-            projected = NativeOperationExitCarrierV1.compose_prefix(
-                guard_outcome, _project_guard_operand
-            )
+            projected = guard_outcome.sequence(_project_guard_operand)
         elif isinstance(guard_outcome, NativeOperationExitCarrierV1):
             projected = guard_outcome.and_then(_project_guard_operand)
         else:
             return self._gap(requested, "If carrying a suspension")
         if isinstance(projected, ExitSet):
-            return NativeOperationExitCarrierV1.compose_prefix(
-                projected, _transition_projected_truth
-            )
+            return projected.sequence(_transition_projected_truth)
         if isinstance(projected, NativeOperationExitCarrierV1):
             return projected.and_then(_transition_projected_truth)
         return self._gap(requested, "If carrying a suspension")

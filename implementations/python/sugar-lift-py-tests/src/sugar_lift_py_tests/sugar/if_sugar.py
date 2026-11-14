@@ -216,9 +216,7 @@ class IfSugar(Sugar):
             # raises): each completed face selects its suites under its own
             # guard; a halted face never reaches either suite. Returning the
             # condition's faces as the statement's dropped both suites.
-            return NativeOperationExitCarrierV1.compose_prefix(
-                cond, lambda value: self._select_on_face(value, ctx)
-            )
+            return cond.sequence(lambda value: self._select_on_face(value, ctx))
         condition = plain_completed_value(cond)
         if condition is None:
             return cond
