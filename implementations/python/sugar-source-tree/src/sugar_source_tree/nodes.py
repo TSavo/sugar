@@ -7423,6 +7423,85 @@ class FunctionDef(Statement):
             occurrence = value.fragment
             return YieldFromStepV1(iterable, occurrence, occurrence.seal().cid)
 
+        def projected_names(names, evaluation):
+            """``(name, key)`` per unpacked Name: its projection of the
+            statement's evaluation (``Assign._unpack_projection_binding``),
+            None for a statement never substituted."""
+            if not isinstance(evaluation, str):
+                return tuple((name, None) for name in names)
+            from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+            return tuple((name, projection_key(evaluation, name)) for name in names)
+
+        def statement_store_step(statement, suspension, store_of, bound):
+            """A yield assignment whose targets are the statement's own
+            sugar (``store_of``), built with its value read through the
+            statement's evaluation key; ``bound`` are the Names it binds,
+            which the resume reads out of what it bound."""
+            store_evaluation = statement._evaluation_key({})
+            store = store_of(
+                _place_read_sugar(store_evaluation, "yield", statement.fragment)
+            )
+            if store is None:
+                return None
+            return YieldAssignStepV1(
+                suspension,
+                bound,
+                statement.fragment.seal().cid,
+                occurrence=statement.fragment,
+                store=store,
+                store_evaluation=store_evaluation,
+            )
+
+        def container_store_step(statement):
+            """``xs[i] = yield v`` on a decided list/dict/set: substitution
+            made it a ``ContainerMutationStatement`` whose call stores the
+            yield (``value_first``: Python evaluates it before the receiver
+            and the key).  The resume runs the statement's mutation with the
+            resumed value read through the yield's projection of the
+            statement's key; the pair the mutation binds under that key
+            (``store_keeps``) is what every later read of the receiver reads
+            (``BuiltinContainerProjection``).  None when anything but the
+            stored value suspends."""
+            call = statement.evaluated[0] if statement.evaluated else None
+            if (
+                not isinstance(call, BuiltinContainerCall)
+                or not call.value_first
+                or not call.args
+                or not isinstance(call.args[-1], (Yield, YieldFrom))
+            ):
+                return None
+            value = call.args[-1]
+            if FunctionDef._owns_yield(
+                (call.receiver, *call.args[:-1], *statement.evaluated[1:])
+            ):
+                return None
+            if value.value is not None and FunctionDef._owns_yield((value.value,)):
+                return None
+            evaluation = getattr(statement, "evaluation", None)
+            if not isinstance(evaluation, str):
+                return None
+            suspension = suspension_step(value)
+            if suspension is None:
+                return None
+            from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+            store_evaluation = projection_key(evaluation, "yield")
+            store = statement.storing_sugar(
+                _place_read_sugar(store_evaluation, "yield", statement.fragment)
+            )
+            if store is None:
+                return None
+            return YieldAssignStepV1(
+                suspension,
+                (),
+                statement.fragment.seal().cid,
+                occurrence=statement.fragment,
+                store=store,
+                store_evaluation=store_evaluation,
+                store_keeps=(evaluation,),
+            )
+
         def yield_assign_step(statement):
             """``<targets> = yield v`` / ``<targets> = yield from xs`` as
             ``YieldAssignStepV1``, or None.
@@ -7431,7 +7510,8 @@ class FunctionDef(Statement):
             (``y = ...``, ``y: T = ...``), a chain of Names (``a = b =
             ...``), or an unpack of Names, flat with at most one ``*Name``
             (``a, b = ...``, ``a, *b = ...``) or a nested Name-only tree
-            (``(a, (b, c)) = ...``).  Each Name carries the key substitution
+            with at most one ``*Name`` per level (``(a, (b, c)) = ...``,
+            ``(a, (b, *c)) = ...``).  Each Name carries the key substitution
             bound its later reads to: ``target_evaluations`` for a Name or a
             chain, the Name's projection of the statement's evaluation for
             an unpack (``Assign._unpack_projection_binding``).
@@ -7443,7 +7523,17 @@ class FunctionDef(Statement):
             value read through the statement's evaluation key: the resume
             binds the resumed value there and runs the store
             (``KeyedStoreSugar`` for a keyed place).
+
+            Targets that hold a store beside Names (``a = o.x = ...``,
+            ``a, o.x = ...``) are the statement's own sugar the same way
+            (``Assign.chained_store_sugar``, ``Assign.unpack_store_sugar``),
+            its Names read out of what it bound.  A store on a decided
+            local list/dict/set (``xs[i] = ...``, which substitution made a
+            ``ContainerMutationStatement``) is that statement's mutation
+            (``container_store_step``).
             """
+            if isinstance(statement, ContainerMutationStatement):
+                return container_store_step(statement)
             if isinstance(statement, ReceiverFieldStoreStatement):
                 targets = ()
             elif isinstance(statement, Assign):
@@ -7455,6 +7545,10 @@ class FunctionDef(Statement):
             operand = statement.value.value
             if operand is not None and FunctionDef._owns_yield((operand,)):
                 # ``y = yield (yield v)``: the operand suspends first.
+                return None
+            if FunctionDef._owns_yield(tuple(targets)):
+                # ``xs[(yield)] = yield v``: a target suspends again after the
+                # value, which this step cannot perform.
                 return None
             suspension = suspension_step(statement.value)
             if suspension is None:
@@ -7486,9 +7580,26 @@ class FunctionDef(Statement):
                     store_evaluation=store_evaluation,
                 )
             unpack = None
+            evaluation = getattr(statement, "evaluation", None)
             if all(isinstance(target, Name) for target in targets):
                 keys = dict(statement.target_evaluations())
                 bound = tuple((target.id, keys.get(target.id)) for target in targets)
+            elif len(targets) > 1 and all(
+                isinstance(target, (Name, Attribute, Subscript)) for target in targets
+            ):
+                # ``a = o.x = yield v``: the chain is the statement's own
+                # sugar; each Name is read out of what it bound.
+                keys = dict(statement.target_evaluations())
+                return statement_store_step(
+                    statement,
+                    suspension,
+                    statement.chained_store_sugar,
+                    tuple(
+                        (target.id, keys.get(target.id))
+                        for target in targets
+                        if isinstance(target, Name)
+                    ),
+                )
             elif (
                 len(targets) == 1
                 and isinstance(targets[0], (Tuple_, List))
@@ -7507,7 +7618,16 @@ class FunctionDef(Statement):
                 else:
                     pattern = statement._name_only_nested_unpack_pattern(target)
                     if pattern is None:
-                        return None
+                        # ``a, o.x = yield v``: the unpack is the statement's
+                        # own sugar; each Name is read out of what it bound.
+                        return statement_store_step(
+                            statement,
+                            suspension,
+                            statement.unpack_store_sugar,
+                            projected_names(
+                                tuple(_unpack_target_names(target)), evaluation
+                            ),
+                        )
                     from sugar_lift_py_tests.sugar.nested_dynamic_unpack_assign_sugar import (
                         flatten_pattern_names,
                     )
@@ -7520,17 +7640,7 @@ class FunctionDef(Statement):
                     *(() if unpack.star_name is None else (unpack.star_name,)),
                     *unpack.suffix_names,
                 )
-                evaluation = getattr(statement, "evaluation", None)
-                if isinstance(evaluation, str):
-                    from sugar_lift_py_tests.temporal.temporal_context import (
-                        projection_key,
-                    )
-
-                    bound = tuple(
-                        (name, projection_key(evaluation, name)) for name in names
-                    )
-                else:
-                    bound = tuple((name, None) for name in names)
+                bound = projected_names(names, evaluation)
             else:
                 return None
             return YieldAssignStepV1(
@@ -7565,6 +7675,16 @@ class FunctionDef(Statement):
                 # The suspension, then the assignment of the value its resume
                 # brings, bound to (or stored through) each target as an
                 # ordinary assignment binds it (``YieldAssignStepV1``).
+                step = yield_assign_step(statement)
+                if step is None:
+                    return absent_step
+                return _GeneratorNamedStepV1(step)
+            if isinstance(
+                statement, ContainerMutationStatement
+            ) and FunctionDef._owns_yield((statement,)):
+                # ``xs[i] = yield v`` on a decided local container: the
+                # suspension, then the statement's mutation storing the
+                # resumed value (``YieldAssignStepV1``).
                 step = yield_assign_step(statement)
                 if step is None:
                     return absent_step
@@ -9981,13 +10101,16 @@ def _store_target_binding(statement, target, scope):
     evaluation = _store_evaluation(statement, target)
     if evaluation is None:
         return None
+    stored = statement.value
+    if isinstance(stored, (Yield, YieldFrom)):
+        stored = _resumed_place_value(statement, target, evaluation)
     if isinstance(target, Attribute):
         updated = target.value.with_attribute_store(
-            target.attr, statement.value, statement.fragment, evaluation
+            target.attr, stored, statement.fragment, evaluation
         )
     else:
         updated = target.value.with_subscript_store(
-            target.slice_, statement.value, statement.fragment, evaluation
+            target.slice_, stored, statement.fragment, evaluation
         )
     if updated is None:
         return None
@@ -9999,6 +10122,20 @@ def _store_target_binding(statement, target, scope):
         and isinstance(entry.state, ObjectPlaceStateV1)
         and entry.state.object_identity_cid == target.value.object_identity_cid
     }
+
+
+def _resumed_place_value(statement, target, evaluation):
+    """What ``o.x = yield v`` on an object place puts in the field: the
+    value the resume brings, which the yield-assign step binds under this
+    store statement's key (``YieldAssignStepV1``), read through that key
+    (``place``) as every later read of the field reads it.  Never the yield
+    node itself: threaded into the place, it would ride every later read of
+    ``o`` (the field's ``of``, the object's ``values``) as a suspension that
+    statement does not own."""
+    label = f".{target.attr}" if isinstance(target, Attribute) else "[]"
+    return _evaluation_ref(
+        statement, statement.value.span, evaluation, label, place=True
+    )
 
 
 def _keyed_store_target(target) -> bool:
@@ -10600,12 +10737,15 @@ class Assign(Statement):
         """Name-only nested Tuple/List tree for non-display dynamic unpack.
 
         Flat all-Name targets stay with ``DynamicUnpackAssignSugar``. This
-        admits only trees that nest at least one Tuple/List of Names (no
-        Attribute/Subscript/Starred). Returns a pattern tuple for
-        ``NestedDynamicUnpackAssignSugar``, or ``None``.
+        admits only trees that nest at least one Tuple/List of Names, with at
+        most one ``*Name`` per level (no Attribute/Subscript). A starred leaf
+        is its name behind ``STAR`` (``nested_dynamic_unpack_assign_sugar``);
+        its level unpacks through the starred sequence projection. Returns a
+        pattern tuple for ``NestedDynamicUnpackAssignSugar``, or ``None``.
         """
         if not isinstance(target, (Tuple_, List)):
             return None
+        from sugar_lift_py_tests.sugar.nested_dynamic_unpack_assign_sugar import STAR
 
         def build(node):
             if isinstance(node, Name):
@@ -10614,7 +10754,14 @@ class Assign(Statement):
                 if not node.elts:
                     return None
                 parts = []
+                starred = 0
                 for element in node.elts:
+                    if isinstance(element, Starred):
+                        starred += 1
+                        if starred > 1 or not isinstance(element.value, Name):
+                            return None
+                        parts.append(STAR + element.value.id)
+                        continue
                     part = build(element)
                     if part is None:
                         return None
@@ -10993,6 +11140,85 @@ class Assign(Statement):
             return self
         return rewrite(self, targets=(rewrite(target, value=updated),))
 
+    def chained_store_sugar(self, value_sugar):
+        """``a = o.x = d[k] = <rhs>``: the one chained assignment of
+        ``value_sugar`` (the right-hand side's sugar, or what a yield
+        assignment's resume reads its resumed value through) to every target,
+        Names bound under their keys (``target_evaluations``) and each store
+        target storing it, left to right (``ChainedAssignSugar``).  None for
+        any other target list."""
+        if len(self.targets) < 2 or not all(
+            isinstance(t, (Name, Attribute, Subscript)) for t in self.targets
+        ):
+            return None
+        from sugar_lift_py_tests.sugar.assign_sugar import ChainedAssignSugar
+
+        stores = []
+        for target in self.targets:
+            if isinstance(target, Attribute):
+                from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                    AttributeStoreEffectSugar,
+                )
+
+                stores.append(
+                    AttributeStoreEffectSugar(
+                        receiver=target.value.sugar(),
+                        value=value_sugar,
+                        attr=target.attr,
+                        site=target.fragment,
+                    )
+                )
+            elif isinstance(target, Subscript):
+                from sugar_lift_py_tests.sugar.store_effect_sugar import (
+                    SubscriptStoreEffectSugar,
+                )
+
+                stores.append(
+                    SubscriptStoreEffectSugar(
+                        receiver=target.value.sugar(),
+                        index=target.slice_.sugar(),
+                        value=value_sugar,
+                        site=target.fragment,
+                    )
+                )
+        return ChainedAssignSugar(
+            bindings=tuple(
+                (target.id, value_sugar)
+                for target in self.targets
+                if isinstance(target, Name)
+            ),
+            stores=tuple(stores),
+            value=value_sugar,
+            site=self.fragment,
+            evaluations=self.target_evaluations(),
+        )
+
+    def unpack_store_sugar(self, value_sugar):
+        """``a, o.x, *b = <rhs>`` against a non-display right-hand side: the
+        one unpack of ``value_sugar`` (the right-hand side's sugar, or what a
+        yield assignment's resume reads its resumed value through) into flat
+        Name / store / ``*Name`` targets, each Name bound under its projection
+        of the statement's evaluation (``DynamicUnpackStoreAssignSugar``).
+        None for any other target."""
+        target = self._dynamic_unpack_target()
+        if target is None:
+            return None
+        evaluation = getattr(self, "evaluation", None)
+        mixed = self._flat_mixed_unpack_targets(
+            target, evaluation if isinstance(evaluation, str) else None
+        )
+        if mixed is None:
+            return None
+        from sugar_lift_py_tests.sugar.assign_sugar import (
+            DynamicUnpackStoreAssignSugar,
+        )
+
+        return DynamicUnpackStoreAssignSugar(
+            value=value_sugar,
+            targets=mixed,
+            site=self.fragment,
+        )
+
     def _construct_sugar(self):
         """`<name> = <rhs>` constructs AssignSugar WITH the rhs's sugar (held as
         the deferred source). A destructured tuple/list target or a chained
@@ -11155,17 +11381,9 @@ class Assign(Statement):
                         evaluation=evaluation,
                     )
                 # Store leaves (+ optional *Name) against non-display RHS.
-                mixed = self._flat_mixed_unpack_targets(target, evaluation)
+                mixed = self.unpack_store_sugar(self.value.sugar())
                 if mixed is not None:
-                    from sugar_lift_py_tests.sugar.assign_sugar import (
-                        DynamicUnpackStoreAssignSugar,
-                    )
-
-                    return DynamicUnpackStoreAssignSugar(
-                        value=self.value.sugar(),
-                        targets=mixed,
-                        site=self.fragment,
-                    )
+                    return mixed
             return super()._construct_sugar()
 
         if len(self.targets) > 1 and all(isinstance(t, Name) for t in self.targets):
@@ -11180,51 +11398,9 @@ class Assign(Statement):
                 evaluations=self.target_evaluations(),
             )
 
-        if len(self.targets) > 1 and all(
-            isinstance(t, (Name, Attribute, Subscript)) for t in self.targets
-        ):
-            from sugar_lift_py_tests.sugar.assign_sugar import ChainedAssignSugar
-
-            value_sugar = self.value.sugar()
-            stores = []
-            for target in self.targets:
-                if isinstance(target, Attribute):
-                    from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                        AttributeStoreEffectSugar,
-                    )
-
-                    stores.append(
-                        AttributeStoreEffectSugar(
-                            receiver=target.value.sugar(),
-                            value=value_sugar,
-                            attr=target.attr,
-                            site=target.fragment,
-                        )
-                    )
-                elif isinstance(target, Subscript):
-                    from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                        SubscriptStoreEffectSugar,
-                    )
-
-                    stores.append(
-                        SubscriptStoreEffectSugar(
-                            receiver=target.value.sugar(),
-                            index=target.slice_.sugar(),
-                            value=value_sugar,
-                            site=target.fragment,
-                        )
-                    )
-            return ChainedAssignSugar(
-                bindings=tuple(
-                    (target.id, value_sugar)
-                    for target in self.targets
-                    if isinstance(target, Name)
-                ),
-                stores=tuple(stores),
-                value=value_sugar,
-                site=self.fragment,
-                evaluations=self.target_evaluations(),
-            )
+        chained = self.chained_store_sugar(self.value.sugar())
+        if chained is not None:
+            return chained
 
         if len(self.targets) == 1 and isinstance(
             self.targets[0], (Attribute, Subscript)
@@ -20130,14 +20306,28 @@ class BuiltinContainerCall(Expression):
         return self
 
     def _construct_sugar(self):
+        return self.storing_sugar(None)
+
+    def storing_sugar(self, value_sugar):
+        """The call's sugar; with ``value_sugar``, a store's call (``d[k] =
+        v``, ``value_first``) storing that in place of its value operand's
+        sugar (a yield assignment's resume reads its resumed value through
+        it).  None when ``value_sugar`` is given for a call that stores no
+        value."""
         from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
             BuiltinContainerCallSugar,
         )
 
+        if value_sugar is None:
+            args = tuple(arg.sugar() for arg in self.args)
+        elif not self.value_first or not self.args:
+            return None
+        else:
+            args = (*(arg.sugar() for arg in self.args[:-1]), value_sugar)
         return BuiltinContainerCallSugar(
             receiver=self.receiver.sugar(),
             method=self.method,
-            args=tuple(arg.sugar() for arg in self.args),
+            args=args,
             kind=self.container_kind,
             site=self.fragment,
             value_first=self.value_first,
@@ -20314,13 +20504,32 @@ class ContainerMutationStatement(Statement):
         return dict(zip(self.names, self.states))
 
     def _construct_sugar(self):
+        return self.storing_sugar(None)
+
+    def storing_sugar(self, value_sugar):
+        """The statement's sugar: its call (``evaluated[0]``), then any
+        havoc, evaluated here, the call's pair bound under the statement's
+        key.  With ``value_sugar``, a store's statement (``d[k] = v`` on a
+        decided container) storing that in place of its value operand's
+        sugar (a yield assignment's resume reads its resumed value through
+        it); None when the statement's call stores no value."""
         from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
             ContainerMutationStatementSugar,
         )
 
+        if value_sugar is None:
+            evaluated = tuple(node.sugar() for node in self.evaluated)
+        else:
+            call = self.evaluated[0] if self.evaluated else None
+            if not isinstance(call, BuiltinContainerCall):
+                return None
+            stored = call.storing_sugar(value_sugar)
+            if stored is None:
+                return None
+            evaluated = (stored, *(node.sugar() for node in self.evaluated[1:]))
         evaluation = getattr(self, "evaluation", None)
         return ContainerMutationStatementSugar(
-            evaluated=tuple(node.sugar() for node in self.evaluated),
+            evaluated=evaluated,
             site=self.fragment,
             evaluation=evaluation if isinstance(evaluation, str) else None,
         )

@@ -19,13 +19,20 @@ from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
-# Pattern tree: leaf name, or tuple of sub-patterns.
+# Pattern tree: leaf name, or tuple of sub-patterns.  A starred leaf
+# (``*rest``) is its name behind ``STAR``: a Python identifier never starts
+# with ``*``, so it is never a plain leaf.  At most one per level.
 NameUnpackPattern = str | tuple["NameUnpackPattern", ...]
+STAR = "*"
+
+
+def is_star_leaf(part: NameUnpackPattern) -> bool:
+    return isinstance(part, str) and part.startswith(STAR)
 
 
 def flatten_pattern_names(pattern: NameUnpackPattern) -> tuple[str, ...]:
     if isinstance(pattern, str):
-        return (pattern,)
+        return (pattern[len(STAR) :] if is_star_leaf(pattern) else pattern,)
     names: list[str] = []
     for part in pattern:
         names.extend(flatten_pattern_names(part))
@@ -98,11 +105,20 @@ def project_nested_pattern(
     sugar (``NestedDynamicUnpackAssignSugar``) unpacks its right-hand side
     through it; a yield assignment's resume unpacks the resumed value through
     it (``YieldAssignUnpackV1.project``).
+
+    A level with a starred leaf (``(a, *b, (c, d))``) is the starred
+    sequence-projection unpack (``SequenceProjectionOperation``, the one a
+    flat ``a, *b = e`` submits): the star takes the list of the members
+    between its fixed neighbours, and each nested neighbour's member is
+    unpacked by its own sub-pattern after.
     """
     from sugar_lift_py_tests.operations.sequence_projection_operation import (
         SequenceProjectionOperation,
     )
 
+    stars = [index for index, part in enumerate(pattern) if is_star_leaf(part)]
+    if stars:
+        return _project_starred_level(value, pattern, stars[0], ctx, site)
     if all(isinstance(part, str) for part in pattern):
         return SequenceProjectionOperation(
             target_names=tuple(pattern),  # type: ignore[arg-type]
@@ -124,6 +140,68 @@ def project_nested_pattern(
         )._arity_mismatch_exit(value, len(members), "nested-unpack")
 
     return _bind_nested_authenticated(members, pattern, ctx, site)
+
+
+def _project_starred_level(
+    value: Any,
+    pattern: tuple[NameUnpackPattern, ...],
+    star: int,
+    ctx: object,
+    site,
+) -> ExitSet:
+    """One level holding the starred leaf at ``star``: the starred
+    sequence-projection unpack of ``value``, each nested neighbour standing
+    in its slot as ``@<index>`` (``@`` is never in an identifier), then each
+    such member unpacked by its sub-pattern, leaves in source order."""
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+    from sugar_lift_py_tests.operations.sequence_projection_operation import (
+        SequenceProjectionOperation,
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    slots = tuple(
+        part if isinstance(part, str) else f"@{index}"
+        for index, part in enumerate(pattern)
+    )
+    prefix = slots[:star]
+    suffix = slots[star + 1 :]
+    operation = SequenceProjectionOperation(
+        target_names=(*prefix, *suffix),
+        owner=_OWNER,
+        blame=site,
+        star_name=flatten_pattern_names(pattern[star])[0],
+        prefix_names=prefix,
+        suffix_names=suffix,
+    )
+
+    def rebinds_of(projected):
+        if not isinstance(projected, ScopeRebinds):
+            raise SugarNotWritten(
+                blame=site,
+                owner=_OWNER,
+                observed=f"starred nested unpack produced {type(projected).__name__}",
+                requested="ScopeRebinds of leaf names",
+                fix="a starred level must rebind its members through ScopeRebinds",
+            )
+        return projected.bindings
+
+    def splice(bindings, index, collected) -> ExitSet:
+        if index == len(bindings):
+            return ExitSet.completed(ScopeRebinds(tuple(collected)))
+        name, member = bindings[index]
+        if not name.startswith("@"):
+            return splice(bindings, index + 1, (*collected, (name, member)))
+        return project_nested_pattern(
+            member, pattern[int(name[1:])], ctx, site=site
+        ).and_then(
+            lambda sub: splice(
+                bindings, index + 1, (*collected, *rebinds_of(sub))
+            )
+        )
+
+    return operation.submit(value, ctx).and_then(
+        lambda level: splice(rebinds_of(level), 0, ())
+    )
 
 
 def _bind_nested_authenticated(
