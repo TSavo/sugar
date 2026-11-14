@@ -1,5 +1,12 @@
-"""A matches() partition cites expected_exceptions; it does not invent SuppressesMode."""
+"""An exit's effect boundary is read off its own formula, never off spellings.
 
+A receiver with fields spelled ``expected_exceptions`` and ``match`` and a
+method spelled ``matches`` is not pytest's ``RaisesExc``: an unreduced
+``matches(exc_val)`` call is that call's undecided citation, and no field
+name stands in for an operand the exit's formula does not read (#7757).
+"""
+
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 from sugar_lift_py_tests.effect import RaiseEffect
@@ -16,19 +23,26 @@ from sugar_lift_py_tests.context_manager_contract import (
     EffectBoundarySemanticsV1,
     ExpectsModeV1,
     FormalArgumentProjectionV1,
-    OptionalFormalArgumentProjectionV1,
+    NoMessagePatternV1,
 )
 from sugar_lift_py_tests.floor.branch_result_coordinate import (
     BranchResultAuthentication,
     branch_result_guard,
 )
+from sugar_lift_py_tests.floor.dict_value import DictValue
 from sugar_lift_py_tests.floor.string_value import StringValue
 from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, not_, str_const
 from sugar_source_tree.binding_state import BranchResultSlot
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import complement_guard
+from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source import manager_summary_derivation as derivation
+
+
+@dataclass(frozen=True)
+class _Method:
+    name: str
 
 
 def _expected_var():
@@ -36,6 +50,7 @@ def _expected_var():
 
 
 def _behavior(*, match=None, extra_actuals=()):
+    """A user receiver spelled exactly like pytest's ``RaisesExc``."""
     expected = _expected_var()
     match_value = NoneValue() if match is None else match
     return SimpleNamespace(
@@ -46,7 +61,9 @@ def _behavior(*, match=None, extra_actuals=()):
             (
                 ObjectField("expected_exceptions", expected),
                 ObjectField("match", match_value),
+                ObjectField("check", NoneValue()),
             ),
+            methods=(_Method("matches"),),
             identity="receiver",
         ),
     )
@@ -65,12 +82,22 @@ def _matches_formula():
                                 "py.object.identity",
                                 [str_const("RaisesExc"), str_const("receiver")],
                             ),
-                            ctor("python:exit_value", [str_const("exit_face")]),
+                            ctor("python:exit_value", [str_const("exit-face")]),
                         ],
                     )
                 ],
             )
         )
+    )
+
+
+def _identity_formula():
+    return atomic(
+        "identity",
+        [
+            ctor("python:exit_type", [str_const("exit-face")]),
+            make_var("expected_exception"),
+        ],
     )
 
 
@@ -81,42 +108,129 @@ def _actual_terms(behavior):
     )
 
 
-def test_matches_formula_projects_the_expected_exceptions_formal():
-    behavior = _behavior()
-    assert (
-        derivation._formal_index_for_matches_expected(
-            _matches_formula(), behavior, _actual_terms(behavior)
-        )
-        == 0
-    )
-
-
-def test_seeded_none_match_does_not_project_a_message_formal():
-    behavior = _behavior()
-    assert (
-        derivation._formal_index_for_matches_message(
-            _matches_formula(), behavior, _actual_terms(behavior)
-        )
-        is None
-    )
-
-
-def test_identity_exit_type_formula_is_not_a_matches_citation():
-    behavior = _behavior()
-    formula = atomic(
+def _no_effect_formula(exit_face_id="exit-face"):
+    return atomic(
         "identity",
         [
-            ctor("python:exit_type", [str_const("exit_face")]),
-            make_var("expected_exception"),
+            ctor("python:exit_type", [str_const(exit_face_id)]),
+            ctor("None", []),
         ],
     )
-    assert derivation._matches_call_of_exit_value(formula) is None
+
+
+def _nested_did_not_raise_exit(decision, *, match_value=None, extra_actuals=()):
+    """``if exc_type is None: raise; if <decision>: return True; return False``."""
+    slot = BranchResultSlot("branch-result:exc-type-is-none")
+    absent = branch_result_guard(slot, "if-exc-type-is-none")
+    fail_halt = Halted(
+        absent,
+        RaiseEffect.for_builtin("RuntimeError", blame="support.py:3"),
+    )
+    matched = Completed(
+        and_([not_(absent), decision]),
+        BlockValue(
+            (
+                BranchResultAuthentication(
+                    slot, _no_effect_formula(), "if-exc-type-is-none"
+                ),
+                ReturnValue(TrueBoolLiteralSugar(site="return-true")),
+            ),
+            can_fall_through=False,
+        ),
+    )
+    unmatched = Completed(
+        and_([not_(absent), not_(decision)]),
+        BlockValue(
+            (ReturnValue(FalseBoolLiteralSugar(site="return-false")),),
+            can_fall_through=False,
+        ),
+    )
+    return (
+        _behavior(match=match_value, extra_actuals=extra_actuals),
+        SimpleNamespace(exit_face_id="exit-face"),
+        ExitSet((fail_halt, matched, unmatched)),
+    )
+
+
+def test_unreduced_matches_call_projects_no_expected_operand():
+    """``matches(exc_val)`` is not read through the ``expected_exceptions`` field."""
+    behavior = _behavior()
     assert (
-        derivation._formal_index_for_matches_expected(
-            formula, behavior, _actual_terms(behavior)
+        derivation._formal_index_for_coordinate(
+            _matches_formula(), _actual_terms(behavior), "python:exit_type"
         )
         is None
     )
+    assert (
+        derivation._formal_index_for_coordinate(
+            _matches_formula(), _actual_terms(behavior), "python:exit_value"
+        )
+        is None
+    )
+
+
+def test_raises_spelled_user_receiver_is_not_raises_exc():
+    """Fields ``match``/``expected_exceptions`` plus ``matches`` seal nothing."""
+    boom = StringValue("boom")
+    behavior, protocol, exit_set = _nested_did_not_raise_exit(
+        _matches_formula(), match_value=boom, extra_actuals=(boom,)
+    )
+    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
+
+
+def test_raises_spelled_receiver_with_none_match_is_not_raises_exc():
+    behavior, protocol, exit_set = _nested_did_not_raise_exit(_matches_formula())
+    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
+
+
+def test_raises_spelled_receiver_with_kwargs_match_is_not_raises_exc():
+    kwargs = DictValue(((StringValue("match"), StringValue("boom")),))
+    behavior, protocol, exit_set = _nested_did_not_raise_exit(
+        _matches_formula(), extra_actuals=(kwargs,)
+    )
+    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
+
+
+def test_identity_exit_reads_its_expected_operand_off_the_formula():
+    """The expected type is the formal the exit's own identity test reads."""
+    behavior, protocol, exit_set = _nested_did_not_raise_exit(_identity_formula())
+    result = derivation._derive_effect_boundary(exit_set, protocol, behavior)
+    assert isinstance(result, EffectBoundarySemanticsV1)
+    assert isinstance(result.mode, ExpectsModeV1)
+    assert result.expected_type_operand == FormalArgumentProjectionV1(0)
+    assert isinstance(result.message_pattern_operand, NoMessagePatternV1)
+
+
+def test_a_field_spelled_match_is_not_a_message_pattern():
+    """A stored ``match`` the exit never reads leaves the message unconstrained.
+
+    The exit decides on ``exc_type`` alone; the raised value appears nowhere
+    in its formula, so it consumes any message. The field's spelling is not
+    read in either direction.
+    """
+    behavior, protocol, exit_set = _nested_did_not_raise_exit(
+        _identity_formula(), match_value=StringValue("boom")
+    )
+    result = derivation._derive_effect_boundary(exit_set, protocol, behavior)
+    assert isinstance(result, EffectBoundarySemanticsV1)
+    assert isinstance(result.message_pattern_operand, NoMessagePatternV1)
+
+
+def test_exit_reading_the_raised_value_without_an_operand_is_refused():
+    """A decision on ``exc_val`` with no projected formal is not NoMessagePattern."""
+    reads_value = atomic(
+        "py.truthy",
+        [
+            ctor(
+                "call:Checker.check",
+                [ctor("python:exit_value", [str_const("exit-face")])],
+            )
+        ],
+    )
+    behavior, protocol, exit_set = _nested_did_not_raise_exit(
+        and_([_identity_formula(), reads_value])
+    )
+    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
 
 
 def test_assertionerror_halt_complements_the_true_return():
@@ -128,7 +242,7 @@ def test_assertionerror_halt_complements_the_true_return():
     completed = Completed(
         complement_guard(guard),
         BlockValue(
-            (ReturnValue(TrueBoolLiteralSugar(site='return-true')),),
+            (ReturnValue(TrueBoolLiteralSugar(site="return-true")),),
             can_fall_through=False,
         ),
     )
@@ -147,7 +261,10 @@ def test_bodyless_free_fail_on_a_completed_face_is_unresolved():
     )
     completed = Completed(
         complement_guard(atomic("py.truthy", [make_var("matches-result")])),
-        BlockValue((fail, ReturnValue(TrueBoolLiteralSugar(site='return-true'))), can_fall_through=False),
+        BlockValue(
+            (fail, ReturnValue(TrueBoolLiteralSugar(site="return-true"))),
+            can_fall_through=False,
+        ),
     )
     assert derivation._completed_faces_have_bodyless_free_calls(ExitSet((completed,)))
 
@@ -163,225 +280,25 @@ def test_method_callsite_on_a_completed_face_is_not_a_free_fail():
     )
     completed = Completed(
         complement_guard(atomic("py.truthy", [make_var("matches-result")])),
-        BlockValue((fill, ReturnValue(TrueBoolLiteralSugar(site='return-true'))), can_fall_through=False),
+        BlockValue(
+            (fill, ReturnValue(TrueBoolLiteralSugar(site="return-true"))),
+            can_fall_through=False,
+        ),
     )
     assert not derivation._completed_faces_have_bodyless_free_calls(
         ExitSet((completed,))
     )
 
 
-def _no_effect_formula(exit_face_id="exit-face"):
-    return atomic(
-        "identity",
-        [
-            ctor("python:exit_type", [str_const(exit_face_id)]),
-            ctor("None", []),
-        ],
-    )
-
-
-def _nested_did_not_raise_exit(*, match_value=None, extra_actuals=()):
-    slot = BranchResultSlot("branch-result:exc-type-is-none")
-    absent = branch_result_guard(slot, "if-exc-type-is-none")
-    matches = _matches_formula()
-    fail_halt = Halted(
-        absent,
-        RaiseEffect.for_builtin("RuntimeError", blame="support.py:3"),
-    )
-    match_halt = Halted(
-        and_([not_(absent), not_(matches)]),
-        RaiseEffect.for_builtin("AssertionError", blame="raises.py:711"),
-    )
-    completed = Completed(
-        and_([not_(absent), matches]),
-        BlockValue(
-            (
-                BranchResultAuthentication(slot, _no_effect_formula(), "if-exc-type-is-none"),
-                ReturnValue(TrueBoolLiteralSugar(site="return-true")),
-            ),
-            can_fall_through=False,
-        ),
-    )
-    return (
-        _behavior(match=match_value, extra_actuals=extra_actuals),
-        SimpleNamespace(exit_face_id="exit-face"),
-        ExitSet((fail_halt, match_halt, completed)),
-        fail_halt,
-        match_halt,
-    )
-
-
-def test_matches_formula_inside_and_still_cites_expected():
-    behavior = _behavior()
-    formula = and_([not_(_no_effect_formula()), _matches_formula()])
-    assert (
-        derivation._formal_index_for_matches_expected(
-            formula, behavior, _actual_terms(behavior)
-        )
-        == 0
-    )
-
-
-def test_nested_not_matches_halt_shares_prefix_with_true_return():
-    _behavior_unused, _protocol, exit_set, fail_halt, match_halt = (
-        _nested_did_not_raise_exit()
-    )
-    assert not derivation._halt_complements_true_return(fail_halt, exit_set)
-    assert not derivation._halt_complements_true_return(match_halt, exit_set)
-    assert not derivation._halt_negates_matches_conjunct_of_true_return(
-        fail_halt, exit_set
-    )
-    assert derivation._halt_negates_matches_conjunct_of_true_return(
-        match_halt, exit_set
-    )
-
-
-def test_nested_exit_with_match_formal_seals_expects_and_message():
-    boom = StringValue("boom")
-    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
-        match_value=boom,
-        extra_actuals=(boom,),
-    )
-    result = derivation._derive_effect_boundary(exit_set, protocol, behavior)
-    assert isinstance(result, EffectBoundarySemanticsV1)
-    assert isinstance(result.mode, ExpectsModeV1)
-    assert result.expected_type_operand == FormalArgumentProjectionV1(0)
-    assert result.message_pattern_operand == OptionalFormalArgumentProjectionV1(1)
-
-
-def test_nested_exit_with_seeded_none_match_seals_expects_without_message():
-    from sugar_lift_py_tests.context_manager_contract import NoMessagePatternV1
-
-    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit()
-    result = derivation._derive_effect_boundary(exit_set, protocol, behavior)
-    assert isinstance(result, EffectBoundarySemanticsV1)
-    assert isinstance(result.mode, ExpectsModeV1)
-    assert result.expected_type_operand == FormalArgumentProjectionV1(0)
-    assert isinstance(result.message_pattern_operand, NoMessagePatternV1)
-
-
-def test_nested_exit_with_unprojected_match_does_not_invent_no_message():
-    boom = StringValue("boom")
-    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
-        match_value=boom,
-    )
-    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
-
-
 def test_none_func_formal_is_not_cited_by_exc_type_is_none():
     """``func=None`` is not the expected type of ``if exc_type is None``."""
-    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
-        extra_actuals=(NoneValue(),),
+    behavior, _protocol, _exit_set = _nested_did_not_raise_exit(
+        _identity_formula(), extra_actuals=(NoneValue(),)
     )
-    formula = and_([not_(_no_effect_formula()), _matches_formula()])
+    formula = and_([not_(_no_effect_formula()), _identity_formula()])
     assert (
         derivation._formal_index_for_coordinate(
             formula, _actual_terms(behavior), "python:exit_type"
         )
-        is None
+        == 0
     )
-    result = derivation._derive_effect_boundary(exit_set, protocol, behavior)
-    assert isinstance(result, EffectBoundarySemanticsV1)
-    assert result.expected_type_operand == FormalArgumentProjectionV1(0)
-    from sugar_lift_py_tests.context_manager_contract import NoMessagePatternV1
-
-    assert isinstance(result.message_pattern_operand, NoMessagePatternV1)
-
-
-def test_uncited_kwargs_match_is_not_no_message_pattern():
-    """A factory ``**kwargs`` pattern that was not cited is not omitted."""
-    from sugar_lift_py_tests.floor.dict_value import DictValue
-
-    boom = StringValue("boom")
-    kwargs = DictValue(((StringValue("match"), boom),))
-    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
-        extra_actuals=(kwargs,),
-    )
-    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
-
-
-def _compile_match(pattern="boom"):
-    return CallSiteValue(
-        target_name="re.compile",
-        arg_values=(StringValue(pattern),),
-        parameters=(),
-        term=ctor("call:re.compile", (str_const(pattern),)),
-        body=None,
-    )
-
-
-def test_field_lookup_reads_a_unique_true_guard_partition_leaf():
-    """A one-face true-guard partition is the constructed receiver, not a wrapper."""
-    from sugar_lift_py_tests.floor import ReceiverStatePartitionValue
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
-
-    compile_match = _compile_match()
-    behavior = _behavior(match=compile_match)
-    behavior.receiver_state = ReceiverStatePartitionValue(
-        exits=ExitSet((Completed(true_guard(), behavior.receiver_state),))
-    )
-    assert derivation._receiver_field_value(behavior, "match") == compile_match
-
-
-def test_field_lookup_does_not_invent_a_field_from_two_partition_faces():
-    """Two completed leaves are still branch-local; there is no unique field."""
-    from sugar_lift_py_tests.floor import ReceiverStatePartitionValue
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
-
-    none_face = _behavior(match=NoneValue()).receiver_state
-    boom_face = _behavior(match=StringValue("boom")).receiver_state
-    behavior = _behavior()
-    behavior.receiver_state = ReceiverStatePartitionValue(
-        exits=ExitSet(
-            (
-                Completed(atomic("match-none", []), none_face),
-                Completed(atomic("match-boom", []), boom_face),
-            )
-        )
-    )
-    assert derivation._receiver_field_value(behavior, "match") is None
-
-
-def test_compile_argument_cites_kwargs_match_without_equating_compile_to_the_string():
-    """``compile("boom")`` cites the kwargs string; it is not itself that string."""
-    from sugar_lift_py_tests.context_manager_contract import (
-        VariadicKeywordEntryProjectionV1,
-    )
-    from sugar_lift_py_tests.floor.dict_value import DictValue
-    from sugar_lift_py_tests.floor import ReceiverStatePartitionValue
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
-
-    boom = StringValue("boom")
-    compile_match = _compile_match()
-    kwargs = DictValue(((StringValue("match"), boom),))
-    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
-        match_value=compile_match,
-        extra_actuals=(kwargs,),
-    )
-    behavior.receiver_state = ReceiverStatePartitionValue(
-        exits=ExitSet((Completed(true_guard(), behavior.receiver_state),))
-    )
-    assert derivation._receiver_field_value(behavior, "match") == compile_match
-    assert compile_match != boom
-    cited = derivation._keyword_entry_cited_by_field(behavior, "match")
-    assert cited == VariadicKeywordEntryProjectionV1(1, "match")
-    result = derivation._derive_effect_boundary(exit_set, protocol, behavior)
-    assert isinstance(result, EffectBoundarySemanticsV1)
-    assert isinstance(result.mode, ExpectsModeV1)
-    assert result.expected_type_operand == FormalArgumentProjectionV1(0)
-    assert result.message_pattern_operand == VariadicKeywordEntryProjectionV1(1, "match")
-
-
-def test_compile_of_a_different_string_does_not_cite_kwargs_match():
-    """A compile argument that is not the kwargs string is still uncited."""
-    from sugar_lift_py_tests.floor.dict_value import DictValue
-
-    compile_match = _compile_match("other")
-    kwargs = DictValue(((StringValue("match"), StringValue("boom")),))
-    behavior, protocol, exit_set, _fail, _match = _nested_did_not_raise_exit(
-        match_value=compile_match,
-        extra_actuals=(kwargs,),
-    )
-    assert derivation._keyword_entry_cited_by_field(behavior, "match") is None
-    assert derivation._derive_effect_boundary(exit_set, protocol, behavior) is None
-

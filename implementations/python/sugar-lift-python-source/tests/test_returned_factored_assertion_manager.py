@@ -1,7 +1,7 @@
-"""Returned assertion managers preserve factored message-pattern faces.
+"""Returned assertion managers keep the contract their exit's formula proves.
 
-A source helper that returns an authenticated EffectBoundary manager must keep
-``match=None`` and ``match=pattern`` faces distinct through:
+A source helper that returns an authenticated EffectBoundary manager keeps it
+through:
 
 - caller return / assignment projection
 - ``populate_source_derived_resource_refs``
@@ -10,7 +10,8 @@ A source helper that returns an authenticated EffectBoundary manager must keep
 
 Direct construction of the same manager class is the twin: face identities and
 outcomes must match. A lying wrapper that returns an ordinary resource under the
-assertion spelling cannot borrow the EffectBoundary contract.
+assertion spelling cannot borrow the EffectBoundary contract, and an exit that
+reads ``effect.message`` gains no message pattern from that spelling (#7757).
 """
 
 from __future__ import annotations
@@ -19,12 +20,9 @@ import csv
 import importlib.metadata
 from pathlib import Path
 
-import pytest
-
 from sugar_lift_py_tests.context_manager_contract import (
     EffectBoundarySemanticsV1,
     NoMessagePatternV1,
-    OptionalFormalArgumentProjectionV1,
     ProtocolResourceSemanticsV1,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
@@ -33,7 +31,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceDerivedContextManagerRefV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.outcome import Completed, Halted
+from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.manager_summary_derivation import (
@@ -170,16 +168,6 @@ def _message_operand(reference):
     return None
 
 
-def _face_guard_names(reference):
-    if not isinstance(reference, FactoredSourceDerivedContextManagerRefV1):
-        return set()
-    return {
-        getattr(face.guard, "name", None)
-        for face in reference.boundary_faces.exits
-        if isinstance(face, Completed)
-    }
-
-
 def _observed_binding(face):
     from sugar_lift_py_tests.effect_router import ObservedEffectBinding
 
@@ -222,8 +210,23 @@ def test_returned_manager_match_none_preserves_no_message_pattern(tmp_path: Path
     assert getattr(binding.effect, "exception_name", None) == "ValueError"
 
 
-def test_returned_manager_pattern_preserves_message_obligation(tmp_path: Path):
-    """Returned match=pattern seals the obligation; excinfo binds consumed occurrence."""
+def _not_an_effect_boundary(reference):
+    assert not isinstance(reference, FactoredSourceDerivedContextManagerRefV1), (
+        reference
+    )
+    assert not isinstance(
+        getattr(reference, "semantics", None), EffectBoundarySemanticsV1
+    ), reference
+
+
+def test_returned_manager_message_attribute_is_no_pattern_obligation(
+    tmp_path: Path,
+):
+    """``effect.message == self.match`` is no message-pattern theorem (#7757).
+
+    What ``effect.message`` holds is decided by the raised value's class; the
+    attribute's spelling does not make the stored ``match`` a pattern.
+    """
     dist = _distribution(tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary")
     consumer = (
         "import arbitrary\n"
@@ -233,48 +236,9 @@ def test_returned_manager_pattern_preserves_message_obligation(tmp_path: Path):
         "        raise ValueError('needle')\n"
     )
     tree, context, _ = _populate(tmp_path, consumer, dist=dist)
-    reference, node = _reference(context, tree)
+    reference, _node = _reference(context, tree)
 
-    assert not isinstance(reference, ContextManagerResolutionGapV1), reference
-    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
-    assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
-    # Message obligation preserved through return / populate / With.
-    assert isinstance(
-        reference.semantics.message_pattern_operand,
-        OptionalFormalArgumentProjectionV1,
-    )
-
-    sugar = node.sugar()
-    assert isinstance(sugar, WithEffectBoundarySugar)
-    assert sugar.observation_slot_id is not None
-    # Single sealed pattern face (not collapsed to NoMessagePattern).
-    assert sugar.semantics is not None
-    assert isinstance(
-        sugar.semantics.message_pattern_operand, OptionalFormalArgumentProjectionV1
-    )
-    assert sugar.semantics.message_pattern_operand == (
-        reference.semantics.message_pattern_operand
-    )
-
-    exits = sugar.desugar()
-    completed = [face for face in exits.exits if isinstance(face, Completed)]
-    assert completed, exits.exits
-    binding = _observed_binding(completed[0])
-    assert binding is not None
-    assert binding.slot_id == sugar.observation_slot_id
-    assert getattr(binding.effect, "exception_name", None) == "ValueError"
-    # Bind only the consumed raise occurrence — not a fabricated twin.
-    occurrence = (
-        getattr(binding.effect, "occurrence_id", None)
-        or getattr(binding.effect, "occurrence", None)
-        or getattr(binding.effect, "blame", None)
-    )
-    assert occurrence == str(binding)
-    assert all(
-        _observed_binding(face) is None
-        for face in exits.exits
-        if isinstance(face, Halted)
-    )
+    _not_an_effect_boundary(reference)
 
 
 def test_direct_imported_name_manager_with_keyword_uses_source_contract(
@@ -341,43 +305,6 @@ def test_shadowed_imported_name_manager_is_not_authorized(tmp_path: Path):
     _, context, _ = _populate(tmp_path, consumer, dist=dist)
 
     assert context.source_derived_contract_refs == {}
-
-
-def test_returned_manager_pattern_mismatch_preserves_halt_without_binding(
-    tmp_path: Path,
-):
-    """Discrimination: message mismatch keeps the identical halt unbound."""
-    dist = _distribution(tmp_path, _ASSERTION_MANAGER_WITH_MESSAGE, exported="boundary")
-    consumer = (
-        "import arbitrary\n"
-        "def use():\n"
-        "    pattern = 'needle'\n"
-        "    with arbitrary.boundary(ValueError, match=pattern) as info:\n"
-        "        raise ValueError('different')\n"
-    )
-    tree, context, _ = _populate(tmp_path, consumer, dist=dist)
-    reference, node = _reference(context, tree)
-
-    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
-    assert isinstance(reference.semantics, EffectBoundarySemanticsV1)
-    assert isinstance(
-        reference.semantics.message_pattern_operand,
-        OptionalFormalArgumentProjectionV1,
-    )
-
-    sugar = node.sugar()
-    exits = sugar.desugar()
-    halted = [face for face in exits.exits if isinstance(face, Halted)]
-    assert halted, exits.exits
-    # Complement / mismatch: original halt retained, no excinfo binding.
-    assert all(_observed_binding(face) is None for face in halted)
-    assert any(
-        getattr(face.effect, "exception_name", None) == "ValueError" for face in halted
-    )
-    # Pattern obligation still present on the sugar (not collapsed to None).
-    assert isinstance(
-        sugar.semantics.message_pattern_operand, OptionalFormalArgumentProjectionV1
-    )
 
 
 def test_direct_and_returned_twins_share_message_operand_and_binding(
@@ -501,18 +428,16 @@ def test_lying_wrapper_cannot_borrow_assertion_contract(tmp_path: Path):
     assert not isinstance(sugar, WithEffectBoundarySugar), type(sugar)
 
 
-def test_returned_factored_dual_face_manager_preserves_both_guards(tmp_path: Path):
-    """Production join: runtime-selected match=None|pattern stays factored.
+def test_returned_dual_face_message_attribute_factors_no_pattern(tmp_path: Path):
+    """Runtime-selected ``match=None|pattern`` faces read through
+    ``effect.message`` factor no message-pattern faces (#7757).
 
-    When the returned manager's receiver carries both match faces, the derived
-    ref must be FactoredSourceDerivedContextManagerRefV1 with both original
-    face guards — never a single sealed summary and never a generic gap.
-
-    If caller-return projection drops the factored ref, this test stays RED and
-    names the missing producer rather than reconstructing the manager locally.
+    Each receiver face's exit is a deferred ``effect.message`` lookup; what
+    that attribute holds is the raised value's class's business, so neither
+    face is an effect boundary and nothing is factored from the spelling.
     """
     # Constructor partitions when ``flag`` is undecided: match=None on one face,
-    # match=pattern on the other. Soft derivation then emits both edges.
+    # match=pattern on the other.
     dual = (
         "class Boundary:\n"
         "    def __init__(self, expected, match=None, flag=None):\n"
@@ -544,58 +469,6 @@ def test_returned_factored_dual_face_manager_preserves_both_guards(tmp_path: Pat
         "        raise ValueError('needle')\n"
     )
     tree, context, _ = _populate(tmp_path, consumer, dist=dist)
-    reference, node = _reference(context, tree)
+    reference, _node = _reference(context, tree)
 
-    if isinstance(reference, FactoredSourceDerivedContextManagerRefV1):
-        names = _face_guard_names(reference)
-        operands = _message_operand(reference)
-        assert NoMessagePatternV1() in operands
-        assert any(
-            isinstance(op, OptionalFormalArgumentProjectionV1) for op in operands
-        )
-        sugar = node.sugar()
-        assert isinstance(sugar, WithEffectBoundarySugar)
-        assert sugar.boundary_faces is not None
-        sugar_ops = {
-            face.value.message_pattern_operand
-            for face in sugar.boundary_faces.exits
-            if isinstance(face, Completed)
-        }
-        assert sugar_ops == operands
-        assert sugar.observation_slot_id is not None
-        # Both original face identities ride the sugar.
-        assert len(sugar._guarded_semantics()) == 2
-        return
-
-    # Production path did not preserve factored faces. Stay RED with a precise
-    # handoff — do not reconstruct the manager or inject a synthetic factored ref.
-    detail = {
-        "reference_type": type(reference).__name__,
-        "kind": getattr(reference, "kind", None),
-        "detail": getattr(reference, "detail", None),
-        "semantics_type": type(getattr(reference, "semantics", None)).__name__,
-        "message_operand": (
-            type(
-                getattr(
-                    getattr(reference, "semantics", None),
-                    "message_pattern_operand",
-                    None,
-                )
-            ).__name__
-            if isinstance(reference, SourceDerivedContextManagerRefV1)
-            else None
-        ),
-    }
-    pytest.fail(
-        "MISSING PRODUCER: returned dual-face assertion manager lost factored "
-        "message-pattern faces before With consumption.\n"
-        f"  observed reference: {detail}\n"
-        "  expected: FactoredSourceDerivedContextManagerRefV1 with both "
-        "NoMessagePatternV1 and pattern-obligation faces under their guards\n"
-        "  missing method contract: a producer that projects the returned "
-        "manager's ReceiverStatePartitionValue match faces through caller "
-        "return / populate into FactoredSourceDerivedContextManagerRefV1 "
-        "without collapsing to one sealed summary or a generic gap\n"
-        "  owned boundary: returned-manager transport after construct_manager_behavior "
-        "+ derive_manager_summary soft dual-face emission; not local reconstruction"
-    )
+    _not_an_effect_boundary(reference)

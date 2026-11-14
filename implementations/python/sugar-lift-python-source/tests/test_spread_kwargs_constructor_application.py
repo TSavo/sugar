@@ -1,4 +1,10 @@
-"""A typed ``**kwargs`` constructor spread cites match as a formal."""
+"""A typed ``**kwargs`` constructor spread binds ``match`` as an actual.
+
+What the bound actual means to the manager is read from the exit's own
+formula. ``effect.message`` is an attribute of the raised value, decided by
+that value's class, and a class spelled like pytest's ``RaisesExc`` is not
+that class (#7757): neither is an effect boundary.
+"""
 
 from __future__ import annotations
 
@@ -31,6 +37,8 @@ _RAISES_SHAPED = """class RaisesExc:
         self.expected_exceptions = expected_exception
         self.match = match
         self.check = check
+    def matches(self, exc_val):
+        return True
     def __enter__(self):
         return self
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -96,45 +104,29 @@ def test_local_spread_kwargs_collects_match_actual(tmp_path):
     )
 
 
-def test_local_spread_kwargs_cites_match_formal(tmp_path):
-    """Same-module ``with Boundary(..., **{'match': 'boom'})`` cites formal 1."""
-    from sugar_lift_py_tests.context_manager_contract import (
-        EffectBoundarySemanticsV1,
-        ExpectsModeV1,
-        OptionalFormalArgumentProjectionV1,
-    )
+def _no_effect_boundary(context):
+    from sugar_lift_py_tests.context_manager_contract import EffectBoundarySemanticsV1
     from sugar_lift_py_tests.context_manager_resolution import (
-        SourceDerivedContextManagerRefV1,
+        FactoredSourceDerivedContextManagerRefV1,
     )
 
+    for reference in context.source_derived_contract_refs.values():
+        assert not isinstance(reference, FactoredSourceDerivedContextManagerRefV1), (
+            reference
+        )
+        assert not isinstance(
+            getattr(reference, "semantics", None), EffectBoundarySemanticsV1
+        ), reference
+
+
+def test_local_message_attribute_is_not_a_message_pattern(tmp_path):
+    """``effect.message == self.match`` seals no EffectBoundary by its spelling."""
     _tree, context = _populate_local(tmp_path, _LOCAL_BOUNDARY)
-    assert context.source_derived_contract_refs
-    reference = next(iter(context.source_derived_contract_refs.values()))
-    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
-    assert isinstance(reference.semantics, EffectBoundarySemanticsV1), reference.semantics
-    assert isinstance(reference.semantics.mode, ExpectsModeV1)
-    assert reference.semantics.message_pattern_operand == OptionalFormalArgumentProjectionV1(
-        1
-    )
+    _no_effect_boundary(context)
 
 
-def test_raises_shaped_spread_kwargs_cites_match_formal(tmp_path):
-    """Keyword-only ``match`` plus unused ``check`` default still cites match."""
-    from sugar_lift_py_tests.context_manager_contract import (
-        EffectBoundarySemanticsV1,
-        ExpectsModeV1,
-        OptionalFormalArgumentProjectionV1,
-    )
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceDerivedContextManagerRefV1,
-    )
-
+def test_raises_spelled_user_class_is_not_raises_exc(tmp_path):
+    """Fields ``match``/``expected_exceptions`` and a ``matches`` method on a
+    user class are not pytest's ``RaisesExc``: no EffectBoundary is sealed."""
     _tree, context = _populate_local(tmp_path, _RAISES_SHAPED)
-    assert context.source_derived_contract_refs
-    reference = next(iter(context.source_derived_contract_refs.values()))
-    assert isinstance(reference, SourceDerivedContextManagerRefV1), reference
-    assert isinstance(reference.semantics, EffectBoundarySemanticsV1), reference.semantics
-    assert isinstance(reference.semantics.mode, ExpectsModeV1)
-    assert reference.semantics.message_pattern_operand == OptionalFormalArgumentProjectionV1(
-        1
-    )
+    _no_effect_boundary(context)
