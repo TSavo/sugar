@@ -441,15 +441,7 @@ import re
 import sys
 
 def receipt_like(obj):
-    if not isinstance(obj, dict):
-        return False
-    if obj.get("kind") == "verification-receipt":
-        return True
-    return (
-        isinstance(obj.get("rows"), list)
-        and "totalClaims" in obj
-        and isinstance(obj.get("witnessDimension"), dict)
-    )
+    return isinstance(obj, dict) and isinstance(obj.get("rows"), list) and "verdict" in obj
 
 def row_matches(row, target_property_cid, target_method):
     if row.get("bridge") != target_method:
@@ -486,7 +478,7 @@ for idx, ch in enumerate(text):
 if receipt is None:
     print("MISSING")
     raise SystemExit(0)
-rows = receipt.get("rows") or receipt.get("claims") or receipt.get("obligations") or []
+rows = receipt.get("rows") or []
 # Prefer exact propertyCid / lib.rs bodyguard rows over any residual internal hit.
 ranked = sorted(
     (row for row in rows if row_matches(row, target_property_cid, target_method)),
@@ -576,15 +568,7 @@ import re
 import sys
 
 def receipt_like(obj):
-    if not isinstance(obj, dict):
-        return False
-    if obj.get("kind") == "verification-receipt":
-        return True
-    return (
-        isinstance(obj.get("rows"), list)
-        and "totalClaims" in obj
-        and isinstance(obj.get("witnessDimension"), dict)
-    )
+    return isinstance(obj, dict) and isinstance(obj.get("rows"), list) and "verdict" in obj
 
 text = open(sys.argv[1], encoding="utf-8").read()
 text = re.sub(r"\x1b\[[0-9;]*m", "", text)
@@ -613,22 +597,16 @@ print("MISSING")
 PY
 }
 
-witness_verdict() {
+# Step 9: prove decides a witness row from the package body the proof states;
+# a recomputed body carries `resolvedBy` on the row's witness verification.
+witness_body_recomputed() {
   python3 - "$1" <<'PY'
 import json
 import re
 import sys
 
 def receipt_like(obj):
-    if not isinstance(obj, dict):
-        return False
-    if obj.get("kind") == "verification-receipt":
-        return True
-    return (
-        isinstance(obj.get("rows"), list)
-        and "totalClaims" in obj
-        and isinstance(obj.get("witnessDimension"), dict)
-    )
+    return isinstance(obj, dict) and isinstance(obj.get("rows"), list) and "verdict" in obj
 
 text = open(sys.argv[1], encoding="utf-8").read()
 text = re.sub(r"\x1b\[[0-9;]*m", "", text)
@@ -647,52 +625,10 @@ for idx, ch in enumerate(text):
 if receipt is None:
     print("MISSING")
     raise SystemExit(0)
-for witness in receipt.get("witnessDimension", {}).get("witnesses", []):
-    verdict = witness.get("verdict")
-    if verdict:
-        print(verdict)
-        raise SystemExit(0)
-print("MISSING")
-PY
-}
-
-recompute_strategy() {
-  python3 - "$1" <<'PY'
-import json
-import re
-import sys
-
-def receipt_like(obj):
-    if not isinstance(obj, dict):
-        return False
-    if obj.get("kind") == "verification-receipt":
-        return True
-    return (
-        isinstance(obj.get("rows"), list)
-        and "totalClaims" in obj
-        and isinstance(obj.get("witnessDimension"), dict)
-    )
-
-text = open(sys.argv[1], encoding="utf-8").read()
-text = re.sub(r"\x1b\[[0-9;]*m", "", text)
-decoder = json.JSONDecoder()
-receipt = None
-for idx, ch in enumerate(text):
-    if ch != "{":
-        continue
-    try:
-        obj, _ = decoder.raw_decode(text[idx:])
-    except Exception:
-        continue
-    if receipt_like(obj):
-        receipt = obj
-        break
-if receipt is None:
-    print("MISSING")
-    raise SystemExit(0)
-for witness in receipt.get("witnessDimension", {}).get("witnesses", []):
-    if "content-address:recompute" in (witness.get("checks") or []):
-        print("content-address:recompute")
+for row in receipt.get("rows", []):
+    verification = row.get("verification") or {}
+    if verification.get("kind") == "witness" and verification.get("resolvedBy"):
+        print("recomputed")
         raise SystemExit(0)
 print("MISSING")
 PY
@@ -733,74 +669,59 @@ PY
   echo "$case_name $suite bodyguard contract: $bodyguard_cid"
 
   echo "== prove $case_name $suite =="
+  local prove_status
   set +e
   (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.prove.json"
-  set -e
-
-  echo "== verify $case_name $suite =="
-  local verify_status
-  set +e
-  (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.verify.json"
-  verify_status=$?
+  prove_status=$?
   set -e
 
   local got_edge got_witness target_cid predicate pair
-  if [ ! -s "$dir/.verify.json" ] && [ "$expect_edge" = "refused" ] && [ "$verify_status" -ne 0 ]; then
+  if [ ! -s "$dir/.prove.json" ] && [ "$expect_edge" = "refused" ] && [ "$prove_status" -ne 0 ]; then
     got_edge="refused"
     got_witness="SKIPPED"
     target_cid="MISSING"
     predicate="MISSING"
-    pair="verify-refused-before-receipt"
+    pair="prove-refused-before-report"
   else
-    got_edge="$(edge_value "$dir/.verify.json" "$bodyguard_cid" "$method" status)"
-    got_witness="$(witness_status "$dir/.verify.json")"
-    target_cid="$(edge_value "$dir/.verify.json" "$bodyguard_cid" "$method" targetCid)"
-    pair="$(edge_value "$dir/.verify.json" "$bodyguard_cid" "$method" property)"
+    got_edge="$(edge_value "$dir/.prove.json" "$bodyguard_cid" "$method" status)"
+    got_witness="$(witness_status "$dir/.prove.json")"
+    target_cid="$(edge_value "$dir/.prove.json" "$bodyguard_cid" "$method" targetCid)"
+    pair="$(edge_value "$dir/.prove.json" "$bodyguard_cid" "$method" property)"
     predicate="$(target_precondition "$dump_path" "$target_cid")"
   fi
 
   if [ "$expect_edge" = "discharged" ]; then
     if [ "$got_edge" != "discharged" ]; then
       echo "$case_name $suite bodyguard edge expected discharged, got $got_edge" >&2
-      cat "$dir/.verify.json" >&2
+      cat "$dir/.prove.json" >&2
       exit 1
     fi
   else
     if [ "$got_edge" = "discharged" ] || [ "$got_edge" = "MISSING" ]; then
       echo "$case_name $suite bodyguard edge expected refusal, got $got_edge" >&2
-      cat "$dir/.verify.json" >&2
+      cat "$dir/.prove.json" >&2
       exit 1
     fi
   fi
   if [ "$expect_edge" = "discharged" ] && [ "$got_witness" != "discharged" ]; then
     echo "$case_name $suite cargo-test witness expected discharged, got $got_witness" >&2
-    cat "$dir/.verify.json" >&2
+    cat "$dir/.prove.json" >&2
     exit 1
   fi
   if [ "$expect_edge" = "refused" ]; then
-    echo "$case_name $suite function=$(case_function_name "$case_name") method=$method predicate=$predicate expected-predicate=$(case_predicate_label "$case_name") verify-json=$dir/.verify.json edge=$got_edge witness=$got_witness recompute=SKIPPED pair=$pair"
+    echo "$case_name $suite function=$(case_function_name "$case_name") method=$method predicate=$predicate expected-predicate=$(case_predicate_label "$case_name") prove-json=$dir/.prove.json edge=$got_edge witness=$got_witness recompute=SKIPPED pair=$pair"
     return
   fi
 
-  rm -rf "$dir/.sugar/witnesses"
-  set +e
-  (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.verify_recompute.json"
-  set -e
-  local recompute verified
-  recompute="$(recompute_strategy "$dir/.verify_recompute.json")"
-  if [ "$recompute" != "content-address:recompute" ]; then
-    echo "$case_name $suite witness recompute expected content-address:recompute, got $recompute" >&2
-    cat "$dir/.verify_recompute.json" >&2
-    exit 1
-  fi
-  verified="$(witness_verdict "$dir/.verify_recompute.json")"
-  if [ "$verified" != "verified" ]; then
-    echo "$case_name $suite witness recompute expected verified, got $verified" >&2
-    cat "$dir/.verify_recompute.json" >&2
+  local recompute
+  recompute="$(witness_body_recomputed "$dir/.prove.json")"
+  if [ "$recompute" != "recomputed" ]; then
+    echo "$case_name $suite witness package body expected recomputed from the proof, got $recompute" >&2
+    cat "$dir/.prove.json" >&2
     exit 1
   fi
 
-  echo "$case_name $suite function=$(case_function_name "$case_name") method=$method predicate=$predicate expected-predicate=$(case_predicate_label "$case_name") verify-json=$dir/.verify.json edge=$got_edge witness=$got_witness recompute=$recompute pair=$pair"
+  echo "$case_name $suite function=$(case_function_name "$case_name") method=$method predicate=$predicate expected-predicate=$(case_predicate_label "$case_name") prove-json=$dir/.prove.json edge=$got_edge witness=$got_witness recompute=$recompute pair=$pair"
 }
 
 for case_name in "${CASES[@]}"; do

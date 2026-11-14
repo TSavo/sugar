@@ -150,7 +150,9 @@ print("MISSING")
 PY
 }
 
-witness_verdict() {
+# Step 9: prove decides a witness row from the package body the proof states;
+# a recomputed body carries `resolvedBy` on the row's witness verification.
+witness_body_recomputed() {
   python3 - "$1" <<'PY'
 import json
 import re
@@ -162,31 +164,10 @@ if not match:
     print("MISSING")
     raise SystemExit(0)
 data = json.loads(text[match.start():])
-for witness in data.get("witnessDimension", {}).get("witnesses", []):
-    verdict = witness.get("verdict")
-    if verdict:
-        print(verdict)
-        raise SystemExit(0)
-print("MISSING")
-PY
-}
-
-witness_recompute_strategy() {
-  python3 - "$1" <<'PY'
-import json
-import re
-import sys
-
-text = open(sys.argv[1], "r", encoding="utf-8").read()
-match = re.search(r"(?m)^\{", text)
-if not match:
-    print("MISSING")
-    raise SystemExit(0)
-data = json.loads(text[match.start():])
-for witness in data.get("witnessDimension", {}).get("witnesses", []):
-    checks = witness.get("checks") or []
-    if "content-address:recompute" in checks:
-        print("content-address:recompute")
+for row in data.get("rows", []):
+    verification = row.get("verification") or {}
+    if verification.get("kind") == "witness" and verification.get("resolvedBy"):
+        print("recomputed")
         raise SystemExit(0)
 print("MISSING")
 PY
@@ -241,43 +222,11 @@ run_suite() {
       exit 1
     fi
 
-    echo "== verify $suite witness =="
-    # #3755: this call must NEVER die silently. It used to run bare under the
-    # script's `set -euo pipefail`, so a nonzero/crashing `sugar verify` (its
-    # own stdout+stderr captured into .verify.json, invisible to this log)
-    # killed the whole script instantly with no PASS/FAIL line and no visible
-    # diagnostic -- exactly the "dies right after the header" shape from
-    # recensus4. Guard it like the `prove` call above, then print a named,
-    # legible failure (with the captured output) instead of a silent abort.
-    # `sugar verify`'s own process exit code reflects the verdict over ALL
-    # claims in the project (including known-vacuous residual rows this
-    # showcase doesn't care about, same as `prove`'s json_status above only
-    # inspecting the first matching row) -- it is not the signal we gate on.
-    # The signal is whether the witness dimension itself parses as "verified".
-    # We still capture the exit code for the diagnostic message so a genuine
-    # crash (nonzero rc AND no parseable witness verdict) is named, not silent.
-    set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.verify.json"
-    local verify_rc=$?
-    set -e
-    local verify_verdict
-    verify_verdict="$(witness_verdict "$dir/.verify.json")"
-    if [ "$verify_verdict" != "verified" ]; then
-      echo "$suite witness verification expected verified, got $verify_verdict (sugar verify exit code $verify_rc)" >&2
-      cat "$dir/.verify.json" >&2
-      exit 1
-    fi
-
-    rm -rf "$dir/.sugar/witnesses"
-    set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.verify_recompute.json"
-    local recompute_rc=$?
-    set -e
-    local recompute_strategy
-    recompute_strategy="$(witness_recompute_strategy "$dir/.verify_recompute.json")"
-    if [ "$recompute_strategy" != "content-address:recompute" ]; then
-      echo "$suite witness recompute expected content-address:recompute, got $recompute_strategy (sugar verify exit code $recompute_rc)" >&2
-      cat "$dir/.verify_recompute.json" >&2
+    local witness_body
+    witness_body="$(witness_body_recomputed "$dir/.prove.json")"
+    if [ "$witness_body" != "recomputed" ]; then
+      echo "$suite witness package body expected recomputed from the proof, got $witness_body" >&2
+      cat "$dir/.prove.json" >&2
       exit 1
     fi
   else

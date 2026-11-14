@@ -81,7 +81,7 @@ run_twin() {
 
   ( cd "$dir" && PATH="$VENV/bin:$PATH" PYTHONPATH="$PYTHON_SRC" showcase_run_with_terminal sugar.mint "$BIN" mint --out . ) >/dev/null || { echo "FAIL: mint ($twin)"; return 1; }
   ( cd "$dir" && PATH="$VENV/bin:$PATH" PYTHONPATH="$PYTHON_SRC" \
-      "$BIN" verify --allow-failed-components --project . --json > .verify.json ) || true
+      "$BIN" prove --allow-failed-components . --json > .verify.json ) || true
   [ -s "$dir/.verify.json" ] || { echo "FAIL: no verify receipt ($twin)"; return 1; }
 
   EXPECT="$expect" TWIN="$twin" "$PYTHON" - "$REPO" "$dir/.verify.json" <<'PY' || return 1

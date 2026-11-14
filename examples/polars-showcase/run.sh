@@ -162,7 +162,9 @@ raise SystemExit(0)
 PY
 }
 
-witness_verdict() {
+# Step 9: prove decides a witness row from the package body the proof states;
+# a recomputed body carries `resolvedBy` on the row's witness verification.
+witness_body_recomputed() {
   python3 - "$1" <<'PY'
 import json
 import re
@@ -176,38 +178,10 @@ if not match:
     raise SystemExit(0)
 data = json.loads(text[match.start():])
 
-for witness in data.get("witnessDimension", {}).get("witnesses", []):
-    verdict = witness.get("verdict")
-    if verdict:
-        print(verdict)
-        raise SystemExit(0)
-print("MISSING")
-raise SystemExit(0)
-PY
-}
-
-witness_recompute_strategy() {
-  python3 - "$1" <<'PY'
-import json
-import re
-import sys
-
-path = sys.argv[1]
-text = open(path, "r", encoding="utf-8").read()
-match = re.search(r"(?m)^\{", text)
-if not match:
-    print("MISSING")
-    raise SystemExit(0)
-data = json.loads(text[match.start():])
-
-for witness in data.get("witnessDimension", {}).get("witnesses", []):
-    checks = witness.get("checks") or []
-    if "content-address:recompute" in checks:
-        print("content-address:recompute")
-        raise SystemExit(0)
-    strategy = witness.get("resolution_strategy") or witness.get("resolutionStrategy")
-    if strategy:
-        print(strategy)
+for row in data.get("rows", []):
+    verification = row.get("verification") or {}
+    if verification.get("kind") == "witness" and verification.get("resolvedBy"):
+        print("recomputed")
         raise SystemExit(0)
 print("MISSING")
 raise SystemExit(0)
@@ -305,31 +279,11 @@ run_suite() {
     fi
     : "$prove_rc"
 
-    echo "== verify $suite witness =="
-    set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" prove . --json) > "$dir/.verify.json"
-    local verify_rc=$?
-    set -e
-    : "$verify_rc"
-    local verify_verdict
-    verify_verdict="$(witness_verdict "$dir/.verify.json")"
-    if [ "$verify_verdict" != "verified" ]; then
-      echo "$suite witness verification expected verified, got $verify_verdict" >&2
-      cat "$dir/.verify.json" >&2
-      exit 1
-    fi
-
-    rm -rf "$dir/.sugar/witnesses"
-    set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" prove . --json) > "$dir/.verify_recompute.json"
-    local verify_recompute_rc=$?
-    set -e
-    : "$verify_recompute_rc"
-    local recompute_strategy
-    recompute_strategy="$(witness_recompute_strategy "$dir/.verify_recompute.json")"
-    if [ "$recompute_strategy" != "content-address:recompute" ]; then
-      echo "$suite witness recompute expected content-address:recompute, got $recompute_strategy" >&2
-      cat "$dir/.verify_recompute.json" >&2
+    local witness_body
+    witness_body="$(witness_body_recomputed "$dir/.prove.json")"
+    if [ "$witness_body" != "recomputed" ]; then
+      echo "$suite witness package body expected recomputed from the proof, got $witness_body" >&2
+      cat "$dir/.prove.json" >&2
       exit 1
     fi
   else

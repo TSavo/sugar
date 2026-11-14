@@ -5,7 +5,7 @@
 # GOOD twin: encodeBase64("abc") == "YWJj"
 #   - python-lift emits the literal-call equality and the encodeBase64 universe.
 #   - pytest-witness emits a witness package for the passing test.
-#   - sugar prove/verify discharge both rows from the durable .proof.
+#   - sugar prove discharges both rows from the durable .proof.
 #
 # BAD twin: encodeBase64("abc") == "AAAA"
 #   - the same z3 path refuses the false equality.
@@ -75,15 +75,13 @@ PY
 }
 
 check_normal_receipts() {
-  "$PYTHON" - "$1" "$2" "$3" "$4" "$5" "$6" <<'PY'
+  "$PYTHON" - "$1" "$2" "$3" "$4" <<'PY'
 import json
 import sys
 
-prove_path, verify_path, twin, expect, prove_rc, verify_rc = sys.argv[1:7]
+prove_path, twin, expect, prove_rc = sys.argv[1:5]
 prove = json.load(open(prove_path, encoding="utf-8"))
-verify = json.load(open(verify_path, encoding="utf-8"))
 prove_rc = int(prove_rc)
-verify_rc = int(verify_rc)
 
 def row(doc, needle):
     matches = [r for r in doc.get("rows", []) if needle in str(r.get("property", ""))]
@@ -93,58 +91,37 @@ def row(doc, needle):
 
 assertion = row(prove, "#euf#")
 witness = row(prove, "witness-package")
-v_assertion = row(verify, "#euf#")
-v_witness = row(verify, "witness-package")
-dim = verify.get("witnessDimension") or {}
-seen = dim.get("witnesses") or []
+witness_verification = witness.get("verification") or {}
 
 print(f"rows({twin}):")
 for label, item in [
     ("prove assertion", assertion),
     ("prove witness", witness),
-    ("verify assertion", v_assertion),
-    ("verify witness", v_witness),
 ]:
     print(f"  {label:<17} {item.get('status'):<12} {item.get('reason', '')[:130]}")
-print(f"  witness dimension total={dim.get('total')} ok={dim.get('ok')} verdicts={[w.get('verdict') for w in seen]}")
+print(f"  verdict={prove.get('verdict')} byStatus={prove.get('byStatus')}")
 
-# Proofs may seat more than one witness memento (e.g. #3750
-# toolchain-plan-self-attestation next to the pytest package). The suite axis
-# is a verified package witness — not total==1 or witnesses[0] order.
-package_witnesses = [
-    w for w in seen
-    if any(
-        c in (w.get("checks") or [])
-        for c in ("content-address:package", "content-address:recompute")
+# The witness row is decided from the package body the proof states (step 9):
+# a recomputed body carries `resolvedBy` on its witness verification.
+if witness_verification.get("kind") != "witness" or not witness_verification.get("resolvedBy"):
+    raise SystemExit(
+        f"FAIL({twin}): the witness package body in the proof was not recomputed: {witness}"
     )
-]
-if dim.get("ok") is not True:
-    raise SystemExit(f"FAIL({twin}): witnessDimension ok must be true: {dim}")
-if not package_witnesses:
-    raise SystemExit(f"FAIL({twin}): expected a verified package witness in dimension: {dim}")
-if any(w.get("verdict") != "verified" for w in package_witnesses):
-    raise SystemExit(f"FAIL({twin}): durable package witness body was not verified: {package_witnesses}")
-if any(w.get("verdict") != "verified" for w in seen):
-    raise SystemExit(f"FAIL({twin}): some witnessDimension entry failed verify: {seen}")
 
 if expect == "good":
-    if prove_rc != 0 or verify_rc != 0:
-        raise SystemExit(f"FAIL({twin}): expected prove/verify exit 0, got {prove_rc}/{verify_rc}")
+    if prove_rc != 0:
+        raise SystemExit(f"FAIL({twin}): expected prove exit 0, got {prove_rc}")
     if assertion.get("status") != "discharged" or witness.get("status") != "discharged":
         raise SystemExit(f"FAIL({twin}): expected discharged rows")
-    if v_assertion.get("status") != "discharged" or v_witness.get("status") != "discharged":
-        raise SystemExit(f"FAIL({twin}): expected durable discharged rows")
-    if verify.get("ok") is not True:
-        raise SystemExit(f"FAIL({twin}): verify ok must be true")
+    if prove.get("verdict") != "green":
+        raise SystemExit(f"FAIL({twin}): prove verdict must be green, got {prove.get('verdict')}")
 else:
-    if prove_rc == 0 or verify_rc == 0:
-        raise SystemExit(f"FAIL({twin}): bad twin must make prove/verify exit nonzero")
+    if prove_rc == 0:
+        raise SystemExit(f"FAIL({twin}): bad twin must make prove exit nonzero")
     if assertion.get("status") != "unsatisfied" or witness.get("status") != "unsatisfied":
         raise SystemExit(f"FAIL({twin}): expected unsatisfied rows")
-    if v_assertion.get("status") != "unsatisfied" or v_witness.get("status") != "unsatisfied":
-        raise SystemExit(f"FAIL({twin}): expected durable unsatisfied rows")
-    if verify.get("ok") is not False:
-        raise SystemExit(f"FAIL({twin}): verify ok must be false")
+    if prove.get("verdict") != "refuted":
+        raise SystemExit(f"FAIL({twin}): prove verdict must be refuted, got {prove.get('verdict')}")
 
 print(f"OK({twin}): {expect}")
 PY
@@ -194,12 +171,7 @@ run_twin() {
     "$BIN" prove --allow-failed-components . --json) >"$dir/.prove.raw" 2>&1
   local prove_rc=$?
   extract_json_receipt "$dir/.prove.raw" "$dir/.prove.json" || return 1
-
-  (cd "$dir" && PATH="$PYTHON_BIN_DIR:$PATH" PYTHONPATH="$PYTHON_SRC" \
-    "$BIN" verify --allow-failed-components --project . --json) >"$dir/.verify.raw" 2>&1
-  local verify_rc=$?
-  extract_json_receipt "$dir/.verify.raw" "$dir/.verify.json" || return 1
-  check_normal_receipts "$dir/.prove.json" "$dir/.verify.json" "$twin" "$expect" "$prove_rc" "$verify_rc" || return 1
+  check_normal_receipts "$dir/.prove.json" "$twin" "$expect" "$prove_rc" || return 1
 
   if [ "$twin" = "bad" ]; then
     mkdir -p "$dir/.sugar"
@@ -227,5 +199,5 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 echo "==== python-literal-base64: PASS ===="
-echo "encodeBase64(\"abc\") is proved through sugar mint/prove/verify with SMT, witness package verification, and lying-discharge guard."
+echo "encodeBase64(\"abc\") is proved through sugar mint/prove with SMT, witness package verification, and lying-discharge guard."
 [ -z "${SHOWCASE_SUBJECT_WITNESS:-}" ] || printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "$SHOWCASE_SUBJECT_WITNESS"

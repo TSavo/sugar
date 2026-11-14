@@ -83,7 +83,7 @@ PY
 
 echo ""
 echo "== verify durable artifact (expected refusal: the contradictory twin is in this proof) =="
-verify_report="$(PATH="$VENV/bin:$PATH" "$BIN" verify --allow-failed-components --project . --json 2>&1)"
+verify_report="$(PATH="$VENV/bin:$PATH" "$BIN" prove --allow-failed-components . --json 2>&1)"
 verify_rc=$?
 echo "$verify_report"
 printf '%s\n' "$verify_report" > .verify.raw
@@ -156,17 +156,14 @@ ok = require(
     and "lacks required provenance KIND" in witness_reason,
 ) and ok
 
-witnesses = receipt.get("witnessDimension", {}).get("witnesses", [])
-verified = any(w.get("verdict") == "verified" for w in witnesses)
-ok = require("durable verify recomputes witness package", verified) and ok
 summary_ok = (
     receipt.get("discharged") == 0
     and receipt.get("violations") == 1
     and receipt.get("refused") == 5
-    and receipt.get("ok") is False
+    and receipt.get("verdict") == "refuted"
 )
-ok = require("durable verify summary is discharged=0 violations=1 refused=5 ok=false", summary_ok) and ok
-sys.exit(0 if (ok and verified and summary_ok) else 1)
+ok = require("durable verify summary is discharged=0 violations=1 refused=5 verdict=refuted", summary_ok) and ok
+sys.exit(0 if (ok and summary_ok) else 1)
 PY
 
 echo ""

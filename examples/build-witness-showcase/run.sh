@@ -133,27 +133,14 @@ if script.get("status") != expected_script:
     raise SystemExit(f"{suite}: expected script {expected_script}, got {script}")
 if output.get("status") != expected_output:
     raise SystemExit(f"{suite}: expected output {expected_output}, got {output}")
-if expected_rc == "0" and receipt.get("ok") is not True:
-    raise SystemExit(f"{suite}: expected ok=true")
-if expected_rc != "0" and receipt.get("ok") is not False:
-    raise SystemExit(f"{suite}: expected ok=false")
-witnesses = receipt.get("witnessDimension", {}).get("witnesses", [])
-build_witnesses = [
-    w for w in witnesses
-    if "content-address:recompute" in (w.get("checks") or [])
-]
-if len(build_witnesses) != 1:
-    raise SystemExit(
-        f"{suite}: expected one recomputed build witness, got {build_witnesses}"
-    )
-w = build_witnesses[0]
-if w.get("verdict") != "verified":
-    raise SystemExit(f"{suite}: witnessDimension did not verify: {w}")
-if "content-address:recompute" not in (w.get("checks") or []):
-    raise SystemExit(f"{suite}: witness did not recompute: {w}")
+verdict = receipt.get("verdict")
+if expected_rc == "0" and verdict != "green":
+    raise SystemExit(f"{suite}: expected verdict green, got {verdict} {receipt.get('byStatus')}")
+if expected_rc != "0" and verdict == "green":
+    raise SystemExit(f"{suite}: expected a verdict that is not green, got {verdict}")
 print(
-    f"{suite}: script={script.get('status')} output={output.get('status')} ok={receipt.get('ok')} "
-    f"witness={w.get('verdict')} checks={','.join(w.get('checks') or [])}"
+    f"{suite}: script={script.get('status')} output={output.get('status')} "
+    f"verdict={verdict} byStatus={receipt.get('byStatus')}"
 )
 PY
 }
@@ -184,25 +171,11 @@ if len(script_rows) != 1 or len(output_rows) != 1:
     )
 if script_rows[0].get("status") != "unsatisfied" or output_rows[0].get("status") != "unsatisfied":
     raise SystemExit(f"{suite}: stale proof witness rows must refuse: {build_rows}")
-witnesses = receipt.get("witnessDimension", {}).get("witnesses", [])
-build_witnesses = [
-    w for w in witnesses
-    if "content-address:recompute" in (w.get("checks") or [])
-    or "witness did not reproduce" in (w.get("reason") or "")
-]
-if len(build_witnesses) != 1:
-    raise SystemExit(
-        f"{suite}: expected one recomputed build witness, got {build_witnesses}"
-    )
-w = build_witnesses[0]
-if w.get("verdict") != "refused":
-    raise SystemExit(f"{suite}: expected witness refused, got {w}")
-if "witness did not reproduce" not in (w.get("reason") or ""):
-    raise SystemExit(f"{suite}: witness refusal did not name recompute drift: {w}")
+if receipt.get("verdict") == "green":
+    raise SystemExit(f"{suite}: a tampered build must not be green: {receipt.get('byStatus')}")
 print(
     f"{suite}: script={script_rows[0].get('status')} output={output_rows[0].get('status')} "
-    f"ok={receipt.get('ok')} "
-    f"witness={w.get('verdict')} checks={','.join(w.get('checks') or [])}"
+    f"verdict={receipt.get('verdict')} byStatus={receipt.get('byStatus')}"
 )
 PY
 }
