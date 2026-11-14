@@ -150,7 +150,11 @@ class ClassDefinitionValue(GuardStableValue):
         class whose ``__init__`` the one class-namespace lookup does not
         decide as a source ``def`` or a builtin's
         (``ClassDef.initializer_entry`` is None: a store to it, a base's
-        generated one, a conditional ``def``).
+        generated one, a conditional ``def``), and a class whose ``__new__``
+        it does not decide as the class's own ``def`` or a builtin's
+        (``ClassDef.new_entry``: a store to it, a base's ``def __new__``) --
+        the ``dataclass`` arm aside, which reads its ``typing.Generic`` base
+        by its own law.
         """
         from sugar_lift_py_tests.floor.object_value import bind_call
 
@@ -174,9 +178,10 @@ class ClassDefinitionValue(GuardStableValue):
             if keyword_count
             else ()
         )
-        if (
+        generated = definition._dataclass_generated_init_fields()
+        if (not definition.new_entry()[0] and generated is None) or (
             definition._authenticated_new_constructor_shape() is None
-            and definition._dataclass_generated_init_fields() is None
+            and generated is None
             and (
                 definition.construction_order() is None
                 or definition.initializer_entry() is None

@@ -576,6 +576,126 @@ def _class_receiver_read(receiver: str, is_class: bool):
     return reads
 
 
+# What a reference may be when it is no class statement or alias the module
+# names (``SourceUnit.class_namespace_stores``): any class whose object the
+# module hands on -- a parameter, a leaf of an unpack whose sides do not
+# pair up.
+_ESCAPED_CLASS = object()
+_ESCAPED = frozenset({_ESCAPED_CLASS})
+
+# The binding table of a name an enclosing function binds (a free or
+# ``nonlocal`` name), as ``class_namespace_stores`` keys it.
+_ENCLOSING_SCOPE = "<enclosing function>"
+
+# The builtins a class handed as an actual is read by and never kept:
+# ``setattr``/``delattr``/``getattr`` on it (a store through the first two
+# is read as one), ``isinstance``/``issubclass``, ``super``.
+_CLASS_ARGUMENT_READERS = frozenset(
+    {
+        LanguageCallee.BUILTIN_SETATTR,
+        LanguageCallee.BUILTIN_DELATTR,
+        LanguageCallee.BUILTIN_GETATTR,
+        LanguageCallee.BUILTIN_ISINSTANCE,
+        LanguageCallee.BUILTIN_ISSUBCLASS,
+        LanguageCallee.BUILTIN_SUPER,
+    }
+)
+
+# The attributes that yield a class from an instance or a class.
+_CLASS_YIELDING_ATTRIBUTES = frozenset(
+    {"__class__", "__mro__", "__bases__", "__base__"}
+)
+
+
+def _alias_pairs(target, value, pairs: list) -> None:
+    """Append ``(name, value)`` for each name the assignment of ``value`` to
+    ``target`` binds: the value itself for a name; each member for an unpack
+    whose two sides pair up (as many members, none starred); None -- a member
+    of something the module built, which may be any class it hands on -- for
+    every name of any other unpack."""
+    if isinstance(target, Name):
+        pairs.append((target, value))
+        return
+    if not isinstance(target, (Tuple_, List)):
+        return
+    if (
+        isinstance(value, (Tuple_, List))
+        and len(value.elts) == len(target.elts)
+        and not any(
+            isinstance(item, Starred) for item in (*target.elts, *value.elts)
+        )
+    ):
+        for member, item in zip(target.elts, value.elts):
+            _alias_pairs(member, item, pairs)
+        return
+    for member in target.elts:
+        _alias_pairs(
+            member.value if isinstance(member, Starred) else member, None, pairs
+        )
+
+
+def _target_name_leaves(targets) -> tuple:
+    """The ``Name`` nodes a binding target binds: the name itself, an
+    unpack's names at any depth, a starred member's."""
+    leaves: list = []
+
+    def visit(target) -> None:
+        if isinstance(target, Name):
+            leaves.append(target)
+        elif isinstance(target, Starred):
+            visit(target.value)
+        elif isinstance(target, (Tuple_, List)):
+            for element in target.elts:
+                visit(element)
+
+    for target in targets:
+        visit(target)
+    return tuple(leaves)
+
+
+def _class_read_kept(parent, field_name: str) -> bool:
+    """Whether an expression read as ``parent``'s ``field_name`` hands the
+    object it reads to nothing that may keep it: the callee of a call, the
+    object of an attribute, a class statement's base, an ``except`` clause's
+    type, what a ``raise`` raises, an operand of ``is``/``is not``, an actual
+    of a builtin that only reads it (``_CLASS_ARGUMENT_READERS``).  Anywhere
+    else -- an actual of any other call, a returned, yielded, stored or
+    compared value, a container's member -- the object may reach code that
+    keeps it, a function whose parameter it binds among them."""
+    if isinstance(parent, Call):
+        return field_name == "func" or (
+            field_name == "args"
+            and parent.language_callee() in _CLASS_ARGUMENT_READERS
+        )
+    if isinstance(parent, (Attribute, Raise)):
+        return True
+    if isinstance(parent, ClassDef):
+        return field_name == "bases"
+    if isinstance(parent, ExceptHandler):
+        return field_name == "type_"
+    if isinstance(parent, Compare):
+        return all(op.kind in ("Is", "IsNot") for op in parent.ops)
+    return False
+
+
+def _yields_a_class(node) -> bool:
+    """Whether the expression ``node`` yields a class it does not spell:
+    ``type(o)`` (the builtin by binding), ``o.__class__``, ``__mro__``,
+    ``__bases__``, ``__base__``, ``C.__subclasses__()``, ``C.mro()``."""
+    if isinstance(node, Attribute):
+        return node.attr in _CLASS_YIELDING_ATTRIBUTES
+    if not isinstance(node, Call):
+        return False
+    if isinstance(node.func, Attribute):
+        return node.func.attr in ("__subclasses__", "mro")
+    return (
+        isinstance(node.func, Name)
+        and len(node.args) == 1
+        and not node.keywords
+        and node.language_callee() is LanguageCallee.BUILTIN_TYPE
+    )
+
+
 def _class_scope_binds(statement, name: str) -> bool:
     """Whether the class-body statement ``statement``, or anything under it
     in the class body's own scope (``_class_scope_nodes``), binds or
@@ -589,30 +709,33 @@ def _class_scope_binds(statement, name: str) -> bool:
     )
 
 
-def _class_block_binding(statements, name: str, state: "bool | None"):
-    """Whether ``name`` is bound in the class namespace once the class-body
-    statements ``statements`` have run from ``state`` (True bound, False
-    not, None not decided): the body's own control flow, read where it
-    decides (``_class_statement_binding``)."""
+def _class_block_binding(statements, name: str, state):
+    """``name``'s binding in the class namespace once the class-body
+    statements ``statements`` have run from ``state``: the statement whose
+    binding stands (bound), False (not bound), None (not decided) -- the
+    body's own control flow, read where it decides
+    (``_class_statement_binding``)."""
     for statement in statements:
         state = _class_statement_binding(statement, name, state)
     return state
 
 
-def _class_statement_binding(statement, name: str, state: "bool | None"):
+def _class_statement_binding(statement, name: str, state):
     """``name``'s binding in the class namespace after the class-body
-    statement ``statement`` runs from ``state``.
+    statement ``statement`` runs from ``state``: the statement that binds it
+    last (the binding the namespace holds), False, or None.
 
     The class exists only when its body completed, so every statement the
     body runs unconditionally has run: an assignment, augmented or
     annotated assignment with a value, ``def``, ``class``, import or type
-    alias binds; a ``del`` unbinds (a ``del`` of an unbound name is
-    ``NameError``, and no class).  An annotation alone (``x: int``) binds
-    nothing.  An ``if`` whose test is a constant runs the branch the
-    constant selects; a ``try`` runs its ``finally`` whenever the class is
-    made.  Anything else that binds or deletes ``name`` -- under an ``if``,
-    ``try``, ``with``, ``for``, ``while`` or ``match``, or through a
-    walrus -- may or may not have run: None."""
+    alias binds -- that statement is the binding; a ``del`` unbinds (a
+    ``del`` of an unbound name is ``NameError``, and no class).  An
+    annotation alone (``x: int``) binds nothing.  An ``if`` whose test is a
+    constant runs the branch the constant selects; a ``try`` runs its
+    ``finally`` whenever the class is made.  Anything else that binds or
+    deletes ``name`` -- under an ``if``, ``try``, ``with``, ``for``,
+    ``while`` or ``match``, or through a walrus -- may or may not have run:
+    None."""
     if isinstance(statement, Delete):
         return False if name in statement.names_bound_here() else state
     if not _class_scope_binds(statement, name):
@@ -631,7 +754,7 @@ def _class_statement_binding(statement, name: str, state: "bool | None"):
     if isinstance(statement, AnnAssign) and statement.value is None:
         return state
     if isinstance(statement, (Import, ImportFrom)):
-        return True
+        return statement
     if isinstance(
         statement,
         (
@@ -644,7 +767,7 @@ def _class_statement_binding(statement, name: str, state: "bool | None"):
             TypeAlias,
         ),
     ) and name in statement.names_bound_here():
-        return True
+        return statement
     return None
 
 
@@ -2749,12 +2872,27 @@ class SourceUnit:
         ``delattr`` (by binding) on ``C`` -- the name its second actual
         spells as a string constant, ``"*"`` (any name) for anything else.
 
-        ``C`` is read by its binding where it stands
-        (``_module_binding_read_at``): a local or parameter of that spelling
-        is not the class.  An alias of the class is the class: a name bound
-        by ``K = C`` (``C`` itself read so, or another alias) -- the module's
-        one binding of ``K`` where a read reaches it, or a local of the same
-        function.
+        A reference is read by the scope that binds it where it stands
+        (CPython's ``symtable``, ``_function_symbol_at``): a module name (or a
+        function's global) is every module-scope binding of that spelling --
+        a ``class`` statement, an alias, at any depth of the module's own
+        compound statements (``if``, ``try``, loops); a function's local is
+        that function's bindings of it; a free name an enclosing function's.
+        An alias of the class is the class: a name bound by ``K = C``, ``K:
+        T = C``, ``(K := C)``, or a tuple unpack whose sides pair up (``K, _
+        = C, 0``).
+
+        A parameter (other than a method's receiver, below) may be any class
+        whose object the module hands on (``_class_read_kept``: anything but
+        a call of it, an attribute of it, a base, an alias, ``isinstance``,
+        ``except``, ``raise``, ``is``), and so may a leaf of an unpack whose
+        sides do not pair up (``K, J = pair``): a store through one is a
+        store on every such class -- on every class when an expression that
+        yields a class from an instance (``type(o)``, ``o.__class__``,
+        ``__mro__``, ``__subclasses__()``) is handed on, or the module
+        reaches a dynamic global writer (``globals``, ``vars``, ...).  A
+        module that reaches the builtin ``exec`` or ``eval`` by binding may
+        store any name on any class: ``"*"`` on every one.
 
         A store through the class a method runs on stores on this class and
         on every subclass it may run on (``mro_holds`` is not False):
@@ -2762,8 +2900,9 @@ class SourceUnit:
         ``__class_getitem__``, ``__init_subclass__`` -- the last only ever on
         a subclass), ``type(self).name`` and ``self.__class__.name`` in any
         other method, and ``setattr``/``delattr`` on them.  A store through
-        any other reference (a parameter, a call's result, ``exec``) is not
-        seen here.  One walk per typed root.
+        a name bound by anything else (a call's result, a ``for`` or
+        ``with`` target, a lambda's or a comprehension's own variable) is
+        not seen here.  One walk per typed root.
         """
         module = self._require_typed_module(
             "SourceUnit.class_namespace_stores", blame=self.filename
@@ -2802,71 +2941,196 @@ class SourceUnit:
 
     def _class_namespace_store_rows(self, module) -> tuple:
         """``(rows, receiver_rows)`` for ``class_namespace_stores``: the
-        names stored on each class occurrence through the class or an alias
-        of it, and ``(class statement, names, subclasses only)`` for each
-        method that stores through the class it runs on."""
-
-        def scope_of(node):
-            function = self.innermost_function_containing(node.line_col_span())
-            return None if function is None else SourceOccurrenceIdentityV1.of(function)
-
-        module_aliases: dict = {}
-        local_aliases: dict = {}
-        aliases: list = []
+        names stored on each class occurrence through a reference that may
+        be the class, and ``(class statement, names, subclasses only)`` for
+        each method that stores through the class it runs on."""
+        occurrence_of = SourceOccurrenceIdentityV1.of
         classes: list = []
+        functions: list = []
+        pairs: list = []
+        target_names: set = set()
+        kept_groups: set = set()
+        imported: set = set()
         for node in module.walk():
             if isinstance(node, ClassDef):
                 classes.append(node)
+            elif isinstance(node, (FunctionDef, AsyncFunctionDef)):
+                functions.append(node)
+            elif isinstance(node, (Import, ImportFrom)):
+                imported.update(
+                    alias.asname or alias.name.split(".")[0] for alias in node.names
+                )
+            if isinstance(node, Assign):
+                for target in node.targets:
+                    _alias_pairs(target, node.value, pairs)
+            elif isinstance(node, (AnnAssign, NamedExpr)) and node.value is not None:
+                _alias_pairs(node.target, node.value, pairs)
+            for field_name in type(node)._bound_target_fields:
+                value = getattr(node, field_name)
+                target_names.update(
+                    id(leaf)
+                    for leaf in _target_name_leaves(
+                        value if isinstance(value, tuple) else (value,)
+                    )
+                )
+            # The members of an ``except (A, B)`` clause and of an
+            # ``isinstance(x, (A, B))`` tuple are read where they stand.
+            if isinstance(node, ExceptHandler) and isinstance(node.type_, Tuple_):
+                kept_groups.add(id(node.type_))
             elif (
-                isinstance(node, Assign)
-                and len(node.targets) == 1
-                and isinstance(node.targets[0], Name)
-                and isinstance(node.value, Name)
+                isinstance(node, Call)
+                and any(isinstance(arg, Tuple_) for arg in node.args)
+                and node.language_callee()
+                in (LanguageCallee.BUILTIN_ISINSTANCE, LanguageCallee.BUILTIN_ISSUBCLASS)
             ):
-                aliases.append(node)
-        # The only spellings a class or an alias of one is read by: a name
-        # the module binds by a ``class`` statement, or an alias's target.
-        spellings = frozenset(
-            name
-            for name, bound in (self.module_direct_bindings or {}).items()
-            if any(isinstance(statement, ClassDef) for statement in bound)
-        ) | frozenset(node.targets[0].id for node in aliases)
+                kept_groups.update(id(arg) for arg in node.args if isinstance(arg, Tuple_))
+
+        # Each method whose first formal is the class or the instance it runs
+        # on: a store through that formal is the method's receiver row
+        # (below), never a parameter's.
+        methods: list = []
+        receivers: dict = {}
+        for klass in classes:
+            for statement in klass.body:
+                for method in _class_scope_nodes(statement):
+                    if not isinstance(method, (FunctionDef, AsyncFunctionDef)):
+                        continue
+                    first = method.params[0] if method.params else None
+                    if first is None or first.param_kind not in (
+                        "positional_only",
+                        "positional_or_keyword",
+                    ):
+                        continue
+                    kind = klass._method_descriptor_kind(method)
+                    if kind == "staticmethod":
+                        continue
+                    receivers[occurrence_of(method)] = first.name
+                    methods.append((klass, method, first, kind))
+        parameters = frozenset(
+            param.name
+            for function in functions
+            for param in function.params
+            if receivers.get(occurrence_of(function)) != param.name
+        )
+        # The only spellings a reference that may be a class is read by: a
+        # ``class`` statement's name, an alias's, a parameter's.
+        spellings = (
+            frozenset(klass.name for klass in classes)
+            | frozenset(target.id for target, _value in pairs)
+            | parameters
+        )
+
+        reads: dict = {}
+
+        def read_of(node) -> tuple:
+            """``(key, parameter, free)`` for the name ``node`` where it
+            stands: the binding table it reads (the module's, or its
+            function's), whether it is a parameter that is not the method's
+            receiver, whether it is an enclosing function's (free)."""
+            row = reads.get(id(node))
+            if row is None:
+                owner, symbol = self._function_symbol_at(node.id, node.line_col_span())
+                if owner is None or symbol is None or symbol.is_global():
+                    row = ((None, node.id), False, False)
+                elif symbol.is_free() or symbol.is_nonlocal():
+                    row = ((_ENCLOSING_SCOPE, node.id), False, True)
+                else:
+                    scope = occurrence_of(owner)
+                    row = (
+                        (scope, node.id),
+                        symbol.is_parameter() and receivers.get(scope) != node.id,
+                        False,
+                    )
+                reads[id(node)] = row
+            return row
+
+        tables: dict = {}
 
         def classes_of(node) -> frozenset:
             """The occurrences of the classes the expression ``node`` may
-            read by binding -- the module class, or an alias of one (a local
-            alias bound more than once may be any of them)."""
+            read by binding -- a class statement, an alias of one -- and
+            ``_ESCAPED_CLASS`` when it may be any class the module hands on
+            (a parameter, a leaf of an unpack whose sides do not pair up)."""
             if not isinstance(node, Name) or node.id not in spellings:
                 return frozenset()
-            binding = self._module_binding_read_at(node.id, node.line_col_span())
-            if isinstance(binding, ClassDef):
-                return frozenset({SourceOccurrenceIdentityV1.of(binding)})
-            if binding is not None:
-                return module_aliases.get(
-                    SourceOccurrenceIdentityV1.of(binding), frozenset()
+            key, parameter, free = read_of(node)
+            if free:
+                found = frozenset().union(
+                    *(
+                        held
+                        for (scope, name), held in tables.items()
+                        if name == node.id and scope is not None
+                    )
                 )
-            scope = scope_of(node)
-            if scope is None:
-                return frozenset()
-            return local_aliases.get((scope, node.id), frozenset())
+                return (found | _ESCAPED) if node.id in parameters else found
+            found = tables.get(key, frozenset())
+            return (found | _ESCAPED) if parameter else found
 
+        for klass in classes:
+            target = klass.binding_target
+            key = read_of(target)[0] if isinstance(target, Name) else (None, klass.name)
+            tables[key] = tables.get(key, frozenset()) | {occurrence_of(klass)}
         # Aliases of aliases: read again until no alias reaches a new class.
         changed = True
         while changed:
             changed = False
-            for node in aliases:
-                reached = classes_of(node.value)
+            for target, value in pairs:
+                reached = _ESCAPED if value is None else classes_of(value)
                 if not reached:
                     continue
-                scope = scope_of(node)
-                if scope is None:
-                    key, table = SourceOccurrenceIdentityV1.of(node), module_aliases
-                else:
-                    key, table = (scope, node.targets[0].id), local_aliases
-                held = table.get(key, frozenset())
+                key = read_of(target)[0]
+                held = tables.get(key, frozenset())
                 if not reached <= held:
-                    table[key] = held | reached
+                    tables[key] = held | reached
                     changed = True
+
+        alias_values = frozenset(
+            id(value) for _target, value in pairs if value is not None
+        )
+
+        def kept(parent, field_name, child) -> bool:
+            """Whether ``child``, read in ``parent``'s ``field_name``, hands
+            the object it reads to nothing that may keep it
+            (``_class_read_kept``)."""
+            return (
+                id(child) in alias_values
+                or id(parent) in kept_groups
+                or _class_read_kept(parent, field_name)
+            )
+
+        # The classes the module hands on (``_class_read_kept``); every
+        # class, when something that yields a class from an instance is
+        # handed on or a dynamic global writer is reached.
+        escaping: set = set()
+        every_class = self._module_reaches_dynamic_global_writer()
+        runs_code = False
+        for node in module.walk():
+            if (
+                not runs_code
+                and (
+                    (isinstance(node, Name) and node.id in {"exec", "eval", *imported})
+                    or (isinstance(node, Attribute) and node.attr in ("exec", "eval"))
+                )
+                and self.language_callee_of(node)
+                in (LanguageCallee.BUILTIN_EXEC, LanguageCallee.BUILTIN_EVAL)
+            ):
+                runs_code = True
+            for field_name, _index, child in node._child_edges():
+                if isinstance(child, Name):
+                    if id(child) in target_names or field_name in (
+                        "binding_target",
+                        "name",
+                    ):
+                        continue
+                    reached = classes_of(child) - _ESCAPED
+                    if reached and not kept(node, field_name, child):
+                        escaping |= reached
+                elif (
+                    not every_class
+                    and _yields_a_class(child)
+                    and not kept(node, field_name, child)
+                ):
+                    every_class = True
 
         def stores(root, on_class) -> list:
             """``(reference, name)`` for every store under ``root`` through
@@ -2901,42 +3165,40 @@ class SourceUnit:
             return found
 
         rows: dict = {}
+        handed: set = set()
         for reference, name in stores(module, lambda node: bool(classes_of(node))):
             for occurrence in classes_of(reference):
-                rows.setdefault(occurrence, set()).add(name)
+                if occurrence is _ESCAPED_CLASS:
+                    handed.add(name)
+                else:
+                    rows.setdefault(occurrence, set()).add(name)
+        # A store through a reference that may be any class the module hands
+        # on is a store on each of them.
+        if handed:
+            for klass in classes:
+                if every_class or occurrence_of(klass) in escaping:
+                    rows.setdefault(occurrence_of(klass), set()).update(handed)
+        # ``exec``/``eval`` may store any name on any class.
+        if runs_code:
+            for klass in classes:
+                rows.setdefault(occurrence_of(klass), set()).add("*")
 
         receiver_rows = []
-        for klass in classes:
-            for statement in klass.body:
-                for method in _class_scope_nodes(statement):
-                    if not isinstance(method, (FunctionDef, AsyncFunctionDef)):
-                        continue
-                    first = method.params[0] if method.params else None
-                    if first is None or first.param_kind not in (
-                        "positional_only",
-                        "positional_or_keyword",
-                    ):
-                        continue
-                    kind = klass._method_descriptor_kind(method)
-                    if kind == "staticmethod":
-                        continue
-                    on_class = _class_receiver_read(
-                        first.name,
-                        kind == "classmethod"
-                        or (
-                            not method.decorators
-                            and method.name in _IMPLICIT_CLASS_RECEIVERS
-                        ),
+        for klass, method, first, kind in methods:
+            on_class = _class_receiver_read(
+                first.name,
+                kind == "classmethod"
+                or (not method.decorators and method.name in _IMPLICIT_CLASS_RECEIVERS),
+            )
+            stored = stores(method, on_class)
+            if stored:
+                receiver_rows.append(
+                    (
+                        klass,
+                        frozenset(name for _reference, name in stored),
+                        method.name == "__init_subclass__",
                     )
-                    stored = stores(method, on_class)
-                    if stored:
-                        receiver_rows.append(
-                            (
-                                klass,
-                                frozenset(name for _reference, name in stored),
-                                method.name == "__init_subclass__",
-                            )
-                        )
+                )
         return (
             {key: frozenset(names) for key, names in rows.items()},
             tuple(receiver_rows),
@@ -4203,24 +4465,32 @@ class SourceUnit:
         statement), or None: a parameter, local, free or nonlocal of the
         function around the read is not the module's name, and a name the
         module binds more than once answers None."""
-        owner = self.innermost_function_containing(span)
-        if owner is not None:
-            table = self.function_symtable(owner.name, owner.line_col_span().start_line)
-            try:
-                symbol = table.lookup(name)
-            except KeyError:
-                symbol = None
-            if symbol is not None and (
-                symbol.is_parameter()
-                or symbol.is_local()
-                or symbol.is_free()
-                or symbol.is_nonlocal()
-            ):
-                return None
+        _owner, symbol = self._function_symbol_at(name, span)
+        if symbol is not None and (
+            symbol.is_parameter()
+            or symbol.is_local()
+            or symbol.is_free()
+            or symbol.is_nonlocal()
+        ):
+            return None
         bindings = (self.module_direct_bindings or {}).get(name, ())
         if len(bindings) != 1:
             return None
         return bindings[0]
+
+    def _function_symbol_at(self, name: str, span):
+        """``(function, symbol)``: the innermost function around ``span``
+        (``innermost_function_containing``) and the CPython ``symtable``
+        symbol its table holds for ``name`` -- ``(None, None)`` at module
+        level, ``(function, None)`` when that table has no such name."""
+        owner = self.innermost_function_containing(span)
+        if owner is None:
+            return None, None
+        table = self.function_symtable(owner.name, owner.line_col_span().start_line)
+        try:
+            return owner, table.lookup(name)
+        except KeyError:
+            return owner, None
 
     def decorated_definition_for_call(
         self, call: "Call"
@@ -4392,9 +4662,13 @@ class SourceUnit:
         (``ClassDef.initializer_entry`` is None: a store to it, a
         conditional ``def``, a base's ``__init_subclass__``) carries no frame
         either, unless its source ``__new__`` shape constructs it: that call
-        is the unanswered call.
+        is the unanswered call.  So is a class whose ``__new__`` the lookup
+        does not decide as its own ``def`` or a builtin's
+        (``ClassDef.new_entry``: a store to it, a base's ``def __new__``).
         """
         if definition.decorators:
+            return False
+        if isinstance(definition, ClassDef) and not definition.new_entry()[0]:
             return False
         if (
             isinstance(definition, ClassDef)
@@ -10385,19 +10659,35 @@ class ClassDef(Statement):
             self.unit.language_callee_of(method.decorators[0])
         )
 
-    def _authenticated_new_constructor_shape(self):
-        """One source-owned ``__new__`` allocation followed by field stores."""
-        constructors = tuple(
-            item
-            for item in self.body
-            if isinstance(item, FunctionDef) and item.name == "__new__"
+    def method_value_is_written(self, method) -> bool:
+        """Whether the value the class-body ``def`` statement ``method``
+        binds in this class's namespace is the function it writes, as the
+        method roster carries it: undecorated, under one builtin descriptor
+        decorator (``_method_descriptor_kind``, the kind the one method door
+        binds by), or under identity decorators only (``typing.final``,
+        ``abc.abstractmethod``: each returns its argument).  Any other
+        decorator's result (``@x.setter``, ``functools.cache``, a source
+        decorator) is not that function (``ObjectValue.class_member``)."""
+        if not method.decorators or self._method_descriptor_kind(method) is not None:
+            return True
+        return all(
+            self.unit.language_callee_of(decorator) in _IDENTITY_DECORATORS
+            for decorator in method.decorators
         )
-        if len(constructors) != 1 or any(
-            isinstance(item, FunctionDef) and item.name == "__init__"
-            for item in self.body
-        ):
+
+    def _authenticated_new_constructor_shape(self):
+        """One source-owned ``__new__`` allocation followed by field stores.
+
+        The ``__new__`` is the one the class call runs, read through the one
+        class-namespace lookup (``new_entry``: this statement's own ``def``,
+        the binding its body leaves), and the ``__init__`` the call runs
+        after it is ``object``'s (``initializer_entry``): any other -- a
+        source ``__init__`` of this class or a base, a builtin exception's,
+        one not decided -- runs on the object ``__new__`` returns, which this
+        shape does not read."""
+        _decided, constructor = self.new_entry()
+        if constructor is None or self.initializer_entry() != "object":
             return None
-        constructor = constructors[0]
         if len(constructor.params) < 2 or len(constructor.body) < 3:
             return None
         allocation = constructor.body[0]
@@ -11137,6 +11427,39 @@ class ClassDef(Statement):
             return None
         return owner
 
+    def new_entry(self) -> "tuple[bool, FunctionDef | None]":
+        """``(decided, definition)``: the ``__new__`` a call of this class
+        runs, by the one class-namespace lookup of ``__new__``
+        (``namespace_owner``, over the MRO) -- this class statement's own
+        ``def __new__``, the binding its body leaves (``body_binder``), or
+        None when a builtin class's runs (``object.__new__``, a builtin
+        exception's).
+
+        Not decided -- ``(False, None)`` -- when the lookup is not (an unread
+        base, a decorator or a store that may write ``__new__``, a
+        conditional ``def``), when the class that holds it holds a value its
+        body did not bind as a ``def`` written in the body itself (an
+        assignment, a ``def`` under a constant ``if``), and when the class
+        that holds it is a base: a class call seats only its own statement's
+        ``__new__`` (``SourceVisibleCallFrameV1``), so a base's is no
+        ``__new__`` this call is read with, and the call is the unanswered
+        call -- never a frame that skips the ``__new__`` that runs."""
+        decided, owner = self.namespace_owner("__new__")
+        if not decided:
+            return False, None
+        if owner is None or isinstance(owner, str):
+            return True, None
+        if SourceOccurrenceIdentityV1.of(owner) != SourceOccurrenceIdentityV1.of(
+            self
+        ) or not self.namespace_value_is_body("__new__"):
+            return False, None
+        binder = self.body_binder("__new__")
+        if not isinstance(binder, FunctionDef) or not any(
+            item is binder for item in self.body
+        ):
+            return False, None
+        return True, binder
+
     def method_resolution_head(self) -> tuple:
         """What every MRO Python builds for this class starts with, read when
         the whole order (``method_resolution_order``) is not: this class,
@@ -11158,7 +11481,25 @@ class ClassDef(Statement):
         (``_class_block_binding``): an unconditional binding is True, a
         ``del`` after it False, an annotation alone (``x: int``) nothing, and
         a binding or ``del`` under control flow the body does not decide (an
-        ``if c:``, a ``try`` whose handler passes, a loop) None."""
+        ``if c:``, a ``try`` whose handler passes, a loop) None.  The
+        statement whose binding stands is ``body_binder``'s."""
+        binder = self.body_binder(name)
+        if binder is None or binder is False:
+            return binder
+        return True
+
+    def body_binder(self, name: str):
+        """The class-body statement whose binding of ``name`` the class
+        namespace holds once the body has run -- the last one the body runs
+        (``_class_block_binding``): a ``def``, an assignment, a nested
+        ``class``, an import.  False when the body leaves ``name`` unbound,
+        None when its own control flow does not decide it
+        (``_body_binding``'s answer, read off the same walk).
+
+        The member a read of ``name`` on the class meets is this statement's
+        value, never an earlier binding of the same name: a ``def`` after a
+        ``property``, an assignment after a ``def`` (``ObjectValue.class_member``).
+        """
         table = self.unit.class_symtable(self.name, self.line_col_span().start_line)
         try:
             symbol = table.lookup(name)
@@ -11631,15 +11972,15 @@ class ClassDef(Statement):
             else (None if new_shape is None else new_shape[0])
         )
         constructed_new_method = None
-        new_definitions = tuple(
-            item
-            for item in self.body
-            if isinstance(item, FunctionDef) and item.name == "__new__"
-        )
-        if len(new_definitions) == 1:
+        # The ``__new__`` the call runs, through the one class-namespace
+        # lookup (``new_entry``).  A class whose ``__new__`` is not decided,
+        # or is a base's, has no frame here: its call is the unanswered call
+        # (``SourceUnit.source_class_admits_source_constructor_frame``,
+        # ``ClassDefinitionValue.callable_application_with``).
+        _new_decided, new_definition = self.new_entry()
+        if new_definition is not None:
             from sugar_lift_py_tests.floor import ConstructedClassMethodV1
 
-            new_definition = new_definitions[0]
             constructed_new_method = ConstructedClassMethodV1(
                 new_definition.name,
                 new_definition.fragment.seal().cid,
@@ -11664,7 +12005,7 @@ class ClassDef(Statement):
         # exception construction during module-wide frame resolution — and that
         # silence blocked authenticated generator managers whose helpers only
         # *mention* those raises.
-        if initializer is None and new_shape is None and not new_definitions:
+        if initializer is None and new_shape is None and new_definition is None:
             dataclass_fields = self._dataclass_generated_init_fields()
             if dataclass_fields is not None:
                 return self._dataclass_constructor_frame(

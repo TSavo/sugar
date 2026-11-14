@@ -359,8 +359,10 @@ def _source_instance_method_call(
     (``ObjectValue.attribute``), never a method selected beside it, and the
     value it answers is applied by the one routine (``apply_callee``):
 
-    - a method the class binds is a ``BoundMethodValue``, bound and applied
-      by ``bind_method_call`` (``call_method_value`` on the receiver);
+    - a method the class binds is a ``BoundMethodValue`` carrying the member
+      the lookup selected, bound and applied by ``bind_method_call``
+      (``ObjectValue.call_member``), and so is a function the class
+      namespace holds as a field (``function.__get__`` binds the receiver);
     - an instance field that shadows the method is that field's value
       called (``self.m = lambda: 1`` -> ``o.m()`` is ``1``);
     - on an instance whose fields are not current (it arrived by binding,
@@ -395,13 +397,14 @@ def _source_instance_method_call(
             and type(callee) is BoundMethodValue
             and callee.receiver is receiver
         ):
-            return receiver.call_method_value(
-                name,
+            # The member the attribute read selected, bound with the frame
+            # the call form authenticated: never selected again by name.
+            return callee.call_with(
                 positional,
+                kw_values,
                 owner="MethodCallSugar",
-                blame=site,
+                site=site,
                 ctx=ctx,
-                keywords=kw_values,
                 required_frame=source_call_frame,
             )
         return apply_callee(callee, positional, kw_values, site, ctx, unanswered)
