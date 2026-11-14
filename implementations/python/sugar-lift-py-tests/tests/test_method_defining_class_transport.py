@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.floor import CallSiteValue
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
@@ -28,9 +27,9 @@ def _definitions():
 def _constructed_pair():
     base, derived = _definitions()
     context = ReduceContext.root(owner="test")
-    base_value = base.sugar().desugar(context).value
+    base_value = base.sugar().desugar(context).completed_value()
     context.temporal = context.temporal.bind_value("Base", base_value)
-    derived_value = derived.sugar().desugar(context).value
+    derived_value = derived.sugar().desugar(context).completed_value()
     return context, base_value, derived_value
 
 
@@ -54,12 +53,12 @@ def test_inherited_method_binds_lexical_class_not_runtime_receiver_class() -> No
         "owner", (), owner="test", blame="call-owner", ctx=context
     )
 
-    assert isinstance(projected, Complete)
-    assert isinstance(projected.value, CallSiteValue)
-    assert projected.value.lexical_defining_class is base
-    reduced = projected.value.retained_source_completion_outcome()
-    assert isinstance(reduced, Complete)
-    assert reduced.value.statements[0].value is base
+    assert projected.completed_value() is not None
+    assert isinstance(projected.completed_value(), CallSiteValue)
+    assert projected.completed_value().lexical_defining_class is base
+    reduced = projected.completed_value().retained_source_completion_outcome()
+    assert reduced.completed_value() is not None
+    assert reduced.completed_value().statements[0].value is base
 
 
 def test_overriding_method_uses_derived_defining_class() -> None:
@@ -71,13 +70,13 @@ def test_overriding_method_uses_derived_defining_class() -> None:
     )
     (derived,) = tuple(node for node in tree.root.body if isinstance(node, ClassDef))
     context = ReduceContext.root(owner="test")
-    derived_value = derived.sugar().desugar(context).value
+    derived_value = derived.sugar().desugar(context).completed_value()
     receiver = derived_value.construct_receiver_state_from_block(None, "receiver")
 
     projected = receiver.call_method_value(
         "owner", (), owner="test", blame="call-owner", ctx=context
-    ).value
+    ).completed_value()
 
     assert projected.lexical_defining_class is derived_value
     reduced = projected.retained_source_completion_outcome()
-    assert reduced.value.statements[0].value is derived_value
+    assert reduced.completed_value().statements[0].value is derived_value

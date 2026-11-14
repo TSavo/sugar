@@ -45,12 +45,11 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, BinOp, Call, Compare, Name
 from sugar_source_tree.tree import SourceFile
 from test_method_call_application_twins import bound_method_call_at
-from sugar_lift_py_tests.outcome import Incomplete
 
 # ---------------------------------------------------------------------------
 # Owner named on every red face (codex-3 general producer)
@@ -167,8 +166,6 @@ def _identity(name: str):
 
 def _completed_sum_value(outcome) -> int:
     """Project BinOp completion to the integer sum (direct twin: 41+1 → 42)."""
-    if isinstance(outcome, Complete) and isinstance(outcome.value, TermValue):
-        return int(outcome.value.value)
     if isinstance(outcome, ExitSet) and len(outcome.exits) == 1:
         face = outcome.exits[0]
         if isinstance(face, Completed) and isinstance(face.value, TermValue):
@@ -184,11 +181,6 @@ def _completed_compare_is_true(outcome) -> bool:
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 
-    if isinstance(outcome, Complete):
-        if isinstance(outcome.value, TrueBoolLiteralSugar):
-            return True
-        if isinstance(outcome.value, FalseBoolLiteralSugar):
-            return False
     if isinstance(outcome, ExitSet) and len(outcome.exits) == 1:
         face = outcome.exits[0]
         if isinstance(face, Completed):
@@ -212,10 +204,6 @@ def _store_value_actual(outcome) -> object:
             args = face.value.arg_values
             assert len(args) == 3, args
             return args[2]
-    if isinstance(outcome, Complete) and isinstance(outcome.value, CallSiteValue):
-        args = outcome.value.arg_values
-        assert len(args) == 3, args
-        return args[2]
     raise AssertionError(
         f"{CODEX3_GENERAL_PRODUCER} — setitem store face has no value actual: "
         f"{type(outcome).__name__} {outcome!r:.200}"
@@ -245,7 +233,7 @@ def _collect_return_values(root) -> list:
         if isinstance(value, ReturnValue):
             found.append(value)
             continue
-        if isinstance(value, Incomplete):
+        if isinstance(value, ExitSet):
             continue
         statements = getattr(value, "statements", None)
         if statements:
@@ -402,15 +390,17 @@ def test_discrimination_completed_return_is_not_valueerror_halt() -> None:
     """Positive twin returns 41; must not be a ValueError halt."""
     site = _attr_callsite(FACTORY_MAKE_41 + "\nFactory().make()\n", "make")
     outcome = site.producer_outcome(None)
-    if isinstance(outcome, ExitSet):
+    assert isinstance(outcome, ExitSet), outcome
+    if outcome.completed_value() is not None:
+        dug = outcome.completed_value()._dig_floor_or_none(
+            None, owner="method-return-as-actual"
+        )
+        assert dug == TermValue(41)
+    else:
         assert not any(
             isinstance(e, Halted) and e.effect.exception_name == "ValueError"
             for e in outcome.exits
         )
-    else:
-        assert isinstance(outcome, Complete)
-        dug = outcome.value._dig_floor_or_none(None, owner="method-return-as-actual")
-        assert dug == TermValue(41)
 
 
 # ---------------------------------------------------------------------------
@@ -421,7 +411,7 @@ def test_discrimination_completed_return_is_not_valueerror_halt() -> None:
 def test_chained_method_return_stays_honestly_typed() -> None:
     """``Factory().make().other()`` must complete as 7, or fail loud naming codex-3.
 
-    Fabricated green (silent Complete without return 7) is forbidden. Loud
+    Fabricated green (silent completion without return 7) is forbidden. Loud
     ConstructionPanic / TypeError is acceptable until codex-3 projects the
     intermediate return as the receiver of ``.other()``.
     """
@@ -440,8 +430,10 @@ def test_chained_method_return_stays_honestly_typed() -> None:
         ) from err
 
     # Green path: dig / complete to TermValue(7).
-    if isinstance(outcome, Complete) and isinstance(outcome.value, CallSiteValue):
-        dug = outcome.value._dig_floor_or_none(None, owner="method-return-as-actual")
+    if isinstance(outcome.completed_value(), CallSiteValue):
+        dug = outcome.completed_value()._dig_floor_or_none(
+            None, owner="method-return-as-actual"
+        )
         if dug == TermValue(7):
             return
         returns = _collect_return_values(dug) if dug is not None else []
@@ -451,8 +443,8 @@ def test_chained_method_return_stays_honestly_typed() -> None:
             f"{CODEX3_GENERAL_PRODUCER} — chained other() completed without "
             f"return floor TermValue(7): dig={type(dug).__name__ if dug else None}"
         )
-    if isinstance(outcome, Complete) and isinstance(outcome.value, TermValue):
-        assert outcome.value == TermValue(7)
+    if isinstance(outcome.completed_value(), TermValue):
+        assert outcome.completed_value() == TermValue(7)
         return
     raise AssertionError(
         f"{CODEX3_GENERAL_PRODUCER} — chained make().other() face not TermValue(7): "

@@ -270,10 +270,10 @@ def _test_function_outcome(source: str):
 
 @pytest.mark.parametrize("form", sorted(_IN_PROCESS_PAIRS))
 def test_method_raise_reaches_the_caller_in_process(form: str) -> None:
-    from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+    from sugar_lift_py_tests.outcome import ExitSet, Halted
 
     truthful, lying, exception = _IN_PROCESS_PAIRS[form]
-    assert isinstance(_test_function_outcome(truthful), Complete)
+    assert _test_function_outcome(truthful).completed_value() is not None
     outcome = _test_function_outcome(lying)
     assert isinstance(outcome, ExitSet), outcome
     assert [type(face) for face in outcome.exits] == [Halted]
@@ -348,9 +348,9 @@ def test_unknown_receiver_method_call_is_two_faced_in_process() -> None:
     under ``python:unknown_callee_call.completes`` and raising otherwise.
     """
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
-    assert isinstance(_test_function_outcome(_HELD_RECEIVER), Complete)
+    assert _test_function_outcome(_HELD_RECEIVER).completed_value() is not None
     outcome = _test_function_outcome(_UNKNOWN_RECEIVER.format(claim=3))
     assert isinstance(outcome, ExitSet), outcome
     completed = [face for face in outcome.exits if isinstance(face, Completed)]

@@ -261,17 +261,17 @@ def test_boolean_continuing_face_returns_the_exact_second_operand(
             return ()
 
         def desugar(self, ctx=None):
-            from sugar_lift_py_tests.outcome import Complete
+            from sugar_lift_py_tests.outcome import ExitSet
 
-            return Complete(right)
+            return ExitSet.completed(right)
 
         def to_term(self, *, owner: str):
             return right.to_term(owner=owner)
 
     outcome = BoolOpSugar(kind, (left, Right()), "boolop-site").desugar(None)
 
-    assert hasattr(outcome, "value")
-    assert outcome.value is right
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value() is right
 
 
 @pytest.mark.parametrize(
@@ -282,7 +282,7 @@ def test_boolean_continuing_face_returns_the_exact_second_operand(
 def test_ifexp_returns_exact_selected_operand_and_never_evaluates_peer(
     condition_is_true: bool, selected_index: int
 ) -> None:
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -300,7 +300,7 @@ def test_ifexp_returns_exact_selected_operand_and_never_evaluates_peer(
             return ()
 
         def desugar(self, ctx=None):
-            return Complete(selected)
+            return ExitSet.completed(selected)
 
         def to_term(self, *, owner: str):
             return selected.to_term(owner=owner)
@@ -319,13 +319,13 @@ def test_ifexp_returns_exact_selected_operand_and_never_evaluates_peer(
     arms = (Selected(), Skipped()) if selected_index == 0 else (Skipped(), Selected())
     outcome = IfExpSugar(condition, arms[0], arms[1], "ifexp-site").desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value is selected
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value() is selected
 
 
 def test_ifexp_condition_halt_bypasses_both_operands_with_effect_identity() -> None:
     from sugar_lift_py_tests.effect import ExpectationNotMetEffect
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
@@ -337,7 +337,7 @@ def test_ifexp_condition_halt_bypasses_both_operands_with_effect_identity() -> N
             return ()
 
         def desugar(self, ctx=None):
-            return Incomplete(effect)
+            return ExitSet.halted(effect)
 
         def to_term(self, *, owner: str):
             raise AssertionError("halting condition was projected")
@@ -357,8 +357,8 @@ def test_ifexp_condition_halt_bypasses_both_operands_with_effect_identity() -> N
         HaltingCondition(), Skipped(), Skipped(), "ifexp-site"
     ).desugar(None)
 
-    assert isinstance(outcome, Incomplete)
-    assert outcome.effect is effect
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    assert outcome.halts()[0].effect is effect
 
 
 @pytest.mark.parametrize(
@@ -370,7 +370,7 @@ def test_ifexp_selected_halt_preserves_its_occurrence_and_skips_peer(
     condition_is_true: bool, selected_index: int
 ) -> None:
     from sugar_lift_py_tests.effect import ExpectationNotMetEffect
-    from sugar_lift_py_tests.outcome import Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -389,7 +389,7 @@ def test_ifexp_selected_halt_preserves_its_occurrence_and_skips_peer(
             return ()
 
         def desugar(self, ctx=None):
-            return Incomplete(selected_effect)
+            return ExitSet.halted(selected_effect)
 
         def to_term(self, *, owner: str):
             raise AssertionError("selected halting arm was projected as a value")
@@ -414,6 +414,7 @@ def test_ifexp_selected_halt_preserves_its_occurrence_and_skips_peer(
         condition_type("ifexp-condition"), arms[0], arms[1], "ifexp-site"
     ).desugar(None)
 
-    assert isinstance(outcome, Incomplete)
-    assert outcome.effect is selected_effect
-    assert outcome.effect.site == f"arm-{selected_index}-occurrence"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect is selected_effect
+    assert halt.effect.site == f"arm-{selected_index}-occurrence"

@@ -9,7 +9,7 @@ from sugar_lift_py_tests.floor.branch_result_coordinate import (
     BranchResultAuthentication,
     branch_result_guard,
 )
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.binding_state import branch_result_slot
 from sugar_source_tree.nodes import Call, Compare, If
@@ -49,10 +49,10 @@ def test_raw_source_if_routes_through_one_condition_owned_slot() -> None:
 
     slot = branch_result_slot(branch.test)
     assert sugar.branch_slot == slot
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     authentications = tuple(
         entry
-        for entry in outcome.value.unconditional_entries
+        for entry in outcome.completed_value().unconditional_entries
         if isinstance(entry, BranchResultAuthentication)
     )
     assert len(authentications) == 1
@@ -76,8 +76,8 @@ def test_renamed_raw_source_if_uses_its_exact_condition_slot() -> None:
 
     slot = branch_result_slot(branch.test)
     assert sugar.branch_slot == slot
-    assert isinstance(outcome, Complete)
-    assert outcome.value.guard == branch_result_guard(slot, sugar.site)
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().guard == branch_result_guard(slot, sugar.site)
 
 
 def test_repeated_raw_source_if_construction_does_not_mint_a_second_slot() -> None:
@@ -88,10 +88,10 @@ def test_repeated_raw_source_if_construction_does_not_mint_a_second_slot() -> No
     outcome = second.desugar(None)
 
     assert second is first
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     authentications = tuple(
         entry
-        for entry in outcome.value.unconditional_entries
+        for entry in outcome.completed_value().unconditional_entries
         if isinstance(entry, BranchResultAuthentication)
     )
     assert len(authentications) == 1
@@ -107,8 +107,8 @@ def test_condition_owned_slot_constructs_one_authenticated_guard() -> None:
     outcome = sugar.desugar(None)
 
     assert sugar.branch_slot == slot
-    assert isinstance(outcome, Complete)
-    guarded = outcome.value
+    assert outcome.completed_value() is not None
+    guarded = outcome.completed_value()
     assert guarded.guard == branch_result_guard(slot, rewritten.fragment)
     assert len(guarded.unconditional_entries) == 1
     authentication = guarded.unconditional_entries[0]
@@ -197,8 +197,8 @@ def test_complementary_results_share_only_the_condition_owned_slot() -> None:
 
     outcome = rewritten.sugar().desugar(None)
 
-    assert isinstance(outcome, Complete)
-    guarded = outcome.value
+    assert outcome.completed_value() is not None
+    guarded = outcome.completed_value()
     expected = branch_result_guard(slot, rewritten.fragment)
     assert guarded.guard == expected
     assert len(guarded.entries) == 2
@@ -249,8 +249,8 @@ def test_identical_condition_spellings_at_distinct_ifs_do_not_share_slots() -> N
     )
     assert expected_guards[0] != expected_guards[1]
     for outcome, slot, expected in zip(outcomes, slots, expected_guards, strict=True):
-        assert isinstance(outcome, Complete)
-        guarded = outcome.value
+        assert outcome.completed_value() is not None
+        guarded = outcome.completed_value()
         assert guarded.guard == expected
         authentications = tuple(
             entry
@@ -276,10 +276,10 @@ def test_ground_true_if_does_not_authenticate_an_unused_slot() -> None:
 
     outcome = branch.sugar().desugar(None)
 
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     authentications = tuple(
         entry
-        for entry in outcome.value.unconditional_entries
+        for entry in outcome.completed_value().unconditional_entries
         if isinstance(entry, BranchResultAuthentication)
     )
     assert authentications == ()
@@ -307,10 +307,10 @@ def test_ground_false_if_records_branch_result_for_the_phi() -> None:
     sugar = branch.sugar()
     outcome = sugar.desugar(ctx)
 
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     authentications = tuple(
         entry
-        for entry in outcome.value.unconditional_entries
+        for entry in outcome.completed_value().unconditional_entries
         if isinstance(entry, BranchResultAuthentication)
     )
     assert authentications == ()
@@ -319,5 +319,5 @@ def test_ground_false_if_records_branch_result_for_the_phi() -> None:
     resolved = BranchResultRefSugar(
         slot=sugar.branch_slot, site=branch.fragment
     ).desugar(ctx)
-    assert isinstance(resolved, Complete)
-    assert isinstance(resolved.value, FalseBoolLiteralSugar)
+    assert resolved.completed_value() is not None
+    assert isinstance(resolved.completed_value(), FalseBoolLiteralSugar)

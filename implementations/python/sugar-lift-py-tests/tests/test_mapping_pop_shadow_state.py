@@ -9,7 +9,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.mapping_pop_state_sugar import MappingPopStateSugar
 from sugar_lift_py_tests.sugar.mapping_pop_result_sugar import MappingPopResultSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -29,7 +29,7 @@ class _FloorSugar(ConstructedTermSugar):
     def desugar(self, ctx=None):
         del ctx
         self.evaluations.append(self.label)
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner):
         return self.value.to_term(owner=owner)
@@ -43,9 +43,9 @@ def _pop(receiver, key):
         default=_FloorSugar(TermValue(None), order, "default"),
         site="pop-site",
     ).desugar(None)
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     assert order == ["receiver", "key", "default"]
-    return outcome.value
+    return outcome.completed_value()
 
 
 def _pop_result(receiver, key, default):
@@ -55,8 +55,8 @@ def _pop_result(receiver, key, default):
         default=_FloorSugar(default, [], "default"),
         site="pop-site",
     ).desugar(None)
-    assert isinstance(outcome, Complete)
-    return outcome.value
+    assert outcome.completed_value() is not None
+    return outcome.completed_value()
 
 
 def test_present_key_is_removed_without_replacing_receiver_identity() -> None:
@@ -129,8 +129,8 @@ def test_inherited_get_projects_present_and_default_values() -> None:
         "get", (StringValue("missing"), TermValue(9)), owner="test", blame="site"
     )
 
-    assert isinstance(present, Complete) and present.value == TermValue(1)
-    assert isinstance(missing, Complete) and missing.value == TermValue(9)
+    assert present.completed_value() == TermValue(1)
+    assert missing.completed_value() == TermValue(9)
 
 
 def test_inherited_items_retains_insertion_order_and_pairing() -> None:
@@ -146,8 +146,8 @@ def test_inherited_items_retains_insertion_order_and_pairing() -> None:
 
     outcome = receiver.call_method_value("items", (), owner="test", blame="site")
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value == TupleValue(
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value() == TupleValue(
         (
             TupleValue((StringValue("first"), TermValue(1))),
             TupleValue((StringValue("second"), TermValue(2))),

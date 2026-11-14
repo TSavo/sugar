@@ -21,7 +21,7 @@ from sugar_lift_py_tests.sugar.assert_sugar import AssertSugar
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 
 VENDOR_TEST_FILE = "def test_one():\n    assert 1 == 1\n"
 
@@ -59,20 +59,18 @@ def test_lift_a_single_assertion_all_the_way_to_sugar():
         assert sugar.test.right.value == 1
 
         # and the operands desugar to the number as floor terms
-        assert sugar.test.left.desugar() == Complete(TermValue(1))
-        assert sugar.test.right.desugar() == Complete(TermValue(1))
+        assert sugar.test.left.desugar() == ExitSet.completed(TermValue(1))
+        assert sugar.test.right.desugar() == ExitSet.completed(TermValue(1))
 
         # the whole assertion desugars — no context, no temporal, no factory:
         #   1 == 1 reduces to True; True states its inv; the assert is testimony
-        from sugar_lift_py_tests.outcome import Complete as _C
-
         outcome = sugar.desugar(None)
-        assert isinstance(outcome, _C)
+        assert outcome.completed_value() is not None
         # the assertion EMITS a fact: the vendor asserted 1 == 1, so the record
         # carries the inv `1 = 1` — a real invariant, trivially valid, with NO
         # call site and no contract. Not SupportValue: the assertion owns the
         # emission; the value does not get to opt out because it is ground-true.
-        inv = outcome.value
+        inv = outcome.completed_value()
         assert type(inv).__name__ == "InvValue"
         assert inv.operand_callsites == ()  # no call site
         assert inv.formula.name == "="  # the fact is an equality

@@ -46,7 +46,7 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import CallSiteValue, ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call
@@ -440,13 +440,11 @@ def test_discrimination_completed_return_is_not_valueerror_halt() -> None:
     )
     site = _method_callsite(source)
     outcome = site.producer_outcome(None)
-    if isinstance(outcome, ExitSet):
-        assert not any(
-            isinstance(e, Halted) and e.effect.exception_name == "ValueError"
-            for e in outcome.exits
-        ), f"{CODEX3}: completed method must not publish ValueError halt"
-    else:
-        assert isinstance(outcome, Complete)
+    assert isinstance(outcome, ExitSet), outcome
+    assert not any(
+        isinstance(e, Halted) and e.effect.exception_name == "ValueError"
+        for e in outcome.exits
+    ), f"{CODEX3}: completed method must not publish ValueError halt"
 
 
 # ===========================================================================

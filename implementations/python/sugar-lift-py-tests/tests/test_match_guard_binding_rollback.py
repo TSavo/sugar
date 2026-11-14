@@ -23,7 +23,7 @@ import pytest
 from sugar_lift_py_tests.context.reduce_context import ReduceContext
 from sugar_lift_py_tests.effect import NameErrorEffect, RaiseEffect
 from sugar_lift_py_tests.floor import ReturnValue, TermValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
@@ -104,11 +104,6 @@ def _returns(outcome: ExitSet) -> list:
 
 
 def _block_entries(outcome):
-    if isinstance(outcome, Complete):
-        block = outcome.value
-        return tuple(
-            getattr(block, "statements", None) or getattr(block, "entries", None) or ()
-        )
     if isinstance(outcome, ExitSet):
         entries = []
         for face in outcome.exits:
@@ -122,7 +117,7 @@ def _block_entries(outcome):
 
 
 def _block_return_values(outcome) -> list:
-    """Pull TermValues from MatchSugar Complete(BlockValue)."""
+    """Pull TermValues from MatchSugar's completed BlockValue arms."""
     found = []
     for entry in _block_entries(outcome):
         if isinstance(entry, ReturnValue):
@@ -154,7 +149,7 @@ class _CountingSubject(Sugar):
 
     def desugar(self, ctx=None):
         self.calls += 1
-        return Complete(TermValue(self.value))
+        return ExitSet.completed(TermValue(self.value))
 
 
 def test_subject_evaluates_once_across_multiple_cases() -> None:
@@ -194,7 +189,7 @@ def test_capture_visible_to_guard_true_commits_body() -> None:
         MatchCaseSpec(alternatives=(), body=(_ret(_int(0)),)),
     )
     outcome = sugar.desugar(ReduceContext.root(owner="guard-true"))
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     # Under true ground guard, return TermValue(5) is present.
     values = _block_return_values(outcome)
     assert TermValue(5) in values or any(
@@ -268,7 +263,7 @@ def test_false_guard_does_not_leave_capture_for_later_case_scope() -> None:
 
 @dataclass(frozen=True)
 class _HaltingGuard(Sugar):
-    """Guard that always Incomplete-halts with a named effect."""
+    """Guard that always halts with a named effect."""
 
     site: object = SITE
 
@@ -277,7 +272,7 @@ class _HaltingGuard(Sugar):
         return ()
 
     def desugar(self, ctx=None):
-        return Incomplete(
+        return ExitSet.halted(
             RaiseEffect.for_builtin(
                 "ValueError",
                 blame=str(self.site),
@@ -303,28 +298,19 @@ def test_guard_halt_bypasses_later_cases() -> None:
         ),
     )
     outcome = sugar.desugar(ReduceContext.root(owner="guard-halt"))
-    # Guard halt: Halted (or ExitSet.collapse → Incomplete for sole true-guard
-    # halt). Later cases do not contribute an unguarded Completed winner.
-    if isinstance(outcome, Incomplete):
-        assert outcome.effect.exception_name == "ValueError"
-        return
-    if isinstance(outcome, ExitSet):
-        halted = [e for e in outcome.exits if isinstance(e, Halted)]
-        assert halted, outcome.exits
-        assert any(h.effect.exception_name == "ValueError" for h in halted)
-        completed = [e for e in outcome.exits if isinstance(e, Completed)]
-        for face in completed:
-            from sugar_lift_py_tests.outcome.exit_set import true_guard
+    # Guard halt: a Halted arm (a record holds no halt, #7826). Later cases do
+    # not contribute an unguarded Completed winner.
+    assert isinstance(outcome, ExitSet), outcome
+    halted = [e for e in outcome.exits if isinstance(e, Halted)]
+    assert halted, outcome.exits
+    assert any(h.effect.exception_name == "ValueError" for h in halted)
+    completed = [e for e in outcome.exits if isinstance(e, Completed)]
+    for face in completed:
+        from sugar_lift_py_tests.outcome.exit_set import true_guard
 
-            if face.guard == true_guard():
-                rets = _block_return_values(ExitSet((face,)))
-                assert TermValue(2) not in rets
-        return
-    assert isinstance(outcome, Complete)
-    entries = _block_entries(outcome)
-    incompletes = [e for e in entries if isinstance(e, Incomplete)]
-    assert incompletes, entries
-    assert incompletes[0].effect.exception_name == "ValueError"
+        if face.guard == true_guard():
+            rets = _block_return_values(ExitSet((face,)))
+            assert TermValue(2) not in rets
 
 
 # ===========================================================================
@@ -409,9 +395,9 @@ def test_swapped_capture_name_does_not_bind_wrong_name() -> None:
         MatchCaseSpec(alternatives=(), body=(_ret(_int(2)),)),
     )
     # Free name y becomes symbolic; comparison may factored dual faces — must not
-    # silently treat as capture x. Outcome may be ExitSet (multi-face) or Complete.
+    # silently treat as capture x. Outcome may be multi-face or one completed arm.
     outcome = sugar.desugar(ReduceContext.root(owner="swap-name"))
-    assert isinstance(outcome, (Complete, ExitSet))
+    assert isinstance(outcome, ExitSet)
 
 
 def test_binding_swap_twin_refuses_same_outcome_as_truthful_capture() -> None:

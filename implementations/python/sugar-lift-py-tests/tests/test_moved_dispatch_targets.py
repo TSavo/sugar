@@ -29,8 +29,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.floor.function_callable import FunctionCallable
 from sugar_lift_py_tests.sugar.function_body_universe import FunctionBodyUniverse
 from sugar_lift_py_tests.ir import _Ctor, make_var
-from sugar_lift_py_tests.outcome import Complete
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor
@@ -58,8 +57,8 @@ def test_floor_to_term_arms_project_through_the_value_s_own_to_term() -> None:
 
     outcome = receiver.setitem(index, value, "setitem-site")
 
-    assert isinstance(outcome, Complete)
-    term = outcome.value.term
+    assert outcome.completed_value() is not None
+    term = outcome.completed_value().term
     assert isinstance(term, _Ctor)
     assert term.name == "py.setitem"
     # Exact cardinality: receiver, index, value -- one projected term each, and
@@ -83,14 +82,15 @@ def test_dynamic_isinstance_projects_the_value_through_its_owned_term_door() -> 
 
     outcome = dynamic_type.test_python_type(value, site)
 
-    assert isinstance(outcome, Incomplete)
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
     expected = ctor(
         "adt.is_python_type",
         [value.to_term(owner="isinstance value"), dynamic_type.term],
     )
-    assert outcome.effect.witness.operation == expected
-    assert outcome.effect.witness.operand == dynamic_type.term
-    assert outcome.effect.witness.site is site
+    assert halt.effect.witness.operation == expected
+    assert halt.effect.witness.operand == dynamic_type.term
+    assert halt.effect.witness.site is site
 
 
 def test_dynamic_isinstance_keeps_a_value_owned_term_refusal_loud() -> None:
@@ -115,9 +115,9 @@ def test_array_repetition_folds_the_same_law_list_and_tuple_fold() -> None:
 
     outcome = ArrayLiteral((element,)).multiply(TermValue(64), "multiply-site", None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, ArrayLiteral)
-    assert outcome.value.items == (element,) * 64
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), ArrayLiteral)
+    assert outcome.completed_value().items == (element,) * 64
 
 
 @pytest.mark.parametrize(
@@ -136,10 +136,10 @@ def test_no_cardinality_refuses_a_concrete_repetition(sequence, count) -> None:
     """
     outcome = sequence.multiply(TermValue(count), "multiply-site", None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, GroundSequenceRepetitionValue)
-    assert outcome.value.repetitions == count
-    term = outcome.value.to_term(owner="multiply-site")
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), GroundSequenceRepetitionValue)
+    assert outcome.completed_value().repetitions == count
+    term = outcome.completed_value().to_term(owner="multiply-site")
     assert isinstance(term, _Ctor)
     assert term.name == "python:sequence_repeat"
     assert len(term.args) == 2
@@ -151,9 +151,9 @@ def test_a_symbolic_count_is_the_same_closed_coordinate() -> None:
         SymbolicValue(make_var("n")), "multiply-site", None
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, SymbolicValue)
-    assert outcome.value.term.name == "python:sequence_repeat"
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), SymbolicValue)
+    assert outcome.completed_value().term.name == "python:sequence_repeat"
 
 
 class _MethodCallOperation:
@@ -176,9 +176,9 @@ def test_static_join_folds_at_any_cardinality() -> None:
         StringValue(","), _MethodCallOperation("join", (parts,))
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, StringValue)
-    assert outcome.value.value == ",".join(str(n) for n in range(300))
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), StringValue)
+    assert outcome.completed_value().value == ",".join(str(n) for n in range(300))
 
 
 def test_an_opaque_join_iterable_still_only_coordinates() -> None:
@@ -191,9 +191,9 @@ def test_an_opaque_join_iterable_still_only_coordinates() -> None:
         _MethodCallOperation("join", (SymbolicValue(make_var("xs")),)),
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, OpaqueOpCallsite)
-    assert outcome.value.computed is None
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), OpaqueOpCallsite)
+    assert outcome.completed_value().computed is None
 
 
 def test_the_deleted_cap_module_is_not_quietly_back() -> None:
@@ -250,7 +250,7 @@ class _RecordingOperation:
 
     def submit(self, value, ctx):
         self.submitted_to.append(value)
-        return Complete(value)
+        return ExitSet.completed(value)
 
 
 def test_a_block_redispatches_its_single_exit_by_submitting_the_operation():
@@ -261,7 +261,7 @@ def test_a_block_redispatches_its_single_exit_by_submitting_the_operation():
 
     outcome = BlockValue((exit_value,)).subscript_with(operation, None)
 
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     # Exact cardinality: submitted once, to the single exit -- not to the block.
     assert operation.submitted_to == [exit_value]
 
@@ -333,9 +333,9 @@ def test_binding_a_call_no_longer_reaches_a_deleted_dig_body() -> None:
 
     outcome = callable_.callsite((TermValue(1),), (), "call-site")
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.target_name == "f"
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert outcome.completed_value().target_name == "f"
 
 
 def test_the_dig_body_type_exists_nowhere_so_no_arm_may_claim_it() -> None:
