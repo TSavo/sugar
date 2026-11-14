@@ -142,106 +142,11 @@ def project_augmented(
 
 
 @dataclass(frozen=True)
-class SubscriptAugAssignSugar(Sugar):
-    """``receiver[index] OP= rhs`` — get once, operate, setitem last.
-
-    Composition uses the outcome/carrier ``and_then`` law directly.
-    ``operation`` is an explicit ``project_*`` function; ``operator`` is the
-    carrier name from the source BinaryOperator class.
-    ``op_site`` is the structural operator gap minted before substitute.
-    """
-
-    receiver: Sugar
-    index: Sugar
-    rhs: Sugar
-    operator: str
-    operation: Callable
-    get_site: object = dataclass_field(compare=False)
-    op_site: object = dataclass_field(compare=False)
-    set_site: object = dataclass_field(compare=False)
-    site: object = dataclass_field(compare=False)
-    # The store's halted face reached nothing inside this statement: the
-    # reducer gives it the prefix (``store_faces``).
-    halts_at_statement_head: ClassVar[bool] = True
-
-    @classmethod
-    def witnesses(cls):
-        return ()
-
-    def desugar(self, ctx: object = None) -> ExitSet:
-        # The read is the one subscript door a source ``receiver[index]``
-        # takes (``discharge_subscript``): a formal operand defers to the
-        # caller, and an actual that owns only ``subscript_with``
-        # (``ObjectValue``, ``DictLiteralValue``, ...) answers through it.
-        from sugar_lift_py_tests.operations.subscript_operation import (
-            discharge_subscript,
-        )
-
-        return self.receiver.desugar(ctx).and_then(
-            lambda receiver: self.index.desugar(ctx).and_then(
-                lambda index: discharge_subscript(
-                    receiver,
-                    index,
-                    self.get_site,
-                    ctx,
-                    owner=type(self).__name__,
-                ).and_then(
-                    lambda current: self.rhs.desugar(ctx).and_then(
-                        lambda right: project_augmented(
-                            current,
-                            right,
-                            operator=self.operator,
-                            projector=self.operation,
-                            site=self.op_site,
-                            ctx=ctx,
-                        ).and_then(
-                            lambda result: self._store(receiver, index, result, ctx)
-                        )
-                    )
-                )
-            )
-        )
-
-    def _store(self, receiver, index, result, ctx) -> ExitSet:
-        coordinates = tuple(
-            getattr(operand, "formal_coordinate", None)
-            for operand in (receiver, index, result)
-        )
-        if any(coordinate is not None for coordinate in coordinates):
-            from sugar_lift_py_tests.sugar.store_effect_sugar import (
-                SubscriptStoreEffectSugar,
-            )
-
-            return SubscriptStoreEffectSugar.mint_setitem_carrier(
-                site=self.set_site,
-                receiver=receiver,
-                index=index,
-                value=result,
-            )
-        if not receiver.runtime_type_is_decided():
-            from sugar_source_tree.panic import SugarNotWritten
-
-            raise SugarNotWritten(
-                owner="SubscriptAugAssignSugar._store",
-                blame=self.set_site,
-                observed="undischarged augmented subscript store over undecided receiver",
-                requested=(
-                    "NativeOperationExitCarrierV1 n-ary setitem demand over "
-                    "receiver, key, and result formal coordinates"
-                ),
-                fix=(
-                    "attach formal coordinates via AugAssign.substitute store-target "
-                    "law (same door as Assign); do not invent setitem completion"
-                ),
-            )
-        return receiver.setitem(index, result, self.set_site, ctx)
-
-
-@dataclass(frozen=True)
 class AttributeAugAssignSugar(Sugar):
     """``receiver.attr OP= rhs`` — get once, operate, setattr last.
 
-    Same substrate as ``SubscriptAugAssignSugar``:
+    (An item target, ``receiver[index] OP= rhs``, is the one mutation door's
+    read-modify-store: ``PathContainerCallSugar._read_modify_store``.)
 
       1. Evaluate ``receiver`` once
       2. ``current = attribute_named / attribute`` **before** RHS

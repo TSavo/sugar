@@ -47,9 +47,17 @@ receiver an active ``__init__`` constructs):
 
 The same door serves a mutation through a path (``path_mutation_statement``,
 ``path_item_statement``: ``a.b.append(x)``, ``a[i][j] = v``, ``d['k'][0] +=
-1``, ``del a.b[k]``) and ``d.setdefault(k, v).<mutator>(...)``, its value
-bound or not (``setdefault_mutation_statement``: the setdefault is the
-name's operation, its value the path's receiver).
+1``, ``del a.b[k]``), an augmented item store on a receiver no bound name
+reaches (``unrooted_item_statement``: ``f()[0] += 1``) and
+``d.setdefault(k, v).<mutator>(...)`` on a name or through a path
+(``self.d.setdefault(k, []).append(x)``), its value bound or not
+(``setdefault_mutation_statement``: the setdefault is the receiver's
+operation, its value the path's receiver).
+
+Which object a read out of another object is, is decided only where the
+source says (``_contains``): two members of one opaque value (``a, b =
+g()``) may be one object, so a mutation through one makes every other (and
+every holder) the mutation's opaque post-state.
 
 Names are only rebound; nothing here decides what a call does.
 """
@@ -352,30 +360,104 @@ def _walk_values(node, *, kept_only=True):
                 stack.append(child)
 
 
-def _contains(state, target) -> bool:
-    """Whether the value ``state`` holds ``target``'s object.
+def _contains(state, target, depth=0) -> bool:
+    """Whether the value ``state`` holds (or may be) ``target``'s object.
 
     An object read out of another -- ``x = d['k']``, ``a = c.items``, an
     unpack's member (``a, b = pair``: ``a`` is the object ``pair`` holds
     first, ``Assign._unpack_member_objects``) -- is held by the object it was
     read from, and so by every value that is or holds that object: a
-    mutation of ``a`` changes what ``pair`` holds."""
+    mutation of ``a`` changes what ``pair`` holds.
+
+    Which object an item read is, is decided only where the source says
+    (``_static_member``: ``r = [x]; r[0]`` is ``x``'s object).  Elsewhere --
+    two members of one opaque value (``a, b = g()``: ``g`` may return the
+    same list twice), a starred member's list, which holds the value's
+    other members -- the read may be, or hold, anything the object it was
+    read from holds (``_read_may_hold``): its identity is undecided, and a
+    mutation through one makes the other the mutation's opaque post-state,
+    never its old value.  ``depth`` bounds the chase; past it, a value may
+    hold anything."""
     from .nodes import Name, Node
 
     if not isinstance(state, Node):
         return False
+    if depth > _CONTAINS_DEPTH:
+        return True
+    member = None if isinstance(target, Name) else _member_object(target)
     for node in _walk_values(state):
         if isinstance(target, Name):
             if isinstance(node, Name) and node.id == target.id:
                 return True
-        elif same_object(node, target):
+        elif same_object(node, target) or (
+            member is not None and same_object(node, member)
+        ):
+            return True
+        if _read_may_hold(node, target, depth):
             return True
     if isinstance(target, Name):
         return False
     root, _steps = path_steps(_identity(target))
     if root is None:
         return False
-    return same_object(state, root) or _contains(state, root)
+    return same_object(state, root) or _contains(state, root, depth + 1)
+
+
+# How many reads out of reads ``_contains`` follows before it answers that a
+# value may hold the object (an undecided answer is never "it does not").
+_CONTAINS_DEPTH = 16
+
+
+def _member_object(node):
+    """The node a read out of a display the source decides names
+    (``_static_member``: ``r = [x]; r[0]`` names ``x``), or None."""
+    root, steps = path_steps(_identity(node))
+    if root is None:
+        return None
+    return _static_member(_identity(root), steps)
+
+
+def _undecided_member(node) -> bool:
+    """Whether ``node`` denotes an item read out of an object whose member
+    there the source does not say (``a, b = g()``'s ``a``, ``r[i]``, a
+    starred member's slice): its identity is undecided."""
+    from .nodes import Subscript
+
+    node = _identity(node)
+    return (
+        isinstance(node, Subscript)
+        and path_steps(node)[0] is not None
+        and _member_object(node) is None
+    )
+
+
+def _read_may_hold(node, target, depth) -> bool:
+    """Whether ``node``, an item read out of an object (``r[i]``, an unpack
+    member ``For._item_of``, a starred member's slice), may be or hold
+    ``target``'s object.
+
+    Where the source says which member it reads (``_static_member``), that
+    member's answer.  Otherwise the read's identity is undecided: it may be,
+    or hold, anything the object it was read from holds -- never that
+    object itself.  Only an item read asks: ``_walk_values`` stops at one
+    (``_holds_no_reference``); an attribute read is walked through to its
+    root already."""
+    from .nodes import Name, Subscript
+
+    if not isinstance(node, Subscript):
+        return False
+    root, steps = path_steps(node)
+    if root is None:
+        return False
+    member = _static_member(_identity(root), steps)
+    if member is not None:
+        return _contains(member, target, depth + 1)
+    if isinstance(target, Name):
+        if isinstance(root, Name) and root.id == target.id:
+            return False
+    elif same_object(root, target):
+        return False
+    return _contains(root, target, depth + 1)
 
 
 def aliases(scope, receiver):
@@ -648,11 +730,30 @@ def havoc_after(statement, pre_scope, scope):
     if isinstance(statement, ContainerMutationStatement):
         # Each of its calls is threaded (``d.setdefault(k, v).append(x)``
         # makes two); what their operands' own calls (or a call, for an
-        # operand it keeps) may change is not.
+        # operand it keeps) may change is not, nor what a receiver's own
+        # calls may change (``f(r)[0] += 1``, ``d[g(r)].append(x)``: what it
+        # is handed, and a module object a source function reaches, as for
+        # any statement's call).  A receiver no bound name reaches
+        # (``unrooted_item_statement``: ``(a or b)[0] += 1``) may be any
+        # object it reaches: the store may change each, which its value
+        # decides at reduce.
         targets = []
         for call in statement.evaluated:
             if not isinstance(call, PathContainerCall):
                 continue
+            for inner in _calls(
+                call.receiver, bound_refs, include_container_calls=False
+            ):
+                targets.extend(_call_targets(inner, pre_scope, bound_refs))
+                targets.extend(
+                    (node, _OPERAND_RULES, None)
+                    for _name, node in _module_objects_reached(inner, pre_scope)
+                )
+            if _unrooted(call.receiver):
+                rules = ((call.method, False, False),)
+                targets.extend(
+                    (node, rules, None) for node in _exposed(call.receiver, bound_refs)
+                )
             for arg in call.args:
                 targets.extend(
                     (node, _OPERAND_RULES, None) for node in _exposed(arg, bound_refs)
@@ -1404,22 +1505,69 @@ def path_item_statement(
     )
 
 
+def unrooted_item_statement(
+    statement, scope, *, site, receiver, args, operator_kind, operator_site
+):
+    """The shadow statement for ``f()[k] OP= v``: an augmented item store
+    whose receiver no bound name reaches (``path_item_statement`` found no
+    path from one) -- an unnamed temporary, or an object only an expression
+    reaches (``(a or b)[k] += v``).
+
+    The same door's read-modify-store (``PathContainerCallSugar``): the
+    receiver and the key, the item read, ``v``, the in-place operator on
+    the item, the store of its result -- each once, in Python's order, the
+    receiver's value deciding the store.  No name denotes the temporary, so
+    the statement rebinds none; what the receiver's own calls may change,
+    and every bound object the receiver reaches (the store may change it),
+    is rebound after it (``havoc_after``)."""
+    from .shadow import occurrence_tags_of
+
+    tags = occurrence_tags_of(statement)
+    call = _container_call(
+        site,
+        receiver,
+        "__setitem__",
+        args,
+        None,
+        tags,
+        label="receiver",
+        operator_kind=operator_kind,
+        operator_site=operator_site,
+    )
+    return _statement(
+        statement, (), (), (call,), tags, statement._evaluation_key(scope)
+    )
+
+
+def _unrooted(receiver) -> bool:
+    """Whether ``receiver`` (or the root of its path) is an expression the
+    statement evaluates, not a read of a value a name was bound to: the
+    object it reaches is no name's, so a store on it may change anything it
+    reaches (``unrooted_item_statement``)."""
+    root, _steps = path_steps(receiver)
+    node = receiver if root is None else root
+    return getattr(node, "kind", None) not in _READ_KINDS
+
+
 def setdefault_mutation_statement(statement, scope, *, name, call, target_name=None):
     """The shadow statement for ``d.setdefault(k, v).<mutator>(*args)`` on a
-    name ``d``, or None; with ``target_name``, ``x = d.setdefault(k,
-    v).<mutator>(*args)``, ``x`` bound to the mutator's value (the pair the
-    statement binds for it).
+    name ``d`` (``name``) or on a path from one (``name`` None:
+    ``self.d.setdefault(k, []).append(x)``, ``d[i].setdefault(k, v).pop()``),
+    or None; with ``target_name``, ``x = d.setdefault(k, v).<mutator>(*args)``,
+    ``x`` bound to the mutator's value (the pair the statement binds for it).
 
     Two operations of the one door, in one statement, in Python's order:
-    ``d.setdefault(k, v)`` is the name's own operation (its pair bound under
-    the statement's key), and its value -- the object ``d[k]`` holds after
-    it -- is the receiver of ``.<mutator>(*args)``, a path from ``d`` through
-    the item ``k`` (``_mutation_through``).  Every name bound to ``d`` reads
-    ``d`` after both; a name bound to the object at ``d[k]`` reads that
-    object after the mutator; anything else that shares them (the default
-    ``v`` included) is unknown.  The receiver's value at reduce decides each
-    operation (``PathContainerCallSugar``).  ``call`` is the statement's
-    call, already substituted against ``scope``."""
+    ``d.setdefault(k, v)`` is the receiver's own operation (its pair bound
+    under the statement's key) -- on a path, the operation through it, the
+    path's root after it read as the path door reads it -- and its value --
+    the object ``d[k]`` holds after it -- is the receiver of
+    ``.<mutator>(*args)``, a path from the root through the setdefault's
+    path and the item ``k`` (``_mutation_through``).  Every name bound to
+    the root reads it after both; a name bound to the object at ``d[k]``
+    reads that object after the mutator; anything else that shares them
+    (the default ``v`` included) is unknown.  The receiver's value at reduce
+    decides each operation (``PathContainerCallSugar``).  ``call`` is the
+    statement's call, already substituted against ``scope``."""
     from .nodes import Attribute, Call, Starred, ground_subscript_key
     from .shadow import occurrence_tags_of, rewrite
     from sugar_lift_py_tests.temporal.temporal_context import projection_key
@@ -1437,26 +1585,59 @@ def setdefault_mutation_statement(statement, scope, *, name, call, target_name=N
     ):
         return None
     receiver = inner.func.value
+    path_root, path = (None, ()) if name is not None else path_steps(receiver)
+    if name is None and path_root is None:
+        # Neither a name nor a path from one (``f().setdefault(k,
+        # v).append(x)``): nothing names the dict, an ordinary call.
+        return None
     tags = occurrence_tags_of(statement)
     evaluation = statement._evaluation_key(scope)
     setdefault = _container_call(
-        inner, receiver, "setdefault", inner.args, inner, tags, label=name
-    )
-    # ``d`` after the setdefault, and its value: the path's root and receiver.
-    root_read = _path_after(
         inner,
-        setdefault,
         receiver,
-        (),
-        "root",
-        name,
+        "setdefault",
+        inner.args,
+        inner,
         tags,
-        True,
-        evaluation=evaluation,
-        prior=receiver,
+        label=name if name is not None else "receiver",
     )
-    member = _projection(inner, setdefault, 1, tags, evaluation)
     key = ground_subscript_key(inner.args[0])
+    step = ("undecided", None) if key is None else ("item", key)
+    if path_root is None:
+        # ``d`` after the setdefault, and its value: the path's root and
+        # receiver.
+        root_read = _path_after(
+            inner,
+            setdefault,
+            receiver,
+            (),
+            "root",
+            name,
+            tags,
+            True,
+            evaluation=evaluation,
+            prior=receiver,
+        )
+        root_object, steps = None, (step,)
+    else:
+        # The root after the setdefault through its path (the path door's
+        # root after a call), and the mutator's path from that root: the
+        # setdefault's path, then ``k``.  The root still denotes its object.
+        shape = _identity(path_root)
+        held = _static_member(shape, path)
+        root_read = _path_after(
+            inner,
+            setdefault,
+            path_root,
+            path,
+            "root",
+            "",
+            tags,
+            held is not None and _path_count(shape, held, {}) == 1,
+            evaluation=evaluation,
+        )
+        root_object, steps = path_root, (*path, step)
+    member = _projection(inner, setdefault, 1, tags, evaluation)
     method = call.func.attr
     return _mutation_through(
         statement,
@@ -1469,11 +1650,12 @@ def setdefault_mutation_statement(statement, scope, *, name, call, target_name=N
         # never the setdefault evaluated again.
         fallback=rewrite(call, func=rewrite(call.func, value=member)),
         root_read=root_read,
-        steps=(("undecided", None),) if key is None else (("item", key),),
+        steps=steps,
         target_name=target_name,
         evaluation=projection_key(evaluation, f"{method}()"),
         before=((setdefault, evaluation),),
-        shape_root=receiver,
+        shape_root=receiver if root_object is None else root_object,
+        root_object=root_object,
     )
 
 
@@ -1577,8 +1759,12 @@ def name_mutation_statement(
     # value after the call is decided at reduce by the receiver's value.  A
     # builtin container's cited mutation changes the container only (its
     # holders are unknown after it); an ordinary call may change anything it
-    # reaches (``sharer``).
+    # reaches (``sharer``).  A receiver whose identity is undecided -- a
+    # member of an opaque value (``a, b = g()``), an item the source does
+    # not say (``r[i]``) -- may be any object the value it was read from
+    # reaches: a name sharing one may hold it, never only share with it.
     graph = _graph(root)
+    undecided = _undecided_member(root)
     for alias, value in scope.items():
         if not isinstance(alias, str) or alias in names or alias == target_name:
             continue
@@ -1587,8 +1773,9 @@ def name_mutation_statement(
             continue
         if getattr(state, "kind", None) in _NEVER_HAVOC_KINDS:
             continue
-        holds = alias in containing
-        if holds or (graph and _graph(state) & graph):
+        shares = bool(graph) and bool(_graph(state) & graph)
+        holds = alias in containing or (undecided and shares)
+        if holds or shares:
             holder = _havoc(
                 site,
                 alias,
@@ -1642,6 +1829,7 @@ def _mutation_through(
     shape_root=None,
     operator_kind=None,
     operator_site=None,
+    root_object=None,
 ):
     """The path door's statement for ``receiver.<method>(*args)`` on the
     object ``root_read`` reaches through ``steps`` (``site`` the source
@@ -1653,13 +1841,17 @@ def _mutation_through(
     each pair bound under its key (``d.setdefault(k, v)``, whose value is
     ``receiver``); this operation's pair is bound under ``evaluation`` (the
     statement's key by default).  ``shape_root`` is the object whose display
-    decides which member the path names (the root by default)."""
+    decides which member the path names (the root by default).
+    ``root_object`` is the read of the root whose object the names are bound
+    to, where ``root_read`` is the root after an earlier operation through a
+    path (``self.d.setdefault(k, v).append(x)``); ``root_read`` by
+    default."""
     from .nodes import Node
     from .shadow import occurrence_tags_of
 
     # ``root`` is the object ``root_read`` denotes (``_identity``: the display
     # or call the name was given), which decides the shape only.
-    root = _identity(root_read)
+    root = _identity(root_read if root_object is None else root_object)
     if root is None or getattr(root, "kind", None) not in _PATH_ROOT_KINDS:
         return None
     bound = {
