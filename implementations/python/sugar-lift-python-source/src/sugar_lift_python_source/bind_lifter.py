@@ -122,32 +122,22 @@ def lift_source(
     emit_bind = layer in ("library-bindings", "all")
     emit_general = layer == "all"
     for info in definitions:
-        try:
-            if emit_bind:
-                entry = _library_binding_entry_for_function(
-                    info.node,
-                    rel_path,
-                    lines,
-                    source_lines,
-                    layer == "library-bindings",
-                    reexport_map=reexport_map,
-                )
-                if entry is not None:
-                    result.ir.append(entry)
-                if not emit_general:
-                    continue
-            if emit_general:
-                result.ir.append(
-                    _entry_for_function(info.node, rel_path, lines, result.diagnostics)
-                )
-        except _ConceptCitationRefusal as exc:
-            result.diagnostics.append(
-                {
-                    "kind": exc.diag_kind,
-                    "message": exc.message,
-                    "path": exc.rel_path,
-                    "line": exc.line_no,
-                }
+        if emit_bind:
+            entry = _library_binding_entry_for_function(
+                info.node,
+                rel_path,
+                lines,
+                source_lines,
+                layer == "library-bindings",
+                reexport_map=reexport_map,
+            )
+            if entry is not None:
+                result.ir.append(entry)
+            if not emit_general:
+                continue
+        if emit_general:
+            result.ir.append(
+                _entry_for_function(info.node, rel_path, lines, result.diagnostics)
             )
     if emit_bind:
         for cls_info in class_definitions:

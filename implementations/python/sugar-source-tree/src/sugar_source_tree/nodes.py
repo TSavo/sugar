@@ -60,6 +60,7 @@ from .panic import (
 from .reporter import NULL_REPORTER, AuditReporter
 from .construction_cache import (
     AmbientSet,
+    AmbientVar,
     abandon_row,
     close_row,
     open_row,

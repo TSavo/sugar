@@ -862,7 +862,6 @@ class _StructuredTransportFormatter(logging.Formatter):
             "gc_gen0",
             "gc_gen1",
             "gc_gen2",
-            "audit_contexts",
             "enumeration_contexts",
             "install_source_entries",
             "source_table_entries",
@@ -1016,7 +1015,6 @@ def _log_resident_profile(request_count: int, method: Any) -> None:
             "gc_gen0": gc_counts[0],
             "gc_gen1": gc_counts[1],
             "gc_gen2": gc_counts[2],
-            "audit_contexts": len(_AUDIT_FILE_CONTEXTS),
             "enumeration_contexts": len(_ENUMERATION_FILE_CONTEXTS),
             "install_source_entries": install_entries,
             "source_table_entries": source_entries,
@@ -1654,32 +1652,6 @@ def _qualified_callable_spelling(
     if callable_name == module or callable_name.startswith(f"{module}."):
         return callable_name
     return f"{module}.{callable_name}"
-
-
-@dataclasses.dataclass(frozen=True)
-class _AuditFileContext:
-    source: str
-    filename: str
-    file_cid: str
-    catalog: Any
-    module: Any
-    module_temporal: Any
-    definition_temporals: dict[int, Any]
-    seed_panics: tuple[_SeedPanicEvidence, ...]
-    module_assertions: tuple[Any, ...]
-    import_aliases: dict[str, str]
-    from_imports: dict[str, tuple[str, str]]
-    name_resolver: dict[str, Any]
-    definitions: tuple[Any, ...]
-    definitions_by_cid: dict[str, Any]
-
-
-# Bounded process-lifetime context for the resident kit. File content CID is
-# the sole key; _remember_file_context applies the same explicit capacity as
-# enumeration contexts so evicted source/AST ownership is collectible.
-_AUDIT_FILE_CONTEXTS: collections.OrderedDict[tuple[str, str], _AuditFileContext] = (
-    collections.OrderedDict()
-)
 
 
 def _definition_class_owner(module, definition) -> str | None:

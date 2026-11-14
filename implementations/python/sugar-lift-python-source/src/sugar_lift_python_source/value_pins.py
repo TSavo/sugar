@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from . import typed_node_api as typed
 from dataclasses import dataclass, field
-from typing import Iterator
+from typing import Iterator, Optional
 
 from .ir import (
     Json,

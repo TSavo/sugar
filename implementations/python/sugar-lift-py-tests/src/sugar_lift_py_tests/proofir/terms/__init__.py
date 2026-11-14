@@ -16,6 +16,7 @@ from sugar_lift_py_tests.ir import (
     PrimitiveSort,
     bool_const,
     ctor,
+    make_var,
     num,
     real_lit,
     str_const,

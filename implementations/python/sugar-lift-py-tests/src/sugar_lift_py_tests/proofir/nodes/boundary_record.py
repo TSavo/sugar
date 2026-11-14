@@ -83,24 +83,6 @@ class BoundaryRecord:
             "provenance": self.provenance().to_rpc(),
         }
 
-    @staticmethod
-    def agreement_violation_diagnostic(
-        violation: FloorContractAgreementViolation,
-    ) -> dict[str, Any]:
-
-        if not isinstance(violation, FloorContractAgreementViolation):
-            raise TypeError(
-                "agreement_violation_diagnostic requires "
-                "FloorContractAgreementViolation"
-            )
-        return {
-            "kind": "floor-contract-agreement-violation",
-            "callee": violation.callee,
-            "contract": violation.contract,
-            "callsite": violation.callsite,
-            "reason": violation.reason,
-        }
-
     def to_proof_ir(self) -> str:
         return encode_jcs(_json_like_to_value(self.to_declaration()))
 
