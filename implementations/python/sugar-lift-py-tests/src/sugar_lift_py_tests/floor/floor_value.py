@@ -478,6 +478,7 @@ class FloorValue:
         """
         if site is None:
             _siteless_undecided_read(owner, f"bool({type(self).__name__})", "Call")
+        from sugar_lift_py_tests.floor.object_identity import identity_term
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import ctor, py_truthy, str_const
         from sugar_lift_py_tests.occurrence import occurrence_key
@@ -485,7 +486,10 @@ class FloorValue:
 
         truth = ctor(
             "python:truth",
-            (self.to_term(owner=owner), str_const(occurrence_key(site))),
+            (
+                identity_term(self, site, "receiver", owner=owner),
+                str_const(occurrence_key(site)),
+            ),
         )
         return ExitSet.completed(
             PredicateValue(py_truthy(truth), site, operand_callsites=self.callsites())
@@ -507,6 +511,7 @@ class FloorValue:
         if site is None:
             _siteless_undecided_read(owner, read, node)
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.floor.object_identity import identity_term
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import atomic, ctor, str_const
         from sugar_lift_py_tests.occurrence import occurrence_key
@@ -515,8 +520,11 @@ class FloorValue:
         term = ctor(
             f"py.{protocol}",
             [
-                self.to_term(owner=owner),
-                *(operand.to_term(owner=owner) for operand in operands),
+                identity_term(self, site, "receiver", owner=owner),
+                *(
+                    identity_term(operand, site, f"operand{position}", owner=owner)
+                    for position, operand in enumerate(operands)
+                ),
             ],
         )
         key = occurrence_key(site)
@@ -696,11 +704,12 @@ class FloorValue:
             )
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.floor.object_identity import identity_term
         from sugar_lift_py_tests.ir import atomic, ctor, str_const
         from sugar_lift_py_tests.occurrence import occurrence_key
         from sugar_lift_py_tests.outcome import ExitSet
 
-        receiver_term = self.to_term(owner=str(site))
+        receiver_term = identity_term(self, site, "receiver", owner=str(site))
         member = CallSiteValue(
             target_name=name,
             arg_values=(self,),
@@ -744,6 +753,7 @@ class FloorValue:
         completed face only.
         """
         del owner
+        from sugar_lift_py_tests.floor.object_identity import identity_term
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import atomic
         from sugar_lift_py_tests.sugar.comparison_op_sugar import (
@@ -754,8 +764,15 @@ class FloorValue:
             atomic(
                 "py.in",
                 [
-                    item.to_term(owner="undecided membership item"),
-                    self.to_term(owner="undecided membership container"),
+                    identity_term(
+                        item, site, "item", owner="undecided membership item"
+                    ),
+                    identity_term(
+                        self,
+                        site,
+                        "container",
+                        owner="undecided membership container",
+                    ),
                 ],
             ),
             site,
@@ -1035,29 +1052,44 @@ class FloorValue:
         # Equality vocabulary is resolved here, once, from construction-time
         # sort testimony. Ill-sorted bare equality cannot leave this door.
         from sugar_lift_py_tests.floor.equality_atom import resolve_equality_atom
+        from sugar_lift_py_tests.floor.object_identity import (
+            holds_stale,
+            identity_term,
+        )
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.outcome import ExitSet
-
-        formula, bridges = resolve_equality_atom(self, other, owner=str(site))
-        predicate = PredicateValue(
-            formula,
-            site,
-            operand_callsites=(*self.callsites(), *other.callsites()),
-            derived_formulas=bridges,
-        )
-        from sugar_lift_py_tests.floor.object_identity import holds_stale
 
         if holds_stale(self) or holds_stale(other):
             # ``==`` reads both operands' contents all the way down; a
             # container whose contents are not current
             # (``object_identity.contents_current``) is not read: the
-            # undecided equality, two-faced (``undecided_dispatch_faces``).
+            # undecided equality, two-faced (``undecided_dispatch_faces``),
+            # over the objects it compares (``identity_term``), never the
+            # contents they arrived with.
+            from sugar_lift_py_tests.ir import py_eq
             from sugar_lift_py_tests.sugar.comparison_op_sugar import (
                 undecided_dispatch_faces,
             )
 
+            owner = str(site)
+            predicate = PredicateValue(
+                py_eq(
+                    identity_term(self, site, "left", owner=owner),
+                    identity_term(other, site, "right", owner=owner),
+                ),
+                site,
+                operand_callsites=(*self.callsites(), *other.callsites()),
+            )
             return undecided_dispatch_faces(predicate, site, "Eq")
-        return ExitSet.completed(predicate)
+        formula, bridges = resolve_equality_atom(self, other, owner=str(site))
+        return ExitSet.completed(
+            PredicateValue(
+                formula,
+                site,
+                operand_callsites=(*self.callsites(), *other.callsites()),
+                derived_formulas=bridges,
+            )
+        )
 
     def is_identical(self, other, site):
         # Default: EMIT. Identity is the ONE comparison whose SMT lowering is
@@ -1444,6 +1476,7 @@ def _siteless_undecided_read(owner: str, read: str, node: str) -> NoReturn:
 def undecided_binary_faces(left, right, site, operator: str):
     """Two faces for ``left <operator> right`` over an undecided operand type."""
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.object_identity import identity_term
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
@@ -1456,8 +1489,8 @@ def undecided_binary_faces(left, right, site, operator: str):
             "python:binary_result",
             (
                 str_const(operator),
-                left.to_term(owner=owner),
-                right.to_term(owner=owner),
+                identity_term(left, site, "left", owner=owner),
+                identity_term(right, site, "right", owner=owner),
                 str_const(key),
             ),
         )

@@ -194,7 +194,7 @@ class AttributeSugar(ConstructedTermSugar):
 
         # What an attribute holds was stored by code this frame may not see:
         # the value reaches the read by binding.
-        return arrived_outcome(receiver.attribute(name, site, ctx))
+        return arrived_outcome(receiver.attribute(name, site, ctx), site)
 
     def desugar(self, ctx: object = None) -> ExitSet:
         return self.receiver.desugar(ctx).and_then(
