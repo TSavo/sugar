@@ -50,8 +50,12 @@ def _unit_without_typed_tree() -> SourceUnit:
             lambda unit: unit.name_bound_nowhere("undefined_name"),
         ),
         (
-            "SourceUnit.class_body_holding",
+            "SourceUnit.scope_holding",
             lambda unit: unit.class_body_holding(READ),
+        ),
+        (
+            "SourceUnit.scope_holding",
+            lambda unit: unit.scope_holding(READ),
         ),
         (
             "SourceUnit._module_global_rows",

@@ -107,16 +107,6 @@ class _RetainedSuppression:
     obligation: object
 
 
-@dataclass(frozen=True)
-class _SuppressedTypeOperand:
-    """One suppressed exception type, as the shared matcher's handler operand."""
-
-    identity: object
-
-    def exception_type_identity(self):
-        return self.identity
-
-
 def _undetermined_suppression_verdict(effect, coordinates, *, owner: str):
     """Split an undetermined raise on the contract's own type tests.
 
@@ -130,6 +120,7 @@ def _undetermined_suppression_verdict(effect, coordinates, *, owner: str):
     the open tests leave as one disjunction; all decided misses restore.
     """
     from sugar_lift_py_tests.authenticated_exception_matching import (
+        ExceptionClassOperand,
         MatchDecided,
         MatchRetained,
         matches_raise_effect,
@@ -139,7 +130,7 @@ def _undetermined_suppression_verdict(effect, coordinates, *, owner: str):
 
     retained = []
     for coordinate in sorted(coordinates, key=repr):
-        verdict = matches_raise_effect(effect, _SuppressedTypeOperand(coordinate))
+        verdict = matches_raise_effect(effect, ExceptionClassOperand(coordinate))
         if isinstance(verdict, MatchDecided):
             if verdict.value:
                 return "suppress"

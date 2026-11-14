@@ -9,6 +9,19 @@ if TYPE_CHECKING:
     from sugar_lift_py_tests.ir import Formula
 
 
+@dataclass(frozen=True)
+class ExceptionClassOperand:
+    """One exception class by its identity alone, as the matcher's handler
+    operand: a suppressed type an exit disposition cites, the class an
+    ``except`` clause names where only its identity is read (the lexical
+    import pass's optional-provider gate)."""
+
+    identity: object
+
+    def exception_type_identity(self):
+        return self.identity
+
+
 def matches_raise_effect(effect, expected) -> "MessageVerdict":
     """Ask the expected floor for its handler semantics (single type or tuple)."""
     match = getattr(expected, "match_raise_effect", None)

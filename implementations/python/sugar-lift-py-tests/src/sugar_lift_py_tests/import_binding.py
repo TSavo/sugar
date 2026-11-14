@@ -781,42 +781,123 @@ class _Pass:
         return definition
 
     @staticmethod
-    def _catches_import_error(handler: Node, state: State) -> bool:
-        """Whether ``handler`` catches the language's ``ImportError`` (or
-        ``ModuleNotFoundError``), alone or in a tuple, read as builtins: a
-        name this pass sees bound is not the builtin."""
+    def _handler_class_identity(node: Node, state: State):
+        """The identity of the exception class the handler type ``node``
+        names, by the binding the read reaches, or None when this pass does
+        not decide it (#7757).
 
-        def builtin_import_error(node: Node) -> bool:
-            return (
-                node.kind == "Name"
-                and node.id in ("ImportError", "ModuleNotFoundError")
-                and state.get(node.id, frozenset({_UNBOUND}))
-                == frozenset({_UNBOUND})
+        The answers of the one exception-class lookup
+        (``SourceUnit.exception_type_identity``), read with what exists while
+        that lookup's import table is being built -- this pass:
+
+        - a ``Name`` or ``Name.attr...`` chain whose head reaches exactly one
+          import here is that import's target symbol
+          (``exception_type_identity_of_import_target``): ``from builtins
+          import ImportError as IE`` keeps the builtin identity;
+        - a ``Name`` nothing in the source binds is the builtin it falls
+          through to (``SourceUnit.builtin_reference_at``, read off CPython's
+          symtable, not off the import table; a star import may bind any
+          name, so it binds none there).
+
+        Anything else -- a source class, a provider-gated or partly bound
+        name, a computed operand -- is None: undecided, never assumed.
+        """
+        from sugar_source_tree.nodes import exception_type_identity_of_import_target
+
+        path = _Pass._attribute_export_path(node)
+        if path is None:
+            return None
+        local_name, exported_path = path
+        binding = _unique_import_def_from_state(state, local_name)
+        if binding is not None:
+            member = _member_path_after_submodule(binding, exported_path)
+            if member is None:
+                return None
+            return exception_type_identity_of_import_target(
+                _target_symbol(binding, member)
             )
+        if exported_path or state.get(local_name, frozenset({_UNBOUND})) != frozenset(
+            {_UNBOUND}
+        ):
+            return None
+        target = node.unit.builtin_reference_at(local_name, node.line_col_span())
+        if target is None:
+            return None
+        return exception_type_identity_of_import_target(target)
+
+    def _catches_import_error(self, handler: Node, state: State) -> bool:
+        """Whether ``handler`` is decided to catch what an absent provider's
+        import raises: ``ModuleNotFoundError`` (an ``ImportError``).
+
+        The handler's class is read by its binding
+        (``_handler_class_identity``), and whether it catches is the one
+        matcher's answer (``matches_raise_effect``) -- a tuple by its
+        disjunction, a bare ``except`` as ``BaseException`` -- so ``except
+        Exception`` catches it and an aliased or rebound name is judged by
+        what it is bound to, never by its spelling.  Only a decided match
+        gates; a member whose class is not decided here never catches.
+        """
+        from sugar_lift_py_tests.authenticated_exception_matching import (
+            ExceptionClassOperand,
+            MatchDecided,
+            matches_raise_effect,
+        )
+        from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+        from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+        from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
         type_node = handler.type_
         if type_node is None:
+            identities = (_builtin_exception_identity("BaseException")[0],)
+        elif type_node.kind == "Tuple":
+            identities = tuple(
+                self._handler_class_identity(item, state) for item in type_node.elts
+            )
+        else:
+            identities = (self._handler_class_identity(type_node, state),)
+        operands = tuple(
+            ExceptionClassOperand(identity)
+            for identity in identities
+            if identity is not None
+        )
+        if not operands:
             return False
-        if type_node.kind == "Tuple":
-            return any(builtin_import_error(item) for item in type_node.elts)
-        return builtin_import_error(type_node)
+        site = _site(self.source_cid, handler)
+        effect = RaiseEffect.for_builtin(
+            "ModuleNotFoundError",
+            occurrence=(
+                f"{site['sourceCid']}:{site['startLine']}:{site['startCol']}:"
+                f"{site['endLine']}:{site['endCol']}"
+            ),
+        )
+        verdict = matches_raise_effect(effect, TupleValue(operands))
+        return verdict == MatchDecided(True)
 
     def _provider_gate(
-        self, node: Statement, before: State, body_out: State, joined: State
+        self,
+        node: Statement,
+        before: State,
+        handler_entry: State,
+        body_out: State,
+        joined: State,
     ) -> State:
         """Record the closed optional-provider gate ``try: import m`` (or
         ``try: from m import X``) / ``except ImportError`` in ``joined``.
 
         A name an ``import`` or ``from ... import`` statement in the try body binds, unbound before
-        the ``try``, whose every handler catches ``ImportError`` and leaves
+        the ``try``, whose every handler is decided to catch the absent
+        provider's ``ModuleNotFoundError`` (``_catches_import_error``, read
+        where the handler's type is evaluated, ``handler_entry``) and leaves
         the name as it found it: after the handlers join, it reaches as that
         import or as unbound because the provider is absent.  That unbound
         face is recorded as ``_PROVIDER_ABSENT`` and the import carries the
         ``PROVIDER_GATE_TRY_IMPORT`` fact, so its references have rows in the
-        one table that say so.  Any other shape keeps the plain join.
+        one table that say so.  Any other shape -- an undecided handler
+        included -- keeps the plain join, where the import may have failed.
         """
         if not node.handlers or not all(
-            self._catches_import_error(handler, before) for handler in node.handlers
+            self._catches_import_error(handler, handler_entry)
+            for handler in node.handlers
         ):
             return joined
         gated = dict(joined)
@@ -1196,7 +1277,9 @@ class _Pass:
                 if handler.name:
                     handler_state[handler.name] = frozenset({_NON_IMPORT})
                 paths.append(self.statements(handler.body, handler_state, scope))
-            joined = self._provider_gate(node, state, paths[0], _join(*paths))
+            joined = self._provider_gate(
+                node, state, handler_entry, paths[0], _join(*paths)
+            )
             joined = self.statements(node.orelse, joined, scope)
             return self.statements(node.finalbody, joined, scope)
         if node.kind in ("With", "AsyncWith"):
