@@ -165,8 +165,6 @@ def verify_proof(proof_bytes: bytes, expected_cid: str, signer_pubkey: bytes) ->
         return True
     except BadSignatureError:
         return False
-    except (TypeError, ValueError):
-        return False
 
 
 # ---------------------------------------------------------------------------

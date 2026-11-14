@@ -541,7 +541,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         pandas_identity, numpy_identity, lift_identity, manifest_cid = (
             authenticate_environment()
         )
-    except Exception as error:
+    except (
+        ExecutionEnvironmentMismatch,
+        RuntimeIdentityResolutionFailure,
+        ImportError,
+        OSError,
+    ) as error:
         print(
             "BATTLEAXE EXECUTION ENVIRONMENT REFUSED: " + str(error),
             file=sys.stderr,

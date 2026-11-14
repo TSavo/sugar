@@ -9,7 +9,6 @@ raw in-memory magnitudes cannot cross the write boundary after validation red.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from collections.abc import Callable, Mapping, Sequence
@@ -24,12 +23,10 @@ _WITNESS_AUTHORITY = object()
 
 
 def _content_cid(data: bytes) -> str:
-    try:
-        import blake3  # type: ignore
+    # blake3 is a declared dependency of this package: one address scheme.
+    import blake3  # type: ignore
 
-        return "blake3-512:" + blake3.blake3(data, max_threads=1).digest(64).hex()
-    except Exception:  # noqa: BLE001 - deterministic stdlib fallback
-        return "sha256:" + hashlib.sha256(data).hexdigest()
+    return "blake3-512:" + blake3.blake3(data, max_threads=1).digest(64).hex()
 
 
 def _canonical_key_manifest(

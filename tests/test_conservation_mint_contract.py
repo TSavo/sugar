@@ -62,7 +62,7 @@ def test_passed_validator_is_the_only_measured_constructor(tmp_path: Path) -> No
         "validatorSourceCid": witness["validatorSourceCid"],
         "status": "passed",
     }
-    assert witness["validatorSourceCid"].startswith(("blake3-512:", "sha256:"))
+    assert witness["validatorSourceCid"].startswith("blake3-512:")
     assert decode_conserved_body(body).witness.to_wire() == witness
 
 

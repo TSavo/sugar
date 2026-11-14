@@ -99,11 +99,8 @@ def census(root: Path) -> int:
                 return 1
             for fn in sf.functions():
                 total_fns += 1
-                try:
-                    span = fn.line_col_span()
-                    where = f"{_rel}:{span.start_line}:{span.start_col}"
-                except Exception:  # noqa: BLE001
-                    where = f"{_rel}:?"
+                span = fn.line_col_span()
+                where = f"{_rel}:{span.start_line}:{span.start_col}"
                 try:
                     sugar = fn.sugar()  # ONE construction; nested gaps self-report
                     clean_fns += 1

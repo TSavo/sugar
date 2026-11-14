@@ -286,10 +286,8 @@ class DesugarAxis:
         # be read at corpus scale. Never re-derive it by parsing a repr.
         classify = getattr(exc, "classification", None)
         if callable(classify):
-            try:
-                verdict = classify()
-            except Exception:  # noqa: BLE001 -- a classifier defect is not R
-                verdict = None
+            # A classifier that raises is a lifter defect: it propagates.
+            verdict = classify()
             if verdict is not None and hasattr(verdict, "row"):
                 row["classification"] = verdict.row()
         self.defects.append(row)

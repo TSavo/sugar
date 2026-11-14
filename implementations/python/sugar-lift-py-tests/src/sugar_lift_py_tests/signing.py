@@ -95,8 +95,6 @@ def ed25519_verify_string(pubkey_string: str, sig_string: str, message: bytes) -
         return True
     except BadSignatureError:
         return False
-    except (TypeError, ValueError):
-        return False
 
 
 # Foundation v0 seed: publicly-known, deterministic test seed.
