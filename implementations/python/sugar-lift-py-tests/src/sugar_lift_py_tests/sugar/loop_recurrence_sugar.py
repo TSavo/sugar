@@ -36,6 +36,93 @@ def _is_authenticated_stop_iteration(effect) -> bool:
     return coordinate == stop_identity
 
 
+def _else_witnesses(runtime, else_ctx) -> tuple:
+    """``(key, value)`` for every key a live loop bound for its ``else``
+    suite where the suite begins (``else_ctx``): each carried name's
+    header and the target's key (``_enter_header``, ``_leave_target``),
+    qualified where the suite runs (``evaluation_here``) -- read where the
+    loop binds them, before the suite reduces.  A context the suite left
+    from holds each of them at that very value (``_else_left_from``)."""
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+
+    temporal = getattr(else_ctx, "temporal", None)
+    if temporal is None:
+        return ()
+    keys = (
+        *(
+            header
+            for header, _writes, _else_writes in getattr(
+                runtime, "carried_evaluations", ()
+            )
+            if header is not None
+        ),
+        *getattr(runtime, "target_evaluations", ()),
+    )
+    witnesses = []
+    for key in keys:
+        here = evaluation_here(key)
+        value = temporal.value_if_bound(here)
+        if value is not None:
+            witnesses.append((here, value))
+    return tuple(witnesses)
+
+
+def _else_left_from(runtime, else_ctx, witnesses, halt, *, site):
+    """The context a live loop's publication is read from where ``halt``
+    left its ``else`` suite, which began at ``else_ctx``.
+
+    A suite that writes no name the loop publishes (no ``else`` write in
+    ``carried_evaluations`` nor ``published_evaluations``) leaves every name
+    as it began: ``else_ctx``.  One that writes is read where it halted --
+    the context of the halt's record, or the bare context it holds -- once
+    that context is authenticated as the suite's: every key the loop bound
+    for the suite holds there the very value it was bound to (``witnesses``,
+    object identity), as a ``break``'s record is
+    (``LoopRecurrenceSugar._require_loop_control_state``).  A halt that left
+    from another context (a callee's record, which the block composition
+    splices on as it is) does not hold what the suite wrote before it: it
+    is refused by name, never read in its place."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    writes = any(
+        else_writes
+        for _key, _writes, else_writes in (
+            *getattr(runtime, "carried_evaluations", ()),
+            *getattr(runtime, "published_evaluations", ()),
+        )
+    )
+    if not writes:
+        return else_ctx
+    state = halt.state
+    context = state.context if isinstance(state, _ReducedBlock) else state
+    temporal = getattr(context, "temporal", None)
+    if (
+        witnesses
+        and temporal is not None
+        and all(temporal.value_if_bound(key) is value for key, value in witnesses)
+    ):
+        return context
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        owner="LoopRecurrenceSugar.else-halt",
+        blame=site,
+        observed=(
+            f"a {type(halt.effect).__name__} halt leaving a live loop's else "
+            "suite, which writes a name the loop publishes, from a context "
+            "that is not the suite's"
+        ),
+        requested=(
+            "the context the else suite halted in, holding what it wrote "
+            "before the halt"
+        ),
+        fix=(
+            "carry the suite's context on the halt's record; never read the "
+            "loop's publication from another frame's context"
+        ),
+    )
+
+
 @dataclass(frozen=True)
 class LoopBindingRefSugar(ConstructedTermSugar):
     """A read after a live loop of ``name``, which the loop carries under
@@ -378,39 +465,106 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 symbol_kind="coordinate",
             )
             recurrences.append(InvValue(atomic("=", [h, step]), self.site))
+        recurrences = tuple(recurrences)
         # The loop leaves publishing what a concrete loop publishes
         # (``_publication``): each coordinate name's value under its binding
         # coordinate, and each other written name's under its post-loop key,
         # with its write slot decided -- here as the guard that some item
         # wrote it, which the symbolic iterable does not decide true or false.
+        posted = tuple(
+            (
+                post_key,
+                SymbolicValue(h),
+                atomic(
+                    "python.loop.wrote",
+                    [str_const(self.target_cid), str_const(post_key)],
+                ),
+            )
+            for post_key, h in zip(post_keys, post_heads, strict=True)
+        )
         published = (
             *recurrences,
-            *self._publication(
-                tuple(SymbolicValue(h) for h in heads),
-                tuple(
-                    (
-                        post_key,
-                        SymbolicValue(h),
-                        atomic(
-                            "python.loop.wrote",
-                            [str_const(self.target_cid), str_const(post_key)],
-                        ),
-                    )
-                    for post_key, h in zip(post_keys, post_heads, strict=True)
-                ),
-            ),
+            *self._publication(tuple(SymbolicValue(h) for h in heads), posted),
         )
 
-        def recurrence(entries=()):
+        def published_after_else(context):
+            # After the ``else`` suite ran (``context``, where it left), a
+            # name is what the suite last wrote it to, as a concrete loop's
+            # is (``_after_else``, ``_post_loop_writes``).
+            return (
+                *recurrences,
+                *self._publication(
+                    *self._after_symbolic_else(runtime, context, posted)
+                ),
+            )
+
+        def recurrence(entries=(), *, halt=None, can_fall_through=True):
             # The loop leaves as its recurrence with what the item it leaves
             # from left (``entries``), as a concrete loop leaves with what its
-            # items left (``_left_with``); no item: nothing.
-            return self._left_with(entries, published)
+            # items left (``_left_with``); no item: nothing.  The recurrence
+            # (``recurrences``) is what the items before it did, on every
+            # exit; the loop publishes where it leaves as a loop (a fall
+            # through, its own ``break``/``continue``, no item), never where
+            # a ``return`` (``can_fall_through`` false) or another halt
+            # (``halt``) leaves from inside the item, as a concrete item's
+            # do (``_after_iteration_state``, ``_after_loop_control``).
+            if halt is None and can_fall_through:
+                return self._left_with(entries, published)
+            return self._left_with(
+                entries, recurrences, halt=halt, can_fall_through=can_fall_through
+            )
+
+        # The loop's ``else`` suite runs once, outside every item, where the
+        # loop is exhausted: after an item that falls through or continues,
+        # and where no item ran -- never after a ``break``.  It reduces once
+        # (``_symbolic_else``), and each exhausted arm leaves beneath its
+        # faces, as a concrete loop's (``_finish_iterator``).
+        else_ctx, otherwise = self._symbolic_else(runtime, ctx, heads)
+        witnesses = _else_witnesses(runtime, else_ctx)
+
+        def exhausted(entries=()):
+            if otherwise is None:
+                return recurrence(entries)
+
+            def leave_after_else(otherwise):
+                return otherwise.sequence(
+                    lambda state: self._left_with(
+                        (*entries, *state.entries),
+                        published_after_else(state.context),
+                        fall_through=state.fall_through,
+                        can_fall_through=state.can_fall_through,
+                    ),
+                    consume=lambda halt: self._left_with(
+                        entries,
+                        published_after_else(
+                            _else_left_from(
+                                runtime, else_ctx, witnesses, halt, site=self.site
+                            )
+                        ),
+                        halt=halt,
+                    ),
+                )
+
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+            from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+            if isinstance(otherwise, NativeOperationExitCarrierV1):
+                return otherwise.after_discharge(
+                    lambda projected: leave_after_else(
+                        _require_exit_set(projected, owner="LoopRecurrenceSugar.else")
+                    )
+                )
+            return leave_after_else(
+                _require_exit_set(otherwise, owner="LoopRecurrenceSugar.else")
+            )
 
         # The item's target unpack runs first: the item's body (and the
         # recurrence) are what follows its completed arm
         # (``ExitSet.sequence``), and its halt (too few, too many, not
-        # iterable) is an arm of the recurrence as it is.
+        # iterable) leaves the loop with what the items before it did, as
+        # every halt does (``recurrence``).
         projected, enter, item = self._enter_symbolic_item(
             runtime, ctx, iterable, heads
         )
@@ -437,14 +591,20 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             with item():
                 body = reduce_block_to_exitset(body_sugars, item_ctx)
             return self._leave_symbolic_item(
-                body, recurrence, item_guard, target_bindings=target_bindings
+                body,
+                recurrence,
+                item_guard,
+                target_bindings=target_bindings,
+                exhausted=exhausted,
             )
 
-        if len(projected.exits) == 1:
+        from sugar_lift_py_tests.outcome import Completed
+
+        if len(projected.exits) == 1 and isinstance(projected.exits[0], Completed):
             # One way in (a name target, a ``while``): the item is exactly
             # what follows it, a body waiting on its caller's actuals handed on.
             return projected.and_then(run_item)
-        return projected.sequence(run_item)
+        return projected.sequence(run_item, consume=lambda halt: recurrence(halt=halt))
 
     def _symbolic_item(self):
         """``(body_sugars, guard)``: the body the recurrence's one symbolic
@@ -469,28 +629,110 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
         return symbolic_item.body_sugars, symbolic_item.guard
 
-    def _leave_symbolic_item(self, body, recurrence, guard, *, target_bindings):
+    def _recurrence_starts(self, runtime, heads):
+        """The value each carried name (``runtime.carried_names`` order) has
+        where the recurrence stands: its recurrence value (``heads``, in
+        coordinate order) for a name carried under a binding coordinate;
+        None for a name carried through its header alone, which has none
+        here, so its header is left unbound and a read of it is refused by
+        name."""
+        by_name = dict(zip(self._coordinate_names(runtime), heads, strict=True))
+        return tuple(
+            None if by_name.get(name) is None else SymbolicValue(by_name[name])
+            for name in runtime.carried_names
+        )
+
+    def _symbolic_else(self, runtime, ctx, heads):
+        """``(else_ctx, otherwise)``: the ``else`` suite of a loop run as its
+        recurrence, reduced once (``otherwise``), outside every item, where
+        the loop is exhausted, and the context it began in (``else_ctx``);
+        ``(None, None)`` when it has none.  It reads each carried name
+        through its header, bound here to
+        the recurrence's value of it (``_recurrence_starts``), as a concrete
+        loop's ``else`` reads what the last item handed on
+        (``_finish_iterator``); whether an earlier item wrote a name first
+        bound in the loop is not known here, so its write slot is left
+        undecided (``decide``).  The target's key is not bound: no item is
+        known to be the last, so a read of the target there is refused by
+        name, never made up."""
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+
+        else_sugars = () if runtime is None else getattr(runtime, "else_sugars", ())
+        if not else_sugars:
+            return None, None
+        if ctx is None:
+            from sugar_lift_py_tests.context import ReduceContext
+
+            ctx = ReduceContext.root(owner="LoopRecurrenceSugar.symbolic-else")
+        if hasattr(ctx, "temporal"):
+            ctx = self._enter_header(
+                runtime, ctx, self._recurrence_starts(runtime, heads), decide=False
+            )
+        return ctx, reduce_block_to_exitset(tuple(else_sugars), ctx)
+
+    def _after_symbolic_else(self, runtime, context, posted):
+        """``(coordinate_values, posted)`` (``_publication``) of a loop run as
+        its recurrence, leaving its ``else`` suite where ``context`` holds
+        what the suite did: each coordinate name is the latest of the
+        suite's writes of it and its header, bound to the recurrence's value
+        (``_after_else``); each name published through its post-loop key is
+        the suite's latest write of it, its write slot decided true, or, the
+        suite not having written it, as ``posted`` holds it (the
+        recurrence's value under the guard that some item wrote it)."""
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+
+        left = self._after_else(runtime, context)
+        latest = dict(zip(runtime.carried_names, left, strict=True))
+        values = []
+        for name in self._coordinate_names(runtime):
+            value = latest[name]
+            if value is None:
+                raise TypeError("loop recurrence omitted a carried binding")
+            values.append(value)
+        temporal = context.temporal
+        written = []
+        for (post_key, _writes, else_writes), entry in zip(
+            getattr(runtime, "published_evaluations", ()), posted, strict=True
+        ):
+            keys = tuple(evaluation_here(key) for key in else_writes)
+            binding = temporal.latest(*keys) if keys else None
+            if binding is not None:
+                entry = (post_key, binding.value, True)
+            written.append(entry)
+        return tuple(values), tuple(written)
+
+    def _leave_symbolic_item(
+        self, body, recurrence, guard, *, target_bindings, exhausted=None
+    ):
         """The loop's exits from the one run of the symbolic item's
         ``body`` (``reduce_block_to_exitset``'s arms), under ``guard``
-        (an item runs), beside the recurrence under its negation (no item
-        runs: the loop leaves as it began).  ``recurrence(entries)`` is the
-        loop leaving as its recurrence with ``entries``, what the item left.
+        (an item runs), beside the loop exhausted under its negation (no item
+        runs).  ``recurrence(entries, *, halt=None, can_fall_through=True)``
+        is the loop leaving with ``entries``, what the item left
+        (``_left_with``): as its recurrence, or by ``halt``, or by a
+        ``return``; ``exhausted(entries)`` is the loop leaving as its
+        recurrence where its iterator is exhausted, through its ``else``
+        suite when it has one (``recurrence`` when none is handed).
 
         Each arm leaves as a concrete item's does (``_after_iteration_state``,
         ``_after_loop_control``): an arm that does not fall through (a
         ``return``) leaves the loop with its entries; an arm that falls
-        through leaves as the recurrence with its entries -- every store,
-        container mutation and rebind the item made, as a concrete item's
-        fall-through hands its entries on to the loop's publication -- and
-        this loop's own ``break``/``continue`` leaves as the recurrence with
-        the entries of its halt's record, what the item did before it,
+        through leaves exhausted with its entries -- every store, container
+        mutation and rebind the item made, as a concrete item's fall-through
+        hands its entries on to the loop's publication -- and this loop's
+        own ``break`` leaves as the recurrence, its ``continue`` exhausted,
+        with the entries of its halt's record, what the item did before it,
         once the record's context is authenticated as this item's
         (``_require_loop_control_state`` against ``target_bindings``, what
         ``_enter_symbolic_item`` bound), as a concrete item's does; any
-        other halt (a ``raise``, an inner loop's or a call's) is an arm as
-        it is.  Every arm keeps the guard, partition faces and ``owed`` of
-        the item's arm it continues (``ExitSet.sequence``).  An arm that
-        falls through after
+        other halt (a ``raise``, an inner loop's or a call's, an enclosing
+        loop's ``break``/``continue``) leaves with its record and what the
+        items before it did (``recurrence(halt=...)``), as a concrete
+        item's does.  Every arm keeps the guard, partition faces and
+        ``owed`` of the item's arm it continues (``ExitSet.sequence``).  An
+        arm that falls through after
         an earlier guarded ``return`` took its exit where that return's guard
         held: it is split as the block composition splits a later halt
         (``_prior_return_face``), the returned arm with its entries, the
@@ -500,20 +742,23 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             NativeOperationExitCarrierV1,
         )
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
-        from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.ir import and_
+        from sugar_lift_py_tests.outcome import Completed
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _prior_return_face,
         )
 
+        if exhausted is None:
+            exhausted = recurrence
+
         def returned(block):
-            return ExitSet.completed(BlockValue(block.entries, can_fall_through=False))
+            return recurrence(block.entries, can_fall_through=False)
 
         def leave(state):
             if not state.can_fall_through:
                 return returned(state)
-            goes_on = recurrence(state.entries)
+            goes_on = exhausted(state.entries)
             earlier = _prior_return_face(state, state.context)
             if earlier is None:
                 return goes_on
@@ -522,7 +767,14 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 if len(state.fall_through) == 1
                 else and_(list(state.fall_through))
             )
-            return goes_on.guarded(continuation).union(earlier.sequence(returned))
+            # The loop goes on under the fall-through guard, and the earlier
+            # ``return`` took its exit beside it: one composition beneath
+            # both (``ExitSet.sequence``), which hands on an exhausted arm
+            # still waiting on its caller's actuals (an ``else`` suite).
+            branches = ExitSet((Completed(continuation, None), *earlier.exits))
+            return branches.sequence(
+                lambda block: goes_on if block is None else returned(block)
+            )
 
         def own_control(halt):
             effect = halt.effect
@@ -533,12 +785,22 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 record = LoopRecurrenceSugar._require_loop_control_state(
                     halt.state, target_bindings=target_bindings
                 )
-                return recurrence(record.entries)
-            return None
+                if effect.action == "break":
+                    return recurrence(record.entries)
+                return exhausted(record.entries)
+            return recurrence(halt=halt)
 
         def compose(body):
-            left = body.sequence(leave, consume=own_control)
-            return recurrence().guarded(not_(guard)).union(left.guarded(guard))
+            # No item runs (the guard's negation): the loop leaves exhausted;
+            # an item runs (the guard): the loop leaves from its arms.
+            ran = ExitSet((Completed(not_(guard), False), Completed(guard, True)))
+
+            def after(item_ran):
+                if item_ran:
+                    return body.sequence(leave, consume=own_control)
+                return exhausted()
+
+            return ran.sequence(after)
 
         if isinstance(body, NativeOperationExitCarrierV1):
             # The body still waits on its caller's actuals: once it
@@ -602,7 +864,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                         runtime, ctx, entries=entries, carried=carried, items=index
                     ),
                 )
-            return outcome
+            # Any other halt of the item's ``next`` leaves the loop with what
+            # the items before it did (``_left_with``).
+            return outcome.sequence(
+                ExitSet.completed,
+                consume=lambda halt: self._left_with(entries, (), halt=halt),
+            )
         next_result = outcome.completed_value()
         # A NextResult owing something has no linear place for the debt: it
         # is refused with every other shape, never carried on without it.
@@ -664,7 +931,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # One plain roster: the item is exactly what follows it, a later
             # item waiting on its caller's actuals handed on.
             return run_item(projections)
-        return projected.sequence(run_item)
+        # The unpack's halt leaves the loop with what the items before it
+        # did (``_left_with``).
+        return projected.sequence(
+            run_item, consume=lambda halt: self._left_with(entries, (), halt=halt)
+        )
 
     def _after_item(self, body, runtime, target_bindings, resume, *, entries, index):
         """The loop's outcome after item ``index``'s ``body`` reduced, for a
@@ -681,8 +952,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # runs beneath it (``ExitSet.sequence``): a completed face carries
             # its own state into the next iteration, this loop's own
             # break/continue is consumed and continues, any other halt leaves
-            # the loop as it is. The first iteration's faces are never the
-            # loop's outcome.
+            # the loop with what the items before it did and its own record
+            # (``_after_loop_control``). The first iteration's faces are never
+            # the loop's outcome.
             # A later item still waiting on its caller's actuals answers its
             # deferred carrier: ``sequence`` composes it beneath its face, and
             # the loop hands the composed carrier on to its caller.
@@ -709,8 +981,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 entries=entries,
                 index=index,
             )
-            if following is None:
-                return body
             # The one face, whichever kind, continues into ``following``.
             return body.sequence(
                 lambda _state: following, consume=lambda _halt: following
@@ -730,8 +1000,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     def _after_iteration_face(
         self, face, runtime, target_bindings, resume, *, entries, index
     ):
-        """The loop's outcome after one face of an iteration, or None when the
-        face leaves the loop as it is (a halt that is not this loop's control)."""
+        """The loop's outcome after one face of an iteration."""
         from sugar_lift_py_tests.outcome import Halted
 
         if isinstance(face, Halted):
@@ -750,15 +1019,16 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     def _after_loop_control(
         self, halt, runtime, target_bindings, resume, *, entries, index
     ):
-        """The loop's outcome after a halted iteration face, or None when the
-        halt is not this loop's own break/continue and leaves as it is.
+        """The loop's outcome after a halted iteration face.
 
-        The halt's record holds what the item did before its
-        ``break``/``continue`` (every store, container mutation and rebind,
-        spliced on by the block composition that ran it): they join what
-        the earlier items left (``entries``), as a completed item's do
-        (``_after_iteration_state``), and the loop goes on, or leaves, with
-        them, from the record's authenticated context."""
+        The halt's record holds what the item did before it (every store,
+        container mutation and rebind, spliced on by the block composition
+        that ran it): they join what the earlier items left (``entries``),
+        as a completed item's do (``_after_iteration_state``).  On this
+        loop's own ``break``/``continue`` the loop goes on, or leaves, with
+        them, from the record's authenticated context; any other halt (a
+        ``raise``, a call's halt, an enclosing loop's ``break``/``continue``)
+        leaves the loop with them, through the one carry (``_left_with``)."""
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
 
         effect = halt.effect
@@ -787,16 +1057,15 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     carried=self._latched(runtime, state, index),
                     items=index + 1,
                 )
-        return None
+        return self._left_with(entries, (), halt=halt)
 
     def _after_iteration_state(self, state, runtime, resume, *, entries, index):
         """The loop's outcome after a completed iteration face whose record is
-        ``state``."""
-        from sugar_lift_py_tests.floor.block_value import BlockValue
-
+        ``state``: a ``return`` leaves the loop with what the items left,
+        through the one carry (``_left_with``)."""
         combined = (*entries, *state.entries)
         if not state.can_fall_through:
-            return ExitSet.completed(BlockValue(combined, can_fall_through=False))
+            return self._left_with(combined, (), can_fall_through=False)
         return resume(
             state.context,
             entries=combined,
@@ -892,8 +1161,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     "never guess the loop continues or stops"
                 ),
             )
+        # A halt of the test leaves the loop with what the items before it
+        # did (``_left_with``).
         return tested.sequence(
-            lambda item: self._after_test(item, runtime, entries=entries, index=index)
+            lambda item: self._after_test(item, runtime, entries=entries, index=index),
+            consume=lambda halt: self._left_with(entries, (), halt=halt),
         )
 
     @staticmethod
@@ -1137,14 +1409,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # The recurrence has a value for each name it carries under a binding
         # coordinate (``heads``, in coordinate order); a name it carries
         # through its header alone has none here, so its header is left
-        # unbound and a read of it is refused by name.  Whether an earlier
-        # item wrote a name first bound in the loop is not known here: its
-        # write slot is left undecided (``decide``).
-        by_name = dict(zip(self._coordinate_names(runtime), heads, strict=True))
-        starts = tuple(
-            None if by_name.get(name) is None else SymbolicValue(by_name[name])
-            for name in runtime.carried_names
-        )
+        # unbound and a read of it is refused by name
+        # (``_recurrence_starts``).  Whether an earlier item wrote a name
+        # first bound in the loop is not known here: its write slot is left
+        # undecided (``decide``).
+        starts = self._recurrence_starts(runtime, heads)
         pattern = getattr(runtime, "target_pattern", None)
         if pattern is None:
             with item():
@@ -1403,28 +1672,45 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # here to the last item's projection (``_leave_target``; a carried
         # target's is its header); the loop leaves with the latest of the
         # else's writes of each name and that header (``_after_else``).
-        otherwise = reduce_block_to_exitset(
-            runtime.else_sugars,
-            self._enter_header(
-                runtime, self._leave_target(runtime, ctx, items), carried
-            ),
+        else_ctx = self._enter_header(
+            runtime, self._leave_target(runtime, ctx, items), carried
         )
+        witnesses = _else_witnesses(runtime, else_ctx)
+        otherwise = reduce_block_to_exitset(runtime.else_sugars, else_ctx)
+
+        def leave(context, left, **how):
+            return self._publish_runtime_bindings(
+                runtime,
+                context,
+                entries=left,
+                carried=self._after_else(runtime, context),
+                items=items,
+                else_ran=True,
+                **how,
+            )
 
         def publish(otherwise):
-            # The published bindings run beneath every completed face of the
-            # else suite (``ExitSet.sequence``): each takes that face's guard
-            # and faces and owes what it owes; a halt leaves as it is.
+            # The published bindings run beneath every face of the else suite
+            # (``ExitSet.sequence``): each takes that face's guard and faces
+            # and owes what it owes.  A completed face leaves with what the
+            # items and the suite left; a halt (a ``raise``, a call's halt,
+            # an enclosing loop's ``break``/``continue``) leaves with what the
+            # items left, its own record, and what the loop publishes where
+            # the suite halted (``_else_left_from``, ``_left_with``).
             return otherwise.sequence(
-                lambda state: self._publish_runtime_bindings(
-                    runtime,
+                lambda state: leave(
                     state.context,
-                    entries=(*entries, *state.entries),
-                    carried=self._after_else(runtime, state.context),
+                    (*entries, *state.entries),
                     fall_through=state.fall_through,
                     can_fall_through=state.can_fall_through,
-                    items=items,
-                    else_ran=True,
-                )
+                ),
+                consume=lambda halt: leave(
+                    _else_left_from(
+                        runtime, else_ctx, witnesses, halt, site=self.site
+                    ),
+                    entries,
+                    halt=halt,
+                ),
             )
 
         if isinstance(otherwise, NativeOperationExitCarrierV1):
@@ -1449,6 +1735,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         can_fall_through=True,
         items=0,
         else_ran=False,
+        halt=None,
     ):
         """Publish the value of each name carried under a binding coordinate
         (``_coordinate_names``) as the loop leaves: ``carried``,
@@ -1465,7 +1752,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         coordinate (a name first bound in the loop, a module binding) is
         published last, under its post-loop key, with its write slot decided
         on this exit (``_post_loop_writes``): ``items`` items ran, and the
-        ``else`` suite ran when ``else_ran``."""
+        ``else`` suite ran when ``else_ran``.  With ``halt`` (a halt leaving
+        the ``else`` suite), the loop leaves by it, carrying all this
+        (``_left_with``)."""
         temporal = getattr(ctx, "temporal", None)
         if temporal is None:
             raise TypeError("loop recurrence omitted its temporal context")
@@ -1488,11 +1777,20 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         return self._left_with(
             entries,
             self._publication(tuple(values), posted),
+            halt=halt,
             fall_through=fall_through,
             can_fall_through=can_fall_through,
         )
 
-    def _left_with(self, entries, published, *, fall_through=(), can_fall_through=True):
+    def _left_with(
+        self,
+        entries,
+        published,
+        *,
+        halt=None,
+        fall_through=(),
+        can_fall_through=True,
+    ):
         """The loop leaving with ``entries`` -- what its items (and its
         ``else`` suite) left: every store, container mutation and rebind
         they made, in the order they ran -- and ``published``, what it
@@ -1501,16 +1799,76 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         (``iterable_writes``) come first: the iterable ran before every
         item.  One record, for a concrete loop (``_publish_runtime_bindings``)
         and the recurrence alike (``_desugar_with_iterable``): what an item
-        left is carried out of the loop the one way."""
+        left is carried out of the loop the one way.
+
+        Every way out is this one carry: a ``return`` (``can_fall_through``
+        false), and a halt (``halt``: a ``raise``, a call's halt, an
+        enclosing loop's ``break``/``continue``, from an item, its target
+        unpack, its ``next`` or ``while`` test, or the ``else`` suite).  A
+        halt leaves as itself, its record holding the iterable's writes,
+        ``entries`` -- what the items before it left -- what its own record
+        holds (what ran before it, spliced on by the block composition
+        that ran it), then ``published``; its context is its record's, with
+        ``published`` bound in it (``extend_scope``) as the block
+        composition binds a completed loop's (``reduce_block_to_exitset``),
+        so an enclosing loop reads its latch from what this loop published.
+        Its guard, faces and ``owed`` are its arm's: the caller composes
+        beneath it (``ExitSet.sequence``).  With nothing to carry its state
+        is left as it is, by identity (``function_universe_sugar._prefixed``'s
+        law).  A halt with no record (none, or the bare context a target
+        unpack's halt holds) is given one; any other payload has no entries
+        to carry them beside and is refused by name: what the items did is
+        never dropped beside it."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
 
-        return ExitSet.completed(
-            BlockValue(
-                (*self.iterable_writes, *entries, *published),
-                fall_through=fall_through,
-                can_fall_through=can_fall_through,
+        before = (*self.iterable_writes, *entries)
+        if halt is None:
+            return ExitSet.completed(
+                BlockValue(
+                    (*before, *published),
+                    fall_through=fall_through,
+                    can_fall_through=can_fall_through,
+                )
             )
-        )
+        state = halt.state
+        if before or published:
+            from dataclasses import replace
+
+            from sugar_lift_py_tests.context.reduce_context import ReduceContext
+            from sugar_lift_py_tests.sugar.function_universe_sugar import (
+                _ReducedBlock,
+            )
+
+            if state is None or isinstance(state, ReduceContext):
+                state = _ReducedBlock((), False, (), context=state)
+            if not isinstance(state, _ReducedBlock):
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    owner="LoopRecurrenceSugar.left-with",
+                    blame=self.site,
+                    observed=(
+                        f"a {type(halt.effect).__name__} halt leaving a live loop "
+                        f"from a {type(state).__name__} state, not a record"
+                    ),
+                    requested=(
+                        "the halt's record, to carry what the loop's items did "
+                        "beside what ran before the halt"
+                    ),
+                    fix=(
+                        "halt with a record (a block's halt state); never drop "
+                        "what the items did"
+                    ),
+                )
+            context = state.context
+            if published and context is not None:
+                context = BlockValue(published).extend_scope(context)
+            state = replace(
+                state,
+                entries=(*before, *state.entries, *published),
+                context=context,
+            )
+        return ExitSet.halted(halt.effect, state=state)
 
     def _recurrence_head(self, key):
         """The recurrence's value of the name a read after the loop reads
