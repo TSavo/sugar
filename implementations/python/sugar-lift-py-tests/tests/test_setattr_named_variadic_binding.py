@@ -33,7 +33,7 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -74,10 +74,10 @@ def _source_class_and_helper(class_body: str, helper_source: str, field: str = "
         if isinstance(node, FunctionDef) and node.name == "helper"
     )
     class_outcome = class_def.sugar().desugar(None)
-    assert isinstance(class_outcome, Complete)
-    assert isinstance(class_outcome.value, ClassDefinitionValue)
-    receiver = class_outcome.value.construct_receiver_state_from_block(
-        None, class_outcome.value.class_definition_cid
+    class_value = class_outcome.completed_value()
+    assert isinstance(class_value, ClassDefinitionValue)
+    receiver = class_value.construct_receiver_state_from_block(
+        None, class_value.class_definition_cid
     )
     assert isinstance(receiver, ObjectValue)
     pending = helper.sugar().desugar(None)

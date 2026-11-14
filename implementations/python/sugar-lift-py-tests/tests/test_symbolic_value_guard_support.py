@@ -21,16 +21,15 @@ def test_guard_does_not_become_symbolic_value_content_identity() -> None:
 def test_symbolic_name_attribute_is_a_coordinate_not_an_invented_string() -> None:
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Complete
 
     value = SymbolicValue(make_var("expected"))
     site = "symbolic-name-attr"
     outcome = value.attribute("__name__", site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.target_name == "__name__"
-    assert outcome.value.term == ctor(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert outcome.completed_value().target_name == "__name__"
+    assert outcome.completed_value().term == ctor(
         "attr:__name__",
         [value.to_term(owner=str(site))],
         symbol_kind="method-coordinate",
@@ -53,7 +52,6 @@ def test_symbolic_unknown_attribute_stays_undecided() -> None:
 def test_call_site_name_attribute_is_a_coordinate_not_an_invented_string() -> None:
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Complete
 
     receiver = CallSiteValue(
         target_name="__getitem__",
@@ -70,10 +68,10 @@ def test_call_site_name_attribute_is_a_coordinate_not_an_invented_string() -> No
     site = "callsite-name-attr"
     outcome = receiver.attribute("__name__", site)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.target_name == "__name__"
-    assert outcome.value.term == ctor(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert outcome.completed_value().target_name == "__name__"
+    assert outcome.completed_value().term == ctor(
         "attr:__name__",
         [receiver.to_term(owner=str(site))],
         symbol_kind="method-coordinate",
@@ -126,7 +124,6 @@ def test_joined_str_names_unground_interpolation_as_an_fstring_coordinate(
 def test_type_call_result_is_a_type_object() -> None:
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor, str_const
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
@@ -146,14 +143,14 @@ def test_type_call_result_is_a_type_object() -> None:
     as_type = result.python_isinstance(
         "type", ctor("python:type", [str_const("type")]), "site"
     )
-    assert isinstance(as_type, Complete)
-    assert isinstance(as_type.value, TrueBoolLiteralSugar)
+    assert as_type.completed_value() is not None
+    assert isinstance(as_type.completed_value(), TrueBoolLiteralSugar)
 
     as_tuple = result.python_isinstance(
         "tuple", ctor("python:type", [str_const("tuple")]), "site"
     )
-    assert isinstance(as_tuple, Complete)
-    assert isinstance(as_tuple.value, FalseBoolLiteralSugar)
+    assert as_tuple.completed_value() is not None
+    assert isinstance(as_tuple.completed_value(), FalseBoolLiteralSugar)
 
 
 def _name_attribute_callsite():
@@ -180,18 +177,17 @@ def test_name_attribute_plus_string_is_a_concat_coordinate_not_an_invented_strin
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Complete
 
     name = _name_attribute_callsite()
     suffix = StringValue("()")
     site = "name-plus-string"
     outcome = name.add(suffix, site, None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert not isinstance(outcome.value, StringValue)
-    assert outcome.value.target_name == "__add__"
-    assert outcome.value.term == ctor(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert not isinstance(outcome.completed_value(), StringValue)
+    assert outcome.completed_value().target_name == "__add__"
+    assert outcome.completed_value().term == ctor(
         "call:__add__",
         [
             name.to_term(owner="CallSiteValue.named_string_concat"),
@@ -205,18 +201,17 @@ def test_string_plus_name_attribute_is_a_concat_coordinate_not_an_invented_strin
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Complete
 
     name = _name_attribute_callsite()
     prefix = StringValue("`")
     site = "string-plus-name"
     outcome = prefix.add(name, site, None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert not isinstance(outcome.value, StringValue)
-    assert outcome.value.target_name == "__add__"
-    assert outcome.value.term == ctor(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert not isinstance(outcome.completed_value(), StringValue)
+    assert outcome.completed_value().target_name == "__add__"
+    assert outcome.completed_value().term == ctor(
         "call:__add__",
         [
             prefix.to_term(owner="CallSiteValue.named_string_concat"),
@@ -231,25 +226,24 @@ def test_backquote_joins_a_named_concat_without_inventing_the_string() -> None:
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Complete
 
     name = _name_attribute_callsite()
     inner = name.add(StringValue("()"), "inner", None)
-    assert isinstance(inner, Complete)
-    prefixed = StringValue("`").add(inner.value, "prefix", None)
-    assert isinstance(prefixed, Complete)
-    assert isinstance(prefixed.value, CallSiteValue)
-    assert not isinstance(prefixed.value, StringValue)
-    wrapped = prefixed.value.add(StringValue("`"), "suffix", None)
-    assert isinstance(wrapped, Complete)
-    assert isinstance(wrapped.value, CallSiteValue)
-    assert not isinstance(wrapped.value, StringValue)
-    assert wrapped.value.target_name == "__add__"
-    assert getattr(wrapped.value.term, "name", None) == "call:__add__"
-    assert wrapped.value.term == ctor(
+    assert inner.completed_value() is not None
+    prefixed = StringValue("`").add(inner.completed_value(), "prefix", None)
+    assert prefixed.completed_value() is not None
+    assert isinstance(prefixed.completed_value(), CallSiteValue)
+    assert not isinstance(prefixed.completed_value(), StringValue)
+    wrapped = prefixed.completed_value().add(StringValue("`"), "suffix", None)
+    assert wrapped.completed_value() is not None
+    assert isinstance(wrapped.completed_value(), CallSiteValue)
+    assert not isinstance(wrapped.completed_value(), StringValue)
+    assert wrapped.completed_value().target_name == "__add__"
+    assert getattr(wrapped.completed_value().term, "name", None) == "call:__add__"
+    assert wrapped.completed_value().term == ctor(
         "call:__add__",
         [
-            prefixed.value.to_term(owner="CallSiteValue.named_string_concat"),
+            prefixed.completed_value().to_term(owner="CallSiteValue.named_string_concat"),
             StringValue("`").to_term(owner="CallSiteValue.named_string_concat"),
         ],
         symbol_kind="coordinate",
@@ -262,7 +256,6 @@ def test_string_plus_join_callsite_is_a_concat_coordinate_not_an_invented_string
     from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Complete
 
     join = OpaqueOpCallsite(
         callee="join",
@@ -274,11 +267,11 @@ def test_string_plus_join_callsite_is_a_concat_coordinate_not_an_invented_string
     site = "string-plus-join"
     outcome = prefix.add(join, site, None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert not isinstance(outcome.value, StringValue)
-    assert outcome.value.target_name == "__add__"
-    assert outcome.value.term == ctor(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert not isinstance(outcome.completed_value(), StringValue)
+    assert outcome.completed_value().target_name == "__add__"
+    assert outcome.completed_value().term == ctor(
         "call:__add__",
         [
             prefix.to_term(owner="CallSiteValue.named_string_concat"),
@@ -287,11 +280,11 @@ def test_string_plus_join_callsite_is_a_concat_coordinate_not_an_invented_string
         symbol_kind="coordinate",
     )
 
-    wrapped = outcome.value.add(StringValue(")"), "join-plus-suffix", None)
-    assert isinstance(wrapped, Complete)
-    assert isinstance(wrapped.value, CallSiteValue)
-    assert not isinstance(wrapped.value, StringValue)
-    assert getattr(wrapped.value.term, "name", None) == "call:__add__"
+    wrapped = outcome.completed_value().add(StringValue(")"), "join-plus-suffix", None)
+    assert wrapped.completed_value() is not None
+    assert isinstance(wrapped.completed_value(), CallSiteValue)
+    assert not isinstance(wrapped.completed_value(), StringValue)
+    assert getattr(wrapped.completed_value().term, "name", None) == "call:__add__"
 
 
 def _dual_arm_helper_callsite(*, name_faces: bool):
@@ -311,15 +304,15 @@ def _dual_arm_helper_callsite(*, name_faces: bool):
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.ir import atomic, ctor
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
     from sugar_lift_py_tests.sugar_body import SugarBody
 
     if name_faces:
         left = _name_attribute_callsite()
         right_outcome = left.add(StringValue("()"), "dual-arm-concat", None)
-        assert isinstance(right_outcome, Complete)
-        right = right_outcome.value
+        assert right_outcome.completed_value() is not None
+        right = right_outcome.completed_value()
     else:
         left = TermValue(1)
         right = TermValue(2)
@@ -342,7 +335,7 @@ def _dual_arm_helper_callsite(*, name_faces: bool):
 
         def desugar(self, ctx=None):
             del ctx
-            return Complete(self.value)
+            return ExitSet.completed(self.value)
 
         def to_term(self, *, owner: str):
             del owner
@@ -358,25 +351,24 @@ def _dual_arm_helper_callsite(*, name_faces: bool):
         source_call_frame_cid="blake3-512:" + "7" * 128,
     )
     produced = callsite.producer_outcome(None)
-    assert isinstance(produced, Complete)
-    assert isinstance(produced.value, CallSiteValue)
-    return produced.value
+    assert produced.completed_value() is not None
+    assert isinstance(produced.completed_value(), CallSiteValue)
+    return produced.completed_value()
 
 
 def test_multi_exit_string_helper_stays_the_callsite_not_the_block() -> None:
     from sugar_lift_py_tests.floor.block_value import BlockValue
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.outcome import Complete
 
     helper = _dual_arm_helper_callsite(name_faces=True)
     projected = helper.project_operation_receiver_outcome(
         None, owner="CallSiteSugar positional actual"
     )
 
-    assert isinstance(projected, Complete)
-    assert projected.value is helper
-    assert isinstance(projected.value, CallSiteValue)
-    assert not isinstance(projected.value, BlockValue)
+    assert projected.completed_value() is not None
+    assert projected.completed_value() is helper
+    assert isinstance(projected.completed_value(), CallSiteValue)
+    assert not isinstance(projected.completed_value(), BlockValue)
     # The application ``helper.term`` stays the bridge coordinate; as a value
     # the call is ONE evaluation's result, keyed on its occurrence -- never the
     # application itself, which would claim every evaluation returns the same
@@ -390,7 +382,6 @@ def test_string_plus_multi_exit_string_helper_is_a_concat_coordinate_not_an_inve
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Complete
 
     helper = _dual_arm_helper_callsite(name_faces=True)
     prefix = StringValue("`")
@@ -398,11 +389,11 @@ def test_string_plus_multi_exit_string_helper_is_a_concat_coordinate_not_an_inve
     outcome = prefix.add(helper, site, None)
 
     assert helper.names_a_string()
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert not isinstance(outcome.value, StringValue)
-    assert outcome.value.target_name == "__add__"
-    assert outcome.value.term == ctor(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert not isinstance(outcome.completed_value(), StringValue)
+    assert outcome.completed_value().target_name == "__add__"
+    assert outcome.completed_value().term == ctor(
         "call:__add__",
         [
             prefix.to_term(owner="CallSiteValue.named_string_concat"),
@@ -411,11 +402,11 @@ def test_string_plus_multi_exit_string_helper_is_a_concat_coordinate_not_an_inve
         symbol_kind="coordinate",
     )
 
-    wrapped = outcome.value.add(StringValue("`"), "dual-arm-plus-suffix", None)
-    assert isinstance(wrapped, Complete)
-    assert isinstance(wrapped.value, CallSiteValue)
-    assert not isinstance(wrapped.value, StringValue)
-    assert getattr(wrapped.value.term, "name", None) == "call:__add__"
+    wrapped = outcome.completed_value().add(StringValue("`"), "dual-arm-plus-suffix", None)
+    assert wrapped.completed_value() is not None
+    assert isinstance(wrapped.completed_value(), CallSiteValue)
+    assert not isinstance(wrapped.completed_value(), StringValue)
+    assert getattr(wrapped.completed_value().term, "name", None) == "call:__add__"
 
 
 def test_multi_exit_non_string_helper_does_not_name_a_string() -> None:
@@ -484,7 +475,7 @@ def test_not_of_a_two_arm_method_body_stands_on_the_call() -> None:
 
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
     from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 
@@ -500,15 +491,15 @@ def test_not_of_a_two_arm_method_body_stands_on_the_call() -> None:
 
         def desugar(self, ctx=None):
             del ctx
-            return Complete(self.value)
+            return ExitSet.completed(self.value)
 
         def to_term(self, *, owner: str):
             return self.value.to_term(owner=owner)
 
     outcome = UnaryOpSugar("Not", _Yield(callsite), "not-two-arm").desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, PredicateValue)
-    negated = outcome.value.formula
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), PredicateValue)
+    negated = outcome.completed_value().formula
     assert "truthy" in str(negated)
     assert "call:RaisesExc.matches" in str(negated)
 
@@ -581,7 +572,7 @@ def test_not_of_a_deferred_lookup_method_body_stands_on_the_call() -> None:
 
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import ctor
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
     from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 
@@ -597,15 +588,15 @@ def test_not_of_a_deferred_lookup_method_body_stands_on_the_call() -> None:
 
         def desugar(self, ctx=None):
             del ctx
-            return Complete(self.value)
+            return ExitSet.completed(self.value)
 
         def to_term(self, *, owner: str):
             return self.value.to_term(owner=owner)
 
     outcome = UnaryOpSugar("Not", _Yield(callsite), "not-deferred-lookup").desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, PredicateValue)
-    negated = outcome.value.formula
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), PredicateValue)
+    negated = outcome.completed_value().formula
     assert "truthy" in str(negated)
     assert "call:stringify" in str(negated)
 
@@ -625,7 +616,7 @@ def _multi_return_block_method_callsite():
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import atomic, ctor
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
     from sugar_lift_py_tests.sugar_body import SugarBody
 
@@ -661,7 +652,7 @@ def _multi_return_block_method_callsite():
 
         def desugar(self, ctx=None):
             del ctx
-            return Complete(self.value)
+            return ExitSet.completed(self.value)
 
         def to_term(self, *, owner: str):
             del owner
@@ -688,7 +679,7 @@ def test_not_of_a_multi_return_block_stands_on_the_call() -> None:
     from dataclasses import dataclass
 
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
     from sugar_lift_py_tests.sugar.unary_op_sugar import UnaryOpSugar
 
@@ -704,15 +695,15 @@ def test_not_of_a_multi_return_block_stands_on_the_call() -> None:
 
         def desugar(self, ctx=None):
             del ctx
-            return Complete(self.value)
+            return ExitSet.completed(self.value)
 
         def to_term(self, *, owner: str):
             return self.value.to_term(owner=owner)
 
     outcome = UnaryOpSugar("Not", _Yield(callsite), "not-multi-return").desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, PredicateValue)
-    negated = outcome.value.formula
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), PredicateValue)
+    negated = outcome.completed_value().formula
     assert "truthy" in str(negated)
     assert "call:RaisesExc.matches" in str(negated)
 

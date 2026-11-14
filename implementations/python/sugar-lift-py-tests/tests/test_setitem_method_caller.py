@@ -39,7 +39,7 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -79,10 +79,10 @@ def _method_definition(source: str = METHOD_BODY):
 def _source_holder_receiver():
     class_def, _method, pending = _method_definition()
     class_outcome = class_def.sugar().desugar(None)
-    assert isinstance(class_outcome, Complete)
-    assert isinstance(class_outcome.value, ClassDefinitionValue)
-    receiver = class_outcome.value.construct_receiver_state_from_block(
-        None, class_outcome.value.class_definition_cid
+    class_value = class_outcome.completed_value()
+    assert isinstance(class_value, ClassDefinitionValue)
+    receiver = class_value.construct_receiver_state_from_block(
+        None, class_value.class_definition_cid
     )
     assert isinstance(receiver, ObjectValue)
     return receiver, pending
@@ -157,15 +157,16 @@ def _assert_named_halt(outcome) -> Halted:
 
 
 def _assert_completed_call(outcome) -> CallSiteValue:
-    """Successful method body publishes as Complete(CallSiteValue).
+    """Successful method body publishes as ExitSet.completed(CallSiteValue).
 
     ``CallSiteValue.project_producer_outcome`` replaces a completed body
-    record with the Call coordinate itself (Complete(self)), while halted
-    bodies remain ExitSet(Halted(...)).
+    record with the Call coordinate itself (ExitSet.completed(self)), while
+    halted bodies remain ExitSet(Halted(...)).
     """
-    assert isinstance(outcome, Complete), outcome
-    assert isinstance(outcome.value, CallSiteValue), outcome.value
-    return outcome.value
+    value = outcome.completed_value()
+    assert value is not None, outcome
+    assert isinstance(value, CallSiteValue), value
+    return value
 
 
 def _stored_list(completed_face) -> ListValue:
@@ -264,7 +265,7 @@ def test_discrimination_keyword_swap_is_not_positional_store() -> None:
     s_out = swapped.producer_outcome(None)
     _assert_completed_call(t_out)
     # Swapped either completes (different binding already proven) or halts.
-    if isinstance(s_out, Complete):
+    if s_out.completed_value() is not None:
         _assert_completed_call(s_out)
     else:
         assert isinstance(s_out, ExitSet)

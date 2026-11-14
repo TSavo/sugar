@@ -55,10 +55,10 @@ def test_dict_literal_subscript_constructs_and_desugars_without_owner_subscript_
     """DictLiteralValue has subscript_with only — must not hit FloorValue.subscript."""
     # Constructs (SubscriptSugar mint) and desugars without ConstructionGap owner=subscript.
     outcome = _desugar_return("def A():\n    return {1: 2}[1]\n")
-    # Completed path or Incomplete typed effect — not a construction_panic.
-    from sugar_lift_py_tests.outcome import Complete, Incomplete, ExitSet
+    # Completed path or halted typed effect — not a construction_panic.
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    assert isinstance(outcome, (Complete, Incomplete, ExitSet))
+    assert isinstance(outcome, ExitSet)
 
 
 def test_tuple_literal_multi_index_constructs():
@@ -80,7 +80,7 @@ def test_none_subscript_constructs_typeerror_exit_not_owner_subscript_gap():
         outcome = _desugar_return("def A():\n    return None[0]\n")
     except ConstructionPanic as e:
         raise AssertionError(f"owner=subscript gap still fires: {e}") from e
-    # Desugar halts: Incomplete(TypeError effect)
+    # Desugar halts: ExitSet.halted(TypeError effect)
     assert outcome is not None
 
 

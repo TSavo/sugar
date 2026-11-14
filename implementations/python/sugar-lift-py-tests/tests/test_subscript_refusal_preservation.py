@@ -7,7 +7,7 @@ import pytest
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import DictValue, FloorValue, StringValue, TermValue
 from sugar_lift_py_tests.ir import atomic, ctor
-from sugar_lift_py_tests.outcome import Complete, ExitSet
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, complement_guard
 from sugar_lift_py_tests.sugar.subscript_sugar import SubscriptSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -72,7 +72,7 @@ def test_partitioned_subscript_preserves_original_typed_refusal(tmp_path, monkey
     )
     sugar = SubscriptSugar(
         _ValueSugar(receiver, site),
-        _ValueSugar(Complete(StringValue("key")), site),
+        _ValueSugar(ExitSet.completed(StringValue("key")), site),
         site,
     )
 
@@ -99,7 +99,7 @@ def test_partitioned_subscript_truth_keeps_value_and_halt_faces(tmp_path, monkey
     )
     sugar = SubscriptSugar(
         _ValueSugar(receiver, site),
-        _ValueSugar(Complete(StringValue("key")), site),
+        _ValueSugar(ExitSet.completed(StringValue("key")), site),
         site,
     )
 

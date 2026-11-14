@@ -177,14 +177,13 @@ def test_ground_non_string_in_string_is_type_error(tmp_path):
     """
     from sugar_lift_py_tests.floor import StringValue, TermValue
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
     site = _workspace_fragment(tmp_path)
 
     outcome = StringValue("abc").contains(TermValue(1), site)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_callsite_container_emits_py_in():

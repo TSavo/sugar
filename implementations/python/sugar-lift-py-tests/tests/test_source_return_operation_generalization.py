@@ -38,9 +38,9 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.ir import and_
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import (
@@ -108,8 +108,6 @@ def _calls_named(tree, name: str) -> list[Call]:
 
 
 def _completed_value(outcome):
-    if isinstance(outcome, Complete):
-        return outcome.value
     if isinstance(outcome, ExitSet):
         completed = [e for e in outcome.exits if isinstance(e, Completed)]
         assert completed, outcome.exits
@@ -128,14 +126,14 @@ CODEX3_OWNER = (
 @pytest.mark.parametrize(
     "competing_exit",
     (
-        Incomplete(
+        ExitSet.halted(
             RaiseEffect.for_builtin(
                 "TypeError",
                 occurrence="implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:138:0",
             ),
-            branch_conditions=(TermValue(True).to_term(owner="guard"),),
+            guard=and_([TermValue(True).to_term(owner="guard")]),
         ),
-        Incomplete(
+        ExitSet.halted(
             RaiseEffect.for_builtin(
                 "TypeError",
                 occurrence="implementations/python/sugar-lift-py-tests/tests/test_source_return_operation_generalization.py:135:0",
@@ -173,10 +171,10 @@ def test_scalar_helper_authenticated_call_projects_return_floor() -> None:
     )
     call = _first(tree, Call)
     outcome = call.sugar().desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.body is not None
-    floor = outcome.value.force_floor(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert outcome.completed_value().body is not None
+    floor = outcome.completed_value().force_floor(
         None, owner="scalar-return-floor", project_callsite=False
     )
     assert isinstance(floor, BlockValue)
@@ -231,19 +229,19 @@ def test_direct_scalar_binop_completes() -> None:
     value = _completed_value(outcome)
     assert value == TermValue(5) or getattr(value, "value", None) == 5 or True
     # Pin a concrete completion face exists (shape varies by BinOp totalizer).
-    assert isinstance(outcome, (Complete, ExitSet))
+    assert isinstance(outcome, ExitSet)
 
 
 def test_direct_scalar_compare_completes() -> None:
     tree, _, _ = _tree("3 < 5\n", bind=frozenset())
     outcome = _first(tree, Compare).sugar().desugar(None)
-    assert isinstance(outcome, (Complete, ExitSet))
+    assert isinstance(outcome, ExitSet)
 
 
 def test_direct_subscript_completes() -> None:
     tree, _, _ = _tree("[10, 20][0]\n", bind=frozenset())
     outcome = _first(tree, Subscript).sugar().desugar(None)
-    assert isinstance(outcome, (Complete, ExitSet))
+    assert isinstance(outcome, ExitSet)
 
 
 # ---------------------------------------------------------------------------
@@ -259,10 +257,10 @@ def test_unauthenticated_helper_call_has_no_body_and_stays_opaque() -> None:
     )
     call = _first(tree, Call)
     outcome = call.sugar().desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    assert outcome.value.body is None
-    dug = outcome.value._dig_floor_or_none(None, owner="opaque-probe")
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    assert outcome.completed_value().body is None
+    dug = outcome.completed_value()._dig_floor_or_none(None, owner="opaque-probe")
     assert dug is None
 
 
@@ -312,7 +310,7 @@ def test_scalar_helper_feeds_binop_isomorphic_to_direct() -> None:
 
     # Both complete (or both factored with a completed arm).
     assert isinstance(
-        helper, (Complete, ExitSet)
+        helper, ExitSet
     ), f"{CODEX3_OWNER} helper outcome={type(helper).__name__}"
     hv = _completed_value(helper)
     dv = _completed_value(direct)
@@ -333,18 +331,10 @@ def test_scalar_helper_feeds_compare_isomorphic_to_direct() -> None:
         helper = _first(helper_tree, Compare).sugar().desugar(None)
     except (ConstructionPanic, SugarNotWritten) as exc:
         pytest.fail(f"{CODEX3_OWNER} compare: {exc}")
-    assert isinstance(helper, (Complete, ExitSet)), CODEX3_OWNER
+    assert isinstance(helper, ExitSet), CODEX3_OWNER
     # At least one completed arm; guards may factor.
-    h_completed = (
-        [helper]
-        if isinstance(helper, Complete)
-        else [e for e in helper.exits if isinstance(e, Completed)]
-    )
-    d_completed = (
-        [direct]
-        if isinstance(direct, Complete)
-        else [e for e in direct.exits if isinstance(e, Completed)]
-    )
+    h_completed = [e for e in helper.exits if isinstance(e, Completed)]
+    d_completed = [e for e in direct.exits if isinstance(e, Completed)]
     assert h_completed and d_completed, CODEX3_OWNER
 
 
@@ -394,7 +384,7 @@ def test_scalar_helper_feeds_store_index() -> None:
         outcome = consumer_call.sugar().desugar(None)
     except (ConstructionPanic, SugarNotWritten) as exc:
         pytest.fail(f"{CODEX3_OWNER} store index: {exc}")
-    assert isinstance(outcome, (Complete, ExitSet)), CODEX3_OWNER
+    assert isinstance(outcome, ExitSet), CODEX3_OWNER
     if isinstance(outcome, ExitSet):
         assert any(
             isinstance(e, Completed) for e in outcome.exits
@@ -435,15 +425,15 @@ def test_guarded_helper_return_retains_guards_into_binop() -> None:
         outcome = _first(tree, BinOp).sugar().desugar(None)
     except (ConstructionPanic, SugarNotWritten, NotImplementedError) as exc:
         pytest.fail(f"{CODEX3_OWNER} guarded return: {exc}")
-    assert isinstance(outcome, (Complete, ExitSet)), CODEX3_OWNER
-    if isinstance(outcome, ExitSet):
+    assert isinstance(outcome, ExitSet), CODEX3_OWNER
+    value = outcome.completed_value()
+    if value is None:
         # Guarded path: either factored faces or a completed arm with guard.
         assert outcome.exits, CODEX3_OWNER
         # At least one completed arm carries a non-trivial guard or value 2.
         completed = [e for e in outcome.exits if isinstance(e, Completed)]
         assert completed, f"{CODEX3_OWNER} no completed arm: {outcome.exits!r}"
     else:
-        value = outcome.value
         assert (
             value == TermValue(2) or getattr(value, "value", None) == 2
         ), f"{CODEX3_OWNER} guarded return lost value: {value!r}"
@@ -614,8 +604,8 @@ def test_module_scope_lambda_never_fabricates_an_unbound_name() -> None:
     tree, _, _ = _tree("result = (lambda value: value + missing)(2)\n")
     call = next(node for node in tree.nodes() if isinstance(node, Call))
     outcome = call.sugar().desugar(None)
-    assert isinstance(outcome, Complete)
-    dug = outcome.value._dig_floor_or_none(None, owner="module-scope-lambda-unbound")
+    assert outcome.completed_value() is not None
+    dug = outcome.completed_value()._dig_floor_or_none(None, owner="module-scope-lambda-unbound")
     # Two faces do not dig to one Floor; no number is invented.
     assert dug is None
 def test_nested_function_source_return_projects_into_outer_caller() -> None:

@@ -15,7 +15,6 @@ from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.ir import PrimitiveSort, _Lambda, ctor, make_var, num
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -51,9 +50,9 @@ def test_list_plus_comprehension_constructs_symbolic_concat() -> None:
         col = 0
 
     out = left.add(right, site=_Site(), ctx=None)
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, ComprehensionValue)
-    assert out.value.term.name == "+"  # type: ignore[attr-defined]
+    value = out.completed_value()
+    assert isinstance(value, ComprehensionValue)
+    assert value.term.name == "+"  # type: ignore[attr-defined]
 
 
 def test_source_list_plus_comprehension_returns_universe(tmp_path: Path) -> None:
@@ -69,5 +68,4 @@ def test_source_list_plus_comprehension_returns_universe(tmp_path: Path) -> None
         ).functions()
     )
     out = fn.sugar().desugar(None)
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, UniverseValue)
+    assert isinstance(out.completed_value(), UniverseValue)

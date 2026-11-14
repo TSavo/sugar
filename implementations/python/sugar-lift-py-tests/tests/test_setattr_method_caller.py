@@ -47,7 +47,7 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 from sugar_lift_py_tests.floor import ObjectValue, StringValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -98,10 +98,10 @@ def _construct_class(source: str, class_name: str) -> ObjectValue:
         if isinstance(node, ClassDef) and node.name == class_name
     )
     class_outcome = class_def.sugar().desugar(None)
-    assert isinstance(class_outcome, Complete)
-    assert isinstance(class_outcome.value, ClassDefinitionValue)
-    receiver = class_outcome.value.construct_receiver_state_from_block(
-        None, class_outcome.value.class_definition_cid
+    class_value = class_outcome.completed_value()
+    assert isinstance(class_value, ClassDefinitionValue)
+    receiver = class_value.construct_receiver_state_from_block(
+        None, class_value.class_definition_cid
     )
     assert isinstance(receiver, ObjectValue)
     return receiver
@@ -170,9 +170,10 @@ def _assert_named_halt(outcome, *, require_pre_effect_state: bool = True) -> Hal
 
 
 def _assert_completed_call(outcome) -> CallSiteValue:
-    assert isinstance(outcome, Complete), outcome
-    assert isinstance(outcome.value, CallSiteValue), outcome.value
-    return outcome.value
+    value = outcome.completed_value()
+    assert value is not None, outcome
+    assert isinstance(value, CallSiteValue), value
+    return value
 
 
 def _obj_value_cids(pending: NativeOperationExitCarrierV1):
@@ -421,15 +422,15 @@ def test_getter_only_property_method_call_binds_and_floor_refuses_store() -> Non
     )
     assert site.arg_values[2] == TermValue(7)
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
     # Use a source fragment site from the method body store statement.
     _, method, _pending = _method_definition()
     floor_site = method.body[0].fragment
     direct = target.setattr("field", TermValue(7), floor_site)
-    assert isinstance(direct, Incomplete) and isinstance(direct.effect, RaiseEffect)
-    assert direct.effect.exception_name == "AttributeError"
-    assert direct.effect.producer_node_owner == "ObjectValue.setattr"
+    assert direct.halts() == direct.exits
+    (halt,) = direct.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "AttributeError"
+    assert halt.effect.producer_node_owner == "ObjectValue.setattr"
 
 
 def test_discrimination_writable_is_not_getter_only_halt() -> None:

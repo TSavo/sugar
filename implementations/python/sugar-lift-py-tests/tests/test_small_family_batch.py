@@ -10,7 +10,6 @@ from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.class_definition_sugar import ClassDefinitionSugar
 from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
 from sugar_lift_py_tests.sugar.starred_sugar import StarredSugar
@@ -109,8 +108,9 @@ def test_named_expr_constructs_and_desugars(tmp_path: Path) -> None:
     assert named, "NamedExpr must construct NamedExprSugar"
     # Direct desugar of the walrus presents the bound value coordinate.
     direct = named[0].desugar(None)
-    assert isinstance(direct, Complete)
-    assert direct.value.name == "n"  # type: ignore[attr-defined]
+    value = direct.completed_value()
+    assert value is not None
+    assert value.name == "n"  # type: ignore[attr-defined]
 
 
 def test_named_expr_non_name_target_stays_loud(tmp_path: Path) -> None:
@@ -142,7 +142,7 @@ def test_yield_from_constructs_suspension_sugar(tmp_path: Path) -> None:
     # Eager desugar stays loud — generator protocol owns consumption.
     try:
         sugar.desugar(None)
-        # May Complete as Universe with Incomplete/gap in body depending on
+        # May complete as Universe with a halt/gap in body depending on
         # statement wrapping; if it raises SNW from YieldFrom, that is correct.
     except SugarNotWritten as gap:
         assert "YieldFrom" in gap.owner or "yield from" in str(gap).lower()
@@ -173,8 +173,9 @@ def test_starred_sugar_desugars_to_coordinate() -> None:
 
     sugar = StarredSugar(value=IntLiteralSugar(value=1, site=_Site()), site=_Site())
     out = sugar.desugar(None)
-    assert isinstance(out, Complete)
-    assert out.value.to_term(owner="t").name == "python:starred"  # type: ignore[attr-defined]
+    value = out.completed_value()
+    assert value is not None
+    assert value.to_term(owner="t").name == "python:starred"  # type: ignore[attr-defined]
 
 
 def _walk_sugars(root, seen=None):

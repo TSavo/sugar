@@ -20,7 +20,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import ListValue, TermValue, TupleValue
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.list_value import ListValue as ListValueCls
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.augassign_sugar import (
     SubscriptAugAssignSugar,
     project_augmented,
@@ -79,7 +79,7 @@ class _FloorSugar(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     @classmethod
     def witnesses(cls):
@@ -172,7 +172,7 @@ def test_discrimination_legacy_runtime_effect_is_not_the_formal_path() -> None:
     assert isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
     assert outcome.demand.operator == "subscript"
     with pytest.raises(AssertionError):
-        assert isinstance(outcome, Incomplete)
+        assert isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits
 
 
 def test_legacy_augmented_subscript_store_effect_sugar_is_deleted() -> None:
@@ -276,8 +276,8 @@ def test_production_desugar_list_augassign_completes_with_updated_cell() -> None
         TermValue(0),
         TermValue(10),
     )
-    assert isinstance(out, Complete), out
-    assert out.value == ListValue((TermValue(11), TermValue(2)))
+    assert out.completed_value() is not None, out
+    assert out.completed_value() == ListValue((TermValue(11), TermValue(2)))
 
 
 def test_formal_helper_desugars_without_legacy_incomplete_only() -> None:
@@ -299,7 +299,7 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
         def desugar(self, ctx=None):
             del ctx
             box["rhs"] += 1
-            return Complete(TermValue(99))
+            return ExitSet.completed(TermValue(99))
 
         @classmethod
         def witnesses(cls):
@@ -325,9 +325,10 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
         site=site,
     )
     out = sugar.desugar(None)
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_name == "IndexError"
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "IndexError"
     assert box["rhs"] == 0
     assert box["set"] == 0
 
@@ -351,7 +352,7 @@ def test_production_arithmetic_halt_blocks_store() -> None:
         NoneValue(),
     )
     assert box["set"] == 0
-    assert not (isinstance(out, Complete) and box["set"])
+    assert not (out.completed_value() is not None and box["set"])
 
 
 def test_production_store_halt_preserves_prior_state_without_fabricated_completion() -> (
@@ -362,7 +363,7 @@ def test_production_store_halt_preserves_prior_state_without_fabricated_completi
         TermValue(0),
         TermValue(10),
     )
-    if isinstance(out, Complete):
+    if out.completed_value() is not None:
         pytest.fail("readable tuple must not authorize completed setitem")
 
 
@@ -389,10 +390,10 @@ def test_production_receiver_index_evaluated_once_for_get_and_set() -> None:
         TermValue(0),
         TermValue(5),
     )
-    assert isinstance(out, Complete)
+    assert out.completed_value() is not None
     assert box["get"] == 1
     assert box["set"] == 1
-    assert out.value.elements[0] == TermValue(6)
+    assert out.completed_value().elements[0] == TermValue(6)
 
 
 def test_discrimination_duplicated_get_is_detected() -> None:
@@ -426,7 +427,7 @@ def test_production_getitem_before_rhs_order() -> None:
         def desugar(self, ctx=None):
             del ctx
             order.append("rhs")
-            return Complete(TermValue(4))
+            return ExitSet.completed(TermValue(4))
 
         @classmethod
         def witnesses(cls):
@@ -448,9 +449,9 @@ def test_production_getitem_before_rhs_order() -> None:
         site=site,
     )
     out = sugar.desugar(None)
-    assert isinstance(out, Complete)
+    assert out.completed_value() is not None
     assert order == ["get", "rhs", "op", "set"]
-    assert out.value == ListValue((TermValue(7),))
+    assert out.completed_value() == ListValue((TermValue(7),))
 
 
 def test_discrimination_wrong_order_rhs_before_get() -> None:
@@ -465,7 +466,7 @@ def test_production_readability_does_not_authorize_writability() -> None:
         TermValue(0),
         TermValue(1),
     )
-    if isinstance(out, Complete):
+    if out.completed_value() is not None:
         pytest.fail("readable tuple must not authorize completed setitem")
 
 
@@ -480,15 +481,15 @@ def test_operator_owned_project_inplace_uses_inplace_binary_edge() -> None:
     assert bound.__func__ is BinaryOperator.project_inplace
     assert Add.inplace_operator == "iadd"
     out = bound(TermValue(1), TermValue(2), _production_sites()[1])
-    assert isinstance(out, Complete)
-    assert out.value == TermValue(3)
+    assert out.completed_value() is not None
+    assert out.completed_value() == TermValue(3)
 
 
 def test_production_projector_default_floor_is_ordinary_binary() -> None:
     """FloorValue.inplace_default → add when species has no inplace override."""
     out = project_iadd(TermValue(1), TermValue(2), _production_sites()[1])
-    assert isinstance(out, Complete)
-    assert out.value == TermValue(3)
+    assert out.completed_value() is not None
+    assert out.completed_value() == TermValue(3)
 
 
 def test_production_projector_raw_notimplemented_falls_through_to_binary() -> None:
@@ -508,18 +509,18 @@ def test_production_projector_raw_notimplemented_falls_through_to_binary() -> No
 
         def add(self, other, site, ctx):
             calls.append("add")
-            return Complete(TermValue(7))
+            return ExitSet.completed(TermValue(7))
 
     out = project_iadd(_RawNotImpl(), TermValue(1), "op")
-    assert isinstance(out, Complete)
-    assert out.value == TermValue(7)
+    assert out.completed_value() is not None
+    assert out.completed_value() == TermValue(7)
     assert calls == ["inplace", "add"]
 
 
 def test_production_projector_completed_notimplemented_falls_through_to_binary() -> (
     None
 ):
-    """Twin: Complete(NotImplemented) from floor edge → ordinary add."""
+    """Twin: a completed NotImplemented from floor edge → ordinary add."""
     from sugar_lift_py_tests.floor.floor_value import FloorValue
 
     calls: list[str] = []
@@ -528,24 +529,24 @@ def test_production_projector_completed_notimplemented_falls_through_to_binary()
         def inplace_binary_operator_with(self, operation, ctx):
             del operation, ctx
             calls.append("inplace")
-            return Complete(NotImplemented)  # type: ignore[arg-type]
+            return ExitSet.completed(NotImplemented)  # type: ignore[arg-type]
 
         def add(self, other, site, ctx):
             calls.append("add")
-            return Complete(TermValue(9))
+            return ExitSet.completed(TermValue(9))
 
     out = project_iadd(_CompleteNotImpl(), TermValue(1), "op")
-    assert isinstance(out, Complete)
-    assert out.value == TermValue(9)
+    assert out.completed_value() is not None
+    assert out.completed_value() == TermValue(9)
     assert calls == ["inplace", "add"]
 
 
 def test_production_projector_incomplete_does_not_fall_through_to_binary() -> None:
-    """Incomplete surfaces unchanged — never authorizes binary fallback."""
+    """A halt surfaces unchanged — never authorizes binary fallback."""
     from sugar_lift_py_tests.effect import CoverageGapEffect
     from sugar_lift_py_tests.floor.floor_value import FloorValue
 
-    incomplete_face = Incomplete(
+    incomplete_face = ExitSet.halted(
         CoverageGapEffect(boundary="iadd", reason="inplace unresolved face")
     )
 
@@ -556,7 +557,7 @@ def test_production_projector_incomplete_does_not_fall_through_to_binary() -> No
 
         def add(self, other, site, ctx):
             del other, site, ctx
-            return Complete(TermValue(0))
+            return ExitSet.completed(TermValue(0))
 
     out = project_iadd(_IncompleteInplace(), TermValue(1), "op")
     assert out is incomplete_face

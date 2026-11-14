@@ -24,7 +24,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
 from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.assign_sugar import (
 
     DynamicUnpackStoreAssignSugar,
@@ -74,7 +74,7 @@ class _FloorSugar(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     @classmethod
     def witnesses(cls):
@@ -89,7 +89,7 @@ class _CountingRhs(Sugar):
     def desugar(self, ctx=None):
         del ctx
         self.box["n"] = self.box.get("n", 0) + 1
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     @classmethod
     def witnesses(cls):
@@ -334,15 +334,10 @@ def _valueerror_type_identity():
 
 
 def _arity_mismatch_effect(outcome):
-    """Normalize Complete/Incomplete/ExitSet shells to the RaiseEffect face."""
+    """Normalize the ExitSet shell to the RaiseEffect face."""
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
 
-    if isinstance(outcome, Incomplete):
-        effect = outcome.effect
-    elif isinstance(outcome, Incomplete) and isinstance(outcome.effect, RaiseEffect):
-        effect = outcome.effect
-    elif isinstance(outcome, ExitSet):
+    if isinstance(outcome, ExitSet):
         halted = [e for e in outcome.exits if isinstance(e, Halted)]
         assert halted, outcome.exits
         effect = halted[0].effect
@@ -446,22 +441,22 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
         blame=site,
     )
     roster_out = op.submit(ListValue((TermValue(10), TermValue(20))), None)
-    assert isinstance(roster_out, Complete)
-    assert isinstance(roster_out.value, UnpackMemberRoster)
-    assert roster_out.value.members[0] == TermValue(10)
-    assert roster_out.value.members[1] == TermValue(20)
-    assert not hasattr(roster_out.value, "bindings")
-    assert roster_out.value.occurrence is site
-    assert roster_out.value.demand_cid == op.demand_cid()
+    assert roster_out.completed_value() is not None
+    assert isinstance(roster_out.completed_value(), UnpackMemberRoster)
+    assert roster_out.completed_value().members[0] == TermValue(10)
+    assert roster_out.completed_value().members[1] == TermValue(20)
+    assert not hasattr(roster_out.completed_value(), "bindings")
+    assert roster_out.completed_value().occurrence is site
+    assert roster_out.completed_value().demand_cid == op.demand_cid()
     # Wrong position twin: swapping members is not the truthful roster.
     lying_roster = UnpackMemberRoster(
         (TermValue(20), TermValue(10)),
-        occurrence=roster_out.value.occurrence,
-        demand_cid=roster_out.value.demand_cid,
+        occurrence=roster_out.completed_value().occurrence,
+        demand_cid=roster_out.completed_value().demand_cid,
     )
-    assert lying_roster != roster_out.value
+    assert lying_roster != roster_out.completed_value()
     with pytest.raises(AssertionError):
-        assert lying_roster == roster_out.value
+        assert lying_roster == roster_out.completed_value()
 
     # --- formal setitem leaf: discharge coordinates must stay ordered ---
     coord_a = SimpleNamespace(coordinate_cid="cid:a")
@@ -513,7 +508,7 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     # Lying twin: claiming missing actuals greened a Complete is impossible.
     with pytest.raises(SugarNotWritten, match="authenticated caller actual absent"):
         out = projected.discharge({})
-        assert isinstance(out, Complete)
+        assert out.completed_value() is not None
     with pytest.raises(
         SugarNotWritten, match="authenticated caller actual absent"
     ) as partial:
@@ -521,7 +516,7 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     assert "cid:i" in str(partial.value)
     with pytest.raises(SugarNotWritten, match="authenticated caller actual absent"):
         out = projected.discharge({"cid:a": ListValue((TermValue(0),))})
-        assert isinstance(out, Complete)
+        assert out.completed_value() is not None
 
 
 def test_successful_roster_carries_authenticated_unpack_occurrence() -> None:
@@ -544,8 +539,8 @@ def test_successful_roster_carries_authenticated_unpack_occurrence() -> None:
         blame=site,
     )
     out = op.submit(ListValue((TermValue(1), TermValue(2))), None)
-    assert isinstance(out, Complete)
-    roster = out.value
+    assert out.completed_value() is not None
+    roster = out.completed_value()
     assert isinstance(roster, UnpackMemberRoster)
     assert roster.occurrence is site
     assert roster.demand_cid == op.demand_cid()
@@ -601,9 +596,16 @@ def test_opaque_formal_is_sequence_unpack_effect() -> None:
     _, pending = _helper(
         "def helper(obj, xs):\n    obj.x, *rest = xs\n    return rest\n"
     )
-    assert not isinstance(pending, Complete)
-    if isinstance(pending, Incomplete):
-        assert isinstance(pending.effect, SequenceUnpackRuntimeEffect)
+    assert not (isinstance(pending, ExitSet) and pending.completed_value() is not None)
+    if (
+        isinstance(pending, ExitSet)
+        and pending.exits
+        and pending.halts() == pending.exits
+    ):
+        assert all(
+            isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+            for halt in pending.halts()
+        )
     elif isinstance(pending, ExitSet):
         assert any(
             isinstance(getattr(e, "effect", None), SequenceUnpackRuntimeEffect)
@@ -659,14 +661,14 @@ def test_positional_roster_has_no_string_keys() -> None:
         blame=site,
     )
     out = op.submit(ListValue((TermValue(1), TermValue(2), TermValue(3))), None)
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, UnpackMemberRoster)
-    assert out.value.members[0] == TermValue(1)
-    assert out.value.members[1] == ListValue((TermValue(2), TermValue(3)))
+    assert out.completed_value() is not None
+    assert isinstance(out.completed_value(), UnpackMemberRoster)
+    assert out.completed_value().members[0] == TermValue(1)
+    assert out.completed_value().members[1] == ListValue((TermValue(2), TermValue(3)))
     # Roster is positional tuple only — not a name map.
-    assert not hasattr(out.value, "bindings")
-    assert out.value.occurrence is site
-    assert out.value.demand_cid == op.demand_cid()
+    assert not hasattr(out.completed_value(), "bindings")
+    assert out.completed_value().occurrence is site
+    assert out.completed_value().demand_cid == op.demand_cid()
 
 
 def test_positional_ground_exit_panic_propagates_without_reconstruction() -> None:

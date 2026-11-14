@@ -35,7 +35,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import ListValue, TermValue, TupleValue
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -449,7 +449,7 @@ def test_source_evaluation_order_independent_of_discharge_order() -> None:
         def desugar(self, ctx=None):
             del ctx
             order.append(self.label)
-            return Complete(self.payload)
+            return ExitSet.completed(self.payload)
 
         @classmethod
         def witnesses(cls):
@@ -465,8 +465,7 @@ def test_source_evaluation_order_independent_of_discharge_order() -> None:
     ).desugar()
 
     assert order == ["value", "receiver", "index"]
-    assert isinstance(outcome, Complete)
-    assert outcome.value == ListValue((TermValue(9),))
+    assert outcome.completed_value() == ListValue((TermValue(9),))
 
     import inspect
 

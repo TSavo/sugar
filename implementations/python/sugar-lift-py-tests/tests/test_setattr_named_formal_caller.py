@@ -51,7 +51,7 @@ from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, ClassDef, FunctionDef
@@ -128,10 +128,10 @@ def _source_class_and_helper(class_body: str, field: str = "field"):
         if isinstance(node, FunctionDef) and node.name == "helper"
     )
     class_outcome = class_def.sugar().desugar(None)
-    assert isinstance(class_outcome, Complete)
-    assert isinstance(class_outcome.value, ClassDefinitionValue)
-    receiver = class_outcome.value.construct_receiver_state_from_block(
-        None, class_outcome.value.class_definition_cid
+    class_value = class_outcome.completed_value()
+    assert isinstance(class_value, ClassDefinitionValue)
+    receiver = class_value.construct_receiver_state_from_block(
+        None, class_value.class_definition_cid
     )
     assert isinstance(receiver, ObjectValue)
     pending = helper.sugar().desugar(None)
@@ -221,12 +221,12 @@ def test_source_defined_property_without_setter_named_attribute_error() -> None:
     # Floor store path (not the read path) refuses the set.
     site = helper.body[0].fragment
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
     direct = receiver.setattr("field", TermValue(7), site)
-    assert isinstance(direct, Incomplete) and isinstance(direct.effect, RaiseEffect)
-    assert direct.effect.exception_name == "AttributeError"
-    assert direct.effect.producer_node_owner == "ObjectValue.setattr"
+    assert direct.halts() == direct.exits
+    (direct_halt,) = direct.halts()
+    assert isinstance(direct_halt.effect, RaiseEffect)
+    assert direct_halt.effect.exception_name == "AttributeError"
+    assert direct_halt.effect.producer_node_owner == "ObjectValue.setattr"
 
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})
@@ -408,7 +408,6 @@ def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
     # re-projects the exceptional resolution.
     site = function.body[0].fragment
     from sugar_lift_py_tests.sugar.store_effect_sugar import AttributeStoreEffectSugar
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
     from sugar_lift_py_tests.sugar.sugar_base import Sugar as _S
 
     @dataclass(frozen=True)
@@ -416,7 +415,7 @@ def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
         value: object
 
         def desugar(self, ctx=None):
-            return Complete(self.value)
+            return ExitSet.completed(self.value)
 
         @classmethod
         def witnesses(cls):
@@ -428,8 +427,9 @@ def test_tuple_receiver_store_halts_from_setattr_not_boundary() -> None:
         "field",
         site,
     ).desugar()
-    assert isinstance(direct, Incomplete)
-    assert direct.effect.producer_node_owner == "TupleValue.setattr"
+    assert direct.halts() == direct.exits
+    (direct_halt,) = direct.halts()
+    assert direct_halt.effect.producer_node_owner == "TupleValue.setattr"
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +444,7 @@ def test_property_without_setter_reads_fine_and_halts_on_store_after_discharge()
     class _GetterBody(Sugar):
         def desugar(self, ctx=None):
             del ctx
-            return Complete(
+            return ExitSet.completed(
                 BlockValue((ReturnValue(TermValue(1)),), can_fall_through=False)
             )
 
@@ -475,11 +475,11 @@ def test_property_without_setter_reads_fine_and_halts_on_store_after_discharge()
     site = function.body[0].fragment
     store = receiver.setattr("field", TermValue(7), site)
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
-    assert isinstance(store, Incomplete) and isinstance(store.effect, RaiseEffect)
-    assert store.effect.exception_name == "AttributeError"
-    assert store.effect.producer_node_owner == "ObjectValue.setattr"
+    assert store.halts() == store.exits
+    (store_halt,) = store.halts()
+    assert isinstance(store_halt.effect, RaiseEffect)
+    assert store_halt.effect.exception_name == "AttributeError"
+    assert store_halt.effect.producer_node_owner == "ObjectValue.setattr"
 
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
     exits = pending.discharge({obj_cid: receiver, value_cid: TermValue(7)})
@@ -494,7 +494,7 @@ def test_lying_read_path_does_not_authorize_completed_store() -> None:
     @dataclass(frozen=True)
     class _GetterBody(Sugar):
         def desugar(self, ctx=None):
-            return Complete(
+            return ExitSet.completed(
                 BlockValue((ReturnValue(TermValue(1)),), can_fall_through=False)
             )
 

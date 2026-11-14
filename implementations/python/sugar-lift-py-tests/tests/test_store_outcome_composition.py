@@ -37,7 +37,6 @@ import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -128,10 +127,11 @@ def _arms(exits):
 
 def _store_entries(state):
     return [
-        entry
+        halt
         for entry in getattr(state, "entries", ())
-        if isinstance(entry, Incomplete)
-        and isinstance(entry.effect, AttributeStoreRuntimeEffect)
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+        if isinstance(halt.effect, AttributeStoreRuntimeEffect)
     ]
 
 
