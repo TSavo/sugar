@@ -22,8 +22,6 @@ GATE = "tools/heavy_measurement_lease_gate.py"
 HEAVY_WORKFLOWS = {
     "python-package-suite.yml": "python-package-suite",
     "factory-zero-tolerance.yml": "python-sole-construction-floors",
-    "numpy-wall.yml": "numpy-wall",
-    "pandas-wall.yml": "pandas-wall",
     "restored-suite-scoreboard.yml": "restored-suite-scoreboard",
     "control-effect-recensus.yml": "control-effect-recensus",
 }

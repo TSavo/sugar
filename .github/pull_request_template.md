@@ -1,7 +1,7 @@
 <!--
 Construction / wall PRs: this template is orientation, not a gate.
-Predicted Epsilon R is cheap. Measured Delta R is minted post-merge by
-pandas-wall.yml / numpy-wall.yml against the #4102 ledger (#4263).
+Predicted Epsilon R is cheap. Measured Delta R is read post-merge from the
+board (control-effect-recensus.yml).
 -->
 
 ## Summary

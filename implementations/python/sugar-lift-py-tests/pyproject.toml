@@ -23,11 +23,10 @@ dependencies = [
 # above); workflows install `-e '...sugar-lift-py-tests[test]'` and nothing else.
 # Enforced by tests/test_test_extras_are_the_dependency_authority.py.
 #
-# `numpy` is imported at MODULE scope by tests/test_numpy_pandas_panic_audit.py;
-# `pandas` is imported inside tests in that same file. Both are required by this
-# package's ordinary suite, so they are declared here rather than hand-listed at
-# each call site — an undeclared module-scope import aborts collection for the
-# WHOLE package (#6260).
+# `numpy` and `pandas` are imported by this package's ordinary suite (for
+# example tests/test_pandas_compare_caller_twins.py), so they are declared here
+# rather than hand-listed at each call site — an undeclared module-scope import
+# aborts collection for the WHOLE package (#6260).
 # `itsdangerous` stays declared for the claim-mass tripwire corpus tooling.
 test = [
     "pytest>=7",

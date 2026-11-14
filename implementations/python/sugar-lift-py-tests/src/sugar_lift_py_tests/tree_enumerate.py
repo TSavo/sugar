@@ -658,28 +658,6 @@ def call_nodes_in_assert(sf: SourceFile, span: Optional[dict]) -> list:
     ]
 
 
-def module_definition_memento(sf: SourceFile, file_rel: str, file_cid: str) -> dict:
-    """The whole-file body the audit frontier demands one leaf for."""
-    lc = sf.root.line_col_span()
-    sealed = sf.fragment.seal()
-    return {
-        "kind": "source-memento",
-        "file": file_rel,
-        "function_name": "<module>",
-        "source_function_name": "<module>",
-        "span": {
-            "start_line": lc.start_line,
-            "start_col": lc.start_col,
-            "end_line": lc.end_line,
-            "end_col": lc.end_col,
-        },
-        "source_cid": sealed.cid,
-        "file_cid": file_cid,
-        "template_cid": None,
-        "param_names": [],
-    }
-
-
 def _roll_call_identity(entry) -> tuple:
     """The SAME identity ``MinorityReport`` uses for present/minority.
 

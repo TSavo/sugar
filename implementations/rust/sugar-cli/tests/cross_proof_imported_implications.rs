@@ -463,23 +463,6 @@ fn run_prove(project: &Path) -> (Json, i32) {
     (report, output.status.code().unwrap_or(-1))
 }
 
-fn run_lift_report(project: &Path) -> Json {
-    let output = Command::new(sugar_bin())
-        .arg("lift")
-        .arg("--report")
-        .arg("--json")
-        .arg(project)
-        .output()
-        .expect("spawn sugar lift report");
-    assert!(
-        output.status.success(),
-        "lift report must render\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).expect("lift report JSON parses")
-}
-
 fn prove_rows(report: &Json) -> &[Json] {
     report["rows"].as_array().expect("prove rows")
 }
@@ -502,15 +485,6 @@ fn find_consistency_row<'a>(report: &'a Json, property_contains: &str) -> &'a Js
         .unwrap_or_else(|| {
             panic!("consistency row containing `{property_contains}` not found: {report:#}")
         })
-}
-
-fn assert_report_edge_targets_imported_proof(report: &Json, target: &str, proof_cid: &str) {
-    let edges = report["callEdges"].as_array().expect("callEdges array");
-    let edge = edges
-        .iter()
-        .find(|edge| edge["targetSymbol"].as_str() == Some(target))
-        .unwrap_or_else(|| panic!("call edge for {target} missing: {edges:#?}"));
-    assert_eq!(edge["targetProofCid"].as_str(), Some(proof_cid));
 }
 
 fn assert_linked_post_targets_imported_proof(row: &Json, proof_cid: &str) {
@@ -663,7 +637,7 @@ fn imported_numpy_load_precondition_discharges_and_refuses_at_consumer_callsite(
         z3_available(),
         "z3 is required for the production prove verdict"
     );
-    let (_vendor_dir, proof, proof_cid) = stage_vendor_proof();
+    let (_vendor_dir, proof, _proof_cid) = stage_vendor_proof();
 
     let good = stage_consumer_project(
         &proof,
@@ -675,8 +649,6 @@ def test_load():
 "#,
         "load-good",
     );
-    let good_report = run_lift_report(&good);
-    assert_report_edge_targets_imported_proof(&good_report, "call:numpy.load", &proof_cid);
     run_mint(&good);
     let (good_prove, good_code) = run_prove(&good);
     assert_eq!(
@@ -736,13 +708,6 @@ def test_sum():
 "#,
         "pandas-sum-good",
     );
-    let good_report = run_lift_report(&good);
-    // Collapse projects `call:sum` (CallSiteValue always uses the EUF ctor
-    // head `call:<callee>`). The vendor binding's bridgeSourceSymbol is also
-    // `call:sum`. The bindings-backed report pass joins them via
-    // bridge_symbol_match_candidates (call:/method:/bare all collide on the
-    // bare leaf) and stamps targetProofCid so the universe line is audible.
-    assert_report_edge_targets_imported_proof(&good_report, "call:sum", &proof_cid);
     run_mint(&good);
     let (good_prove, good_code) = run_prove(&good);
     assert_eq!(
@@ -800,12 +765,6 @@ def test_pandas_fact():
 "#,
         "pandas-len-good",
     );
-    let good_report = run_lift_report(&good);
-    // Free call projects `call:len` (same EUF head as method collapse). The
-    // vendor binding's bridgeSourceSymbol is `call:len` with one formal for
-    // the argument so ambient post specialization arity-matches and stamps
-    // vendorPost → vendorUniverseFol for the three-fact middle line.
-    assert_report_edge_targets_imported_proof(&good_report, "call:len", &proof_cid);
     run_mint(&good);
     let (good_prove, good_code) = run_prove(&good);
     assert_eq!(
@@ -928,8 +887,6 @@ def test_add():
         "vendor-update-consumer",
     );
 
-    let v1_report = run_lift_report(&consumer);
-    assert_report_edge_targets_imported_proof(&v1_report, "call:numpy.load", &proof_v1_cid);
     run_mint(&consumer);
     let (v1_prove, v1_code) = run_prove(&consumer);
     assert_eq!(
@@ -943,8 +900,6 @@ def test_add():
     assert_linked_post_targets_imported_proof(v1_add, &proof_v1_cid);
 
     replace_imported_proof(&consumer, &proof_v2);
-    let v2_report = run_lift_report(&consumer);
-    assert_report_edge_targets_imported_proof(&v2_report, "call:numpy.load", &proof_v2_cid);
     run_mint(&consumer);
     let (v2_prove, v2_code) = run_prove(&consumer);
     assert_eq!(

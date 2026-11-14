@@ -1,9 +1,0 @@
-{
-  "kind": "pandas-wall-ratchet-floors",
-  "floors": {
-    "frontier_ceilings": {
-      "independent_panics": 11417,
-      "suppressed_descendants": 12938
-    }
-  }
-}

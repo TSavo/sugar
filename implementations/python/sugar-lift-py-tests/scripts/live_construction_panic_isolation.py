@@ -32,7 +32,7 @@ for _path in (_SRC, _SOURCE_SRC):
     if _path.is_dir() and str(_path) not in sys.path:
         sys.path.insert(0, str(_path))
 
-from sugar_lift_py_tests.idd.collect_panic_audit import (  # noqa: E402
+from sugar_lift_py_tests.idd.installed_package_workspace import (  # noqa: E402
     _resolve_installed_package_path,
 )
 from sugar_lift_py_tests.idd.live_construction_panic_isolation import (  # noqa: E402

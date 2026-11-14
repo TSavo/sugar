@@ -35,8 +35,6 @@ on:
     workflows:
       - "Python package suite (authoritative)"
       - "Python sole-construction floors (R>0 red)"
-      - "NumPy Wall Ratchet"
-      - "Pandas Wall Ratchet"
       - "Restored Suite Scoreboard"
     types: [completed]
   workflow_dispatch:

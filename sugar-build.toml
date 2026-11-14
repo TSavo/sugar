@@ -195,18 +195,6 @@ artifacts = [
   "debug:discharge_cli",
 ]
 
-[tasks.pandas-wall]
-capabilities = ["python-test", "python-scientific", "solver-z3"]
-binaries = ["sugar"]
-command = ["python", "tools/pandas_wall.py"]
-network = "none"
-
-[tasks.numpy-wall]
-capabilities = ["python-test", "python-scientific", "solver-z3"]
-binaries = ["sugar"]
-command = ["python", "tools/numpy_wall.py"]
-network = "none"
-
 [tasks.restored-suite-scoreboard]
 capabilities = ["python-test", "python-scientific", "solver-z3"]
 binaries = ["sugar"]
