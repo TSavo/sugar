@@ -1236,13 +1236,20 @@ def with_module_final_globals(ctx, readers, *, site):
     formal binds that value (``DefaultValueSugar``).
     The run evaluated each write once, whatever it wrote (a literal,
     ``x += e``, a call's result, a list), so its value is the module's,
-    never a second evaluation of the write here.  A key the completed arms
-    bound to different values has no one value, and is not bound.  Where
-    the run completes on no arm, or no completed arm bound the key, it is
-    not bound: its read is refused by name, naming the key
-    (``EvaluationRefSugar._unbound``).  Where the run refuses, its refusal
-    is never caught: this frame entry is refused by the run's own gap.  A
-    global the module body does not
+    never a second evaluation of the write here.  A live loop's publication
+    is read the same way: its post-loop key (``nodes._live_loop_publication``)
+    and its own key of a name it carries (``LoopBindingRef.post_key``) are
+    bound to what the loop left them as in the run, and each slot a phi of
+    the binding selects its arm by -- the loop's write slot
+    (``loop_write_slot``), a module ``if``'s -- is decided as the run
+    decided it (``ground_branch_results``), so the read takes the arm the
+    run took.  A key the completed arms bound to different values has no
+    one value, and is not bound; nor is a slot they decided differently, or
+    that none decided.  Where the run completes on no arm, or no completed
+    arm bound the key, it is not bound: its read is refused by name, naming
+    the key (``EvaluationRefSugar._unbound``).  Where the run refuses, its
+    refusal is never caught: this frame entry is refused by the run's own
+    gap.  A global the module body does not
     decide was refused by name when the body was constructed.  The name is
     never bound.
 
@@ -1257,24 +1264,27 @@ def with_module_final_globals(ctx, readers, *, site):
     )
 
     keys = []
+    slots = []
     for reader in readers:
         evaluations = []
+        decisions = []
         for _name, state in sorted(
             module_final_global_references(reader, site).items()
         ):
-            _collect_final_evaluations(state, evaluations)
+            _collect_final_evaluations(state, evaluations, decisions)
         # The reader's own defaults, which its module ``def`` statement
         # evaluated in the same run: a formal the call omits binds that
         # value, never its default expression evaluated here.
         defaults = module_final_default_keys(reader, site)
-        if not evaluations and not defaults:
+        if not evaluations and not defaults and not decisions:
             continue
         from sugar_lift_py_tests.tree_enumerate import module_end_contexts
 
         ends = module_end_contexts(reader.unit)
-        keys.extend((reference.evaluation, ends) for reference in evaluations)
+        keys.extend((key, ends) for key in evaluations)
         keys.extend((key, ends) for key in defaults)
-    if not keys:
+        slots.extend((slot_id, ends) for slot_id in decisions)
+    if not keys and not slots:
         return ctx
     from dataclasses import replace
 
@@ -1284,6 +1294,19 @@ def with_module_final_globals(ctx, readers, *, site):
         ReduceContext.root(owner="with_module_final_globals") if ctx is None else ctx
     )
     bound_any = False
+    # Each slot a phi of a final binding selects its arm by (a live loop's
+    # write slot, ``loop_write_slot``; a module ``if``'s), decided as the
+    # run decided it (``BranchResultDecision``, ``IfSugar``): the read
+    # takes that arm, whose key the run bound, never the arm it did not.
+    for slot_id, ends in slots:
+        table = entered.ground_branch_results
+        if slot_id in table:
+            continue
+        decided = _module_end_decision(ends, slot_id)
+        if decided is None:
+            continue
+        entered = replace(entered, ground_branch_results={**table, slot_id: decided})
+        bound_any = True
     for key, ends in keys:
         if entered.temporal.value_if_bound(key) is not None:
             continue
@@ -1321,34 +1344,83 @@ def _module_end_value(ends, key):
     return first
 
 
-def _collect_final_evaluations(state, evaluations: list) -> None:
-    """Every evaluation reference a module-final binding ``state`` reads
-    through: the reference itself, a decorated ``def``/``class`` statement's
-    value (``DecoratedDefinitionRef``: the key its statement bound the
-    decorators' result under, whose function carries the defaults the
-    statement evaluated), each arm of the phi the module block built over a
-    module ``if`` or ``try`` route (``IfExp`` on a ``BranchResultRef``), and
-    each arm of a binding joined over a slot (``GuardedBinding``).  An
-    undecorated definition, an import's row, an effect slot or an unbound
-    state reads no key."""
-    from sugar_source_tree.binding_state import GuardedBinding, unwrap_binding_state
+def _module_end_decision(ends, slot_id):
+    """How the module run decided the slot ``slot_id``, read off ``ends``
+    (``ground_branch_results``, a ``TrueBoolLiteralSugar`` or a
+    ``FalseBoolLiteralSugar``): the one decision every completed arm that
+    decided it agrees on, else None.  An arm that never reached the slot's
+    owner (a loop or an ``if`` in a route it did not take) decides nothing;
+    an arm that holds it undecided (a loop over a symbolic iterable, which
+    authenticates the slot as a guard) leaves it undecided."""
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    decisions = [
+        decided
+        for decided in (
+            getattr(end, "ground_branch_results", {}).get(slot_id) for end in ends
+        )
+        if decided is not None
+    ]
+    if not decisions:
+        return None
+    first = decisions[0]
+    if not isinstance(first, (TrueBoolLiteralSugar, FalseBoolLiteralSugar)):
+        return None
+    if any(type(decided) is not type(first) for decided in decisions[1:]):
+        return None
+    return first
+
+
+def _collect_final_evaluations(state, evaluations: list, decisions: list) -> None:
+    """Every key a module-final binding ``state`` reads through
+    (``evaluations``), and every slot a phi of it selects its arm by
+    (``decisions``): an evaluation reference's key, a decorated
+    ``def``/``class`` statement's value (``DecoratedDefinitionRef``: the key
+    its statement bound the decorators' result under, whose function
+    carries the defaults the statement evaluated), a live loop's own key of
+    a name it carries (``LoopBindingRef.post_key``, each face of its
+    ``LoopProjectedBinding``), each arm of the phi the module block built
+    over a module ``if`` or ``try`` route (``IfExp`` on a
+    ``BranchResultRef``, whose slot is collected), and each arm of a binding
+    joined over a slot (``GuardedBinding``: a live loop's write slot over
+    its post-loop key, ``nodes._live_loop_publication``).  An undecorated
+    definition, an import's row, an effect slot or an unbound state reads
+    no key."""
+    from sugar_source_tree.binding_state import (
+        GuardedBinding,
+        LoopProjectedBinding,
+        unwrap_binding_state,
+    )
     from sugar_source_tree.nodes import (
         BranchResultRef,
         DecoratedDefinitionRef,
         EvaluationRef,
         IfExp,
+        LoopBindingRef,
     )
 
     state = unwrap_binding_state(state)
     if isinstance(state, EvaluationRef):
-        evaluations.append(state)
+        evaluations.append(state.evaluation)
     elif isinstance(state, DecoratedDefinitionRef) and isinstance(
         getattr(state, "evaluation", None), str
     ):
-        evaluations.append(state)
+        evaluations.append(state.evaluation)
+    elif isinstance(state, LoopBindingRef):
+        evaluations.append(state.post_key)
+    elif isinstance(state, LoopProjectedBinding):
+        for face in state.completed_faces:
+            _collect_final_evaluations(face.state, evaluations, decisions)
     elif isinstance(state, IfExp) and isinstance(state.test, BranchResultRef):
-        _collect_final_evaluations(state.body, evaluations)
-        _collect_final_evaluations(state.orelse, evaluations)
+        decisions.append(state.test.slot_id)
+        _collect_final_evaluations(state.body, evaluations, decisions)
+        _collect_final_evaluations(state.orelse, evaluations, decisions)
     elif isinstance(state, GuardedBinding):
-        _collect_final_evaluations(state.when_true, evaluations)
-        _collect_final_evaluations(state.when_false, evaluations)
+        decisions.append(state.slot.slot_id)
+        _collect_final_evaluations(state.when_true, evaluations, decisions)
+        _collect_final_evaluations(state.when_false, evaluations, decisions)

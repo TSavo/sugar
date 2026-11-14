@@ -1127,6 +1127,81 @@ def test_a_symbolic_item_with_no_exit_still_unpacks_its_target() -> None:
     assert any(isinstance(exit_, Completed) for exit_ in outcome.exits)
 
 
+_INNER_LOOP_EXIT = (
+    "def f(xs):\n"
+    "    for x in xs:\n"
+    "        for y in g():\n"
+    "            pass\n"
+    "        return y\n"
+    "def g():\n"
+    "    return (1, 2)\n"
+)
+
+
+def test_an_exit_in_the_symbolic_item_reads_an_inner_loops_publication() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``xs`` is symbolic, so the outer loop runs as its recurrence and
+    # ``return y`` is reduced in its one symbolic item.  The inner loop
+    # ahead of it on its path runs there first, over ``g()``'s two items,
+    # and publishes ``y`` through its post-loop key with its write slot
+    # decided, so the exit's read decides: the last item, 2.  It is never
+    # refused for want of an inner loop that did not run.
+    function = _function(_INNER_LOOP_EXIT)
+    loop = next(
+        statement
+        for statement in function.sugar().statements
+        if isinstance(statement, LoopRecurrenceSugar)
+    )
+    (face,) = loop.outward_faces
+    (inner,) = face.prefix_sugars
+    assert isinstance(inner, LoopRecurrenceSugar)
+    outcome = function_universe_outcome(function)
+    assert TermValue(2) in _flattened(_returned_values(outcome))
+
+
+_EXIT_AFTER_A_GUARDED_PREFIX = (
+    "def f(xs):\n"
+    "    for x in xs:\n"
+    "        y = x\n"
+    "        if x:\n"
+    "            z = y\n"
+    "            return z\n"
+)
+
+
+def test_an_exit_in_an_if_arm_runs_the_statements_ahead_of_the_if() -> None:
+    # ``return z`` sits in an ``if`` arm: the statements ahead of it on its
+    # path are ``y = x`` (ahead of the ``if``) and ``z = y`` (ahead of it in
+    # the arm), in that order; the ``if`` itself is the face's guard.
+    loop = next(
+        statement
+        for statement in _function(_EXIT_AFTER_A_GUARDED_PREFIX).sugar().statements
+        if isinstance(statement, LoopRecurrenceSugar)
+    )
+    (face,) = loop.outward_faces
+    assert len(face.prefix_sugars) == 2
+    assert all(isinstance(sugar, AssignSugar) for sugar in face.prefix_sugars)
+    xs = SymbolicValue(make_var("xs"))
+    outcome = loop._desugar_with_iterable(
+        xs, ReduceContext.root(owner="live-symbolic-prefix")
+    )
+    item = SymbolicValue(
+        ctor(
+            "python:loop.item",
+            [str_const(loop.target_cid), xs.to_term(owner="test")],
+            symbol_kind="coordinate",
+        )
+    )
+    returned = [
+        getattr(entry, "value", None)
+        for exit_ in outcome.exits
+        if isinstance(exit_, Completed)
+        for entry in getattr(exit_.value, "statements", ())
+    ]
+    assert item in returned
+
+
 def test_each_read_of_an_evaluation_is_spanned_at_its_use() -> None:
     rewritten = _function(
         "def f(x):\n    x += 1\n    y = x\n    return (x, y)\n"
