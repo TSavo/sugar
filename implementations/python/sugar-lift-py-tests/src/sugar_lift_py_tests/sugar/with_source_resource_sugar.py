@@ -62,6 +62,7 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
     )
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
+        resumed,
     )
 
     # The manager, its enter and its exit are each routed face by face here:
@@ -119,9 +120,23 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                 )
             )
             for body_face in body_es.exits:
+                # ``__exit__`` runs where the body left this face: a body
+                # halt's record (``resumed``), or the record the body
+                # completed with -- never the context the ``with`` began in.
                 exit_es = (
                     _require_exit_set(
-                        concrete_exit(entered, body_face, ctx),
+                        concrete_exit(
+                            entered,
+                            body_face,
+                            resumed(
+                                body_face.state
+                                if isinstance(body_face, Halted)
+                                else body_face.value,
+                                ctx,
+                                owner="WithSourceResourceSugar.exit",
+                                blame=resource.site,
+                            ).context,
+                        ),
                         owner="WithSourceResourceSugar.exit",
                     )
                     if concrete_exit is not None

@@ -87,14 +87,16 @@ class TryStarSugar(Sugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
             reduce_block_to_exitset,
+            resumed,
         )
         from sugar_source_tree.panic import SugarNotWritten
 
         body = reduce_block_to_exitset(self.body, ctx)
 
         def after_body(value):
+            # The ``else`` continues after the body's completed record.
             if self.orelse:
-                return reduce_block_to_exitset(self.orelse, ctx)
+                return reduce_block_to_exitset(self.orelse, ctx, after=value)
             return ExitSet.completed(value)
 
         def handled(exit_):
@@ -114,9 +116,17 @@ class TryStarSugar(Sugar):
                 )
             original = exit_.effect
             # Frontier: one face per body halt, then each handler branches it.
+            # The face begins from the state the halt carries (``resumed``).
             frontier: list[_StarFace] = [
                 _StarFace(
-                    path=ExitSet.completed(_seed_temporal(exit_.state, ctx)),
+                    path=ExitSet.completed(
+                        resumed(
+                            exit_.state,
+                            ctx,
+                            owner="TryStarSugar.handler",
+                            blame=self.site,
+                        )
+                    ),
                     residual=original,
                     exceptional=(),
                 )
@@ -157,18 +167,21 @@ class TryStarSugar(Sugar):
                         next_frontier.append(face)
                         continue
                     matched = regroup_except_star(face.residual, matched_parts)
-                    base_ctx = (
-                        face.state.context if face.state.context is not None else ctx
+                    # The handler resumes from the face's record: the halt's,
+                    # then what every earlier handler on this path left.
+                    record = resumed(
+                        face.state, ctx, owner="TryStarSugar.handler", blame=self.site
                     )
                     handler_ctx = bind_in_flight_effect(
-                        base_ctx, slot_id, matched, blame=self.site
+                        record.context, slot_id, matched, blame=self.site
                     )
                     if slot_id is not None:
                         # Shared typed ReduceContext surface.
                         handler_ctx = handler_ctx.with_observed_effect(slot_id, matched)
-                    seed = replace(face.state, context=handler_ctx)
-                    handler_exits = _reduce_block_from_state(
-                        handler_body, seed, handler_ctx
+                    handler_exits = reduce_block_to_exitset(
+                        handler_body,
+                        handler_ctx,
+                        after=replace(record, context=handler_ctx),
                     )
                     # The handler runs beneath this face's path: ``sequence``
                     # conjoins the face's guard, faces and ``owed`` onto every
@@ -305,112 +318,3 @@ def _is_exceptional_raise(effect) -> bool:
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 
     return isinstance(effect, (RaiseEffect, GroupedRaiseEffect))
-
-
-def _seed_temporal(state, ctx):
-    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
-
-    if isinstance(state, _ReducedBlock):
-        if state.context is None and ctx is not None:
-            return replace(state, context=ctx)
-        return state
-    return _ReducedBlock(
-        entries=(),
-        can_fall_through=True,
-        fall_through=(),
-        context=ctx,
-    )
-
-
-def _reduce_block_from_state(statements, state, ctx):
-    """Reduce ``statements`` continuing from an existing temporal ``state``;
-    a state that is no reduced block reduces the handler under ``ctx``, the
-    handler's context.
-
-    A statement still waiting on its caller's actuals (a deferred carrier)
-    keeps waiting: every later statement runs beneath its completed arms once
-    it discharges (the carrier's own ``and_then``), as the block reducer
-    hands one on."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        _ReducedBlock,
-        reduce_block_to_exitset,
-    )
-
-    if not isinstance(state, _ReducedBlock):
-        return reduce_block_to_exitset(statements, ctx)
-
-    exits = ExitSet.completed(state)
-    for statement in statements:
-
-        def step(prefix, stmt=statement):
-            return _reduce_one_from(prefix, stmt)
-
-        if isinstance(exits, NativeOperationExitCarrierV1):
-            exits = exits.and_then(step)
-        else:
-            exits = exits.sequence(step)
-    return exits
-
-
-def _reduce_one_from(state, statement):
-    """Reduce one statement after ``state``; prefix entries; keep new context.
-
-    A statement still waiting on its caller's actuals answers its carrier:
-    its faces take this prefix once it discharges (``after_discharge``)."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, _require_exit_set
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        reduce_block_to_exitset,
-    )
-
-    if not state.can_fall_through:
-        return ExitSet.completed(state)
-
-    following = reduce_block_to_exitset((statement,), state.context)
-    if isinstance(following, NativeOperationExitCarrierV1):
-        return following.after_discharge(
-            lambda projected: _beneath_prefix(
-                state,
-                _require_exit_set(projected, owner="TryStarSugar.statement"),
-            )
-        )
-    return _beneath_prefix(state, following)
-
-
-def _beneath_prefix(state, following):
-    """``following``'s faces with ``state``'s entries and transforms before
-    their own; a halt that carries no state halts at ``state``.
-
-    Each face continues as its own record with the prefix spliced in,
-    composed through ``ExitSet.sequence`` (``consume=`` for the halts): its
-    guard, faces and ``owed`` ride on unchanged."""
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
-
-    def prefixed(record):
-        return replace(
-            record,
-            entries=(*state.entries, *record.entries),
-            transforms=(*state.transforms, *record.transforms),
-        )
-
-    def completed(value):
-        if isinstance(value, _ReducedBlock):
-            return ExitSet.completed(prefixed(value))
-        return ExitSet.completed(value)
-
-    def halted(halt):
-        halt_state = halt.state
-        if isinstance(halt_state, _ReducedBlock):
-            halt_state = prefixed(halt_state)
-        elif halt_state is None:
-            halt_state = state
-        return ExitSet.halted(halt.effect, state=halt_state)
-
-    return following.sequence(completed, consume=halted)

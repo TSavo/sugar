@@ -17,7 +17,7 @@ inv_contribution/post_contribution) are pure meaning and are reused verbatim.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 
 from sugar_lift_py_tests.floor import BlockValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
@@ -142,6 +142,64 @@ def _halt_state(state: _ReducedBlock, exit_) -> object:
     return _prefixed(state, exit_.state)
 
 
+def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
+    """The record a suite resumes from where a halt left: an ``except``
+    handler that caught it, a ``finally`` beneath it, a ``with`` exit it
+    reaches.
+
+    A halt's record is everything the block reached before it halted --
+    every store, rebind, container mutation and walrus bind, in its
+    ``entries`` and in the ``context`` it halted in -- and Python never
+    rolls any of it back. So the suite continues after that record exactly
+    as a block continues after a statement (``reduce_block_to_exitset``,
+    ``after=``): it reads what the record's context binds and its own
+    entries follow the record's. The record goes on: the halt's own
+    fall-through flag is about the block that halted, not the suite that
+    resumes, and the guard of every ``return`` before the halt is already
+    on the halt's arm (the reducer guards everything after a ``return`` by
+    its fall-through), so it is not stated again. A record reduced with no
+    context (a nested record its producer built bare) reads ``ctx``.
+
+    A halt with no record of its own -- ``None``, which a compound
+    statement hands back when it offers none (``_halt_state``), or the bare
+    context a target unpack's halt holds -- is given one with no entries,
+    in that context or in ``ctx``. Any other payload holds no entries to
+    resume from and is refused by name: nothing is resumed from a state
+    that is not this block's.
+    """
+    from sugar_lift_py_tests.context import ReduceContext
+
+    if isinstance(state, _ReducedBlock):
+        return replace(
+            state,
+            can_fall_through=True,
+            fall_through=(),
+            context=state.context if state.context is not None else ctx,
+        )
+    if state is None or isinstance(state, ReduceContext):
+        return _ReducedBlock(
+            (), True, (), context=ctx if state is None else state
+        )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        owner=owner,
+        blame=blame if blame is not None else owner,
+        observed=(
+            f"a halt whose state is a {type(state).__name__}, not a block's "
+            "record"
+        ),
+        requested=(
+            "the halt's record (its entries and the context it halted in), "
+            "to resume the suite after"
+        ),
+        fix=(
+            "halt with a record (a block's halt state); never resume a suite "
+            "from a state that is not the block's"
+        ),
+    )
+
+
 def _is_return_entry(entry) -> bool:
     """A record entry that is a ``return`` (guarded by its arm or not)."""
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
@@ -182,16 +240,40 @@ def _prior_return_face(state, ctx) -> "ExitSet | None":
 
 
 def reduce_block_to_exitset(
-    statements: tuple, ctx: object = None
+    statements: tuple, ctx: object = None, *, after: object = None
 ) -> ExitSet[_ReducedBlock]:
-    """Reduce a suite to guarded exits before the linear compatibility view."""
+    """Reduce a suite to guarded exits before the linear compatibility view.
+
+    ``after`` is the record the suite continues after (an ``else`` after the
+    ``try`` body's completion, a handler or ``finally`` after the record a
+    halt carries: ``resumed``): the suite's first statement reduces where
+    that record left off, as every statement reduces where the one before it
+    left off, and its entries follow the record's. Without it the suite
+    begins from nothing, under ``ctx``.
+    """
     if ctx is None:
         from sugar_lift_py_tests.context import ReduceContext
 
         ctx = ReduceContext.root(owner="reduce_block_to_exitset")
-    exits = ExitSet.completed(
-        _ReducedBlock(entries=(), can_fall_through=True, fall_through=(), context=ctx)
-    )
+    if after is None:
+        after = _ReducedBlock(
+            entries=(), can_fall_through=True, fall_through=(), context=ctx
+        )
+    elif not isinstance(after, _ReducedBlock):
+        from sugar_source_tree.panic import SugarNotWritten
+
+        sites = [getattr(statement, "site", None) for statement in statements]
+        raise SugarNotWritten(
+            owner="reduce_block_to_exitset.after",
+            blame=next(
+                (site for site in sites if site is not None),
+                "reduce_block_to_exitset.after",
+            ),
+            observed=f"a suite continuing after a {type(after).__name__}",
+            requested="the block record the suite continues after",
+            fix="continue a suite after a block's record, never another value",
+        )
+    exits = ExitSet.completed(after)
 
     for index, head in enumerate(statements):
 
