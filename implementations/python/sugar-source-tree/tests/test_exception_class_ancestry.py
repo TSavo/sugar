@@ -155,12 +155,129 @@ def test_ancestry_follows_sibling_classes_and_states_nothing_untestified() -> No
         "    pass\n"
     )
     rows = _rows_by_name(_source_file("vendor.py", source), "vendor.py")
-    # J's only base is import-bound: its ancestry is its own proof's to
-    # state. Plain classes are not exception classes. A decorator decides
-    # what `Decorated` is bound to, not its header.
-    assert set(rows) == {"python:vendor.B" + EXCEPTION_ANCESTRY_SUFFIX, E_ROW}
+    # J's only base is import-bound: J states `is(J, json.JSONDecodeError)`,
+    # and the base's own ancestry is its defining proof's to state. Plain
+    # classes are not exception classes. A decorator decides what
+    # `Decorated` is bound to, not its header.
+    assert set(rows) == {
+        "python:vendor.B" + EXCEPTION_ANCESTRY_SUFFIX,
+        E_ROW,
+        "python:vendor.J" + EXCEPTION_ANCESTRY_SUFFIX,
+    }
+    assert _facts(rows["python:vendor.J" + EXCEPTION_ANCESTRY_SUFFIX]) == [
+        (_identity("import", "vendor.J"), _identity("import", "json.JSONDecodeError"))
+    ]
     facts = set(_facts(rows[E_ROW]))
     assert (VENDOR_E, _identity("import", "vendor.B")) in facts
     assert (VENDOR_E, _identity("builtins", "KeyError")) in facts
     assert (VENDOR_E, _identity("builtins", "LookupError")) in facts
     assert (VENDOR_E, _identity("builtins", "BaseException")) in facts
+
+
+# ── Closed across proofs: the base is imported from a third module ──
+#
+#     # third.py                      # vendor.py
+#     class Base(ValueError):         from third import Base
+#         pass
+#                                     class E(Base):
+#                                         pass
+#
+# The consumer imports `E` and catches `ValueError` around `raise E`. The
+# vendor's proof states `is(E, Base)` with Base's coordinate from the one
+# import table; third's states `is(Base, ValueError)`. Prove closes the chain
+# across the two staged proofs (``except_twin_imported_base_closes_across_
+# proofs`` in ``consistency.rs``). Here: each link is stated, and the links
+# meet on the same coordinate.
+
+THIRD = "class Base(ValueError):\n    pass\n"
+VENDOR_OF_IMPORTED_BASE = "from third import Base\n\nclass E(Base):\n    pass\n"
+THIRD_BASE = _identity("import", "third.Base")
+
+
+def test_an_imported_base_is_stated_and_its_proof_closes_the_chain() -> None:
+    vendor_rows = _rows_by_name(
+        _source_file("vendor.py", VENDOR_OF_IMPORTED_BASE), "vendor.py"
+    )
+    assert list(vendor_rows) == [E_ROW]
+    assert _facts(vendor_rows[E_ROW]) == [(VENDOR_E, THIRD_BASE)]
+
+    third_rows = _rows_by_name(_source_file("third.py", THIRD), "third.py")
+    third_row = third_rows["python:third.Base" + EXCEPTION_ANCESTRY_SUFFIX]
+    third_facts = set(_facts(third_row))
+    # The vendor's ancestor is the subject of third's own row ...
+    assert (THIRD_BASE, _identity("builtins", "ValueError")) in third_facts
+    # ... so `is(E, Base)` and `is(Base, ValueError)` answer the consumer's
+    # open `is(E, ValueError)` (``test_the_consumer_question_is_about_the_
+    # stated_coordinates``).
+
+
+# ── A re-exported class ──
+#
+#     # vendor/errors.py              # vendor/__init__.py
+#     class E(ValueError):            from .errors import E
+#         pass
+#
+# The consumer's `from vendor import E` names `vendor.E`; the defining
+# module's row names `vendor.errors.E`. The package states the edge between
+# the two, and prove follows it into the defining proof
+# (``except_twin_reexported_class_closes_through_the_package``).
+
+
+def _workspace_source_file(root: Path, relative: str):
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+
+    return open_source_file_for_construction(
+        root / relative,
+        root=root,
+        construction_context=TreeConstructionContextV1.for_source_call_construction(
+            workspace_root=str(root)
+        ),
+    )
+
+
+def _write_package(root: Path, package_dir: str) -> tuple:
+    """``errors.py`` and a re-exporting ``__init__.py`` in ``package_dir``,
+    both written before either is opened."""
+    files = {
+        f"{package_dir}/errors.py": VENDOR,
+        f"{package_dir}/__init__.py": "from .errors import E\n",
+    }
+    for relative, source in files.items():
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source, encoding="utf-8")
+    return tuple(_workspace_source_file(root, relative) for relative in files)
+
+
+def test_a_package_states_the_edge_to_the_class_it_re_exports(tmp_path) -> None:
+    errors, package = _write_package(tmp_path, "vendor")
+    package_rows = _rows_by_name(package, "vendor/__init__.py")
+    assert list(package_rows) == [E_ROW]
+    defined = _identity("import", "vendor.errors.E")
+    assert _facts(package_rows[E_ROW]) == [(VENDOR_E, defined)]
+
+    errors_rows = _rows_by_name(errors, "vendor/errors.py")
+    errors_facts = set(
+        _facts(errors_rows["python:vendor.errors.E" + EXCEPTION_ANCESTRY_SUFFIX])
+    )
+    # The package's ancestor is the subject of the defining module's row.
+    assert (defined, _identity("builtins", "ValueError")) in errors_facts
+
+
+def test_a_src_layout_names_the_module_a_consumer_imports(tmp_path) -> None:
+    # `src/vendor/...` is installed as `vendor`: both rows name the symbols a
+    # consumer's `from vendor import E` and `from vendor.errors import E` reach.
+    errors, package = _write_package(tmp_path, "src/vendor")
+    assert list(_rows_by_name(package, "src/vendor/__init__.py")) == [E_ROW]
+    assert list(_rows_by_name(errors, "src/vendor/errors.py")) == [
+        "python:vendor.errors.E" + EXCEPTION_ANCESTRY_SUFFIX
+    ]
+
+
+def test_a_plain_module_import_states_no_re_export() -> None:
+    # Only a package's ``__init__`` re-exports: a consumer's own import is
+    # not a statement about the imported class.
+    assert _rows_by_name(_source_file("consumer.py", CONSUMER), "consumer.py") == {}

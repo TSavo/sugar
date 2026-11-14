@@ -3645,10 +3645,73 @@ fn collect_is_type_subject_symbols(node: &Json, out: &mut std::collections::BTre
     }
 }
 
+/// The ancestor symbol an `adt.is_python_type(_, <ancestor>)` fact names,
+/// when the ancestor is an import coordinate: another proof may state that
+/// class's own ancestry.
+fn is_type_ancestor_symbol(fact: &Json) -> Option<String> {
+    let args = fact.get("args")?.as_array()?;
+    let [_subject, ancestor] = args.as_slice() else {
+        return None;
+    };
+    exception_identity_target_symbol(ancestor)
+}
+
+/// The ancestry of `symbol`'s class, closed across the staged proofs: the
+/// facts the pool states for `symbol`, and, for each ancestor that is an
+/// import coordinate, that ancestor's stated ancestry with `symbol`'s class
+/// in its place. `class E(Base)` with `Base` imported states `is(E, Base)`
+/// in E's proof; Base's proof states `is(Base, ValueError)`; the subclass
+/// relation is transitive, so `is(E, ValueError)` is joined. A re-export is
+/// the same edge: the package states `is(<package>.E, <module>.E)`, and the
+/// defining module's facts follow. Each proof is read once per closure, so a
+/// cycle ends.
+fn closed_exception_ancestry(symbol: &str, ancestry: &ExceptionAncestry) -> Vec<Json> {
+    let Some(stated) = ancestry.get(symbol) else {
+        return Vec::new();
+    };
+    let mut facts: Vec<Json> = stated.clone();
+    let mut read = std::collections::BTreeSet::from([symbol.to_string()]);
+    let mut next = 0;
+    while next < facts.len() {
+        let fact = facts[next].clone();
+        next += 1;
+        let Some(ancestor) = is_type_ancestor_symbol(&fact) else {
+            continue;
+        };
+        if !read.insert(ancestor.clone()) {
+            continue;
+        }
+        let Some(subject) = fact
+            .get("args")
+            .and_then(|v| v.as_array())
+            .and_then(|args| args.first())
+            .cloned()
+        else {
+            continue;
+        };
+        for inherited in ancestry.get(&ancestor).into_iter().flatten() {
+            let mut derived = inherited.clone();
+            let Some(first) = derived
+                .get_mut("args")
+                .and_then(|v| v.as_array_mut())
+                .and_then(|args| args.first_mut())
+            else {
+                continue;
+            };
+            *first = subject.clone();
+            if !facts.contains(&derived) {
+                facts.push(derived);
+            }
+        }
+    }
+    facts
+}
+
 /// The stated facts that answer `inv`'s open subclass questions: for each
 /// `adt.is_python_type(<class>, _)` in `inv` whose class is an import
-/// coordinate, the ancestry the pool states for that class's symbol. No
-/// proof states it: nothing, and the question stays open.
+/// coordinate, the ancestry the pool states for that class's symbol, closed
+/// across the staged proofs (`closed_exception_ancestry`). No proof states
+/// it: nothing, and the question stays open.
 fn exception_ancestry_facts_for_inv(inv: &Json, ancestry: &ExceptionAncestry) -> Vec<Json> {
     if ancestry.is_empty() {
         return Vec::new();
@@ -3657,9 +3720,9 @@ fn exception_ancestry_facts_for_inv(inv: &Json, ancestry: &ExceptionAncestry) ->
     collect_is_type_subject_symbols(inv, &mut symbols);
     let mut facts: Vec<Json> = Vec::new();
     for symbol in &symbols {
-        for fact in ancestry.get(symbol).into_iter().flatten() {
-            if !facts.contains(fact) {
-                facts.push(fact.clone());
+        for fact in closed_exception_ancestry(symbol, ancestry) {
+            if !facts.contains(&fact) {
+                facts.push(fact);
             }
         }
     }
@@ -9669,5 +9732,152 @@ mod tests {
             "the vendor states `is(E, ValueError)`, so `except ValueError` never misses E: {}",
             missed.reason
         );
+    }
+
+    // ── The ancestry closed across proofs (#7757) ──
+    // `third.py`: `class Base(ValueError)`. `vendor.py`: `from third import
+    // Base; class E(Base)`. The vendor's proof states only `is(E, Base)`;
+    // third's states `is(Base, ValueError)` and the language's ancestry above
+    // it. The consumer imports `E` and catches `ValueError` around `raise E`.
+    //
+    // Re-export: `vendor/errors.py`: `class E(ValueError)`;
+    // `vendor/__init__.py`: `from .errors import E`. The consumer's `from
+    // vendor import E` names `vendor.E`; the package's proof states
+    // `is(vendor.E, vendor.errors.E)` and the defining module's proof states
+    // `vendor.errors.E`'s ancestry.
+
+    fn ancestry_row(class_symbol: &str, ancestors: &[Json]) -> Json {
+        let class = ancestry_identity("import", class_symbol);
+        let facts: Vec<Json> = ancestors
+            .iter()
+            .map(|ancestor| ancestry_is_type(class.clone(), ancestor.clone()))
+            .collect();
+        let inv = if facts.len() == 1 {
+            facts[0].clone()
+        } else {
+            json!({"kind": "and", "operands": facts})
+        };
+        json!({
+            "kind": "contract",
+            "name": format!("python:{class_symbol}::exception-ancestry"),
+            "inv": inv
+        })
+    }
+
+    fn ancestry_of_rows(rows: &[Json]) -> ExceptionAncestry {
+        let mut ancestry = ExceptionAncestry::new();
+        for row in rows {
+            let (symbol, facts) = exception_ancestry_of(row).expect("ancestry row");
+            merge_exception_ancestry(&mut ancestry, symbol, facts);
+        }
+        ancestry
+    }
+
+    fn value_error_chain() -> Vec<Json> {
+        vec![
+            ancestry_builtin("ValueError"),
+            ancestry_builtin("Exception"),
+            ancestry_builtin("BaseException"),
+        ]
+    }
+
+    /// `except ValueError` caught the imported class `class_symbol`.
+    fn caught_by_value_error_of(class_symbol: &str) -> Json {
+        ancestry_is_type(
+            ancestry_identity("import", class_symbol),
+            ancestry_builtin("ValueError"),
+        )
+    }
+
+    /// Only `except BaseException` caught the imported class `class_symbol`.
+    fn missed_by_value_error_of(class_symbol: &str) -> Json {
+        json!({
+            "kind": "and",
+            "operands": [
+                {"kind": "not", "operands": [caught_by_value_error_of(class_symbol)]},
+                ancestry_is_type(
+                    ancestry_identity("import", class_symbol),
+                    ancestry_builtin("BaseException")
+                )
+            ]
+        })
+    }
+
+    fn assert_match_decided(class_symbol: &str, staged: &ExceptionAncestry) {
+        let caught = prove_with_ancestry(caught_by_value_error_of(class_symbol), staged);
+        assert_eq!(
+            caught.verdict,
+            ObligationVerdict::Discharged,
+            "`except ValueError` catches {class_symbol}: {}",
+            caught.reason
+        );
+        let missed = prove_with_ancestry(missed_by_value_error_of(class_symbol), staged);
+        assert_eq!(
+            missed.verdict,
+            ObligationVerdict::Unsatisfied,
+            "`except ValueError` never misses {class_symbol}: {}",
+            missed.reason
+        );
+    }
+
+    /// Nothing staged closes `class_symbol` to `ValueError`: the joined facts
+    /// leave a miss consistent.
+    fn assert_match_open(class_symbol: &str, staged: &ExceptionAncestry) {
+        let caught = canonicalize_formula_json(&caught_by_value_error_of(class_symbol));
+        assert!(
+            !exception_ancestry_facts_for_inv(&caught, staged).contains(&caught),
+            "nothing staged states `is({class_symbol}, ValueError)`"
+        );
+        let missed = prove_with_ancestry(missed_by_value_error_of(class_symbol), staged);
+        assert_eq!(
+            missed.verdict,
+            ObligationVerdict::Discharged,
+            "nothing staged rules out a miss of {class_symbol}: {}",
+            missed.reason
+        );
+    }
+
+    #[test]
+    fn except_twin_imported_base_closes_across_proofs() {
+        let base = ancestry_identity("import", "third.Base");
+        let vendor = ancestry_row("vendor.E", &[base]);
+        let third = ancestry_row("third.Base", &value_error_chain());
+
+        // The vendor's proof alone: `is(E, Base)`, and nothing about Base.
+        assert_match_open("vendor.E", &ancestry_of_rows(&[vendor.clone()]));
+
+        // Both staged: E's ancestry closes through Base's proof.
+        let staged = ancestry_of_rows(&[vendor, third]);
+        let caught = canonicalize_formula_json(&caught_by_value_error_of("vendor.E"));
+        let facts = exception_ancestry_facts_for_inv(&caught, &staged);
+        assert!(
+            facts.contains(&caught),
+            "the join derives `is(E, ValueError)`: {facts:?}"
+        );
+        assert_match_decided("vendor.E", &staged);
+    }
+
+    #[test]
+    fn except_twin_reexported_class_closes_through_the_package() {
+        let defined = ancestry_identity("import", "vendor.errors.E");
+        let package = ancestry_row("vendor.E", &[defined]);
+        let defining = ancestry_row("vendor.errors.E", &value_error_chain());
+
+        // The defining module alone names `vendor.errors.E`, not the
+        // `vendor.E` the consumer imports.
+        assert_match_open("vendor.E", &ancestry_of_rows(&[defining.clone()]));
+
+        assert_match_decided("vendor.E", &ancestry_of_rows(&[package, defining]));
+    }
+
+    #[test]
+    fn closed_ancestry_ends_on_a_cycle() {
+        let a = ancestry_row("m.A", &[ancestry_identity("import", "m.B")]);
+        let b = ancestry_row("m.B", &[ancestry_identity("import", "m.A")]);
+        // (A cycle cannot be written in Python; the closure still ends.)
+        let staged = ancestry_of_rows(&[a, b]);
+        let facts = closed_exception_ancestry("python:m.A", &staged);
+        assert_eq!(facts.len(), 2, "{facts:?}");
+        assert_match_open("m.A", &staged);
     }
 }

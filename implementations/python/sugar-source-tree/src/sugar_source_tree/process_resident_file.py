@@ -170,17 +170,21 @@ def source_file_from_identity(
 
 def _lexical_key(
     source_cid: str,
+    module_name: str | None,
     module_is_package: bool,
     module_identities: dict | None,
 ) -> tuple:
-    """Content CID + package role + identity map — not seat/path spelling.
+    """Content CID + module name + package role + identity map.
 
     Protocol §4 keys preparation by content CID. Package role matters for
-    ``__init__.py`` vs module file of the same bytes; asker path does not.
+    ``__init__.py`` vs module file of the same bytes. The module name
+    matters too: a relative import (``from .errors import E``) resolves
+    against it, so the same bytes in two packages bind two different targets
+    (#7757). The rest of the asker's path does not.
     """
     identities = module_identities or {}
     id_items = tuple(sorted((str(k), str(v)) for k, v in identities.items()))
-    return (source_cid, module_is_package, id_items)
+    return (source_cid, module_name, module_is_package, id_items)
 
 
 def get_or_prepare_lexical_import_pass(
@@ -202,12 +206,18 @@ def get_or_prepare_lexical_import_pass(
 
     from sugar_lift_py_tests.import_binding import (
         _run_lexical_import_pass_on_module,
+        module_name_for_path,
     )
 
     root_p = Path(root)
     path_p = Path(path)
     module_is_package = path_p.name == "__init__.py"
-    key = _lexical_key(source_cid, module_is_package, module_identities)
+    try:
+        module_name = module_name_for_path(root_p, path_p)
+    except ValueError:
+        # Outside the root: the pass itself refuses this seat on a miss.
+        module_name = None
+    key = _lexical_key(source_cid, module_name, module_is_package, module_identities)
     hit = _LEXICAL.get(key)
     if hit is not None:
         _LEXICAL.move_to_end(key)

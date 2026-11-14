@@ -894,6 +894,33 @@ def exception_type_identity_of_symbol(target_symbol: str):
     )
 
 
+def exception_type_identity_of_import_target(target_symbol: str):
+    """The exception-class coordinate an import's target symbol reaches.
+
+    Language-owned builtins keep their builtin identity even through an
+    import alias: qualification does not create a new exception class, and
+    only the language's closed exception vocabulary testifies for that
+    namespace (an unknown member is not a foreign exception: ``None``). Any
+    other target is ``exception_type_identity_of_symbol``. Read by the import
+    door (``SourceUnit.imported_exception_type_identity``) and by a package
+    that re-exports a name (``SourceUnit.exception_class_ancestry``).
+    """
+    qualified = (
+        target_symbol[len("python:") :]
+        if target_symbol.startswith("python:")
+        else target_symbol
+    )
+    components = qualified.split(".")
+    if components[0] == "builtins":
+        from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+        if len(components) != 2:
+            return None
+        identity, _mro = _builtin_exception_identity(components[1])
+        return identity
+    return exception_type_identity_of_symbol(target_symbol)
+
+
 @dataclass(frozen=True)
 class SourceUnit:
     """One parsed source: oracle-pinned text, its content address, its line table.
@@ -1235,6 +1262,32 @@ class SourceUnit:
         if not path.is_absolute() and root.is_absolute():
             path = root / path
         return root, path
+
+    def module_member_target_symbol(self, name: str) -> Optional[str]:
+        """The target symbol of this module's top-level ``name`` (#7757).
+
+        ``python:<module>.<name>``, with the module name the one import table
+        spells for this unit's seat (``module_name_for_path``, src layout
+        included): the symbol a consumer's ``from <module> import <name>``
+        reaches. The one speller of a module's own definition symbol: a
+        function's ``bridgeSourceSymbol`` (the join, #7862) and a class's
+        ancestry row (``exception_class_ancestry``) both read it, so the two
+        joins name a definition once. ``None`` when the seat names no module
+        (a path outside the root, or the root's own ``__init__``).
+        """
+        from sugar_lift_py_tests.import_binding import (
+            member_target_symbol,
+            module_name_for_path,
+        )
+
+        root, path = self._lexical_import_seat()
+        try:
+            module_name = module_name_for_path(root, path)
+        except ValueError:
+            return None
+        if not module_name:
+            return None
+        return member_target_symbol(f"python:{module_name}", (name,))
 
     def _lexical_import_pass(self):
         """The ONE lexical import pass over this unit (#7837), or None before a
@@ -2645,18 +2698,7 @@ class SourceUnit:
         target = self.import_reference_of(node, admit_provider_gate=True)
         if target is None:
             return None
-        qualified = target[len("python:") :] if target.startswith("python:") else target
-        components = qualified.split(".")
-        if components[0] == "builtins":
-            from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
-
-            # Only the language's closed exception vocabulary can testify for
-            # this namespace. An unknown member is not a foreign exception.
-            if len(components) != 2:
-                return None
-            identity, _mro = _builtin_exception_identity(components[1])
-            return identity
-        return exception_type_identity_of_symbol(target)
+        return exception_type_identity_of_import_target(target)
 
     def _compute_exception_type_identity(
         self, node: "Name", span, builtin_names, ctor, str_const
@@ -2840,11 +2882,15 @@ class SourceUnit:
     def exception_class_ancestry(self):
         """The exception classes this module defines, with their ancestry (#7757).
 
-        Returns ``((definition, symbol, identity, ancestors), ...)`` in source
-        order, one entry per module-level exception class:
+        Returns ``((statement, name, symbol, identity, ancestors), ...)``: one
+        entry per module-level exception class, in source order, then one per
+        name a package re-exports:
 
-        - ``symbol`` is the class's target symbol, ``python:<module>.<name>``,
-          with the module name the one import table spells for this unit;
+        - ``statement`` is the ``class`` (or the re-exporting ``from ...
+          import``) that binds ``name`` at module level;
+        - ``symbol`` is the name's target symbol, ``python:<module>.<name>``
+          (``module_member_target_symbol``: the one speller the function join
+          reads too);
         - ``identity`` is the coordinate a consumer's import door mints for
           that symbol (``exception_type_identity_of_symbol``);
         - ``ancestors`` are the coordinates of the classes it is a subclass
@@ -2853,7 +2899,9 @@ class SourceUnit:
         The module's proof states ``adt.is_python_type(identity, ancestor)``
         for each ancestor. A consumer's ``except`` against the imported class
         retains exactly ``adt.is_python_type(identity, handler)``; prove joins
-        that open question to these facts by the symbol.
+        that open question to these facts by the symbol, and closes it across
+        the staged proofs: an ancestor that is itself an import coordinate is
+        followed into the facts its own proof states (step 9).
 
         What testifies to an ancestor:
 
@@ -2862,30 +2910,27 @@ class SourceUnit:
         - a sibling exception class of this module, by its own symbol
           coordinate, and that class's ancestry in turn;
         - an import-bound base, by the coordinate the import door mints for
-          it. Its own ancestry is its defining proof's to state.
+          it from the one import table. Its own ancestry is its defining
+          proof's to state; the join follows it there.
+
+        A package ``__init__`` that binds a name by ``from <m> import <name>``
+        re-exports it: a consumer's ``from <package> import <name>`` names
+        ``<package>.<name>``, while the defining module's rows name the
+        import's target. The package states the one edge between them,
+        ``adt.is_python_type(<package>.<name>, <target>)`` (the same class,
+        so true), and the join follows the target's own facts.
 
         A base nothing testifies to (computed, subscripted, a call, a cycle)
         states nothing. Every fact stated is true, and what is not stated
         stays open at the consumer. A decorated class, or one with class
         keywords (a metaclass), states nothing: its decorator or metaclass
         decides what the name is bound to, not its header. A class whose
-        ancestry reaches no builtin exception is not known here to be an
-        exception class, and states nothing.
+        ancestry reaches neither a builtin exception nor an imported class is
+        not known here to be an exception class, and states nothing.
         """
-        from sugar_lift_py_tests.import_binding import module_name_for_path
-
         module = self._require_typed_module(
             "SourceUnit.exception_class_ancestry", blame=self.filename
         )
-        # The module name the import table spells for this unit's seat: the
-        # one a consumer's ``from <module> import <name>`` reaches.
-        root, path = self._lexical_import_seat()
-        try:
-            module_name = module_name_for_path(root, path)
-        except ValueError:
-            return ()
-        if not module_name:
-            return ()
         bindings = self.module_direct_bindings or {}
 
         def own_class(name):
@@ -2897,13 +2942,12 @@ class SourceUnit:
                 return None
             return definition
 
-        def symbol_of(definition) -> str:
-            return f"python:{module_name}.{definition.name}"
-
         memo: dict = {}
 
         def ancestry(definition, visiting: frozenset):
-            """``(ancestors, reaches_a_builtin_exception)`` of ``definition``."""
+            """``(ancestors, exceptional)`` of ``definition``: ``exceptional``
+            when its ancestry reaches a builtin exception or an imported class
+            (whose own ancestry its defining proof states)."""
             if definition.name in memo:
                 return memo[definition.name]
             if definition.name in visiting:
@@ -2939,12 +2983,19 @@ class SourceUnit:
                     sibling_ancestors, sibling_exceptional = ancestry(sibling, visiting)
                     if not sibling_exceptional:
                         continue
-                    add(exception_type_identity_of_symbol(symbol_of(sibling)))
+                    sibling_symbol = self.module_member_target_symbol(sibling.name)
+                    if sibling_symbol is None:
+                        continue
+                    add(exception_type_identity_of_symbol(sibling_symbol))
                     for ancestor in sibling_ancestors:
                         add(ancestor)
                     exceptional = True
-                else:
+                elif kind == "import":
+                    # ``is(E, Base)`` holds whatever Base is; Base's own
+                    # ancestry is its defining proof's, and the join follows
+                    # it there (step 9).
                     add(identity)
+                    exceptional = True
             result = (tuple(ancestors), exceptional)
             memo[definition.name] = result
             return result
@@ -2963,15 +3014,46 @@ class SourceUnit:
             ancestors, exceptional = ancestry(definition, frozenset())
             if not exceptional or not ancestors:
                 continue
-            symbol = symbol_of(definition)
+            symbol = self.module_member_target_symbol(definition.name)
+            if symbol is None:
+                continue
             stated.append(
                 (
                     definition,
+                    definition.name,
                     symbol,
                     exception_type_identity_of_symbol(symbol),
                     ancestors,
                 )
             )
+
+        _root, path = self._lexical_import_seat()
+        runner = self._lexical_import_pass() if path.name == "__init__.py" else None
+        for statement in module.body if runner is not None else ():
+            if statement.kind != "ImportFrom":
+                continue
+            for alias in statement.names:
+                name = alias.asname or alias.name
+                bound = bindings.get(name, ())
+                if alias.name == "*" or len(bound) != 1 or bound[0] is not statement:
+                    continue
+                # The name's target is the one import table's, never rebuilt.
+                target = runner.module_import_target(name)
+                symbol = self.module_member_target_symbol(name)
+                if target is None or symbol is None or target == symbol:
+                    continue
+                reached = exception_type_identity_of_import_target(target)
+                if reached is None:
+                    continue
+                stated.append(
+                    (
+                        statement,
+                        name,
+                        symbol,
+                        exception_type_identity_of_symbol(symbol),
+                        (reached,),
+                    )
+                )
         return tuple(stated)
 
     def exception_class_value(self, node: "Name"):
@@ -6165,11 +6247,11 @@ class FunctionDef(Statement):
                                     "lift door (`workspace_path_source`)"
                                 ),
                             )
-                        module_parts = list(relative.with_suffix("").parts)
-                        if module_parts and module_parts[-1] == "__init__":
-                            module_parts.pop()
-                        module_name = ".".join(module_parts)
-                        bridge_source_symbol = f"python:{module_name}.{self.name}"
+                        # The one speller of a module's own definition
+                        # symbol: the class ancestry rows read it too.
+                        bridge_source_symbol = self.unit.module_member_target_symbol(
+                            self.name
+                        )
                     return FunctionUniverseSugar(
                         name=self.name,
                         formals=tuple(p.name for p in self.params),

@@ -466,22 +466,24 @@ The verifier reads the class symbol off the row name by this suffix, and the
 row is a statement of fact, never a claim to check (``consistency.rs``)."""
 
 
-def class_def_memento(definition, file_rel: str):
-    """A class definition's own SourceMemento (its ancestry row's warrant)."""
+def ancestry_statement_memento(statement, name: str, file_rel: str):
+    """The SourceMemento of the statement that binds ``name`` (a ``class``, or
+    a package's re-exporting ``from ... import``): its ancestry row's warrant."""
     from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
     from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
 
-    lc = definition.line_col_span()
+    lc = statement.line_col_span()
     return SourceMementoDto(
         file=file_rel,
         span=SourceSpanDto(lc.start_line, lc.start_col, lc.end_line, lc.end_col),
-        source_cid=definition.fragment.seal().cid,
-        source_function_name=definition.name,
+        source_cid=statement.fragment.seal().cid,
+        source_function_name=name,
     )
 
 
 def exception_ancestry_rows(sf: SourceFile, file_rel: str) -> list:
-    """One row per exception class the module defines: its ancestry (#7757).
+    """One row per exception class the module defines, and per name a package
+    re-exports: its ancestry (#7757).
 
     The row is a ``contract`` named ``<class symbol>::exception-ancestry``
     whose ``inv`` states ``adt.is_python_type(<class>, <ancestor>)`` for every
@@ -489,8 +491,9 @@ def exception_ancestry_rows(sf: SourceFile, file_rel: str) -> list:
     (``SourceUnit.exception_class_ancestry``). Both operands are the
     coordinates a consumer mints for the same classes, so a consumer's open
     ``adt.is_python_type(<class>, <handler>)`` is answered at prove by joining
-    on the class's target symbol (step 9). The row is read off the class
-    definition alone; nothing is reduced here.
+    on the class's target symbol and closing across the staged proofs (step
+    9). The row is read off the binding statement alone; nothing is reduced
+    here.
 
     Returns ``(memento, dto)`` pairs, the shape of the universe scan's rows.
     """
@@ -504,8 +507,10 @@ def exception_ancestry_rows(sf: SourceFile, file_rel: str) -> list:
     from sugar_lift_py_tests.proofir.nodes.universe_mint import UniverseMint
 
     rows = []
-    for definition, symbol, identity, ancestors in sf.unit.exception_class_ancestry():
-        memento = class_def_memento(definition, file_rel)
+    for statement, name, symbol, identity, ancestors in (
+        sf.unit.exception_class_ancestry()
+    ):
+        memento = ancestry_statement_memento(statement, name, file_rel)
         locus = ConstructionSite(
             path=file_rel, line=memento.span.start_line, column=memento.span.start_col
         )
