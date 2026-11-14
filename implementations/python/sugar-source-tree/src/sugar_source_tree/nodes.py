@@ -5302,7 +5302,8 @@ def module_final_global_references(reader, site) -> dict:
     body reads the binding standing there, whose key the module body's
     own reduction binds as it runs.  A reader called after import reads
     keys nothing in its frame bound; its frame entry binds them from
-    here (``call_site_sugar.with_module_final_globals``)."""
+    here, each to the value the module body's own run bound it to
+    (``call_site_sugar.with_module_final_globals``)."""
     if _site_where_called(reader.unit, site) is not None:
         return {}
     return construct_at_module_execution_site(None, reader._module_global_references)
@@ -7151,6 +7152,12 @@ class Module(Node):
         statement owns its own meaning and constructs through ``Statement.sugar``
         exactly once.  A child construction gap therefore propagates with the
         child's owner; the module neither skips it nor invents completion.
+
+        A ``def`` statement constructs through the one def-statement rule
+        every body uses (``_def_statement_sugar``): it binds the function
+        value and never reduces the function's body, which runs only when the
+        function is called.  So a module-level function whose body raises or
+        refuses is no face of the module body's run (#7757 item 7).
         """
         from sugar_lift_py_tests.engine_log import reduction_span
         from sugar_lift_py_tests.sugar.module_block_sugar import ModuleBlockSugar
@@ -7163,7 +7170,12 @@ class Module(Node):
             with reduction_span(sugar="Construct", role="construction", site=where):
                 return ModuleBlockSugar(
                     statements=tuple(
-                        statement.sugar() for statement in substituted.body
+                        (
+                            _def_statement_sugar(statement)
+                            if isinstance(statement, (FunctionDef, AsyncFunctionDef))
+                            else statement.sugar()
+                        )
+                        for statement in substituted.body
                     ),
                     site=self.fragment,
                 )
@@ -8596,18 +8608,10 @@ class FunctionDef(Statement):
         lc = stmt.line_col_span()
         site = f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}"
         with reduction_span(sugar=f"Body.{stmt.kind}", role="construction", site=site):
+            if isinstance(stmt, (FunctionDef, AsyncFunctionDef)):
+                return _def_statement_sugar(stmt)
             if not call_applies_own_frame(stmt):
                 return _decorated_statement_sugar(stmt)
-            if isinstance(stmt, (FunctionDef, AsyncFunctionDef)):
-                # A ``def`` statement builds the function and binds its name
-                # (substitution bound every later read of the name to the
-                # definition, ``_local_definition_binding``); its body runs
-                # only when the function is called, in the call's frame.  So
-                # the statement reduces nothing of the body: no face of the
-                # body is the enclosing function's (#7757).  It evaluates its
-                # defaults, once, here (``_definition_defaults_sugar``).
-                stmt.discharge_by_substitution()
-                return _definition_defaults_sugar(stmt)
             return stmt.sugar()
 
     def _construct_sugar(self):
@@ -21767,6 +21771,27 @@ def _decorated_statement_binding(statement, binding):
     from .shadow import rewrite_with_leaves
 
     return rewrite_with_leaves(statement, {"decorated_value": bound})
+
+
+def _def_statement_sugar(statement):
+    """THE ``def`` / ``async def`` statement, wherever it stands: a module
+    body, a function body (#8014), the one rule (#7757 item 7).
+
+    The statement builds the function and binds its name; the body runs
+    only when the function is called, in the call's frame.  So the
+    statement reduces nothing of the body, and no face of the body (a
+    raise, a refusal) is the enclosing body's.  An undecorated statement
+    (substitution bound every later read of the name to the definition,
+    ``_local_definition_binding``) evaluates its defaults, once, where it
+    stands, and nothing else (``_definition_defaults_sugar``); a decorated
+    one runs its decorators once and binds the name to their result
+    (``_decorated_statement_sugar``).  The function's own reduction is its
+    own entry's (``tree_enumerate.function_universe_outcome``, a call's
+    frame)."""
+    if not call_applies_own_frame(statement):
+        return _decorated_statement_sugar(statement)
+    statement.discharge_by_substitution()
+    return _definition_defaults_sugar(statement)
 
 
 def _decorated_statement_sugar(statement):

@@ -456,7 +456,12 @@ def reduce_body(statements: tuple, ctx: object = None):
     guard, its pre-halt state and what it owes: the caller wraps via
     `.and_then`, so a halt never becomes a false universe.
     """
-    exits = reduce_block_to_exitset(statements, ctx)
+    return block_values(reduce_block_to_exitset(statements, ctx))
+
+
+def block_values(exits):
+    """``exits`` (a suite's ``reduce_block_to_exitset``) as ``reduce_body``
+    answers it: every completed record a ``BlockValue``, every halt kept."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )

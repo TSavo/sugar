@@ -210,15 +210,18 @@ class OwnerReduction:
     ``outcome`` is the reduction's outcome; ``asserts`` is every
     ``(coordinate, outcome)`` an assert inside it reduced to, in reduction
     order. Its unanswered calls are owed by the outcome's own arms
-    (``unanswered_calls.owed_calls``).
+    (``unanswered_calls.owed_calls``). ``ends`` is, for a module, the
+    context each completed arm of its run ended with
+    (``ModuleBlockSugar.run``); a function's reduction has none.
     """
 
-    __slots__ = ("unit", "outcome", "asserts")
+    __slots__ = ("unit", "outcome", "asserts", "ends")
 
-    def __init__(self, unit, outcome, asserts):
+    def __init__(self, unit, outcome, asserts, ends=()):
         self.unit = unit
         self.outcome = outcome
         self.asserts = asserts
+        self.ends = ends
 
 
 _OWNER_REDUCTIONS: dict = {}
@@ -227,31 +230,90 @@ _OWNER_REDUCTIONS_BOUND = 256
 
 def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     """THE reduction of a function (``owner``) or of a module (``owner`` None,
-    ``sf`` given), once per resident unit (#7757, inventory item 28).
+    ``sf`` given: anything holding the module's ``root``, a ``SourceFile`` or
+    its unit's ``constructed_module``), once per resident unit (#7757,
+    inventory item 28).
 
     Every reader of a function's reduction reads this one: the universe rows,
     the link-unit enrollment, and the ``facts`` row of each assert in it. An assert is therefore reduced once, in context, and
     never alone. A refusal is not kept: it propagates to the reader, named.
     The unanswered calls the reduction left are owed by its outcome's arms,
     so a reduction read back from here carries them as the first one did.
+    A module's reduction is its body's one run (``ModuleBlockSugar.run``),
+    under no module execution site, as an import runs it; it keeps the
+    context each completed arm ended with (``OwnerReduction.ends``).
     """
     from sugar_lift_py_tests import assert_reductions
+    from sugar_source_tree.nodes import construct_at_module_execution_site
 
     node = owner if owner is not None else sf.root
     lc = node.line_col_span()
     key = (id(node.unit), node.kind, lc.start_line, lc.start_col, lc.end_line, lc.end_col)
     held = _OWNER_REDUCTIONS.get(key)
     if held is None or held.unit is not node.unit:
+        ends = ()
         with assert_reductions.collecting() as asserts:
             if owner is not None:
                 outcome = function_universe_outcome(owner)
             else:
-                outcome = sf.root.sugar().desugar(None)
+                outcome, ends = construct_at_module_execution_site(
+                    None, lambda: sf.root.sugar().run(None)
+                )
         if len(_OWNER_REDUCTIONS) >= _OWNER_REDUCTIONS_BOUND:
             _OWNER_REDUCTIONS.clear()
-        held = OwnerReduction(node.unit, outcome, tuple(asserts))
+        held = OwnerReduction(node.unit, outcome, tuple(asserts), ends)
         _OWNER_REDUCTIONS[key] = held
     return held
+
+
+# The units whose module run is under way, and each unit's module-end
+# contexts once read (``module_end_contexts``).
+_MODULE_RUNS_UNDER_WAY: set = set()
+_MODULE_END_CONTEXTS: dict = {}
+
+
+def module_end_contexts(unit) -> tuple:
+    """The context each completed arm of ``unit``'s module run ended with:
+    the one source of module-final global values (#7757 item 7).
+
+    The run is THE module reduction (``owner_reduction`` with no owner).  A
+    function called after import reads a global through the module's final
+    binding of it, the key of the module body's last write; the value the
+    run bound under that key is its value, whatever the write evaluated (a
+    literal, ``x += e``, a call's result, a list), evaluated once
+    (``call_site_sugar.with_module_final_globals``).  Only completed arms:
+    a function is called after an import that completed.
+
+    Empty, so each such read is refused by name, where the run completes on
+    no arm (every arm halts), where it refuses (a construction gap, named
+    where it was raised), and where it is asked for while it runs (a run
+    that reaches, through another module's function, a function reading
+    this module's final binding).  An answer read while another module's
+    run is under way is not kept: it may hold that cycle's refusal.
+    """
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_source_tree.panic import SourceTreePanic
+
+    key = id(unit)
+    held = _MODULE_END_CONTEXTS.get(key)
+    if held is not None and held[0] is unit:
+        return held[1]
+    if key in _MODULE_RUNS_UNDER_WAY:
+        return ()
+    keep = not _MODULE_RUNS_UNDER_WAY
+    _MODULE_RUNS_UNDER_WAY.add(key)
+    try:
+        try:
+            ends = owner_reduction(None, unit.constructed_module).ends
+        except (SourceTreePanic, ConstructionPanic):
+            ends = ()
+    finally:
+        _MODULE_RUNS_UNDER_WAY.discard(key)
+    if keep:
+        if len(_MODULE_END_CONTEXTS) >= _OWNER_REDUCTIONS_BOUND:
+            _MODULE_END_CONTEXTS.clear()
+        _MODULE_END_CONTEXTS[key] = (unit, ends)
+    return ends
 
 
 def assert_outcome(sf: SourceFile, span: Optional[dict]):
@@ -581,8 +643,10 @@ def function_universe_outcome(fn):
 
     A function reduced on its own is called from outside its module's run:
     its body reads each module global through the module's final binding,
-    and the frame entry every call takes binds those keys
-    (``call_site_sugar.with_module_final_globals``) before the body runs.
+    and the frame entry every call takes binds those keys to the values the
+    module body's run bound them to (``call_site_sugar.
+    with_module_final_globals``, ``module_end_contexts``) before the body
+    runs.
     """
     from sugar_lift_py_tests.sugar.call_site_sugar import with_module_final_globals
     from sugar_source_tree.nodes import current_module_execution_site

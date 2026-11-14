@@ -26,28 +26,30 @@ def _tree(
     )
 
 
-def test_module_constructs_each_child_once_in_source_order(monkeypatch) -> None:
+def test_a_module_def_statement_never_constructs_its_body(monkeypatch) -> None:
+    # The one def-statement rule (#7757 item 7): a ``def`` binds the
+    # function; its body runs only when it is called, so the module block
+    # constructs nothing of it.
     tree = _tree(
         "def first():\n" "    return 1\n" "\n" "def second():\n" "    return 2\n"
     )
-    calls: list[tuple[str, int]] = []
-    constructed: dict[str, object] = {}
+    calls: list[str] = []
     original = FunctionDef.sugar
 
     def observed(child: FunctionDef):
-        calls.append((child.name, child.line_col_span().start_line))
-        result = original(child)
-        constructed[child.name] = result
-        return result
+        calls.append(child.name)
+        return original(child)
 
     monkeypatch.setattr(FunctionDef, "sugar", observed)
 
     sugar = tree.root.sugar()
 
     assert type(sugar).__name__ == "ModuleBlockSugar"
-    assert calls == [("first", 1), ("second", 4)]
-    assert sugar.statements[0] is constructed["first"]
-    assert sugar.statements[1] is constructed["second"]
+    assert calls == []
+    assert [type(statement).__name__ for statement in sugar.statements] == [
+        "InertSugar",
+        "InertSugar",
+    ]
 
 
 def test_module_threads_temporal_scope_before_constructing_children(
