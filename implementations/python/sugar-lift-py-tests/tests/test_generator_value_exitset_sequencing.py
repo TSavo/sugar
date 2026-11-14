@@ -62,12 +62,6 @@ class _OutcomeValue(ConstructedTermSugar):
 
 
 @dataclass(frozen=True)
-class _Pending:
-    candidate_cid: str
-    demands: tuple = ()
-
-
-@dataclass(frozen=True)
 class _RefusingValue(ConstructedTermSugar):
     @classmethod
     def witnesses(cls):
@@ -116,26 +110,22 @@ def _mixed_faces():
     right_guard = atomic("generator.value.halted.right", [])
     left_face, completed_left_face = partition("generator-value-left")
     completed_right_face, right_face = partition("generator-value-right")
-    pending = (_Pending("pending:halted-left"),)
     halted_left = Halted(
         left_guard,
         RaiseEffect.for_builtin("LeftError", occurrence="value:halted:left"),
         state=object(),
         faces=frozenset({left_face}),
-        pending_contracts=pending,
     )
     completed = Completed(
         completed_guard,
         TermValue(11),
         frozenset({completed_left_face, completed_right_face}),
-        (),
     )
     halted_right = Halted(
         right_guard,
         RaiseEffect.for_builtin("RightError", occurrence="value:halted:right"),
         state=object(),
         faces=frozenset({right_face}),
-        pending_contracts=(),
     )
     return ExitSet((halted_left, completed, halted_right)), (
         halted_left,
@@ -159,7 +149,6 @@ def _assert_mixed_prefix(outcome, original):
         assert actual.state is expected.state
         assert actual.guard is expected.guard
         assert actual.faces is expected.faces
-        assert actual.pending_contracts is expected.pending_contracts
 
 
 def _install_transition_spy(monkeypatch, consumer: str):
@@ -280,21 +269,18 @@ def test_synthetic_all_halted_assign_is_unchanged_and_runs_no_continuation(
             RaiseEffect.for_builtin("TypeError", occurrence="contains"),
             None,
             frozenset({membership_true}),
-            (),
         ),
         Halted(
             and_((not_(membership_guard), equality_guard)),
             RaiseEffect.for_builtin("TypeError", occurrence="equals"),
             None,
             frozenset({membership_false, equality_true}),
-            (),
         ),
         Halted(
             and_((not_(membership_guard), not_(equality_guard))),
             dynamic,
             _ReducedBlock((), True, ()),
             frozenset({membership_false, equality_false}),
-            (),
         ),
     )
     reductions: list[str] = []
@@ -413,7 +399,6 @@ def _carrier(tmp_path, *, mixed: bool = False):
             RaiseEffect.for_builtin("CarrierError", occurrence="carrier:halted"),
             state=object(),
             faces=frozenset({halted_face}),
-            pending_contracts=(_Pending("pending:carrier-halted"),),
         )
         completed_value = TermValue(3)
         projected = ExitSet(
@@ -423,7 +408,6 @@ def _carrier(tmp_path, *, mixed: bool = False):
                     atomic("carrier:completed", []),
                     completed_value,
                     frozenset({completed_face}),
-                    (),
                 ),
             )
         )
@@ -494,7 +478,6 @@ def test_native_exit_carrier_preserves_identity_and_appends_one_continuation(
     assert halted_after.effect is halted.effect
     assert halted_after.state is halted.state
     assert halted_after.faces is halted.faces
-    assert halted_after.pending_contracts is halted.pending_contracts
     completed = discharged.exits[1]
     assert isinstance(completed, Completed)
     if consumer == "return":

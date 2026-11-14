@@ -1898,7 +1898,6 @@ class CallSiteValue(FloorValue):
                         exit_.guard,
                         retaining(exit_.value),
                         exit_.faces,
-                        exit_.pending_contracts,
                     )
                     if isinstance(exit_, Completed)
                     else Halted(
@@ -1906,7 +1905,6 @@ class CallSiteValue(FloorValue):
                         call_owned(exit_.effect),
                         exit_.state,
                         exit_.faces,
-                        exit_.pending_contracts,
                     )
                 )
                 for exit_ in exits.exits

@@ -2342,9 +2342,7 @@ class GeneratorConstructionV1:
         after_with = replace(self, cursor=last + 1)
         return ExitSet(
             tuple(
-                Completed(
-                    face.guard, after_with, face.faces, face.pending_contracts
-                )
+                Completed(face.guard, after_with, face.faces)
                 if isinstance(face, Completed) and face.value is self
                 else face
                 for face in result.exits
@@ -2447,13 +2445,11 @@ class GeneratorConstructionV1:
                         guard_formula,
                         self._spliced(step.then_steps),
                         frozenset({then_face}),
-                        (),
                     ),
                     Completed(
                         not_(guard_formula),
                         self._spliced(step.else_steps),
                         frozenset({else_face}),
-                        (),
                     ),
                 )
             )
@@ -2482,7 +2478,6 @@ class GeneratorConstructionV1:
                                 exit_.guard,
                                 exit_.value,
                                 exit_.faces | branch_faces,
-                                exit_.pending_contracts,
                             )
                             if isinstance(exit_, Completed)
                             else exit_
@@ -2758,18 +2753,16 @@ class GeneratorConstructionV1:
 
 def _guard_exits(exit_set: ExitSet, face) -> ExitSet:
     """Conjoin one routing face's guard and partition keys onto every exit."""
-    from sugar_lift_py_tests.caller_parameter_contract import merge_pending
     from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, _and_guards
 
     out = []
     for inner in exit_set.exits:
         guard = _and_guards(face.guard, inner.guard)
         faces = face.faces | inner.faces
-        owed = merge_pending(face.pending_contracts, inner.pending_contracts)
         if isinstance(inner, Halted):
-            out.append(Halted(guard, inner.effect, inner.state, faces, owed))
+            out.append(Halted(guard, inner.effect, inner.state, faces))
         else:
-            out.append(Completed(guard, inner.value, faces, owed))
+            out.append(Completed(guard, inner.value, faces))
     return ExitSet(tuple(out)).normalize()
 
 
@@ -2777,7 +2770,7 @@ def _halts_with_a_raise(value) -> bool:
     """A step's value that raised: one unconditional halt with a ``RaiseEffect``.
 
     This is the halt ``ground_exceptional_exit`` returns (``1 // 0``).  It
-    carries no branch condition and no pending contract, so the step's own
+    carries no branch condition, so the step's own
     halted face, with the machine's state, is the whole outcome.
     """
     from sugar_lift_py_tests.effect import RaiseEffect
@@ -2787,5 +2780,4 @@ def _halts_with_a_raise(value) -> bool:
         isinstance(value, Incomplete)
         and isinstance(value.effect, RaiseEffect)
         and not value.branch_conditions
-        and not value.pending_contracts
     )

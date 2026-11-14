@@ -47,7 +47,6 @@ def _gap(owner: object) -> ConstructionGap:
         "guarded",
         "collection ListValue",
         "StringValue.contains",
-        "ContractConditionalConstructionV1.and_then",
         "FunctionCallable decorator result:renamed_target",
     ],
 )

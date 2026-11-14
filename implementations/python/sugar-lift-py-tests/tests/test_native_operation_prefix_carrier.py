@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import pytest
 
 from sugar_lift_py_tests.caller_parameter_contract import (
@@ -24,17 +22,6 @@ from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.tree import SourceFile
-
-
-@dataclass(frozen=True)
-class _Demand:
-    demand_cid: str
-
-
-@dataclass(frozen=True)
-class _Pending:
-    candidate_cid: str
-    demands: tuple[_Demand, ...]
 
 
 def _coordinate(name: str, ordinal: int) -> FormalParameterCoordinateV1:
@@ -86,8 +73,6 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
     first_guard = atomic("test:prefix-first", [])
     second_guard = atomic("test:prefix-second", [])
     first_face, second_face = partition("test:prefix-arms")
-    first_obligation = _Pending("first", (_Demand("first-demand"),))
-    second_obligation = _Pending("second", (_Demand("second-demand"),))
     stopped_state = object()
     stopped_effect = UndeterminedRaiseEffect(
         blame="prefix-halt", occurrence="prefix-halt"
@@ -98,13 +83,11 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
                 first_guard,
                 TermValue(1),
                 frozenset({first_face}),
-                (first_obligation,),
             ),
             Completed(
                 second_guard,
                 TermValue(2),
                 frozenset({second_face}),
-                (second_obligation,),
             ),
             Halted(first_guard, stopped_effect, stopped_state),
         )
@@ -134,11 +117,9 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
     assert len(following) == 2
     assert following[0].guard == and_([first_guard, tail_guard])
     assert following[0].faces == frozenset({first_face})
-    assert following[0].pending_contracts == (first_obligation,)
     assert following[0].state is pre_effect_state
     assert following[1].guard == and_([second_guard, tail_guard])
     assert following[1].faces == frozenset({second_face})
-    assert following[1].pending_contracts == (second_obligation,)
     assert following[1].state is pre_effect_state
 
 

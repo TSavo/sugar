@@ -37,12 +37,6 @@ from sugar_source_tree.tree import SourceFile
 
 
 @dataclass(frozen=True)
-class _Pending:
-    candidate_cid: str
-    demands: tuple = ()
-
-
-@dataclass(frozen=True)
 class _OutcomeGuard(ConstructedTermSugar):
     outcome: object
 
@@ -104,14 +98,13 @@ def _step(guard) -> IfStepV1:
     )
 
 
-def _halt(name: str, *, pending=()):
+def _halt(name: str):
     left, _ = partition(("if-guard-halt", name))
     return Halted(
         atomic(f"guard:halted:{name}", []),
         RaiseEffect.for_builtin(f"{name}Error", occurrence=f"guard:{name}"),
         state=object(),
         faces=frozenset({left}),
-        pending_contracts=pending,
     )
 
 
@@ -121,7 +114,6 @@ def _assert_halt_identity(actual, expected) -> None:
     assert actual.state is expected.state
     assert actual.guard is expected.guard
     assert actual.faces is expected.faces
-    assert actual.pending_contracts is expected.pending_contracts
 
 
 def _transition_truth_spy(monkeypatch):
@@ -140,8 +132,8 @@ def test_four_face_guard_projects_completed_operands_once_then_transitions(
     monkeypatch,
 ) -> None:
     """Synthetic four-face law: two halts, predicate, guarded predicate."""
-    halted_left = _halt("left", pending=(_Pending("pending:left"),))
-    halted_right = _halt("right", pending=(_Pending("pending:right"),))
+    halted_left = _halt("left")
+    halted_right = _halt("right")
     direct_formula = atomic("guard:direct-truth", [])
     inner_true_formula = atomic("guard:inner:true", [])
     inner_false_formula = atomic("guard:inner:false", [])
@@ -156,8 +148,6 @@ def test_four_face_guard_projects_completed_operands_once_then_transitions(
         _TruthOperand(Complete(PredicateValue(inner_false_formula)), inner_false_calls),
     )
     direct_face, guarded_face = partition("if-guard-completed")
-    direct_pending = (_Pending("pending:direct"),)
-    guarded_pending = (_Pending("pending:guarded"),)
     direct_prefix_guard = atomic("guard:direct-prefix", [])
     guarded_prefix_guard = atomic("guard:guarded-prefix", [])
     guard_outcome = ExitSet(
@@ -168,13 +158,11 @@ def test_four_face_guard_projects_completed_operands_once_then_transitions(
                 direct_prefix_guard,
                 direct,
                 frozenset({direct_face}),
-                direct_pending,
             ),
             Completed(
                 guarded_prefix_guard,
                 guarded,
                 frozenset({guarded_face}),
-                guarded_pending,
             ),
         )
     )
@@ -200,8 +188,6 @@ def test_four_face_guard_projects_completed_operands_once_then_transitions(
     _assert_halt_identity(outcome.exits[1], halted_right)
     completed = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     assert len(completed) == 2
-    assert completed[0].pending_contracts is direct_pending
-    assert completed[1].pending_contracts is guarded_pending
     assert {direct_face, then_face, else_face} <= completed[0].faces
     assert {guarded_face, then_face, else_face} <= completed[1].faces
     for arm in completed:
@@ -234,15 +220,8 @@ def test_guarded_incomplete_arm_becomes_halted_without_running_branch() -> None:
         operand,
         _TruthOperand(Complete(PredicateValue(atomic("guard:unused", []))), []),
     )
-    prefix_pending = (_Pending("pending:guarded-incomplete"),)
     guard_outcome = ExitSet(
-        (
-            Completed(
-                atomic("guard:prefix-incomplete", []),
-                guarded,
-                pending_contracts=prefix_pending,
-            ),
-        )
+        (Completed(atomic("guard:prefix-incomplete", []), guarded),)
     )
 
     step = _step(_OutcomeGuard(guard_outcome))
@@ -256,7 +235,6 @@ def test_guarded_incomplete_arm_becomes_halted_without_running_branch() -> None:
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
     assert halted.effect is incomplete.effect
-    assert halted.pending_contracts == prefix_pending
 
 
 def _assert_transition_refusal(raised, step, *, observed: str, requested: str):
@@ -317,7 +295,7 @@ def test_guard_carrier_composes_prefix_and_runs_projection_and_transition_once(
     path = tmp_path / "guard_carrier.py"
     path.write_text("def f(left, right):\n    return left == right\n", encoding="utf-8")
     site = next(SourceFile.from_path(path).functions()).body[0].fragment
-    halted = _halt("carrier", pending=(_Pending("pending:carrier"),))
+    halted = _halt("carrier")
     truth_calls: list[object] = []
     truth = _TruthOperand(
         Complete(PredicateValue(atomic("guard:carrier-truth", []))), truth_calls
@@ -374,7 +352,7 @@ def test_projected_truth_exitset_composes_a_branch_carrier_without_duplication(
         ),
         coordinates=(None, None),
     )
-    truth_halted = _halt("projected-truth", pending=(_Pending("pending:truth"),))
+    truth_halted = _halt("projected-truth")
     projected_truth = ExitSet(
         (
             truth_halted,
@@ -422,7 +400,6 @@ def test_projected_truth_exitset_composes_a_branch_carrier_without_duplication(
     assert nested_halted.faces is not truth_halted.faces
     assert len(nested_halted.faces) == len(truth_halted.faces) == 1
     assert next(iter(nested_halted.faces)) is next(iter(truth_halted.faces))
-    assert nested_halted.pending_contracts is truth_halted.pending_contracts
     completed = [arm for arm in outcome.exits if isinstance(arm, Completed)]
     assert len(completed) == 1
     assert isinstance(completed[0].value, YieldEffect)

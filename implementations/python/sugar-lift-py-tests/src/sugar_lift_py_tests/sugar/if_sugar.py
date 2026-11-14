@@ -115,7 +115,6 @@ def _is_linear(exits) -> bool:
         and isinstance(exits.exits[0], Completed)
         and exits.exits[0].guard == true_guard()
         and not exits.exits[0].faces
-        and not exits.exits[0].pending_contracts
     )
 
 

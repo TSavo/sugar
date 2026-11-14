@@ -7,7 +7,6 @@ widen its way to green by flattening the distinction it was supposed to keep
 
 The families, by the census kind string they used to produce:
 
-- ``AttributeError: 'ContractConditionalConstructionV1' has no attribute 'guarded'``
 - ``NotImplementedError: a conditional-expression arm that reduces to an effect ...``
 - ``AttributeError: 'ExitSet' object has no attribute 'value'``
 - ``AttributeError: 'SourceFragment' has no attribute 'compare_left'``
@@ -17,19 +16,13 @@ The families, by the census kind string they used to produce:
 
 from __future__ import annotations
 
-import json
 import tempfile
 from dataclasses import dataclass
 
 import pytest
 
-from sugar_lift_py_tests.caller_parameter_contract import (
-    ContractConditionalConstructionV1,
-)
 from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
-from sugar_lift_py_tests.canonicalizer import encode_jcs
-from sugar_lift_py_tests.ir import formula_to_value
 from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -86,14 +79,6 @@ def _discharged_dict_method(out):
     return outcome_to_exitset(out.discharge(actuals))
 
 
-def _pending(out):
-    return tuple(
-        row
-        for row in _statements(out)
-        if isinstance(row, ContractConditionalConstructionV1)
-    )
-
-
 @dataclass(frozen=True)
 class _Site:
     """A minimal site: the effect vocabulary asks a locus for filename/line/col."""
@@ -112,49 +97,6 @@ class _BoundState(Sugar):
 
     def desugar(self, ctx=None):  # pragma: no cover - never reduced by delete
         raise AssertionError("delete_binding must not reduce a bound face")
-
-
-def _demand_shape(entry):
-    """The demanded formula's outermost connective, as wire vocabulary."""
-    return json.loads(
-        encode_jcs(formula_to_value(entry.sole_demand().demanded_formula))
-    )
-
-
-# --------------------------------------------------------------------------
-# Family: ContractConditionalConstructionV1 has no attribute 'guarded'
-# --------------------------------------------------------------------------
-
-
-def test_guarded_pending_contract_lifts_and_weakens_its_demand() -> None:
-    """POSITIVE. A formal subscript under an `if` used to raise AttributeError."""
-    out = _out("def f(p, c):\n if c:\n  return p[0]\n return 0\n")
-    pending = _pending(out)
-    assert len(pending) == 1
-    # The obligation is owed only on the guarded face: the demanded formula is an
-    # implication, not the bare `python:indexable` atom.
-    shape = _demand_shape(pending[0])
-    assert shape["kind"] == "implies", shape
-
-
-def test_unguarded_pending_contract_keeps_its_bare_demand() -> None:
-    """DISCRIMINATING. Without a guard the demand must NOT become an implication.
-
-    If `guarded` were applied unconditionally, every demand would weaken to
-    `true -> P` and a caller could discharge nothing.
-    """
-    out = _out("def f(p):\n return p[0]\n")
-    pending = _pending(out)
-    assert len(pending) == 1
-    shape = _demand_shape(pending[0])
-    assert shape["kind"] != "implies", shape
-
-
-def test_nested_guards_compose_on_one_demand() -> None:
-    """DISCRIMINATING. Two enclosing guards weaken the SAME single demand once
-    per guard -- they do not duplicate the entry."""
-    out = _out("def f(p, c, d):\n if c:\n  if d:\n   return p[0]\n return 0\n")
-    assert len(_pending(out)) == 1
 
 
 # --------------------------------------------------------------------------
@@ -336,55 +278,6 @@ def test_single_outcome_law_names_the_violated_law() -> None:
         require_single_value(ExitSet(()), owner="twin", blame="twin", arm="when_true")
     assert SINGLE_OUTCOME_LAW in str(raised.value)
     assert "when_true" in str(raised.value)
-
-
-def test_conditional_receiver_with_one_pending_contract_arm_lifts() -> None:
-    """POSITIVE. The live bare-assert offender: an operation distributed into a
-    conditional arm whose answer carries a pending parameter contract. The demand
-    is hoisted under that arm's guard and re-attached to the joined value."""
-    out = _out(
-        "def f(c, p):\n"
-        " if c:\n"
-        "  x = p\n"
-        " else:\n"
-        "  x = (1, 2)\n"
-        " return x[0]\n"
-    )
-    pending = _pending(out)
-    assert len(pending) == 1
-
-
-def test_two_pending_contract_arms_join_and_conserve_both_demands() -> None:
-    """SUPERSEDED PANIC, NOW A LAW (#6352).
-
-    This used to assert the panic: one entry carried exactly one demand, so a
-    join of TWO pending arms had no representation and had to be loud. The
-    panic named its own replacement -- "widen ContractConditionalConstructionV1
-    to carry a demand SET" -- and that widening landed, so the assertion moves
-    from "it refuses" to "it joins, and conserves BOTH obligations".
-
-    The twin is rewritten rather than deleted: the obligation being conserved is
-    what the panic was protecting, and deleting the test would retire the
-    protection along with the panic. Both formals must still be owed.
-    """
-    out = _out(
-        "def f(c, p, q):\n"
-        " if c:\n"
-        "  x = p\n"
-        " else:\n"
-        "  x = q\n"
-        " return x[0]\n"
-    )
-    pending = _pending(out)
-    assert pending
-
-    formals = {
-        demand.formal_coordinate_cid for entry in pending for demand in entry.demands
-    }
-    assert len(formals) == 2, (
-        "a join of two pending arms conserved only one formal's obligation: the "
-        "demands were dropped or conjoined instead of unioned (#6352)"
-    )
 
 
 # --------------------------------------------------------------------------

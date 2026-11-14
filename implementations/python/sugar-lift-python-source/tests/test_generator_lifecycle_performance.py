@@ -137,7 +137,6 @@ def test_enter_bound_generator_sequences_mixed_yield_and_halt_faces():
         occurrence="mixed-enter:halt",
     )
     state = TermValue("pre-enter-state")
-    pending = ()
 
     class MixedGuardSugar(ConstructedTermSugar):
         @classmethod
@@ -157,14 +156,12 @@ def test_enter_bound_generator_sequences_mixed_yield_and_halt_faces():
                         atomic("mixed-enter-completed", []),
                         TrueBoolLiteralSugar(site="mixed-enter:true"),
                         frozenset({true_face}),
-                        (),
                     ),
                     Halted(
                         atomic("mixed-enter-halted", []),
                         effect,
                         state,
                         frozenset({false_face}),
-                        pending,
                     ),
                 )
             )
@@ -203,7 +200,6 @@ def test_enter_bound_generator_sequences_mixed_yield_and_halt_faces():
     assert halted[0].effect is effect
     assert halted[0].state is state
     assert halted[0].faces == frozenset({false_face})
-    assert halted[0].pending_contracts is pending
 
 
 def test_enter_projector_resumes_guarded_branch_machines_once():

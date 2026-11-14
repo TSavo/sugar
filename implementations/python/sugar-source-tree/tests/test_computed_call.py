@@ -5,11 +5,6 @@ the callee reduces like any value through whatever sugar its own node built
 `py.call(callee, args)`. A callee whose node has no sugar (a Lambda called
 inline) stays loud through the ordinary recursion -- this sugar never masks
 that gap.
-
-Projection note: formal-parameter indexable operations leave a pending
-``ContractConditionalConstructionV1`` until the Rust linker discharges the
-demand. ``UniverseValue.post`` panics on pending demands by law. These twins
-read the call term from the conditional construction value, not from post().
 """
 
 from __future__ import annotations
@@ -32,15 +27,8 @@ def _call_term(src):
     """Project the returned call coordinate without illegal UniverseValue.post."""
     universe = _fn(src).sugar().desugar().value
     for entry in universe.record.statements:
-        # Discharged path: ReturnValue directly on the record.
         if type(entry).__name__ == "ReturnValue":
             return entry.value.term
-        # Pending parameter-contract path: term is on the conditional value.
-        if type(entry).__name__ == "ContractConditionalConstructionV1":
-            ret = entry.value
-            if type(ret).__name__ == "ReturnValue":
-                return ret.value.term
-            return getattr(ret, "term", ret)
     raise AssertionError(
         f"no return/call term in universe statements: "
         f"{[type(s).__name__ for s in universe.record.statements]}"

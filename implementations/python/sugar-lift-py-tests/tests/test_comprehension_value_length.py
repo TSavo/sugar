@@ -14,12 +14,6 @@ from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
 
 
 @dataclass(frozen=True)
-class _Pending:
-    candidate_cid: str
-    demands: tuple = ()
-
-
-@dataclass(frozen=True)
 class _ListcompLookalike:
     name: str = "py.listcomp"
 
@@ -102,21 +96,17 @@ def test_valid_foreign_listcomp_constructor_and_site_are_retained_exactly() -> N
     assert foreign.term != first.term
 
 
-def test_exitset_listcomp_length_preserves_halt_guard_and_pending() -> None:
-    halted_pending = _Pending("pending:halted")
-    completed_pending = _Pending("pending:completed")
+def test_exitset_listcomp_length_preserves_halt_guard() -> None:
     halted = Halted(
         atomic("test:halted", ()),
         RaiseEffect.for_builtin("ValueError", occurrence="source.py:1:0"),
         TermValue(41),
-        pending_contracts=(halted_pending,),
     )
     completed = Completed(
         atomic("test:completed", ()),
         ComprehensionValue(
             ctor("py.listcomp", ()), finite_elements=(TermValue(1), TermValue(2))
         ),
-        pending_contracts=(completed_pending,),
     )
 
     result = ExitSet((halted, completed)).and_then(lambda value: value.length(object()))
@@ -125,7 +115,5 @@ def test_exitset_listcomp_length_preserves_halt_guard_and_pending() -> None:
     completed_after = next(face for face in result.exits if isinstance(face, Completed))
     assert halted_after is halted
     assert halted_after.guard == halted.guard
-    assert halted_after.pending_contracts == (halted_pending,)
     assert completed_after.value == TermValue(2)
     assert completed_after.guard == completed.guard
-    assert completed_after.pending_contracts == (completed_pending,)

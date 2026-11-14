@@ -33,7 +33,6 @@ class _StarFace:
     residual: object  # GroupedRaiseEffect
     state: object  # _ReducedBlock
     faces: frozenset
-    pending: tuple
     # Exceptional raises collected on THIS face's guard path only.
     exceptional: tuple
 
@@ -51,7 +50,6 @@ class TryStarSugar(Sugar):
         return ()
 
     def desugar(self, ctx=None):
-        from sugar_lift_py_tests.caller_parameter_contract import merge_pending
         from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
         from sugar_lift_py_tests.effect_router import (
             regroup_except_star,
@@ -100,7 +98,6 @@ class TryStarSugar(Sugar):
                     residual=original,
                     state=_seed_temporal(exit_.state, ctx),
                     faces=exit_.faces,
-                    pending=exit_.pending_contracts,
                     exceptional=(),
                 )
             ]
@@ -157,9 +154,6 @@ class TryStarSugar(Sugar):
                     for handler_exit in handler_exits.exits:
                         guard = _and_guards(face.guard, handler_exit.guard)
                         faces = face.faces | handler_exit.faces
-                        owed = merge_pending(
-                            face.pending, handler_exit.pending_contracts
-                        )
                         if isinstance(handler_exit, Halted) and _is_exceptional_raise(
                             handler_exit.effect
                         ):
@@ -174,7 +168,6 @@ class TryStarSugar(Sugar):
                                     residual=handler_residual,
                                     state=next_state,
                                     faces=faces,
-                                    pending=owed,
                                     exceptional=(
                                         *face.exceptional,
                                         handler_exit.effect,
@@ -190,7 +183,6 @@ class TryStarSugar(Sugar):
                                     handler_exit.effect,
                                     handler_exit.state,
                                     faces,
-                                    owed,
                                 )
                             )
                             next_state = (
@@ -204,7 +196,6 @@ class TryStarSugar(Sugar):
                                     residual=handler_residual,
                                     state=next_state,
                                     faces=faces,
-                                    pending=owed,
                                     exceptional=face.exceptional,
                                 )
                             )
@@ -225,22 +216,18 @@ class TryStarSugar(Sugar):
                                     residual=handler_residual,
                                     state=next_state,
                                     faces=faces,
-                                    pending=owed,
                                     exceptional=face.exceptional,
                                 )
                             )
                             continue
                         # Unknown face: still conjoin enclosing guard; retain.
-                        retained.append(
-                            _rebind_face_guard(handler_exit, guard, faces, owed)
-                        )
+                        retained.append(_rebind_face_guard(handler_exit, guard, faces))
                         next_frontier.append(
                             _StarFace(
                                 guard=guard,
                                 residual=handler_residual,
                                 state=face.state,
                                 faces=faces,
-                                pending=owed,
                                 exceptional=face.exceptional,
                             )
                         )
@@ -262,13 +249,10 @@ class TryStarSugar(Sugar):
                                 regrouped,
                                 face.state,
                                 face.faces,
-                                face.pending,
                             )
                         )
                 else:
-                    retained.append(
-                        Completed(face.guard, face.state, face.faces, face.pending)
-                    )
+                    retained.append(Completed(face.guard, face.state, face.faces))
 
             if not retained:
                 retained.append(
@@ -276,7 +260,6 @@ class TryStarSugar(Sugar):
                         exit_.guard,
                         _seed_temporal(exit_.state, ctx),
                         exit_.faces,
-                        exit_.pending_contracts,
                     )
                 )
             parts.append(ExitSet(tuple(retained)).normalize())
@@ -324,15 +307,15 @@ def _seed_temporal(state, ctx):
     )
 
 
-def _rebind_face_guard(face, guard, faces, owed):
+def _rebind_face_guard(face, guard, faces):
     """Retain a face with the enclosing guard conjoined (all faces, no drop)."""
     from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
     from sugar_source_tree.panic import SugarNotWritten
 
     if isinstance(face, Halted):
-        return Halted(guard, face.effect, face.state, faces, owed)
+        return Halted(guard, face.effect, face.state, faces)
     if isinstance(face, Completed):
-        return Completed(guard, face.value, faces, owed)
+        return Completed(guard, face.value, faces)
     raise SugarNotWritten(
         blame=None,
         owner="TryStarSugar.desugar",
@@ -383,7 +366,6 @@ def _reduce_one_from(state, statement):
                         transforms=(*state.transforms, *face.value.transforms),
                     ),
                     face.faces,
-                    face.pending_contracts,
                 )
             )
         elif isinstance(face, Halted):
@@ -402,7 +384,6 @@ def _reduce_one_from(state, statement):
                     face.effect,
                     halt_state,
                     face.faces,
-                    face.pending_contracts,
                 )
             )
         else:

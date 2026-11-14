@@ -9358,22 +9358,12 @@ def test_native_exit_guarded_returns_keep_authentication_and_obligations():
         can_fall_through=False,
     )
     faces = frozenset({partition("native-return-owner")[0]})
-    # Opaque plumbing sentinel: projection must conserve, not re-mint, demands.
-    from types import SimpleNamespace
-
-    pending = (
-        SimpleNamespace(demands=(SimpleNamespace(demand_cid="retained-demand"),)),
-    )
-    result = _exit_return_values(
-        ExitSet((Completed(true_guard(), block, faces, pending),))
-    )
+    result = _exit_return_values(ExitSet((Completed(true_guard(), block, faces),)))
     assert {f.value.value: f.guard for f in result.exits} == {
         True: observed,
         False: complement_guard(observed),
     }
-    assert all(
-        f.faces == faces and f.pending_contracts == pending for f in result.exits
-    )
+    assert all(f.faces == faces for f in result.exits)
 
 
 @pytest.mark.parametrize("refusal", ["unproved-guard", "prefix-store", "empty-green"])

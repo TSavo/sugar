@@ -267,7 +267,6 @@ class GeneratorObjectWithSugar(Sugar):
                     effect,
                     manager_exit.value,
                     manager_exit.faces,
-                    manager_exit.pending_contracts,
                 )
             )
         return exitset_to_outcome(ExitSet(tuple(exits)).normalize())
@@ -334,7 +333,6 @@ class NonManagerObjectWithSugar(Sugar):
                     effect,
                     manager_exit.value,
                     manager_exit.faces,
-                    manager_exit.pending_contracts,
                 )
             )
         return exitset_to_outcome(ExitSet(tuple(exits)).normalize())

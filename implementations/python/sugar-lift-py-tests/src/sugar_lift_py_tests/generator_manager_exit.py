@@ -290,7 +290,7 @@ def _after_refused_yield(machine, message: str, blame: str):
             # A raise from close() supersedes the RuntimeError in flight.
             exits.append(face)
             continue
-        exits.append(Halted(face.guard, refusal, None, face.faces, face.pending_contracts))
+        exits.append(Halted(face.guard, refusal, None, face.faces))
     return ExitSet(tuple(exits)).normalize()
 
 
@@ -316,7 +316,6 @@ def _map_exits(exit_set, on_completed, blame: str, *, thrown=None):
                             effect,
                             face.state,
                             face.faces,
-                            face.pending_contracts,
                         ),
                     )
                 )
@@ -335,7 +334,6 @@ def _map_exits(exit_set, on_completed, blame: str, *, thrown=None):
 
 
 def _guard_with(exit_set, face):
-    from sugar_lift_py_tests.caller_parameter_contract import merge_pending
     from sugar_lift_py_tests.outcome.exit_set import (
         Completed,
         ExitSet,
@@ -347,9 +345,8 @@ def _guard_with(exit_set, face):
     for inner in exit_set.exits:
         guard = _and_guards(face.guard, inner.guard)
         faces = face.faces | inner.faces
-        owed = merge_pending(face.pending_contracts, inner.pending_contracts)
         if isinstance(inner, Halted):
-            out.append(Halted(guard, inner.effect, inner.state, faces, owed))
+            out.append(Halted(guard, inner.effect, inner.state, faces))
         else:
-            out.append(Completed(guard, inner.value, faces, owed))
+            out.append(Completed(guard, inner.value, faces))
     return ExitSet(tuple(out)).normalize()

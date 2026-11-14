@@ -1070,7 +1070,6 @@ class NativeOperationExitCarrierV1:
             isinstance(projected, Incomplete)
             and isinstance(projected.effect, RaiseEffect)
             and not projected.branch_conditions
-            and not projected.pending_contracts
         ):
             # A decided raise: the halt carries the exception identity and
             # the occurrence the exceptional resolution cites.
@@ -1200,333 +1199,6 @@ class NativeOperationExitCarrierV1:
         for short in trailing:
             exits = union_short_circuit(exits, short)
         return exits
-
-
-@dataclass(frozen=True)
-class ParameterContractDemandV1:
-    owner_source_identity_cid: str
-    formal_coordinate_cid: str
-    operation_site: SourceFragmentCoordinateV1
-    demanded_formula: Formula
-    candidate_cid: str
-    demand_cid: str
-
-    @classmethod
-    def mint(cls, **fields) -> "ParameterContractDemandV1":
-        preimage = {
-            "kind": "parameter-contract-demand",
-            "schemaVersion": "1",
-            "ownerSourceIdentityCid": fields["owner_source_identity_cid"],
-            "formalCoordinateCid": fields["formal_coordinate_cid"],
-            "operationSite": fields["operation_site"].wire(),
-            "demandedFormula": _json(formula_to_value(fields["demanded_formula"])),
-            "demandedEffectBound": None,
-            "candidateCid": fields["candidate_cid"],
-        }
-        return cls(**fields, demand_cid=_cid(preimage))
-
-    def to_value(self) -> dict[str, Any]:
-        return {
-            "kind": "parameter-contract-demand",
-            "schemaVersion": "1",
-            "ownerSourceIdentityCid": self.owner_source_identity_cid,
-            "formalCoordinateCid": self.formal_coordinate_cid,
-            "operationSite": self.operation_site.wire(),
-            "demandedFormula": _json(formula_to_value(self.demanded_formula)),
-            "demandedEffectBound": None,
-            "candidateCid": self.candidate_cid,
-            "demandCid": self.demand_cid,
-        }
-
-
-def merge_demands(*groups) -> tuple[ParameterContractDemandV1, ...]:
-    """The demand SET: union by content address, ordered by content address.
-
-    `demand_cid` is the content address of the WHOLE obligation — owner source
-    identity, formal coordinate, operation site, demanded formula, candidate —
-    so equal cids are the same obligation and dedupe is not a heuristic. It is
-    the arithmetic of the obligation: a conjunction is idempotent, `F and F` IS
-    `F`, and one obligation reaching a join twice through a shared outcome DAG
-    (`p[0]` read once and consumed on both faces of a fold) is one obligation.
-
-    Ordering is by cid, never by arrival. The universe is content: a set that
-    ordered by the order two folds happened to run would make the same
-    obligations mint two different rows, and there is no RNG and no clock here
-    to justify that.
-    """
-    by_cid: dict[str, ParameterContractDemandV1] = {}
-    for group in groups:
-        for demand in group:
-            by_cid.setdefault(demand.demand_cid, demand)
-    return tuple(by_cid[cid] for cid in sorted(by_cid))
-
-
-def merge_pending(*groups) -> tuple:
-    """Union pending CARRIERS by candidate content address (#6352 family).
-
-    The carrier set is the exit-level counterpart of ``merge_demands``. Two
-    carriers are the same pending construction exactly when their
-    ``candidate_cid`` agrees -- that address is taken over the source node AND
-    the candidate term, so equal addresses are the same construction at the
-    same site, and dedupe is arithmetic rather than a heuristic.
-
-    Same candidate reaching a join twice: ONE carrier, demand sets unioned by
-    ``merge_demands`` -- which is idempotent, so a shared outcome DAG that
-    delivers the same obligation on two faces still owes it once. Different
-    candidates: two carriers, both kept, nothing conjoined.
-
-    Ordering is by ``candidate_cid``, never by arrival, for the reason
-    ``merge_demands`` orders by ``demand_cid``: the universe is content, and
-    two folds that happened to run in a different order must not mint two
-    different rows.
-    """
-    # THE EMPTY AND SINGLETON CASES COST NOTHING. This is called once per exit
-    # pair in `ExitSet.sequence` -- the innermost loop of every k-operand fold
-    # in the lift -- and almost every arm owes nothing at all, so building a
-    # dict, sorting it and rebuilding a tuple to answer `()` is work done per
-    # arm per fold step for no result. A group of at most one carrier is
-    # already sorted and already deduped, so it is returned as it stands.
-    populated = [group for group in groups if group]
-    if not populated:
-        return ()
-    if len(populated) == 1 and len(populated[0]) <= 1:
-        return tuple(populated[0])
-
-    by_candidate: dict[str, "ContractConditionalConstructionV1"] = {}
-    for group in groups:
-        for entry in group:
-            prior = by_candidate.get(entry.candidate_cid)
-            by_candidate[entry.candidate_cid] = (
-                entry
-                if prior is None
-                else replace(prior, demands=merge_demands(prior.demands, entry.demands))
-            )
-    return tuple(by_candidate[cid] for cid in sorted(by_candidate))
-
-
-def weaken_pending(entries, formula) -> tuple:
-    """Every carrier in a group weakened to one guarded face.
-
-    Weakening only some of a group would leave the rest owed unconditionally on
-    a face that may never run, which is a STRONGER obligation than the source
-    states -- the same reason ``demanded_under`` weakens every demand in a set.
-    """
-    return merge_pending(tuple(entry.demanded_under(formula) for entry in entries))
-
-
-@dataclass(frozen=True)
-class ContractConditionalConstructionV1:
-    """A constructed value together with every caller obligation it incurred.
-
-    `demands` is a SET, not one demand (#6352). One expression can incur several
-    distinct obligations — `[p[0], q[1]]` owes `python:indexable(p)` AND
-    `python:indexable(q)`, `f(p[0], q[1])` the same — and the entry used to hold
-    exactly one. Every join that met a second one panicked NAMED: `collection
-    TupleValue`, `IfExpSugar._join`, and `ContractConditionalConstructionV1
-    .and_then` each said the same sentence, "widen ... to carry a demand SET".
-    Three call sites requesting one widening is the ontology telling you it is
-    missing a kind of thing, so the thing is here now.
-
-    Two demands are NOT conjoined into one. Each carries its own
-    `formal_coordinate_cid` and `owner_source_identity_cid`; fusing their
-    formulas would mint one obligation attributed to one formal that actually
-    spans two, which is a fabricated fact, not a smaller answer.
-
-    THE WIRE SHAPE IS UNCHANGED. `contribution` splits the entry into one entry
-    per demand before anything is projected, so `to_value`, the link unit, and
-    the Rust linker still see exactly one demand per row. The set exists only
-    in flight, where the joins happen.
-    """
-
-    source_node: SourceFragmentCoordinateV1
-    candidate: Term
-    candidate_cid: str
-    demands: tuple[ParameterContractDemandV1, ...]
-    value: FloorValue
-
-    @classmethod
-    def mint(cls, *, site, candidate, demand_formula, value, coordinate):
-        source_node = source_coordinate(site)
-        candidate_preimage = {
-            "kind": "parameter-contract-candidate",
-            "schemaVersion": "1",
-            "sourceNode": source_node.wire(),
-            "candidate": _json(term_to_value(candidate)),
-        }
-        candidate_cid = _cid(candidate_preimage)
-        demand = ParameterContractDemandV1.mint(
-            owner_source_identity_cid=coordinate.owner_source_identity_cid,
-            formal_coordinate_cid=coordinate.coordinate_cid,
-            operation_site=source_node,
-            demanded_formula=demand_formula,
-            candidate_cid=candidate_cid,
-        )
-        return cls(source_node, candidate, candidate_cid, (demand,), value)
-
-    def and_then(self, step):
-        """Continue with the carried value; every demand rides on the result.
-
-        A following ``Complete`` takes the demands back and the entry rides on
-        into the block record, where ``link_unit_projection`` enrols it and the
-        linker discharges it.
-
-        Anything else has nowhere to carry it, and this used to ``return
-        following`` -- silently dropping the obligation. A dropped demand is
-        never enrolled and never discharged, so `p[0]` would stand with no
-        `python:indexable(p)` owed by anyone. That is not a smaller answer, it is
-        a wrong one, and it is loud now. Measured on 25 pandas modules / 158
-        functions: 4 such drops before this branch existed, and threading the
-        collection/f-string/bool-op reducers through ``and_then`` exposed 20
-        more that had previously been lost inside an `.value` read instead.
-        """
-        from sugar_lift_py_tests.outcome import Complete
-
-        following = step(self.value)
-        if isinstance(following, Complete):
-            return replace(self, value=following.value)
-        from sugar_lift_py_tests.floor.single_outcome_law import rewrap_pending
-
-        return rewrap_pending(
-            self,
-            following,
-            owner="ContractConditionalConstructionV1.and_then",
-            blame=self.source_node,
-        )
-
-    def demanded_under(self, formula):
-        """Weaken the pending obligation to a guarded face; carried value untouched.
-
-        The demand is owed only where the branch runs. `python:indexable(p)` for
-        `if c: return p[0]` is `c -> python:indexable(p)`, never the
-        unconditional obligation: a caller that never takes the branch owes
-        nothing. Re-minting changes `demand_cid`, which is correct -- it IS a
-        different obligation.
-
-        This is the half a caller wants when the caller is guarding the VALUE
-        itself (an `IfExp` that fuses both arms into one `GuardedValue`), so
-        guarding the value here too would guard it twice. `guarded` is the other
-        door, for a caller that hands the whole entry under a branch.
-        """
-        from sugar_lift_py_tests.ir import implies
-
-        # EVERY demand weakens. Weakening only one of a set would leave the
-        # others owed unconditionally on a face that may never run, which is a
-        # stronger obligation than the source states.
-        return replace(
-            self,
-            demands=merge_demands(
-                tuple(
-                    ParameterContractDemandV1.mint(
-                        owner_source_identity_cid=demand.owner_source_identity_cid,
-                        formal_coordinate_cid=demand.formal_coordinate_cid,
-                        operation_site=demand.operation_site,
-                        demanded_formula=implies(formula, demand.demanded_formula),
-                        candidate_cid=demand.candidate_cid,
-                    )
-                    for demand in self.demands
-                )
-            ),
-        )
-
-    def guarded(self, formula):
-        """Ride under a branch: the CARRIED value guards, the DEMAND weakens.
-
-        This entry is a wrapper -- `and_then` threads the branch's real floor
-        value through `self.value`, and `resume_project` substitutes exactly
-        that value once the linker discharges the demand. So a guard reaching
-        this entry has two distinct arms to conserve, and neither may be
-        dropped:
-
-        1. The carried value guards the way it would have if no demand were
-           pending (ReturnValue -> GuardedReturn, InvValue -> implication, ...).
-           Guarding the wrapper without guarding the value would let the
-           resumed record project an UNGUARDED return for a branch that only
-           runs under `formula`.
-        2. The demand is owed only on the guarded face. `python:indexable(p)`
-           for `if c: return p[0]` is `c -> python:indexable(p)`, never the
-           unconditional obligation -- a caller that never takes the branch
-           owes nothing. Weakening re-mints the demand, so `demand_cid`
-           changes: it IS a different obligation.
-
-        Nested guards compose by repeated application, innermost first, which
-        is the same accumulation `Incomplete.guarded` records positionally.
-        """
-        return replace(self.demanded_under(formula), value=self.value.guarded(formula))
-
-    def contribution(self):
-        """One row per demand: the SET collapses back to singletons HERE.
-
-        This is the boundary the wire lives behind. `to_value`, the link unit,
-        and the Rust linker each state one demand per row, and they are right
-        to -- an obligation is owned by ONE formal coordinate. The set is an
-        in-flight join carrier, not a wire shape, so it never reaches them.
-        """
-        return tuple(replace(self, demands=(demand,)) for demand in self.demands)
-
-    def inv_contribution(self):
-        return ()
-
-    def mint_contribution(self, name, formals):
-        # A resolved candidate mints no independent contract row: its constructed
-        # value already flows through the return term. The demand is discharged
-        # by the linker, not re-stated as an inv here.
-        del name, formals
-        return ()
-
-    def post_contribution(self):
-        return ()
-
-    def derived_post_contribution(self):
-        return ()
-
-    def edge_contribution(self, source_name):
-        del source_name
-        return ()
-
-    def follow(self):
-        return self.value.follow_rest()
-
-    def extend_scope(self, ctx):
-        return self.value.extend_scope(ctx)
-
-    def sole_demand(self) -> ParameterContractDemandV1:
-        """The one demand a PROJECTED row states, or a named gap.
-
-        Every projection boundary reads this. `contribution` splits the set
-        before anything is projected, so a set arriving here means a producer
-        reached the wire without going through the block record -- loud, not
-        silently first-of-set.
-        """
-        if len(self.demands) == 1:
-            return self.demands[0]
-        from sugar_lift_py_tests.gap.info import GapKind
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        construction_panic_gap(
-            owner="ContractConditionalConstructionV1.sole_demand",
-            blame=self.source_node,
-            observed=(
-                f"a projected contract row carries {len(self.demands)} demands "
-                f"({', '.join(demand.demand_cid for demand in self.demands)})"
-            ),
-            requested="exactly one demand per projected row",
-            fix=(
-                "route the entry through `contribution`, which splits the "
-                "in-flight demand SET into one row per demand, before "
-                "projecting it to the wire"
-            ),
-            gap_kind=GapKind.FLOOR,
-        )
-
-    def to_value(self) -> dict[str, Any]:
-        return {
-            "kind": "contract-conditional-construction",
-            "schemaVersion": "1",
-            "sourceNode": self.source_node.wire(),
-            "candidate": _json(term_to_value(self.candidate)),
-            "candidateCid": self.candidate_cid,
-            "demand": self.sole_demand().to_value(),
-        }
 
 
 @dataclass(frozen=True)
@@ -1771,9 +1443,10 @@ class ParameterOwnedContractV1:
 
 @dataclass(frozen=True)
 class ParameterContractLinkUnitV1:
-    """One function's closed enrollment row: its owned contract, the candidates
-    its body enrolled, the already-constructed call edges, and the retained
-    continuation key `link_unit_cid`."""
+    """One function's closed enrollment row: its owned contract, its candidates
+    (none: nothing in the lift owes a parameter contract, inventory item 43),
+    the already-constructed call edges, and the retained continuation key
+    `link_unit_cid`."""
 
     source_memento: Any
     parameter_owned_contract: ParameterOwnedContractV1
@@ -1906,76 +1579,27 @@ def _validate_resolution(resolution: dict) -> None:
         raise ResumeStalePanic("resolution basis is unknown")
 
 
-def resume_project(universe, accepted: dict[str, dict]):
-    """Mechanically replace each exactly-resolved ContractConditionalConstruction
-    V1 entry with its RETAINED .value (same object -> occurrence identity
-    unchanged), returning a resumed universe whose record projects post()
-    NORMALLY. The candidate's carried value contributes its own post; nothing is
-    suppressed to an implicit None. Entries with no accepted resolution are left
-    standing, so post() still panics on any unresolved candidate."""
-    import dataclasses
-
-    new_statements = tuple(
-        (
-            entry.value
-            if (
-                isinstance(entry, ContractConditionalConstructionV1)
-                and entry.sole_demand().demand_cid in accepted
-            )
-            else entry
-        )
-        for entry in universe.record.statements
-    )
-    return dataclasses.replace(
-        universe,
-        record=dataclasses.replace(universe.record, statements=new_statements),
-    )
-
-
 def resume_apply_resolutions(link_unit, resolution_set) -> dict[str, dict]:
     """The Phase-3 resume decision. Given the RETAINED link unit (the immutable
-    continuation) and the presented resolution set, honor the resume ONLY when:
+    continuation) and the presented resolution set, honor the resume ONLY when
+    the set is bound to THIS continuation (the replay guard:
+    resolution_set.link_unit_cid == link_unit.link_unit_cid, and set_cid
+    re-derives, checked by ParameterContractResolutionSetV1.from_value) and
+    names no demand: a link unit owes no candidate (inventory item 43), so every
+    presented resolution is foreign. Each one is validated first, so a stale
+    CID is named as stale.
 
-      1. Replay guard: the set is bound to THIS continuation --
-         resolution_set.link_unit_cid == link_unit.link_unit_cid, and set_cid
-         re-derives (both checked mutually by ParameterContractResolutionSetV1.
-         from_value + this equality). A foreign/lost continuation is loud.
-      2. Exact complete bijection over the link unit's PENDING candidates: every
-         enrolled (demand_cid, candidate_cid, contract_cid) has exactly one
-         resolution; none missing, duplicated, foreign-contract, or
-         wrong-candidate; every resolution CID re-derives.
-
-    Returns {demand_cid: resolution} on success; raises ResumeStalePanic (which
-    the caller lifts to a ConstructionPanic) otherwise. Never reconstructs.
+    Returns ``{}`` on success; raises ResumeStalePanic (which the caller lifts to
+    a ConstructionPanic) otherwise. Never reconstructs.
     """
     if resolution_set.link_unit_cid != link_unit.link_unit_cid:
         raise ResumeStalePanic(
             "resolution set is bound to a different continuation "
             f"({resolution_set.link_unit_cid} != {link_unit.link_unit_cid})"
         )
-    pending = {}
-    for candidate in link_unit.candidates:
-        key = candidate.sole_demand().demand_cid
-        if key in pending:
-            raise ResumeStalePanic("duplicate pending demand in link unit")
-        pending[key] = candidate
-    accepted: dict[str, dict] = {}
     for resolution in resolution_set.resolutions:
         _validate_resolution(resolution)
-        demand_cid = resolution["demandCid"]
-        candidate = pending.get(demand_cid)
-        if candidate is None:
-            raise ResumeStalePanic(f"resolution for a foreign demand {demand_cid}")
-        if demand_cid in accepted:
-            raise ResumeStalePanic(f"duplicate resolution for demand {demand_cid}")
-        if resolution["candidateCid"] != candidate.candidate_cid:
-            raise ResumeStalePanic("resolution names the wrong candidate")
-        if resolution["contractCid"] != link_unit.parameter_owned_contract.contract_cid:
-            raise ResumeStalePanic("resolution names a foreign contract")
-        accepted[demand_cid] = resolution
-    missing = set(pending) - set(accepted)
-    if missing:
         raise ResumeStalePanic(
-            f"resolution set is incomplete: missing {sorted(missing)}"
+            f"resolution for a foreign demand {resolution['demandCid']}"
         )
-    return accepted
+    return {}

@@ -321,14 +321,12 @@ class ObjectValue(FloorValue):
                                 ),
                                 face.state,
                                 face.faces,
-                                face.pending_contracts,
                             )
                             if isinstance(face, Halted)
                             else Completed(
                                 face.guard,
                                 face.value,
                                 face.faces,
-                                face.pending_contracts,
                             )
                         )
                         for face in outcome.exits

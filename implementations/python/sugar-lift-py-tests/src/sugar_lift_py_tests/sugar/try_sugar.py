@@ -230,7 +230,6 @@ def _and_finally_with_raise_context(
     """
     from dataclasses import replace
 
-    from sugar_lift_py_tests.caller_parameter_contract import merge_pending
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.in_flight_effect import bind_in_flight_effect
     from sugar_lift_py_tests.outcome.exit_set import (
@@ -278,7 +277,6 @@ def _and_finally_with_raise_context(
         for clean in cleanup_es.exits:
             guard = _and_guards(incoming.guard, clean.guard)
             faces = incoming.faces | clean.faces
-            owed = merge_pending(incoming.pending_contracts, clean.pending_contracts)
             if isinstance(clean, Halted):
                 effect = clean.effect
                 # Supersede: cleanup halt wins; retain body raise as context.
@@ -290,11 +288,11 @@ def _and_finally_with_raise_context(
                     and effect is not incoming.effect
                 ):
                     effect = replace(effect, context_effect=incoming.effect)
-                exits.append(Halted(guard, effect, clean.state, faces, owed))
+                exits.append(Halted(guard, effect, clean.state, faces))
                 continue
             if _finally_restores(clean.value):
                 if isinstance(incoming, Completed):
-                    exits.append(Completed(guard, incoming.value, faces, owed))
+                    exits.append(Completed(guard, incoming.value, faces))
                 else:
                     exits.append(
                         Halted(
@@ -302,11 +300,10 @@ def _and_finally_with_raise_context(
                             incoming.effect,
                             incoming.state,
                             faces,
-                            owed,
                         )
                     )
             else:
-                exits.append(Completed(guard, clean.value, faces, owed))
+                exits.append(Completed(guard, clean.value, faces))
     return ExitSet(tuple(exits)).normalize()
 
 
@@ -692,9 +689,8 @@ def _prepend_facts(exits, facts: tuple):
             out.append(exit_)
             continue
         state = exit_.value
-        # ``replace`` keeps the arm's partition testimony and pending
-        # obligations; rebuilding ``Completed`` from guard and value alone
-        # dropped both.
+        # ``replace`` keeps the arm's partition testimony; rebuilding
+        # ``Completed`` from guard and value alone dropped it.
         if isinstance(state, _ReducedBlock):
             out.append(
                 replace(exit_, value=replace(state, entries=(*facts, *state.entries)))

@@ -87,11 +87,7 @@ class GuardedValue(FloorValue):
                 GuardedValue(other.guard, true_outcome.value, false_outcome.value)
             )
 
-        from sugar_lift_py_tests.floor.single_outcome_law import (
-            pending_demand,
-            require_single_value,
-            rewrap_pending,
-        )
+        from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
 
         owner = f"GuardedValue._map({method})"
         blame = args[-1] if args else method
@@ -120,24 +116,9 @@ class GuardedValue(FloorValue):
                 for face in es.exits:
                     g = and_formulas([guard, face.guard])
                     if isinstance(face, Halted):
-                        faces.append(
-                            Halted(
-                                g,
-                                face.effect,
-                                face.state,
-                                face.faces,
-                                face.pending_contracts,
-                            )
-                        )
+                        faces.append(Halted(g, face.effect, face.state, face.faces))
                     else:
-                        faces.append(
-                            Completed(
-                                g,
-                                face.value,
-                                face.faces,
-                                face.pending_contracts,
-                            )
-                        )
+                        faces.append(Completed(g, face.value, face.faces))
                 return tuple(faces)
 
             true_es = outcome_to_exitset(true_outcome)
@@ -145,22 +126,15 @@ class GuardedValue(FloorValue):
             return ExitSet(
                 _under(true_es, self.guard) + _under(false_es, not_(self.guard))
             ).normalize()
-        # An arm may answer with a value that still owes a parameter contract
-        # (`(a if c else p)[i]` for a formal `p`). The demand is owed only on that
-        # arm's face; hoist it, join the carried values, then re-attach it.
-        true_pending, true_outcome = pending_demand(true_outcome, self.guard)
-        false_pending, false_outcome = pending_demand(false_outcome, not_(self.guard))
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=blame, arm="when_true"
         )
         false_outcome = require_single_value(
             false_outcome, owner=owner, blame=blame, arm="when_false"
         )
-        joined = Complete(
+        return Complete(
             GuardedValue(self.guard, true_outcome.value, false_outcome.value)
         )
-        joined = rewrap_pending(true_pending, joined, owner=owner, blame=blame)
-        return rewrap_pending(false_pending, joined, owner=owner, blame=blame)
 
     def _predicate(self, method: str, *args):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
@@ -173,11 +147,7 @@ class GuardedValue(FloorValue):
             TrueBoolLiteralSugar,
         )
 
-        from sugar_lift_py_tests.floor.single_outcome_law import (
-            pending_demand,
-            require_single_value,
-            rewrap_pending,
-        )
+        from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
 
         owner = f"GuardedValue._predicate({method})"
         blame = args[-1] if args else method
@@ -187,18 +157,12 @@ class GuardedValue(FloorValue):
         false_outcome = getattr(self.when_false, method)(*args)
         if isinstance(false_outcome, Incomplete):
             return false_outcome.guarded(not_(self.guard))
-        true_pending, true_outcome = pending_demand(true_outcome, self.guard)
-        false_pending, false_outcome = pending_demand(false_outcome, not_(self.guard))
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=blame, arm="when_true"
         )
         false_outcome = require_single_value(
             false_outcome, owner=owner, blame=blame, arm="when_false"
         )
-
-        def _rejoin(outcome):
-            outcome = rewrap_pending(true_pending, outcome, owner=owner, blame=blame)
-            return rewrap_pending(false_pending, outcome, owner=owner, blame=blame)
 
         true_value = true_outcome.value
         false_value = false_outcome.value
@@ -215,7 +179,7 @@ class GuardedValue(FloorValue):
         true_formula = formula(true_value)
         false_formula = formula(false_value)
         if true_formula is None or false_formula is None:
-            return _rejoin(super().equals(args[0], args[-1]))
+            return super().equals(args[0], args[-1])
         if (
             type(true_value) is TrueBoolLiteralSugar
             and type(false_value) is FalseBoolLiteralSugar
@@ -251,7 +215,7 @@ class GuardedValue(FloorValue):
                 ),
             )
         )
-        return _rejoin(joined)
+        return joined
 
     def less_than_from_left(self, left, site):
         """Typed Floor obligation: distribute ``left <`` across guarded arms.
@@ -272,11 +236,7 @@ class GuardedValue(FloorValue):
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
-        from sugar_lift_py_tests.floor.single_outcome_law import (
-            pending_demand,
-            require_single_value,
-            rewrap_pending,
-        )
+        from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
 
         owner = f"GuardedValue.map_from_left({method})"
         true_outcome = getattr(left, method)(self.when_true, site)
@@ -305,19 +265,15 @@ class GuardedValue(FloorValue):
                     )
                 )
             )
-        true_pending, true_outcome = pending_demand(true_outcome, self.guard)
-        false_pending, false_outcome = pending_demand(false_outcome, not_(self.guard))
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=site, arm="when_true"
         )
         false_outcome = require_single_value(
             false_outcome, owner=owner, blame=site, arm="when_false"
         )
-        joined = Complete(
+        return Complete(
             GuardedValue(self.guard, true_outcome.value, false_outcome.value)
         )
-        joined = rewrap_pending(true_pending, joined, owner=owner, blame=site)
-        return rewrap_pending(false_pending, joined, owner=owner, blame=site)
 
     def _predicate_from_left(self, method: str, left, site):
         from sugar_lift_py_tests.outcome import Complete, Incomplete
@@ -330,16 +286,10 @@ class GuardedValue(FloorValue):
             from sugar_lift_py_tests.ir import not_
 
             return false_outcome.guarded(not_(self.guard))
-        from sugar_lift_py_tests.floor.single_outcome_law import (
-            pending_demand,
-            require_single_value,
-            rewrap_pending,
-        )
+        from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
         from sugar_lift_py_tests.ir import not_
 
         owner = f"GuardedValue._predicate_from_left({method})"
-        true_pending, true_outcome = pending_demand(true_outcome, self.guard)
-        false_pending, false_outcome = pending_demand(false_outcome, not_(self.guard))
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=site, arm="when_true"
         )
@@ -347,9 +297,7 @@ class GuardedValue(FloorValue):
             false_outcome, owner=owner, blame=site, arm="when_false"
         )
         joined = GuardedValue(self.guard, true_outcome.value, false_outcome.value)
-        outcome = joined._predicate("truth", site)
-        outcome = rewrap_pending(true_pending, outcome, owner=owner, blame=site)
-        return rewrap_pending(false_pending, outcome, owner=owner, blame=site)
+        return joined._predicate("truth", site)
 
     def subscript(self, index, site):
         return self._map("subscript", index, site)
@@ -385,19 +333,14 @@ class GuardedValue(FloorValue):
         VALUES, and this operation's arms answer with a rebind roster, so the
         join has to happen one layer in. What is shared with ``_map`` is the
         conventions, and they are kept: an arm answering with an effect keeps
-        its own guard polarity, an arm's pending contract demand is hoisted
-        under that arm's face, and an arm's own decidable arity mismatch stays
+        its own guard polarity, and an arm's own decidable arity mismatch stays
         loud rather than being laundered by distributing.
 
         Both rosters come from ``operation.target_names``, so they agree by
         construction; ``strict=True`` states that rather than assuming it.
         """
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
-        from sugar_lift_py_tests.floor.single_outcome_law import (
-            pending_demand,
-            require_single_value,
-            rewrap_pending,
-        )
+        from sugar_lift_py_tests.floor.single_outcome_law import require_single_value
         from sugar_lift_py_tests.ir import not_
         from sugar_lift_py_tests.outcome import Complete, Incomplete
 
@@ -409,8 +352,6 @@ class GuardedValue(FloorValue):
         false_outcome = self.when_false.project_sequence_with(operation, ctx)
         if isinstance(false_outcome, Incomplete):
             return false_outcome.guarded(not_(self.guard))
-        true_pending, true_outcome = pending_demand(true_outcome, self.guard)
-        false_pending, false_outcome = pending_demand(false_outcome, not_(self.guard))
         true_outcome = require_single_value(
             true_outcome, owner=owner, blame=blame, arm="when_true"
         )
@@ -423,7 +364,7 @@ class GuardedValue(FloorValue):
         false_bindings = _require_rebind_roster(
             false_outcome.value, owner=owner, blame=blame, arm="when_false"
         )
-        joined = Complete(
+        return Complete(
             ScopeRebinds(
                 tuple(
                     (name, GuardedValue(self.guard, true_member, false_member))
@@ -433,8 +374,6 @@ class GuardedValue(FloorValue):
                 )
             )
         )
-        joined = rewrap_pending(true_pending, joined, owner=owner, blame=blame)
-        return rewrap_pending(false_pending, joined, owner=owner, blame=blame)
 
     def setitem(self, index, value, site):
         """Rebind both statically known receiver faces after a subscript store."""
