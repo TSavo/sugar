@@ -284,10 +284,6 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
         for o in offenders
     ), _SCANNER.format_report(offenders)
     assert not any(
-        o.path.endswith("bind_lifter.py") and o.kind == "exception-soft-continue"
-        for o in offenders
-    ), _SCANNER.format_report(offenders)
-    assert not any(
         o.path.endswith("bench_backends.py") and o.kind == "exception-soft-continue"
         for o in offenders
     ), _SCANNER.format_report(offenders)

@@ -8,9 +8,3 @@ emit = "hypothesis"
 name = "python-lift"
 kind = "lift"
 surface = "python"
-
-[[plugins]]
-name = "python-bind"
-kind = "lift"
-surface = "python-bind"
-layer = "library-bindings"

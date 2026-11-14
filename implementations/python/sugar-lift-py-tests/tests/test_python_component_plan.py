@@ -52,21 +52,24 @@ def _run_component(messages: list[dict]) -> list[dict]:
 
 
 def _source_memento(tmp_path: Path, rel: str, source: str) -> dict:
-    from sugar_lift_python_source.bind_lifter import lift_source
+    from sugar_lift_python_source import typed_node_api as typed
+    from sugar_lift_python_source.source_oracle import _body_source_locator
 
     path = tmp_path / rel
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(source, encoding="utf-8")
-    entry = next(
-        item
-        for item in lift_source(source, rel, layer="library-bindings").ir
-        if item.get("kind") == "library-sugar-binding-entry"
+    fn = next(
+        node
+        for node in typed.walk(typed.parse(source, filename=rel))
+        if isinstance(node, (typed.FunctionDef, typed.AsyncFunctionDef))
     )
-    memento = dict(entry["body_source"])
+    full = _body_source_locator(fn, rel, source.splitlines(keepends=True))
+    memento = {
+        key: full[key]
+        for key in ("file", "source_cid", "span", "template_cid", "param_names")
+    }
     memento["kind"] = "source-memento"
-    memento["source_function_name"] = entry["source_function_name"]
-    assert "body_text" not in memento
-    assert "ast_template" not in memento
+    memento["source_function_name"] = fn.name
     return memento
 
 

@@ -21,20 +21,16 @@ path = "implementations/rust/sugar-lift-contracts/src"
 path = "implementations/java/sugar-lift-java-tests/src"
 
 [[entrypoints]]
-id = "python-bind-rpc"
-status = "production"
-owner = "python source kit"
-path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_rpc.py"
-reason = "Python bind RPC emits source binding surfaces for the Python kit."
-needles = ["bind", "jsonrpc"]
-
-[[entrypoints]]
-id = "python-bind-lifter-core"
-status = "production"
-owner = "python source kit"
+id = "python-bind-second-lifter"
+status = "absent"
+owner = "#7757 item 11"
 path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_lifter.py"
-reason = "Core Python binding lifter implementation behind the bind RPC door."
-needles = ["def lift_source", "class BindLiftResult"]
+reason = "The python-bind kit (bind_rpc + bind_lifter.lift_source) was a second whole Python lifter beside the mint path."
+retirement = "A Python file becomes a proof one way: sugar_lift_py_tests.lift_rpc `sugar.enumerate`. Do not restore."
+absent_paths = [
+    "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_lifter.py",
+    "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_rpc.py",
+]
 
 [[entrypoints]]
 id = "python-source-oracle"

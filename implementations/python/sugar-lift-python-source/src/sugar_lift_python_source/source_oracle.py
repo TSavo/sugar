@@ -32,10 +32,10 @@ from typing import Any
 from . import typed_node_api as typed
 from .ast_template import (
     expr_to_template,
+    function_body_template,
     function_param_names,
     stmt_to_template,
 )
-from .bind_lifter import _body_source_locator
 from .canonical import blake3_512_of, template_cid_of_json
 from .source_tables import source_segment, source_splitlines
 
@@ -409,8 +409,7 @@ def resolve_source_memento(
 
     source_cid = blake3_512_of(source.encode("utf-8"))
     # SourceFile / typed Nodes are the sole recompute path: locate, body text,
-    # and template projection all speak typed currency (bind_lifter/ast_template
-    # already drain onto typed Nodes).
+    # and template projection all speak typed currency.
     SourceFile, BackendCouldNotParse = _source_file_cls()
     try:
         source_file = SourceFile((source, str(path), source_cid))
@@ -465,6 +464,82 @@ def resolve_source_memento(
         "template_cid": recomputed.get("template_cid"),
         "param_names": recomputed.get("param_names"),
     }
+
+
+def _body_source_locator(
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
+    rel_path: str,
+    source_lines: list[str],
+) -> dict[str, Any]:
+    """Whole-function recompute: locus, CIDs, body text and AST template."""
+    start_line = node.lineno
+    start_col = node.col_offset
+    if node.decorators:
+        first = min(node.decorators, key=lambda decorator: decorator.lineno)
+        start_line = first.lineno
+        start_col = 0
+    end_line = node.end_lineno or node.lineno
+    end_col = node.end_col_offset or 0
+    body_text = _extract_body_text(node, source_lines)
+    ast_template = function_body_template(node)
+    result: dict[str, Any] = {
+        "file": rel_path,
+        "source_cid": blake3_512_of(body_text.encode("utf-8")),
+        "span": {
+            "start_line": start_line,
+            "start_col": start_col,
+            "end_line": end_line,
+            "end_col": end_col,
+        },
+        "template_cid": template_cid_of_json(ast_template),
+        "param_names": function_param_names(node),
+        "ast_template": ast_template,
+    }
+    if body_text:
+        result["body_text"] = body_text
+    return result
+
+
+def _extract_body_text(
+    node: typed.FunctionDef | typed.AsyncFunctionDef,
+    source_lines: list[str],
+) -> str:
+    """The dedented text of the function body (no decorators, no def line)."""
+    if not node.body:
+        return ""
+    body_start = node.body[0].lineno
+    body_end = node.end_lineno or body_start
+    if body_start > len(source_lines) or body_end < body_start:
+        return ""
+    raw_lines = source_lines[body_start - 1 : body_end]
+    if not raw_lines:
+        return ""
+    indent = 0
+    for stmt in node.body:
+        if not _is_docstring_stmt(stmt):
+            line_idx = stmt.lineno - 1
+            if line_idx < len(source_lines):
+                line = "".join(source_lines[line_idx])
+                stripped = line.lstrip()
+                if stripped:
+                    indent = len(line) - len(stripped)
+            break
+    dedented = []
+    for raw_line in raw_lines:
+        text = "".join([raw_line]) if isinstance(raw_line, str) else raw_line
+        if text.startswith(" " * indent):
+            dedented.append(text[indent:])
+        else:
+            dedented.append(text.lstrip())
+    return "".join(dedented).rstrip()
+
+
+def _is_docstring_stmt(node: typed.stmt) -> bool:
+    return (
+        isinstance(node, typed.Expr)
+        and isinstance(node.value, typed.Constant)
+        and isinstance(node.value.value, str)
+    )
 
 
 def _span_of(node: typed.AST) -> dict[str, int]:

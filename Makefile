@@ -63,7 +63,7 @@ help:
 	@echo "  make assertion-lift-frontier   run the explicit recursive assertion_lift frontier ratchet"
 	@echo "  make check-resident-ownership  Lane B: unbounded process-lifetime cache census (R→0)"
 	@echo "  make check-showcase-kit-preflight  Lane A: showcase kit import contracts (A1→0)"
-	@echo "  make check-lift-manifest-pythonpath  Lane A: lift_rpc PYTHONPATH + bind_rpc --rpc census"
+	@echo "  make check-lift-manifest-pythonpath  Lane A: lift_rpc PYTHONPATH census"
 	@echo "  make showcase-verdict-scoreboard  Lane A: classify showcase log → A2 residue"
 	@echo "  make check-fleet-claim-contract   CLAIMED lanes must carry fleet:lane (+ kit set)"
 	@echo "  make showcase-bulk-refuse-class   Lane A: prove/durable vacuity parity instrument"
@@ -167,7 +167,7 @@ check-showcase-kit-preflight:
 	$(PYTHON) tools/showcase_kit_preflight.py
 
 # Lane A instrument: showcase lift manifests must put sugar-lift-python-source
-# on PYTHONPATH for sugar_lift_py_tests launches, and bind_rpc must pass --rpc.
+# on PYTHONPATH for sugar_lift_py_tests launches.
 .PHONY: check-lift-manifest-pythonpath
 check-lift-manifest-pythonpath:
 	$(PYTHON) tools/check_lift_manifest_pythonpath.py --self-test

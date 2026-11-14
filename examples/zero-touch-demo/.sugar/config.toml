@@ -1,5 +1,0 @@
-[[plugins]]
-name = "python-bind-lift"
-kind = "lift"
-surface = "python-bind"
-layer = "library-bindings"

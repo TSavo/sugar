@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
-"""Census: lift launches of the Python kit must wire both packages + --rpc.
+"""Census: lift launches of the Python kit must wire both packages.
 
-Law:
-1. Any command that launches `sugar_lift_py_tests.lift_rpc` (or sibling -m
-   sugar_lift_py_tests.*) must put `sugar-lift-python-source` on PYTHONPATH.
-   `factory/source_fragment.py` imports it at module load; py-tests-only
-   PYTHONPATH dies before handshake and cascades into A2 refuse noise.
-2. Any `bind_rpc` launch must pass `--rpc` (else usage text breaks the
-   declaration handshake JSON).
+Law: any command that launches `sugar_lift_py_tests.lift_rpc` (or sibling -m
+sugar_lift_py_tests.*) must put `sugar-lift-python-source` on PYTHONPATH.
+`factory/source_fragment.py` imports it at module load; py-tests-only
+PYTHONPATH dies before handshake and cascades into A2 refuse noise.
 
 R = offender count. Exit 1 while R > 0.
 
@@ -51,8 +48,6 @@ VAR_ASSIGN = re.compile(
     r'^([A-Za-z_][A-Za-z0-9_]*)=(?P<q>["\'])(?P<body>.*?)(?P=q)\s*$',
     re.MULTILINE,
 )
-BIND_RPC = re.compile(r"sugar_lift_python_source\.bind_rpc|bind_rpc")
-RPC_FLAG = re.compile(r"(?:^|[\s,\"'])--rpc(?:$|[\s,\"'])")
 
 
 @dataclass(frozen=True)
@@ -139,24 +134,6 @@ def scan_file(path: Path) -> list[Offender]:
                     ),
                 )
             )
-
-    # 2) bind_rpc without --rpc
-    if BIND_RPC.search(text) and "bind_rpc" in text:
-        if not RPC_FLAG.search(text):
-            locus = 1
-            for i, line in enumerate(text.splitlines(), start=1):
-                if "bind_rpc" in line:
-                    locus = i
-                    break
-            offenders.append(
-                Offender(
-                    path=_rel(path),
-                    line=locus,
-                    shape="A1/bind-rpc-missing-rpc-flag",
-                    detail="launches bind_rpc without --rpc (handshake gets usage text)",
-                    replacement="append --rpc to the bind_rpc command argv",
-                )
-            )
     return offenders
 
 
@@ -185,21 +162,17 @@ def report(offenders: list[Offender]) -> int:
     r = len(offenders)
     print("LIFT MANIFEST PYTHONPATH CENSUS")
     print(f"R={r} incomplete kit launch surfaces")
-    print(
-        "class: sugar_lift_py_tests without sugar-lift-python-source | "
-        "bind_rpc without --rpc"
-    )
+    print("class: sugar_lift_py_tests without sugar-lift-python-source")
     if offenders:
         print("offenders:")
         for o in offenders:
             print(o.render())
         print(
             "FAIL: R must be 0 "
-            "(every Python kit launch can import sugar_lift_python_source "
-            "and every bind_rpc speaks --rpc)"
+            "(every Python kit launch can import sugar_lift_python_source)"
         )
         return 1
-    print("PASS: R=0 — Python kit PYTHONPATH and bind_rpc --rpc are complete")
+    print("PASS: R=0 — Python kit PYTHONPATH is complete")
     return 0
 
 
@@ -228,35 +201,25 @@ command = [
 PP="$REPO/implementations/python/sugar-lift-python-source/src:$REPO/implementations/python/sugar-lift-py-tests/src"
 command = ["env", "PYTHONPATH=$PP", "python", "-m", "sugar_lift_py_tests.lift_rpc", "--rpc"]
 '''
-    planted_bind = '''
-command = ["/usr/bin/env", "python", "-m", "sugar_lift_python_source.bind_rpc"]
-'''
-    planted_bind_ok = '''
-command = ["/usr/bin/env", "python", "-m", "sugar_lift_python_source.bind_rpc", "--rpc"]
-'''
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         cases = {
-            "miss.toml": (planted_miss, True, False),
-            "ok.toml": (planted_ok, False, False),
-            "var.sh": (planted_var_ok, False, False),
-            "bind.sh": (planted_bind, False, True),
-            "bindok.sh": (planted_bind_ok, False, False),
+            "miss.toml": (planted_miss, True),
+            "ok.toml": (planted_ok, False),
+            "var.sh": (planted_var_ok, False),
         }
-        for name, (body, expect_src, expect_rpc) in cases.items():
+        for name, (body, expect_src) in cases.items():
             path = root / name
             path.write_text(body, encoding="utf-8")
             found = scan_file(path)
             has_src = any(o.shape.endswith("missing-source") for o in found)
-            has_rpc = any(o.shape.endswith("missing-rpc-flag") for o in found)
-            if has_src != expect_src or has_rpc != expect_rpc:
+            if has_src != expect_src:
                 print(
-                    f"FAIL: {name}: found={found} expect_src={expect_src} "
-                    f"expect_rpc={expect_rpc}",
+                    f"FAIL: {name}: found={found} expect_src={expect_src}",
                     file=sys.stderr,
                 )
                 return 1
-    print("PASS: manifest PYTHONPATH / bind_rpc --rpc census self-test")
+    print("PASS: manifest PYTHONPATH census self-test")
     return 0
 
 

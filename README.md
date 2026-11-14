@@ -96,7 +96,7 @@ picture of what works end to end today. Highlights:
 
 | Demo | What it shows |
 |---|---|
-| [examples/numpy-vendor/](examples/numpy-vendor/) | A whole library vendored: every module-level numpy function lifted into one `.proof`, no shim; a consumer `verify` recomputes the witnesses. |
+| [examples/numpy-vendor/](examples/numpy-vendor/) | A numpy consumer's passing test shipped as a signed witness `.proof`, no shim; a consumer `verify` recomputes the witness. |
 | [examples/numpy-showcase/](examples/numpy-showcase/) | One operation (`numpy.rot90`) discharged two ways: consistency via z3, and the degenerate twin refused by both z3 UNSAT and witness recompute. |
 | [Inheritance e2e test](implementations/python/sugar-lift-py-tests/tests/test_inheritance_e2e.py) | A consumer inherits numpy's contract and is refused when it contradicts it. |
 

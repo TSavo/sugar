@@ -402,7 +402,6 @@ def scan_file(path: Path, *, rel: str) -> list[SideDoorOffender]:
                 in {
                     "lift_rpc.py",
                     "tree_enumerate.py",
-                    "bind_rpc.py",
                     "rpc.py",
                 }
                 or "enumerate" in basename
