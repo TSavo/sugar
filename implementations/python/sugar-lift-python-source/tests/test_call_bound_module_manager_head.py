@@ -139,8 +139,7 @@ def test_a_returned_value_that_is_not_a_module_is_not_cited(tmp_path):
 
 def test_an_absent_module_is_never_cited(tmp_path):
     # import_module halts with ModuleNotFoundError, so opt returns only None:
-    # nothing is a module and nothing is cited.  That the suite is then dead
-    # is test_absent_optional_module_branch's (#7697).
+    # nothing is a module and nothing is cited.
     _source_file, _with_node, seated = _lifted(
         tmp_path, name="zz_sugar_absent_module_7742"
     )
