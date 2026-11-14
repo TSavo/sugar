@@ -10823,11 +10823,15 @@ class ClassDef(Statement):
                         )
                     continue
                 if isinstance(item, ClassDef):
+                    # A nested class statement runs where it stands in this
+                    # body: its run (``statement_run``) carries what its own
+                    # body's callees stored, which this body lays in its
+                    # record as it lays any field value's callee stores.
                     fields.append(
                         ConstructedClassFieldV1(
                             item.name,
                             item.fragment.seal().cid,
-                            item.sugar(),
+                            item.sugar().statement_run(),
                             binding_occurrence(item.binding_target),
                         )
                     )
@@ -12218,6 +12222,17 @@ def _store_member_key(evaluation: str, ordinal: int) -> str:
     from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
     return projection_key(evaluation, f"<member {ordinal}>")
+
+
+def _item_evaluation_key(evaluation: str) -> str:
+    """The key an unrolled ``for`` holds an item's element under, evaluated
+    before the first item (``For._item_evaluated_apart``): the item's
+    projection of its unpack's own evaluation ``evaluation``, which no
+    target's projection (a source name) can spell.  The item's unpack reads
+    the element there (``EvaluationRef``); no name is bound to it."""
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+    return projection_key(evaluation, "<item>")
 
 
 def _store_statement_key(evaluation: str, ordinal: int) -> str:
@@ -14876,41 +14891,44 @@ class For(Statement):
                 hoisted.extend(_iteration_copies(self, index, (unpack,)))
                 kept.append(None)
             else:
-                evaluated, unpacked = self._item_evaluated_apart(unpack, element, index)
+                evaluated, unpacked = self._item_evaluated_apart(unpack, element)
                 hoisted.extend(_iteration_copies(self, index, (evaluated,)))
                 kept.append(unpacked)
         return tuple(hoisted), tuple(kept)
 
-    def _item_evaluated_apart(self, unpack, element, index):
-        """``(evaluated, unpacked)``: iteration ``index``'s keyed unpack of
-        its item (``unpack``: ``<target> = <element>``) parted in two.
-        ``evaluated`` evaluates ``element`` once and binds it under its own
-        key (a store to a label no source name can spell, ``for-item:<i>``,
-        keyed as an evaluation of the unpack's own); ``unpacked`` is the
-        unpack with ``element`` read through that key -- the statement's
-        own key kept, so every read of a target is unchanged.  The iterable
-        is evaluated before the first item and each item is unpacked as it
-        is taken: ``evaluated`` runs there, ``unpacked`` here, and the
-        element is never evaluated twice."""
-        from sugar_lift_py_tests.temporal.temporal_context import projection_key
+    def _item_evaluated_apart(self, unpack, element):
+        """``(evaluated, unpacked)``: an iteration's keyed unpack of its item
+        (``unpack``: ``<target> = <element>``) parted in two.
+        ``evaluated`` is ``element`` in statement position, evaluated once
+        and held under the item's evaluation key -- its projection of the
+        unpack's own key (``Statement._evaluation_key``,
+        ``_item_evaluation_key``), which no target's projection can be --
+        binding no name (``Expr._construct_sugar``); ``unpacked`` is the
+        unpack with ``element`` read through that key (``EvaluationRef``),
+        the statement's own key kept, so every read of a target is
+        unchanged.  The iterable is evaluated before the first item and each
+        item is unpacked as it is taken: ``evaluated`` runs there,
+        ``unpacked`` here, and the element is never evaluated twice."""
+        from .backend import Child, Leaf, materialize
+        from .shadow import ShadowNode, _handle_of, rewrite_with_leaves
 
-        from .shadow import rewrite_with_leaves
-
-        label = f"for-item:{index}"
-        evaluation = projection_key(unpack.evaluation, label)
+        evaluation = _item_evaluation_key(unpack.evaluation)
         exit_path = getattr(unpack, "evaluation_exit_path", None)
         exit_path = exit_path if isinstance(exit_path, tuple) else ()
-        evaluated = rewrite_with_leaves(
-            self._make_assign(self._make_name(label), element),
-            {"evaluation": evaluation, "evaluation_exit_path": exit_path},
+        evaluated = materialize(
+            self.unit,
+            ShadowNode(
+                "Expr",
+                self.span,
+                (
+                    ("value", Child(_handle_of(element))),
+                    ("evaluation", Leaf(evaluation)),
+                    ("evaluation_exit_path", Leaf(exit_path)),
+                ),
+            ),
+            self.reporter,
         )
-        read = _evaluation_ref(
-            self,
-            element.span,
-            projection_key(evaluation, label),
-            label,
-            of=element,
-        )
+        read = _evaluation_ref(self, element.span, evaluation, "<item>", of=element)
         unpacked = rewrite_with_leaves(
             self._make_assign(self.target, read),
             {"evaluation": unpack.evaluation, "evaluation_exit_path": exit_path},
@@ -18602,7 +18620,25 @@ class Expr(Statement):
 
     def _construct_sugar(self):
         """`<expr>` as a statement constructs ExprStatementSugar WITH the
-        value's sugar. States nothing; an effect in the value rides."""
+        value's sugar. States nothing; an effect in the value rides.
+
+        An expression a later read references through its key -- an
+        unrolled ``for``'s item element, evaluated before the first item
+        (``For._item_evaluated_apart``) -- carries that key as its
+        evaluation: it is evaluated here, once, by the one assignment
+        routine, and its value held under the key, binding no name
+        (``ChainedAssignSugar`` with no target)."""
+        evaluation = getattr(self, "evaluation", None)
+        if isinstance(evaluation, str):
+            from sugar_lift_py_tests.sugar.assign_sugar import ChainedAssignSugar
+
+            return ChainedAssignSugar(
+                bindings=(),
+                stores=(),
+                value=self.value.sugar(),
+                site=self.fragment,
+                evaluation=evaluation,
+            )
         from sugar_lift_py_tests.sugar.expr_statement_sugar import (
             ExprStatementSugar,
         )

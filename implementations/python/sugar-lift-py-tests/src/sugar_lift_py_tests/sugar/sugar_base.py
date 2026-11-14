@@ -191,6 +191,15 @@ class Sugar(ABC):
         """Reduce this sugar to an ExitSet, recursively desugaring its body
         sugars. The one semantic verb; a sugar constructed with sugar."""
 
+    def as_statement(self) -> "Sugar":
+        """This sugar where a block runs it as one of its statements
+        (``reduce_block_to_exitset``): itself, for every sugar whose
+        statement and value are one reduction.  A ``class`` statement is not
+        (``ClassDefinitionSugar.as_statement``): its body runs once, at the
+        statement, whose record lays what the body's callees stored, while a
+        read of the class value applies none of it."""
+        return self
+
     def walk_children(self) -> tuple[SugarBody, ...]:
         # Default: a leaf. Sugars that hold SugarBody children override to
         # return them in source order -- the factory walk projects those.
