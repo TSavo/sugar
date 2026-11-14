@@ -24,7 +24,7 @@ def test_planted_opaque_complete_trips() -> None:
     rows = _scan("""
 def reduce(values):
     if len(values) > MATERIALIZE_LIMIT:
-        return Complete(CallSiteValue(body=None, term=exact_term))
+        return ExitSet.completed(CallSiteValue(body=None, term=exact_term))
     return build_all(values)
 """)
     assert [row.kind for row in rows] == ["finite-cap-opaque-complete"]
@@ -35,7 +35,7 @@ def test_planted_under_cap_early_return_then_opaque_fallthrough_trips() -> None:
 def reduce(values):
     if len(values) <= MATERIALIZE_LIMIT:
         return build_all(values)
-    return Complete(CallSiteValue(body=None, term=exact_term))
+    return ExitSet.completed(CallSiteValue(body=None, term=exact_term))
 """)
     assert [row.kind for row in rows] == ["finite-cap-opaque-complete"]
 
@@ -44,8 +44,8 @@ def test_planted_novel_opaque_complete_is_closed_by_default() -> None:
     rows = _scan("""
 def reduce(values):
     if len(values) > MATERIALIZE_LIMIT:
-        return Complete(FutureOpaqueSuccess(source_shape=values[0]))
-    return Complete(ListValue(tuple(build(value) for value in values)))
+        return ExitSet.completed(FutureOpaqueSuccess(source_shape=values[0]))
+    return ExitSet.completed(ListValue(tuple(build(value) for value in values)))
 """)
     assert [row.kind for row in rows] == ["finite-cap-opaque-complete"]
 
@@ -126,7 +126,7 @@ def reduce(values):
     assert _scan("""
 def reduce(values):
     if len(values) > MATERIALIZE_LIMIT:
-        return Complete(GroundSequenceRepetitionValue(values, exact_count))
+        return ExitSet.completed(GroundSequenceRepetitionValue(values, exact_count))
     return build_all(values)
 """) == []
 
@@ -141,16 +141,6 @@ def test_bad_parse_and_missing_root_are_structured(tmp_path: Path) -> None:
     }
     assert _SCANNER.r_auditor_errors(rows) == 2
     assert _SCANNER.main([str(tmp_path), str(tmp_path / "missing")]) == 1
-
-
-def test_planted_exitset_completed_opaque_trips() -> None:
-    rows = _scan("""
-def reduce(values):
-    if len(values) > MATERIALIZE_LIMIT:
-        return ExitSet.completed(CallSiteValue(body=None, term=exact_term))
-    return build_all(values)
-""")
-    assert [row.kind for row in rows] == ["finite-cap-opaque-complete"]
 
 
 def test_exitset_completed_exact_compact_value_is_admitted() -> None:

@@ -24,7 +24,8 @@ def _definition_and_receiver():
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
     )
     definition = next(node for node in tree.root.body if isinstance(node, ClassDef))
-    value = definition.sugar().desugar(ReduceContext.root(owner="test")).value
+    outcome = definition.sugar().desugar(ReduceContext.root(owner="test"))
+    value = outcome.completed_value()
     return value, value.construct_receiver_state_from_block(None, "receiver")
 
 

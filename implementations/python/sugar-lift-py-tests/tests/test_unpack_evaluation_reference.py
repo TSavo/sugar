@@ -21,7 +21,7 @@ from sugar_lift_py_tests.effect.name_error_effect import NameErrorEffect
 from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind, ScopeRebinds
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
-from sugar_lift_py_tests.outcome import ExitSet, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
     DynamicUnpackAssignSugar,
 )
@@ -194,7 +194,7 @@ def test_nested_statement_sugar_carries_its_evaluation_key() -> None:
 
 def _value(outcome):
     """The single completed value of an outcome, in either outcome form."""
-    return outcome_to_exitset(outcome).completed_value()
+    return outcome.completed_value()
 
 
 def _flat(evaluation: str | None = None) -> DynamicUnpackAssignSugar:
@@ -294,7 +294,7 @@ def test_a_read_after_a_dynamic_unpack_is_not_a_name_error(tmp_path: Path) -> No
 def test_a_read_before_the_unpack_still_halts(tmp_path: Path) -> None:
     # Discrimination: the unpack binds from its statement on, never before.
     outcome = _outcome(tmp_path, READ_THEN_UNPACK, "read_then_unpack")
-    exits = outcome_to_exitset(outcome)
+    exits = outcome
     halts = [face for face in exits.exits if isinstance(face, Halted)]
     names = [f.effect.name for f in halts if isinstance(f.effect, NameErrorEffect)]
     assert names and set(names) == {"a"}

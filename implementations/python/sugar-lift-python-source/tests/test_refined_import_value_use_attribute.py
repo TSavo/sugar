@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Halted
 from sugar_source_tree.nodes import FunctionDef
 
 from test_contextmanager_generator_protocol import _imported
@@ -45,7 +45,7 @@ def _owners(tmp_path: Path, member: str):
     func = next(
         n for n in tree.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    exits = outcome_to_exitset(func.sugar().desugar()).exits
+    exits = func.sugar().desugar().exits
     return {
         str(getattr(face.effect, "producer_node_owner", None))
         for face in exits

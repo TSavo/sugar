@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
@@ -431,7 +431,7 @@ class CallSiteSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         if self.source_call_frame is not None:
             from sugar_source_tree.panic import SugarNotWritten
             from sugar_source_tree.nodes import (
@@ -639,7 +639,7 @@ class CallSiteSugar(ConstructedTermSugar):
             blame=self.target_name,
         )
 
-    def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
+    def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
         )
@@ -665,7 +665,7 @@ class CallSiteSugar(ConstructedTermSugar):
 
     def _collect_kwargs(
         self, remaining: tuple, kw_values: tuple, positional: tuple, ctx: object
-    ) -> Outcome:
+    ) -> ExitSet:
         if remaining:
             from sugar_lift_py_tests.floor.named_expression_value import (
                 consume_operands,

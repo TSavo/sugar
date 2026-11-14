@@ -48,7 +48,7 @@ ENFORCEMENT LADDER
 
     Retirement path (name what would let this auditor delete itself):
     1. Evidence mints are sealed so only the production graph can construct
-       caller/site sets; empty observed sets are typed Incomplete, not filled.
+       caller/site sets; empty observed sets are typed incomplete, not filled.
     2. Identity assertions are a typed helper ``assert_identity(got, expected)``
        that requires Eq on the coordinate term — ``is not None`` does not type.
     3. Assertion macros reject tautological AST (left.unparse == right.unparse).

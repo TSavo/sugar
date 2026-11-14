@@ -36,7 +36,9 @@ def test_constructor_projection_refuses_a_foreign_guarded_snapshot(tmp_path, for
     path.write_text("class Owned:\n    pass\nclass Foreign:\n    pass\n")
     tree = SourceFile(workspace_path_source(str(path), root=str(tmp_path)))
     owned, other = [
-        node.sugar().desugar().value for node in tree.nodes() if node.kind == "ClassDef"
+        node.sugar().desugar().completed_value()
+        for node in tree.nodes()
+        if node.kind == "ClassDef"
     ]
     receiver = owned.construct_receiver_state_from_block(None, "owned")
     alien = replace(

@@ -104,7 +104,7 @@ def finish(elements, iterable, ctx, site):
 
 def range_call(cardinality, accumulated):
     if cardinality <= STATIC_UNFOLD_LIMIT:
-        return Complete(ListValue(tuple(TermValue(v) for v in span)))
+        return ExitSet.completed(ListValue(tuple(TermValue(v) for v in span)))
     # over-cap falls through to CallSiteValue projection
 """) == []
 

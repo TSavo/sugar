@@ -87,7 +87,7 @@ def _fn(src: str):
 
 
 def _val(src: str):
-    return _fn(src).sugar().desugar().value
+    return _fn(src).sugar().desugar().completed_value()
 
 
 def _out(src: str):

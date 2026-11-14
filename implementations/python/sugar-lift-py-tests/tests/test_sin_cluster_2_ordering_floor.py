@@ -2,7 +2,7 @@
 
 SOURCEFILE_CONSTRUCTION_DOOR: AST shadows → temporal rewrite → Sugar → meaning. No other
 mechanism. An ordering OUTCOME is meaning, so minting
-``Complete(PredicateValue(py.lt/…))`` from a Python floor helper is a second
+``ExitSet.completed(PredicateValue(py.lt/…))`` from a Python floor helper is a second
 mechanism even when the atom would be "right".
 
 Undecided must never become a sole value: undecided ordering is the #7585
@@ -81,7 +81,7 @@ def test_sourcefile_construction_door_auditor_cannot_see_ordering_floor_meaning_
 ):
     """LOUD: repository SOURCEFILE_CONSTRUCTION_DOOR auditor is SourceFile-owner scoped only.
 
-    It does not AST-walk floor ordering doors for Complete(PredicateValue).
+    It does not AST-walk floor ordering doors for ExitSet.completed(PredicateValue).
     This package tooth is the instrument for that axis until the auditor
     gains a floor-meaning denominator — do not pretend the shared auditor
     closed this sin.
@@ -97,7 +97,7 @@ def test_sourcefile_construction_door_auditor_cannot_see_ordering_floor_meaning_
 
 def test_floor_value_ordering_defaults_never_mint_predicate_complete() -> None:
     """AST tooth: FloorValue ordering methods must not call resolve_comparison_atom
-    or construct Complete(PredicateValue(...)).
+    or construct ExitSet.completed(PredicateValue(...)).
     """
     tree = ast.parse(_floor_value_path().read_text(encoding="utf-8"))
     offenders: list[str] = []
@@ -119,18 +119,16 @@ def test_floor_value_ordering_defaults_never_mint_predicate_complete() -> None:
                     )
                 if isinstance(child, ast.Call):
                     func = child.func
-                    if isinstance(func, ast.Name) and func.id == "Complete":
-                        # Complete(...) inside ordering door is the FOL invent shape
-                        # when its argument is PredicateValue — ban any Complete mint
-                        # on the default doors (ground arms live on subclasses).
-                        offenders.append(f"{item.name}:{child.lineno}:Complete(...)")
                     if (
                         isinstance(func, ast.Attribute)
                         and func.attr == "completed"
                         and isinstance(func.value, ast.Name)
                         and func.value.id == "ExitSet"
                     ):
-                        # The same completion mint in the ExitSet form (#7825).
+                        # A completion mint inside an ordering door is the FOL
+                        # invent shape when its argument is PredicateValue —
+                        # ban any completion mint on the default doors (ground
+                        # arms live on subclasses).
                         offenders.append(
                             f"{item.name}:{child.lineno}:ExitSet.completed(...)"
                         )
@@ -159,7 +157,7 @@ def test_floor_value_ordering_defaults_never_mint_predicate_complete() -> None:
 def _assert_undecided_ordering_faces(outcome) -> None:
     """Undecided ordering dispatch is the #7585 two faces, like ``==``.
 
-    Never a sole Complete(PredicateValue) and never a guessed TypeError: the
+    Never a sole completed PredicateValue and never a guessed TypeError: the
     predicate completes only under ``python:compare.completes`` and an
     UndeterminedRaiseEffect halts under the complement.
     """
@@ -245,7 +243,7 @@ def test_decided_default_pair_without_sugar_arm_panics_not_refuses() -> None:
         ListValue((TermValue(1),)).less_than(ListValue((TermValue(2),)), SITE, None)
     msg = str(raised.value)
     assert "no Sugar arm" in msg or "SOURCEFILE_CONSTRUCTION_DOOR" in msg
-    assert "Complete(PredicateValue)" in msg or "PredicateValue" in msg
+    assert "PredicateValue" in msg
 
 
 def test_decided_string_le_gt_ge_construct_bool_sugar() -> None:
@@ -266,14 +264,14 @@ def test_decided_string_le_gt_ge_construct_bool_sugar() -> None:
 
 
 def test_lying_complete_predicate_is_not_ordering_meaning() -> None:
-    """Lying twin: a sole Complete(PredicateValue) is never the ordering answer."""
+    """Lying twin: a sole completed PredicateValue is never the ordering answer."""
     outcome = _symbolic().less_than(TermValue(1), SITE, None)
     assert outcome.completed_value() is None
     _assert_undecided_ordering_faces(outcome)
 
 
 def test_lying_residual_ordering_predicate_mint_panics_at_publisher() -> None:
-    """Lying twin: residual Complete(PredicateValue) cannot dual-edge at Sugar.
+    """Lying twin: a residual completed PredicateValue cannot dual-edge at Sugar.
 
     Plants the old FOL invent outcome into publish_undecided_ordering_edges.
     Must ConstructionPanic — never ExitSet with nameless Compare halt.
@@ -379,7 +377,7 @@ def test_lying_dual_edge_is_not_undecided_binary_answer() -> None:
 def _assert_undecided_membership_faces(outcome) -> None:
     """Undecided ``__contains__`` dispatch is the #7585 two faces.
 
-    Never a sole Complete(py.in) (fabricated membership), never a guessed
+    Never a sole completed py.in (fabricated membership), never a guessed
     TypeError, never a construction panic: the predicate completes only under
     ``python:compare.completes`` and an UndeterminedRaiseEffect halts under the
     complement.

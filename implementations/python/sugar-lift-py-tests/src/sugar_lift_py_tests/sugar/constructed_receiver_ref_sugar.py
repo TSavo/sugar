@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.floor import ObjectValue
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -36,7 +36,7 @@ class ConstructedReceiverRefSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         if ctx is not None:
             receiver = ctx.temporal.value_if_bound(self.binding_coordinate_cid)
             if isinstance(receiver, ObjectValue):

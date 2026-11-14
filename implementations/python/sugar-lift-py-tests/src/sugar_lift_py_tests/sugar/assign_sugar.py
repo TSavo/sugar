@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import ClassVar
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import (
     NotVerdictBearing,
@@ -49,7 +49,7 @@ class AssignSugar(Sugar):
             lying=prefix + "def test_a():\n    assert A(5) == 6\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # The binding was consumed by substitute, but the RHS is evaluated
         # HERE: its halts are this statement's, and a later read sees the
         # completed value (sugar/assigned_value.py).
@@ -99,7 +99,7 @@ class MultiAssignSugar(Sugar):
             lying=prefix + "def test_a():\n    assert A(2, 3) == 6\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # Every binding was consumed by substitute; each RHS member is still
         # evaluated HERE, left to right, before any name is bound.
         from sugar_lift_py_tests.sugar.assigned_value import (
@@ -138,7 +138,7 @@ class ChainedAssignSugar(Sugar):
             reason="mixed chained stores stay red while lexical bindings continue",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.sugar.assigned_value import (
             evaluate_assignment_values,
         )
@@ -187,7 +187,7 @@ class _PreconstructedStoreSugar(Sugar):
             reason="the public ChainedAssignSugar twins own RHS-once sequencing",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         return self.store.desugar_store(ctx, self.value)
 
 
@@ -221,7 +221,7 @@ class DynamicUnpackStoreAssignSugar(Sugar):
             wrong_reason_needle="unpack demands exactly 3 members",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.operations.positional_unpack_operation import (
             PositionalUnpackOperation,
         )
@@ -371,7 +371,7 @@ class UnpackStoreAssignSugar(Sugar):
             wrong_reason_needle="attribute store target `.z`",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
 

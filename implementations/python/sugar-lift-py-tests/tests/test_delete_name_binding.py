@@ -32,7 +32,6 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.floor import ReturnValue, TermValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 from sugar_lift_py_tests.sugar.binding_projection import (
     GuardedProjection,
     UnboundProjection,
@@ -66,7 +65,7 @@ def _function_outcome(source: str, *, fname: str = "f"):
         for node in tree.nodes()
         if isinstance(node, FunctionDef) and node.name == fname
     )
-    return function, outcome_to_exitset(function.sugar().desugar(None))
+    return function, function.sugar().desugar(None)
 
 
 def _sole_halt(outcome: ExitSet) -> Halted:

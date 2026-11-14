@@ -21,7 +21,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field, replace
 
-from sugar_lift_py_tests.outcome import outcome_to_exitset
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -117,9 +116,7 @@ class TryStarSugar(Sugar):
                     handler_residual = face.residual
                     matched_parts = []
                     for matcher in matchers:
-                        expected = outcome_to_exitset(
-                            matcher.desugar(face.state.context)
-                        ).completed_value()
+                        expected = matcher.desugar(face.state.context).completed_value()
                         if expected is None:
                             raise SugarNotWritten(
                                 blame=self.site,

@@ -12,7 +12,7 @@ from typing import Any, ClassVar, NoReturn
 
 from sugar_lift_py_tests.floor.call_site_value import force_floor
 from sugar_lift_py_tests.ir import num
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 
 
 @dataclass(frozen=True)
@@ -43,11 +43,11 @@ class SubscriptOperation:
         """
         return self.blame
 
-    def submit(self, receiver: Any, ctx: object) -> Outcome:
+    def submit(self, receiver: Any, ctx: object) -> ExitSet:
         """Ask the receiver to answer this subscript demand."""
         return receiver.subscript_with(self, ctx)
 
-    def subscript_string(self, receiver, ctx: object) -> Outcome:
+    def subscript_string(self, receiver, ctx: object) -> ExitSet:
         from sugar_lift_py_tests.floor import (
             Bv32Value,
             EncodedStringValue,
@@ -69,7 +69,7 @@ class SubscriptOperation:
             )
         )
 
-    def subscript_array(self, receiver, ctx: object) -> Outcome:
+    def subscript_array(self, receiver, ctx: object) -> ExitSet:
         index = force_floor(self.index, ctx, owner=f"{self.owner} array index")
         return _subscript_sequence(
             receiver.items,
@@ -79,7 +79,7 @@ class SubscriptOperation:
             observed_name="ArrayLiteral",
         )
 
-    def subscript_tuple(self, receiver, ctx: object) -> Outcome:
+    def subscript_tuple(self, receiver, ctx: object) -> ExitSet:
         index = force_floor(self.index, ctx, owner=f"{self.owner} tuple index")
         return _subscript_sequence(
             receiver.items,
@@ -89,7 +89,7 @@ class SubscriptOperation:
             observed_name="TupleLiteralValue",
         )
 
-    def subscript_object(self, receiver, ctx: object) -> Outcome:
+    def subscript_object(self, receiver, ctx: object) -> ExitSet:
         return receiver.call_method_value(
             "__getitem__",
             (self.index,),
@@ -98,7 +98,7 @@ class SubscriptOperation:
             ctx=ctx,
         )
 
-    def subscript_symbolic(self, receiver, ctx: object) -> Outcome:
+    def subscript_symbolic(self, receiver, ctx: object) -> ExitSet:
         del ctx
         from sugar_lift_py_tests.floor import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
@@ -132,7 +132,7 @@ def _subscript_sequence(
     owner: str,
     blame: object,
     observed_name: str,
-) -> Outcome:
+) -> ExitSet:
     from sugar_lift_py_tests.floor import BoolValue, TermValue
 
     index = _unwrap_index(index)
@@ -173,7 +173,7 @@ def _string_index_term(value: Any):
     )
 
 
-def _subscript_string_slice(receiver, index, blame: object) -> Outcome:
+def _subscript_string_slice(receiver, index, blame: object) -> ExitSet:
     from sugar_lift_py_tests.floor import StringValue, TermValue
 
     lower = _concrete_slice_bound(index.lower, blame)

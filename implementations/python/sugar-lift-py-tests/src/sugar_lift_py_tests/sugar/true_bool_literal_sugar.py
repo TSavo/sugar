@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor.guard_stable_value import GuardStableValue
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
@@ -30,7 +30,7 @@ class TrueBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
             lying="False",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         del ctx  # the literal is its own floor value
         return ExitSet.completed(self)
 
@@ -52,7 +52,7 @@ class TrueBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
 
         return ExitSet.completed(InvValue(true_guard(), site))
 
-    def negate(self) -> Outcome:
+    def negate(self) -> ExitSet:
         # True negates to False -- the literal knows its opposite, no fork.
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,

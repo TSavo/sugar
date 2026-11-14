@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.unanswered_calls import owed_calls
 from sugar_source_tree.nodes import FunctionDef
 
@@ -33,7 +33,7 @@ def _exits(tmp_path: Path, source: str):
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    return outcome_to_exitset(func.sugar().desugar())
+    return func.sugar().desugar()
 
 
 def _owners(exits):

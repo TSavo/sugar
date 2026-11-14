@@ -49,7 +49,6 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import ListValue, ReturnValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
@@ -304,7 +303,7 @@ def test_first_store_halt_blocks_later_targets() -> None:
     )
     tree = _tree(source, "dual_partial.py")
     fn = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    outcome = outcome_to_exitset(fn.sugar().desugar(None))
+    outcome = fn.sugar().desugar(None)
     halted = [e for e in outcome.exits if isinstance(e, Halted)]
     completed = [e for e in outcome.exits if isinstance(e, Completed)]
     assert len(halted) == 1
@@ -325,7 +324,7 @@ def test_first_store_halt_blocks_later_targets_discrimination() -> None:
     )
     tree = _tree(source, "dual_partial_d.py")
     fn = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    outcome = outcome_to_exitset(fn.sugar().desugar(None))
+    outcome = fn.sugar().desugar(None)
     with pytest.raises(AssertionError):
         assert len(outcome.exits) == 1 and isinstance(
             outcome.exits[0], Completed

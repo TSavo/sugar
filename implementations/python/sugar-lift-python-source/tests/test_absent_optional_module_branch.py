@@ -84,7 +84,7 @@ def test_a_present_module_keeps_the_with_demanded(tmp_path: Path) -> None:
     # (#7742) and json is off the enrolled population, so the manager
     # ``z.D().r(b'')`` produces is cited (never read, never dropped): the
     # helper reduces, and the with's opaque faces are on it.
-    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome import Halted
     from sugar_source_tree.nodes import FunctionDef
 
     tree, _with_node = _imported(
@@ -93,7 +93,7 @@ def test_a_present_module_keeps_the_with_demanded(tmp_path: Path) -> None:
     func = next(
         n for n in tree.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    exits = outcome_to_exitset(func.sugar().desugar()).exits
+    exits = func.sugar().desugar().exits
     owners = {
         getattr(face.effect, "producer_node_owner", None)
         for face in exits

@@ -28,7 +28,7 @@ def arbitrary(items, stop):
     constructed = function.sugar()
 
     assert type(constructed.statements[1]).__name__ == "LoopRecurrenceSugar"
-    recurrence = constructed.statements[1].desugar().value
+    recurrence = constructed.statements[1].desugar().completed_value()
     assert len(recurrence.inv_contribution()) == 1
     equation = recurrence.inv_contribution()[0]
     assert equation.name == "="

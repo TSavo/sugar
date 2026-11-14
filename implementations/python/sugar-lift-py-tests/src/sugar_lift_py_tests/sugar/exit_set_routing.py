@@ -18,19 +18,3 @@ def site_inv_values(entries: tuple, site) -> tuple:
         dc_replace(e, site=site) if isinstance(e, InvValue) and e.site is None else e
         for e in entries
     )
-
-
-def sugar_outcome_to_exitset(outcome) -> "ExitSet":
-    """The ExitSet a tree-owned enter/exit method-coordinate sugar answered.
-
-    A sugar answers an ``ExitSet`` already (#7825): a call that may complete
-    or raise is its own guarded faces, and every one is kept. Anything else is
-    refused by name.
-    """
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-
-    if isinstance(outcome, ExitSet):
-        return outcome
-    raise TypeError(
-        f"sugar_outcome_to_exitset expects ExitSet, got {type(outcome).__name__}"
-    )

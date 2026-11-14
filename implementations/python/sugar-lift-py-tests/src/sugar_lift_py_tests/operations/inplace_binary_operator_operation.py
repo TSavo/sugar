@@ -91,20 +91,13 @@ def after_inplace_notimplemented(projected, binary_fallback: Callable):
     Halts, split or owing arm sets, carriers, and other completed values
     surface unchanged — they never authorize binary fallback.
     """
-    from sugar_lift_py_tests.outcome import (
-        NativeOperationExitCarrierV1,
-        Outcome,
-        outcome_to_exitset,
-    )
+    from sugar_lift_py_tests.outcome import ExitSet
 
     if projected is NotImplemented:
         return binary_fallback()
-    if isinstance(projected, Outcome) and not isinstance(
-        projected, NativeOperationExitCarrierV1
-    ):
-        exits = outcome_to_exitset(projected)
+    if isinstance(projected, ExitSet):
         # One completed NotImplemented arm under truth that owes nothing.
-        if exits.completed_value() is NotImplemented and not exits.owed_items():
+        if projected.completed_value() is NotImplemented and not projected.owed_items():
             return binary_fallback()
     return projected
 

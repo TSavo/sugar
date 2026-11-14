@@ -344,8 +344,8 @@ def test_constructor_validation_halt_still_derives_expected_exceptions(tmp_path:
     """A validation ``raise`` next to field stores is an ExitSet, not None.
 
     RaisesExc's empty-args ``ValueError`` keeps constructor application as an
-    ExitSet whose completed face already holds the receiver. Reading
-    ``Complete.value`` on that ExitSet invented ``non-manager-result:
+    ExitSet whose completed face already holds the receiver. Reading a
+    linear completed value off that ExitSet invented ``non-manager-result:
     NoneType`` after ``super()`` and the isinstance wrap had run.
     """
     from sugar_lift_py_tests.context_manager_contract import (
@@ -456,7 +456,7 @@ def test_local_classdef_without_protocol_raises_the_interpreters_type_error(
     from sugar_lift_py_tests.manager_protocol_absence_refusal import (
         observed_non_manager_with_refusal,
     )
-    from sugar_lift_py_tests.outcome import Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome import Halted
 
     source = textwrap.dedent("""\
         class NotCM:
@@ -484,7 +484,7 @@ def test_local_classdef_without_protocol_raises_the_interpreters_type_error(
     func = next(
         n for n in tree.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    (face,) = outcome_to_exitset(func.sugar().desugar()).exits
+    (face,) = func.sugar().desugar().exits
     assert isinstance(face, Halted)
     assert isinstance(face.effect, RaiseEffect)
     refusal = observed_non_manager_with_refusal(

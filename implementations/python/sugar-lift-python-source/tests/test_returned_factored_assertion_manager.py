@@ -33,7 +33,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
     SourceDerivedContextManagerRefV1,
     TreeConstructionContextV1,
 )
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_python_source.manager_summary_derivation import (
@@ -212,7 +212,7 @@ def test_returned_manager_match_none_preserves_no_message_pattern(tmp_path: Path
     assert sugar.observation_slot_id is not None
     assert sugar.observation_slot_id.endswith("#observation")
 
-    exits = outcome_to_exitset(sugar.desugar())
+    exits = sugar.desugar()
     completed = [face for face in exits.exits if isinstance(face, Completed)]
     assert len(completed) == 1
     binding = _observed_binding(completed[0])
@@ -255,7 +255,7 @@ def test_returned_manager_pattern_preserves_message_obligation(tmp_path: Path):
         reference.semantics.message_pattern_operand
     )
 
-    exits = outcome_to_exitset(sugar.desugar())
+    exits = sugar.desugar()
     completed = [face for face in exits.exits if isinstance(face, Completed)]
     assert completed, exits.exits
     binding = _observed_binding(completed[0])
@@ -365,7 +365,7 @@ def test_returned_manager_pattern_mismatch_preserves_halt_without_binding(
     )
 
     sugar = node.sugar()
-    exits = outcome_to_exitset(sugar.desugar())
+    exits = sugar.desugar()
     halted = [face for face in exits.exits if isinstance(face, Halted)]
     assert halted, exits.exits
     # Complement / mismatch: original halt retained, no excinfo binding.
@@ -422,8 +422,8 @@ def test_direct_and_returned_twins_share_message_operand_and_binding(
     returned_sugar = returned_node.sugar()
     assert type(direct_sugar) is type(returned_sugar) is WithEffectBoundarySugar
 
-    direct_exits = outcome_to_exitset(direct_sugar.desugar())
-    returned_exits = outcome_to_exitset(returned_sugar.desugar())
+    direct_exits = direct_sugar.desugar()
+    returned_exits = returned_sugar.desugar()
     assert len(direct_exits.exits) == len(returned_exits.exits) == 1
     assert isinstance(direct_exits.exits[0], Completed)
     assert isinstance(returned_exits.exits[0], Completed)

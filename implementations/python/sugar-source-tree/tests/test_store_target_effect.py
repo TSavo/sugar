@@ -28,13 +28,12 @@ def _fn(src):
 
 
 from sugar_lift_py_tests.outcome.exit_set import (
-    sole_completed_outcome as _completed,
+    sole_completed_value as _completed,
 )
 
 
 def _entries(src):
-    outcome = _completed(_fn(src).sugar().desugar())
-    return outcome.value.record.statements
+    return _completed(_fn(src).sugar().desugar()).record.statements
 
 
 def _red(entries) -> list:
@@ -88,9 +87,7 @@ def test_attribute_store_lifts_a_red_effect_and_the_block_continues():
 
 
 def test_attribute_store_post_out_equals_the_returned_value():
-    v = _completed(
-        _fn("def A(v):\n    o.a = v\n    return v\n").sugar().desugar()
-    ).value
+    v = _completed(_fn("def A(v):\n    o.a = v\n    return v\n").sugar().desugar())
     post = v.post()
     assert post.name == "="
     assert post.args[0].name == "out"

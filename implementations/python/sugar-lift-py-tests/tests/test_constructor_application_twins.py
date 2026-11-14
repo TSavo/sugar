@@ -156,7 +156,7 @@ def test_class_method_call_carries_the_constructor_halt(actual: int, raises: boo
     )
     (class_def,) = tuple(node for node in tree.nodes() if isinstance(node, ClassDef))
     ctx = ReduceContext.root(owner="test")
-    box = class_def.sugar().desugar(ctx).value
+    box = class_def.sugar().desugar(ctx).completed_value()
     outcome = box.call_method_value(
         "make", (TermValue(actual),), owner="test", blame="make-site", ctx=ctx
     )

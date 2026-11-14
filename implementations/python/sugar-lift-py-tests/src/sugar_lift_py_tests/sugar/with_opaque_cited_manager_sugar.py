@@ -34,7 +34,7 @@ undischarged obligation.
 This runs the SAME ExitSet algebra as ``WithResourceSugar``.  It is not a
 second control model and not a soft survival arm: the refusal is not rescued
 here, it was replaced upstream by a positive seated citation.  Compare
-``SoftUnresolvedWithSugar``, which dresses a gap as an ``Incomplete`` and is
+``SoftUnresolvedWithSugar``, which dresses a gap as a halted arm and is
 forbidden in production for exactly that reason.
 """
 
@@ -42,7 +42,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -220,21 +220,18 @@ class WithOpaqueCitedManagerSugar(Sugar):
             )
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+    def desugar(self, ctx: object = None) -> ExitSet:
+        from sugar_lift_py_tests.outcome.exit_set import Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             prepend_facts_to_exitset,
-        )
-        from sugar_lift_py_tests.sugar.exit_set_routing import (
-            sugar_outcome_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
             reduce_block_to_exitset,
         )
 
-        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
+        manager_es = self.manager.desugar(ctx)
         parts: list = []
 
         for mgr_exit in manager_es.exits:

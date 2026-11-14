@@ -172,7 +172,8 @@ def test_loop_recurrence_evaluates_iterable_once_and_retains_live_floor(
     (equation,) = outcome.value.inv_contribution()
     step = equation.args[1]
     assert step.name == "python:loop.step"
-    assert step.args[2] == iterable.desugar().value.to_term(owner="test")
+    iterable_value = iterable.desugar().completed_value()
+    assert step.args[2] == iterable_value.to_term(owner="test")
 
 
 def test_loop_recurrence_rejects_lying_iterable_occurrence(tmp_path: Path):

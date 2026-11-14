@@ -55,7 +55,6 @@ from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
     Halted,
-    outcome_to_exitset,
 )
 from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
 
@@ -101,7 +100,7 @@ def _joined():
 
 
 def _completed_arms(outcome) -> int:
-    exits = outcome_to_exitset(outcome)
+    exits = outcome
     return sum(isinstance(exit_, Completed) for exit_ in exits.exits)
 
 
@@ -127,7 +126,7 @@ def test_operand_chains_over_a_partitioning_conditional_do_not_multiply():
     completed face stays at one arm for every k. With an unfactored one this
     is 2 ** k, which is what timed out on three pandas files.
     """
-    joined = outcome_to_exitset(_joined())
+    joined = _joined()
 
     # The whole series is measured before anything is asserted, so a failure
     # PRINTS the growth curve rather than only its first point. `1, 2, 4, 8,
@@ -160,7 +159,7 @@ def test_the_halted_arm_survives_the_factoring():
     The halted face is the other half of the meaning. `factor_completed` never
     touches it, and it must still be there.
     """
-    exits = outcome_to_exitset(_joined())
+    exits = _joined()
     halted = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
 
     assert len(halted) == 1
@@ -176,7 +175,7 @@ def test_both_faces_values_survive_inside_the_guarded_chain():
     Factoring relocates the partition; it does not choose a winner. Both arms'
     values must still be reachable, on their own guards, in the chain.
     """
-    exits = outcome_to_exitset(_joined())
+    exits = _joined()
     completed = [e for e in exits.exits if isinstance(e, Completed)][0]
 
     chain = completed.value
@@ -254,7 +253,7 @@ def test_a_fold_conserves_every_halted_arm():
             )
         )
 
-    exits = outcome_to_exitset(outcome)
+    exits = outcome
     halted = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
     assert len(halted) == 1
 

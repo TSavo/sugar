@@ -21,7 +21,7 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import FunctionDef
 
@@ -43,7 +43,7 @@ def _manager(enter: str) -> str:
 
 def _faces(tree):
     func = next(n for n in tree.nodes() if isinstance(n, FunctionDef) and n.name == "f")
-    return outcome_to_exitset(func.sugar().desugar()).exits
+    return func.sugar().desugar().exits
 
 
 @pytest.mark.parametrize(

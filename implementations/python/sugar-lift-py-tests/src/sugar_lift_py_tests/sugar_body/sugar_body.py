@@ -19,10 +19,10 @@ from sugar_lift_py_tests.gap.audit_row import (
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.ir import Formula
-    from sugar_lift_py_tests.outcome import Outcome
+    from sugar_lift_py_tests.outcome import ExitSet
 
     ReductionContext: TypeAlias = ReduceContext | None
-    ReductionResult: TypeAlias = Outcome | Formula
+    ReductionResult: TypeAlias = ExitSet | Formula
     ReductionT_co = TypeVar("ReductionT_co", bound=ReductionResult, covariant=True)
 else:
     ReductionContext: TypeAlias = object

@@ -161,7 +161,7 @@ def test_guarded_raise_halts_its_branch_and_guards_the_tail():
     assert tail.args[1].value == 2  # the tail fact z == 2
 
     # The raise itself is red testimony, pristine RaiseEffect, with the branch
-    # condition recorded on the Incomplete wrapper (not smashed into the effect).
+    # condition recorded on the halted arm's guard (not smashed into the effect).
     assert type(halted.effect).__name__ == "RaiseEffect"
     assert halted.effect.exception_name == "ValueError"
     assert halted.guard.args[0].name == "python:branch_result"

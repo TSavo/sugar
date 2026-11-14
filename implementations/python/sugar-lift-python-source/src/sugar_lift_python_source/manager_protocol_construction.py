@@ -76,18 +76,14 @@ class ConstructedManagerProtocolV1:
     def enter_outcome(self, ctx: object = None):
         if isinstance(self.receiver_state, ObjectValue):
             return self.enter_call.reduce_source_outcome(ctx)
-        from sugar_lift_py_tests.outcome import outcome_to_exitset
-
         return _completed_receiver_exits(self.receiver_state).sequence(
-            lambda receiver: outcome_to_exitset(
-                _call_protocol_method(
-                    receiver,
-                    "__enter__",
-                    (),
-                    self.exit_face_id,
-                    ctx,
-                ).reduce_source_outcome(ctx)
-            )
+            lambda receiver: _call_protocol_method(
+                receiver,
+                "__enter__",
+                (),
+                self.exit_face_id,
+                ctx,
+            ).reduce_source_outcome(ctx)
         )
 
     def exit_outcome(self, ctx: object = None):
@@ -112,11 +108,7 @@ class ConstructedManagerProtocolV1:
 
         if isinstance(self.receiver_state, ObjectValue):
             return run_exit(self.receiver_state)
-        from sugar_lift_py_tests.outcome import outcome_to_exitset
-
-        return _completed_receiver_exits(self.receiver_state).sequence(
-            lambda receiver: outcome_to_exitset(run_exit(receiver))
-        )
+        return _completed_receiver_exits(self.receiver_state).sequence(run_exit)
 
     def enter_resource_outcome(self, ctx: object = None):
         """Run enter once and carry each face's exact receiver into resource exit."""
@@ -411,10 +403,10 @@ def _call_protocol_method(receiver, name, arguments, exit_face_id, ctx):
 def _receiver_state_after_enter(
     receiver: ObjectValue, enter_outcome, *, blame: object
 ) -> ObjectValue:
-    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+    from sugar_lift_py_tests.outcome import Completed
     from sugar_source_tree.panic import SugarNotWritten
 
-    exits = outcome_to_exitset(enter_outcome).exits
+    exits = enter_outcome.exits
     completed = tuple(face for face in exits if isinstance(face, Completed))
     observed_stores = tuple(
         statement
@@ -484,17 +476,12 @@ def _receiver_state_after_enter(
 
 def _resource_enter_transitions(receiver: ObjectValue, enter_outcome, *, blame: object):
     from sugar_lift_py_tests.ir import and_, not_
-    from sugar_lift_py_tests.outcome import (
-        Completed,
-        ExitSet,
-        Halted,
-        outcome_to_exitset,
-    )
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
     from sugar_lift_py_tests.outcome.exit_set import partition
     from sugar_source_tree.panic import SugarNotWritten
 
     projected = []
-    for face in outcome_to_exitset(enter_outcome).exits:
+    for face in enter_outcome.exits:
         if isinstance(face, Halted):
             projected.append(face)
             continue
@@ -1013,13 +1000,13 @@ def _floor_enter_value(value: object):
     """
     from sugar_lift_py_tests.floor.floor_value import FloorValue
     from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.outcome import ExitSet, outcome_to_exitset
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
     if isinstance(value, FloorValue):
         return ExitSet.completed(value)
     if isinstance(value, Sugar):
-        outcome = outcome_to_exitset(value.desugar())
+        outcome = value.desugar()
         if outcome.completed_value() is not None:
             return outcome.sequence(_floor_enter_value)
         from sugar_source_tree.panic import SugarNotWritten

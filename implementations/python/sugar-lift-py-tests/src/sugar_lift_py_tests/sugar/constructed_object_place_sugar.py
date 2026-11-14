@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -66,7 +66,7 @@ class ConstructedObjectPlaceSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         del ctx
         from sugar_lift_py_tests.ir import _term_content_cid
         from sugar_source_tree.binding_provenance import BindingProvenanceGap

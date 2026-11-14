@@ -14,7 +14,7 @@ from sugar_lift_py_tests.context_manager_contract import (
 )
 from sugar_lift_py_tests.context_manager_resolution import SourceDerivedContextManagerRefV1
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import FunctionDef, With
 
@@ -36,7 +36,7 @@ def test_contextlib_chdir_constructs_with_posix_c_call_faces(tmp_path: Path) -> 
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    exits = outcome_to_exitset(func.sugar().desugar()).exits
+    exits = func.sugar().desugar().exits
     assert any(isinstance(face, Completed) for face in exits)
     halted = [face for face in exits if isinstance(face, Halted)]
     # os.getcwd() and os.chdir(path) in __enter__, os.chdir(pop()) in __exit__:

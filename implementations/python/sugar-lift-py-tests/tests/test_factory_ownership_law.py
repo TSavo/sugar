@@ -53,7 +53,7 @@ class DemoSugar:
         return [object()]
 
     def desugar(self, ctx=None):
-        return Incomplete("unsupported construction")
+        return ExitSet.halted("unsupported construction")
 """,
         encoding="utf-8",
     )
@@ -81,7 +81,7 @@ class DemoSugar:
         return [object()]
 
     def desugar(self, ctx=None):
-        return Incomplete(DemoRuntimeEffect("runtime operand"))
+        return ExitSet.halted(DemoRuntimeEffect("runtime operand"))
 """,
         encoding="utf-8",
     )
@@ -117,7 +117,7 @@ class DemoSugar:
         )
 
     def desugar(self, ctx=None):
-        return Incomplete(DemoRuntimeEffect("runtime operand"))
+        return ExitSet.halted(DemoRuntimeEffect("runtime operand"))
 """,
         encoding="utf-8",
     )

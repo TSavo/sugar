@@ -314,7 +314,7 @@ def test_scalar_helper_feeds_binop_isomorphic_to_direct() -> None:
     ), f"{CODEX3_OWNER} helper outcome={type(helper).__name__}"
     hv = _completed_value(helper)
     dv = _completed_value(direct)
-    # Outcome-isomorphic: same TermValue (or equal numeric floor).
+    # Isomorphic outcomes: same TermValue (or equal numeric floor).
     assert hv == dv or (
         getattr(hv, "value", hv) == getattr(dv, "value", dv)
     ), f"{CODEX3_OWNER} helper={hv!r} direct={dv!r}"
@@ -456,7 +456,7 @@ def test_dig_of_scalar_return_must_not_stop_at_blockvalue_for_binop() -> None:
         bind=frozenset({"scalar"}),
     )
     call = _first(tree, Call)
-    cs = call.sugar().desugar(None).value
+    cs = call.sugar().desugar(None).completed_value()
     dug = cs._dig_floor_or_none(None, owner="dig-ceiling-probe")
     assert dug is not None
     # LAW: dig for operation use must surface the returned Floor, not the block.
@@ -589,7 +589,7 @@ def test_module_scope_lambda_callee_constructs_by_substituting_first() -> None:
         for node in tree.nodes()
         if isinstance(node, BinOp) and isinstance(node.left, Call)
     )
-    value = outer.sugar().desugar(None).value
+    value = outer.sugar().desugar(None).completed_value()
     if not isinstance(value, TermValue):
         value = value._dig_floor_or_none(None, owner="module-scope-lambda")
     assert value == TermValue(6)
@@ -640,7 +640,7 @@ def test_nested_function_closure_capture_stays_loud_without_binding_testimony() 
     call = _calls_named(tree, "outer")[0]
 
     with pytest.raises((SugarNotWritten, ConstructionPanic)):
-        call.sugar().desugar(None).value._dig_floor_or_none(
+        call.sugar().desugar(None).completed_value()._dig_floor_or_none(
             None, owner="nested-closure-refusal"
         )
 
@@ -675,7 +675,7 @@ def test_nested_shadowed_function_does_not_cross_wire_outer_same_name() -> None:
     ].source_visible_call_frame()
 
     with pytest.raises((AssertionError, ConstructionPanic, SugarNotWritten)):
-        call.sugar().desugar(None).value._dig_floor_or_none(
+        call.sugar().desugar(None).completed_value()._dig_floor_or_none(
             None, owner="nested-shadow-cross-wire"
         )
 
@@ -691,7 +691,7 @@ def test_lambda_inside_nested_function_composes_with_source_return_projection() 
     )
     call = _calls_named(tree, "outer")[0]
 
-    assert call.sugar().desugar(None).value._dig_floor_or_none(
+    assert call.sugar().desugar(None).completed_value()._dig_floor_or_none(
         None, owner="nested-lambda-return"
     ) == TermValue(6)
 
@@ -797,6 +797,6 @@ def test_foreign_same_signature_nested_frame_refuses_loudly(
     public_call = _calls_named(tree, "outer")[0]
 
     with pytest.raises((AssertionError, ConstructionPanic, SugarNotWritten)):
-        public_call.sugar().desugar(None).value._dig_floor_or_none(
+        public_call.sugar().desugar(None).completed_value()._dig_floor_or_none(
             None, owner=f"foreign-nested-{foreign_owner}"
         )

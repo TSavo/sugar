@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
@@ -64,7 +64,7 @@ class DynamicUnpackAssignSugar(Sugar):
             wrong_reason_needle="unpack demands exactly 3 members",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.scope_rebind import bind_unpack_projections
         from sugar_lift_py_tests.operations import SequenceProjectionOperation
 

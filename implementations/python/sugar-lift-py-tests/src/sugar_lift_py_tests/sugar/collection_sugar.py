@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -92,7 +92,7 @@ class ListSugar(ConstructedTermSugar):
             lying="2",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.list_value import ListValue
 
         return _reduce_into(self.elements, ctx, ListValue)
@@ -147,7 +147,7 @@ class TupleSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
         return _reduce_into(self.elements, ctx, TupleValue)
@@ -172,7 +172,7 @@ class SetSugar(ConstructedTermSugar):
             lying="2",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         site = self.site
 
         def SetValue(values):  # noqa: N802 -- the owner name the fold reports
@@ -221,7 +221,7 @@ class DictSugar(ConstructedTermSugar):
             lying="3",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # Keys and values interleave in source order (`{k1: v1, k2: v2}`), so
         # they reduce as ONE element sequence and are re-paired afterwards. A
         # halt in `v1` must not be reported after `k2` was evaluated.

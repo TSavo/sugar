@@ -207,7 +207,7 @@ def test_distinct_formals_sharing_a_name_never_alias() -> None:
     bound = TemporalContext.empty().bind_value(
         alpha.formal_coordinates[0].cid, TermValue(7)
     )
-    assert alpha_ref.desugar(_ReduceCtx(bound)).value == TermValue(7)
+    assert alpha_ref.desugar(_ReduceCtx(bound)).completed_value() == TermValue(7)
 
     # Discrimination: binding the *other* coordinate of the same name does not
     # satisfy this read.  A name map would have resolved it; the coordinate
@@ -239,7 +239,7 @@ def test_no_name_based_fallback_behind_the_coordinate_door() -> None:
 
     # Discrimination: the identical context plus the coordinate CID resolves.
     by_coordinate = by_name.bind_value(ref.coordinate.cid, TermValue(7))
-    assert ref.desugar(_ReduceCtx(by_coordinate)).value == TermValue(7)
+    assert ref.desugar(_ReduceCtx(by_coordinate)).completed_value() == TermValue(7)
 
     # And the door could not build a name map even if it wanted one: the
     # authenticated coordinate carries scope owner, binding site, and
@@ -280,7 +280,7 @@ def test_substitution_reuses_the_actual_and_reconstructs_no_sugar() -> None:
     twin = TermValue(7)
     assert twin == actual
     assert twin is not actual
-    assert ref.desugar(_ReduceCtx(bound)).value is not twin
+    assert ref.desugar(_ReduceCtx(bound)).completed_value() is not twin
 
 
 # ---------------------------------------------------------------------------
@@ -386,8 +386,8 @@ def test_two_call_occurrences_retain_distinct_occurrences() -> None:
     _install(context, first, functions["outer_alpha"])
     _install(context, second, functions["outer_alpha"])
 
-    first_value = first.sugar().desugar().value
-    second_value = second.sugar().desugar().value
+    first_value = first.sugar().desugar().completed_value()
+    second_value = second.sugar().desugar().completed_value()
     assert isinstance(first_value, CallSiteValue)
     assert isinstance(second_value, CallSiteValue)
 

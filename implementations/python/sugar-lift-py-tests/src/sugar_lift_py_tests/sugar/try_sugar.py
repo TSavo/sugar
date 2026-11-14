@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field, replace
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
@@ -60,7 +60,7 @@ class TrySugar(Sugar):
             lying=prefix + "def test_a():\n    assert A(5) == 6\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
         )
@@ -336,7 +336,6 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
         MatchDecided,
         matches_raise_effect,
     )
-    from sugar_lift_py_tests.outcome import outcome_to_exitset
     from sugar_source_tree.panic import SugarNotWritten
 
     # An ``UndeterminedRaiseEffect`` is an ordinary (non-group) exception
@@ -355,7 +354,7 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
         )
     if matcher is None:
         return MatchDecided(True)
-    expected = outcome_to_exitset(matcher.desugar(ctx)).completed_value()
+    expected = matcher.desugar(ctx).completed_value()
     if expected is None:
         raise SugarNotWritten(
             blame=effect.occurrence_id,

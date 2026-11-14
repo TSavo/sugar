@@ -143,7 +143,7 @@ def test_seal_board_splits_file_and_residual_meanings() -> None:
             "observedEventType": (
                 mod._CONSTRUCTION_PANIC_TYPE
                 if is_panic
-                else "sugar_lift_py_tests.outcome.Complete"
+                else "sugar_lift_py_tests.outcome.exit_set.ExitSet"
             ),
             "terminalKind": "construction-panic" if is_panic else "constructed",
             "observed_chain_length": 2 if is_panic else 1,

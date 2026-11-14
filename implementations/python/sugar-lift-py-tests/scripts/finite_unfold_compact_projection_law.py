@@ -8,7 +8,7 @@ shared compact projection door.
 Replacement architecture (one shared door, not file tickets):
 
 * CallSugar range over-cap → fall through to CallSiteValue projection
-  (no ListValue materialize, no force-curry, no opaque Complete on the cap arm)
+  (no ListValue materialize, no force-curry, no opaque completion on the cap arm)
 * ForSugar finite over-cap or non-ground while body → recognition projection
   (``_project_compact_finite`` / ``_bind_and_body`` without ``force_curry=True``)
   instead of N-fold static unfold or force-curry opacity
@@ -169,7 +169,7 @@ def scan_source(source: str, *, path: str) -> list[FiniteUnfoldCompactGap]:
                 (
                     "replace residual finite_unfold panic with shared compact "
                     "projection: CallSiteValue range fall-through or ForSugar "
-                    "recognition projection (no force_curry, no opaque Complete)"
+                    "recognition projection (no force_curry, no opaque completion)"
                 ),
             )
         )
@@ -259,7 +259,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if risk == 0 and errors == 0:
             print(
                 "replacement: CallSiteValue range projection + ForSugar "
-                "recognition projection (no force_curry / opaque Complete)"
+                "recognition projection (no force_curry / opaque completion)"
             )
     return 1 if risk or errors else 0
 

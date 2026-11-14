@@ -8,7 +8,7 @@ LOOKUP was therefore indistinguishable, at the verdict, from a genuinely
 unbounded one.
 
 Both arms are pinned here on purpose. Lawful inapplicability MUST still reach
-symbolic `Complete`; a failed authenticated lookup MUST refuse. A test that
+a symbolic completion; a failed authenticated lookup MUST refuse. A test that
 only shows the refusal proves nothing about whether the lawful arm survived.
 """
 
@@ -265,7 +265,7 @@ def test_an_enrolled_consumer_whose_row_is_gone_stays_owed_and_refuses():
 
 
 # --------------------------------------------------------------------------
-# ARM ONE: a failed authenticated lookup refuses and never reaches Complete.
+# ARM ONE: a failed authenticated lookup refuses and never completes.
 #
 # THE JOIN. On the merged tree #7348's `_recurrence_generators` reads the row
 # STRICTLY, so a stranded comprehension now refuses at SUGAR CONSTRUCTION,
@@ -295,7 +295,7 @@ def test_the_projection_arm_still_refuses_an_enrolled_slot_without_its_pattern(k
     #7348 closed the producer path that USED to reach here. The decision arm
     stays because the invariant is a property of the projection, not of one
     caller: any future callsite that hands `_finite_map` an enrolled slot with
-    no pattern must refuse, not spend a `Complete`.
+    no pattern must refuse, not spend a completion.
     """
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
@@ -326,7 +326,7 @@ def test_the_projection_arm_still_refuses_an_enrolled_slot_without_its_pattern(k
 
 
 # --------------------------------------------------------------------------
-# ARM TWO: the lawful arms are untouched. Symbolic Complete stays lawful.
+# ARM TWO: the lawful arms are untouched. Symbolic completion stays lawful.
 # --------------------------------------------------------------------------
 
 

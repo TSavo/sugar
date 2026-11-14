@@ -33,7 +33,7 @@ def bound_method_call_at(call_node, ctx=None):
     sugar = call_node.sugar()
 
     def operand(item):
-        return item.desugar(ctx).value.project_operation_receiver(
+        return item.desugar(ctx).completed_value().project_operation_receiver(
             ctx, owner="bound_method_call_at"
         )
 

@@ -5,8 +5,8 @@ on an arm's ``pending_contracts``. Since #6611 (2026-07-27, "Route formal
 Subscript through caller discharge") nothing in the lifter minted one: a formal
 operation such as ``p[0]`` owes a ``NativeOperationExitCarrierV1`` demand
 instead. #7840 struck the 20 sites that rebuilt the slot as ``()``; item 43
-deleted the class, the slot on ``Incomplete``, ``Halted`` and ``Completed``,
-and every piece of carrier code that existed only to carry it.
+deleted the class, the slot on every arm (``Halted`` and ``Completed``; the
+linear halt that also carried it is deleted, #7825), and every piece of carrier code that existed only to carry it.
 
 The tests below are tripwires. If a second representation of an owed contract
 comes back, they fail.
@@ -45,7 +45,7 @@ def test_the_class_is_gone() -> None:
     assert not hasattr(contracts, "ContractConditionalConstructionV1")
 
 
-@pytest.mark.parametrize("arm", ["Incomplete", "Halted", "Completed"])
+@pytest.mark.parametrize("arm", ["Halted", "Completed"])
 def test_no_arm_carries_an_owed_contract_slot(arm: str) -> None:
     import sugar_lift_py_tests.outcome as outcome
 

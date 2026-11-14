@@ -13,13 +13,6 @@ FACTORY_CONSTRUCTORS = (
     / "factory"
     / "sugar_constructors.py"
 )
-STATEMENT_FUNCTION_DEF_SUGAR = (
-    sugar_lift_py_tests_package_root()
-    / "src"
-    / "sugar_lift_py_tests"
-    / "sugar"
-    / "statement_function_def_sugar.py"
-)
 
 
 def test_factory_value_helpers_are_deleted_not_relocated() -> None:
@@ -50,25 +43,4 @@ def test_factory_value_helpers_are_deleted_not_relocated() -> None:
     assert offenders == [], (
         "factory value construction must be owned by registered Sugar recognizers; "
         f"promote and delete these side doors: {', '.join(offenders)}"
-    )
-
-
-def test_promoted_module_replay_never_swallows_incomplete() -> None:
-    tree = ast.parse(STATEMENT_FUNCTION_DEF_SUGAR.read_text(encoding="utf-8"))
-    offenders: list[int] = []
-
-    for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        if not any(
-            isinstance(child, ast.Name) and child.id == "Incomplete"
-            for child in ast.walk(node.test)
-        ):
-            continue
-        if any(isinstance(child, ast.Continue) for child in node.body):
-            offenders.append(node.lineno)
-
-    assert offenders == [], (
-        "promoted Sugar must construct cited evidence or stay loud; "
-        f"delete Incomplete-to-continue suppression at lines {offenders}"
     )

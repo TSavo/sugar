@@ -70,14 +70,10 @@ def _populated(tmp_path: Path, consumer: str):
 
 
 def _exits(tree):
-    from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
     from sugar_source_tree.nodes import FunctionDef
 
     function = next(n for n in tree.nodes() if isinstance(n, FunctionDef))
-    return sorted(
-        type(face).__name__
-        for face in outcome_to_exitset(function.sugar().desugar()).exits
-    )
+    return sorted(type(face).__name__ for face in function.sugar().desugar().exits)
 
 
 def test_single_bound_manager_enters_the_assigned_call(tmp_path):

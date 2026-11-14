@@ -276,11 +276,8 @@ def _observed_binding(face):
 
 
 def _as_exitset(outcome):
-    from sugar_lift_py_tests.outcome import outcome_to_exitset
-
-    if isinstance(outcome, ExitSet):
-        return outcome
-    return outcome_to_exitset(outcome)
+    assert isinstance(outcome, ExitSet), type(outcome).__name__
+    return outcome
 
 
 def _multi_body():

@@ -19,7 +19,7 @@ import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.effect.name_error_effect import NameErrorEffect
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.panic import SugarNotWritten
 
@@ -31,7 +31,7 @@ def _exits(tmp_path: Path, source: str):
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    return outcome_to_exitset(func.sugar().desugar())
+    return func.sugar().desugar()
 
 
 def test_local_class_shadowing_a_builtin_raises_the_local_class(tmp_path) -> None:

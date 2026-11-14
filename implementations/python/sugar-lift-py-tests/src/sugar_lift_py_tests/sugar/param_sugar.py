@@ -5,7 +5,7 @@ from typing import Optional
 
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
@@ -39,6 +39,6 @@ class ParamSugar(Sugar):
             lying=prefix + "def test_a():\n    assert A(5) == 6\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         del ctx  # a formal stands as its symbolic universe variable
         return ExitSet.completed(SymbolicValue(make_var(self.name)))

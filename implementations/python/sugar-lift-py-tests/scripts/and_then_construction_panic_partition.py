@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Partition and_then / outcome_to_exitset construction panics from a LIVE board.
+"""Partition ``ExitSet.and_then`` construction panics from a LIVE board.
 
 ## Why this exists
 
 The Deferred Exit design (third Exit variant) would relocate panics that today
-fire mid-composition inside ``ExitSet.sequence`` / ``and_then`` →
-``outcome_to_exitset``. A stale 9a board split was quoted as
+fire mid-composition inside ``ExitSet.sequence`` / ``and_then`` (its refusal of
+a step that answered no ``ExitSet``). A stale 9a board split was quoted as
 ``native=0, pending-contract=283, guarded=25 of 502`` — which **refuted** the
 claim that the 283 mass is NativeOperationExitCarrierV1 (Deferred). That split
 is stale; tip mass is unknown until control_effect_recensus produces a board.
@@ -27,7 +27,7 @@ desugar the corpus. It classifies panics already recorded on a board artifact.
 
 | Bucket | Meaning |
 | --- | --- |
-| ``native_deferred`` | ``NativeOperationExitCarrierV1`` undischarged at ``outcome_to_exitset`` or carrier-internal Deferred mouths |
+| ``native_deferred`` | ``NativeOperationExitCarrierV1`` undischarged at ``ExitSet.and_then`` or carrier-internal Deferred mouths |
 | ``pending_contract`` | multi-demand / pending parameter-contract joins (ContractConditionalConstruction / rewrap_pending law) |
 | ``guarded`` | GuardedValue / guarded-arm single-outcome law failures |
 | ``other`` | remaining construction panics at the conversion boundary (unknown outcome variant, etc.) |
@@ -196,7 +196,7 @@ def classify_mouth(owner: str | None, observed: str | None) -> str:
     text = f"{o} {obs}".lower()
 
     # Deferred / native carrier — the object under design
-    if o == "outcome_to_exitset" and "undischarged native" in obs:
+    if o == "ExitSet.and_then" and "undischarged native" in obs:
         return "native_deferred"
     if "nativeoperationexitcarrier" in o.lower():
         return "native_deferred"
@@ -225,8 +225,9 @@ def classify_mouth(owner: str | None, observed: str | None) -> str:
     if "no surviving face to carry" in text and "pending" in text:
         return "pending_contract"
 
-    # outcome_to_exitset unknown variant (not native carrier)
-    if o == "outcome_to_exitset":
+    # ExitSet.and_then: a step answered something that is not exits (not a
+    # native carrier)
+    if o == "ExitSet.and_then":
         return "other"
 
     return "other"
@@ -301,8 +302,6 @@ def is_and_then_related(row: BoardPanicRow) -> bool:
     """
     o = (row.owner or "").lower()
     m = (row.message or "").lower()
-    if "outcome_to_exitset" in o or "outcome_to_exitset" in m:
-        return True
     if "nativeoperationexitcarrier" in o:
         return True
     if "contractconditionalconstruction" in o:
@@ -341,7 +340,7 @@ def format_report(
 ) -> str:
     lines = [
         "AND_THEN CONSTRUCTION PANIC PARTITION",
-        "class=and_then / outcome_to_exitset conversion mass",
+        "class=ExitSet.and_then refusal mass",
         "recognition=live mouths (AST) + board rows (control_effect_recensus)",
         f"board={board_path if board_path else '<none>'}",
         "",
@@ -392,7 +391,7 @@ def self_check() -> int:
     planted = [
         BoardPanicRow(
             "plant",
-            "outcome_to_exitset",
+            "ExitSet.and_then",
             "undischarged native operation demand",
             "f.py:1:0",
             {},
@@ -420,8 +419,8 @@ def self_check() -> int:
         ),
         BoardPanicRow(
             "plant",
-            "outcome_to_exitset",
-            "SomeWeirdOutcome is not an Outcome the exit algebra knows",
+            "ExitSet.and_then",
+            "SomeWeirdValue is not an ExitSet",
             "f.py:5:0",
             {},
         ),

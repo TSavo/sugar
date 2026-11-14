@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_body
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
@@ -23,5 +23,5 @@ class ModuleBlockSugar(Sugar):
             reason="module blocks project the ordinary constructed block",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         return reduce_body(self.statements, ctx)

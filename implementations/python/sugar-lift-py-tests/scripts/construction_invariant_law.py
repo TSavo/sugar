@@ -416,8 +416,7 @@ def _fabricated_findings(tree: ast.Module, path: str) -> list[Finding]:
         full_name = _call_name(node)
         name = full_name.split(".")[-1]
         if (
-            name in {"Complete", "Completed"}
-            or full_name.split(".")[-2:] == ["ExitSet", "completed"]
+            name == "Completed" or full_name.split(".")[-2:] == ["ExitSet", "completed"]
         ) and any(
             isinstance(argument, ast.Constant) and argument.value is None
             for argument in (*node.args, *(keyword.value for keyword in node.keywords))

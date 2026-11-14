@@ -2,37 +2,20 @@ from __future__ import annotations
 
 from sugar_lift_py_tests.floor import FloorValue
 
-from .complete import Complete
-from .incomplete import Incomplete
-from .outcome import Outcome
+from .exit_set import ExitSet
 
 
-def complete_value(outcome: Outcome, *, owner: str) -> FloorValue:
+def complete_value(outcome: ExitSet, *, owner: str) -> FloorValue:
     """Project a single completed floor value, or refuse loudly.
 
-    After store ExitSet composition (#6246), a body may reduce to multi-arm
-    ``ExitSet`` rather than ``Complete``. Reading ``.value`` on that is a bare
-    ``AttributeError`` — permanent-floor red. Refuse as a typed construction
-    gap so kit-domain multi-arm outcomes stay on the typed-gap axis, never bare.
+    After store ExitSet composition (#6246), a body may reduce to a multi-arm
+    ``ExitSet``. Reading one value off that is a bare ``AttributeError`` --
+    permanent-floor red. Refuse as a typed construction gap so kit-domain
+    multi-arm outcomes stay on the typed-gap axis, never bare.
     """
-    if isinstance(outcome, Incomplete):
-        from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-        construction_panic_gap(
-            owner=owner,
-            blame=owner,
-            observed=f"Incomplete effect (reason={outcome.reason!r}); no completed floor value",
-            requested="Complete floor value",
-            fix="do not project complete_value from Incomplete; reduce or leave the gap loud",
-        )
-    if isinstance(outcome, Complete):
-        return outcome.value
-    from .exit_set import ExitSet
-
     if isinstance(outcome, ExitSet):
-        # One unconditional completed arm that owes nothing is the shape a
-        # linear ``Complete`` stood for (#7825); an owing arm keeps its debt
-        # and is refused below, exactly as ``collapse`` refused to linearize it.
+        # One unconditional completed arm that owes nothing; an owing arm
+        # keeps its debt and is refused below.
         value = outcome.completed_value()
         if value is not None and not outcome.owed_items():
             return value
@@ -44,7 +27,7 @@ def complete_value(outcome: Outcome, *, owner: str) -> FloorValue:
                 owner=owner,
                 blame=owner,
                 observed=f"ExitSet with {len(outcome.exits)} arms",
-                requested="one Complete floor value",
+                requested="one unconditional completed floor value",
                 fix=(
                     "multi-arm store/control outcomes cannot force_floor to a single "
                     "value; leave the projection absent or reduce under ExitSet routing"
@@ -59,6 +42,6 @@ def complete_value(outcome: Outcome, *, owner: str) -> FloorValue:
         owner=owner,
         blame=owner,
         observed=f"outcome species {type(outcome).__name__} has no complete_value arm",
-        requested="Complete | ExitSet (ExitSet already handled) | Incomplete (refused)",
+        requested="ExitSet",
         fix=f"write complete_value arm for {type(outcome).__name__} or refuse earlier",
     )

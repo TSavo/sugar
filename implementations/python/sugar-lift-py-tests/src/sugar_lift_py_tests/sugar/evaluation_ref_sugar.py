@@ -74,7 +74,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -125,7 +125,7 @@ class EvaluationRefSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
         if self.member:
             return self._member(temporal)
@@ -144,7 +144,7 @@ class EvaluationRefSugar(ConstructedTermSugar):
 
         return NameSugar(name=self.name, site=self.site).desugar(ctx)
 
-    def _unreached_walrus(self) -> Outcome:
+    def _unreached_walrus(self) -> ExitSet:
         """A walrus's reference whose key this temporal never received: the
         walrus never completed here, or its bind was not carried out of the
         operand that holds it.  Refused by name: the name may hold a write
@@ -188,7 +188,7 @@ class EvaluationRefSugar(ConstructedTermSugar):
             ),
         )
 
-    def _member(self, temporal) -> Outcome:
+    def _member(self, temporal) -> ExitSet:
         """A comprehension member's coordinate (or, read by a lambda the
         comprehension stores, its final member coordinate), bound by the
         comprehension before any read; unbound, the read panics and never

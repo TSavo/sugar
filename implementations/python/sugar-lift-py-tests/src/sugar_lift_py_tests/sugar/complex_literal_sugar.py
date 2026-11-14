@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor.complex_value import ComplexValue
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
@@ -36,7 +36,7 @@ class ComplexLiteralSugar(ConstructedTermSugar):
             lying="3j",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         del ctx  # the complex value stands as a floor value
         return ExitSet.completed(ComplexValue(self.real, self.imag))
 

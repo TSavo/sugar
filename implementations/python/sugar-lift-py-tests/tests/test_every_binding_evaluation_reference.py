@@ -34,7 +34,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed
 from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 from sugar_lift_py_tests.temporal.temporal_context import (
     EVALUATION_PREFIX,
@@ -153,7 +153,7 @@ def _returned(outcome) -> list:
         if record is not None:
             visit(record)
 
-    for exit_ in outcome_to_exitset(outcome).exits:
+    for exit_ in outcome.exits:
         if isinstance(exit_, Completed):
             visit(exit_.value)
     return found
@@ -169,7 +169,7 @@ def _resolved(value):
     inner = _returned(outcome)
     if inner:
         return inner[-1]
-    return outcome_to_exitset(outcome).completed_value()
+    return outcome.completed_value()
 
 
 # ---------------------------------------------------------------------------

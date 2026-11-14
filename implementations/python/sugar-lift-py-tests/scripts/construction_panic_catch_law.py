@@ -11,7 +11,7 @@ may catch it without pure re-raise:
 2. **Production typed-gap classification** — ``scripts/_production_lift_child.py``
    marks the file ``typed-gap`` for the zero-tolerance floors so kit-domain
    construction panics are not misclassified as bare Python exceptions.
-   That path does NOT convert the panic into Incomplete, opacity, soft None,
+   That path does NOT convert the panic into a halt, opacity, soft None,
    or a missing report row.
 3. **Recensus per-file terminals** — ``scripts/recensus_enumerate_consumer.py``
    authenticates the panic identity, then emits the exact roster,
@@ -22,7 +22,7 @@ Every other ``except ConstructionPanic`` (or catch via BaseException / bare
 except) under production sources is debt unless the handler body is pure
 re-raise on every path (no soft assignment / continue / return None after
 catch). Production construction, dig, floors, and reports must never convert
-ConstructionPanic into Incomplete or silence.
+ConstructionPanic into a halt or silence.
 
 Exit 1 while R > 0. Missing roots and source read/parse failures are separate
 ``auditor_errors`` and also exit red. No baseline. A named membrane is
@@ -61,7 +61,6 @@ _SOFT_AFTER_CATCH = frozenset(
         "pass",
         "return",
         "append",
-        "Incomplete",
         "halted",
         "resolved_value",
         "recovered",
@@ -509,7 +508,6 @@ def _soft_continue(handler: ast.ExceptHandler) -> bool:
         "return None",
         "\ncontinue",
         "\n        pass",
-        "Incomplete",
         "ExitSet.halted(",
         "append(",
         "resolved_value = None",

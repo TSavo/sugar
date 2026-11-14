@@ -10,7 +10,7 @@ from sugar_lift_py_tests.generator_construction import (
     GeneratorTransitionGapV1,
     YieldEffect,
 )
-from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, Outcome
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -31,20 +31,17 @@ class GeneratorWithSugar(Sugar):
             reason="generator manager mechanics route already-constructed body faces",
         )
 
-    def desugar(self, ctx=None) -> Outcome:
+    def desugar(self, ctx=None) -> ExitSet:
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             prepend_facts_to_exitset,
-        )
-        from sugar_lift_py_tests.sugar.exit_set_routing import (
-            sugar_outcome_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
             reduce_block_to_exitset,
         )
 
-        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
+        manager_es = self.manager.desugar(ctx)
         if not manager_es.exits:
             # No manager face is reachable: the statement completes with an
             # empty record and its tail is unreachable.
@@ -194,19 +191,16 @@ class GeneratorObjectWithSugar(Sugar):
             reason="a generator object at a with head halts before any body face",
         )
 
-    def desugar(self, ctx=None) -> Outcome:
+    def desugar(self, ctx=None) -> ExitSet:
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.generator_object_with_refusal import (
             observed_generator_object_with_refusal,
-        )
-        from sugar_lift_py_tests.sugar.exit_set_routing import (
-            sugar_outcome_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
         refusal = observed_generator_object_with_refusal(self.object_kind)
         blame = str(self.site)
-        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
+        manager_es = self.manager.desugar(ctx)
         exits = []
         for manager_exit in manager_es.exits:
             if isinstance(manager_exit, Halted):
@@ -275,13 +269,10 @@ class NonManagerObjectWithSugar(Sugar):
             reason="a non-manager object at a with head halts before any body face",
         )
 
-    def desugar(self, ctx=None) -> Outcome:
+    def desugar(self, ctx=None) -> ExitSet:
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.manager_protocol_absence_refusal import (
             observed_non_manager_with_refusal,
-        )
-        from sugar_lift_py_tests.sugar.exit_set_routing import (
-            sugar_outcome_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
@@ -289,7 +280,7 @@ class NonManagerObjectWithSugar(Sugar):
             self.type_name, has_enter=self.has_enter, has_exit=self.has_exit
         )
         blame = str(self.site)
-        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
+        manager_es = self.manager.desugar(ctx)
         exits = []
         for manager_exit in manager_es.exits:
             if isinstance(manager_exit, Halted):

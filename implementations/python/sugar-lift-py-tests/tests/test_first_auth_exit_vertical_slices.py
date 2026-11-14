@@ -33,7 +33,7 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     attribute_body_probes,
     _exceptional_exit_effects,
 )
-from sugar_lift_py_tests.outcome import Completed, ExitSet, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
@@ -231,9 +231,7 @@ def test_full_route_consumes_matching_halt(
         tmp_path, family=family, body=body, expected=expected
     )
     outcome = with_node.sugar().desugar()
-    exits = _without_pytest_raises_construction_halts(
-        outcome_to_exitset(outcome).exits
-    )
+    exits = _without_pytest_raises_construction_halts(outcome.exits)
     assert len(exits) == 1, (family, exits)
     assert isinstance(exits[0], Completed), (
         family,
@@ -268,9 +266,7 @@ def test_lying_body_without_matching_halt_fails_expectation(
         tmp_path, family=family, body=body, expected=expected
     )
     outcome = with_node.sugar().desugar()
-    exits = _without_pytest_raises_construction_halts(
-        outcome_to_exitset(outcome).exits
-    )
+    exits = _without_pytest_raises_construction_halts(outcome.exits)
     assert len(exits) == 1
     face = exits[0]
     assert isinstance(face, Halted)

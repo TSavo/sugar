@@ -349,11 +349,7 @@ def _assert_lifecycle_once(sugar, *, shape: str, bind_slot: str | None):
             "through GeneratorWithSugar / protocol enter_resource_outcome"
         )
 
-    exits = getattr(outcome, "exits", None)
-    if exits is None:
-        from sugar_lift_py_tests.outcome import outcome_to_exitset
-
-        exits = outcome_to_exitset(outcome).exits
+    exits = outcome.exits
     assert exits, f"lifecycle produced empty ExitSet for {shape}"
 
     # Guard identities from the multi-face body must survive exit fan-out.
@@ -782,11 +778,7 @@ def test_stack_two_renamed_managers_source_order_enter_reverse_exit(tmp_path: Pa
             "  expected: enter outer then inner once each; exit inner then outer "
             "once each over every body edge; distinct occurrence identities"
         )
-    exits = getattr(outcome, "exits", None)
-    if exits is None:
-        from sugar_lift_py_tests.outcome import outcome_to_exitset
-
-        exits = outcome_to_exitset(outcome).exits
+    exits = outcome.exits
     guard_text = " ".join(str(face.guard) for face in exits)
     for face_id in ("body-completed", "body-returned", "body-halted"):
         assert face_id in guard_text, (

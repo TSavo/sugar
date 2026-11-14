@@ -17,7 +17,7 @@ def _function(source: str):
 
 
 def _returned_int(source: str) -> int:
-    return _function(source).sugar().desugar().value.post().args[1].value
+    return _function(source).sugar().desugar().completed_value().post().args[1].value
 
 
 def test_inner_break_preserves_outer_state_and_does_not_suppress_outer_else() -> None:

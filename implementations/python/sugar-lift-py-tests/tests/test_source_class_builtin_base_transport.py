@@ -41,10 +41,10 @@ def test_source_subclass_transports_its_authenticated_builtin_base() -> None:
         "class Mapping(dict):\n    pass\n\nclass Derived(Mapping):\n    pass\n"
     )
     context = ReduceContext.root(owner="test")
-    base_value = base.sugar().desugar(context).value
+    base_value = base.sugar().desugar(context).completed_value()
     context.temporal = context.temporal.bind_value("Mapping", base_value)
 
-    derived_value = derived.sugar().desugar(context).value
+    derived_value = derived.sugar().desugar(context).completed_value()
 
     assert derived_value.base_classes == (base_value,)
     receiver = derived_value.construct_receiver_state_from_block(None, "receiver")
@@ -58,7 +58,7 @@ def test_class_named_dict_cannot_fabricate_builtin_mapping_semantics() -> None:
         "dict", ClassValue(name="dict", bases=(), record=BlockValue(()))
     )
 
-    value = definition.sugar().desugar(context).value
+    value = definition.sugar().desugar(context).completed_value()
     receiver = value.construct_receiver_state_from_block(None, "receiver")
 
     assert type(receiver) is ObjectValue
@@ -68,7 +68,7 @@ def test_unenrolled_non_dict_base_gains_no_new_capability() -> None:
     (definition,) = _classes("class Sequence(list):\n    pass\n")
     context = ReduceContext.root(owner="test")
 
-    value = definition.sugar().desugar(context).value
+    value = definition.sugar().desugar(context).completed_value()
     receiver = value.construct_receiver_state_from_block(None, "receiver")
 
     assert type(receiver) is ObjectValue
@@ -79,10 +79,10 @@ def test_mixed_source_and_builtin_bases_preserve_positional_roster() -> None:
         "class Local:\n    pass\n\nclass Mixed(Local, dict):\n    pass\n"
     )
     context = ReduceContext.root(owner="test")
-    local_value = local.sugar().desugar(context).value
+    local_value = local.sugar().desugar(context).completed_value()
     context.temporal = context.temporal.bind_value("Local", local_value)
 
-    mixed_value = mixed.sugar().desugar(context).value
+    mixed_value = mixed.sugar().desugar(context).completed_value()
 
     assert mixed_value.base_classes[0] is local_value
     assert type(mixed_value.base_classes[1]) is BuiltinDictClassValue

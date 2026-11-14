@@ -23,7 +23,7 @@ def _constructed(source: str):
     for node in tree.root.body:
         if not isinstance(node, ClassDef):
             continue
-        value = node.sugar().desugar(context).value
+        value = node.sugar().desugar(context).completed_value()
         context.temporal = context.temporal.bind_value(value.class_name, value)
         values.append(value)
     return context, values

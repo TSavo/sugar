@@ -28,7 +28,7 @@ from sugar_lift_py_tests.floor.undetermined_exception_value import (
     UndeterminedExceptionValue,
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_source_tree.nodes import FunctionDef
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
@@ -47,7 +47,7 @@ def _exits(tmp_path: Path, source: str):
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    return outcome_to_exitset(func.sugar().desugar())
+    return func.sugar().desugar()
 
 
 def _try(prelude: str, operation: str, *arms: tuple[str, str]) -> str:

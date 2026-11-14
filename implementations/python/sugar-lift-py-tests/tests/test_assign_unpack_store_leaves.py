@@ -39,8 +39,7 @@ import pytest
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     Halted,
-    outcome_to_exitset,
-    sole_completed_outcome,
+    sole_completed_value,
 )
 from sugar_lift_py_tests.sugar.assign_sugar import (
     MultiAssignSugar,
@@ -75,25 +74,25 @@ def _unpack(tmp_path: Path, source: str, stem: str = "assign_case"):
 
 
 def _outcome(tmp_path: Path, source: str, stem: str = "assign_case"):
-    """The constructed outcome, ALWAYS as an ``ExitSet``.
+    """The constructed outcome, an ``ExitSet``.
 
     A body containing a store no longer reduces to one unconditional exit: the
     store partitions it into a completed arm and one halted arm per store. A
-    body with no store still reduces linearly, and ``outcome_to_exitset`` lifts
-    that to the one-exit set, so every twin below reads the same instrument.
+    body with no store reduces to the one-exit set, so every twin below reads
+    the same instrument.
     """
-    return outcome_to_exitset(_function_sugar(tmp_path, source, stem).desugar(None))
+    return _function_sugar(tmp_path, source, stem).desugar(None)
 
 
 def _completed_value(tmp_path: Path, source: str, stem: str = "assign_case"):
     """The value on the SOLE completed arm.
 
-    ``sole_completed_outcome`` is the sanctioned door: it refuses loudly when a
+    ``sole_completed_value`` is the sanctioned door: it refuses loudly when a
     success face was dropped or duplicated instead of quietly projecting one of
     several. It is not a way to discard the halted arms -- those are read by
     ``_arm_projections`` and asserted per arm.
     """
-    return sole_completed_outcome(_outcome(tmp_path, source, stem)).value
+    return sole_completed_value(_outcome(tmp_path, source, stem))
 
 
 def _record(tmp_path: Path, source: str, stem: str = "assign_case"):
@@ -491,7 +490,7 @@ def test_name_leaf_binding_is_discharged_beside_the_store_effect(
 PURE_NAME_SHAPES = (
     (
         "def f(p, q):\n    a, b = p, q\n    return a\n",
-        "226ca945216c831f574a9b28697fc4f1",  # MultiAssignSugar + Complete
+        "226ca945216c831f574a9b28697fc4f1",  # MultiAssignSugar + ExitSet face
     ),
     (
         "def f(p, q, r):\n    a, b, c = p, q, r\n    return a\n",
@@ -499,7 +498,7 @@ PURE_NAME_SHAPES = (
     ),
     (
         "def f(p):\n    x = y = p\n    return x\n",
-        "821c4398b70779143e38f47459ea4be3",  # ChainedAssignSugar + Complete
+        "821c4398b70779143e38f47459ea4be3",  # ChainedAssignSugar + ExitSet face
     ),
 )
 
@@ -507,7 +506,7 @@ PURE_NAME_SHAPES = (
 def _shape_fingerprint(tmp_path: Path, source: str, stem: str) -> str:
     sugar = _function_sugar(tmp_path, source, stem)
     # Pure-name MultiAssign/ChainedAssign are inert at desugar; pin the sugar
-    # roster and each assign statement's own Complete face only.
+    # roster and each assign statement's own completed face only.
     assign_faces = []
     for stmt in sugar.statements:
         if type(stmt).__name__ in (

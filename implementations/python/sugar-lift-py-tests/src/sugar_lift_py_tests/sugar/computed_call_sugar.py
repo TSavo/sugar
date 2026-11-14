@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -91,12 +91,12 @@ class ComputedCallSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         return self.callee.desugar(ctx).and_then(
             lambda callee: self._collect(callee, self.args, (), ctx)
         )
 
-    def _collect(self, callee, remaining: tuple, accumulated: tuple, ctx) -> Outcome:
+    def _collect(self, callee, remaining: tuple, accumulated: tuple, ctx) -> ExitSet:
         if remaining:
             head, *rest = remaining
             return head.desugar(ctx).and_then(
@@ -108,7 +108,7 @@ class ComputedCallSugar(ConstructedTermSugar):
 
     def _collect_kwargs(
         self, callee, remaining: tuple, kw_values: tuple, positional: tuple, ctx
-    ) -> Outcome:
+    ) -> ExitSet:
         if remaining:
             (name, sugar), *rest = remaining
             return sugar.desugar(ctx).and_then(
@@ -140,7 +140,7 @@ class ComputedCallSugar(ConstructedTermSugar):
             *(value for _name, value in kw_values),
         )
 
-    def _call(self, callee, positional: tuple, kw_values: tuple, ctx) -> Outcome:
+    def _call(self, callee, positional: tuple, kw_values: tuple, ctx) -> ExitSet:
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
 

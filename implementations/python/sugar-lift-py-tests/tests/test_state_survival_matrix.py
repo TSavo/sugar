@@ -88,7 +88,7 @@ from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset, true_guard
+from sugar_lift_py_tests.outcome.exit_set import true_guard
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import (
@@ -472,7 +472,7 @@ def test_d_free_dual_store_later_halt_retains_prior_store_in_state() -> None:
     )
     tree = _tree(source, "free_dual_store.py")
     fn = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    outcome = outcome_to_exitset(fn.sugar().desugar(None))
+    outcome = fn.sugar().desugar(None)
     halted = [e for e in outcome.exits if isinstance(e, Halted)]
     completed = [e for e in outcome.exits if isinstance(e, Completed)]
     assert len(halted) == 1

@@ -416,7 +416,7 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     2. Formal setitem store leaf mints discharge coordinates (receiver, index,
        value); a lying twin with swapped index/value slots is distinguishable.
     3. A formal missing from discharge actuals is the typed SugarNotWritten
-       undischarged refusal — never a silent Complete.
+       undischarged refusal — never a silent completion.
     """
     from types import SimpleNamespace
 
@@ -499,13 +499,13 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     assert lying.demand.operand_coordinate_cids != cids
     with pytest.raises(AssertionError):
         assert lying.demand.operand_coordinate_cids == cids
-    # Missing formals → typed undischarged refusal, never Complete.
+    # Missing formals → typed undischarged refusal, never a completion.
     with pytest.raises(
         SugarNotWritten, match="authenticated caller actual absent"
     ) as missing:
         projected.discharge(None, {})
     assert "cid:a" in str(missing.value)
-    # Lying twin: claiming missing actuals greened a Complete is impossible.
+    # Lying twin: claiming missing actuals greened a completion is impossible.
     with pytest.raises(SugarNotWritten, match="authenticated caller actual absent"):
         out = projected.discharge(None, {})
         assert out.completed_value() is not None

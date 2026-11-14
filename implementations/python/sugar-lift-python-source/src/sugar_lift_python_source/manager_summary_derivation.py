@@ -44,7 +44,7 @@ from sugar_lift_py_tests.floor.branch_result_coordinate import (
     resolve_branch_result_guards as _resolve_branch_result_guards,
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
-from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
 from .canonical import cid_of_json
 from .manager_protocol_construction import (
@@ -450,7 +450,7 @@ def derive_manager_summary(
     from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
 
     try:
-        enter = outcome_to_exitset(protocol.enter_outcome())
+        enter = protocol.enter_outcome()
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "enter"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
@@ -466,6 +466,13 @@ def derive_manager_summary(
             "enter-may-halt",
             protocol.protocol_construction_cid,
             f"{owner}:{observed}",
+        )
+    if not isinstance(enter, ExitSet):
+        # An undischarged native-operation demand is not an enter face.
+        return DerivedManagerSummaryGapV1(
+            "enter-may-halt",
+            protocol.protocol_construction_cid,
+            f"{type(enter).__name__} is not an ExitSet",
         )
     enter_completion = TotalCompletionV1()
     enter_halted = tuple(face for face in enter.exits if not isinstance(face, Completed))
@@ -541,7 +548,7 @@ def derive_manager_summary(
             return _sealed_summary(
                 protocol, semantics, _signature_for_behavior(behavior, semantics)
             )
-        exit_ = outcome_to_exitset(exit_outcome)
+        exit_ = exit_outcome
     except ConstructionPanic as panic:
         owner = getattr(getattr(panic, "info", None), "owner", None) or "exit"
         observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
@@ -557,6 +564,14 @@ def derive_manager_summary(
             "exit-may-halt",
             protocol.protocol_construction_cid,
             f"{owner}:{observed}",
+        )
+    if not isinstance(exit_, ExitSet):
+        # An undischarged native-operation demand that is not the admitted
+        # exit-value lookup above is not an exit face.
+        return DerivedManagerSummaryGapV1(
+            "exit-may-halt",
+            protocol.protocol_construction_cid,
+            f"{type(exit_).__name__} is not an ExitSet",
         )
     boundary = (
         _derive_effect_boundary(exit_, protocol, behavior) if boundary_door else None
@@ -1044,11 +1059,10 @@ def _derive_boundary_for_receiver(protocol, behavior, receiver):
         return _derive_effect_boundary_from_deferred_carrier(
             exit_outcome, specialized, behavior, receiver=receiver
         )
-    try:
-        exit_ = outcome_to_exitset(exit_outcome)
-    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten, SourceCallBindingGap):
+    if not isinstance(exit_outcome, ExitSet):
+        # Any other undischarged native-operation demand is not an exit face.
         return None
-    return _derive_effect_boundary(exit_, specialized, behavior)
+    return _derive_effect_boundary(exit_outcome, specialized, behavior)
 
 
 def _derive_factored_effect_boundary(protocol, behavior):
@@ -1636,7 +1650,7 @@ def _signature_for_behavior(behavior, semantics):
         default = NoDefaultV1()
         sort = PrimitiveSort("String" if index == message_index else "Value")
         if default_sugar is not None:
-            outcome = outcome_to_exitset(default_sugar.desugar())
+            outcome = default_sugar.desugar()
             constructed = outcome.completed_value()
             # A signature default has no arm to carry an owed item on: an
             # owing default is not constructed completely here.
@@ -2433,7 +2447,7 @@ def _constructor_application_from_spread(call_sugar, reduce_ctx):
     from sugar_lift_py_tests.outcome.exit_set import true_guard
     from sugar_source_tree.panic import SugarNotWritten
 
-    outcome = outcome_to_exitset(call_sugar.desugar(reduce_ctx))
+    outcome = call_sugar.desugar(reduce_ctx)
     value = outcome.completed_value()
     bound = getattr(value, "bound_source_actuals", None)
     if not isinstance(value, CallSiteValue) or bound is None:
@@ -2570,10 +2584,10 @@ def _receiver_from_constructor_outcome(outcome):
         if isinstance(value, CallSiteValue):
             retained = value.retained_source_completion_outcome()
             if retained is not None:
-                return outcome_to_exitset(retained).completed_value()
+                return retained.completed_value()
         return value
 
-    exits = outcome_to_exitset(outcome)
+    exits = outcome
     completed = exits.completed_value()
     # A bare receiver has no arm to carry an owed item on: an owing face
     # stays a face of the partition, which keeps it.
@@ -2693,7 +2707,7 @@ def _read_same_module_class_head(
 
     target_symbol = f"python:local:{class_def.name}"
     try:
-        class_outcome = outcome_to_exitset(class_def.sugar().desugar(reduce_ctx))
+        class_outcome = class_def.sugar().desugar(reduce_ctx)
         class_value = class_outcome.completed_value()
         if type(class_value) is not ClassDefinitionValue:
             _install_local_derivation_gap(
@@ -2704,7 +2718,7 @@ def _read_same_module_class_head(
                 type(class_outcome).__name__,
             )
             return
-        application = outcome_to_exitset(collect_application(call.sugar()))
+        application = collect_application(call.sugar())
         application_value = application.completed_value()
         # The manager behavior built from these actuals has no arm to
         # carry an owed item on: an owing application is not constructed.
@@ -2717,8 +2731,7 @@ def _read_same_module_class_head(
         result_outcome = class_value.callable_application_with(
             application_value, reduce_ctx
         )
-        result_exits = outcome_to_exitset(result_outcome)
-        result = _receiver_from_constructor_outcome(result_exits)
+        result = _receiver_from_constructor_outcome(result_outcome)
         if isinstance(result, ObjectValue):
             if not _owned_by_class(result, class_value):
                 _install_local_derivation_gap(
@@ -3144,14 +3157,14 @@ def _module_returned_by_call(call) -> str | None:
     """
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
+    from sugar_lift_py_tests.outcome import Completed
     from sugar_lift_py_tests.source_call_resolution import module_value_name
     from sugar_lift_py_tests.temporal import builtin_name_temporal
     from sugar_source_tree.panic import SugarNotWritten
 
     ctx = ReduceContext(temporal=builtin_name_temporal())
     try:
-        exits = outcome_to_exitset(call.sugar().desugar(ctx)).exits
+        exits = call.sugar().desugar(ctx).exits
     except (SugarNotWritten, TypeError):
         return None
     values = []

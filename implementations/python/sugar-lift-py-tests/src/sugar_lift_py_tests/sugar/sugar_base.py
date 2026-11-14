@@ -5,7 +5,7 @@ from dataclasses import fields, is_dataclass
 import inspect
 from typing import Any, Callable, ClassVar, List, cast
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnesses
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -95,8 +95,8 @@ class Sugar(ABC):
         """The truthful/lying twin pair that proves this sugar discriminates."""
 
     @abstractmethod
-    def desugar(self, ctx: object = None) -> Outcome:
-        """Reduce this sugar to an Outcome, recursively desugaring its body
+    def desugar(self, ctx: object = None) -> ExitSet:
+        """Reduce this sugar to an ExitSet, recursively desugaring its body
         sugars. The one semantic verb; a sugar constructed with sugar."""
 
     def walk_children(self) -> tuple[SugarBody, ...]:

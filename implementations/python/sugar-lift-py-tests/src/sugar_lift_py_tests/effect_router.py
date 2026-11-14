@@ -9,26 +9,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from sugar_lift_py_tests.context_manager_contract import (
-    Contract,
-    EffectMatcher,
-    Expects,
-    NeverSuppresses,
-    RuntimeSelected,
-    Suppresses,
-)
+from sugar_lift_py_tests.context_manager_contract import EffectMatcher
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
-from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
-from sugar_lift_py_tests.ir import atomic, ctor, eq, str_const
+from sugar_lift_py_tests.ir import ctor, eq, str_const
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
-
-_EFFECT_ABSENT_NAME = "py.effect.none"
-_EFFECT_EXPECTED_OBLIGATION = "py.effect.expected"
 
 
 @dataclass(frozen=True)
@@ -51,10 +40,6 @@ class ObservedEffectBinding(FloorValue):
         """
         del formula
         return self
-
-
-class RuntimeSelectedReachedRouter(RuntimeError):
-    """Raised when a ``RuntimeSelected`` contract reaches ``route``."""
 
 
 class EmptyExceptStarRegroup(RuntimeError):
@@ -363,15 +348,6 @@ def _first_effect_of_kind(entries: tuple, kind: str):
     return None
 
 
-def _has_unresolved_call_coordinates(entries: tuple) -> bool:
-    for entry in entries:
-        if isinstance(entry, CallSiteValue):
-            return True
-        if isinstance(entry, InvValue) and entry.operand_callsites:
-            return True
-    return False
-
-
 def _binding_for_slot(slot_id: str | None, observed) -> tuple:
     if slot_id is None or observed is None:
         return ()
@@ -383,107 +359,6 @@ def _binding_for_slot(slot_id: str | None, observed) -> tuple:
             type_name=type_name,
             effect=effect,
         ),
-    )
-
-
-def _route_expects(
-    entries: tuple,
-    matcher: EffectMatcher,
-    *,
-    slot_id: str | None = None,
-    site=None,
-) -> RoutedOutcome:
-    matching = _matching_effect(entries, matcher)
-    if matching is not None:
-        index, _entry, observation = matching
-        observed = str_const(observation[1])
-        facts = [InvValue(eq(str_const(matcher.name), observed), site=site)]
-        for obligation in matcher.payload_obligations:
-            message = observation[2]
-            message_term = observed if message is None else str_const(message)
-            facts.append(
-                InvValue(
-                    atomic(
-                        "py.effect.message_matches",
-                        [message_term, str_const(obligation.pattern)],
-                    ),
-                    site=site,
-                )
-            )
-        bindings = _binding_for_slot(slot_id, observation)
-        binding_facts = tuple(f for b in bindings for f in b.to_facts(site=site))
-        remaining = entries[:index] + entries[index + 1 :]
-        all_facts = (*facts, *binding_facts)
-        return RoutedOutcome(
-            entries=(*remaining, *all_facts),
-            stated_facts=all_facts,
-            bindings=bindings,
-        )
-
-    wrong = _first_effect_of_kind(entries, matcher.kind)
-    if wrong is not None:
-        _, _entry, observation = wrong
-        fact = InvValue(
-            eq(str_const(matcher.name), str_const(observation[1])), site=site
-        )
-        # Wrong path: slot not authenticated (no binding).
-        return RoutedOutcome(entries=(*entries, fact), stated_facts=(fact,))
-
-    if _has_unresolved_call_coordinates(entries):
-        operands = [str_const(matcher.name)] + [
-            str_const(o.pattern) for o in matcher.payload_obligations
-        ]
-        obligation = InvValue(atomic(_EFFECT_EXPECTED_OBLIGATION, operands), site=site)
-        return RoutedOutcome(entries=(*entries, obligation), stated_facts=(obligation,))
-
-    fact = InvValue(
-        eq(str_const(matcher.name), str_const(_EFFECT_ABSENT_NAME)), site=site
-    )
-    return RoutedOutcome(entries=(*entries, fact), stated_facts=(fact,))
-
-
-def _route_suppresses(
-    entries: tuple, matcher: EffectMatcher, *, slot_id: str | None = None, site=None
-) -> RoutedOutcome:
-    del site
-    matching = _matching_effect(entries, matcher)
-    if matching is None:
-        return RoutedOutcome(entries=entries)
-    index, _entry, observation = matching
-    remaining = entries[:index] + entries[index + 1 :]
-    # Suppresses consumes; as-binding is not a Suppresses surface (tree stays loud).
-    del slot_id, observation
-    return RoutedOutcome(entries=remaining)
-
-
-def route(
-    entries: tuple,
-    contract: Contract,
-    *,
-    slot_id: str | None = None,
-    site=None,
-) -> RoutedOutcome:
-    """Route once. Optional ``slot_id`` receives EffectBinding testimony on match."""
-    if isinstance(contract, Expects):
-        return _route_expects(entries, contract.matcher, slot_id=slot_id, site=site)
-    if isinstance(contract, Suppresses):
-        return _route_suppresses(entries, contract.matcher, slot_id=slot_id, site=site)
-    if isinstance(contract, NeverSuppresses):
-        return RoutedOutcome(entries=entries)
-    if isinstance(contract, RuntimeSelected):
-        raise RuntimeSelectedReachedRouter(
-            "effect_router.route reached with RuntimeSelected: the caller "
-            "must keep a runtime-selected exit loud before routing, never "
-            "let it arrive here for the router to guess a policy"
-        )
-    from sugar_lift_py_tests.gap.panic import construction_panic_gap
-
-    construction_panic_gap(
-        owner="effect_router.route",
-        blame=site if site is not None else "effect_router.route",
-        observed=f"context-manager contract species {type(contract).__name__} has no route arm",
-        requested="Expects | Suppresses | NeverSuppresses (RuntimeSelected must not reach the router)",
-        fix=f"write route arm for {type(contract).__name__} or keep it loud before routing",
     )
 
 

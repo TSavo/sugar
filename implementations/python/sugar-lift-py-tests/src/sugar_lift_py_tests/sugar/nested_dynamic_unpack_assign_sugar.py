@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
@@ -65,7 +65,7 @@ class NestedDynamicUnpackAssignSugar(Sugar):
             wrong_reason_needle="exactly 4 members",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         if self.evaluation is None:
             return self.value.desugar(ctx).and_then(
                 lambda value: self._project(value, self.pattern, ctx)
@@ -80,7 +80,7 @@ class NestedDynamicUnpackAssignSugar(Sugar):
 
     def _project(
         self, value: Any, pattern: tuple[NameUnpackPattern, ...], ctx: object
-    ) -> Outcome:
+    ) -> ExitSet:
         from sugar_lift_py_tests.operations.sequence_projection_operation import (
             SequenceProjectionOperation,
         )
@@ -112,7 +112,7 @@ class NestedDynamicUnpackAssignSugar(Sugar):
         members: tuple[Any, ...],
         pattern: tuple[NameUnpackPattern, ...],
         ctx: object,
-    ) -> Outcome:
+    ) -> ExitSet:
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,
@@ -120,7 +120,7 @@ class NestedDynamicUnpackAssignSugar(Sugar):
 
         collected: list[tuple[str, Any]] = []
 
-        def step(index: int) -> Outcome:
+        def step(index: int) -> ExitSet:
             if index == len(pattern):
                 return ExitSet.completed(ScopeRebinds(tuple(collected)))
             part = pattern[index]
@@ -150,7 +150,7 @@ class NestedDynamicUnpackAssignSugar(Sugar):
 
     def _runtime_nested(
         self, value: Any, pattern: tuple[NameUnpackPattern, ...]
-    ) -> Outcome:
+    ) -> ExitSet:
         from sugar_lift_py_tests.effect import (
             SequenceUnpackRuntimeEffect,
             runtime_effect_evidence_from_terms,

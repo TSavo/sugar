@@ -142,7 +142,7 @@ def test_bounded_while_break_skips_else_with_exact_post_state():
     )
     substituted = _function(source).substitute({})
     assert not any(node.kind in {"While", "Break"} for node in substituted.walk())
-    post = _function(source).sugar().desugar().value.post()
+    post = _function(source).sugar().desugar().completed_value().post()
     assert post.args[1].value == 2
 
 

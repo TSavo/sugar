@@ -22,7 +22,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.generator_manager_exit import observed_exit_refusals
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.sugar.generator_with_sugar import GeneratorWithSugar
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import With
@@ -99,7 +99,7 @@ def _exits(tmp_path: Path, source: str):
 
 def _faces(sugar):
     # GeneratorWithSugar hands back its own faces (#7826).
-    return outcome_to_exitset(sugar.desugar())
+    return sugar.desugar()
 
 
 def _halts(exits):
@@ -169,7 +169,7 @@ def _function_rows(source_file, with_node):
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
     rows = []
-    for face in outcome_to_exitset(func.sugar().desugar()).exits:
+    for face in func.sugar().desugar().exits:
         if isinstance(face, Halted):
             rows.append(("halt", getattr(face.effect, "exception_name", None)))
             continue

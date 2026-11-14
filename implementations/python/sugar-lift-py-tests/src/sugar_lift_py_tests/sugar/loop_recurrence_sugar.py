@@ -157,7 +157,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             from sugar_lift_py_tests.operations.iterator_operation import (
                 IteratorOperation,
             )
-            from sugar_lift_py_tests.outcome import outcome_to_exitset
             from sugar_lift_py_tests.temporal import bind_temporal
 
             from dataclasses import replace
@@ -180,7 +179,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 initial = sugar.desugar(runtime_ctx)
                 if isinstance(initial, NativeOperationExitCarrierV1):
                     return initial
-                initial = outcome_to_exitset(initial)
                 initial_value = initial.completed_value()
                 # Only one unconditional value owing nothing is bound and
                 # carried on; any other shape (a halt, several faces, an arm
@@ -303,16 +301,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from dataclasses import replace
 
         from sugar_lift_py_tests.operations.next_operation import NextOperation
-        from sugar_lift_py_tests.outcome import outcome_to_exitset
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
         from sugar_lift_py_tests.temporal import bind_temporal
 
-        outcome = outcome_to_exitset(
-            NextOperation(owner="LoopRecurrenceSugar", blame=self.site).submit(
-                iterator, ctx
-            )
+        outcome = NextOperation(owner="LoopRecurrenceSugar", blame=self.site).submit(
+            iterator, ctx
         )
         if outcome.exits and outcome.halts() == outcome.exits:
             effect = outcome.exits[0].effect
@@ -387,7 +382,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # consumed and continues, any other halt leaves the loop as it is. The
         # first iteration's faces are never the loop's outcome.
         def after_halt(halt):
-            following = self._after_loop_control(
+            return self._after_loop_control(
                 halt,
                 next_result,
                 runtime,
@@ -395,14 +390,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 entries=entries,
                 index=index,
             )
-            return None if following is None else outcome_to_exitset(following)
 
         if len(body.exits) != 1:
             return body.sequence(
-                lambda state: outcome_to_exitset(
-                    self._after_iteration_state(
-                        state, next_result, runtime, entries=entries, index=index
-                    )
+                lambda state: self._after_iteration_state(
+                    state, next_result, runtime, entries=entries, index=index
                 ),
                 consume=after_halt,
             )
@@ -591,7 +583,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             PositionalUnpackOperation,
             UnpackMemberRoster,
         )
-        from sugar_lift_py_tests.outcome import outcome_to_exitset
         from sugar_source_tree.nodes import List, Name, Tuple_
 
         coordinates = {
@@ -612,7 +603,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 owner="LoopRecurrenceSugar.target",
                 blame=target.fragment,
             )
-            unpacked = outcome_to_exitset(operation.submit(current, ctx))
+            unpacked = operation.submit(current, ctx)
             if unpacked.exits and unpacked.halts() == unpacked.exits:
                 return unpacked
             roster = unpacked.completed_value()
@@ -756,9 +747,8 @@ def _outward_face_partition(outcome, face, *, guarded=False):
     block entry, each halt keeps the face's state."""
     from sugar_lift_py_tests.floor.block_value import BlockValue
     from sugar_lift_py_tests.outcome import Completed, Halted
-    from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
-    exits = outcome_to_exitset(outcome)
+    exits = outcome
     if guarded:
         exits = exits.guarded(face.guard)
     partition = []

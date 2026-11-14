@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import ClassVar
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -40,12 +40,12 @@ class AttributeDeleteEffectSugar(Sugar):
     def witnesses(cls):
         return ()
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self._delete(receiver, ctx)
         )
 
-    def _delete(self, receiver, ctx) -> Outcome:
+    def _delete(self, receiver, ctx) -> ExitSet:
         formal_coordinate = getattr(receiver, "formal_coordinate", None)
         if formal_coordinate is not None:
             # Undischarged demand awaiting caller actuals — not a refusal.
@@ -141,14 +141,14 @@ class SubscriptDeleteEffectSugar(Sugar):
     def witnesses(cls):
         return ()
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.index.desugar(ctx).and_then(
                 lambda index: self._delete(receiver, index, ctx)
             )
         )
 
-    def _delete(self, receiver, index, ctx) -> Outcome:
+    def _delete(self, receiver, index, ctx) -> ExitSet:
         coordinates = tuple(
             getattr(operand, "formal_coordinate", None) for operand in (receiver, index)
         )

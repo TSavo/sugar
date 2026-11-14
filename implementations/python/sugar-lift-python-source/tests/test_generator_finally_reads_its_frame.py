@@ -16,7 +16,7 @@ from __future__ import annotations
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import FunctionDef
 
@@ -42,7 +42,7 @@ def _exits(tmp_path):
     func = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    return outcome_to_exitset(func.sugar().desugar()).exits
+    return func.sugar().desugar().exits
 
 
 def test_printoptions_cleanup_reads_the_frame(tmp_path):

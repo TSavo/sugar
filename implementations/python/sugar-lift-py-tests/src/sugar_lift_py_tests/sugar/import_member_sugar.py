@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_python_source.canonical import cid_of_json
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -51,7 +51,7 @@ class ImportMemberSugar(ConstructedTermSugar):
             reason="projects one import-bound export coordinate from lexical authority",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         del ctx
         from sugar_lift_py_tests.floor.import_member_value import (
             _mint_import_member_value,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -23,7 +23,7 @@ class ReceiverFieldStoreSugar(Sugar):
             reason="initializer state is testimony from already-constructed children",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.receiver_field_store_value import (
             ReceiverFieldStoreValue,
         )

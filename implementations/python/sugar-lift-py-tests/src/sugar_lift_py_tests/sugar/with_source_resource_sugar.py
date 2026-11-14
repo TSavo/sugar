@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -41,11 +41,11 @@ class WithSourceResourceSugar(Sugar):
     def witnesses(cls):
         return ()
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         return _route_manager_faces(self, ctx)
 
 
-def _route_manager_faces(resource, ctx: object = None) -> Outcome:
+def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
     """Enter every manager face under its guard; union the exits (8.5).
 
     The enter runs beneath its manager face and the body beneath its enter
@@ -53,16 +53,12 @@ def _route_manager_faces(resource, ctx: object = None) -> Outcome:
     face's guard and faces and owes what the face owes. The exit routing
     carries a body face's debts onto every arm it leaves through.
     """
-    from sugar_lift_py_tests.outcome import outcome_to_exitset
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+    from sugar_lift_py_tests.outcome.exit_set import Halted
     from sugar_lift_py_tests.outcome.resource_bindings import (
         EnterResultBinding,
         ExitFaceBinding,
         ManagerBinding,
         prepend_facts_to_exitset,
-    )
-    from sugar_lift_py_tests.sugar.exit_set_routing import (
-        sugar_outcome_to_exitset,
     )
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
@@ -70,7 +66,7 @@ def _route_manager_faces(resource, ctx: object = None) -> Outcome:
 
     # A manager call coordinate is not its returned receiver. Perform its
     # source outcome once, preserving exceptional faces before enter.
-    manager_es = sugar_outcome_to_exitset(resource.manager.desugar(ctx)).sequence(
+    manager_es = resource.manager.desugar(ctx).sequence(
         lambda value: _project_manager_receiver(value, ctx)
     )
     parts = []
@@ -82,9 +78,7 @@ def _route_manager_faces(resource, ctx: object = None) -> Outcome:
             resource.manager_slot_id, manager_face.value
         ).to_facts(site=resource.site)
         enter_es = ExitSet((manager_face,)).sequence(
-            lambda manager: outcome_to_exitset(
-                resource.protocol.enter_resource_outcome_for(manager, ctx)
-            )
+            lambda manager: resource.protocol.enter_resource_outcome_for(manager, ctx)
         )
         for enter_face in enter_es.exits:
             if isinstance(enter_face, Halted):
@@ -106,13 +100,11 @@ def _route_manager_faces(resource, ctx: object = None) -> Outcome:
             abstract_exit = (
                 None
                 if concrete_exit is not None
-                else outcome_to_exitset(
-                    resource.protocol.exit_outcome_for(entered, ctx)
-                )
+                else resource.protocol.exit_outcome_for(entered, ctx)
             )
             for body_face in body_es.exits:
                 exit_es = (
-                    outcome_to_exitset(concrete_exit(entered, body_face, ctx))
+                    concrete_exit(entered, body_face, ctx)
                     if concrete_exit is not None
                     else abstract_exit
                 )
@@ -191,8 +183,6 @@ def _project_manager_receiver(value, ctx, seen=frozenset()):
     floor projects its own retained completion; only the fixed-point receiver
     reaches enter. ExitSet sequencing keeps every exceptional/guarded face.
     """
-    from sugar_lift_py_tests.outcome import outcome_to_exitset
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_source_tree.panic import SugarNotWritten
 
     if id(value) in seen:
@@ -213,7 +203,7 @@ def _project_manager_receiver(value, ctx, seen=frozenset()):
     projected = value.project_operation_receiver_outcome(
         ctx, owner="WithSourceResourceSugar.manager"
     )
-    return outcome_to_exitset(projected).sequence(
+    return projected.sequence(
         lambda receiver: (
             ExitSet.completed(receiver)
             if receiver is value

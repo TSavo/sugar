@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -58,7 +58,7 @@ class SliceSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # Bounds are ordinary operands evaluated **left-to-right**: lower, then
         # upper, then step.  A lower-bound halt must not evaluate upper/step
         # (Python source order).  Collection ``_reduce_into`` eagerly maps
@@ -72,7 +72,7 @@ class SliceSugar(ConstructedTermSugar):
         positions = (self.lower, self.upper, self.step)
         # Seed: no bounds reduced yet.  Each present bound desugars only after
         # the prior outcome continues (its completed arms).
-        outcome: Outcome = ExitSet.completed(())
+        outcome: ExitSet = ExitSet.completed(())
         for bound in positions:
             if bound is None:
                 # Omitted position: Python fills None; do not desugar.

@@ -691,10 +691,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     from sugar_lift_py_tests import tree_enumerate as _tree
     from sugar_lift_py_tests import unanswered_calls as _unanswered
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.outcome import (
-        NativeOperationExitCarrierV1,
-        outcome_to_exitset,
-    )
+    from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
     from sugar_source_tree.panic import SugarNotWritten
 
     global _RETAINED_LINK_UNITS, _RETAINED_BY_MEMENTO
@@ -726,7 +723,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
             # deferred carrier or any other arm set enrolls nothing.
             if isinstance(outcome, NativeOperationExitCarrierV1):
                 continue
-            universe = outcome_to_exitset(outcome).completed_value()
+            universe = outcome.completed_value()
             if not isinstance(universe, UniverseValue):
                 continue
             def_memento_dto = _tree.function_def_memento(fn, file_rel)

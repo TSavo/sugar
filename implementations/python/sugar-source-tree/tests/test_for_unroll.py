@@ -153,7 +153,7 @@ def test_jump_bearing_body_unrolls_with_exact_break_exit():
     # The controlled unroll consumes break at its owning loop.  It must not
     # duplicate the jump or apply later elements: Python's exact post is 1.
     src = "def A():\n    t = 0\n    for x in [1, 2, 3]:\n        t = t + x\n        break\n    return t\n"
-    post = _fn(src).sugar().desugar().value.post()
+    post = _fn(src).sugar().desugar().completed_value().post()
     assert post.args[1].value == 1
 
 

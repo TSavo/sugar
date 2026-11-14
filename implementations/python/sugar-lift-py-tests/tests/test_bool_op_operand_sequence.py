@@ -18,7 +18,7 @@ from sugar_lift_py_tests.floor import FloorValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.ground_exit import ground_type_error
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
-from sugar_lift_py_tests.outcome import ExitSet, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -100,7 +100,7 @@ def _truth(value: bool):
 
 
 def _completed_value(outcome):
-    exits = outcome_to_exitset(outcome).exits
+    exits = outcome.exits
     assert len(exits) == 1
     face = exits[0]
     assert not isinstance(face, Halted)
@@ -243,7 +243,7 @@ def test_halted_left_truth_test_propagates_and_never_reaches_right() -> None:
         _Site(),
     ).desugar()
 
-    exits = outcome_to_exitset(result).exits
+    exits = result.exits
     assert evaluations == ["left"]
     assert truth_calls == ["left"]
     assert len(exits) == 1

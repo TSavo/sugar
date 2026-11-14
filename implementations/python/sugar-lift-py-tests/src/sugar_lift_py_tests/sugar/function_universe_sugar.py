@@ -25,7 +25,6 @@ from sugar_lift_py_tests.outcome import (
     Completed,
     ExitSet,
     Halted,
-    Outcome,
     true_guard,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -483,7 +482,7 @@ class FunctionUniverseSugar(Sugar):
             lying=prefix + "def test_a():\n    assert A(2) == 3\n",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         # The body was already SUBSTITUTED (FunctionDef.sugar): ordinary
         # formals stay free Vars; as-bindings are EffectRef/ObservationRef
         # coordinates.  A class-owned initializer additionally carries one

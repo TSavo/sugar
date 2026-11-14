@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -188,7 +188,7 @@ class ComprehensionSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         if not self.generators:
             raise ValueError("comprehension recurrence requires a generator")
         return self._desugar_generators(0, (), ctx, writes=(), outer=ctx)
@@ -367,7 +367,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         try:
             # Probe the sole context-replacement capability the projection
             # needs BEFORE entering the recursion. Inside ``project`` a failure
-            # would have to travel back through ``Outcome.and_then``, which is
+            # would have to travel back through ``ExitSet.and_then``, which is
             # exactly how this cause used to be laundered into a bare ``None``.
             replace(ctx, temporal=ctx.temporal)
         except TypeError:
@@ -495,7 +495,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         sifted = self._sifted_members(generator, members, ctx)
         if sifted is None:
             return NotProjected(FiniteProjectionNonSuccessV1.LAWFULLY_INAPPLICABLE)
-        # Outcome.and_then owns terminal/guarded propagation. Every constructed
+        # ExitSet.and_then owns terminal/guarded propagation. Every constructed
         # outcome propagates unchanged through its own continuation law and is
         # TRANSPORTED by ``Projected`` -- which is not a non-success cause.
         return Projected(project(0, (), (), final_ctx))
@@ -796,7 +796,7 @@ class ComprehensionSugar(ConstructedTermSugar):
 
         return generator.filters[filter_index].desugar(ctx).and_then(after_guard)
 
-    def _complete(self, resolved, element, key=None, *, writes, outer) -> Outcome:
+    def _complete(self, resolved, element, key=None, *, writes, outer) -> ExitSet:
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
         from sugar_lift_py_tests.floor.named_expression_value import (
             carry_walrus_binds,

@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import ClassVar
 
-from sugar_lift_py_tests.outcome import ExitSet, Outcome
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 
 
@@ -117,7 +117,7 @@ class BuiltinContainerCallSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
         )
@@ -189,7 +189,7 @@ class BuiltinContainerProjectionSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
         )
@@ -230,7 +230,7 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         del ctx
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -262,7 +262,7 @@ class ContainerMutationStatementSugar(Sugar):
             "the mutation is read through the receiver's post-state",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.sugar.assigned_value import (
             evaluate_assignment_values,
         )
@@ -333,7 +333,7 @@ class PathContainerCallSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.context import ReduceContext
         from sugar_lift_py_tests.floor import builtin_container_method as law
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
@@ -550,7 +550,7 @@ class PathAfterCallSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
         )
@@ -566,7 +566,7 @@ class PathAfterCallSugar(ConstructedTermSugar):
         # carried rides the read, never stands in for the pair.
         return consume_operands(lambda pair: self._after(pair, unknown, ctx), pair)
 
-    def _after(self, pair, unknown, ctx) -> Outcome:
+    def _after(self, pair, unknown, ctx) -> ExitSet:
         from sugar_lift_py_tests.floor import builtin_container_method as law
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -621,7 +621,7 @@ class SourceCallActualAfterSugar(ConstructedTermSugar):
             symbol_kind="coordinate",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.floor_value import FloorValue
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             plain_completed_value,

@@ -377,7 +377,7 @@ def production_native_operation_operators() -> frozenset[str]:
     * ``_BINARY_OPERATOR_COORDINATE`` keys (``operator=owner`` formal binary path)
     * ``COMPARE_METHODS`` values (``operator=method`` formal ordering path)
     * contracted store operators whose producers pin the mint shape for this
-      table even when the live store path still carries dual-face Incomplete
+      table even when the live store path still carries dual-face halted
       instrumentation (``setitem`` window 10876, ``setattr_named`` window 17534)
 
     The projector table's key set must equal this set exactly, both directions.
@@ -848,7 +848,6 @@ class NativeOperationExitCarrierV1:
         share one authenticated demand; different demands are not mergeable.
         """
         from sugar_lift_py_tests.outcome import ExitSet, Halted
-        from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 
         resolved = []
         deferred = []
@@ -860,8 +859,6 @@ class NativeOperationExitCarrierV1:
             if isinstance(following, cls):
                 deferred.append((prefix_exit, following))
                 continue
-            if not isinstance(following, ExitSet):
-                following = outcome_to_exitset(following)
             sequenced = ExitSet((prefix_exit,)).sequence(
                 lambda _value, *, exits=following: exits
             )
@@ -961,15 +958,12 @@ class NativeOperationExitCarrierV1:
         )
         from sugar_lift_py_tests.outcome.exit_set import (
             _is_true,
-            outcome_to_exitset,
         )
 
         def apply_exitset_step(projected, step):
             projected = step(projected)
             if isinstance(projected, NativeOperationExitCarrierV1):
                 projected = projected.discharge(ctx, actuals_by_formal_coordinate)
-            if not isinstance(projected, ExitSet):
-                projected = outcome_to_exitset(projected)
             return projected
 
         def apply_exitset_steps(projected, continuation_count):
@@ -1050,10 +1044,9 @@ class NativeOperationExitCarrierV1:
         # Bind by the projector's declared parameter order.  Each lambda names
         # its Floor signature; this is not a generic method splat.  The site
         # and the caller's context close every projector's parameters.
-        # Every Outcome variant passes the exit algebra's loud door (a linear
-        # one from a producer not yet converted lifts there).  In particular,
-        # never reinterpret an unresolved carrier as a normal completion.
-        exits = outcome_to_exitset(projector(*actual_operands, self.site, ctx))
+        # A projector answers its ExitSet.  Never reinterpret an unresolved
+        # carrier as a normal completion.
+        exits = projector(*actual_operands, self.site, ctx)
         # One arm that halts: the shape a projector's own effect takes.
         sole_halt = (
             exits.exits[0]

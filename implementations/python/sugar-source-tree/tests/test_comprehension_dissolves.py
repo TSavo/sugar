@@ -410,7 +410,7 @@ def test_nested_comprehension_substitutes_outer_capture_before_building():
     expression = fn.substitute({}).body[-1].value
     nested = expression.elt
     assert nested.generators[0].iter.kind == "List"
-    value = expression.sugar().desugar().value
+    value = expression.sugar().desugar().completed_value()
     assert value.term.name == "py.listcomp"
     assert value.term.args[1].body.name == "py.listcomp"
     assert value.term.args[1].body.args[0].name == "array"

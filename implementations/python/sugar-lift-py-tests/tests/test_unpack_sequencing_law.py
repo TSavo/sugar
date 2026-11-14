@@ -45,7 +45,6 @@ from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
     Halted,
-    outcome_to_exitset,
 )
 from sugar_lift_py_tests.sugar.assign_sugar import UnpackStoreAssignSugar
 from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSugar
@@ -111,7 +110,7 @@ def _unpack(
 
 
 def _exits(tmp_path: Path, source: str, stem: str = "unpack_seq"):
-    return outcome_to_exitset(_function_sugar(tmp_path, source, stem).desugar(None))
+    return _function_sugar(tmp_path, source, stem).desugar(None)
 
 
 @dataclass(frozen=True)

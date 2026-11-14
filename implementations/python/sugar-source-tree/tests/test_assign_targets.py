@@ -27,7 +27,7 @@ def _fn(src):
 
 
 def _post(src):
-    return _fn(src).sugar().desugar().value.post()
+    return _fn(src).sugar().desugar().completed_value().post()
 
 
 def _completed_entries(src):
@@ -39,10 +39,9 @@ def _completed_entries(src):
     completed arm; the halt faces and the composition laws are asserted in
     sugar-lift-py-tests/tests/test_store_outcome_composition.py.
     """
-    from sugar_lift_py_tests.outcome.exit_set import sole_completed_outcome
+    from sugar_lift_py_tests.outcome.exit_set import sole_completed_value
 
-    outcome = sole_completed_outcome(_fn(src).sugar().desugar())
-    return outcome.value.record.statements
+    return sole_completed_value(_fn(src).sugar().desugar()).record.statements
 
 
 def test_tuple_destructure_assign_lifts_through():

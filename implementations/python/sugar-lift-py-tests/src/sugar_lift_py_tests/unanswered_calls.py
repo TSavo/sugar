@@ -58,9 +58,7 @@ def owed_calls(outcome) -> tuple[UnansweredCallV1, ...]:
     (``NativeOperationExitCarrierV1``) has no arms of its own until a caller
     discharges it, but the arms of its composed prefix and the stopping faces
     of its short circuits were reduced: their items are read there, and a
-    deferred carrier beneath the prefix is read the same way. A linear
-    ``Complete`` / ``Incomplete`` owes nothing (it has no owed slot, which is
-    why ``ExitSet.collapse`` keeps an owing arm an arm).
+    deferred carrier beneath the prefix is read the same way.
     """
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 

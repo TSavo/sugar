@@ -23,7 +23,7 @@ paired with a discriminating arm that fails when the law is violated:
    frontier (``TupleValue`` / ``ListValue`` / ``CallSiteValue``) instead of
    silently succeeding.
 
-Arm/outcome structure is read through ``outcome_to_exitset``; this module reads
+Arm/outcome structure is read off the ``ExitSet``; this module reads
 arms, it does not claim how many exits the control algebra has.
 """
 

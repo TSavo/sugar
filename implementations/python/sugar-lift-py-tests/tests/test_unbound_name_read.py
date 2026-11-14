@@ -10,7 +10,6 @@ from __future__ import annotations
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.outcome import Completed, Halted
-from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -26,7 +25,7 @@ def _function_exits(source: str, *, fname: str = "f"):
         for node in tree.nodes()
         if isinstance(node, FunctionDef) and node.name == fname
     )
-    return outcome_to_exitset(function.sugar().desugar(None)).exits
+    return function.sugar().desugar(None).exits
 
 
 def test_bound_parameter_read_completes() -> None:

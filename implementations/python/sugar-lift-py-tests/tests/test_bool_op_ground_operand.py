@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 from sugar_lift_py_tests.ir import make_var, num, py_eq
 from sugar_lift_py_tests.floor.none_value import NoneValue
-from sugar_lift_py_tests.outcome import outcome_to_exitset
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
@@ -48,7 +47,7 @@ def _bool_op(kind: str, *operands: object):
 def _completed_values(outcome):
     return tuple(
         face.value
-        for face in outcome_to_exitset(outcome).exits
+        for face in outcome.exits
         if hasattr(face, "value")
     )
 
