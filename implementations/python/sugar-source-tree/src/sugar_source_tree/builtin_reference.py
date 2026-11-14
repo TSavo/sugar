@@ -64,3 +64,51 @@ def module_reads_builtin(source: str, name: str) -> bool:
         return False
     tree = parsed_module(source)
     return tree is not None and not name_bound_anywhere(tree, name)
+
+
+# Names the interpreter binds without a source binding: the module attributes
+# the import system sets, the class-body names, and the implicit ``__class__``
+# cell of a method.
+_IMPLICIT_NAMES = frozenset(
+    (
+        "__name__",
+        "__file__",
+        "__doc__",
+        "__spec__",
+        "__loader__",
+        "__package__",
+        "__path__",
+        "__cached__",
+        "__builtins__",
+        "__annotations__",
+        "__dict__",
+        "__module__",
+        "__qualname__",
+        "__class__",
+    )
+)
+
+# A read of one of these can write a global (or a builtin) the source never
+# spells as a binding, so no read in that module is called unbound.
+_DYNAMIC_GLOBAL_WRITERS = frozenset(
+    ("globals", "vars", "locals", "exec", "eval", "builtins", "__builtins__")
+)
+
+
+def module_name_unbound(source: str, name: str) -> bool:
+    """Whether every load of ``name`` in ``source`` raises ``NameError``.
+
+    True only when nothing binds the name: no scope of the module (the one
+    ``name_bound_anywhere`` reading, star imports included), not a builtin,
+    not a name the interpreter binds itself, and no read of a dynamic global
+    writer in the module. Any doubt answers False.
+    """
+    if hasattr(builtins, name) or name in _IMPLICIT_NAMES:
+        return False
+    tree = parsed_module(source)
+    if tree is None or name_bound_anywhere(tree, name):
+        return False
+    return not any(
+        isinstance(node, ast.Name) and node.id in _DYNAMIC_GLOBAL_WRITERS
+        for node in ast.walk(tree)
+    )
