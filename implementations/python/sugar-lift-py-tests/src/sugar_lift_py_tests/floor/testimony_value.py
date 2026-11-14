@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.call_symbol import call_target
+
 from .floor_value import FloorValue
 
 
@@ -99,6 +101,6 @@ def _ground_callsite_euf_name(formula) -> str | None:
     ):
         return None
     left = ir.args[0]
-    if not isinstance(left, _Ctor) or not left.name.startswith("call:"):
+    if not isinstance(left, _Ctor) or call_target(left.name) is None:
         return None
     return canonical_euf_callsite_name(left)

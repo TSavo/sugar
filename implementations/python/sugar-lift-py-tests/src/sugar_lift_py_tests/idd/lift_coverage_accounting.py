@@ -28,6 +28,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping
 
+from sugar_lift_py_tests.call_symbol import call_symbol, call_target
+
 from .lift_coverage_census import (
     AssertLocus,
     BodyLocus,
@@ -765,12 +767,13 @@ def _asked_bridge_names(payload: Mapping[str, Any]) -> set[str]:
         if not isinstance(target, str) or not target:
             continue
         asked.add(target)
-        if target.startswith("call:"):
-            asked.add(target[len("call:") :])
+        called = call_target(target)
+        if called is not None:
+            asked.add(called)
         elif target.startswith("method:"):
             asked.add(target[len("method:") :])
         else:
-            asked.add(f"call:{target}")
+            asked.add(call_symbol(target))
     return asked
 
 
@@ -780,12 +783,13 @@ def _body_is_asked(body: Mapping[str, Any], asked: set[str]) -> bool:
         return False
     if bridge in asked:
         return True
-    if bridge.startswith("call:") and bridge[len("call:") :] in asked:
+    called = call_target(bridge)
+    if called is not None and called in asked:
         return True
-    if f"call:{bridge}" in asked:
+    if call_symbol(bridge) in asked:
         return True
     bare = bridge.rsplit(".", 1)[-1]
-    return bare in asked or f"call:{bare}" in asked
+    return bare in asked or call_symbol(bare) in asked
 
 
 def _census_disagreement(

@@ -6,6 +6,7 @@ from dataclasses import dataclass, field, replace
 import json
 from typing import Literal
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.context_manager_contract import (
     CallParameterV1,
@@ -1259,7 +1260,7 @@ def _direct_matches_call_of_exit_value(formula):
     call = formula.args[0]
     if not isinstance(call, _Ctor):
         return None
-    if call.name != "call:matches" and not call.name.endswith(".matches"):
+    if call.name != call_symbol("matches") and not call.name.endswith(".matches"):
         return None
     if not any(_term_contains_ctor(arg, "python:exit_value") for arg in call.args):
         return None

@@ -537,7 +537,8 @@ def test_second_owner_does_not_change_what_the_call_constructs():
         ),
     )
     before = call.sugar()
-    assert before.target_name == "python:unresolved-source-call"
+    # Not bridged, never renamed: the call stays its own edge (item 18).
+    assert before.target_name == "missing_helper"
     assert (
         before.contract_resolution_gap
         == "call-target-source-absent:missing_helper"
@@ -554,7 +555,7 @@ def test_second_owner_does_not_change_what_the_call_constructs():
         ),
     )
     after = call.sugar()
-    assert after.target_name == "python:unresolved-source-call"
+    assert after.target_name == "missing_helper"
     assert (
         after.contract_resolution_gap == "call-target-source-absent:missing_helper"
     )

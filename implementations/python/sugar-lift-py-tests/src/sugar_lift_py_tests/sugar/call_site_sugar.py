@@ -5,6 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from enum import Enum
 from typing import TYPE_CHECKING, Any, TypeAlias
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 
 from sugar_lift_py_tests.outcome import Complete, Outcome
@@ -626,7 +627,7 @@ class CallSiteSugar(ConstructedTermSugar):
         ]
         spelled = self.spelled_target
         term = ctor(
-            f"call:{spelled}",
+            call_symbol(spelled),
             [value.to_term(owner=owner) for value in positional] + kwarg_terms,
             symbol_kind=("builtin" if hasattr(builtins, spelled) else "coordinate"),
         )

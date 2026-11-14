@@ -8,6 +8,7 @@ from types import MappingProxyType
 from dataclasses import dataclass, field, replace
 from typing import Literal, Mapping
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.context_manager_resolution import (
     OpaqueSourceCallObligationV1,
     TreeConstructionContextV1,
@@ -226,7 +227,7 @@ class _ModuleSourceFrameCallableV1(FloorValue):
             bound.actuals,
             self.frame.parameters,
             ctor(
-                "call:module-source-frame",
+                call_symbol("module-source-frame"),
                 [
                     self.to_term(owner=self.callable_name),
                     *(item.to_term(owner=self.callable_name) for item in bound.actuals),
@@ -3938,7 +3939,7 @@ def _construct_reachable_decorated_class_bindings(
                 bound.actuals,
                 self.frame.parameters,
                 ctor(
-                    "call:source-frame",
+                    call_symbol("source-frame"),
                     [
                         self.to_term(owner=self.definition.name),
                         *(

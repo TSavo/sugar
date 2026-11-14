@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.call_symbol import call_symbol
+
 from .guard_stable_value import GuardStableValue
 
 
@@ -63,7 +65,7 @@ class ComprehensionValue(GuardStableValue):
                 target_name="len",
                 arg_values=(self,),
                 parameters=(),
-                term=ctor("call:len", (self.term,), symbol_kind="builtin"),
+                term=ctor(call_symbol("len"), (self.term,), symbol_kind="builtin"),
                 body=None,
                 site=site,
             )

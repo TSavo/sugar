@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from sugar_lift_py_tests.call_symbol import call_symbol
+
 from .guard_stable_value import GuardStableValue
 
 
@@ -208,7 +210,11 @@ def undecided_length(container, site):
             target_name="len",
             arg_values=(container,),
             parameters=(),
-            term=ctor("call:len", (container.to_term(owner=owner),), symbol_kind="builtin"),
+            term=ctor(
+                call_symbol("len"),
+                (container.to_term(owner=owner),),
+                symbol_kind="builtin",
+            ),
             body=None,
             site=site,
         )

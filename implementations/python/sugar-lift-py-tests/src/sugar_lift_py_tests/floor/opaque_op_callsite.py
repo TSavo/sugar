@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.ir import Term
 
 from .floor_value import FloorValue
@@ -51,7 +52,7 @@ class OpaqueOpCallsite(FloorValue):
 
         args = [self.arg.to_term(owner=owner)]
         args.extend(extra.to_term(owner=owner) for extra in self.extra_args)
-        return ctor(f"call:{self.callee}", args, symbol_kind="method-coordinate")
+        return ctor(call_symbol(self.callee), args, symbol_kind="method-coordinate")
 
     def callsites(self):
         return (self,)
@@ -73,7 +74,7 @@ class OpaqueOpCallsite(FloorValue):
             {
                 "kind": "call-edge",
                 "sourceContract": source_contract,
-                "targetSymbol": f"call:{self.callee}",
+                "targetSymbol": call_symbol(self.callee),
             },
         )
 
@@ -222,13 +223,13 @@ class OpaqueOpCallsite(FloorValue):
         return Incomplete(
             AttributeStoreRuntimeEffect(
                 "attribute assignment runtime boundary: opaque coordinate "
-                f"`call:{self.callee}(...)` cannot be mutated as source object "
+                f"`{call_symbol(self.callee)}(...)` cannot be mutated as source object "
                 "state. Python attribute assignment can invoke descriptors and "
                 "__setattr__ at runtime; keep as typed red until a narrower "
                 "attribute mutation floor owns this shape. "
                 f"blame={operation.blame}",
                 **runtime_effect_evidence(
-                    "py.setattr", f"call:{self.callee}", operation
+                    "py.setattr", call_symbol(self.callee), operation
                 ),
             )
         )

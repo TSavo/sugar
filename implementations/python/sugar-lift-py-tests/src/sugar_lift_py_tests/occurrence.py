@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_source_tree.construction_cache import AmbientVar
 
 # Ambient to memo rows: a row that read the path is served only under it.
@@ -111,7 +112,7 @@ def call_frame_path(call_site, call_path: tuple[str, ...]) -> tuple[str, ...]:
 
     The call is named by its site's coordinate CID (#7808), never its repr.
     """
-    return (*call_path, f"call:{site_coordinate_cid(call_site)}")
+    return (*call_path, call_symbol(site_coordinate_cid(call_site)))
 
 
 def occurrence_term(site, path: tuple[str, ...] | None = None):

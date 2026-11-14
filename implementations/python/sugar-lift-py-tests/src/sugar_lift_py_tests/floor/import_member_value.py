@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from sugar_lift_py_tests.call_symbol import call_symbol
+
 from .floor_value import FloorValue
 
 _IMPORT_MEMBER_AUTHORITY = object()
@@ -327,7 +329,7 @@ def _import_member_runtime_effect(
     from sugar_lift_py_tests.outcome import Incomplete
 
     member = value.to_term(owner="ImportMemberRuntimeEffect")
-    operand = ctor("call:import_member", [member])
+    operand = ctor(call_symbol("import_member"), [member])
     return Incomplete(
         ImportedModuleRuntimeEffect(
             "import-member runtime boundary: "

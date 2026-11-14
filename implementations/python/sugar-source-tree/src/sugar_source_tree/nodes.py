@@ -13646,12 +13646,8 @@ class Call(Expression):
                     ) == "python:typing.cast":
                         self.func.discharge_by_substitution()
                         return self.args[1].sugar()
-                from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
-
-                return CallSiteSugar(
-                    target_name="python:unresolved-source-call",
+                return self._not_bridged_call_site(
                     args=tuple(a.sugar() for a in self.args),
-                    site=self.fragment,
                     keywords=tuple(
                         (
                             kw.arg if kw.arg is not None else "**",
@@ -13659,9 +13655,7 @@ class Call(Expression):
                         )
                         for kw in self.keywords
                     ),
-                    contract_resolution_gap=(
-                        f"{obligation.resolution_kind}:{obligation.target_name}"
-                    ),
+                    gap=f"{obligation.resolution_kind}:{obligation.target_name}",
                 )
 
         # Either spread form selects the reference call coordinate. In
@@ -13777,17 +13771,12 @@ class Call(Expression):
                 SourceCallPreconstructionGapV1,
                 SourceCallPreconstructionRefV1,
             )
-            from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
             if isinstance(source_call_resolution, SourceCallPreconstructionGapV1):
-                return CallSiteSugar(
-                    target_name="python:unresolved-source-call",
+                return self._not_bridged_call_site(
                     args=tuple(a.sugar() for a in self.args),
-                    site=self.fragment,
                     keywords=keyword_sugars,
-                    contract_resolution_gap=(
-                        f"{source_call_resolution.kind}:{source_call_resolution.detail}"
-                    ),
+                    gap=f"{source_call_resolution.kind}:{source_call_resolution.detail}",
                 )
             if not isinstance(source_call_resolution, SourceCallPreconstructionRefV1):
                 from sugar_source_tree.panic import BackendDefect
@@ -14220,7 +14209,7 @@ class Call(Expression):
         parameter, a local, a shadowed or ambiguous name -- has no row and
         constructs as before. The symbol is read, never built here.
         """
-        target = self.unit.import_reference_of(self.func)
+        target = self._import_reference_symbol()
         if target is None:
             return None
         # The spelling is absorbed into the call-site coordinate, so every node
@@ -14232,7 +14221,34 @@ class Call(Expression):
                 chain.discharge_by_substitution()
                 chain = chain.value
             chain.discharge_by_substitution()
+        return target
+
+    def _import_reference_symbol(self) -> Optional[str]:
+        """The callee's target symbol in the one import reference table
+        (#7837), without its ``python:`` namespace, or ``None``. A read only."""
+        target = self.unit.import_reference_of(self.func)
+        if target is None:
+            return None
         return target[len("python:") :] if target.startswith("python:") else target
+
+    def _not_bridged_call_site(self, *, args, keywords, gap: str):
+        """A call nothing bridges stays its own edge.
+
+        The callee keeps the spelling it was written with, and its edge the
+        target symbol the import reference table holds for it, exactly as a
+        bridged call. Only the gap says it is not bridged: the call is never
+        renamed to a shared stand-in.
+        """
+        from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
+
+        return CallSiteSugar(
+            target_name=self._spread_callee_name(self.func) or self.func.segment(),
+            args=args,
+            site=self.fragment,
+            keywords=keywords,
+            contract_resolution_gap=gap,
+            reference_symbol=self._import_reference_symbol(),
+        )
 
     def _authenticate_warning_category(self, args_sugar, keyword_sugars):
         """Attach the floor-owned class identity to a ``warnings.warn`` category.

@@ -168,7 +168,7 @@ def test_off_population_call_desugars_to_a_callsite_not_a_gap():
     from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
 
     sugar = CallSiteSugar(
-        target_name="python:unresolved-source-call",
+        target_name="re.compile",
         args=(StringLiteralSugar("boom", site="raises.py:377"),),
         site="raises.py:377",
         contract_resolution_gap="call-target-off-population:python:re.compile",

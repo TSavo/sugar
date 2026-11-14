@@ -129,6 +129,7 @@ class BuiltinSemanticCallable(FloorValue):
         force_floor / field projection can refuse with a stage-keyed residual
         rather than aborting the whole manager factory membrane.
         """
+        from sugar_lift_py_tests.call_symbol import call_symbol
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import Complete
@@ -141,7 +142,7 @@ class BuiltinSemanticCallable(FloorValue):
                 arg_values=args,
                 parameters=(),
                 term=ctor(
-                    f"call:{name}",
+                    call_symbol(name),
                     [value.to_term(owner=owner) for value in args],
                     symbol_kind="builtin",
                 ),

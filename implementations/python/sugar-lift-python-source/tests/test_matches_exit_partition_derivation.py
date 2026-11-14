@@ -302,10 +302,10 @@ def test_uncited_kwargs_match_is_not_no_message_pattern():
 
 def _compile_match(pattern="boom"):
     return CallSiteValue(
-        target_name="python:unresolved-source-call",
+        target_name="re.compile",
         arg_values=(StringValue(pattern),),
         parameters=(),
-        term=ctor("python:unresolved-source-call", (str_const(pattern),)),
+        term=ctor("call:re.compile", (str_const(pattern),)),
         body=None,
     )
 

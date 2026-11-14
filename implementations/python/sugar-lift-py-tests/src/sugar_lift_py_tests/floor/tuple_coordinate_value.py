@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 from sugar_lift_py_tests.ir import Term, _term_content_cid, ctor
 from sugar_lift_python_source.canonical import cid_of_json
@@ -369,7 +370,7 @@ class TupleCoordinateValue(FloorValue):
                 arg_values=(self,),
                 parameters=(),
                 term=ctor(
-                    "call:len",
+                    call_symbol("len"),
                     (self.term,),
                     symbol_kind="builtin",
                 ),
