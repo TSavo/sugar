@@ -4678,8 +4678,16 @@ class WithItem(Node):
         return span.start_line, span.start_col, span.end_line, span.end_col
 
     def _manager_slot_id(self) -> str:
-        """Stable once-eval manager identity for this with-item."""
-        return self._effect_slot_id()
+        """Once-eval manager identity for this with-item, one per evaluation.
+
+        A ``with`` evaluated more than once (a loop iteration's copy, a
+        duplicated ``finally``'s exit-path copy) keys its item with its own
+        evaluation (``With.substitute``), so the manager, its enter result
+        (``as x``, the lowered ``as (a, b)`` store) and its observation are
+        that evaluation's slots, never a sibling copy's (temporal choice 1,
+        #7661).  An item evaluated once keeps the source occurrence's slot.
+        """
+        return Statement._evaluation_slot(self, self._effect_slot_id())
 
     def _make_manager_ref(self) -> "Node":
         """``ManagerRef(M)`` — single manager coordinate for enter and exit."""
@@ -4697,8 +4705,14 @@ class WithItem(Node):
         return self._make_call(enter_attr, ())
 
     def _exit_face_id(self) -> str:
-        """Stable exit-face coordinate X for parametric exit-arg refs."""
-        return f"{self._manager_slot_id()}#exit_face"
+        """Stable exit-face coordinate X for parametric exit-arg refs.
+
+        Still the source occurrence's, not the evaluation's: the manager
+        summary derivation records it per source item
+        (``manager_summary_derivation._direct_with_call_uses``) and the
+        resolved protocol states its exit over it, so the sugar's face facts
+        and the protocol's exit coordinates must name the same face."""
+        return f"{self._effect_slot_id()}#exit_face"
 
     def _make_exit_type_ref(self) -> "Node":
         from .backend import Leaf, materialize
@@ -8806,10 +8820,13 @@ class For(Statement):
                 with reduction_span(sugar="For.unroll", role="temporal", site=where):
                     target_pattern = self.unit.require_target_pattern(self, self.target)
                     bindings = [target_pattern.bindings_for(e) for e in elements]
+                    unpacks, bindings = self._iteration_unpacks(
+                        elements, bindings, scope
+                    )
                     if all(b is not None for b in bindings):
                         if self._body_has_owned_loop_control():
                             controlled = self._unroll_concrete_controlled(
-                                bindings, scope
+                                bindings, scope, unpacks
                             )
                             if controlled is not None:
                                 statements, final_bindings = controlled
@@ -8831,6 +8848,9 @@ class For(Statement):
                                 self, index, {**carried, **element_bindings}, scope
                             )
                             new_body, _c = self._substitute_body(self.body, iter_scope)
+                            if unpacks[index] is not None:
+                                # The iteration's unpack of its item opens it.
+                                new_body = (unpacks[index], *new_body)
                             # Each iteration is its own evaluation of the body.
                             new_body = _iteration_copies(self, index, new_body)
                             unrolled.extend(new_body)
@@ -8865,11 +8885,13 @@ class For(Statement):
                             unrolled.extend(else_body)
                         return _Splice(tuple(unrolled), final_target_bindings)
                 if elements is not None:
-                    # A concrete iterable whose target did not destructure its
-                    # elements -- a starred/nested target, or an arity the
-                    # display does not match -- is a runtime binding error, never
-                    # a symbolic universal. It stays loud. (The symbolic-jump
-                    # case set `elements = None` above and falls through.)
+                    # A concrete iterable whose display element the target did
+                    # not destructure -- an arity or nesting the display does
+                    # not match -- is a runtime binding error, never a symbolic
+                    # universal. It stays loud. (A non-display element is
+                    # unpacked by its iteration's keyed unpack,
+                    # ``_iteration_unpacks``; the symbolic-jump case set
+                    # `elements = None` above and falls through.)
                     raise SugarNotWritten(
                         owner="For.substitute",
                         blame=self.target.fragment,
@@ -9037,11 +9059,63 @@ class For(Statement):
             for node in statement.walk()
         )
 
-    def _unroll_concrete_controlled(self, bindings, scope):
+    def _iteration_unpacks(self, elements, bindings, scope):
+        """``for a, b in [p, q]``: each iteration's unpack of its item.
+
+        A destructuring target pairs a display element by substitution
+        (``TargetPatternV1.bindings_for``).  An element that is not a display
+        (a name, a call, a constant) has no members substitution can pair, so
+        the iteration evaluates it once and unpacks it: the iteration opens
+        with ``<target> = <element>``, keyed as that iteration's own
+        evaluation (``_iteration_scope``, as #7886 keys ``x += e``), and each
+        target binds to a reference to its projection of that evaluation
+        (temporal choice 1, #7661) -- never the name read by spelling.  The
+        unpack's sugar binds each member under its projection at reduce
+        (``DynamicUnpackAssignSugar``).
+
+        The element is already substituted (the iterable was evaluated once,
+        before the loop), so the unpack is keyed, not substituted again: a
+        later iteration's rebinding never reaches an earlier element.
+
+        Returns ``(unpacks, bindings)``: per iteration, the unpack statement
+        (or None) and the target bindings (None where a display did not
+        destructure, which stays loud).
+        """
+        if self.target.kind not in ("Tuple", "List"):
+            return (None,) * len(elements), bindings
+        from .shadow import rewrite_with_leaves
+
+        unpacks = []
+        resolved = []
+        for index, (element, binding) in enumerate(
+            zip(elements, bindings, strict=True)
+        ):
+            # A display that did not destructure stays loud; a ``*xs`` member
+            # of the iterable display is no one item.
+            if binding is not None or element.kind in ("Tuple", "List", "Starred"):
+                unpacks.append(None)
+                resolved.append(binding)
+                continue
+            iteration = _iteration_scope(self, index, scope, scope)
+            store = self._make_assign(self.target, element)
+            store = rewrite_with_leaves(
+                store,
+                {
+                    "evaluation": store._evaluation_key(iteration),
+                    "evaluation_exit_path": store._evaluation_exit_path(iteration),
+                },
+            )
+            unpacks.append(store)
+            resolved.append(store.substitution_binding(iteration))
+        return tuple(unpacks), resolved
+
+    def _unroll_concrete_controlled(self, bindings, scope, unpacks=None):
         """Exact AST-local execution of bounded jump-bearing loop structure.
 
         Only literal-decidable branch guards are selected.  A symbolic guard
         returns ``None`` so the source loop remains typed and loud/opaque.
+        ``unpacks`` (``_iteration_unpacks``) opens each iteration with its
+        keyed unpack of a non-display item.
         """
         unrolled = []
         carried = dict(scope)
@@ -9056,6 +9130,8 @@ class For(Statement):
             if reduced is None:
                 return None
             statements, iteration, action = reduced
+            if unpacks is not None and unpacks[index] is not None:
+                statements = (unpacks[index], *statements)
             unrolled.extend(_iteration_copies(self, index, statements))
             target_names = set(
                 self.unit.require_target_pattern(self, self.target).names
@@ -10894,6 +10970,22 @@ class With(Statement):
             if len(items) != 1:
                 return self if not changed else rewrite(self, **changed)
             item = items[0]
+            # A with evaluated more than once (a loop iteration's copy, a
+            # duplicated ``finally``'s exit-path copy) is one evaluation per
+            # copy: its item is keyed with this evaluation BEFORE any slot is
+            # read, so the manager, enter-result and observation slots (the
+            # ``as x`` ObservationRef, the lowered ``as (a, b)`` store's
+            # value) are this copy's, never a sibling's (``_manager_slot_id``).
+            evaluation = self._duplicated_evaluation_key(scope)
+            if (
+                evaluation is not None
+                and getattr(item, "evaluation", None) != evaluation
+            ):
+                from .shadow import rewrite_with_leaves
+
+                item = rewrite_with_leaves(item, {"evaluation": evaluation})
+                items = (item,)
+                changed["items"] = items
             if item.optional_vars is not None and item.optional_vars.kind != "Name":
                 # A store target is normalized into `<target> = enter_result` as
                 # the first body statement BEFORE the body is substituted, so
@@ -10901,7 +10993,10 @@ class With(Statement):
                 # through the ordinary assignment seam. Substituting first and
                 # injecting after would resolve the block's loads against the
                 # OUTER scope and silently shadow the names this site binds.
-                current = self if not changed else rewrite(self, **changed)
+                # Keyed first, so the re-substitution reads the same key.
+                current = self._keyed_evaluation(
+                    self if not changed else rewrite(self, **changed), scope
+                )
                 bound = current._bind_store_target(item)
                 if bound is not current:
                     return bound.substitute(scope)
@@ -10913,10 +11008,8 @@ class With(Statement):
             new_body, d = self._substitute_body(self.body, body_scope)
             if d:
                 changed["body"] = new_body
-            # A with evaluated more than once (a loop iteration's copy, a
-            # duplicated ``finally``'s exit-path copy) observes one effect per
-            # evaluation; keyed, its ``as`` name reads its own observation
-            # (``_effect_boundary_binding``), never a sibling's.
+            # Keyed as the item is: the With's own sugar reads its slots off
+            # the keyed item.
             return self._keyed_evaluation(
                 self if not changed else rewrite(self, **changed), scope
             )
@@ -10971,12 +11064,12 @@ class With(Statement):
             )
             testify(self.reporter, "report_gap", self, panic)
             raise panic
-        # One observation per evaluation of this with (``_keyed_evaluation``):
-        # the ``as`` name's ObservationRef and the boundary's deposit both
-        # read this slot, so a read of one iteration's ``e`` is never the
-        # next iteration's effect.
-        observation = self._evaluation_slot(item._manager_slot_id())
-        return f"{observation}#observation", projection
+        # One observation per evaluation of this with: the item carries the
+        # with's evaluation key (``With.substitute``), so its manager slot is
+        # already this evaluation's.  The ``as`` name's ObservationRef and the
+        # boundary's deposit both read this slot, so a read of one
+        # iteration's ``e`` is never the next iteration's effect.
+        return f"{item._manager_slot_id()}#observation", projection
 
     def _effect_boundary_observation_slot(self, item, resolved_ref):
         return self._effect_boundary_binding(item, resolved_ref)[0]
@@ -10996,8 +11089,22 @@ class With(Statement):
             if len(self.items) != 1:
                 return self._nest_items().substitution_binding(None)
             item = self.items[0]
-            if item.optional_vars is None or item.optional_vars.kind != "Name":
+            if item.optional_vars is None:
                 return None
+            if item.optional_vars.kind != "Name":
+                # ``with M() as (a, b):`` lowered its store into the body
+                # (``_bind_store_target``) and substitution keyed it as one
+                # evaluation: after the with, each target is a reference to
+                # its projection of that evaluation, as it is inside the body
+                # -- never the name read by spelling.  A store target no
+                # store was lowered for, and an attribute/subscript store
+                # (no lexical name), binds nothing.
+                if item.optional_vars.kind not in ("Tuple", "List"):
+                    return None
+                enter_slot = f"{item._manager_slot_id()}#enter_result"
+                if not self._already_bound_store(enter_slot):
+                    return None
+                return self.body[0].substitution_binding(scope)
             # SourceTreePanic from the door propagates — no Exception swallow.
             resolved_ref = None
             if self._generator_manager_frame(item) is None:

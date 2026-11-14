@@ -136,7 +136,10 @@ def test_each_evaluation_of_a_with_observes_its_own_slot() -> None:
     source_slot, _ = with_node._effect_boundary_binding(with_node.items[0], ref)
     slots = []
     for key in ("evaluation:one", "evaluation:two"):
-        keyed = rewrite_with_leaves(with_node, {"evaluation": key})
+        # With.substitute keys the item with the with's evaluation; the
+        # observation slot is read off the keyed item.
+        item = rewrite_with_leaves(with_node.items[0], {"evaluation": key})
+        keyed = rewrite_with_leaves(with_node, {"evaluation": key}, items=(item,))
         slot, _ = keyed._effect_boundary_binding(keyed.items[0], ref)
         assert slot.endswith("#observation")
         slots.append(slot)
