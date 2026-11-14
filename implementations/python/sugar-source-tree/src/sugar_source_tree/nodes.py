@@ -5094,7 +5094,11 @@ def _live_loop_publication(loop, carried, scope) -> dict:
     item wrote it (the read there is a ``NameError`` halt), a carried
     accumulator keeps its pre-loop binding there.  The loop's reduction
     decides the slot on each exit, as it binds the post-loop key there
-    (``LoopRecurrenceSugar._post_loop_writes``), so the read takes one arm.
+    (``LoopRecurrenceSugar._publication``), so the read takes one arm; a
+    loop over a symbolic iterable runs as its recurrence, binds the key to
+    the recurrence's value of the name and authenticates the slot as the
+    guard that some item wrote it, so the read takes each arm under its
+    side of that guard.
     A name undecided before the loop stays undecided.  A name with no
     binding before the loop is unbound on that arm where the loop's header
     of it starts unbound (``_loop_header_start``): a module name no builtin

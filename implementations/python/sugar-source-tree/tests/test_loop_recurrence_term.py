@@ -169,11 +169,20 @@ def test_loop_recurrence_evaluates_iterable_once_and_retains_live_floor(
     outcome = replace(loop, construction=construction).desugar()
 
     assert calls == [1]
-    (equation,) = outcome.value.inv_contribution()
-    step = equation.args[1]
-    assert step.name == "python:loop.step"
+    # One step equation per name the loop writes (``total`` under its binding
+    # coordinate, the target ``item`` under its post-loop key), each over the
+    # one evaluation of the iterable.
+    equations = [
+        inv
+        for inv in outcome.value.inv_contribution()
+        if getattr(inv, "name", None) == "="
+    ]
+    assert len(equations) == 2
     iterable_value = iterable.desugar().completed_value()
-    assert step.args[2] == iterable_value.to_term(owner="test")
+    for equation in equations:
+        step = equation.args[1]
+        assert step.name == "python:loop.step"
+        assert step.args[2] == iterable_value.to_term(owner="test")
 
 
 def test_loop_recurrence_rejects_lying_iterable_occurrence(tmp_path: Path):

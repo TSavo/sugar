@@ -288,16 +288,24 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor import InvValue
         from sugar_lift_py_tests.floor.block_value import BlockValue
 
+        # The recurrence's value of each name the loop writes: one head per
+        # name, keyed by what a read after the loop reads it through -- its
+        # binding coordinate (``binding_coordinate_cids``), or its post-loop
+        # key (``LiveForRuntimeV1.published_evaluations``) -- each the fixed
+        # point of the loop's step over the iterable.
         heads = tuple(
-            ctor(
-                "python:loop.recurrence",
-                [str_const(self.target_cid), str_const(coordinate_cid)],
-                symbol_kind="coordinate",
-            )
+            self._recurrence_head(coordinate_cid)
             for coordinate_cid in self.binding_coordinate_cids
         )
+        post_keys = tuple(
+            post_key
+            for post_key, _writes, _else_writes in getattr(
+                runtime, "published_evaluations", ()
+            )
+        )
+        post_heads = tuple(self._recurrence_head(post_key) for post_key in post_keys)
         recurrences = []
-        for h in heads:
+        for h in (*heads, *post_heads):
             step = ctor(
                 "python:loop.step",
                 [
@@ -312,8 +320,31 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 symbol_kind="coordinate",
             )
             recurrences.append(InvValue(atomic("=", [h, step]), self.site))
+        # The loop leaves publishing what a concrete loop publishes
+        # (``_publication``): each coordinate name's value under its binding
+        # coordinate, and each other written name's under its post-loop key,
+        # with its write slot decided -- here as the guard that some item
+        # wrote it, which the symbolic iterable does not decide true or false.
         recurrence = BlockValue(
-            (*self.iterable_writes, *recurrences), can_fall_through=True
+            (
+                *self.iterable_writes,
+                *recurrences,
+                *self._publication(
+                    tuple(SymbolicValue(h) for h in heads),
+                    tuple(
+                        (
+                            post_key,
+                            SymbolicValue(h),
+                            atomic(
+                                "python.loop.wrote",
+                                [str_const(self.target_cid), str_const(post_key)],
+                            ),
+                        )
+                        for post_key, h in zip(post_keys, post_heads, strict=True)
+                    ),
+                ),
+            ),
+            can_fall_through=True,
         )
         # The item's target unpack runs first, whether or not the body has an
         # outward face: the recurrence (and its faces) are what follows its
@@ -1286,7 +1317,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         on this exit (``_post_loop_writes``): ``items`` items ran, and the
         ``else`` suite ran when ``else_ran``."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 
         temporal = getattr(ctx, "temporal", None)
         if temporal is None:
@@ -1298,51 +1328,94 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 strict=True,
             )
         )
-        projected = []
-        for name, coordinate_cid in zip(
-            self._coordinate_names(runtime), self.binding_coordinate_cids, strict=True
-        ):
+        values = []
+        for name in self._coordinate_names(runtime):
             value = carried[name]
             if value is None:
                 raise TypeError("loop recurrence omitted a carried binding")
-            projected.append(ScopeRebind(coordinate_cid, value))
+            values.append(value)
         posted = self._post_loop_writes(
             runtime, temporal, items=items, else_suite=else_ran
         )
         return ExitSet.completed(
             BlockValue(
-                (*self.iterable_writes, *entries, *projected, *posted),
+                (
+                    *self.iterable_writes,
+                    *entries,
+                    *self._publication(tuple(values), posted),
+                ),
                 fall_through=fall_through,
                 can_fall_through=can_fall_through,
             )
         )
 
-    def _post_loop_writes(self, runtime, temporal, *, items, else_suite):
-        """``ScopeRebind(<post-loop key>, value)`` for each name the items
-        write that the loop does not carry
-        (``LiveForRuntimeV1.published_evaluations``): the post-loop key bound
-        outside every item (``evaluation_here``) to the latest write of the
-        name on the path the loop leaves by -- the ``else`` suite's when it
-        ran and wrote it, else that of the last of the ``items`` items that
-        wrote it (each item's writes are keyed by that item).  A read after
-        the loop reads the name through this key, as a function-level live
-        loop's ``else`` reads its target's and header's keys bound after the
-        last item (``_leave_target``, ``_enter_header``).  A name no item and
-        no ``else`` wrote binds nothing.
+    def _recurrence_head(self, key):
+        """The recurrence's value of the name a read after the loop reads
+        through ``key`` (a binding coordinate or a post-loop key): the loop's
+        symbolic fixed point of it (``python:loop.recurrence``)."""
+        return ctor(
+            "python:loop.recurrence",
+            [str_const(self.target_cid), str_const(key)],
+            symbol_kind="coordinate",
+        )
 
-        Each name's write slot (``loop_write_slot``) is decided on the exit
-        it is published on (``BranchResultDecision``): true where the
-        post-loop key was bound here, false where it was not.  A read after
-        the loop (``nodes._live_loop_publication``) takes exactly
-        that arm: the post-loop key, or the binding before the loop (unbound
-        when there was none), and never the name."""
+    def _publication(self, coordinate_values, posted):
+        """What the loop leaves bound for a read after it, on every exit it
+        publishes on, concrete or symbolic: each coordinate name's value
+        (``coordinate_values``, ``binding_coordinate_cids`` order) under its
+        binding coordinate -- every read after the loop is a ``LoopBindingRef``
+        to it (``project_loop_post_binding``) -- then, per name published
+        through its post-loop key, ``(post_key, value, wrote)``
+        (``_post_loop_writes``): the post-loop key bound outside every item
+        (``evaluation_here``) to ``value`` where ``value`` is not None, and
+        the name's write slot (``loop_write_slot``) decided by ``wrote``.  A
+        ``bool`` decides the slot on this exit (``BranchResultDecision``): a
+        concrete loop knows whether an item wrote it.  A formula authenticates
+        the slot as that guard (``BranchResultAuthentication``): the symbolic
+        recurrence does not know, so a read after the loop
+        (``nodes._live_loop_publication``) takes the post-loop key under the
+        guard and the binding before the loop (unbound when there was none)
+        under its negation.  The name is never written nor read."""
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
+            BranchResultAuthentication,
             BranchResultDecision,
         )
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
-        from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
         from sugar_source_tree.binding_state import loop_write_slot
+
+        published = [
+            ScopeRebind(coordinate_cid, value)
+            for coordinate_cid, value in zip(
+                self.binding_coordinate_cids, coordinate_values, strict=True
+            )
+        ]
+        for post_key, value, wrote in posted:
+            if value is not None:
+                published.append(ScopeRebind(evaluation_here(post_key), value))
+            slot = loop_write_slot(post_key)
+            published.append(
+                BranchResultDecision(slot, wrote, self.site)
+                if isinstance(wrote, bool)
+                else BranchResultAuthentication(slot, wrote, self.site)
+            )
+        return tuple(published)
+
+    def _post_loop_writes(self, runtime, temporal, *, items, else_suite):
+        """``(post_key, value, wrote)`` (``_publication``) for each name the
+        items write that the loop does not carry
+        (``LiveForRuntimeV1.published_evaluations``): ``value`` is the latest
+        write of the name on the path the loop leaves by -- the ``else``
+        suite's when it ran and wrote it, else that of the last of the
+        ``items`` items that wrote it (each item's writes are keyed by that
+        item) -- and ``wrote`` whether there was one.  A read after the loop
+        reads the name through the post-loop key, as a function-level live
+        loop's ``else`` reads its target's and header's keys bound after the
+        last item (``_leave_target``, ``_enter_header``).  A name no item and
+        no ``else`` wrote binds nothing, and its write slot is decided false
+        on this exit: the read takes the binding before the loop."""
+        from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
 
         posted = []
         for post_key, writes, else_writes in getattr(
@@ -1359,11 +1432,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     keys = tuple(evaluation_here(key) for key in writes)
                 binding = temporal.latest(*keys)
                 index -= 1
-            if binding is not None:
-                posted.append(ScopeRebind(evaluation_here(post_key), binding.value))
             posted.append(
-                BranchResultDecision(
-                    loop_write_slot(post_key), binding is not None, self.site
+                (
+                    post_key,
+                    None if binding is None else binding.value,
+                    binding is not None,
                 )
             )
         return tuple(posted)
