@@ -126,7 +126,9 @@ def _context_manager_rows_for_paths(paths, *, root: Path) -> List[Dict[str, Any]
     Each file is opened by the opener's first stage (``_open_at_seat``), at
     the seat the opener reads, so the row reads the same bytes at the same
     seat the enumerate levels construct. It opens with no construction
-    context: these rows are what the context's table is built from.
+    context: these rows are what the context's table is built from. The unit
+    it parses is the one the opener later attaches its context to; the file is
+    parsed once.
     """
     from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
     from sugar_lift_python_source.source_oracle import SourceUnavailable
@@ -452,10 +454,19 @@ def _open_at_seat(
     same bytes and the same resident unit the opener does. The files are step
     2's file list; no dependency module is opened anywhere.
 
+    One parse per file: opened with no context, the unit is parsed once and
+    waits for the opener (``AWAITING_CONSTRUCTION_CONTEXT``); the opener's open
+    under its context attaches that context to the same unit
+    (``SourceUnit.attach_construction_context``) rather than parsing the file
+    again. Opened after the opener, the readers get the opener's unit.
+
     ``seated`` is the identity the caller already read at this seat (the opener
     reads once to consult its memo); otherwise it is read here.
     ``reporter=None`` leaves a resident file's reporter as it is.
     """
+    from sugar_source_tree.process_resident_file import (
+        AWAITING_CONSTRUCTION_CONTEXT,
+    )
     from sugar_source_tree.tree import SourceFile
 
     identity = (
@@ -469,7 +480,11 @@ def _open_at_seat(
         identity,
         backend=backend,
         reporter=reporter,
-        construction_context=construction_context,
+        construction_context=(
+            AWAITING_CONSTRUCTION_CONTEXT
+            if construction_context is None
+            else construction_context
+        ),
     )
 
 
@@ -482,6 +497,61 @@ def _enumerate_contract_refs(root: Path):
     if _BOUND_CONTRACT_REFS is not None:
         return _BOUND_CONTRACT_REFS
     return provisional_contract_refs_from_demands(root)
+
+
+def _open_session(root: Path, resolution_session=None):
+    """The resolution session an open runs under: the caller's, else the
+    walk-scoped session for ``root``, whose roster is step 2's file list for
+    ``root`` (``project_file_roster``) and nothing else."""
+    from sugar_lift_python_source.resolution_session import (
+        project_file_roster,
+        walk_session_for,
+    )
+
+    if resolution_session is not None:
+        return resolution_session
+    return walk_session_for(root, enrolled_distributions=project_file_roster(root))
+
+
+def _context_minter(table, root: Path):
+    """Mints the opener's construction context on ``table`` for ``root``."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+
+    return lambda: TreeConstructionContextV1(table, workspace_root=str(root))
+
+
+def construction_context_for_open(
+    path: Path,
+    *,
+    root: Path,
+    contract_refs=None,
+    resolution_session=None,
+    source_workspace_root: Path | None = None,
+):
+    """The context the opener opens this file under when the caller names none.
+
+    Built on ``contract_refs``, else on ``_enumerate_contract_refs`` (the Rust
+    prebind's bound refs when installed), and minted once per file and
+    authority (``process_resident_file.open_context``). A caller that passes it
+    to the opener explicitly (the audit leaf) and a caller that passes nothing
+    (the enumerate levels) open the same unit: one parse, one population.
+    """
+    from sugar_source_tree.process_resident_file import open_context
+
+    session = _open_session(root, resolution_session)
+    table = contract_refs if contract_refs is not None else _enumerate_contract_refs(root)
+    _source, seat, source_cid = _read_at_seat(
+        path, root=root, source_workspace_root=source_workspace_root
+    )
+    return open_context(
+        source_cid,
+        seat,
+        str(root),
+        (table, session),
+        mint=_context_minter(table, root),
+    )
 
 
 def open_source_file_for_construction(
@@ -508,7 +578,14 @@ def open_source_file_for_construction(
     ``_enumerate_contract_refs``: the Rust prebind's bound refs when installed,
     otherwise the provisional demand table for ``root``. ``contract_refs``
     names a table already derived for this root (a census shares one);
-    ``construction_context`` a frozen context the caller already holds.
+    ``construction_context`` a frozen context the caller already holds. The
+    context the opener builds is minted once per file and authority
+    (``construction_context_for_open``), so passing it back explicitly is the
+    same open as passing nothing.
+
+    One parse per file (#7757 item 5): when the step-3 readers already opened
+    the file through the first stage, which parses with no context, the first
+    stage attaches this open's context to that unit instead of parsing again.
 
     ``resolution_session`` owns every source-resolution memo for this open. When
     omitted, this door uses the walk-scoped session for ``root``, whose roster is
@@ -533,54 +610,52 @@ def open_source_file_for_construction(
     from sugar_lift_python_source.manager_summary_derivation import (
         populate_source_derived_resource_refs,
     )
-    from sugar_lift_python_source.resolution_session import (
-        project_file_roster,
-        walk_session_for,
-    )
     from sugar_source_tree.process_resident_file import (
+        forget_open_context,
         get_opened,
+        open_context,
         remember_opened,
     )
     from sugar_source_tree.reporter import NULL_REPORTER
-
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
 
     if reporter is None:
         reporter = NULL_REPORTER
     # Multi-resolve owner: walk-scoped session when none given so census and
     # same-content re-open share projection memos under one root. Its roster
     # is the files this root lists (step 2), with no extras.
-    if resolution_session is not None:
-        session = resolution_session
-    else:
-        session = walk_session_for(
-            root,
-            enrolled_distributions=project_file_roster(root),
-        )
-    # The authority this open constructs under: the caller's context, or the
-    # table a context is built on for this root.
-    if construction_context is not None:
-        table = construction_context
-    elif contract_refs is not None:
-        table = contract_refs
-    else:
-        table = _enumerate_contract_refs(root)
-    authority = (table, session)
+    session = _open_session(root, resolution_session)
     seated = _read_at_seat(
         path, root=root, source_workspace_root=source_workspace_root
     )
     _source, seat, source_cid = seated
+    # The authority this open constructs under: the table the opener builds
+    # its own context on, with the session. A context the caller holds that
+    # the opener did not mint is its own authority.
+    if construction_context is None:
+        table = (
+            contract_refs
+            if contract_refs is not None
+            else _enumerate_contract_refs(root)
+        )
+        construction_context = open_context(
+            source_cid,
+            seat,
+            str(root),
+            (table, session),
+            mint=_context_minter(table, root),
+        )
+    else:
+        table = getattr(construction_context, "contract_refs", None)
+    own = (table, session)
+    if open_context(source_cid, seat, str(root), own) is construction_context:
+        authority = own
+    else:
+        authority = (construction_context, session)
     source_file = get_opened(source_cid, seat, str(root), authority)
     opened_before = source_file is not None
     if opened_before:
         source_file.reporter = reporter
     else:
-        if construction_context is None:
-            construction_context = TreeConstructionContextV1(
-                table, workspace_root=str(root)
-            )
         source_file = _open_at_seat(
             path,
             root=root,
@@ -604,12 +679,20 @@ def open_source_file_for_construction(
     if opened_before:
         # Populated when it was first opened under this authority.
         return source_file
-    populate_source_derived_resource_refs(
-        source_file,
-        root=root,
-        path=path,
-        session=session,
-    )
+    try:
+        populate_source_derived_resource_refs(
+            source_file,
+            root=root,
+            path=path,
+            session=session,
+        )
+    except BaseException:
+        # A population that halted is not remembered, and neither is the
+        # context it wrote into: the next open mints a fresh one and so
+        # prepares its own unit.
+        if authority is own:
+            forget_open_context(source_cid, seat, str(root), own)
+        raise
     remember_opened(source_cid, seat, str(root), authority, source_file)
     return source_file
 
@@ -2093,10 +2176,18 @@ def _roll_call_audit_leaf(
         # panic per file, at the file's FIRST `with`, masking everything behind
         # it. See scripts/construction_context_door_law.py; every production
         # level opens this way.
+        #
+        # The context is named here, on the authenticated table when the Rust
+        # prebind installed one, and it is the same context the enumerate
+        # levels open this file under (``construction_context_for_open``), so
+        # the leaf shares their parse and their population.
         source_file = open_source_file_for_construction(
             full_path,
             root=root,
             reporter=reporter,
+            construction_context=construction_context_for_open(
+                full_path, root=root, source_workspace_root=locus_root
+            ),
             source_workspace_root=locus_root,
         )
         report = discharge(source_file)

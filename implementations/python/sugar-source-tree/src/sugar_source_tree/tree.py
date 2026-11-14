@@ -96,8 +96,10 @@ class SourceFile:
         construction_context: object | None = None,
     ) -> None:
         # When ``__new__`` returns the resident shell, Python still calls
-        # ``__init__``. The shell is already prepared under its construction
-        # context, which is never rebound; only the reporter is.
+        # ``__init__``. The shell is already prepared; its construction context
+        # is written once (by the residency door, when the opener attaches its
+        # context to a unit the first stage parsed with none) and never
+        # rebound. Only the reporter is rebound here.
         del identity, backend, construction_context
         if not hasattr(self, "unit"):
             raise RuntimeError(
