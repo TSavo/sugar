@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import ClassVar
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import (
     NotVerdictBearing,

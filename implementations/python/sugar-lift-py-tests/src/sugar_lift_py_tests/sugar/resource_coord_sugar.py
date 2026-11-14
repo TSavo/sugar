@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -36,7 +36,7 @@ class ManagerRefSugar(ConstructedTermSugar):
         del ctx
         from sugar_lift_py_tests.floor.manager_coordinate import ManagerCoordinate
 
-        return Complete(ManagerCoordinate(slot_id=self.slot_id, site=self.site))
+        return ExitSet.completed(ManagerCoordinate(slot_id=self.slot_id, site=self.site))
 
 
 @dataclass(frozen=True)
@@ -63,7 +63,7 @@ class ExitTypeRefSugar(ConstructedTermSugar):
         del ctx
         from sugar_lift_py_tests.floor.manager_coordinate import ExitTypeCoordinate
 
-        return Complete(ExitTypeCoordinate(face_id=self.face_id, site=self.site))
+        return ExitSet.completed(ExitTypeCoordinate(face_id=self.face_id, site=self.site))
 
 
 @dataclass(frozen=True)
@@ -90,7 +90,7 @@ class ExitValueRefSugar(ConstructedTermSugar):
         del ctx
         from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
 
-        return Complete(ExitValueCoordinate(face_id=self.face_id, site=self.site))
+        return ExitSet.completed(ExitValueCoordinate(face_id=self.face_id, site=self.site))
 
 
 @dataclass(frozen=True)
@@ -119,4 +119,4 @@ class ExitTracebackRefSugar(ConstructedTermSugar):
             ExitTracebackCoordinate,
         )
 
-        return Complete(ExitTracebackCoordinate(face_id=self.face_id, site=self.site))
+        return ExitSet.completed(ExitTracebackCoordinate(face_id=self.face_id, site=self.site))

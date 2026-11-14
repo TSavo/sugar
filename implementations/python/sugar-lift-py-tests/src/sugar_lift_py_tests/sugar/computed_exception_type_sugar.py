@@ -57,11 +57,14 @@ class ComputedExceptionTypeSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_source_tree.panic import SugarNotWritten
 
         outcome = self.value.desugar(ctx)
-        if not isinstance(outcome, Complete):
+        value = (
+            outcome.completed_value() if isinstance(outcome, ExitSet) else None
+        )
+        if value is None:
             raise SugarNotWritten(
                 blame=self.site,
                 owner="ComputedExceptionTypeSugar.desugar",
@@ -69,7 +72,6 @@ class ComputedExceptionTypeSugar(ConstructedTermSugar):
                 requested="an except expression that completes",
                 fix="model the handler expression's own raise, or keep it loud",
             )
-        value = outcome.value
         members = value.elements if type(value) is TupleValue else (value,)
         for member in members:
             reader = getattr(member, "exception_type_identity", None)

@@ -16,7 +16,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 
@@ -48,7 +48,7 @@ def _rebind_name(name: str, member, evaluation: str | None) -> Outcome:
     )
 
     if evaluation is None:
-        return Complete(ScopeRebind(name, member))
+        return ExitSet.completed(ScopeRebind(name, member))
     return bind_unpack_projections(ScopeRebinds(((name, member),)), evaluation)
 
 

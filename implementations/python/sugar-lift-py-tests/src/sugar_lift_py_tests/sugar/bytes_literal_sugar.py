@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor.bytes_value import BytesValue
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
@@ -31,7 +31,7 @@ class BytesLiteralSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx  # the bytes stand as a floor value
-        return Complete(BytesValue(self.value))
+        return ExitSet.completed(BytesValue(self.value))
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor

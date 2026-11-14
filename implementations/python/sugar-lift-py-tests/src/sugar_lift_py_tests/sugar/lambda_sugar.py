@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_pair
 
@@ -98,7 +98,7 @@ class LambdaSugar(ConstructedTermSugar):
         construction_identity = (
             f"{sealed.source_cid}@{sealed.start}:{sealed.end}#{sealed.cid}"
         )
-        return Complete(
+        return ExitSet.completed(
             LambdaCallable(
                 parameters=self.formals,
                 body=self.body,

@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
@@ -173,6 +173,9 @@ class IfExpSugar(ConstructedTermSugar):
             outcome_to_exitset,
             partition as _partition,
         )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
 
         not_formula = not_(formula)
 
@@ -180,8 +183,12 @@ class IfExpSugar(ConstructedTermSugar):
         # before. GuardedValue is the shape the whole design rests on --
         # operations distribute into both arms and an equality resolves per atom
         # -- so it is kept for the case that can carry it, never widened away.
-        if isinstance(then_out, Complete) and isinstance(else_out, Complete):
-            return Complete(GuardedValue(formula, then_out.value, else_out.value))
+        # Only plain arms fuse: an arm that owes something keeps its own arm
+        # below, so its debt is carried.
+        then_value = plain_completed_value(then_out)
+        else_value = plain_completed_value(else_out)
+        if then_value is not None and else_value is not None:
+            return ExitSet.completed(GuardedValue(formula, then_value, else_value))
 
         # AN ARM HALTS OR PARTITIONS. `(a if c else raise)`, `(f() if c else b)`
         # with an unresolvable call, `(a if c else d[k] := v)`. Under `c` the
@@ -231,13 +238,8 @@ class IfExpSugar(ConstructedTermSugar):
         # that is first-match-wins carries them exactly. Nothing is capped,
         # nothing is pruned, no arm is dropped, and no halted arm is touched --
         # the halted face already grows linearly at the exit level.
-        exits = (
-            exits.factor_completed()
-        )  # `factored_operand`'s half that stays an ExitSet
-
-        # A partition with a single completed face and no halt is a plain value
-        # again (normalize may have merged the faces): collapse rather than hand
-        # callers a one-arm ExitSet they would have to unwrap. Anything still
-        # partitioned stays partitioned -- a caller threads it with `and_then`,
-        # which is how every other partition in the lift is consumed.
-        return exits.collapse()
+        # A partition with a single completed face and no halt is one arm again
+        # (normalize may have merged the faces); anything still partitioned
+        # stays partitioned. Either way a caller threads it with `and_then`,
+        # which is how every partition in the lift is consumed.
+        return exits.factor_completed()

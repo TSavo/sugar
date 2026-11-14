@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -76,4 +76,4 @@ class ConstructedObjectPlaceSugar(ConstructedTermSugar):
         )
         if observed != self.testimony.semantic_value_cid:
             raise BindingProvenanceGap("constructed object projection mismatch")
-        return Complete(self.value)
+        return ExitSet.completed(self.value)

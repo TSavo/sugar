@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -25,11 +25,10 @@ def _reduce_into(element_sugars, ctx, build):
     """Reduce elements in source order, then hand the tuple of values to ``build``.
 
     LAW: an element's outcome is not one unconditional value. ``and_then`` is the
-    one door every ``Outcome`` variant implements, and each variant states its own
-    law through it -- ``Complete`` continues (a constructed raise keeps the
-    control-flow value and evaluates no enclosing step), ``Incomplete`` propagates
-    the effect and never runs the tail, ``ExitSet`` threads every completed arm
-    while halted arms bypass.
+    one door: an ``ExitSet`` threads every completed arm (a constructed raise
+    keeps the control-flow value and evaluates no enclosing step) while halted
+    arms bypass and never run the tail; a deferred native-operation carrier
+    retains the tail until its caller discharges it.
 
     Reading ``.value`` off the outcome instead assumed exactly one arm, which is
     false the moment an element can halt: `[a, d[k] := f()]`, an element whose
@@ -49,17 +48,17 @@ def _reduce_into(element_sugars, ctx, build):
     # holds like any other floor value) and leaves its halted arms at the exit
     # level. The accumulator itself cannot be factored -- its completed value is
     # the growing tuple this fold is building.
-    outcome = Complete(())
+    outcome = ExitSet.completed(())
     for element_outcome in reduced:
         outcome = outcome.and_then(
             lambda collected, got=factored_operand(element_outcome): got.and_then(
-                lambda value: Complete((*collected, value))
+                lambda value: ExitSet.completed((*collected, value))
             )
         )
     if getattr(build, "returns_outcome", False):
         built = outcome.and_then(build)
     else:
-        built = outcome.and_then(lambda values: Complete(build(values)))
+        built = outcome.and_then(lambda values: ExitSet.completed(build(values)))
     return built
 
 
@@ -258,7 +257,6 @@ def _built_set(values, site):
     )
     from sugar_lift_py_tests.floor.membership import decided_unhashable
     from sugar_lift_py_tests.floor.set_value import SetValue
-    from sugar_lift_py_tests.outcome import Complete
 
     kept: list = []
     for member in values:
@@ -267,7 +265,7 @@ def _built_set(values, site):
         if _hash_decided(member) and _index_of(tuple(kept), member) not in (None, -1):
             continue
         kept.append(member)
-    return Complete(SetValue(tuple(kept)))
+    return ExitSet.completed(SetValue(tuple(kept)))
 
 
 def _built_dict(pairs, site):
@@ -281,7 +279,6 @@ def _built_dict(pairs, site):
     )
     from sugar_lift_py_tests.floor.dict_value import DictValue
     from sugar_lift_py_tests.floor.membership import decided_unhashable
-    from sugar_lift_py_tests.outcome import Complete
 
     keys: list = []
     values: list = []
@@ -294,7 +291,7 @@ def _built_dict(pairs, site):
             continue
         keys.append(key)
         values.append(value)
-    return Complete(DictValue(tuple(zip(keys, values))))
+    return ExitSet.completed(DictValue(tuple(zip(keys, values))))
 
 
 def _display_refusal(site, owner):

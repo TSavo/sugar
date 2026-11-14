@@ -11,7 +11,7 @@ from sugar_lift_py_tests.floor.class_definition_value import (
     ConstructedClassMethodV1,
     DeferredClassMethodV1,
 )
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
 
@@ -227,7 +227,7 @@ class ClassDefinitionSugar(Sugar):
             initializer = _inherited_source_initializer(tuple(base_values))
 
         def construct_class(body_value):
-            return Complete(
+            return ExitSet.completed(
                 ClassDefinitionValue(
                     self.class_name,
                     self.class_definition_cid,
@@ -265,16 +265,19 @@ class ClassDefinitionSugar(Sugar):
             if not isinstance(item, ConstructedClassConditionalFieldsV1):
                 selected.append(item)
                 return
-            condition = item.condition_sugar.desugar(ctx)
             from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
                 FalseBoolLiteralSugar,
+            )
+            from sugar_lift_py_tests.sugar.function_universe_sugar import (
+                plain_completed_value,
             )
             from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
                 TrueBoolLiteralSugar,
             )
 
-            if not isinstance(condition, Complete) or not isinstance(
-                condition.value, (TrueBoolLiteralSugar, FalseBoolLiteralSugar)
+            condition = plain_completed_value(item.condition_sugar.desugar(ctx))
+            if not isinstance(
+                condition, (TrueBoolLiteralSugar, FalseBoolLiteralSugar)
             ):
                 from sugar_source_tree.panic import SugarNotWritten
 
@@ -290,7 +293,7 @@ class ClassDefinitionSugar(Sugar):
                 )
             for child in (
                 item.when_true
-                if isinstance(condition.value, TrueBoolLiteralSugar)
+                if isinstance(condition, TrueBoolLiteralSugar)
                 else item.when_false
             ):
                 select(child)
@@ -312,7 +315,7 @@ class ClassDefinitionSugar(Sugar):
 
         def bind_fields(active, completed):
             del active
-            return Complete(
+            return ExitSet.completed(
                 tuple(
                     ObjectField(item.name, completed[index])
                     for item, index in zip(selected, value_index)
@@ -320,7 +323,7 @@ class ClassDefinitionSugar(Sugar):
             )
 
         outcome = evaluate_assignment_values(tuple(values), ctx, tail=bind_fields)
-        from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet
+        from sugar_lift_py_tests.outcome.exit_set import Completed
 
         if (
             isinstance(outcome, ExitSet)

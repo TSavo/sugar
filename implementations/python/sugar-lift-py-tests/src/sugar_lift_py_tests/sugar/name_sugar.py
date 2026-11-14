@@ -53,7 +53,7 @@ class NameSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor import SymbolicValue
         from sugar_lift_py_tests.ir import make_var
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         # Authenticated temporal bindings (builtins, formals already installed
         # into the reduction floor) are source-visible testimony, not free
@@ -63,7 +63,7 @@ class NameSugar(ConstructedTermSugar):
         if temporal is not None:
             bound = temporal.value_if_bound(self.name)
             if bound is not None:
-                return Complete(bound)
+                return ExitSet.completed(bound)
         # A name nothing binds -- not local, not a parameter, not module-level,
         # not imported, not a builtin -- is no free variable: reading it raises
         # NameError, and that halt is its meaning.
@@ -72,9 +72,8 @@ class NameSugar(ConstructedTermSugar):
         if name_bound_nowhere is not None:
             if name_bound_nowhere(self.name):
                 from sugar_lift_py_tests.effect import NameErrorEffect
-                from sugar_lift_py_tests.outcome import ExitSet
 
                 return ExitSet.halted(
                     NameErrorEffect.at(name=self.name, site=self.site)
-                ).collapse()
-        return Complete(SymbolicValue(make_var(self.name)))
+                )
+        return ExitSet.completed(SymbolicValue(make_var(self.name)))

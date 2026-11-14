@@ -29,7 +29,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 from typing import ClassVar
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 
 
@@ -50,7 +50,6 @@ def _opaque_pair(kind, method, site):
     from sugar_lift_py_tests.occurrence import occurrence_key
     from sugar_lift_py_tests.outcome.exit_set import (
         Completed,
-        ExitSet,
         Halted,
         complement_guard,
     )
@@ -84,7 +83,7 @@ def _opaque_pair(kind, method, site):
 def _operands(pending, done, ctx):
     """Evaluate ``pending`` operand sugars in order, after ``done``."""
     if not pending:
-        return Complete(done)
+        return ExitSet.completed(done)
     return (
         pending[0]
         .desugar(ctx)
@@ -185,8 +184,8 @@ class BuiltinContainerProjectionSugar(ConstructedTermSugar):
 
         def project(pair):
             if type(pair) is not TupleValue or len(pair.elements) != 2:
-                return Complete(pair)
-            return Complete(pair.elements[self.index])
+                return ExitSet.completed(pair)
+            return ExitSet.completed(pair.elements[self.index])
 
         return self.call.desugar(ctx).and_then(project)
 
@@ -220,7 +219,7 @@ class ReceiverAfterCallSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.ir import ctor, str_const
         from sugar_lift_py_tests.occurrence import occurrence_key
 
-        return Complete(
+        return ExitSet.completed(
             SymbolicValue(
                 ctor(
                     "python:receiver_after_call",
@@ -252,7 +251,6 @@ class ContainerMutationStatementSugar(Sugar):
         )
 
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
-        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
         def record(active, completed):
@@ -323,17 +321,20 @@ class PathContainerCallSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor import builtin_container_method as law
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.sugar.assigned_value import assigned_key
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
 
         key = assigned_key(self.receiver)
         unknown = _unknown_after(self.site, "receiver")
 
         def ordinary(call_ctx):
             return self.fallback.desugar(call_ctx).and_then(
-                lambda result: Complete(TupleValue((unknown, result)))
+                lambda result: ExitSet.completed(TupleValue((unknown, result)))
             )
 
         outcome = self.receiver.desugar(ctx)
-        if key is None and type(outcome) is not Complete:
+        if key is None and plain_completed_value(outcome) is None:
             # No occurrence to answer a second read from: the ordinary call
             # is the one evaluation.
             return ordinary(ctx)
@@ -526,25 +527,27 @@ class PathAfterCallSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor import builtin_container_method as law
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
 
-        unknown = Complete(_unknown_after(self.site, self.mode))
-        called = self.call.desugar(ctx)
-        if type(called) is not Complete:
+        unknown = ExitSet.completed(_unknown_after(self.site, self.mode))
+        pair = plain_completed_value(self.call.desugar(ctx))
+        if pair is None:
             return unknown
-        pair = called.value
         if type(pair) is not TupleValue or len(pair.elements) != 2:
             return unknown
         post = pair.elements[0]
         if law.container_kind(post) is None:
             return unknown
-        rooted = self.root.desugar(ctx)
-        if type(rooted) is not Complete:
+        rooted = plain_completed_value(self.root.desugar(ctx))
+        if rooted is None:
             return unknown
         check_shared = self.mode == "root" and not self.unshared
-        updated = _replace_path(rooted.value, tuple(self.steps), post, check_shared)
+        updated = _replace_path(rooted, tuple(self.steps), post, check_shared)
         if updated is None:
             return unknown
-        return Complete(post if self.mode == "inner" else updated)
+        return ExitSet.completed(post if self.mode == "inner" else updated)
 
 
 @dataclass(frozen=True)
@@ -582,12 +585,16 @@ class SourceCallActualAfterSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.floor.floor_value import FloorValue
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
 
         outcome = self.state.desugar(ctx)
+        value = plain_completed_value(outcome)
         if (
-            isinstance(outcome, Complete)
-            and outcome.follow().continues
-            and isinstance(outcome.value, FloorValue)
+            value is not None
+            and value.follow_rest().continues
+            and isinstance(value, FloorValue)
         ):
             return outcome
-        return Complete(_unknown_after(self.site, self.label))
+        return ExitSet.completed(_unknown_after(self.site, self.label))

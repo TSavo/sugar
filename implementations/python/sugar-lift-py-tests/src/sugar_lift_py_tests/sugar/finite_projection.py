@@ -9,12 +9,13 @@
 4. replacing the temporal context failed.
 
 `_after_iterable` erased all four into one symbolic fallback and `_complete`
-issued `Complete(ComprehensionValue(term))` with `finite_elements=None`. A
+issued `ExitSet.completed(ComprehensionValue(term))` with
+`finite_elements=None`. A
 comprehension whose finite projection was LOST TO A STRANDED LOOKUP therefore
 reported the same verdict as a genuinely unbounded one, and no downstream
 consumer could tell them apart.
 
-THE LAW. Lawful inapplicability may produce `Complete`. A FAILED AUTHENTICATED
+THE LAW. Lawful inapplicability may complete. A FAILED AUTHENTICATED
 LOOKUP MAY NOT: it must refuse, naming construct, coordinate and shape.
 
 The carrier is closed on purpose, and the closure is TYPE-LEVEL rather than
@@ -39,7 +40,7 @@ class FiniteProjectionNonSuccessV1(Enum):
     LAWFULLY_INAPPLICABLE = "lawfully-inapplicable"
     """The iterable exposes no finite-member roster.
 
-    Symbolic `Complete` is HONEST here: `ComprehensionValue.finite_elements`
+    A symbolic completion is HONEST here: `ComprehensionValue.finite_elements`
     documents `None` as "no exact finite-member testimony exists".
     """
 
@@ -57,7 +58,7 @@ class FiniteProjectionNonSuccessV1(Enum):
 
     A CONSTRUCTION REFUSAL. The producer OWED testimony for this slot
     (#7348's `TargetPatternEnrolledV1`) and the lookup came back empty --
-    the relation is stranded, not absent. This must NEVER reach `Complete`.
+    the relation is stranded, not absent. This must NEVER complete.
     """
 
     REPLACEMENT_FAILED = "replacement-failed"

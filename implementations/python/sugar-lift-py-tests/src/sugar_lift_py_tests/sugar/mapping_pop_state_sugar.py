@@ -55,7 +55,7 @@ class MappingPopStateSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
         from sugar_lift_py_tests.floor.set_value import _closed_member_equal
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if not isinstance(receiver, (DictValue, MappingObjectValue)):
             construction_panic_gap(
@@ -92,8 +92,8 @@ class MappingPopStateSugar(ConstructedTermSugar):
                 fix="repair mapping construction before pop",
             )
         if not matching:
-            return Complete(receiver)
+            return ExitSet.completed(receiver)
         index = matching[0]
-        return Complete(
+        return ExitSet.completed(
             receiver.mapping_with_entries(entries[:index] + entries[index + 1 :])
         )

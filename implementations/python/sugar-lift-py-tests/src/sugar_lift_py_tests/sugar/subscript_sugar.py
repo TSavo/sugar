@@ -81,9 +81,20 @@ class SubscriptSugar(ConstructedTermSugar):
         index_outcome = self.index.desugar(ctx)
 
         from sugar_lift_py_tests.outcome import ExitSet as _ExitSet
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
 
-        receiver_partitioned = isinstance(receiver_outcome, _ExitSet)
-        index_partitioned = isinstance(index_outcome, _ExitSet)
+        # One plain completed arm is the single-outcome path: its value is
+        # handed straight to the step, as a deferred carrier the step answers.
+        receiver_partitioned = (
+            isinstance(receiver_outcome, _ExitSet)
+            and plain_completed_value(receiver_outcome) is None
+        )
+        index_partitioned = (
+            isinstance(index_outcome, _ExitSet)
+            and plain_completed_value(index_outcome) is None
+        )
         if receiver_partitioned or index_partitioned:
             subscripted = outcome_to_exitset(receiver_outcome).and_then(
                 lambda receiver: outcome_to_exitset(index_outcome).and_then(
@@ -94,7 +105,7 @@ class SubscriptSugar(ConstructedTermSugar):
             )
         else:
             # Single-outcome path: undecided lookups raise SugarNotWritten
-            # from the receiver floor (named refusal), exact exits Complete.
+            # from the receiver floor (named refusal), exact exits complete.
             subscripted = receiver_outcome.and_then(
                 lambda receiver: index_outcome.and_then(
                     lambda index: self._subscript(receiver, index, ctx)

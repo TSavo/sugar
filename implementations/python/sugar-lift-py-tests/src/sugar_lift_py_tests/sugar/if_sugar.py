@@ -27,7 +27,7 @@ import functools
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
@@ -64,15 +64,17 @@ def _ground_atomic_truth(formula):
 
 def predicate_formula(value, site):
     """The one truth-to-formula projection shared by all guarded constructs."""
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
 
     truth = value.truth(site)
-    if not isinstance(truth, Complete):
+    truth_value = plain_completed_value(truth)
+    if truth_value is None:
         raise NotImplementedError(
             f"condition truth did not produce one value: {type(truth).__name__}"
         )
-    truth_value = truth.value
     # A truth face that PRESENTS another value (`if (n := c):` -- the walrus keeps
     # its value and bind faces inseparable) is transparent to the guard: the
     # binding is temporal and `extend_scope` applies it, while the GUARD is the
@@ -202,7 +204,10 @@ class IfSugar(Sugar):
         cond = self.test.desugar(ctx)
         if isinstance(cond, NativeOperationExitCarrierV1):
             return cond.and_then(lambda value: self._desugar_condition(value, ctx))
-        from sugar_lift_py_tests.outcome import ExitSet, Halted
+        from sugar_lift_py_tests.outcome import Halted
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
 
         if isinstance(cond, ExitSet) and any(
             isinstance(face, Halted) for face in cond.exits
@@ -214,9 +219,10 @@ class IfSugar(Sugar):
             return NativeOperationExitCarrierV1.compose_prefix(
                 cond, lambda value: self._select_on_face(value, ctx)
             )
-        if not isinstance(cond, Complete):
+        condition = plain_completed_value(cond)
+        if condition is None:
             return cond
-        return self._desugar_condition(cond.value, ctx)
+        return self._desugar_condition(condition, ctx)
 
     def _select_on_face(self, value, ctx):
         """One completed condition face selects its suites.
@@ -225,8 +231,12 @@ class IfSugar(Sugar):
         truth) keeps the face's own value, as every condition face did before
         faces selected suites: that gap is the truth law's, not this one's.
         """
-        if not isinstance(value.truth(self.site), Complete):
-            return Complete(value)
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
+
+        if plain_completed_value(value.truth(self.site)) is None:
+            return ExitSet.completed(value)
         return self._desugar_condition(value, ctx)
 
     def _ground_branch_result(self, ctx, observed_formula) -> None:
@@ -268,8 +278,8 @@ class IfSugar(Sugar):
         # b`) stands as its own formula, a bare value (`if c`) emits the Python
         # `py.truthy(c)` relation. A ground bool (`if True:`) folds to a literal
         # with no formula and is not lifted yet -- LOUD, never guard by nothing.
-        # A condition expression that raised never gets here: it is an
-        # ``Incomplete``, handed back before any branch is selected.
+        # A condition expression that raised never gets here: its halted arm
+        # is handed back before any branch is selected.
         observed_formula = predicate_formula(condition, self.site)
         from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
@@ -292,8 +302,6 @@ class IfSugar(Sugar):
         # never executes, turning an unreachable diagnostic into a function
         # construction failure. Symbolic conditions still reduce both suites
         # and preserve their guarded exits exactly as before.
-        from sugar_lift_py_tests.outcome import ExitSet
-
         # Walrus (and any FloorValue with non-identity extend_scope) binds
         # before branch selection — Python makes the name visible in BOTH arms.
         # Default FloorValue.extend_scope is identity.
@@ -405,7 +413,7 @@ class IfSugar(Sugar):
         from dataclasses import replace as _replace
 
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
-        from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+        from sugar_lift_py_tests.outcome import Completed, Halted
         from sugar_lift_py_tests.outcome.exit_set import (
             _or_guards,
             false_guard,
@@ -507,10 +515,11 @@ class IfSugar(Sugar):
             evaluations=_arm_evaluations((then_exits, else_exits), incoming),
         )
         if not halted and not completed_owed:
-            return Complete(faces)
+            return ExitSet.completed(faces)
         if completed_guard is None:
             return ExitSet(tuple(halted)).normalize()
-        # ``Complete`` has no owed slot: an owing completed face stays an arm.
+        # An owing completed face stays an arm under its own guard, carrying
+        # every debt of the arms it stands for.
         return ExitSet(
             (*halted, Completed(completed_guard, faces, owed=completed_owed))
         ).normalize()

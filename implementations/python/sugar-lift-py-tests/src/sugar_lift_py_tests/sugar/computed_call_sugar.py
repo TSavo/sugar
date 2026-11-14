@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -161,7 +161,7 @@ class ComputedCallSugar(ConstructedTermSugar):
                     requested="actuals matching the authenticated lambda signature",
                     fix="supply real actuals/defaults or keep the lambda call loud",
                 ) from exc
-            return Complete(
+            return ExitSet.completed(
                 CallSiteValue(
                     target_name="py.call",
                     arg_values=bound_source_actuals.actuals,
@@ -216,4 +216,4 @@ class ComputedCallSugar(ConstructedTermSugar):
             callee_term = callee.to_term(owner=owner)
             name = callee_term.name if type(callee_term) is _Var else "py.call"
             return UnknownCalleeCallV1(name).faces(callsite, self.site)
-        return Complete(callsite)
+        return ExitSet.completed(callsite)

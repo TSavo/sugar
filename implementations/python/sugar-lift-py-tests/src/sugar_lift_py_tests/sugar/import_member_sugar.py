@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_python_source.canonical import cid_of_json
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -89,7 +89,7 @@ class ImportMemberSugar(ConstructedTermSugar):
         del ctx
         floored = _seated_language_owned_floor(self)
         if floored is not None:
-            return Complete(floored)
+            return ExitSet.completed(floored)
         from sugar_lift_py_tests.floor.import_member_value import (
             _mint_import_member_value,
         )
@@ -97,7 +97,7 @@ class ImportMemberSugar(ConstructedTermSugar):
         value = _mint_import_member_value(self.receipt)
         if value.qualified_name != self.qualified_name:
             raise ValueError("ImportMemberSugar receipt target mismatch")
-        return Complete(value)
+        return ExitSet.completed(value)
 
     def to_term(self, *, owner: str):
         floored = _seated_language_owned_floor(self)

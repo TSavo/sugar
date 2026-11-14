@@ -28,7 +28,7 @@ class AugAssignSugar(Sugar):
          substitution rewrote (``EvaluationRef``) answers; and under the name,
          for the readers substitution does not reach (a live loop's next item,
          a class body, the export prefix's module bindings).
-      5. On halt: no rebind (Incomplete.and_then never steps) — prior binding stands
+      5. On halt: no rebind (a halted arm bypasses and_then) — prior binding stands
 
     Substitute does **not** thread ``_make_binop`` (__add__) as the rebind.
     Dual-eval of discarded project_inplace + add-binding is the forbidden
@@ -70,13 +70,13 @@ class AugAssignSugar(Sugar):
 
     def _rebind(self, result) -> Outcome:
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind, ScopeRebinds
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if self.evaluation is None:
-            return Complete(ScopeRebind(self.name, result))
+            return ExitSet.completed(ScopeRebind(self.name, result))
         # The name first, the evaluation last: a read of the evaluation is the
         # latest of the two until something rebinds the name.
-        return Complete(
+        return ExitSet.completed(
             ScopeRebinds(((self.name, result), (self.evaluation, result)))
         )
 

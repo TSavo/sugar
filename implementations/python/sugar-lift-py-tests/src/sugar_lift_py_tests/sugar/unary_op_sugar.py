@@ -12,7 +12,7 @@ Python semantic law for ``not`` (distinct from BoolOp):
   a. ``bool(value)`` MAY halt — ``__bool__`` / ``__len__`` can raise a
      source-authenticated exception type; that halt is a real exceptional face.
   b. ONLY the completed truth face is negated — a halted truth has no bool to
-     flip; ``Complete.and_then`` / ``ExitSet.sequence`` skip halted tails.
+     flip; ``ExitSet.and_then`` skips halted tails.
   c. The result is ALWAYS a bool (``True``/``False``), never the operand.
      Contrast BoolOp (#6595): ``a and b`` returns an operand.
   d. Exception type originates in the truth dispatch floor, never from an
@@ -193,8 +193,8 @@ class UnaryOpSugar(ConstructedTermSugar):
                 refuse_undecided_unary_truth(value, self.site)
                 return value.truth(self.site)
 
-            # Negate only completed truth faces.  A raise (``Incomplete``) and
-            # Halted exits bypass this step (no bool to flip).
+            # Negate only completed truth faces.  A raise (a Halted exit)
+            # bypasses this step (no bool to flip).
             return operand.and_then(project_not).and_then(
                 lambda predicate: predicate.negate()
             )

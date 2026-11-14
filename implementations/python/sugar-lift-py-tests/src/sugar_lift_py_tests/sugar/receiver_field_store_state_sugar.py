@@ -44,7 +44,7 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.floor.object_value import ObjectValue
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         def update(receiver, value):
             if not isinstance(receiver, ObjectValue):
@@ -55,7 +55,7 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
                     requested="authenticated source receiver",
                     fix="retain field mutation as typed loud until its receiver floors",
                 )
-            return Complete(receiver.with_field_store(self.attr, value))
+            return ExitSet.completed(receiver.with_field_store(self.attr, value))
 
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.value.desugar(ctx).and_then(

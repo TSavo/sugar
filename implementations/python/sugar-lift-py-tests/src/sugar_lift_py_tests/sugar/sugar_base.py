@@ -5,7 +5,7 @@ from dataclasses import fields, is_dataclass
 import inspect
 from typing import Any, Callable, ClassVar, List, cast
 
-from sugar_lift_py_tests.outcome import Complete, Incomplete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnesses
 from sugar_lift_py_tests.sugar_body import SugarBody
@@ -19,8 +19,9 @@ class Sugar(ABC):
         ``match(Sugar) { Some => cite_or_effect, None => panic }``.
       * ``desugar(ctx)`` -- reduce this sugar (already constructed with its body
         sugars) by dispatching operations onto floor values and recursively
-        desugaring its bodies. Returns ONE thing: ``Outcome`` = ``Complete`` (a
-        floor value) or ``Incomplete`` (a runtime effect that propagates itself).
+        desugaring its bodies. Returns ONE thing: an ``ExitSet`` whose
+        ``Completed`` arms hold floor values and whose ``Halted`` arms hold the
+        runtime effects that propagate themselves.
 
     There is no ``build`` and no ``_build``. Construction is just ``new``: the
     factory recognizes, then constructs the sugar WITH its body sugars, then calls
@@ -82,7 +83,7 @@ class Sugar(ABC):
 
                 value = recorded_value(ctx, self)
                 if value is not _MISS:
-                    return Complete(value)
+                    return ExitSet.completed(value)
             return own(self, ctx, *args, **kwargs)
 
         desugar._answers_assigned_value = True

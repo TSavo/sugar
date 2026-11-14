@@ -64,9 +64,9 @@ class EvaluationRefSugar(ConstructedTermSugar):
         if temporal is not None:
             latest = temporal.latest(self.evaluation, self.name)
             if latest is not None and latest.name == self.evaluation:
-                from sugar_lift_py_tests.outcome import Complete
+                from sugar_lift_py_tests.outcome import ExitSet
 
-                return Complete(latest.value)
+                return ExitSet.completed(latest.value)
             evaluated = temporal.value_if_bound(self.evaluation) is not None
         if self.unevaluated is not None and not evaluated:
             return self.unevaluated.desugar(ctx)

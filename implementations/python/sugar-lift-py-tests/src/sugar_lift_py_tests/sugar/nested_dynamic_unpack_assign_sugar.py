@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from typing import Any
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
@@ -114,29 +114,33 @@ class NestedDynamicUnpackAssignSugar(Sugar):
         ctx: object,
     ) -> Outcome:
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
 
         collected: list[tuple[str, Any]] = []
 
         def step(index: int) -> Outcome:
             if index == len(pattern):
-                return Complete(ScopeRebinds(tuple(collected)))
+                return ExitSet.completed(ScopeRebinds(tuple(collected)))
             part = pattern[index]
             member = members[index]
             if isinstance(part, str):
                 collected.append((part, member))
                 return step(index + 1)
             sub = self._project(member, part, ctx)
-            if not isinstance(sub, Complete):
+            sub_value = plain_completed_value(sub)
+            if sub_value is None:
                 return sub
-            if isinstance(sub.value, ScopeRebinds):
-                collected.extend(sub.value.bindings)
+            if isinstance(sub_value, ScopeRebinds):
+                collected.extend(sub_value.bindings)
             else:
                 from sugar_source_tree.panic import SugarNotWritten
 
                 raise SugarNotWritten(
                     blame=self.site,
                     owner="NestedDynamicUnpackAssignSugar",
-                    observed=f"nested unpack sub-project produced {type(sub.value).__name__}",
+                    observed=f"nested unpack sub-project produced {type(sub_value).__name__}",
                     requested="ScopeRebinds of leaf names",
                     fix="nested Name-only unpack must rebind leaves through ScopeRebinds",
                 )
@@ -152,7 +156,6 @@ class NestedDynamicUnpackAssignSugar(Sugar):
             runtime_effect_evidence_from_terms,
         )
         from sugar_lift_py_tests.ir import ctor, num
-        from sugar_lift_py_tests.outcome import Incomplete
 
         term = value.to_term(owner=f"{type(self).__name__}.value")
         arity = len(pattern)
@@ -163,7 +166,7 @@ class NestedDynamicUnpackAssignSugar(Sugar):
         )
         desc = pattern_desc(pattern)
         leaves = ", ".join(flatten_pattern_names(pattern))
-        return Incomplete(
+        return ExitSet.halted(
             SequenceUnpackRuntimeEffect(
                 "nested sequence unpack runtime boundary: unpack demands "
                 f"nested pattern {desc} (outer arity={arity}, leaves=({leaves})) "

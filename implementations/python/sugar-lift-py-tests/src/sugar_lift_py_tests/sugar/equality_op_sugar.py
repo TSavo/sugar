@@ -114,11 +114,13 @@ def _finite_equality_face(value, peer, *, matches: bool):
 def _equals_and_refine(left, right, site, ctx, left_coordinate):
     outcome = _equals_with_derived_residue(left, right, site, ctx)
     from sugar_lift_py_tests.floor import PredicateValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
 
-    if not isinstance(outcome, Complete) or not isinstance(
-        outcome.value, PredicateValue
-    ):
+    predicate = plain_completed_value(outcome)
+    if not isinstance(predicate, PredicateValue):
         return outcome
     from sugar_lift_py_tests.floor.guarded_value import GuardedValue
     from sugar_lift_py_tests.floor.string_value import StringValue
@@ -136,15 +138,15 @@ def _equals_and_refine(left, right, site, ctx, left_coordinate):
     remaining = _finite_equality_face(left, right, matches=False)
     matching_binding = ((coordinate, matching),) if matching is not None else ()
     remaining_binding = ((coordinate, remaining),) if remaining is not None else ()
-    return Complete(
+    return ExitSet.completed(
         replace(
-            outcome.value,
+            predicate,
             then_bindings=(
-                *outcome.value.then_bindings,
+                *predicate.then_bindings,
                 *matching_binding,
             ),
             else_bindings=(
-                *outcome.value.else_bindings,
+                *predicate.else_bindings,
                 *remaining_binding,
             ),
         )
@@ -164,17 +166,19 @@ def _equals_with_derived_residue(left, right, site, ctx):
     outcome = left.equals(right, site, ctx)
 
     from sugar_lift_py_tests.floor import CallSiteValue, PredicateValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
 
     if isinstance(left, CallSiteValue):
         residue = left.derived_equality_residue(ctx)
-        if residue is not None and (
-            isinstance(outcome, Complete) and isinstance(outcome.value, PredicateValue)
-        ):
-            outcome = Complete(
+        predicate = plain_completed_value(outcome)
+        if residue is not None and isinstance(predicate, PredicateValue):
+            outcome = ExitSet.completed(
                 replace(
-                    outcome.value,
-                    derived_formulas=(*outcome.value.derived_formulas, residue),
+                    predicate,
+                    derived_formulas=(*predicate.derived_formulas, residue),
                 )
             )
     # Equality law: dual-edge when either operand type is undecided.

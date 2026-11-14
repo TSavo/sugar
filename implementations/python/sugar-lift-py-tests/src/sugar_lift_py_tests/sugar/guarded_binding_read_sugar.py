@@ -228,7 +228,7 @@ class GuardedBindingReadSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> Outcome:
         return read_binding(
             self.state, read_name=self.name, read_site=self.site, ctx=ctx
-        ).collapse()
+        )
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const

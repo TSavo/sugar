@@ -111,8 +111,8 @@ def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
     """Ordering law: never dual-edge residual FOL invent (LAW_OF_ONE).
 
     Floor undecided doors throw named; ground doors construct Sugar or
-    an authenticated ground exit (a halt). A residual ``Complete(PredicateValue)`` is OUR
-    fabrication second door — construction panic, not a nameless dual-edge
+    an authenticated ground exit (a halt). A residual plain completed
+    ``PredicateValue`` is OUR fabrication second door — construction panic, not a nameless dual-edge
     ExitSet. Equality still dual-edges via the shared helper; membership uses
     :func:`publish_undecided_membership_edges`.
 
@@ -121,11 +121,11 @@ def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
     """
     del left, right
     from sugar_lift_py_tests.floor import PredicateValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
 
-    if not isinstance(outcome, Complete) or not isinstance(
-        outcome.value, PredicateValue
-    ):
+    if not isinstance(plain_completed_value(outcome), PredicateValue):
         return outcome
 
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
@@ -133,7 +133,9 @@ def publish_undecided_ordering_edges(left, right, site, op_kind: str, outcome):
     construction_panic_gap(
         owner="publish_undecided_ordering_edges",
         blame=site,
-        observed=(f"residual Complete(PredicateValue) on ordering desugar ({op_kind})"),
+        observed=(
+            f"residual completed PredicateValue on ordering desugar ({op_kind})"
+        ),
         requested=(
             "named SugarNotWritten for undecided operands, or Sugar-owned "
             "TrueBool/FalseBool/a ground exit for decided ground"
@@ -236,16 +238,17 @@ def _publish_undecided_dispatch_edges(
         return outcome
 
     from sugar_lift_py_tests.floor import PredicateValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
 
     # Operand type uncertainty cannot revoke an already-constructed Floor
     # outcome. In particular, native halt/ExitSet testimony already owns
     # its exception type, occurrence, guards and pre-effect state. Only a bare
     # predicate needs the unresolved-dispatch check below; inventing an exit
     # for that predicate would still require native exception testimony.
-    if not isinstance(outcome, Complete) or not isinstance(
-        outcome.value, PredicateValue
-    ):
+    predicate = plain_completed_value(outcome)
+    if not isinstance(predicate, PredicateValue):
         return outcome
 
     denotes_left = getattr(left, "denotes_value", None)
@@ -269,7 +272,7 @@ def _publish_undecided_dispatch_edges(
     # ``python:compare.completes(python:compare(op, site))`` and halts with an
     # ``UndeterminedRaiseEffect`` (owner ``UndecidedCompare:<op>``) under the
     # complement.  No exception type is named: the halt is undetermined.
-    return undecided_dispatch_faces(outcome.value, site, op_kind)
+    return undecided_dispatch_faces(predicate, site, op_kind)
 
 
 def undecided_dispatch_faces(predicate, site, op_kind: str):
@@ -345,11 +348,11 @@ def _operation_receiver_outcome(value, ctx, *, owner: str):
     a different producer is projected again, so every completed face ends on
     a value that is its own receiver.
     """
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     def settle(projected):
         if projected is value:
-            return Complete(projected)
+            return ExitSet.completed(projected)
         return _operation_receiver_outcome(projected, ctx, owner=owner)
 
     return value.project_operation_receiver_outcome(ctx, owner=owner).and_then(settle)

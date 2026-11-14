@@ -3,7 +3,7 @@
 The census's #2 family, and mostly docstrings. A bare expression STATES no
 fact: its value reduces (the recursion -- a docstring to its string, a method
 call to its coordinate) and then contributes nothing to the record. What DOES
-ride is an effect: an Incomplete outcome propagates itself through and_then, so
+ride is an effect: a halted arm propagates itself through and_then, so
 `raise`-bearing or unresolvable expressions stay red testimony, never dropped.
 """
 
@@ -13,7 +13,7 @@ from typing import ClassVar
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import inert_statement_return_witness
 
@@ -73,12 +73,14 @@ class ExprStatementSugar(Sugar):
         evaluates again.  ``None`` when the value is not a receiver field store
         or has no occurrence to key; the ordinary path then runs unchanged.
         """
-        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.assigned_value import (
             assigned_key,
             evaluate_assignment_values,
         )
-        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            _ReducedBlock,
+            plain_completed_value,
+        )
         from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
             ReceiverFieldStoreStateSugar,
         )
@@ -90,8 +92,9 @@ class ExprStatementSugar(Sugar):
 
         def tail(active, completed):
             (value,) = completed
-            linear = self._record_statement_value(value, active)
-            follow = linear.follow() if isinstance(linear, Complete) else None
+            recorded = self._record_statement_value(value, active)
+            plain = plain_completed_value(recorded)
+            follow = plain.follow_rest() if plain is not None else None
             if (
                 follow is None
                 or not follow.continues
@@ -100,10 +103,10 @@ class ExprStatementSugar(Sugar):
             ):
                 # Not one plainly continuing record: hand it to the block
                 # reducer exactly as the ordinary path does.
-                return linear
+                return recorded
             return ExitSet.completed(
                 _ReducedBlock(
-                    linear.contribution(), True, (), (), linear.extend_scope(active)
+                    plain.contribution(), True, (), (), plain.extend_scope(active)
                 )
             )
 
@@ -192,7 +195,7 @@ class ExprStatementSugar(Sugar):
                         )
                         if store is not None
                     )
-                return Complete(
+                return ExitSet.completed(
                     BlockValue((recorded, *extras), can_fall_through=True)
                 )
 
@@ -202,4 +205,4 @@ class ExprStatementSugar(Sugar):
             if retained is not None:
                 return retained.and_then(pack)
             return value.reduce_source_outcome(ctx).and_then(pack)
-        return Complete(BlockValue((recorded,), can_fall_through=True))
+        return ExitSet.completed(BlockValue((recorded,), can_fall_through=True))

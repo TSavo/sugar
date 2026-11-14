@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -51,13 +51,13 @@ class PlaceAssignSugar(Sugar):
                     selector = self.selector
                 elif self.selector_kind == "subscript":
                     return self.selector.desugar(ctx).and_then(
-                        lambda selector: Complete(
+                        lambda selector: ExitSet.completed(
                             PlaceAssignValue(receiver, "subscript", selector, value)
                         )
                     )
                 else:
                     raise ValueError("typed place selector mismatch")
-                return Complete(
+                return ExitSet.completed(
                     PlaceAssignValue(receiver, "attribute", selector, value)
                 )
 
