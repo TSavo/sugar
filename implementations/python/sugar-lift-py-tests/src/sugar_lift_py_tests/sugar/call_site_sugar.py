@@ -711,7 +711,6 @@ class CallSiteSugar(ConstructedTermSugar):
                     ),
                     ctx,
                 )
-        from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
 
         owner = str(self.site)
@@ -735,10 +734,6 @@ class CallSiteSugar(ConstructedTermSugar):
             + closure_terms,
             symbol_kind=("builtin" if hasattr(builtins, spelled) else "coordinate"),
         )
-        source_body = None
-        source_frame_cid = None
-        native_operation_actuals = None
-        bound_source_actuals = None
         source_call_frame = self.source_call_frame
         if self.source_call_frame_table is not None:
             from sugar_source_tree.panic import SugarNotWritten
@@ -763,196 +758,31 @@ class CallSiteSugar(ConstructedTermSugar):
                     fix="retain the authenticated frame at the exact call coordinate or keep loud",
                 )
         if source_call_frame is not None:
-            from sugar_source_tree.nodes import (
-                AsyncFunctionDef as SourceAsyncFunctionDef,
-                FunctionDef as SourceFunctionDef,
+            ctx, module_halt = enter_source_frame(
+                source_call_frame,
+                ctx,
+                owner="CallSiteSugar.desugar",
+                blame=self.site,
+                covered=frozenset(name for name, _cid, _value in captured_values),
             )
-
-            closure_owner = source_call_frame.owner
-            if isinstance(
-                closure_owner, (SourceFunctionDef, SourceAsyncFunctionDef)
-            ) and closure_owner.lacks_captured_binding_testimony(
-                covered=frozenset(name for name, _cid, _value in captured_values)
-            ):
-                from sugar_source_tree.panic import SugarNotWritten
-
-                raise SugarNotWritten(
-                    owner="CallSiteSugar.desugar",
-                    blame=self.site,
-                    observed="free or nonlocal source binding has no captured coordinate testimony",
-                    requested="producer-owned captured binding coordinates for every closure read",
-                    fix="construct closure bindings at the lexical frame boundary or keep loud",
-                )
-        if source_call_frame is not None:
-            from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
-            from sugar_source_tree.panic import SugarNotWritten
-
-            if not isinstance(source_call_frame, SourceVisibleCallFrameV1):
-                raise SugarNotWritten(
-                    owner="CallSiteSugar.desugar",
-                    blame=self.site,
-                    observed=type(source_call_frame).__name__,
-                    requested="a closed SourceCallFrameV1 variant",
-                    fix="construct a typed source frame or keep the call loud",
-                )
-            ctx = _with_frame_mutable_globals(ctx, source_call_frame)
             ctx = self._with_captured_values(ctx, source_call_frame, captured_values)
-            module_halt = _frame_module_halt(source_call_frame)
             if module_halt is not None:
                 return module_halt
-            from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-
-            try:
-                if source_call_frame.pending_native_operation is None:
-                    bound_source_actuals = source_call_frame.bind_actuals(
-                        positional, kw_values, ctx
-                    )
-                    positional = bound_source_actuals.actuals
-                else:
-                    native_operation_actuals = (
-                        source_call_frame.bind_native_operation_actuals(
-                            positional, kw_values, ctx
-                        )
-                    )
-                    bound_source_actuals = native_operation_actuals.source_actuals
-                    positional = native_operation_actuals.actuals
-            except SourceCallBindingGap as exc:
-                raise SugarNotWritten(
-                    owner="CallSiteSugar.desugar",
-                    blame=self.site,
-                    observed=str(exc),
-                    requested="actuals matching the authenticated source signature",
-                    fix="supply a real actual/default/variadic occurrence or keep loud",
-                ) from exc
-            # Declaration body keeps formal BindingCoordinateRefs whose cids
-            # match formal_coordinate_cids. Call._construct_sugar may have
-            # bind_node_actuals-specialized the frame body by inlining outer
-            # formal nodes (e.g. make_guard's BindingCoordinateRef into
-            # Class.__init__). force_floor curries THIS frame's formal cids
-            # with FloorValue actuals; mismatched outer formal refs stay
-            # unspecialized and abort source-derived manager construction.
-            # The declaration frame is read again at the module execution site
-            # the call was constructed at: a body reads a module global as the
-            # module binds it where the call runs (#7757 item 7).
-            from sugar_source_tree.nodes import construct_at_module_execution_site
-
-            module_execution_site = getattr(
-                source_call_frame, "module_execution_site", None
-            )
-            source_body = source_call_frame.body
-            owner = getattr(source_call_frame, "owner", None)
-            if owner is not None and hasattr(owner, "source_visible_constructor_frame"):
-                source_body = construct_at_module_execution_site(
-                    module_execution_site, owner.source_visible_constructor_frame
-                ).body
-            elif owner is not None and hasattr(owner, "source_visible_call_frame"):
-                # Imported helper calls are node-specialized when the caller's
-                # Sugar is built. Their FloorValue actuals are curried below,
-                # so reduction must use the callee's declaration body whose
-                # BindingCoordinateRefs match this frame's formal coordinates,
-                # not the caller's inlined formal nodes.
-                bound_class = getattr(source_call_frame, "bound_receiver_class", None)
-                declaration_frame = construct_at_module_execution_site(
-                    module_execution_site,
-                    (
-                        owner.source_visible_call_frame
-                        if bound_class is None
-                        else lambda: owner.bound_classmethod_call_frame(bound_class)
-                    ),
-                )
-                if (
-                    declaration_frame.frame_cid
-                    != source_call_frame.declaration_frame_cid
-                ):
-                    from sugar_source_tree.panic import BackendDefect
-
-                    raise BackendDefect(
-                        owner="CallSiteSugar.desugar",
-                        blame=self.site,
-                        observed="declaration/source frame mismatch",
-                        requested="byte-identical authenticated source frame",
-                        fix="retain the callee declaration frame across node binding",
-                    )
-                source_body = declaration_frame.body
-            source_frame_cid = source_call_frame.frame_cid
-            # bind_actuals returned the complete formal-ordered tuple,
-            # including keyword/default actuals. They must not be appended a
-            # second time below.
-            kw_values = ()
-            if source_call_frame.generator_steps is not None:
-                from sugar_lift_py_tests.generator_construction import (
-                    FormalFloorBindingV1,
-                    GeneratorConstructionV1,
-                )
-
-                # Binder boundary: pair each formal coordinate with the exact
-                # Floor actual bind_actuals already produced (object identity).
-                # Guard temporal installs these Floors; it never rebuilds from
-                # runtime_entries Nodes via sugar()/desugar().
-                formal_floor_bindings = tuple(
-                    FormalFloorBindingV1(coordinate.cid, floor)
-                    for coordinate, floor in zip(
-                        source_call_frame.formal_coordinates,
-                        positional,
-                        strict=True,
-                    )
-                ) + tuple(
-                    FormalFloorBindingV1(
-                        pair.coordinate.cid,
-                        pair.actual,
-                        coordinate=pair.coordinate,
-                    )
-                    for pair in bound_source_actuals.projected_pairs
-                )
-                from sugar_lift_py_tests.occurrence import site_coordinate_cid
-
-                return ExitSet.completed(
-                    GeneratorConstructionV1.allocate(
-                        allocation_coordinate=site_coordinate_cid(self.site),
-                        frame_coordinate=source_call_frame.frame_cid,
-                        binding_state=source_call_frame.runtime_entries,
-                        steps=source_call_frame.generator_steps,
-                        formal_floor_bindings=formal_floor_bindings,
-                        reduction_context=ctx,
-                        source_frame=source_call_frame,
-                    )
-                )
-        callsite = CallSiteValue(
-            target_name=self.target_name,
-            arg_values=positional + tuple(value for _, value in kw_values),
-            parameters=(
-                source_call_frame.parameters if source_call_frame is not None else ()
-            ),
+        # The one binder (``object_value.bind_call``): every call form binds
+        # its actuals there, and ``producer_outcome`` below applies the body.
+        callsite = bind_source_frame_call(
+            self.target_name,
+            positional,
+            kw_values,
+            frame=source_call_frame,
+            ctx=ctx,
+            owner="CallSiteSugar.desugar",
+            blame=self.site,
             term=term,
-            body=source_body,
-            keyword_names=tuple(name for name, _ in kw_values),
-            site=self.site,
             call_occurrence=self.call_occurrence,
             authenticated_target_symbol=self.import_target_symbol,
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
-            source_call_frame_cid=source_frame_cid,
-            formal_coordinate_cids=(
-                tuple(item.cid for item in source_call_frame.formal_coordinates)
-                if source_call_frame is not None
-                else ()
-            ),
-            bound_native_actuals_by_coordinate=(
-                native_operation_actuals.by_formal_coordinate
-                if native_operation_actuals is not None
-                else (
-                    bound_source_actuals.by_native_formal_coordinate
-                    if bound_source_actuals is not None
-                    and bound_source_actuals.native_formal_coordinates
-                    else None
-                )
-            ),
-            bound_native_source_actuals=(
-                None
-                if native_operation_actuals is None
-                else native_operation_actuals.source_actuals
-            ),
-            bound_source_actuals=bound_source_actuals,
             builtin_exception_class=self._applied_builtin_exception_class(
                 ctx, source_call_frame
             ),
@@ -961,54 +791,70 @@ class CallSiteSugar(ConstructedTermSugar):
             ),
             language_callee=self.language_callee,
         )
-        if native_operation_actuals is not None:
+        bound_source_actuals = callsite.bound_source_actuals
+        if (
+            source_call_frame is not None
+            and source_call_frame.generator_steps is not None
+        ):
+            from sugar_lift_py_tests.generator_construction import (
+                FormalFloorBindingV1,
+                GeneratorConstructionV1,
+            )
+
+            # Binder boundary: pair each formal coordinate with the exact
+            # Floor actual bind_actuals already produced (object identity).
+            # Guard temporal installs these Floors; it never rebuilds from
+            # runtime_entries Nodes via sugar()/desugar().
+            formal_floor_bindings = tuple(
+                FormalFloorBindingV1(coordinate.cid, floor)
+                for coordinate, floor in zip(
+                    source_call_frame.formal_coordinates,
+                    callsite.arg_values,
+                    strict=True,
+                )
+            ) + tuple(
+                FormalFloorBindingV1(
+                    pair.coordinate.cid,
+                    pair.actual,
+                    coordinate=pair.coordinate,
+                )
+                for pair in bound_source_actuals.projected_pairs
+            )
+            from sugar_lift_py_tests.occurrence import site_coordinate_cid
+
+            return ExitSet.completed(
+                GeneratorConstructionV1.allocate(
+                    allocation_coordinate=site_coordinate_cid(self.site),
+                    frame_coordinate=source_call_frame.frame_cid,
+                    binding_state=source_call_frame.runtime_entries,
+                    steps=source_call_frame.generator_steps,
+                    formal_floor_bindings=formal_floor_bindings,
+                    reduction_context=ctx,
+                    source_frame=source_call_frame,
+                )
+            )
+        if (
+            source_call_frame is not None
+            and source_call_frame.pending_native_operation is not None
+        ):
             pending = source_call_frame.pending_native_operation.discharge(
-                ctx, native_operation_actuals.by_formal_coordinate
+                ctx, bound_source_actuals.by_native_formal_coordinate
             )
-            return callsite.project_producer_outcome(
-                pending,
-                ctx,
-                carrier_actuals=callsite.bound_native_actuals_by_coordinate,
-            )
+            return callsite.project_producer_outcome(pending, ctx)
         if self.formal_function_sugar is not None and self.source_call_frame is None:
             pending = self.formal_function_sugar.desugar(ctx)
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
             )
 
-            if isinstance(pending, NativeOperationExitCarrierV1):
-                actuals = (
-                    None
-                    if native_operation_actuals is None
-                    else native_operation_actuals.by_formal_coordinate
+            if (
+                isinstance(pending, NativeOperationExitCarrierV1)
+                and bound_source_actuals is not None
+            ):
+                pending = pending.discharge(
+                    ctx, bound_source_actuals.by_native_formal_coordinate
                 )
-                if actuals is None and bound_source_actuals is not None:
-                    actuals = bound_source_actuals.by_native_formal_coordinate
-                if actuals is not None:
-                    pending = pending.discharge(ctx, actuals)
-            return callsite.project_producer_outcome(
-                pending,
-                ctx,
-                carrier_actuals=callsite.bound_native_actuals_by_coordinate,
-            )
-        from sugar_lift_py_tests.context.reduce_context import ReduceContext
-        from sugar_source_tree.panic import SugarNotWritten
-
-        if (
-            ctx is not None
-            and not isinstance(ctx, ReduceContext)
-            and callsite.body is not None
-        ):
-            raise SugarNotWritten(
-                owner="CallSiteSugar.desugar",
-                blame=self.site,
-                observed="source-visible call under a temporal-only reduction context",
-                requested="a ReduceContext that can record the call",
-                fix=(
-                    "keep the call loud until allocate carries a reduction "
-                    "context; do not invent the callee body"
-                ),
-            )
+            return callsite.project_producer_outcome(pending, ctx)
         if callsite.body is None:
             unprojected = _import_bound_unanswered_call(self)
             if unprojected is None:
@@ -1055,11 +901,7 @@ class CallSiteSugar(ConstructedTermSugar):
                 unprojected = _unknown_callee_call(self, ctx)
             if unprojected is not None:
                 return unprojected.faces(callsite, self.site)
-        produced = callsite.producer_outcome(
-            ctx,
-            carrier_actuals=callsite.bound_native_actuals_by_coordinate,
-        )
-        return produced
+        return callsite.producer_outcome(ctx)
 
 
 def _actual_reduce_context(ctx):
@@ -1074,6 +916,156 @@ def _actual_reduce_context(ctx):
     from sugar_lift_py_tests.context import ReduceContext
 
     return ReduceContext.root(owner="CallSiteSugar.desugar")
+
+
+def enter_source_frame(
+    frame, ctx, *, owner: str, blame: object, covered=frozenset()
+):
+    """What a call into a source frame does before it binds, for every form.
+
+    A plain call, a computed callee and a call with ``*``/``**`` enter the
+    frame here: it is the one typed variant, a closure body has its captured
+    coordinates (``covered``: the captured names the call carries), the
+    frame's module globals are installed, and a module whose constant halts
+    is the call's halt.  Returns ``(ctx, halt)``: ``halt`` is that module
+    halt, else ``None``.
+    """
+    from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
+    from sugar_source_tree.panic import SugarNotWritten
+
+    if not isinstance(frame, SourceVisibleCallFrameV1):
+        raise SugarNotWritten(
+            owner=owner,
+            blame=blame,
+            observed=type(frame).__name__,
+            requested="a closed SourceCallFrameV1 variant",
+            fix="construct a typed source frame or keep the call loud",
+        )
+    closure_owner = frame.owner
+    if (
+        isinstance(closure_owner, (FunctionDef, AsyncFunctionDef))
+        and closure_owner.lacks_captured_binding_testimony(covered=covered)
+    ):
+        raise SugarNotWritten(
+            owner=owner,
+            blame=blame,
+            observed="free or nonlocal source binding has no captured coordinate testimony",
+            requested="producer-owned captured binding coordinates for every closure read",
+            fix="construct closure bindings at the lexical frame boundary or keep loud",
+        )
+    return _with_frame_mutable_globals(ctx, frame), _frame_module_halt(frame)
+
+
+def source_frame_body(frame, *, owner: str, blame: object):
+    """The body a call into ``frame`` reduces: its declaration's.
+
+    The declaration body keeps formal BindingCoordinateRefs whose cids match
+    the frame's formal coordinates, which the call curries with its bound
+    FloorValue actuals.  ``Call._construct_sugar`` may have
+    ``bind_node_actuals``-specialized the frame body by inlining the caller's
+    formal nodes (e.g. make_guard's BindingCoordinateRef into
+    Class.__init__); those refs are not this frame's, so the specialized body
+    is never the one reduced.  A class call reduces the class statement's
+    constructor frame.
+
+    The declaration frame is read again at the module execution site the
+    call was constructed at: a body reads a module global as the module
+    binds it where the call runs (#7757 item 7).
+    """
+    from sugar_source_tree.nodes import construct_at_module_execution_site
+
+    module_execution_site = getattr(frame, "module_execution_site", None)
+    owner_node = getattr(frame, "owner", None)
+    if owner_node is not None and hasattr(
+        owner_node, "source_visible_constructor_frame"
+    ):
+        return construct_at_module_execution_site(
+            module_execution_site, owner_node.source_visible_constructor_frame
+        ).body
+    if owner_node is not None and hasattr(owner_node, "source_visible_call_frame"):
+        bound_class = getattr(frame, "bound_receiver_class", None)
+        declaration_frame = construct_at_module_execution_site(
+            module_execution_site,
+            (
+                owner_node.source_visible_call_frame
+                if bound_class is None
+                else lambda: owner_node.bound_classmethod_call_frame(bound_class)
+            ),
+        )
+        if declaration_frame.frame_cid != frame.declaration_frame_cid:
+            from sugar_source_tree.panic import BackendDefect
+
+            raise BackendDefect(
+                owner=owner,
+                blame=blame,
+                observed="declaration/source frame mismatch",
+                requested="byte-identical authenticated source frame",
+                fix="retain the callee declaration frame across node binding",
+            )
+        return declaration_frame.body
+    return frame.body
+
+
+def _refuse_loud(*, owner, blame, observed, requested, fix):
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        owner=owner,
+        blame=blame,
+        observed=observed,
+        requested=requested,
+        fix=fix,
+    )
+
+
+def bind_source_frame_call(
+    target_name: str,
+    positional: tuple,
+    keywords: tuple,
+    *,
+    frame,
+    ctx,
+    owner: str,
+    blame: object,
+    term,
+    refuse=_refuse_loud,
+    **testimony,
+):
+    """``target_name(*positional, **keywords)`` bound by the one binder.
+
+    ``object_value.bind_call`` with what ``frame`` (entered through
+    ``enter_source_frame``) says about the callee: its formals, its
+    declaration body (``source_frame_body``), its coordinates.  With no frame
+    the call is bound bodyless.  The result is applied by
+    ``CallSiteValue.producer_outcome``, as every call is.
+    """
+    from sugar_lift_py_tests.floor.object_value import bind_call
+
+    return bind_call(
+        target_name,
+        positional,
+        keywords,
+        frame=frame,
+        parameters=() if frame is None else frame.parameters,
+        body=(
+            None
+            if frame is None
+            else source_frame_body(frame, owner=owner, blame=blame)
+        ),
+        frame_cid=None if frame is None else frame.frame_cid,
+        formal_coordinate_cids=(
+            ()
+            if frame is None
+            else tuple(item.cid for item in frame.formal_coordinates)
+        ),
+        ctx=ctx,
+        owner=owner,
+        blame=blame,
+        refuse=refuse,
+        term=term,
+        **testimony,
+    )
 
 
 def _frame_module_halt(frame):

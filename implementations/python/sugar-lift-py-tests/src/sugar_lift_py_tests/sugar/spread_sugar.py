@@ -322,8 +322,9 @@ class SpreadCallSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor import BoundMethodValue
 
         # A bound method (a source method read off its receiver, or one
-        # selected through zero-arg ``super``) is called through the
-        # receiver's own method dispatch, as ``MethodCallSugar`` does.
+        # selected through zero-arg ``super``) is called as every value
+        # callee is: its own application, which binds the receiver first
+        # through the one binder and applies the body (#7756).
         if isinstance(callee_value, BoundMethodValue):
             if any(role == "star" for role, _, _ in self.arguments):
                 from sugar_source_tree.panic import SugarNotWritten
@@ -335,6 +336,8 @@ class SpreadCallSugar(ConstructedTermSugar):
                     requested="an exact positional roster",
                     fix="project the starred operand exactly or keep the call loud",
                 )
+            from sugar_lift_py_tests.callable_application import CallableApplication
+
             positional = tuple(
                 value
                 for (role, _name, _), value in zip(self.arguments, values)
@@ -345,13 +348,14 @@ class SpreadCallSugar(ConstructedTermSugar):
                 for (role, name, _), value in zip(self.arguments, values)
                 if role in {"keyword", "double-star"}
             )
-            return callee_value.receiver.call_method_value(
-                callee_value.name,
-                positional,
-                owner="SpreadCallSugar._finish",
-                blame=self.site,
-                ctx=ctx,
-                keywords=keywords,
+            return callee_value.callable_application_with(
+                CallableApplication(
+                    positional + tuple(value for _name, value in keywords),
+                    tuple(name for name, _value in keywords),
+                    self.site,
+                    owner="SpreadCallSugar._finish",
+                ),
+                ctx,
             )
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -374,9 +378,9 @@ class SpreadCallSugar(ConstructedTermSugar):
             arg_terms.append(term)
         term = ctor("python:call", [callee_term, *arg_terms])
 
-        framed = self._body_bearing_callsite(values, term, ctx)
+        framed = self._framed_call(values, term, ctx)
         if framed is not None:
-            return self._produce_framed(framed, ctx)
+            return framed
 
         callsite = CallSiteValue(
             target_name=self.callee_name or "python:call",
@@ -392,48 +396,31 @@ class SpreadCallSugar(ConstructedTermSugar):
             callsite, self.callee_name or "python:call", self.site
         )
 
-    def _produce_framed(self, framed, ctx) -> ExitSet:
-        """A projected source body is reduced once, at the Call, as CallSiteSugar does.
+    def _framed_call(self, values, term, ctx) -> ExitSet | None:
+        """The call into an enrolled source frame, through the plain call's routine.
 
-        Its halts are the call's own faces and its completion is retained on
-        the CallSiteValue, so a consumer never replays the body.
-        """
-        from sugar_lift_py_tests.context.reduce_context import ReduceContext
-        from sugar_source_tree.panic import SugarNotWritten
+        The ``*``/``**`` actuals are projected onto the positional and keyword
+        rosters, then the call enters the frame, binds through the one binder
+        (``object_value.bind_call``) and is applied by
+        ``CallSiteValue.producer_outcome``, exactly as ``f(...)`` is: the body
+        runs once, at the Call, its halts are the call's own faces and its
+        completion is retained, so a consumer never replays it.
 
-        if ctx is not None and not isinstance(ctx, ReduceContext):
-            raise SugarNotWritten(
-                owner="SpreadCallSugar._finish",
-                blame=self.site,
-                observed="source-visible call under a temporal-only reduction context",
-                requested="a ReduceContext that can record the call",
-                fix=(
-                    "keep the call loud until allocate carries a reduction "
-                    "context; do not invent the callee body"
-                ),
-            )
-        return framed.producer_outcome(
-            ctx, carrier_actuals=framed.bound_native_actuals_by_coordinate
-        )
-
-    def _body_bearing_callsite(self, values, term, ctx) -> object | None:
-        """Project ``*``/``**`` actuals onto an enrolled source frame when lawful.
-
-        A star operand projects only when it is a decided ``TupleValue``. A
-        double-star must be a constructed DictValue so bind_actuals can merge
-        keys onto formals — the same law FunctionCallable uses for ``**``.
+        A star operand projects only when it is a decided ``TupleValue``, and
+        a double-star binds only when it is a constructed DictValue
+        (``bind_actuals``); any other operand leaves the call bodyless
+        (``None``), its two faces minted by the caller.
         """
         frame = self.source_call_frame
         if frame is None:
             return None
-        from sugar_lift_py_tests.floor import CallSiteValue, TupleValue
-        from sugar_lift_py_tests.source_call_frame import (
-            SourceCallBindingGap,
-            SourceVisibleCallFrameV1,
+        from sugar_lift_py_tests.floor import TupleValue
+        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
+        from sugar_lift_py_tests.sugar.call_site_sugar import (
+            bind_source_frame_call,
+            enter_source_frame,
         )
 
-        if not isinstance(frame, SourceVisibleCallFrameV1):
-            return None
         positional: list = []
         keywords: list = []
         for (role, name, _), value in zip(self.arguments, values):
@@ -453,25 +440,30 @@ class SpreadCallSugar(ConstructedTermSugar):
                 keywords.append(("**", value))
             else:
                 return None
+        ctx, module_halt = enter_source_frame(
+            frame, ctx, owner="SpreadCallSugar._finish", blame=self.site
+        )
+        if module_halt is not None:
+            return module_halt
+
+        def unbound(*, observed, **_testimony):
+            raise SourceCallBindingGap(observed)
+
         try:
-            bound = frame.bind_actuals(tuple(positional), tuple(keywords), ctx)
+            callsite = bind_source_frame_call(
+                self.callee_name or "python:call",
+                tuple(positional),
+                tuple(keywords),
+                frame=frame,
+                ctx=ctx,
+                owner="SpreadCallSugar._finish",
+                blame=self.site,
+                term=term,
+                refuse=unbound,
+            )
         except SourceCallBindingGap:
             return None
-        source_body = frame.body
-        owner = getattr(frame, "owner", None)
-        if owner is not None and hasattr(owner, "source_visible_constructor_frame"):
-            source_body = owner.source_visible_constructor_frame().body
-        return CallSiteValue(
-            target_name=self.callee_name or "python:call",
-            arg_values=bound.actuals,
-            parameters=frame.parameters,
-            term=term,
-            body=source_body,
-            site=self.site,
-            source_call_frame_cid=frame.frame_cid,
-            formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
-            bound_source_actuals=bound,
-        )
+        return callsite.producer_outcome(ctx)
 
 
 def _unprojected_spread_call_faces(callsite, callee: str, site):

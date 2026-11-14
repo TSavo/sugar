@@ -205,19 +205,6 @@ def _source_coordinate(node) -> SourceFragmentCoordinateV1:
 
 
 @dataclass(frozen=True)
-class BoundNativeOperationActualsV1:
-    """The one Python binder's ordered result, indexed by formal coordinate."""
-
-    actuals: tuple
-    by_formal_coordinate: dict[str, object]
-    source_actuals: BoundSourceCallActualsV1
-
-    def __post_init__(self) -> None:
-        if self.source_actuals.actuals != self.actuals:
-            raise SourceCallBindingGap("native actual testimony values diverge")
-
-
-@dataclass(frozen=True)
 class BoundFormalActualV1:
     coordinate: BindingCoordinateV1
     actual: object
@@ -819,17 +806,6 @@ class SourceVisibleCallFrameV1:
                 raise SourceCallBindingGap(
                     "pending carrier demand coordinate testimony is cross-wired"
                 )
-
-    def bind_native_operation_actuals(
-        self, positional: tuple, keywords: tuple, ctx=None
-    ) -> BoundNativeOperationActualsV1:
-        """Bind once, then key that exact result by formal coordinates."""
-        bound = self.bind_actuals(positional, keywords, ctx)
-        return BoundNativeOperationActualsV1(
-            actuals=bound.actuals,
-            by_formal_coordinate=bound.by_native_formal_coordinate,
-            source_actuals=bound,
-        )
 
     def with_native_operation_projection(self, formal_coordinates, pending):
         """Seat one already-constructed formal operation on this call frame."""

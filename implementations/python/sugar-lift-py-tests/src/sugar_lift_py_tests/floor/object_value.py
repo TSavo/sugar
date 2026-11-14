@@ -778,21 +778,37 @@ def bind_call(
     owner: str,
     blame: object,
     refuse,
+    term=None,
+    **testimony,
 ):
     """Bind ``arguments``/``keywords`` to a source frame: the call, unapplied.
 
-    The frame's own ``bind_actuals`` puts every actual in its formal slot;
-    the result is the ``CallSiteValue`` that ``producer_outcome`` applies.
-    A method call (receiver first) and a class call (the class statement's
-    constructor frame) both bind here.  With no frame the actuals are taken
-    as already in formal order.
+    Every call binds here, whatever form it is written in: a plain call
+    ``f(...)`` (``CallSiteSugar``), a computed callee ``(lambda x: ...)(...)``
+    (``ComputedCallSugar``), a call with ``*``/``**`` (``SpreadCallSugar``),
+    a method call ``obj.m(...)``/``self.m(...)``/``super().m(...)`` (the
+    receiver first, ``bind_method_call``) and a class call (the class
+    statement's constructor frame).  The frame's own ``bind_actuals`` puts
+    every actual in its formal slot; the result is the ``CallSiteValue`` that
+    ``CallSiteValue.producer_outcome`` applies, the one application.  With no
+    frame the actuals are taken as already in formal order, the keyword
+    actuals after the positional ones under their names.
+
+    ``term`` is the call coordinate when the call form has its own (a plain
+    call's ``call:<name>(...)``); ``testimony`` is what that form
+    authenticated about the call (its occurrence, its exception type, its
+    import target), carried on the value unchanged.
     """
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor
 
     arg_values = tuple(arguments)
+    keyword_names: tuple[str, ...] = ()
     bound_source_actuals = None
-    if frame is not None:
+    if frame is None:
+        arg_values = arg_values + tuple(value for _name, value in keywords)
+        keyword_names = tuple(name for name, _value in keywords)
+    else:
         from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
         try:
@@ -806,15 +822,18 @@ def bind_call(
                 fix="preserve exact defaults/variadics or keep the call loud",
             )
         arg_values = bound_source_actuals.actuals
+    if term is None:
+        term = ctor(
+            call_symbol(target_name),
+            [value.to_term(owner=f"{owner} call argument") for value in arg_values],
+            symbol_kind="contract-target",
+        )
     return CallSiteValue(
         target_name=target_name,
         arg_values=arg_values,
         parameters=parameters,
-        term=ctor(
-            call_symbol(target_name),
-            [value.to_term(owner=f"{owner} call argument") for value in arg_values],
-            symbol_kind="contract-target",
-        ),
+        term=term,
+        keyword_names=keyword_names,
         body=body,
         site=blame,
         source_call_frame_cid=frame_cid,
@@ -827,4 +846,5 @@ def bind_call(
         ),
         bound_source_actuals=bound_source_actuals,
         lexical_defining_class=lexical_defining_class,
+        **testimony,
     )

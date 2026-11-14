@@ -158,54 +158,39 @@ class ComputedCallSugar(ConstructedTermSugar):
         )
         frame = self.source_call_frame
         if frame is not None:
-            from sugar_lift_py_tests.source_call_frame import (
-                SourceCallBindingGap,
-                SourceVisibleCallFrameV1,
+            # A lambda called where it is written: the plain call's routine,
+            # so its body runs here and every face of it is this call's.
+            from sugar_lift_py_tests.sugar.call_site_sugar import (
+                bind_source_frame_call,
+                enter_source_frame,
             )
-            from sugar_source_tree.panic import SugarNotWritten
 
-            if not isinstance(frame, SourceVisibleCallFrameV1):
-                raise SugarNotWritten(
-                    blame=self.site,
-                    owner="ComputedCallSugar.desugar",
-                    observed=type(frame).__name__,
-                    requested="a closed SourceCallFrameV1 variant",
-                    fix="construct a typed source frame or keep the call loud",
-                )
-            try:
-                bound_source_actuals = frame.bind_actuals(positional, kw_values, ctx)
-            except SourceCallBindingGap as exc:
-                raise SugarNotWritten(
-                    blame=self.site,
-                    owner="ComputedCallSugar.desugar",
-                    observed=str(exc),
-                    requested="actuals matching the authenticated lambda signature",
-                    fix="supply real actuals/defaults or keep the lambda call loud",
-                ) from exc
-            return ExitSet.completed(
-                CallSiteValue(
-                    target_name="py.call",
-                    arg_values=bound_source_actuals.actuals,
-                    parameters=frame.parameters,
-                    term=term,
-                    body=frame.body,
-                    site=self.site,
-                    source_call_frame_cid=frame.frame_cid,
-                    formal_coordinate_cids=tuple(
-                        item.cid for item in frame.formal_coordinates
-                    ),
-                    bound_source_actuals=bound_source_actuals,
-                )
+            ctx, module_halt = enter_source_frame(
+                frame, ctx, owner="ComputedCallSugar.desugar", blame=self.site
             )
-        from sugar_lift_py_tests.floor import ClassDefinitionValue
+            if module_halt is not None:
+                return module_halt
+            return bind_source_frame_call(
+                "py.call",
+                positional,
+                kw_values,
+                frame=frame,
+                ctx=ctx,
+                owner="ComputedCallSugar.desugar",
+                blame=self.site,
+                term=term,
+            ).producer_outcome(ctx)
+        from sugar_lift_py_tests.floor import BoundMethodValue, ClassDefinitionValue
 
-        if isinstance(callee, ClassDefinitionValue):
+        if isinstance(callee, (ClassDefinitionValue, BoundMethodValue)):
             from sugar_lift_py_tests.callable_application import CallableApplication
 
             # A computed callee that reduced to a source class is constructor
-            # application (``cls(None)`` after a classmethod binds cls).  Other
-            # computed callees stay a dig cue; this does not invent calling an
-            # import member or an unknown formal.
+            # application (``cls(None)`` after a classmethod binds cls); one
+            # that reduced to a bound method is that method's call.  Both bind
+            # and apply through the one routine.  Other computed callees stay
+            # a dig cue; this does not invent calling an import member or an
+            # unknown formal.
             return callee.callable_application_with(
                 CallableApplication(
                     positional + tuple(value for _, value in kw_values),
