@@ -606,6 +606,14 @@ class _Pass:
         # authenticator, ``typing.cast``, ``importorskip``) looks here.  A row
         # carries its binding's provider-gate fact (``ImportReference``).
         self.reference_targets: dict[tuple[int, int, int, int], ImportReference] = {}
+        # The same table's row for each binding an import statement makes,
+        # keyed by ``(statement coordinate, local name)``: what the module
+        # threading binds the name to (``SourceUnit.import_binding_reference``).
+        # A binding whose local names nothing the table rows (``import a.b``
+        # binds the package ``a``) has none.
+        self.binding_targets: dict[
+            tuple[int, int, int, int, str], ImportReference
+        ] = {}
         self.module_state = module_state or {}
         self.analyze_nested = analyze_nested
         self.class_outer_states: dict[int, State] = {}
@@ -850,6 +858,18 @@ class _Pass:
             return None
         return link.id, tuple(reversed(attrs))
 
+    def _record_binding(self, node: Node, local: str, binding: _ImportDef) -> None:
+        """The row of the binding import statement ``node`` makes of
+        ``local``: the import's own target, as a reference to ``local``
+        right after the statement reads it.  ``import a.b`` binds the
+        package ``a``, which this binding does not name: no row."""
+        if binding.submodule_tail:
+            return
+        span = node.line_col_span()
+        self.binding_targets[
+            (span.start_line, span.start_col, span.end_line, span.end_col, local)
+        ] = ImportReference(_target_symbol(binding, ()))
+
     def _record_reference(
         self, node: Node, binding: _ImportDef, member: tuple[str, ...]
     ) -> None:
@@ -993,15 +1013,13 @@ class _Pass:
                         "exportedPath": [alias.name],
                     },
                 }
-                state[local] = frozenset(
-                    {
-                        _ImportDef(
-                            _hash(payload),
-                            f"python:{module}.{alias.name}",
-                            encode_jcs(_json_value(payload)),
-                        )
-                    }
+                definition = _ImportDef(
+                    _hash(payload),
+                    f"python:{module}.{alias.name}",
+                    encode_jcs(_json_value(payload)),
                 )
+                self._record_binding(node, local, definition)
+                state[local] = frozenset({definition})
             return state
         if node.kind == "Import":
             for alias in node.names:
@@ -1024,18 +1042,14 @@ class _Pass:
                         "exportedPath": [],
                     },
                 }
-                state[local] = frozenset(
-                    {
-                        _ImportDef(
-                            _hash(payload),
-                            f"python:{alias.name}",
-                            encode_jcs(_json_value(payload)),
-                            ()
-                            if alias.asname
-                            else tuple(alias.name.split(".")[1:]),
-                        )
-                    }
+                definition = _ImportDef(
+                    _hash(payload),
+                    f"python:{alias.name}",
+                    encode_jcs(_json_value(payload)),
+                    () if alias.asname else tuple(alias.name.split(".")[1:]),
                 )
+                self._record_binding(node, local, definition)
+                state[local] = frozenset({definition})
             return state
         if node.kind in ("FunctionDef", "AsyncFunctionDef"):
             for deco in node.decorators:
