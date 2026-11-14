@@ -551,6 +551,7 @@ def _module_recurrence() -> LoopRecurrenceSugar:
         target_cid=MODULE_LOOP,
         loop_construction_cid="blake3-512:module-live-loop-construction",
         binding_coordinate_cids=(),
+        post_binding_keys=(),
         outward_faces=(),
         construction=None,
         site="module-live-loop",

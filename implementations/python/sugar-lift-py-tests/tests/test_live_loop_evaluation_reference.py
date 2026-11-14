@@ -76,6 +76,7 @@ HEADER = EVALUATION_PREFIX + "blake3-512:test-header"
 LATCH = EVALUATION_PREFIX + "blake3-512:test-latch"
 WRITE = EVALUATION_PREFIX + "blake3-512:test-write"
 ELSE_WRITE = EVALUATION_PREFIX + "blake3-512:test-else-write"
+POST = EVALUATION_PREFIX + "blake3-512:test-post-binding"
 LOOP = "blake3-512:test-loop"
 
 
@@ -101,6 +102,7 @@ def _recurrence() -> LoopRecurrenceSugar:
         target_cid=LOOP,
         loop_construction_cid="blake3-512:test-construction",
         binding_coordinate_cids=(),
+        post_binding_keys=(),
         outward_faces=(),
         construction=None,
         site="live-loop-evaluation",
@@ -249,11 +251,15 @@ def test_the_else_reads_the_last_items_target() -> None:
     assert recurrence._leave_target(runtime, ctx, 0) is ctx
 
 
-def test_the_publication_writes_the_coordinate_never_the_name() -> None:
+def test_the_publication_writes_the_loops_own_key_never_the_coordinate() -> None:
+    # The loop publishes a name it carries under a binding coordinate under
+    # its own key of the name: never the name, never the coordinate (another
+    # loop writing the name carries it under the same one).
     recurrence = LoopRecurrenceSugar(
         target_cid=LOOP,
         loop_construction_cid="blake3-512:test-construction",
         binding_coordinate_cids=("blake3-512:test-binding",),
+        post_binding_keys=(POST,),
         outward_faces=(),
         construction=None,
         site="live-loop-evaluation",
@@ -265,7 +271,7 @@ def test_the_publication_writes_the_coordinate_never_the_name() -> None:
         carried=(TermValue(4),),
     )
     block = published.completed_value()
-    assert block.statements == (ScopeRebind("blake3-512:test-binding", TermValue(4)),)
+    assert block.statements == (ScopeRebind(POST, TermValue(4)),)
 
 
 # -- a read inside a nested live loop's item ----------------------------------
@@ -738,23 +744,155 @@ def test_an_unbound_loop_binding_ref_refuses_by_name() -> None:
         binding_coordinate_cid="blake3-512:test-binding",
         completion_kind="NormalExhaustion",
         name="carried",
+        post_key=POST,
         site=None,
     )
     # No context, and a context the loop's publication never reached: the
-    # read is refused naming the coordinate and the name, never answered
-    # with an unbound ``python:loop.post_binding`` term.
-    for ctx in (None, ReduceContext.root(owner="live-unbound-post-binding")):
+    # read is refused naming the loop's key, the coordinate and the name,
+    # never answered with an unbound ``python:loop.post_binding`` term.
+    unpublished = ReduceContext.root(owner="live-unbound-post-binding")
+    # A value under the coordinate is another loop's, or the binding before
+    # the loop: never this loop's publication, so never read.
+    elsewhere = unpublished.with_temporal(
+        unpublished.temporal.bind_value("blake3-512:test-binding", TermValue(9))
+    )
+    for ctx in (None, unpublished, elsewhere):
         with pytest.raises(ConstructionPanic) as refused:
             ref.desugar(ctx)
         observed = refused.value.info.observed
+        assert POST in observed
         assert "blake3-512:test-binding" in observed
         assert "`carried`" in observed
     # Bound by the loop's publication, the read is the published value.
     ctx = ReduceContext.root(owner="live-bound-post-binding")
-    ctx = ctx.with_temporal(
-        ctx.temporal.bind_value("blake3-512:test-binding", TermValue(4))
-    )
+    ctx = ctx.with_temporal(ctx.temporal.bind_value(POST, TermValue(4)))
     assert ref.desugar(ctx) == ExitSet.completed(TermValue(4))
+    # Read inside the item of a live loop around it, the key published
+    # outside that item is the one read.
+    with entered(_item(0)):
+        assert ref.desugar(ctx) == ExitSet.completed(TermValue(4))
+
+
+# -- two loops writing one name: each publishes under its own key (#7757) -----
+
+
+def _loops(function) -> list:
+    return [
+        statement
+        for statement in function.sugar().statements
+        if isinstance(statement, LoopRecurrenceSugar)
+    ]
+
+
+def test_two_loops_writing_one_name_publish_under_their_own_keys() -> None:
+    # Both loops carry ``x`` under the binding coordinate the name has: the
+    # second starts from the first's publication of it.  Each publishes it
+    # under its own key, so no read after the one finds the other's value.
+    function = _function(
+        "def f(xs, ys):\n"
+        "    x = 0\n"
+        "    for a in xs:\n"
+        "        x = a\n"
+        "    for b in ys:\n"
+        "        x = b\n"
+        "    return x\n"
+    )
+    first, second = _loops(function)
+    [first_key] = first.post_binding_keys
+    [second_key] = second.post_binding_keys
+    assert first_key.startswith(EVALUATION_PREFIX)
+    assert second_key.startswith(EVALUATION_PREFIX)
+    assert first_key != second_key
+
+
+_HELPERS = "def g():\n    return (1, 2)\ndef h():\n    return (7, 8)\n"
+
+
+def test_a_loop_in_an_if_after_a_loop_is_read_in_the_branch() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # The first loop leaves ``x`` 2; the second, inside the branch, leaves it
+    # 8.  The read in the branch after the second loop is 8: never the first
+    # loop's 2, which a key shared by both loops would hand it.
+    function = _function(
+        "def f(c):\n"
+        "    x = 0\n"
+        "    for a in g():\n"
+        "        x = a\n"
+        "    if c:\n"
+        "        for b in h():\n"
+        "            x = b\n"
+        "        return x\n"
+        "    return 5\n" + _HELPERS
+    )
+    returned = _flattened(_returned_values(function_universe_outcome(function)))
+    assert TermValue(8) in returned, returned
+    assert TermValue(5) in returned, returned
+    assert TermValue(2) not in returned, returned
+
+
+def test_a_loop_in_an_if_after_a_loop_is_read_after_the_if() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # After the ``if``: the second loop's 8 on the arm it ran, the first
+    # loop's 2 on the arm it did not.  The ``if`` carries the second loop's
+    # key out of its arm, so the read is not refused.
+    function = _function(
+        "def f(c):\n"
+        "    x = 0\n"
+        "    for a in g():\n"
+        "        x = a\n"
+        "    if c:\n"
+        "        for b in h():\n"
+        "            x = b\n"
+        "    return x\n" + _HELPERS
+    )
+    returned = _flattened(_returned_values(function_universe_outcome(function)))
+    assert TermValue(8) in returned, returned
+    assert TermValue(2) in returned, returned
+    assert TermValue(0) not in returned, returned
+
+
+def test_a_loop_in_each_if_arm_is_read_after_the_if() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # Each arm's loop writes ``x``, carried under the one coordinate ``x = 0``
+    # binds.  After the ``if``, each arm reads its own loop's key, carried
+    # out of that arm: 2 on the one, 8 on the other, never the binding
+    # before the ``if`` and never refused.
+    function = _function(
+        "def f(c):\n"
+        "    x = 0\n"
+        "    if c:\n"
+        "        for a in g():\n"
+        "            x = a\n"
+        "    else:\n"
+        "        for b in h():\n"
+        "            x = b\n"
+        "    return x\n" + _HELPERS
+    )
+    first, second = _loops_in_arms(function)
+    assert first.post_binding_keys != second.post_binding_keys
+    returned = _flattened(_returned_values(function_universe_outcome(function)))
+    assert TermValue(2) in returned, returned
+    assert TermValue(8) in returned, returned
+    assert TermValue(0) not in returned, returned
+
+
+def _loops_in_arms(function) -> list:
+    """The live loops in the arms of ``function``'s ``if``, in source order."""
+    from sugar_lift_py_tests.sugar.if_sugar import IfSugar
+
+    [branch] = [
+        statement
+        for statement in function.sugar().statements
+        if isinstance(statement, IfSugar)
+    ]
+    return [
+        statement
+        for statement in (*branch.then_body, *branch.else_body)
+        if isinstance(statement, LoopRecurrenceSugar)
+    ]
 
 
 _LIVE_ELSE = (
@@ -827,7 +965,7 @@ def test_a_nested_loop_rebinding_a_carried_target_is_a_write() -> None:
     assert isinstance(inner, LoopRecurrenceSugar)
     assert inner.construction.loop_runtime.carried_names == ("x",)
     [(_header, writes, _else_writes)] = runtime.carried_evaluations
-    assert writes == inner.binding_coordinate_cids
+    assert writes == inner.post_binding_keys
 
 
 _SYMBOLIC_EXIT = (

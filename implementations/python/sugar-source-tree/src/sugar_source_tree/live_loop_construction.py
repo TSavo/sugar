@@ -103,10 +103,12 @@ class LiveForRuntimeV1:
     published_evaluations: tuple[
         tuple[str, tuple[str, ...], tuple[str, ...]], ...
     ] = ()
-    # The carried names the loop publishes under their binding coordinates
+    # The carried names the loop carries under their binding coordinates
     # (``LoopRecurrenceSugar.binding_coordinate_cids`` order): the names
-    # bound before the loop by a binding entry.  Every other carried name is
-    # published through its post-loop key.
+    # bound before the loop by a binding entry, each published under the
+    # loop's own key of it (``loop_post_binding_key``,
+    # ``LoopRecurrenceSugar.post_binding_keys``).  Every other carried name
+    # is published through its post-loop key.
     coordinate_names: tuple[str, ...] = ()
     # The name of each ``published_evaluations`` entry, in its order.
     published_names: tuple[str, ...] = ()
@@ -212,8 +214,10 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
     evaluation, every assignment (``y = e``, ``y: T = e``, an unpack) each
     target's projection of its evaluation, every assignment (an ``if``'s phi
     among them) its carried write of the name (``carried_write_key``), and a
-    nested live loop the binding coordinate or the post-loop key it
-    publishes the name under (``coordinate_names``, ``published_names``).
+    nested live loop the key it publishes the name under: its own post-binding
+    key of a name it carries under a binding coordinate
+    (``loop_post_binding_key``, ``coordinate_names``), or its post-loop key
+    of any other name it writes (``published_names``).
     A nested ``for`` whose target is a name this loop carries (``for x in
     xs: for x in ys``) writes it on every item: a live one carries that
     target itself (``construct_live_loop_recurrence``) and publishes its
@@ -268,12 +272,14 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
         if isinstance(node, LoopRecurrenceStatement):
             runtime = getattr(node.construction, "loop_runtime", None)
             if runtime is not None:
-                for name, coordinate_cid in zip(
+                # A name the nested loop carries under a binding coordinate,
+                # published under that loop's own key of it as it leaves.
+                for name, post_key in zip(
                     runtime.coordinate_names,
-                    node.binding_coordinate_cids,
+                    node.post_binding_keys,
                     strict=True,
                 ):
-                    write(name, coordinate_cid)
+                    write(name, post_key)
                 # A name the nested loop publishes through its post-loop key,
                 # bound as it leaves, in the item of this loop it runs in.
                 for name, (post_key, _writes, _else_writes) in zip(
@@ -565,7 +571,26 @@ def _guard_union(guards, fallback):
     return concrete[0] if len(concrete) == 1 else or_(concrete)
 
 
-def _make_loop_ref(loop, name, entry, completion_kind):
+def loop_post_binding_key(loop, name: str, scope) -> str:
+    """The key a live loop publishes ``name`` under as it leaves, for a name
+    it carries under a binding coordinate: the loop statement's own
+    evaluation key (``Statement._evaluation_key``) projected on the name
+    (``projection_key``).
+
+    Every read after the loop is a ``LoopBindingRef`` to this key, and the
+    loop binds it on every exit it leaves by
+    (``LoopRecurrenceSugar._publication``).  The binding coordinate is the
+    name's, not the loop's: two loops writing one name carry it under one
+    coordinate, so the key is the loop's own, and no two loops share one.
+    It is an evaluation key, so an ``if`` carries it out of the arm the loop
+    sits in like any statement evaluation (``if_sugar._arm_evaluations``),
+    and the ``if``'s phi reads it on that arm only."""
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+    return projection_key(loop._evaluation_key(scope), name)
+
+
+def _make_loop_ref(loop, name, entry, completion_kind, post_key):
     from .backend import Leaf, materialize
     from .shadow import ShadowNode
 
@@ -579,13 +604,16 @@ def _make_loop_ref(loop, name, entry, completion_kind):
                 ("binding_coordinate_cid", Leaf(entry.coordinate.cid)),
                 ("completion_kind", Leaf(completion_kind)),
                 ("name", Leaf(name)),
+                ("post_key", Leaf(post_key)),
             ),
         ),
         loop.reporter,
     )
 
 
-def _make_statement(loop, construction, binding_coordinate_cids, outward_faces):
+def _make_statement(
+    loop, construction, binding_coordinate_cids, post_binding_keys, outward_faces
+):
     from .backend import Child, Leaf, materialize
     from .shadow import ShadowNode, _handle_of
 
@@ -599,6 +627,7 @@ def _make_statement(loop, construction, binding_coordinate_cids, outward_faces):
                 ("construction", Leaf(construction)),
                 ("target_cid", Leaf(construction.target.target_cid)),
                 ("binding_coordinate_cids", Leaf(binding_coordinate_cids)),
+                ("post_binding_keys", Leaf(post_binding_keys)),
                 ("outward_faces", Leaf(outward_faces)),
             ),
         ),
@@ -682,6 +711,12 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     _refuse_deferred_carried_writes(loop, carried_names)
     pre_entries = tuple(scope[name] for name in coordinate_names)
     pre_state, pre_runtime = _sealed_state(pre_entries)
+    # The key this loop publishes each coordinate name under: its own, never
+    # the name's coordinate, which an earlier or a later loop writing the
+    # name carries too (``loop_post_binding_key``).
+    post_binding_keys = tuple(
+        loop_post_binding_key(loop, name, scope) for name in coordinate_names
+    )
 
     target = loop.owned_loop_target.wire()
     target_cid = target["targetCid"]
@@ -718,10 +753,12 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         projected_entries = tuple(
             replace(
                 entry,
-                state=_make_loop_ref(loop, name, entry, completion_kind),
+                state=_make_loop_ref(loop, name, entry, completion_kind, post_key),
                 sealed_state=None,  # unsealed until face testimony is sealed
             )
-            for name, entry in zip(coordinate_names, pre_entries, strict=True)
+            for name, entry, post_key in zip(
+                coordinate_names, pre_entries, post_binding_keys, strict=True
+            )
         )
         state_record, runtime_snapshot = _sealed_state(projected_entries)
         if all(
@@ -1171,6 +1208,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             loop,
             construction,
             tuple(entry.coordinate.cid for entry in pre_entries),
+            post_binding_keys,
             tuple(outward_faces),
         ),
         bindings,
