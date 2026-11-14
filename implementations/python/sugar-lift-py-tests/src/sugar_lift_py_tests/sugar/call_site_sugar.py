@@ -139,17 +139,14 @@ def _resolved_manager_construction(sugar) -> bool:
     refs = getattr(context, "source_derived_contract_refs", None)
     if not refs:
         return False
-    try:
-        span = sugar.site.line_col_span
-        coordinate = SourceFragmentCoordinateV1(
-            sugar.site.source_cid,
-            span.start_line,
-            span.start_col,
-            span.end_line,
-            span.end_col,
-        )
-    except (AttributeError, TypeError):
-        return False
+    span = sugar.site.line_col_span
+    coordinate = SourceFragmentCoordinateV1(
+        sugar.site.source_cid,
+        span.start_line,
+        span.start_col,
+        span.end_line,
+        span.end_col,
+    )
     from sugar_lift_py_tests.context_manager_resolution import (
         ContextManagerResolutionGapV1,
     )

@@ -53,10 +53,9 @@ def assigned_key(sugar) -> object | None:
     site = getattr(sugar, "site", None)
     if site is None or not hasattr(site, "span") or not hasattr(site, "unit"):
         return None
-    try:
-        hash(site)
-    except TypeError:
-        return None
+    # A source fragment is hashable; an unhashable site is a lifter bug, and
+    # its TypeError propagates here rather than answering "no key".
+    hash(site)
     # A shadow evaluation minted once per substitution (an unrolled
     # iteration's mutating call) shares its span with every other iteration's;
     # its evaluation coordinate (span plus occurrence tags, never a process

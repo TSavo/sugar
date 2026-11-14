@@ -1,24 +1,26 @@
-"""Full-tree universe mint must not downgrade product panics to gaps.
+"""The universe door must not downgrade a refusal to a gap.
 
-The targeted ``seek=true`` universe door answers one call site, so it names
-the refused function as a gap.  The full-tree ``seek=false`` mint must not:
-converting ``SugarNotWritten`` to a gap lets Rust turn it into a diagnostic
-and seal an incomplete ``ir-document``.  This tooth pins that arm at the real
-JSON-RPC membrane.
+Neither the full-tree ``seek=false`` mint nor the targeted ``seek=true``
+door converts ``SugarNotWritten`` into an enumeration gap: a gap lets Rust
+turn it into a diagnostic and seal an incomplete ``ir-document``.  The
+refusal leaves by name.  This tooth pins that at the real JSON-RPC membrane.
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from sugar_lift_py_tests import lift_rpc, tree_enumerate
 from sugar_source_tree.panic import SugarNotWritten
 
 
-def test_full_tree_universe_scan_preserves_sugar_not_written_as_typed_loud(
-    tmp_path, monkeypatch
+@pytest.mark.parametrize("seek", (False, True))
+def test_universe_door_preserves_sugar_not_written_as_typed_loud(
+    tmp_path, monkeypatch, seek
 ) -> None:
-    """Removing the no-seek rethrow must recreate a successful empty result."""
+    """A catch of the refusal must recreate a successful result with a gap."""
 
     subject = tmp_path / "subject.py"
     subject.write_text("def subject():\n    return 1\n", encoding="utf-8")
@@ -44,7 +46,7 @@ def test_full_tree_universe_scan_preserves_sugar_not_written_as_typed_loud(
             "level": "universe",
             "workspace_root": str(tmp_path),
             "at": {"file": subject.name},
-            "seek": False,
+            "seek": seek,
         },
     }
     requests = iter([request])

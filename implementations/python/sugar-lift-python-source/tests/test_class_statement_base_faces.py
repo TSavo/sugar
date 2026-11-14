@@ -313,4 +313,7 @@ def test_import_member_subscript_refusal_is_still_reachable():
         object.__setattr__(member, name, value)
     with pytest.raises(SugarNotWritten) as raised:
         member.subscript(_KeyWithNoTerm(), "m.py:1:0")
+    # The key's own refusal propagates as itself; it is not rewritten into an
+    # undecided-receiver refusal.
     assert raised.value.owner == "ImportMemberValue.subscript"
+    assert raised.value.observed == "a key with no term"

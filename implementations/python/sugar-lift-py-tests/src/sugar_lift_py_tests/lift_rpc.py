@@ -701,18 +701,16 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     (never calls post()), projects its link unit, and RETAINS the immutable
     universe keyed by linkUnitCid + def-memento so Phase-3 resume reuses it.
 
-    Soft-skip is only ``SugarNotWritten`` (typed tree frontier), matching
-    universe enumerate. ``ConstructionPanic`` is *not* caught here — the sole
-    production soft membranes are audit enumeration and
-    ``_production_lift_child``; panics propagate to the process-terminal
-    JSON-RPC error + SystemExit handler. Halting / non-Universe outcomes
+    Nothing is soft-skipped: neither ``SugarNotWritten`` nor
+    ``ConstructionPanic`` is caught here — the sole production soft membranes
+    are audit enumeration and ``_production_lift_child``; refusals propagate
+    to the typed-loud JSON-RPC error handler. Halting / non-Universe outcomes
     simply enroll no link unit (no owned demand).
     """
     from sugar_lift_py_tests import tree_enumerate as _tree
     from sugar_lift_py_tests import unanswered_calls as _unanswered
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
     from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
-    from sugar_source_tree.panic import SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
 
     global _RETAINED_LINK_UNITS, _RETAINED_BY_MEMENTO
@@ -731,16 +729,11 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
             source_path, root=root, reporter=CollectingReporter()
         )
         for fn in sf.functions():
-            try:
-                # The one reduction a resumed function gets: the unanswered
-                # calls its arms owe are retained with the unit (see the
-                # resume rows).
-                outcome = _tree.owner_reduction(fn).outcome
-            except SugarNotWritten:
-                # Typed tree frontier: no link unit to enroll. Gap remains
-                # visible on the universe/audit scan; never catch
-                # ConstructionPanic to soft-continue.
-                continue
+            # The one reduction a resumed function gets: the unanswered
+            # calls its arms owe are retained with the unit (see the
+            # resume rows). A refusal (SugarNotWritten or ConstructionPanic)
+            # propagates by name; it never skips the function.
+            outcome = _tree.owner_reduction(fn).outcome
             # One unconditional completed arm (``ExitSet.completed_value``),
             # owing or not: what it owes is retained with the unit below. A
             # deferred carrier or any other arm set enrolls nothing.
@@ -1720,26 +1713,6 @@ def _qualify_factory_walk_owner(rows, start: int, qualified_name: str) -> None:
         rows[index] = dataclasses.replace(row, source_memento=memento)
 
 
-def _parse_blame_locus(site: str) -> tuple[str, int, int]:
-    """Parse 'path:line:col' from the right (paths may contain colons)."""
-    if not site:
-        return "", 0, 0
-    parts = site.rsplit(":", 2)
-    if len(parts) == 3:
-        file, line_s, col_s = parts
-        try:
-            return file, int(line_s), int(col_s)
-        except ValueError:
-            return site, 0, 0
-    if len(parts) == 2:
-        file, line_s = parts
-        try:
-            return file, int(line_s), 0
-        except ValueError:
-            return site, 0, 0
-    return site, 0, 0
-
-
 def _first_bridge_ctor_name(
     node: Any,
     term_table: Optional[Dict[str, Dict[str, Any]]] = None,
@@ -2673,7 +2646,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_py_tests import unanswered_calls as _unanswered
                 from sugar_lift_py_tests.ir import TermTableBuilder
                 from sugar_lift_py_tests.proofir._errors import FreeVariableRefusal
-                from sugar_source_tree.panic import SugarNotWritten
                 from sugar_source_tree.reporter import CollectingReporter
 
                 sf = open_source_file_for_construction(
@@ -2754,25 +2726,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                             )
                         )
                         continue
-                    except SugarNotWritten as gap:
-                        # A full-tree mint has no later construction entrance:
-                        # turning this product terminal into an enumeration gap
-                        # lets the Rust fold downgrade it to a diagnostic and
-                        # seal incomplete IR.  Let the existing typed-loud RPC
-                        # membrane carry the structured panic instead.  A
-                        # targeted seek answers one call site: that callee's
-                        # universe is a named gap there.
-                        if not seek:
-                            raise
-                        gaps.append(
-                            {
-                                "memento": _tree.function_def_memento(
-                                    fn, file_rel
-                                ).to_rpc(),
-                                "reason": gap.observed,
-                            }
-                        )
-                        continue
+                    # A SugarNotWritten from the function, in a full scan or a
+                    # seek, is not turned into an enumeration gap: it leaves
+                    # through the typed-loud RPC membrane by name.
                     for row in _tree.unanswered_call_rows(calls, file_rel):
                         key = json.dumps(
                             row.to_rpc_with_term_table(None), sort_keys=True

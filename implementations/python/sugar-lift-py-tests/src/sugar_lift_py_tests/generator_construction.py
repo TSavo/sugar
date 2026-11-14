@@ -1873,15 +1873,10 @@ class GeneratorConstructionV1:
                 requested, f"raise did not halt ({type(outcome).__name__})"
             )
         if isinstance(step, TermStepV1):
-            from sugar_source_tree.panic import SugarNotWritten
-
-            # A ConstructionPanic from the term is its own named refusal: it
-            # propagates with its owner, requested, and observed intact. It is
-            # never rewritten into a transition gap.
-            try:
-                outcome = step.term.desugar(self._guard_evaluation_context())
-            except SugarNotWritten as exc:
-                return self._gap(requested, str(exc.observed))
+            # A refusal from the term (ConstructionPanic or SugarNotWritten) is
+            # its own named refusal: it propagates with its owner, requested,
+            # and observed intact. It is never rewritten into a transition gap.
+            outcome = step.term.desugar(self._guard_evaluation_context())
             if not isinstance(outcome, ExitSet):
                 return self._gap(requested, type(outcome).__name__)
             if outcome.completed_value() is None or outcome.owed_items():
@@ -2122,7 +2117,6 @@ class GeneratorConstructionV1:
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
-        from sugar_source_tree.panic import SugarNotWritten
 
         names = ", ".join(name for name, _evaluation in step.targets)
         sent = self._sent_value(requested)
@@ -2133,12 +2127,9 @@ class GeneratorConstructionV1:
                 None, sent, step.fragment_cid, evaluation=step.store_evaluation
             )
             bound = replace(self, binding_state=(*self.binding_state, stored))
-            try:
-                outcome = reduce_block_to_exitset(
-                    (step.store,), bound._guard_evaluation_context()
-                )
-            except SugarNotWritten as exc:
-                return self._gap(requested, str(exc.observed))
+            outcome = reduce_block_to_exitset(
+                (step.store,), bound._guard_evaluation_context()
+            )
             if not isinstance(outcome, ExitSet):
                 return self._gap(
                     requested,
@@ -3135,18 +3126,13 @@ class GeneratorConstructionV1:
             NativeOperationExitCarrierV1,
         )
         from sugar_lift_py_tests.sugar.sugar_base import Sugar
-        from sugar_source_tree.panic import SugarNotWritten
 
         value = guard
         if isinstance(guard, Sugar):
             ctx = self._guard_evaluation_context()
-            try:
-                outcome = guard.desugar(ctx)
-            except SugarNotWritten:
-                # Unspecialized / wrong-coordinate formal: not a ground truth.
-                # Surface as undecided (None) so the branch stays a loud gap or
-                # partition path rather than inventing a default.
-                return None
+            # A guard whose reduction refuses (SugarNotWritten) propagates
+            # that refusal by name; it is never an undecided None.
+            outcome = guard.desugar(ctx)
             if isinstance(outcome, NativeOperationExitCarrierV1):
                 return outcome
             if not isinstance(outcome, ExitSet):
@@ -3200,16 +3186,11 @@ class GeneratorConstructionV1:
             NativeOperationExitCarrierV1,
         )
         from sugar_lift_py_tests.sugar.sugar_base import Sugar
-        from sugar_source_tree.panic import SugarNotWritten
 
         if not isinstance(value, Sugar):
             return value
         ctx = self._guard_evaluation_context()
-        try:
-            outcome = value.desugar(ctx)
-        except SugarNotWritten as exc:
-            observed = getattr(exc, "observed", type(exc).__name__)
-            return self._gap(requested, str(observed))
+        outcome = value.desugar(ctx)
         if (
             isinstance(outcome, ExitSet)
             and outcome.completed_value() is not None

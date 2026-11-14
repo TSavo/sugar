@@ -120,31 +120,26 @@ class ImportMemberValue(FloorValue):
         symbolic ``py.subscript(<member>, <key>)`` completes only under
         ``python:subscript.completes(python:subscript(<term>, <site>))`` and
         the complement halts with an ``UndeterminedRaiseEffect``.  No entry is
-        chosen and no ``KeyError`` is guessed.  A key with no term, or a
-        subscript with no site to key the atom on, stays named-loud.
+        chosen and no ``KeyError`` is guessed.  A key with no term refuses by
+        its own name (the key's ``to_term`` refusal propagates); a subscript
+        with no site to key the atom on stays named-loud.
         """
         from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_source_tree.panic import SugarNotWritten
 
         if site is None:
             return self.undecided_subscript(
                 index, site, owner="ImportMemberValue.subscript"
             )
-        try:
-            term = ctor(
-                "py.subscript",
-                [
-                    self.to_term(owner="ImportMemberValue.subscript"),
-                    index.to_term(owner="ImportMemberValue.subscript"),
-                ],
-            )
-        except SugarNotWritten:
-            return self.undecided_subscript(
-                index, site, owner="ImportMemberValue.subscript"
-            )
+        term = ctor(
+            "py.subscript",
+            [
+                self.to_term(owner="ImportMemberValue.subscript"),
+                index.to_term(owner="ImportMemberValue.subscript"),
+            ],
+        )
         return _opaque_subscript_faces(
             ExitSet.completed(SymbolicValue(term)),
             site,

@@ -577,12 +577,11 @@ def test_reduce_value_keeps_none_and_non_sugar_raw() -> None:
     assert machine._reduce_value(raw, "linear") is raw
 
 
-def test_reduce_value_keeps_sugar_not_written_as_direct_transition_gap() -> None:
+def test_reduce_value_propagates_sugar_not_written_by_name() -> None:
     machine = _machine(())
 
-    outcome = machine._reduce_value(_RefusingValue(), "linear-request")
+    with pytest.raises(SugarNotWritten) as raised:
+        machine._reduce_value(_RefusingValue(), "linear-request")
 
-    assert isinstance(outcome, GeneratorTransitionGapV1)
-    assert outcome.owner == "GeneratorConstructionV1.transition"
-    assert outcome.observed == "linear-refusal"
-    assert outcome.requested == "linear-request"
+    assert raised.value.owner == "_RefusingValue"
+    assert raised.value.observed == "linear-refusal"
