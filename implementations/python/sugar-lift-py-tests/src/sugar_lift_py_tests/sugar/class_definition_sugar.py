@@ -24,6 +24,29 @@ class ConstructedClassConditionalFieldsV1:
     when_false: tuple[object, ...] = ()
 
 
+@dataclass(frozen=True)
+class ConstructedClassMethodDefaultsV1:
+    """A class-body ``def`` statement's defaults: Python evaluates them when
+    the class body runs, in source order with the fields.  ``defaults`` is
+    the one def-statement rule's ``DefinitionDefaultsSugar``
+    (``nodes._def_statement_sugar``): each default's sugar and the
+    per-parameter key its value is bound under.  The method's definition
+    (``methods``, by its fragment) already names them, so they are no part
+    of the class definition's identity."""
+
+    definition_fragment_cid: str
+    defaults: Sugar = field(compare=False)
+
+
+@dataclass(frozen=True)
+class _ClassBodyV1:
+    """A completed class body: its fields, and each method default's
+    ``(key, value)`` the class value carries to its method calls."""
+
+    fields: tuple
+    method_defaults: tuple = field(compare=False)
+
+
 def _inherited_source_initializer(bases):
     """The first authenticated source ``__init__`` on a local base class.
 
@@ -67,6 +90,10 @@ class ClassDefinitionSugar(Sugar):
     # The class statement itself: its constructor frame is the one ``Cls(x)``
     # applies, whether the class is called by name or as a value.
     class_definition: object = field(default=None, compare=False)
+    # ``(position, ConstructedClassMethodDefaultsV1)``: each method
+    # statement's defaults, evaluated before the top-level field at
+    # ``position`` (after every field where it is ``len(fields)``).
+    method_defaults: tuple = field(default=(), compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -226,7 +253,10 @@ class ClassDefinitionSugar(Sugar):
         if initializer is None:
             initializer = _inherited_source_initializer(tuple(base_values))
 
-        def construct_class(body_value):
+        def construct_class(body):
+            body_value, method_defaults = body, ()
+            if isinstance(body, _ClassBodyV1):
+                body_value, method_defaults = body.fields, body.method_defaults
             return ExitSet.completed(
                 ClassDefinitionValue(
                     self.class_name,
@@ -240,6 +270,7 @@ class ClassDefinitionSugar(Sugar):
                     self.decorator_cids,
                     tuple(base_values),
                     class_definition=self.class_definition,
+                    method_defaults=method_defaults,
                 )
             )
 
@@ -248,11 +279,14 @@ class ClassDefinitionSugar(Sugar):
         return class_body().and_then(construct_class)
 
     def _class_body(self, ctx):
-        """The body's outcome: the class's fields on each completed face.
+        """The body's outcome: on each completed face, the class's fields and
+        each method default's ``(key, value)`` (``method_defaults``).
 
         A class field is an assignment.  Its right-hand side is evaluated by
         the routine every other assignment uses, in source order: a halt of a
         right-hand side is the body's halt and no later field runs under it.
+        A method's ``def`` statement evaluates its defaults the same way,
+        where it stands in the body (``nodes._def_statement_sugar``).
         """
         from sugar_lift_py_tests.floor import ObjectField
         from sugar_lift_py_tests.sugar.assigned_value import (
@@ -298,13 +332,28 @@ class ClassDefinitionSugar(Sugar):
             ):
                 select(child)
 
-        for item in self.fields:
+        defaults_at: dict[int, list] = {}
+        for position, defaults in self.method_defaults:
+            defaults_at.setdefault(position, []).append(defaults)
+        for position, item in enumerate(self.fields):
+            selected.extend(defaults_at.get(position, ()))
             select(item)
+        selected.extend(defaults_at.get(len(self.fields), ()))
         # ``a = b = e`` is one statement: its right-hand side is one value.
         values = []
         value_index = []
         groups = {}
+        field_items = []
+        default_keys = []
         for item in selected:
+            if isinstance(item, ConstructedClassMethodDefaultsV1):
+                statement = item.defaults
+                default_keys.extend(
+                    (key, len(values) + at) for key, at in statement.evaluations
+                )
+                values.extend(statement.values)
+                continue
+            field_items.append(item)
             index = groups.get(item.evaluation_group_cid)
             if item.evaluation_group_cid is None or index is None:
                 index = len(values)
@@ -316,9 +365,12 @@ class ClassDefinitionSugar(Sugar):
         def bind_fields(active, completed):
             del active
             return ExitSet.completed(
-                tuple(
-                    ObjectField(item.name, completed[index])
-                    for item, index in zip(selected, value_index)
+                _ClassBodyV1(
+                    tuple(
+                        ObjectField(item.name, completed[index])
+                        for item, index in zip(field_items, value_index)
+                    ),
+                    tuple((key, completed[index]) for key, index in default_keys),
                 )
             )
 
@@ -326,7 +378,7 @@ class ClassDefinitionSugar(Sugar):
         # y``): bind it, as every assignment does.
         evaluations = tuple(
             (item.evaluation_key, index)
-            for item, index in zip(selected, value_index)
+            for item, index in zip(field_items, value_index)
             if getattr(item, "evaluation_key", None) is not None
         )
         outcome = evaluate_assignment_values(
@@ -345,7 +397,7 @@ class ClassDefinitionSugar(Sugar):
             # so the refusal names the body's fields.
             from sugar_source_tree.panic import SugarNotWritten
 
-            names = ", ".join(dict.fromkeys(item.name for item in selected))
+            names = ", ".join(dict.fromkeys(item.name for item in field_items))
             raise SugarNotWritten(
                 blame=self.site,
                 owner="ClassDefinitionSugar.desugar",
