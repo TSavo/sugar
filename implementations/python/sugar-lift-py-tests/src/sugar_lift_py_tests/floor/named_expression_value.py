@@ -360,30 +360,11 @@ def reduce_operands(operands, ctx, *, factored: bool = False):
     partitioning operand.
 
     An operand that halts leaves with the walrus binds the ones before it
-    made: where the fold holds a walrus, a walrus-free operand's halt with no
-    record of its own carries the record of where it was evaluated
-    (``halts_at_operand_head``): ``[(a := 1), d[k]]``'s ``KeyError`` carries
-    ``a``."""
+    made: its evaluation records its halt where it was evaluated, in the
+    context they wrote (``sugar_base._recorded_at_its_head``):
+    ``[(a := 1), d[k]]``'s ``KeyError`` carries ``a``."""
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.outcome.exit_set import factored_operand
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        _offers_no_record,
-        halts_at_operand_head,
-    )
-
-    operands = tuple(operands)
-    walrus: list = []
-
-    def holds_a_walrus() -> bool:
-        # Whether any operand holds a walrus, read once, only when a halt
-        # needs it.
-        if not walrus:
-            from sugar_lift_py_tests.sugar.named_expr_sugar import (
-                holds_a_walrus as holds,
-            )
-
-            walrus.append(any(holds(operand) for operand in operands))
-        return walrus[0]
 
     def reduce_next(collected, operand):
         if operand is None:
@@ -392,8 +373,6 @@ def reduce_operands(operands, ctx, *, factored: bool = False):
         for earlier in collected:
             operand_ctx = written_by(earlier, operand_ctx)
         outcome = operand.desugar(operand_ctx)
-        if _offers_no_record(outcome) and holds_a_walrus():
-            outcome = halts_at_operand_head(outcome, operand, operand_ctx)
         if factored:
             outcome = factored_operand(outcome)
         return outcome.and_then(
@@ -420,10 +399,12 @@ def consume_operands(step, *operands):
     enclosing statement.  The bind rides only the arms the step completed
     under after the operand ran: a short-circuit's later operand is consumed
     inside its continuing face, so its bind never reaches the stopping face.
-    A halted arm of the step leaves the statement as it is: it carries none
-    of the binds, and where it offers no record the statement holding the
-    walrus is refused by name (``_require_recorded_halts``), never given a
-    record without them.  With no bind among the operands this is
+    A halted arm of the step halted after every operand it consumed was
+    evaluated, so after their binds: one that offers no record of its own
+    carries the record of the context the consumer was evaluated in with
+    every bind applied (``halts_at_operand_head``; ``x = (a := 1) + 'x'``'s
+    ``TypeError`` carries ``a``), never the statement's head, which holds
+    none of them.  With no bind among the operands this is
     ``step(*operands)`` exactly.
 
     The operands were reduced left to right, each under the state after the
@@ -440,6 +421,32 @@ def consume_operands(step, *operands):
         return outcome
     from sugar_lift_py_tests.outcome import ExitSet
 
+    outcome = _halted_after(binds, outcome)
     return outcome.and_then(
         lambda result: ExitSet.completed(carry_walrus_binds(binds, result))
     )
+
+
+def _halted_after(binds, outcome):
+    """``outcome`` -- a consumer's step, run after its operands -- with every
+    halt that offers no record carrying the record of the context the
+    consumer was evaluated in (``sugar_base.evaluating``) with ``binds``, its
+    operands' writes, applied: the state Python halted in
+    (``halts_at_operand_head``, the step itself running no walrus).
+    ``outcome`` as it is where it offers no record-less halt, or the consumer
+    was evaluated with no context that holds a temporal."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _offers_no_record,
+        halts_at_operand_head,
+    )
+    from sugar_lift_py_tests.sugar.sugar_base import evaluating
+
+    if not _offers_no_record(outcome):
+        return outcome
+    consumer = evaluating()
+    if consumer is None:
+        return outcome
+    _sugar, ctx = consumer
+    if ctx is None or not hasattr(ctx, "temporal"):
+        return outcome
+    return halts_at_operand_head(outcome, None, bind_walrus_binds(binds, ctx))

@@ -17407,6 +17407,8 @@ class Assert(Statement):
         sugar. The test recognizes itself (self.test.sugar()) — the recursion.
         The message is provenance only (#4593/#4594): AssertSugar never builds
         or reduces it; its pinned fragment rides separately from the condition.
+        CPython still runs it before it raises, so a walrus in it is bound
+        when the assert fails: the sugar says so (``message_holds_a_walrus``).
         """
         from sugar_lift_py_tests.sugar.assert_sugar import AssertSugar
 
@@ -17414,6 +17416,10 @@ class Assert(Statement):
             test=self.test.sugar(),
             message=self.msg.fragment if self.msg is not None else None,
             site=self.fragment,
+            message_holds_a_walrus=(
+                self.msg is not None
+                and any(node.kind == "NamedExpr" for node in self.msg.walk())
+            ),
         )
 
 

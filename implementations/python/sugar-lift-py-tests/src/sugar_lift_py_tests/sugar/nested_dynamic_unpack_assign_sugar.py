@@ -57,9 +57,10 @@ class NestedDynamicUnpackAssignSugar(Sugar):
     evaluation: str | None = None
     # A record-less halt is the right-hand side's, or a level's unpack before
     # any leaf was bound (the outer one; an inner one first in its parent):
-    # its pre-halt record is the block's prefix. An inner level that halts
-    # after a leaf was bound carries the record of what was bound
-    # (``_bound_record``).
+    # its pre-halt record is the block's prefix, or, after a walrus in the
+    # right-hand side bound, the record of that bind (``consume_operands``).
+    # An inner level that halts after a leaf was bound carries the record of
+    # what was bound (``_bound_record``).
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -79,17 +80,31 @@ class NestedDynamicUnpackAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        if self.evaluation is None:
-            return self.value.desugar(ctx).and_then(
-                lambda value: self._project(value, self.pattern, ctx)
-            )
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            written_by,
+        )
         from sugar_lift_py_tests.floor.scope_rebind import bind_unpack_projections
 
-        return self.value.desugar(ctx).and_then(
-            lambda value: self._project(value, self.pattern, ctx).and_then(
-                lambda rebinds: bind_unpack_projections(rebinds, self.evaluation)
-            )
-        )
+        # The unpack consumes the evaluated right-hand side through the one
+        # operand door: a walrus in it (``(a, b), c = (w := v)``) is bound
+        # before any level unpacks, so the outer level's halt carries it
+        # (``consume_operands``), an inner level's record is built on it
+        # (``_bound_record``), and the completed face carries it on.
+        def unpack(value):
+            after = written_by(value, ctx)
+
+            def step(presented):
+                projected = self._project(presented, self.pattern, after)
+                if self.evaluation is None:
+                    return projected
+                return projected.and_then(
+                    lambda rebinds: bind_unpack_projections(rebinds, self.evaluation)
+                )
+
+            return consume_operands(step, value)
+
+        return self.value.desugar(ctx).and_then(unpack)
 
     def _project(
         self, value: Any, pattern: tuple[NameUnpackPattern, ...], ctx: object

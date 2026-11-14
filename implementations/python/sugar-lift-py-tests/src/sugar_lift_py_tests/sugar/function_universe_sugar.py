@@ -175,10 +175,12 @@ def _require_recorded_halts(outcome, statement) -> None:
     completes, before a later operand or the statement's own step halts
     (``x, y = (a := 1), f()``, ``raise E((m := msg))``): such a halt's
     record is built where it halted, from the binds already made
-    (``halts_at_operand_head``: ``evaluate_assignment_values``,
-    ``reduce_operands``, ``NamedExprSugar``). One that still offers no record
-    from a statement holding a walrus is refused here like any other: the
-    prefix would drop the bind.
+    (``halts_at_operand_head``: every operand's evaluation,
+    ``sugar_base._recorded_at_its_head``; every consumer's step,
+    ``consume_operands``). One that still offers no record from a statement
+    holding a walrus (the statement's own step after it: an ``assert``'s
+    failure after its message's walrus, a ``raise`` of a walrus's value) is
+    refused here like any other: the prefix would drop the bind.
     """
     if not any(
         isinstance(exit_, Halted) and exit_.state is None for exit_ in outcome.exits
@@ -363,6 +365,13 @@ def halts_at_operand_head(outcome, operand, ctx):
     evaluated in, every walrus bind of the operands before it applied
     (``written_by``) -- holds exactly that. ``x, y = (a := 1), f()``: ``f()``
     halts in a context where ``a`` is bound, and its halt carries it.
+
+    The one place a halt's record is built from the binds already made: the
+    one expression evaluation applies it to every operand
+    (``sugar_base._recorded_at_its_head``), and a step that runs after its
+    operands (``consume_operands``, an unpack of an evaluated right-hand
+    side) applies it with ``operand`` None -- the step itself runs no
+    walrus -- in the context its operands' binds wrote.
 
     An operand that holds a walrus may have bound it before a later part of
     it halted: its record-less halt is left as it is, never given a record

@@ -67,17 +67,14 @@ class NamedExprSugar(ConstructedTermSugar):
             NamedExpressionValue,
             consume_operands,
         )
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            halts_at_operand_head,
-        )
 
         # The assigned expression is an operand: a walrus inside it
         # (``(y := (x := 5))``) binds first, through the one operand door, and
         # this walrus assigns the value it presents. Nothing of this walrus
         # is bound before its value halts: a walrus-free value's halt carries
-        # the record of where it was evaluated (``halts_at_operand_head``).
-        evaluated = halts_at_operand_head(self.value.desugar(ctx), self.value, ctx)
-        return evaluated.and_then(
+        # the record of where it was evaluated, as every operand's does
+        # (``sugar_base._recorded_at_its_head``).
+        return self.value.desugar(ctx).and_then(
             lambda value: consume_operands(
                 lambda assigned: ExitSet.completed(
                     NamedExpressionValue(
@@ -113,8 +110,38 @@ def holds_a_walrus(sugar: object) -> bool:
     them built in this package (an unpack target) -- never what is held out
     of equality as a lookup aid (a site, a callee's body, a frame table):
     a walrus in a callee runs in the callee's frame. An operand a sugar
-    holds out of its equality (an ``assert``'s message) is not read.
+    holds out of its equality and never reduces still runs where Python
+    runs it (an ``assert``'s message, provenance only, runs before the
+    ``AssertionError``): the sugar answers for it
+    (``AssertSugar.message_holds_a_walrus``).
+
+    Every evaluation asks it of the sugar that evaluated a halting operand
+    (``sugar_base._recorded_at_its_head``), so the answer is kept on each
+    sugar it is asked of (a sugar is never changed once constructed).
     """
+    memo = _memo(sugar)
+    if memo is not None and _HOLDS in memo:
+        return memo[_HOLDS]
+    answer = _reaches_a_walrus(sugar)
+    if memo is not None:
+        memo[_HOLDS] = answer
+    return answer
+
+
+_HOLDS = "_holds_a_walrus"
+
+
+def _memo(item):
+    """The instance dictionary a sugar keeps ``holds_a_walrus``'s answer in,
+    or None (not a sugar, or one with no instance dictionary)."""
+    from sugar_lift_py_tests.sugar.sugar_base import Sugar
+
+    if not isinstance(item, Sugar):
+        return None
+    return getattr(item, "__dict__", None)
+
+
+def _reaches_a_walrus(sugar: object) -> bool:
     from dataclasses import fields, is_dataclass
 
     from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -142,6 +169,17 @@ def holds_a_walrus(sugar: object) -> bool:
         if not (isinstance(item, Sugar) or part) or id(item) in seen:
             continue
         seen.add(id(item))
+        if item is not sugar:
+            memo = _memo(item)
+            if memo is not None and _HOLDS in memo:
+                # A part already asked: its answer stands for its parts.
+                if memo[_HOLDS]:
+                    return True
+                continue
+        if getattr(item, "message_holds_a_walrus", False):
+            # An operand held out of equality that still runs (an
+            # ``assert``'s message).
+            return True
         if is_dataclass(item):
             # What the sugar is (its compared fields): never a lookup aid
             # out of its equality (a site, a callee's body, a frame table).

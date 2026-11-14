@@ -492,6 +492,24 @@ def test_a_walrus_free_sugar_holds_no_walrus_and_one_that_runs_it_does() -> None
     assert holds_a_walrus(MultiAssignSugar((("x", _walrus()), ("y", _Leaks())), None))
 
 
+@dataclass(frozen=True)
+class _LeaksAsOperand(ConstructedTermSugar):
+    """An expression that halts at its head, offering no record (a
+    subscript's ``KeyError``)."""
+
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        return ExitSet.halted(_effect())
+
+    def to_term(self, *, owner: str):
+        raise NotImplementedError(owner)
+
+
 def test_a_later_members_halt_carries_the_walrus_an_earlier_member_bound() -> None:
     # ``x, y = (a := 1), <halts>``: ``a`` is bound when the second member
     # halts (no target is yet). The halt's record holds the bind, after the
@@ -499,7 +517,7 @@ def test_a_later_members_halt_carries_the_walrus_an_earlier_member_bound() -> No
     # ``a`` was bound) stood in for it.
     ctx = ReduceContext.root(owner="every-halt-record.walrus")
     before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
-    statement = MultiAssignSugar((("x", _walrus()), ("y", _Leaks())), None)
+    statement = MultiAssignSugar((("x", _walrus()), ("y", _LeaksAsOperand())), None)
     exits = reduce_block_to_exitset((statement,), ctx, after=before)
     halts = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
     assert halts
@@ -556,3 +574,289 @@ def test_a_handler_sees_the_walrus_bound_before_a_later_member_raised() -> None:
         return _returned_value(function_universe_outcome(_function(source)))
 
     assert returned("g()") == returned("2")
+
+
+# -- no target is bound before every right-hand side has completed --------------
+
+_X_KEY = EVALUATION_PREFIX + "every-halt-record.target.x"
+_Y_KEY = EVALUATION_PREFIX + "every-halt-record.target.y"
+
+
+@dataclass(frozen=True)
+class _HaltsWhereItRuns(ConstructedTermSugar):
+    """An expression that halts carrying the record of the context it was
+    evaluated in, as a call's halt does (``at_the_call``)."""
+
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        return ExitSet.halted(_effect(), state=halt_record(ctx))
+
+    def to_term(self, *, owner: str):
+        raise NotImplementedError(owner)
+
+
+def _targets_statement(second) -> MultiAssignSugar:
+    """``x, y = 1, <second>``, each target bound under its key."""
+    return MultiAssignSugar(
+        (("x", _One()), ("y", second)),
+        None,
+        evaluations=(("x", _X_KEY), ("y", _Y_KEY)),
+    )
+
+
+def test_a_later_right_hand_sides_halt_carries_no_earlier_target() -> None:
+    # Python evaluates the whole right side, then assigns the targets: when
+    # the second member halts, ``x`` is not assigned. The halt's record (the
+    # context the member was evaluated in) holds no binding of ``x``; it
+    # used to, since ``x`` was bound as soon as its member completed.
+    ctx = ReduceContext.root(owner="every-halt-record.targets-halt")
+    before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
+    exits = reduce_block_to_exitset(
+        (_targets_statement(_HaltsWhereItRuns()),), ctx, after=before
+    )
+    halts = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
+    assert halts
+    for halt in halts:
+        assert isinstance(halt.state, _ReducedBlock)
+        assert halt.state.entries == (TermValue(7),)
+        assert halt.state.context.temporal.value_if_bound(_X_KEY) != TermValue(1)
+
+
+def test_every_target_is_bound_once_the_right_side_completed() -> None:
+    # The completed twin: both targets are bound after the statement.
+    ctx = ReduceContext.root(owner="every-halt-record.targets-complete")
+    exits = reduce_block_to_exitset((_targets_statement(_One()),), ctx)
+    (completed,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Completed)]
+    assert completed.value.context.temporal.value_if_bound(_X_KEY) == TermValue(1)
+    assert completed.value.context.temporal.value_if_bound(_Y_KEY) == TermValue(1)
+
+
+# -- every operand's halt carries the walrus binds made before it ----------------
+
+
+@dataclass(frozen=True)
+class _Pair(ConstructedTermSugar):
+    """``first`` then ``second``, the second evaluated in the context the
+    first wrote, both consumed by one step (as ``BoolOpSugar`` evaluates
+    ``(a := f()) and g()``)."""
+
+    first: Sugar
+    second: Sugar
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            written_by,
+        )
+
+        return self.first.desugar(ctx).and_then(
+            lambda first: self.second.desugar(written_by(first, ctx)).and_then(
+                lambda second: consume_operands(
+                    lambda _first, presented: ExitSet.completed(presented),
+                    first,
+                    second,
+                )
+            )
+        )
+
+    def to_term(self, *, owner: str):
+        raise NotImplementedError(owner)
+
+
+def test_an_operand_after_a_walrus_halts_with_the_walrus_bound() -> None:
+    # ``(a := 1) and <halts>``: the halt's record is where the second
+    # operand was evaluated, ``a`` bound -- the one expression evaluation
+    # records it, whatever statement runs the expression (an ``if`` test, a
+    # loop's iterable, a ``match`` subject, a ``with`` item, a ``return``).
+    ctx = ReduceContext.root(owner="every-halt-record.operand")
+    (halt,) = [
+        exit_
+        for exit_ in _Pair(_walrus(), _LeaksAsOperand()).desugar(ctx).exits
+        if isinstance(exit_, Halted)
+    ]
+    assert isinstance(halt.state, _ReducedBlock)
+    assert halt.state.entries == ()
+    assert halt.state.context.temporal.value_if_bound(_WALRUS_KEY) == TermValue(1)
+
+
+def test_an_operand_of_a_walrus_free_expression_halts_as_it_did() -> None:
+    # No walrus: nothing is bound before the halt, which is handed on with
+    # no record for its statement to record at its head.
+    ctx = ReduceContext.root(owner="every-halt-record.operand-free")
+    (halt,) = [
+        exit_
+        for exit_ in _Pair(_One(), _LeaksAsOperand()).desugar(ctx).exits
+        if isinstance(exit_, Halted)
+    ]
+    assert halt.state is None
+
+
+def test_a_statement_whose_operand_halts_after_a_nested_walrus_is_recorded() -> (
+    None
+):
+    # ``x = (a := 1) and <halts>``: the right-hand side holds the walrus, so
+    # the assignment had no record for the halt and was refused; the
+    # operand's evaluation now records it with ``a`` bound.
+    ctx = ReduceContext.root(owner="every-halt-record.operand-statement")
+    before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
+    statement = AssignSugar("x", _Pair(_walrus(), _LeaksAsOperand()), None)
+    exits = reduce_block_to_exitset((statement,), ctx, after=before)
+    (halt,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
+    assert halt.state.entries == (TermValue(7),)
+    assert halt.state.context.temporal.value_if_bound(_WALRUS_KEY) == TermValue(1)
+
+
+@dataclass(frozen=True)
+class _ConsumesThenHalts(ConstructedTermSugar):
+    """An expression whose step halts, offering no record, after its operand
+    completed (``(a := 1) + 'x'``'s ``TypeError``)."""
+
+    operand: Sugar
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
+
+        return self.operand.desugar(ctx).and_then(
+            lambda value: consume_operands(
+                lambda _presented: ExitSet.halted(_effect("TypeError")), value
+            )
+        )
+
+    def to_term(self, *, owner: str):
+        raise NotImplementedError(owner)
+
+
+def test_a_step_after_a_walrus_operand_halts_with_the_walrus_bound() -> None:
+    # The step ran after its operand bound ``a``: its halt carries ``a``,
+    # where it used to carry none of it (and the statement was refused).
+    ctx = ReduceContext.root(owner="every-halt-record.step")
+    before = _ReducedBlock((TermValue(7),), True, (), context=ctx)
+    statement = AssignSugar("x", _ConsumesThenHalts(_walrus()), None)
+    exits = reduce_block_to_exitset((statement,), ctx, after=before)
+    (halt,) = [exit_ for exit_ in exits.exits if isinstance(exit_, Halted)]
+    assert halt.state.entries == (TermValue(7),)
+    assert halt.state.context.temporal.value_if_bound(_WALRUS_KEY) == TermValue(1)
+
+
+def test_a_step_with_no_walrus_operand_halts_as_it_did() -> None:
+    ctx = ReduceContext.root(owner="every-halt-record.step-free")
+    (halt,) = [
+        exit_
+        for exit_ in _ConsumesThenHalts(_One()).desugar(ctx).exits
+        if isinstance(exit_, Halted)
+    ]
+    assert halt.state is None
+
+
+def _walrus_test(statement: str, second: str) -> str:
+    """``f``: ``statement`` (holding ``(a := 1) and <second>``) inside a
+    ``try`` whose handler (and the completed path) returns ``a``."""
+    return (
+        _RAISES
+        + "def f():\n"
+        + "    try:\n"
+        + statement.format(test=f"(a := 1) and {second}")
+        + "    except ValueError:\n"
+        + "        return a\n"
+        + "    return a\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "        if {test}:\n            pass\n",
+        "        assert {test}\n",
+    ],
+    ids=["if-test", "assert-test"],
+)
+def test_a_handler_sees_the_walrus_a_statements_test_bound_before_it_raised(
+    statement: str,
+) -> None:
+    # ``if (a := 1) and g():`` where ``g`` raises: ``a`` is bound before
+    # ``g()`` runs, and the handler returns it as the completed twin does.
+    def returned(second: str):
+        source = _walrus_test(statement, second)
+        return _returned_value(function_universe_outcome(_function(source)))
+
+    assert returned("g()") == returned("2")
+
+
+# -- an unpack carries the walrus bound in its right-hand side -------------------
+
+
+def _unpack_of_walrus(rhs: str, read: str) -> str:
+    """``f``: ``x, y = (a := <rhs>)`` inside a ``try`` whose handler (and
+    the completed path) returns ``read``."""
+    return (
+        "def f():\n"
+        + "    try:\n"
+        + f"        x, y = (a := {rhs})\n"
+        + "    except ValueError:\n"
+        + f"        return {read}\n"
+        + f"    return {read}\n"
+    )
+
+
+def _returned_by(rhs: str, read: str):
+    source = _unpack_of_walrus(rhs, read)
+    return _returned_value(function_universe_outcome(_function(source)))
+
+
+def test_an_unpack_of_a_walrus_binds_its_targets_and_the_walrus() -> None:
+    # ``x, y = (a := (1, 2))`` binds ``x``, ``y`` and ``a``: ``y`` and
+    # ``a[1]`` read the same member. It used to be refused: the unpack was
+    # handed the walrus's value, not the value it presents.
+    assert _returned_by("(1, 2)", "y") == _returned_by("(1, 2)", "a[1]")
+
+
+def test_an_unpack_that_fails_after_its_walrus_carries_it() -> None:
+    # ``x, y = (a := (1, 2, 3))`` raises ``ValueError`` after ``a`` is bound:
+    # the handler reads ``a`` as the completed twin does.
+    assert _returned_by("(1, 2, 3)", "a[0]") == _returned_by("(1, 2)", "a[0]")
+
+
+# -- an assert's message runs before the assert fails --------------------------
+
+
+def test_an_asserts_message_walrus_is_held() -> None:
+    # The message is provenance, never reduced, and held out of equality; a
+    # walrus in it still runs before ``AssertionError``, so the statement
+    # holds it, and its record-less failure is refused, never given the
+    # prefix that drops the bind.
+    assert holds_a_walrus(AssertSugar(_One(), None, message_holds_a_walrus=True))
+    assert not holds_a_walrus(AssertSugar(_One(), None))
+
+
+def test_an_assert_built_from_source_says_its_message_holds_a_walrus() -> None:
+    from sugar_source_tree.nodes import Assert
+
+    def built(source: str) -> AssertSugar:
+        context = TreeConstructionContextV1.for_source_call_construction()
+        tree = SourceFile(
+            (source, "every_halt_record.py", blake3_512_of(source.encode())),
+            construction_context=context,
+        )
+        node = next(node for node in tree.nodes() if isinstance(node, Assert))
+        return node._construct_sugar()
+
+    assert built("def f():\n    assert True, (m := 'x')\n").message_holds_a_walrus
+    assert not built("def f():\n    assert True, 'x'\n").message_holds_a_walrus
+    assert not built("def f():\n    assert True\n").message_holds_a_walrus
