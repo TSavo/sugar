@@ -99,6 +99,7 @@ class RaiseSugar(Sugar):
                 cause_value=cause_value,
                 context_effect=context_effect,
                 producer_node_owner="RaiseSugar.desugar",
+                site=self.site,
             )
         mro = (
             mro_reader()
@@ -115,6 +116,7 @@ class RaiseSugar(Sugar):
             raised_value=raised_value,
             cause_value=cause_value,
             context_effect=context_effect,
+            site=self.site,
         )
 
     def constructed(self, ctx: object = None) -> ExitSet:

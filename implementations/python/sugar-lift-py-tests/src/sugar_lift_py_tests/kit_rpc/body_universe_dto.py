@@ -30,22 +30,30 @@ class PanicLocusDto:
       states one; absent otherwise, never borrowed from somewhere else;
     * ``argTerm``: what the halt is about: the raised type's coordinate for a
       raise, the failing operation for a runtime effect; absent when the halt
-      states neither.
+      states neither;
+    * ``guard``: the halted arm's guard, the path condition the halt is reached
+      under, written exactly as the contract's ``post`` is (a ``ClaimFormula``
+      through ``universe_value.contract_claim``). The same reader reads it
+      into the obligation's guard facts.
 
-    That reader takes no path condition from a locus (a locus's guard facts
-    come only from walking a formula's ``cf_ite`` branches), so the arm's guard
-    has no field here. Nothing in a proof links a Python halt to a bridge, so
-    the row the verifier makes of it stays ``undecidable``.
+    Nothing in a proof links a Python halt to a bridge, so the row the
+    verifier makes of it stays ``undecidable``.
     """
 
     file: str | None = None
     line: int | None = None
     arg_term: Term | None = None
+    guard: ClaimFormula | None = None
+
+    def __post_init__(self) -> None:
+        _require_claim_formula_slot("guard", self.guard)
 
     def to_rpc_with_term_table(self, term_table: TermTableBuilder) -> dict[str, Any]:
         out = self._site()
         if self.arg_term is not None:
             out["argTerm"] = term_table.reference(self.arg_term)
+        if self.guard is not None:
+            out["guard"] = term_table.formula(self.guard.ir_formula)
         return out
 
     def to_semantic_rpc(self) -> dict[str, Any]:
@@ -57,6 +65,8 @@ class PanicLocusDto:
         out = self._site()
         if self.arg_term is not None:
             out["argTerm"] = json.loads(encode_jcs(term_to_value(self.arg_term)))
+        if self.guard is not None:
+            out["guard"] = to_rpc_value(self.guard)
         return out
 
     def _site(self) -> dict[str, Any]:

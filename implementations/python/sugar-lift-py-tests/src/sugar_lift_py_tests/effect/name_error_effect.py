@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .raise_effect import RaiseEffect
 
@@ -18,7 +18,6 @@ class NameErrorEffect(RaiseEffect):
     """
 
     name: str = ""
-    site: object = field(default=None, compare=False)
 
     @classmethod
     def at(cls, *, name: str, site) -> "NameErrorEffect":

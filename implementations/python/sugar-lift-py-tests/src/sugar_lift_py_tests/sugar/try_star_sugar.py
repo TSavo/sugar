@@ -98,6 +98,8 @@ def _wrapped(effect):
         occurrence=occurrence,
         exception_type_coordinate=identity,
         exception_type_mro=mro,
+        # The wrapped exception's own halt site: the group halts where it did.
+        site=getattr(effect, "site", None),
     )
 
 

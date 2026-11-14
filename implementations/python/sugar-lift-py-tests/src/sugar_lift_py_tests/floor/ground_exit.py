@@ -135,6 +135,7 @@ def ground_raise_effect(*, exception_name: str, site, owner: str, raised_value=N
         exception_type_mro=type_mro,
         raised_value=raised_value,
         producer_node_owner=owner,
+        site=site,
     )
 
 

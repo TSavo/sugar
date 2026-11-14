@@ -173,6 +173,33 @@ def _stated_formal_sorts(formals, formal_coordinates):
     return [{"kind": "primitive", "name": sort.name} for sort in sorts]
 
 
+def contract_claim(formula, *, formals, def_memento, role, floor_chain):
+    """One formula of a function's contract row, in the one claim form.
+
+    The post and every halted arm's guard (``PanicLocusDto.guard``) are both
+    stated through here: scoped to the function's formals, warranted at its
+    definition, so the guard is written exactly as the post is.
+    """
+    from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
+    from sugar_lift_py_tests.proofir.nodes import (
+        ConstructionSite,
+        Derived,
+        Provenance,
+    )
+
+    span = def_memento.span
+    provenance = Provenance(
+        node_class="BodyUniverseDto",
+        construction_site=ConstructionSite(
+            path=def_memento.file,
+            line=span.start_line,
+            column=span.start_col,
+        ),
+        warrant=Derived(floor_chain=tuple(floor_chain)),
+    )
+    return claim_formula(formula, formals=formals, provenance=provenance, role=role)
+
+
 def function_contract_row(
     *,
     name,
@@ -190,7 +217,7 @@ def function_contract_row(
     makes). The linker's catalog reads a contract's signature from it.
 
     ``panic_loci`` states the reduction's halted arms, one entry each, in the
-    existing ``panicLoci`` shape (#7766).
+    existing ``panicLoci`` shape (#7766), each with its arm's guard.
 
     ``bridge_source_symbol`` is stated only by a row that has one: a
     definition's ``python:<module>.<name>``. A contract dug at a call site has
@@ -198,31 +225,16 @@ def function_contract_row(
     never stands beside the callee's definition under a second spelling
     (#7762).
     """
-    from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
     from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
-    from sugar_lift_py_tests.proofir.nodes import (
-        ConstructionSite,
-        Derived,
-        Provenance,
-    )
 
-    span = def_memento.span
-    post_provenance = Provenance(
-        node_class="BodyUniverseDto",
-        construction_site=ConstructionSite(
-            path=def_memento.file,
-            line=span.start_line,
-            column=span.start_col,
-        ),
-        warrant=Derived(floor_chain=("UniverseValue.post",)),
-    )
     return BodyUniverseDto(
         name=name,
-        post=claim_formula(
+        post=contract_claim(
             post,
             formals=formals,
-            provenance=post_provenance,
+            def_memento=def_memento,
             role="post",
+            floor_chain=("UniverseValue.post",),
         ),
         source_warrants=[def_memento],
         formals=list(formals),
@@ -293,7 +305,8 @@ def exit_arms_payload_rows(
       nothing else. A halted arm adds nothing to it, so a function that only
       halts states the empty conjunction: no claim about any result.
     * every halted arm: one ``panicLoci`` entry on the function-contract row,
-      the existing panic-locus shape. A halt is never dropped.
+      the existing panic-locus shape: the site it halted at, the raised type,
+      and the arm's guard as its path condition. A halt is never dropped.
     * one contract row per assertion SITE the reduction evaluated: the OR over
       the completed arms that hold the site of ``g_i AND fact_i``. The claim of
       an assertion is that an execution reaches it and it holds there; a guard

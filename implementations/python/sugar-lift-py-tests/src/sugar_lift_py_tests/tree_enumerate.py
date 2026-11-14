@@ -73,17 +73,24 @@ def _stated_fragment(holder):
     return None
 
 
-def halt_locus(arm):
+def halt_locus(arm, *, formals, def_memento, blame):
     """One halted arm of a reduction, as its panic-locus row (#7766, ruling 3).
 
-    Read off the arm's own halt record, never off the source. The site is the
-    fragment the effect states: the exception value a raise threw carries the
-    fragment it was raised at, a runtime effect's witness carries the fragment
-    of its boundary, an unmet expectation carries its site. The term is the
-    raised type's coordinate for a raise (``None`` when the raise's type is
-    undetermined) and the failing operation for a runtime effect. A halt whose
-    record states neither still gets its row, with only the leaf: every halted
-    arm reaches the proof, and the verifier states it ``undecidable``.
+    Filled from the reduction: the site, the raised type, and the guard as
+    path condition. Read off the arm's own halt record, never off the source.
+
+    * site: the fragment the halt left at. A raise states it on its effect
+      (``site``: the ``raise`` statement, the operation whose two faces it is,
+      the ground exit); a raise built before that carried it states it on the
+      exception value it threw. A runtime effect's witness carries the
+      fragment of its boundary, an unmet expectation carries its site.
+    * term: the raised type's coordinate for a raise (``None`` when the type is
+      undetermined) and the failing operation for a runtime effect.
+    * guard: the arm's guard, in the contract's claim form
+      (``universe_value.contract_claim``), scoped to ``formals``.
+
+    A halt whose record states no site is refused by name: two such loci
+    would be indistinguishable, so the halt cannot be stated as its own row.
     """
     from sugar_lift_py_tests.effect import (
         ExpectationNotMetEffect,
@@ -93,6 +100,7 @@ def halt_locus(arm):
         UndeterminedRaiseEffect,
     )
     from sugar_lift_py_tests.floor import ExceptionValue
+    from sugar_lift_py_tests.floor.universe_value import contract_claim
     from sugar_lift_py_tests.ir import Term
     from sugar_lift_py_tests.kit_rpc import PanicLocusDto
 
@@ -100,21 +108,47 @@ def halt_locus(arm):
     fragment = None
     term = None
     if isinstance(effect, RuntimeEffect):
-        fragment = effect.witness.site
+        fragment = _stated_fragment(effect.witness.site)
         term = effect.witness.operation
     elif isinstance(effect, (RaiseEffect, UndeterminedRaiseEffect)):
-        if isinstance(effect.raised_value, ExceptionValue):
+        fragment = _stated_fragment(effect)
+        if fragment is None and isinstance(effect.raised_value, ExceptionValue):
             fragment = _stated_fragment(effect.raised_value.site)
         term = effect.exception_type_coordinate
     elif isinstance(effect, GroupedRaiseEffect):
+        fragment = _stated_fragment(effect)
         if isinstance(effect.exception_type_coordinate, Term):
             term = effect.exception_type_coordinate
     elif isinstance(effect, ExpectationNotMetEffect):
-        fragment = _stated_fragment(effect.site)
+        fragment = _stated_fragment(effect)
+    if fragment is None:
+        from sugar_source_tree.panic import SugarNotWritten
+
+        producer = getattr(effect, "producer_node_owner", None)
+        raise SugarNotWritten(
+            owner="halt_locus",
+            blame=blame,
+            observed=(
+                f"a halted arm whose {type(effect).__name__} states no source "
+                f"fragment (producer {producer!r})"
+            ),
+            requested="the fragment the halt left at",
+            fix=(
+                f"carry the halting operation's fragment on the "
+                f"{type(effect).__name__} it builds (its ``site``)"
+            ),
+        )
     return PanicLocusDto(
-        file=None if fragment is None else fragment.filename,
-        line=None if fragment is None else fragment.line,
+        file=fragment.filename,
+        line=fragment.line,
         arg_term=term,
+        guard=contract_claim(
+            arm.guard,
+            formals=formals,
+            def_memento=def_memento,
+            role="guard",
+            floor_chain=("Halted.guard",),
+        ),
     )
 
 
@@ -850,7 +884,6 @@ def reduction_rows(outcome, *, owner, blame, def_memento):
         )
         halted = tuple(exit_ for exit_ in outcome.exits if isinstance(exit_, Halted))
         halted_sites = halted_assertion_sites(halted)
-        halt_loci = tuple(halt_locus(arm) for arm in halted)
         unread = [
             type(exit_).__name__
             for exit_ in outcome.exits
@@ -880,6 +913,15 @@ def reduction_rows(outcome, *, owner, blame, def_memento):
                 fix="complete a function body arm with its universe",
             )
     stated = arms[0][1] if arms else owner
+    halt_loci = tuple(
+        halt_locus(
+            arm,
+            formals=tuple(stated.formals),
+            def_memento=def_memento,
+            blame=blame,
+        )
+        for arm in halted
+    )
     return exit_arms_payload_rows(
         name=stated.name,
         formals=tuple(stated.formals),

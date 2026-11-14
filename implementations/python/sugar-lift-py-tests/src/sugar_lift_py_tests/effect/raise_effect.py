@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.effect.authenticated_raise_locus import (
     AuthenticatedRaiseLocus,
@@ -34,6 +34,10 @@ class RaiseEffect:
     cause_value: object | None = None
     context_effect: "RaiseEffect | UndeterminedRaiseEffect | None" = None
     producer_node_owner: str | None = None
+    # The source fragment the raise halted at (#7766): the address its
+    # panic locus states. Testimony about the halt, not what it denotes, so it
+    # never enters equality or repr. ``occurrence`` and ``blame`` spell it.
+    site: object | None = field(default=None, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.exception_type_coordinate is None:
@@ -66,6 +70,7 @@ class RaiseEffect:
         context_effect: object | None = None,
         producer_node_owner: str | None = None,
         exception_type_mro: tuple[Term, ...] | None = None,
+        site: object | None = None,
     ) -> "RaiseEffect":
         """One door for language-owned exception classes (tests + ground producers).
 
@@ -100,6 +105,7 @@ class RaiseEffect:
             cause_value=cause_value,
             context_effect=context_effect,
             producer_node_owner=producer_node_owner,
+            site=site,
         )
 
     @property
@@ -134,6 +140,8 @@ class UndeterminedRaiseEffect:
     context_effect: "RaiseEffect | UndeterminedRaiseEffect | None" = None
     producer_node_owner: str | None = None
     exception_name: str | None = None
+    # The source fragment the raise halted at (see ``RaiseEffect.site``).
+    site: object | None = field(default=None, compare=False, repr=False)
 
     @property
     def occurrence_id(self) -> str | None:

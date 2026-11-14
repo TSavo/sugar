@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .raise_effect import RaiseEffect, UndeterminedRaiseEffect
 
@@ -38,6 +38,9 @@ class GroupedRaiseEffect:
     # it undecided (a member nothing here decides).
     exception_type_coordinate: object | None = None
     exception_type_mro: tuple | None = None
+    # The source fragment the group was raised at (#7766): the address its
+    # panic locus states. Testimony, never part of equality or repr.
+    site: object | None = field(default=None, compare=False, repr=False)
 
     @property
     def occurrence_id(self) -> str:
@@ -95,6 +98,7 @@ class GroupedRaiseEffect:
             occurrence=self.occurrence,
             exception_type_coordinate=self.exception_type_coordinate,
             exception_type_mro=self.exception_type_mro,
+            site=self.site,
         )
 
 

@@ -146,10 +146,31 @@ def test_every_halted_arm_states_a_panic_locus(tmp_path: Path) -> None:
     (halted, *_rows) = _wire_rows(tmp_path, "def f():\n    y = 1\n    assert 2 == 3\n")
     assert "panicLoci" not in held
     (locus,) = halted["panicLoci"]
-    assert set(locus) == {"callee", "file", "line", "argTerm"}
+    assert set(locus) == {"callee", "file", "line", "argTerm", "guard"}
     assert locus["callee"] == RUNTIME_FAILURE_SITE
     assert (locus["file"], locus["line"]) == ("m.py", 3)
     assert locus["argTerm"]["kind"] == "term-ref"
+    assert locus["guard"] == _TRUE
+
+
+def test_a_halted_arm_states_its_guard_as_path_condition(tmp_path: Path) -> None:
+    """Ruling 3: the locus is filled from the reduction (site, raised type,
+    guard as path condition). Twin: the same ``assert`` under a branch the
+    floor decided, and under a branch on a formal. The first halts under
+    truth; the second only under its branch's condition. Every halt states the
+    site it halted at."""
+    decided = _wire_rows(
+        tmp_path, "def f(x):\n    if 1 == 1:\n        assert 2 == 3\n    return 4\n"
+    )[0]
+    branched = _wire_rows(
+        tmp_path, "def f(x):\n    if x == 1:\n        assert 2 == 3\n    return 4\n"
+    )[0]
+    (unconditional,) = [loc for loc in decided["panicLoci"] if loc["line"] == 3]
+    (conditional,) = [loc for loc in branched["panicLoci"] if loc["line"] == 3]
+    assert unconditional["guard"] == _TRUE
+    assert conditional["guard"] != _TRUE
+    for locus in (*decided["panicLoci"], *branched["panicLoci"]):
+        assert {"file", "line", "guard"} <= set(locus)
 
 
 def test_a_function_that_only_halts_claims_nothing(tmp_path: Path) -> None:

@@ -75,7 +75,8 @@ pub fn run(pool: &MementoPool) -> Vec<CallSite> {
                 pool,
                 callsite_bundle_cid.as_ref(),
             ) {
-                if !has_same_panic_callsite(&out, &cs) {
+                let by_guard = !cs.guard_facts.is_empty();
+                if !has_same_panic_callsite(&out, &cs, by_guard) {
                     warn_if_panic_callsite_alias_disagrees_for_locus(
                         pool,
                         callsite_bundle_cid.as_ref(),
@@ -215,6 +216,7 @@ fn callsite_from_panic_locus(
         .and_then(|v| v.as_str())
         .filter(|s| !s.is_empty())
         .map(str::to_string);
+    let guard_facts = guard_facts_from_locus(locus);
 
     let scoped_bridge = match (callsite_bundle_cid, file.as_deref(), line) {
         (Some(bundle), Some(file), Some(line)) => scoped_callsite_key(bundle, file, line, callee)
@@ -280,7 +282,7 @@ fn callsite_from_panic_locus(
         producer_line,
         producer_symbol,
         containing_atomic: None,
-        guard_facts: Vec::new(),
+        guard_facts,
         file,
         line,
         source_column: None,
@@ -288,6 +290,21 @@ fn callsite_from_panic_locus(
         panic_site: true,
         attribute_safety: attribute_safety_from_locus(locus),
     })
+}
+
+/// The path condition a panic locus states (#7766, ruling 3): its `guard`
+/// formula, the halted arm's guard, written in the same formula shape as a
+/// contract's `pre`/`post`. Carried verbatim as the one guard fact of the
+/// obligation (`(and guard_facts) => pre`), byte-blind like a `cf_ite` guard.
+/// A locus without the field (every other kit's) states no guard: empty, as
+/// before.
+fn guard_facts_from_locus(locus: &Json) -> Vec<Json> {
+    locus
+        .get("guard")
+        .filter(|guard| guard.is_object())
+        .cloned()
+        .into_iter()
+        .collect()
 }
 
 fn attribute_safety_from_locus(locus: &Json) -> Option<AttributeSafetyObligation> {
@@ -430,7 +447,12 @@ fn callsite_is_panic_site(callsite: Option<&Json>, bridge_name: &str) -> bool {
     }
 }
 
-fn has_same_panic_callsite(existing: &[CallSite], candidate: &CallSite) -> bool {
+/// `by_guard`: the candidate is read off a panic locus that states its
+/// `guard` (#7766). Such a locus is the same callsite only under the same
+/// guard: two halts at one site under different path conditions are two
+/// halts, and merging them would drop one. Every other candidate dedups by
+/// its site and term exactly as before.
+fn has_same_panic_callsite(existing: &[CallSite], candidate: &CallSite, by_guard: bool) -> bool {
     existing.iter().any(|cs| {
         cs.panic_site
             && cs.property_cid == candidate.property_cid
@@ -438,6 +460,7 @@ fn has_same_panic_callsite(existing: &[CallSite], candidate: &CallSite) -> bool 
             && cs.file == candidate.file
             && cs.line == candidate.line
             && cs.arg_term == candidate.arg_term
+            && (!by_guard || cs.guard_facts == candidate.guard_facts)
     })
 }
 
@@ -926,7 +949,7 @@ fn walk_term(
             callsite_bundle_cid,
             path_cond,
         ) {
-            if !has_same_panic_callsite(out, &cs) {
+            if !has_same_panic_callsite(out, &cs, false) {
                 out.push(cs);
             }
         }
@@ -1440,6 +1463,67 @@ mod guard_propagation_tests {
         });
         pool.insert_unanchored_for_tests(caller, contract);
         pool
+    }
+
+    // A contract whose only panic loci are `loci` (#7766): runtime-failure
+    // sites a kit read off a reduction's halted arms, each at `m.py:3`.
+    fn pool_with_runtime_failure_loci(loci: Json) -> MementoPool {
+        let mut pool = MementoPool::default();
+        pool.insert_unanchored_for_tests(
+            test_cid("halting"),
+            json!({
+                "envelope": true,
+                "header": {
+                    "kind": "contract",
+                    "contractName": "halting",
+                    "post": { "kind": "and", "operands": [] },
+                    "panicLoci": loci,
+                }
+            }),
+        );
+        pool
+    }
+
+    fn runtime_failure_locus(guard: Option<&Json>) -> Json {
+        let mut locus = json!({
+            "callee": panic_freedom::RUNTIME_FAILURE_SITE,
+            "file": "m.py",
+            "line": 3,
+        });
+        if let Some(guard) = guard {
+            locus["guard"] = guard.clone();
+        }
+        locus
+    }
+
+    #[test]
+    fn panic_locus_guard_is_the_obligations_guard_fact() {
+        // The halted arm's guard rides the locus verbatim into the one guard
+        // fact; two halts at one site under different guards stay two, and a
+        // repeat of the same halt under the same guard is one.
+        let guard_a = json!({ "kind": "atomic", "name": "pred_a", "args": [recv()] });
+        let guard_b = json!({ "kind": "atomic", "name": "pred_b", "args": [recv()] });
+        let a = runtime_failure_locus(Some(&guard_a));
+        let b = runtime_failure_locus(Some(&guard_b));
+        let sites = run(&pool_with_runtime_failure_loci(json!([a.clone(), b, a])));
+        let guards: Vec<&Vec<Json>> = sites
+            .iter()
+            .filter(|cs| cs.panic_site)
+            .map(|cs| &cs.guard_facts)
+            .collect();
+        assert_eq!(guards, vec![&vec![guard_a], &vec![guard_b]]);
+    }
+
+    #[test]
+    fn panic_locus_without_guard_states_no_guard_fact() {
+        // Every other kit's locus carries no `guard`: it reads as before.
+        let sites = run(&pool_with_runtime_failure_loci(json!([runtime_failure_locus(None)])));
+        let guards: Vec<&Vec<Json>> = sites
+            .iter()
+            .filter(|cs| cs.panic_site)
+            .map(|cs| &cs.guard_facts)
+            .collect();
+        assert_eq!(guards, vec![&Vec::<Json>::new()]);
     }
 
     #[test]
