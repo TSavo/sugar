@@ -2865,8 +2865,8 @@ def _read_same_module_class_head(
             call,
             class_def,
             protocol,
-            construction_total=not result_exits.owed_items()
-            and isinstance(result_exits.completed_value(), ObjectValue),
+            construction_total=not result_outcome.owed_items()
+            and isinstance(result_outcome.completed_value(), ObjectValue),
         ):
             return
         kind, detail = _gap_kind_and_detail(protocol)

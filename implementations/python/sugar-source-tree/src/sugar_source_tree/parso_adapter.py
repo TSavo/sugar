@@ -526,7 +526,7 @@ def _fold_trailers(
             )
         else:
             vocabulary_missing(
-                blame=trailer,
+                blame=tr,
                 owner="parso_adapter._fold_trailers",
                 observed=f"trailer starting with {first.value!r} not recognized",
                 requested="'.', '(' or '['",

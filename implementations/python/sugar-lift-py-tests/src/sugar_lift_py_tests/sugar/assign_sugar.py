@@ -204,7 +204,7 @@ class KeyedStoreSugar(Sugar):
             reason="the store's own sugar owns its faces; this binds its value once",
         )
 
-    def desugar(self, ctx: object = None) -> Outcome:
+    def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.context import ReduceContext
         from sugar_lift_py_tests.sugar.assigned_value import (
             evaluate_assignment_values,
