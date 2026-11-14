@@ -1667,24 +1667,27 @@ class CallSiteValue(FloorValue):
             )
         return ExitSet.completed(retained.value)
 
-    def reduce_source_outcome(self, ctx: Any = None):
+    def _reduce_source_outcome(self, ctx: Any = None):
         """Reduce this already-constructed source body without floor projection.
 
-        The body reduction ``producer_outcome`` applies: the body's complete
-        ExitSet, method halts included.  A context-manager protocol method is
-        applied through ``producer_outcome`` like every call (#7757 entry 6),
-        not here.  This uses the identical explicit call frame/curry path as
+        The inner half of ``producer_outcome`` and called only by it: the
+        body's complete ExitSet, method halts included, before the Call
+        projects it (native-operation discharge against the bound actuals,
+        call-owned raises, the retained completion).  Every call is applied
+        through ``producer_outcome`` (#7757 entry 6); a caller that needs the
+        body's block reads it back with ``retained_source_completion_outcome``.
+        This uses the identical explicit call frame/curry path as
         ``force_floor`` and never reconstructs source.
         """
         if self._retained_source_completion is not None:
             _retained_completion_invariant(
-                owner="CallSiteValue.reduce_source_outcome",
+                owner="CallSiteValue._reduce_source_outcome",
                 callsite=self,
                 observed="retained source completion already seated",
             )
         if self.body is None or len(self.parameters) != len(self.arg_values):
             _force_floor_gap(
-                owner="CallSiteValue.reduce_source_outcome",
+                owner="CallSiteValue._reduce_source_outcome",
                 target_name=self.target_name,
                 observed="missing body or callsite arity mismatch",
                 fix="retain the source-visible call frame or keep the call loud",
@@ -1752,7 +1755,7 @@ class CallSiteValue(FloorValue):
                     "context; do not invent the callee body"
                 ),
             )
-        outcome = self.reduce_source_outcome(ctx)
+        outcome = self._reduce_source_outcome(ctx)
         return self.project_producer_outcome(outcome, ctx)
 
     def project_producer_outcome(self, outcome, ctx):

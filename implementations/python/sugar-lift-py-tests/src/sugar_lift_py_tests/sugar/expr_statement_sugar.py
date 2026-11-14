@@ -213,5 +213,20 @@ class ExprStatementSugar(Sugar):
             retained = value.retained_source_completion_outcome()
             if retained is not None:
                 return retained.and_then(pack)
-            return value.reduce_source_outcome(ctx).and_then(pack)
+
+            # No completion kept: apply the call the one way, through
+            # ``producer_outcome`` (#7757 entry 6) -- native operations
+            # discharge against the bound actuals and the body's raises are
+            # the Call's own.  Each completed face is the Call carrying the
+            # body completion it retained; the statement splices that body.
+            def body_completion(result):
+                if isinstance(result, CallSiteValue) and result.term is value.term:
+                    completed = result.retained_source_completion_outcome()
+                    if completed is not None:
+                        return completed.completed_value()
+                return result
+
+            return value.producer_outcome(ctx).and_then(
+                lambda result: pack(body_completion(result))
+            )
         return ExitSet.completed(BlockValue((recorded,), can_fall_through=True))

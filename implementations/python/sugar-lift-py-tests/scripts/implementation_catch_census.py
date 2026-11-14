@@ -440,7 +440,7 @@ def _typed_conversion_kind(handler: ast.ExceptHandler) -> tuple[str | None, list
                 and (
                     "construct" in leaf.lower()
                     or "project" in leaf.lower()
-                    or leaf == "reduce_source_outcome"
+                    or leaf == "_reduce_source_outcome"
                 )
             )
             if recovery_calls:
