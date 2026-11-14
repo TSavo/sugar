@@ -41,17 +41,33 @@ class _Method:
 
 def test_a_floored_receiver_face_keeps_its_faces_and_owed() -> None:
     # The rebuild ``type(face)(face.guard, floored)`` stated the guard alone:
-    # the face's partition testimony and its debts were dropped.
+    # the face's partition testimony and its debts were dropped. The floored
+    # receiver holds exactly the fields it stored: none is invented (#8104).
+    from sugar_lift_py_tests.floor.class_value import ClassValue
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
     from sugar_lift_python_source.manager_construction import (
         _floor_tuple_construct_fields,
     )
 
     side, _other = partition(("test:floor-tuple-face", 7825))
     guard = atomic("test:floor-tuple:7825", [])
+    expected = ClassValue("Expected", (), None)
+    # ``expected if isinstance(...) else () if ... is None else (expected,)``:
+    # the stored wrap floors to its singleton arm for one class actual.
+    wrap = GuardedValue(
+        atomic("test:is-tuple:7825", []),
+        expected,
+        GuardedValue(
+            atomic("test:is-none:7825", []),
+            TupleValue(()),
+            TupleValue((expected,)),
+        ),
+    )
     receiver = ObjectValue(
-        "RaisesExc",
-        (ObjectField("expected_exceptions", TermValue(1)),),
-        methods=(_Method("matches"),),
+        "Manager",
+        (ObjectField("expected", wrap),),
+        methods=(_Method("check"),),
     )
     halt = Halted(complement_guard(guard), _raise("floor-halt"))
     state = ReceiverStatePartitionValue(
@@ -63,13 +79,14 @@ def test_a_floored_receiver_face_keeps_its_faces_and_owed() -> None:
         )
     )
 
-    floored = _floor_tuple_construct_fields(state, ())
+    floored = _floor_tuple_construct_fields(state, (expected,))
 
     assert isinstance(floored, ReceiverStatePartitionValue)
     arm, stood = floored.exits.exits
     assert isinstance(arm, Completed)
     assert arm.value is not receiver
-    assert {field.name for field in arm.value.fields} >= {"match", "check"}
+    assert arm.value.fields == (ObjectField("expected", TupleValue((expected,))),)
+    assert arm.value.methods == receiver.methods
     assert arm.guard == guard
     assert arm.faces == frozenset({side})
     assert arm.owed == ("debt:face",)
