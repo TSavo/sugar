@@ -514,6 +514,7 @@ class SymbolicValue(FloorValue):
                     ),
                     body=None,
                     site=site,
+                    type_name_attribute=True,
                 )
             )
         return self.undecided_attribute(name, site, owner="SymbolicValue.attribute")

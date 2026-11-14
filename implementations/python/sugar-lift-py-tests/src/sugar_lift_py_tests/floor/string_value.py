@@ -750,6 +750,11 @@ def _fold_string_method(receiver: StringValue, operation):
         return opaque_coordinate(LanguageCallee.STR_JOIN)
 
     if name == "split":
+        # An opaque separator or maxsplit: coordinate only, carrying what it
+        # is (``str.split``, whose result is a new ``list``) so a later
+        # ``.append`` asks the binding, never the spelling (#7757).
+        from sugar_source_tree.nodes import LanguageCallee
+
         if len(args) == 0:
             return ExitSet.completed(
                 ArrayLiteral(
@@ -773,7 +778,7 @@ def _fold_string_method(receiver: StringValue, operation):
                         tuple(StringValue(part) for part in receiver.value.split(None))
                     )
                 )
-            return opaque_coordinate()
+            return opaque_coordinate(LanguageCallee.STR_SPLIT)
         if len(args) == 2:
             sep, maxsplit = args
             if isinstance(maxsplit, TermValue) and type(maxsplit.value) is int:
@@ -796,7 +801,7 @@ def _fold_string_method(receiver: StringValue, operation):
                             )
                         )
                     )
-            return opaque_coordinate()
+            return opaque_coordinate(LanguageCallee.STR_SPLIT)
         return None
 
     if name == "splitlines":

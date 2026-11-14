@@ -39,6 +39,19 @@ def _require_rebind_roster(value, *, owner: str, blame, arm: str):
     )
 
 
+def _stands_on_append_floor(face) -> bool:
+    """Whether ``face`` answers ``append_with`` itself.
+
+    Its class must define ``append_with``; a class whose instances differ
+    (``OpaqueOpCallsite``: only the ``STR_SPLIT`` coordinate is list-shaped)
+    narrows it by ``stands_on_append_floor``.
+    """
+    if "append_with" not in type(face).__dict__:
+        return False
+    narrowed = getattr(face, "stands_on_append_floor", None)
+    return narrowed() if callable(narrowed) else True
+
+
 @dataclass(frozen=True)
 class GuardedValue(FloorValue):
     """A definitely-bound value selected by an existing branch guard.
@@ -422,8 +435,7 @@ class GuardedValue(FloorValue):
 
     def append_with(self, value, site):
         if all(
-            "append_with" in type(face).__dict__
-            for face in (self.when_true, self.when_false)
+            _stands_on_append_floor(face) for face in (self.when_true, self.when_false)
         ):
             return self._map("append_with", value, site)
         from sugar_lift_py_tests.effect import (

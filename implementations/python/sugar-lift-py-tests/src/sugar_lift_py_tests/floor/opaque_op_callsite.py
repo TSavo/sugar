@@ -31,8 +31,9 @@ class OpaqueOpCallsite(FloorValue):
     `callee` spells the coordinate's symbol only.  What the operator IS (the
     behaviour the language fixes for it) is `language_callee`, the
     `LanguageCallee` member its minting site decided: `str.join` over an
-    opaque iterable (`StringValue`'s method fold) is `STR_JOIN`.  A reader
-    asks `language_callee`, never the spelling (#7757).
+    opaque iterable (`StringValue`'s method fold) is `STR_JOIN`, and
+    `str.split` by an opaque separator is `STR_SPLIT`.  A reader asks
+    `language_callee`, never the spelling (#7757).
     """
 
     callee: str
@@ -197,3 +198,34 @@ class OpaqueOpCallsite(FloorValue):
 
     def subscript_with(self, operation: Any, ctx: Any) -> Any:
         return self._downstream().subscript_with(operation, ctx)
+
+    def append_with(self, value, site):
+        """``.append(v)`` on a ``str.split`` result: the ``py.list_append`` rebind.
+
+        ``str.split`` always returns a new ``list``; ``StringValue``'s method
+        fold marks the coordinate it mints for an opaque separator with
+        ``LanguageCallee.STR_SPLIT``.  That marker, never the spelling
+        ``split``, makes this value list-shaped (#7757).  Its elements are not
+        known, so the append carries the prior coordinate and the value on
+        ``py.list_append``.  Any other operator coordinate does not stand on
+        the append floor and stays loud.
+        """
+        if self.stands_on_append_floor():
+            from sugar_lift_py_tests.floor.call_site_value import (
+                list_append_coordinate_value,
+            )
+            from sugar_lift_py_tests.outcome import ExitSet
+
+            return ExitSet.completed(list_append_coordinate_value(self, value, site))
+        return super().append_with(value, site)
+
+    def stands_on_append_floor(self) -> bool:
+        """Only the ``STR_SPLIT`` coordinate is list-shaped (its marker).
+
+        ``GuardedValue.append_with`` asks this before mapping an append over
+        a face, so every other operator coordinate keeps the guarded append's
+        runtime boundary exactly as before this door answered ``str.split``.
+        """
+        from sugar_source_tree.nodes import LanguageCallee
+
+        return self.language_callee is LanguageCallee.STR_SPLIT
