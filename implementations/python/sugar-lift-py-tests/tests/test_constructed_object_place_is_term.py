@@ -79,14 +79,13 @@ def test_attribute_receiver_still_requires_constructed_term() -> None:
     assert "AttributeSugar.receiver" in _ATTR.read_text(encoding="utf-8")
 
 
-def test_object_place_state_still_mints_promoted_class() -> None:
-    """ObjectPlaceStateV1._construct_sugar still returns ConstructedObjectPlaceSugar."""
+def _construct_sugar_returns(class_name: str) -> set[str]:
     text = _NODES.read_text(encoding="utf-8")
     tree = ast.parse(text)
     cls = next(
         n
         for n in ast.walk(tree)
-        if isinstance(n, ast.ClassDef) and n.name == "ObjectPlaceStateV1"
+        if isinstance(n, ast.ClassDef) and n.name == class_name
     )
     construct = next(
         n
@@ -102,4 +101,19 @@ def test_object_place_state_still_mints_promoted_class() -> None:
                 returns.add(func.id)
             elif isinstance(func, ast.Attribute):
                 returns.add(func.attr)
+    return returns
+
+
+def test_constructed_value_projection_still_mints_promoted_class() -> None:
+    """ConstructedValueProjectionV1._construct_sugar returns ConstructedObjectPlaceSugar."""
+    returns = _construct_sugar_returns("ConstructedValueProjectionV1")
     assert "ConstructedObjectPlaceSugar" in returns, returns
+
+
+def test_object_place_state_reads_its_assignment_key() -> None:
+    """ObjectPlaceStateV1 reads the value its constructor call completed with
+    at the assignment, through the assignment's key (#7757 item 7): never the
+    constructed value computed at substitution."""
+    returns = _construct_sugar_returns("ObjectPlaceStateV1")
+    assert "EvaluationRefSugar" in returns, returns
+    assert "ConstructedObjectPlaceSugar" not in returns, returns

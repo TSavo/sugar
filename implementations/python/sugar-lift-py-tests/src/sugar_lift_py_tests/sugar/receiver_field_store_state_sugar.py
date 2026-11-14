@@ -42,11 +42,25 @@ class ReceiverFieldStoreStateSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.floor.object_value import ObjectValue
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
         from sugar_lift_py_tests.outcome import ExitSet
 
         def update(receiver, value):
+            if (
+                isinstance(receiver, CallSiteValue)
+                and receiver.body is not None
+                and receiver.source_call_frame_cid is not None
+            ):
+                # An object read through its constructor call's key
+                # (``ObjectPlaceStateV1``): the authenticated call's floor, as
+                # an attribute read takes it (``AttributeSugar``).
+                receiver = receiver.force_floor(
+                    ctx,
+                    owner="authenticated receiver field store",
+                    project_callsite=False,
+                )
             if not isinstance(receiver, ObjectValue):
                 construction_panic_gap(
                     owner="ReceiverFieldStoreStateSugar",

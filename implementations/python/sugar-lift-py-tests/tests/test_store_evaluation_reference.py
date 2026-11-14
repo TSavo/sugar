@@ -16,6 +16,18 @@ the right-hand side again where they were read:
 3. A call's result kept as its object identity (``OpaqueObjectStateV1``,
    ``Assign.refine_binding_entries``) reduced its call again at every read.
    It reads the assignment's key, as the name's reference does.
+
+The residue of #7976, each a second way to obtain a value:
+
+4. A path mutation (``d['a'].append(x)``, ``path_mutation_statement``) ran
+   its mutating call again at every read of ``d``.  The statement binds the
+   call's pair under its key; the root after it reads the pair there.
+5. An object a constructor call built (``ObjectPlaceStateV1``) was read as
+   the value computed at substitution, and a field a later store put there
+   as the stored expression computed at substitution.  The object reads its
+   assignment's key; the field reads the store statement's key.
+6. ``with cm:`` over a call result a name holds evaluated the call's
+   operands again at the ``with``.  It reads the assignment's key.
 """
 
 from __future__ import annotations
@@ -24,6 +36,9 @@ from pathlib import Path
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.floor.formal_selected_manager import (
+    FormalSelectedManagerHeadSugar,
+)
 from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
@@ -32,6 +47,7 @@ from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
     ContainerMutationStatementSugar,
 )
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
+from sugar_lift_py_tests.sugar.place_assign_sugar import PlaceAssignSugar
 from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
     ReceiverFieldStoreSugar,
 )
@@ -44,10 +60,14 @@ from sugar_source_tree.nodes import (
     BuiltinContainerProjection,
     ContainerMutationStatement,
     FunctionDef,
+    Name,
+    ObjectPlaceStateV1,
     OpaqueObjectStateV1,
+    PathAfterCall,
     ReceiverFieldStoreState,
     ReceiverFieldStoreStatement,
     Return,
+    With,
 )
 from sugar_source_tree.tree import SourceFile
 
@@ -84,6 +104,29 @@ SUBSCRIPT = (
 )
 # 3. A name bound to a call's result, read twice.
 CALL_READ_TWICE = "def f(p):\n    r = p.read()\n    return (r, r)\n"
+# 4. A path mutation, its operand rebound after it.
+PATH = (
+    "def f():\n"
+    "    d = {'a': []}\n"
+    "    x = 1\n"
+    "    d['a'].append(x)\n"
+    "    x += 1\n"
+    "    return d['a'][0]\n"
+)
+# 5. An object a constructor call built, and a field a later store put there.
+PLACE = (
+    "class Box:\n"
+    "    pass\n"
+    "\n"
+    "def f():\n"
+    "    box = Box()\n"
+    "    x = 1\n"
+    "    box.size: int = x\n"
+    "    x += 1\n"
+    "    return box.size\n"
+)
+# 6. A call result a name holds, the head of a ``with``.
+OPAQUE_HEAD = "def f(p, q):\n    cm = p.open(q)\n    return cm\n"
 
 
 def _tree(source: str, context) -> SourceFile:
@@ -271,3 +314,131 @@ def test_a_call_result_read_twice_reads_the_assignments_key() -> None:
         # The key, not a second term for the call.
         assert isinstance(sugar, EvaluationRefSugar)
         assert sugar.evaluation == key
+
+
+# ---------------------------------------------------------------------------
+# 4. ``d['a'].append(x)``: a later read of ``d`` reads the statement's key.
+# ---------------------------------------------------------------------------
+
+
+def test_a_path_mutation_reads_the_statements_key() -> None:
+    body = _function(PATH).substitute({}).body
+    mutation = next(
+        node for node in body if isinstance(node, ContainerMutationStatement)
+    )
+    assert isinstance(mutation.evaluation, str)
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    afters = [node for node in ret.value.walk() if isinstance(node, PathAfterCall)]
+    assert afters
+    for after in afters:
+        assert after.evaluation == mutation.evaluation
+        pair = after.sugar().call
+        # The pair is read through the key: no second term for the call.
+        assert isinstance(pair, EvaluationRefSugar)
+        assert pair.place
+        assert pair.evaluation == mutation.evaluation
+
+
+def test_a_path_mutation_statement_binds_its_key() -> None:
+    statements = _function(PATH).sugar().statements
+    mutation = next(
+        sugar
+        for sugar in statements
+        if isinstance(sugar, ContainerMutationStatementSugar)
+    )
+    assert isinstance(mutation.evaluation, str)
+
+
+def test_a_path_read_after_a_rebind_is_the_old_value(tmp_path: Path) -> None:
+    returned = _returned(_outcome(tmp_path, PATH, "path"))
+    assert returned == [ONE], returned
+
+
+# ---------------------------------------------------------------------------
+# 5. ``box = Box()``; ``box.size: int = x``: the object reads its
+#    assignment's key, the field reads the store's key.
+# ---------------------------------------------------------------------------
+
+
+def _place_body():
+    return _function(PLACE).substitute({}).body
+
+
+def test_an_object_place_reads_its_assignments_key() -> None:
+    body = _place_body()
+    assign = next(
+        node
+        for node in body
+        if isinstance(node, Assign)
+        and isinstance(node.targets[0], Name)
+        and node.targets[0].id == "box"
+    )
+    # The statement keeps its call: it evaluates it here, once.
+    assert assign.value.kind == "Call"
+    key = projection_key(assign.evaluation, "box")
+    states = [
+        node
+        for statement in body
+        for node in statement.walk()
+        if isinstance(node, ObjectPlaceStateV1)
+    ]
+    assert states
+    for state in states:
+        assert state.evaluation == key
+        sugar = state.sugar()
+        # The key, not the constructed value computed at substitution.
+        assert isinstance(sugar, EvaluationRefSugar)
+        assert sugar.evaluation == key
+
+
+def test_an_object_place_field_read_is_the_stores_key() -> None:
+    body = _place_body()
+    store = next(node for node in body if isinstance(node, AnnAssign))
+    assert isinstance(store.evaluation, str)
+    # The statement evaluates ``x`` itself, once.
+    assert store.value.kind == "EvaluationRef"
+    assert not getattr(store.value, "place", False)
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    # The read holds the store's key, never ``x``'s reference.
+    assert ret.value.kind == "EvaluationRef"
+    assert ret.value.place is True
+    assert ret.value.evaluation == store.evaluation
+
+
+def test_an_object_place_store_binds_its_key() -> None:
+    statements = _function(PLACE).sugar().statements
+    keyed = [sugar for sugar in statements if isinstance(sugar, KeyedStoreSugar)]
+    assert len(keyed) == 1
+    (store,) = keyed
+    assert isinstance(store.store, PlaceAssignSugar)
+    stored = store.store.value
+    assert isinstance(stored, EvaluationRefSugar)
+    assert stored.place
+    assert stored.evaluation == store.evaluation
+
+
+def test_an_object_place_read_after_a_rebind_is_the_old_value(
+    tmp_path: Path,
+) -> None:
+    returned = _returned(_outcome(tmp_path, PLACE, "place"))
+    assert returned == [ONE], returned
+
+
+# ---------------------------------------------------------------------------
+# 6. ``cm = p.open(q)``; ``with cm:``: the head reads the assignment's key.
+# ---------------------------------------------------------------------------
+
+
+def test_an_opaque_with_head_reads_its_assignments_key() -> None:
+    body = _function(OPAQUE_HEAD).substitute({}).body
+    head = body[-1].value
+    assert isinstance(head, OpaqueObjectStateV1)
+    selected = With._formal_head_with_operands(
+        FormalSelectedManagerHeadSugar("p.open", "site"), head
+    )
+    # ``q`` ran at the assignment: the ``with`` never evaluates it again.
+    assert selected.operands == ()
+    assert isinstance(selected.bound, EvaluationRefSugar)
+    assert selected.bound.evaluation == head.evaluation

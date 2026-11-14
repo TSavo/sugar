@@ -360,10 +360,11 @@ def _call_node(statement, site_node, receiver, method, args, kind, tags, value_f
 def _projection(site_node, call, index, tags, evaluation=None):
     """Element ``index`` of ``call``'s ``(post-state, result)`` pair.
 
-    With ``evaluation`` (a decided call's statement key, ``mutation_statement``)
-    the projection reads the pair the statement bound under that key
-    (``ContainerMutationStatementSugar``): ``d[k] = v; ...; d[k]`` reads the
-    dict the store left, never the call (and ``v``) evaluated again."""
+    With ``evaluation`` (the statement's key, ``mutation_statement``,
+    ``path_mutation_statement``) the projection reads the pair the statement
+    bound under that key (``ContainerMutationStatementSugar``): ``d[k] = v;
+    ...; d[k]`` reads the dict the store left, never the call (and ``v``)
+    evaluated again."""
     from .backend import Child, Leaf
     from .shadow import _handle_of
 
@@ -786,6 +787,8 @@ def _rebind(statement, pre_scope, scope, targets):
 #   receiver is evaluated once; if the value is a decided list/dict/set the call
 #   is the cited CPython mutation (``floor/builtin_container_method``), else it
 #   is the ordinary call, and the receiver's contents afterwards are unknown.
+#   Its ``(post-state, result)`` pair is bound under the statement's key;
+#   every projection below reads the pair there, never the call again.
 # - **The root.** Every name bound to the root's object is rebound to the root
 #   after the call (``PathAfterCall``, mode ``root``): the root's value with the
 #   path's member replaced by the post-state when every step is a plain field
@@ -970,7 +973,21 @@ def _sharing_states(scope, root):
     return found
 
 
-def _path_after(site_node, call, root, steps, mode, label, tags, unshared, inner=None):
+def _path_after(
+    site_node,
+    call,
+    root,
+    steps,
+    mode,
+    label,
+    tags,
+    unshared,
+    inner=None,
+    evaluation=None,
+):
+    """The root or the object after ``call``.  With ``evaluation`` (the
+    statement's key, ``path_mutation_statement``) it reads the call's pair
+    the statement bound under that key, never the call evaluated again."""
     from .backend import Child, Leaf, MaybeChild
     from .shadow import _handle_of
 
@@ -986,6 +1003,8 @@ def _path_after(site_node, call, root, steps, mode, label, tags, unshared, inner
         # mutation of that object through another name reaches the root.
         ("inner", MaybeChild(None if inner is None else _handle_of(inner))),
     ]
+    if evaluation is not None:
+        fields.append(("evaluation", Leaf(evaluation)))
     return _materialize(site_node, "PathAfterCall", tuple(fields), tags)
 
 
@@ -1050,9 +1069,32 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
         # The root after an earlier call through this same path holds that
         # call's object there.
         member = root.inner
-    inner = _path_after(call, path_call, root, steps, "inner", "", tags, unshared)
+    # The statement evaluates the call once and binds its pair under its own
+    # key; the root after it, the object after it and the call's value read
+    # that key, never the call (and its operands) evaluated again.
+    evaluation = statement._evaluation_key(scope)
+    inner = _path_after(
+        call,
+        path_call,
+        root,
+        steps,
+        "inner",
+        "",
+        tags,
+        unshared,
+        evaluation=evaluation,
+    )
     root_after = _path_after(
-        call, path_call, root, steps, "root", "", tags, unshared, inner=inner
+        call,
+        path_call,
+        root,
+        steps,
+        "root",
+        "",
+        tags,
+        unshared,
+        inner=inner,
+        evaluation=evaluation,
     )
     exact, _containing = aliases(scope, root)
     names, states, evaluated = [], [], [path_call, root_after, inner]
@@ -1084,8 +1126,8 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
             evaluated.append(havoc)
     if target_name is not None:
         names.append(target_name)
-        states.append(_projection(call, path_call, 1, tags))
-    return _statement(statement, names, states, evaluated, tags)
+        states.append(_projection(call, path_call, 1, tags, evaluation))
+    return _statement(statement, names, states, evaluated, tags, evaluation)
 
 
 # ---------------------------------------------------------------------------
