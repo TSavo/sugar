@@ -168,10 +168,11 @@ def prove_decorated_manager_absence(
     """``@d async def g`` / ``@d def g``: the absence proof for what ``g()`` returns.
 
     Only the strict shape is read: ``d``'s body is an optional docstring, one
-    nested ``helper`` definition (optionally ``@wraps(func)`` with ``wraps``
-    from ``functools``), and ``return helper``; ``helper``'s body is one
-    ``return C(...)`` where ``C`` is a module class.  Then ``g(...)`` is
-    ``C(...)`` and the proof is ``C``'s.
+    nested ``helper`` definition (optionally decorated by calls whose callee
+    is bound to ``functools.wraps``, read by ``SourceUnit.language_callee_of``),
+    and ``return helper``; ``helper``'s body is one ``return C(...)`` where
+    ``C`` is a module class.  Then ``g(...)`` is ``C(...)`` and the proof is
+    ``C``'s.
     """
     from sugar_source_tree.nodes import (
         Call,
@@ -179,7 +180,7 @@ def prove_decorated_manager_absence(
         Constant,
         Expr,
         FunctionDef,
-        ImportFrom,
+        LanguageCallee,
         Name,
         Return,
     )
@@ -198,19 +199,10 @@ def prove_decorated_manager_absence(
     unit = decorator_function.unit
     bindings = unit.module_direct_bindings or {}
     for decorator in helper.decorators:
-        if not (
-            isinstance(decorator, Call)
-            and isinstance(decorator.func, Name)
-            and decorator.func.id == "wraps"
-        ):
+        if not isinstance(decorator, Call):
             return None
-        binds = bindings.get("wraps", ())
-        if not (
-            len(binds) == 1
-            and isinstance(binds[0], ImportFrom)
-            and binds[0].module == "functools"
-            and any(a.name == "wraps" and a.asname is None for a in binds[0].names)
-        ):
+        callee = unit.language_callee_of(decorator.func)
+        if callee is not LanguageCallee.FUNCTOOLS_WRAPS:
             return None
     if len(helper.body) != 1 or not isinstance(helper.body[0], Return):
         return None

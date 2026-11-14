@@ -169,6 +169,25 @@ class LanguageCallee(_enum.Enum):
     BUILTIN_CLASSMETHOD = "python:builtins.classmethod"
     BUILTIN_STATICMETHOD = "python:builtins.staticmethod"
     BUILTIN_PROPERTY = "python:builtins.property"
+    # ``functools.wraps(wrapped)``: a decorator factory whose decorator copies
+    # ``wrapped``'s metadata onto the wrapper and returns the wrapper.
+    FUNCTOOLS_WRAPS = "python:functools.wraps"
+    # ``dataclasses.dataclass`` / ``dataclasses.field``: the class decorator
+    # that writes ``__init__`` from the annotated fields, and its field
+    # specifier (Lib/dataclasses.py).
+    DATACLASSES_DATACLASS = "python:dataclasses.dataclass"
+    DATACLASSES_FIELD = "python:dataclasses.field"
+    # ``typing.Generic``: the parameterisable base that contributes no
+    # fields.
+    TYPING_GENERIC = "python:typing.Generic"
+    # ``enum.Enum`` / ``enum.Flag`` / ``enum.IntFlag`` / ``enum.IntEnum`` /
+    # ``enum.StrEnum``: the enumeration bases whose metaclass fixes members
+    # at class creation (Lib/enum.py).
+    ENUM_ENUM = "python:enum.Enum"
+    ENUM_FLAG = "python:enum.Flag"
+    ENUM_INTFLAG = "python:enum.IntFlag"
+    ENUM_INTENUM = "python:enum.IntEnum"
+    ENUM_STRENUM = "python:enum.StrEnum"
 
     @classmethod
     def of(cls, target_symbol: Optional[str]) -> Optional["LanguageCallee"]:
@@ -179,6 +198,15 @@ class LanguageCallee(_enum.Enum):
             return cls(target_symbol)
         except ValueError:
             return None
+
+
+# The builtin method descriptor constructors a decorator's binding may reach,
+# by the descriptor kind ``ClassDef._method_descriptor_kind`` answers.
+_METHOD_DESCRIPTOR_KINDS = {
+    LanguageCallee.BUILTIN_PROPERTY: "property",
+    LanguageCallee.BUILTIN_CLASSMETHOD: "classmethod",
+    LanguageCallee.BUILTIN_STATICMETHOD: "staticmethod",
+}
 
 
 @dataclass(frozen=True)
@@ -5920,23 +5948,19 @@ class ClassDef(Statement):
     def _method_descriptor_kind(
         self, method: "FunctionDef | AsyncFunctionDef"
     ) -> Optional[str]:
-        """Authenticate one language descriptor decorator by lexical binding.
+        """Authenticate one language descriptor decorator by its binding.
 
-        The decorator spelling is only a lookup key.  A same-named module
-        binding defeats the builtin coordinate, so it can never grant property
-        or class/static method semantics.
+        The decorator resolves through ``SourceUnit.language_callee_of``: a
+        name that falls through to the builtin namespace (or an import of
+        ``builtins``) reaches the descriptor constructor; any rebinding
+        reaches nothing and never grants property or class/static method
+        semantics.
         """
         if len(method.decorators) != 1:
             return None
-        decorator = method.decorators[0]
-        if not isinstance(decorator, Name):
-            return None
-        if decorator.id not in {"property", "classmethod", "staticmethod"}:
-            return None
-        bindings = (self.unit.module_direct_bindings or {}).get(decorator.id, ())
-        if bindings:
-            return None
-        return decorator.id
+        return _METHOD_DESCRIPTOR_KINDS.get(
+            self.unit.language_callee_of(method.decorators[0])
+        )
 
     def _authenticated_new_constructor_shape(self):
         """One source-owned ``__new__`` allocation followed by field stores."""
@@ -6397,42 +6421,6 @@ class ClassDef(Statement):
             None,
         )
 
-    def _module_import_binding(self, local_name: str):
-        """The sole module-level import statement binding ``local_name``."""
-        bindings = tuple(
-            (getattr(self.unit, "module_direct_bindings", None) or {}).get(
-                local_name, ()
-            )
-        )
-        if len(bindings) != 1 or not isinstance(bindings[0], (Import, ImportFrom)):
-            return None
-        return bindings[0]
-
-    def _names_stdlib_member(self, node, module_name: str, member: str) -> bool:
-        """``node`` spells ``<module_name>.<member>`` through one authenticated
-        module-level import: ``import M [as X]`` + ``X.member``, or
-        ``from M import member [as Y]`` + ``Y``."""
-        if isinstance(node, Attribute) and node.attr == member:
-            if not isinstance(node.value, Name):
-                return False
-            statement = self._module_import_binding(node.value.id)
-            return isinstance(statement, Import) and any(
-                alias.name == module_name and (alias.asname or alias.name) == node.value.id
-                for alias in statement.names
-            )
-        if isinstance(node, Name):
-            statement = self._module_import_binding(node.id)
-            return (
-                isinstance(statement, ImportFrom)
-                and statement.level == 0
-                and statement.module == module_name
-                and any(
-                    alias.name == member and (alias.asname or alias.name) == node.id
-                    for alias in statement.names
-                )
-            )
-        return False
-
     def _dataclass_generated_init_fields(self):
         """The ``__init__`` ``@dataclasses.dataclass`` writes, as its fields.
 
@@ -6454,14 +6442,17 @@ class ClassDef(Statement):
         ``default``, or a non-default field after a default one (which
         dataclasses itself rejects with ``TypeError``).
         """
-        if len(self.decorators) != 1 or not self._names_stdlib_member(
-            self.decorators[0], "dataclasses", "dataclass"
+        unit = self.unit
+        if (
+            len(self.decorators) != 1
+            or unit.language_callee_of(self.decorators[0])
+            is not LanguageCallee.DATACLASSES_DATACLASS
         ):
             return None
         for base in self.bases:
             if not (
                 isinstance(base, Subscript)
-                and self._names_stdlib_member(base.value, "typing", "Generic")
+                and unit.language_callee_of(base.value) is LanguageCallee.TYPING_GENERIC
             ):
                 return None
         if getattr(self, "keywords", ()):
@@ -6503,8 +6494,10 @@ class ClassDef(Statement):
             factory = None
             value = item.value
             if value is not None:
-                if isinstance(value, Call) and self._names_stdlib_member(
-                    value.func, "dataclasses", "field"
+                if (
+                    isinstance(value, Call)
+                    and unit.language_callee_of(value.func)
+                    is LanguageCallee.DATACLASSES_FIELD
                 ):
                     if value.args or len(value.keywords) != 1:
                         return None
@@ -6728,41 +6721,36 @@ class ClassDef(Statement):
     def _inherits_default_exception_constructor(self) -> bool:
         """Whether this class inherits BaseException's ``(*args)`` constructor.
 
-        Identity is the authenticated base graph, never the class spelling.
-        A non-exception class without ``__init__`` still takes zero arguments
-        (object construction); only exception ancestry opens ``*args``.
+        Identity is the authenticated base graph, never the class spelling:
+        each base resolves through ``SourceUnit.exception_type_identity`` (its
+        binding -- the builtin namespace nothing rebinds, ``from builtins
+        import``, or the one module class statement binding it), and a source
+        class is walked through its own bases in turn.  A non-exception class
+        without ``__init__`` still takes zero arguments (object construction);
+        only exception ancestry opens ``*args``.
         """
-        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
-            BUILTIN_EXCEPTION_NAMES,
-        )
-
-        module = self.unit._require_typed_module(
-            "ClassDef._inherits_default_exception_constructor",
-            blame=self.fragment,
-        )
-        visiting: set[str] = set()
+        unit = self.unit
+        visiting: set[int] = set()
 
         def base_is_exception(base) -> bool:
             if not isinstance(base, Name):
                 return False
-            if base.id in BUILTIN_EXCEPTION_NAMES:
+            identity = unit.exception_type_identity(base)
+            if identity is None:
+                return False
+            if unit._builtin_exception_ancestry(identity) is not None:
                 return True
-            if base.id in visiting:
+            bindings = (unit.module_direct_bindings or {}).get(base.id, ())
+            if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
                 return False
-            # Walk the same lexical ClassDef graph SourceUnit.exception_type_mro
-            # authenticates: one unique same-module definition, no guessed imports.
-            definitions = [
-                item
-                for item in module.body
-                if isinstance(item, ClassDef) and item.name == base.id
-            ]
-            if len(definitions) != 1:
+            (definition,) = bindings
+            if id(definition) in visiting:
                 return False
-            visiting.add(base.id)
+            visiting.add(id(definition))
             try:
-                return any(base_is_exception(item) for item in definitions[0].bases)
+                return any(base_is_exception(item) for item in definition.bases)
             finally:
-                visiting.remove(base.id)
+                visiting.remove(id(definition))
 
         return any(base_is_exception(base) for base in self.bases)
 
