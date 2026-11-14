@@ -417,11 +417,16 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     def _desugar_with_iterable(self, iterable, ctx):
         runtime = self.construction.loop_runtime
         from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.floor.object_identity import contents_stale
 
+        # A container whose contents are not current
+        # (``object_identity.contents_stale``) has no members in hand: the
+        # loop over it is the recurrence, as over a symbolic iterable.
         if (
             iterable is not None
             and runtime is not None
             and not isinstance(iterable, SymbolicValue)
+            and not contents_stale(iterable)
         ):
             from sugar_lift_py_tests.operations.iterator_operation import (
                 IteratorOperation,

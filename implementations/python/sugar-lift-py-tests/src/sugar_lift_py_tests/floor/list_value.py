@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 from sugar_lift_py_tests.effect import runtime_effect_evidence
 
 from .guard_stable_value import GuardStableValue
+from .object_identity import UNNAMED_CONSTRUCTION
 
 
 @dataclass(frozen=True)
@@ -20,8 +21,12 @@ class ListValue(GuardStableValue):
     # The construction that made this object in the frame reading it, kept
     # by the one door's post-state; None for a value that arrived by binding
     # (``object_identity``: ``made_at``, ``arrived``, ``contents_current``).
+    # A value built without one was made here by a construction it does not
+    # name (``UNNAMED_CONSTRUCTION``).
     allocation: str | None = dataclass_field(
-        default=None, compare=False, metadata={"testimony": "provenance"}
+        default=UNNAMED_CONSTRUCTION,
+        compare=False,
+        metadata={"testimony": "provenance"},
     )
 
     def denotes_value(self) -> bool:
@@ -99,13 +104,24 @@ class ListValue(GuardStableValue):
         A constructed list projects as ``array`` (``to_term``), so it takes the
         array arm. Routing it through ``project_tuple`` would print a tuple
         diagnostic for an arity mismatch on a list: a correct refusal wearing
-        the wrong name.
+        the wrong name.  A list whose contents are not current
+        (``object_identity.contents_current``) has no members in hand: its
+        count is the runtime unpack's.
         """
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            return operation.project_symbolic(self, ctx)
         return operation.project_array(self, ctx)
 
     def iter_with(self, operation, ctx):
-        """``iter(list)`` → authenticated ``ListIteratorValue`` over members."""
-        del operation, ctx
+        """``iter(list)`` → authenticated ``ListIteratorValue`` over members;
+        over contents that are not current, the undecided iteration."""
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            return self.undecided_iteration(operation.blame, owner="ListValue.iter")
+        del ctx
         from sugar_lift_py_tests.floor.iterator_value import ListIteratorValue
         from sugar_lift_py_tests.outcome import ExitSet
 
@@ -117,8 +133,14 @@ class ListValue(GuardStableValue):
         return self.elements
 
     def length(self, site):
-        # A list knows its length: the count of reduced elements.
-        del site
+        # A list knows its length: the count of reduced elements -- when
+        # they are its contents now (``object_identity.contents_current``).
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            from .set_value import undecided_length
+
+            return undecided_length(self, site)
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import ExitSet
 
@@ -160,18 +182,29 @@ class ListValue(GuardStableValue):
 
     def append_with(self, value, site):
         # Concrete history folds: the updated list is the old elements plus the
-        # new value. Symbolic receivers stay on the default panic.
+        # new value. Symbolic receivers stay on the default panic.  The same
+        # object: it keeps its ``allocation``.
         del site
         from sugar_lift_py_tests.outcome import ExitSet
 
-        return ExitSet.completed(ListValue((*self.elements, value)))
+        return ExitSet.completed(replace(self, elements=(*self.elements, value)))
 
     def add(self, other, site, ctx):
-        """Python list concatenation, or a cited coordinate for an opaque peer."""
+        """Python list concatenation, or a cited coordinate for an opaque peer.
+
+        The concatenation is a new list made here, current when both
+        operands' contents are (``object_identity.made_if_current``)."""
         if type(other) is ListValue:
             from sugar_lift_py_tests.outcome import ExitSet
 
-            return ExitSet.completed(ListValue((*self.elements, *other.elements)))
+            from .object_identity import made_if_current
+
+            return ExitSet.completed(
+                ListValue(
+                    (*self.elements, *other.elements),
+                    allocation=made_if_current(site, self, other),
+                )
+            )
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
 
         if type(other) is ComprehensionValue:
@@ -209,11 +242,19 @@ class ListValue(GuardStableValue):
         return super().add(other, site, ctx)
 
     def multiply(self, other, site, ctx):
-        # Python list repetition, through the one sequence-repetition law.
+        # Python list repetition, through the one sequence-repetition law: a
+        # new list made here (``object_identity.made_if_current``).
         from sugar_lift_py_tests.floor.sequence_repetition import repeat_sequence
 
+        from .object_identity import made_if_current
+
+        allocation = made_if_current(site, self)
+
+        def rebuild(elements):
+            return ListValue(elements, allocation=allocation)
+
         return repeat_sequence(
-            self, other, site, elements=self.elements, rebuild=ListValue
+            self, other, site, elements=self.elements, rebuild=rebuild
         )
 
     def subtract(self, other, site, ctx):
@@ -243,10 +284,16 @@ class ListValue(GuardStableValue):
     def subscript(self, index, site):
         # Concrete list + integer index is fully decided. A known non-integer
         # is TypeError; an index with undecided runtime semantics stays loud.
+        # A member or a slice is read only from contents that are current
+        # (``object_identity.contents_current``); otherwise it is the
+        # undecided read.
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import ExitSet
 
+        from .object_identity import contents_current, made_at
+
+        current = contents_current(self)
         if isinstance(index, SliceValue):
             bounds = (index.lower, index.upper, index.step)
             if _slice_bounds_not_indices(bounds):
@@ -269,12 +316,17 @@ class ListValue(GuardStableValue):
                         site=site,
                         owner="ListValue.subscript",
                     )
-                return ExitSet.completed(
-                    ListValue(tuple(self.elements[slice(lower, upper, step)]))
-                )
+                if current:
+                    # A new list made here.
+                    return ExitSet.completed(
+                        ListValue(
+                            tuple(self.elements[slice(lower, upper, step)]),
+                            allocation=made_at(site),
+                        )
+                    )
             return self.undecided_subscript(index, site, owner="ListValue.subscript")
 
-        if type(index) is TermValue and isinstance(index.value, int):
+        if current and type(index) is TermValue and isinstance(index.value, int):
             i = index.value
             n = len(self.elements)
             if -n <= i < n:
@@ -316,7 +368,8 @@ class ListValue(GuardStableValue):
                     value,
                     *self.elements[resolved + 1 :],
                 )
-                return ExitSet.completed(ListValue(updated))
+                # The same object: it keeps its ``allocation``.
+                return ExitSet.completed(replace(self, elements=updated))
             from sugar_lift_py_tests.floor.ground_index_error import (
                 ground_index_error,
             )
@@ -418,7 +471,7 @@ class ListValue(GuardStableValue):
                     site=site,
                     owner="ListValue.setitem",
                 )
-            return ExitSet.completed(ListValue(tuple(elements)))
+            return ExitSet.completed(replace(self, elements=tuple(elements)))
 
         return members_out.and_then(_write)
 
@@ -459,12 +512,13 @@ class ListValue(GuardStableValue):
                     )
                 selected = set(range(len(self.elements))[slice(lower, upper, step)])
                 return ExitSet.completed(
-                    ListValue(
-                        tuple(
+                    replace(
+                        self,
+                        elements=tuple(
                             value
                             for position, value in enumerate(self.elements)
                             if position not in selected
-                        )
+                        ),
                     )
                 )
             from sugar_lift_py_tests.effect import SubscriptStoreRuntimeEffect
@@ -486,8 +540,12 @@ class ListValue(GuardStableValue):
             if -n <= i < n:
                 resolved = i if i >= 0 else n + i
                 return ExitSet.completed(
-                    ListValue(
-                        (*self.elements[:resolved], *self.elements[resolved + 1 :])
+                    replace(
+                        self,
+                        elements=(
+                            *self.elements[:resolved],
+                            *self.elements[resolved + 1 :],
+                        ),
                     )
                 )
             from sugar_lift_py_tests.floor.ground_index_error import (

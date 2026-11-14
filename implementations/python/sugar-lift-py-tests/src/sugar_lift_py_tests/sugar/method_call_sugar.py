@@ -360,25 +360,6 @@ def _method_callsite(
     )
 
 
-# Cited container methods whose exits and result the law decides from the
-# operands alone, never from the receiver's contents.
-_CONTENTS_FREE_METHODS = {
-    "list": frozenset({"append", "extend", "insert", "clear", "reverse"}),
-    "dict": frozenset({"__setitem__", "update", "clear"}),
-    "set": frozenset(
-        {
-            "add",
-            "discard",
-            "update",
-            "clear",
-            "difference_update",
-            "intersection_update",
-            "symmetric_difference_update",
-        }
-    ),
-}
-
-
 def _container_method_call(kind, name, receiver, positional, kw_values, site, ctx):
     """A built-in container's method that no floor of the receiver answered.
 
@@ -386,15 +367,16 @@ def _container_method_call(kind, name, receiver, positional, kw_values, site, ct
     by binding: a helper's formal bound to the caller's actual), or the
     method or an argument is not one the cited fold reads: code this frame
     does not see may have changed the object without rebinding the name.  The
-    container law (#7603) decides only what does not read the contents; every
-    other call is two-faced under its ``python:builtin_method`` atom.  The
-    receiver's post-state is the statement's or the caller's to apply."""
+    container law (#7603) decides only what does not read the contents
+    (``CONTENTS_FREE_METHODS``); every other call is two-faced under its
+    ``python:builtin_method`` atom.  The receiver's post-state is the
+    statement's or the caller's to apply."""
     from sugar_lift_py_tests.floor import builtin_container_method as law
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
     from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _opaque_pair
 
     decided = None
-    if not kw_values and name in _CONTENTS_FREE_METHODS.get(kind, ()):
+    if not kw_values and name in law.CONTENTS_FREE_METHODS.get(kind, ()):
         decided = law.apply(kind, name, receiver, tuple(positional), site, ctx)
     if decided is None:
         decided = _opaque_pair(kind, name, site)

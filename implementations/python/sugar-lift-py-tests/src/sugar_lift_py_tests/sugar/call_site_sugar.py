@@ -985,6 +985,7 @@ class CallSiteSugar(ConstructedTermSugar):
                         self.language_callee,
                         callsite.arg_values,
                         getattr(callsite, "keyword_names", ()) or (),
+                        site=self.site,
                     )
                     if constructed is not None:
                         return constructed

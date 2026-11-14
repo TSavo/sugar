@@ -1218,15 +1218,19 @@ class _UndecidedMember(Exception):
 def _finite_members(iterable):
     """The members ``iterable`` yields when it is an exact finite container
     (a list or tuple, an iterator over one from its position, a projected
-    comprehension), else ``None``."""
+    comprehension), else ``None`` -- as for a list whose contents are not
+    current (``object_identity.contents_stale``)."""
     from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
     from sugar_lift_py_tests.floor.iterator_value import (
         ListIteratorValue,
         TupleIteratorValue,
     )
     from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.object_identity import contents_stale
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
+    if contents_stale(iterable):
+        return None
     if isinstance(iterable, (TupleValue, ListValue)):
         return iterable.elements
     if isinstance(iterable, (ListIteratorValue, TupleIteratorValue)):

@@ -35,14 +35,21 @@ class MappingObjectValue(ObjectValue):
     def mapping_with_entries(self, entries: tuple) -> "MappingObjectValue":
         return replace(self, entries=entries)
 
+    def _builtin_dict(self):
+        """The authenticated ``dict`` base state as the builtin dict it is:
+        this object's own state, made with the object (its ``identity``).
+        Its currency is the object's, which ``arrived`` does not take off
+        an instance (``object_identity``)."""
+        return DictValue(self.entries, allocation=self.identity or None)
+
     def truth(self, site):
-        return DictValue(self.entries).truth(site)
+        return self._builtin_dict().truth(site)
 
     def length(self, site):
-        return DictValue(self.entries).length(site)
+        return self._builtin_dict().length(site)
 
     def contains(self, item, site):
-        return DictValue(self.entries).contains(item, site)
+        return self._builtin_dict().contains(item, site)
 
     def subscript(self, index, site):
         return self._mapping_read(index, site, None)
@@ -57,7 +64,7 @@ class MappingObjectValue(ObjectValue):
         )
 
         return discharge_subscript(
-            DictValue(self.entries),
+            self._builtin_dict(),
             index,
             site,
             ctx,
@@ -116,7 +123,7 @@ class MappingObjectValue(ObjectValue):
         from sugar_lift_py_tests.outcome import ExitSet
 
         return (
-            DictValue(self.entries)
+            self._builtin_dict()
             .setitem(index, value, site, ctx)
             .and_then(
                 lambda updated: ExitSet.completed(
@@ -155,7 +162,7 @@ class MappingObjectValue(ObjectValue):
         from sugar_lift_py_tests.outcome import ExitSet
 
         return (
-            DictValue(self.entries)
+            self._builtin_dict()
             .delitem(index, site, ctx)
             .and_then(
                 lambda updated: ExitSet.completed(

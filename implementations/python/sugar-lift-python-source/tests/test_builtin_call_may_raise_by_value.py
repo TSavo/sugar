@@ -271,7 +271,11 @@ def test_contents_not_current_at_the_call_are_not_folded():
     made = ListValue((TermValue(1),), allocation="made-here")
     assert cited_container_method(made, "index")
     assert not cited_container_method(arrived(made), "index")
-    assert not cited_container_method(ListValue((TermValue(1),)), "index")
+    unmade = ListValue((TermValue(1),), allocation=None)
+    assert not cited_container_method(unmade, "index")
+    # A value built with no allocation given was made here by a construction
+    # it does not name: current.
+    assert cited_container_method(ListValue((TermValue(1),)), "index")
     assert not cited_container_method(made, "pop")
     assert cited_container_method(TupleValue((TermValue(1),)), "index")
     assert not cited_container_method(TupleValue((made,)), "index")
@@ -343,6 +347,182 @@ def test_a_bound_dict_has_no_closed_items():
     made = DictValue(((StringValue("a"), TermValue(1)),), allocation="made-here")
     assert made.supports_closed_method("items")
     assert not arrived(made).supports_closed_method("items")
+
+
+# One currency rule (#7757, after #8105): every read of a list/dict/set's
+# contents asks ``object_identity.contents_current`` -- the cited fold, the
+# one door's container law, and each floor read.  A container that is not
+# current (it arrived by binding) is read in the read's own undecided form,
+# never from the contents it held when it arrived.
+
+
+def _made_and_arrived():
+    from sugar_lift_py_tests.floor.object_identity import arrived
+
+    made = ListValue((TermValue(1), TermValue(2)), allocation="made-here")
+    return made, arrived(made)
+
+
+def test_the_one_rule_answers_every_reader():
+    from sugar_lift_py_tests.floor.object_identity import (
+        contents_current,
+        contents_stale,
+    )
+
+    made, stale = _made_and_arrived()
+    assert contents_current(made) and not contents_stale(made)
+    assert not contents_current(stale) and contents_stale(stale)
+    # A tuple has no currency of its own; it is never stale.
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    assert not contents_stale(TupleValue((stale,)))
+
+
+def test_a_stale_lists_length_is_the_len_coordinate_never_its_count():
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+
+    made, stale = _made_and_arrived()
+    assert made.length("len-site").completed_value() == TermValue(2)
+    counted = stale.length("len-site").completed_value()
+    assert type(counted) is CallSiteValue
+    assert counted.target_name == "len"
+
+
+def test_a_stale_list_is_not_handed_to_the_fold():
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_lift_py_tests.source_call_resolution import _NOT_GROUND, _host_ground
+
+    made, stale = _made_and_arrived()
+    assert _host_ground(made) == [1, 2]
+    assert _host_ground(stale) is _NOT_GROUND
+    # Nor inside a value that holds it.
+    assert _host_ground(TupleValue((stale,))) is _NOT_GROUND
+
+
+def test_the_door_does_not_read_a_stale_receiver():
+    from sugar_lift_py_tests.floor import DictValue
+    from sugar_lift_py_tests.floor import builtin_container_method as law
+    from sugar_lift_py_tests.floor.object_identity import arrived, contents_current
+    from sugar_lift_py_tests.floor.tuple_value import TupleValue
+
+    made, stale = _made_and_arrived()
+    popped = law.apply("list", "pop", made, (), "pop", None).completed_value()
+    assert type(popped) is TupleValue and popped.elements[1] == TermValue(2)
+    # ``pop``'s value, ``remove``'s membership, a dict's ``setdefault`` read
+    # the contents: undecided, and the door applies an opaque post-state.
+    assert law.apply("list", "pop", stale, (), "pop", None) is law.UNDECIDED
+    assert law.apply("list", "remove", stale, (TermValue(1),), "rm", None) is None
+    stale_dict = arrived(
+        DictValue(((StringValue("k"), TermValue(1)),), allocation="made-here")
+    )
+    assert (
+        law.apply("dict", "setdefault", stale_dict, (StringValue("k"),), "sd", None)
+        is law.UNDECIDED
+    )
+    # ``append`` reads nothing: it applies, and its post-state is not current.
+    appended = law.apply("list", "append", stale, (TermValue(3),), "append", None)
+    post, result = appended.completed_value().elements
+    assert not contents_current(post)
+    assert type(result).__name__ == "NoneValue"
+
+
+def test_a_stale_member_is_never_equal_by_its_contents():
+    from sugar_lift_py_tests.floor.membership import member_equal
+
+    made, stale = _made_and_arrived()
+    assert member_equal(made, ListValue((TermValue(1), TermValue(2)))) is True
+    assert member_equal(stale, ListValue((TermValue(1), TermValue(2)))) is None
+
+
+def test_a_concatenation_of_current_lists_is_current_and_of_a_stale_one_is_not():
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+
+    made, stale = _made_and_arrived()
+    fresh = made.add(made, "add-site", None).completed_value()
+    assert contents_current(fresh)
+    assert not contents_current(stale.add(made, "add-site", None).completed_value())
+
+
+_CLEAR = "def clear(ys):\n    ys.clear()\n"
+
+
+@pytest.mark.parametrize(
+    "read, stale_answer",
+    [
+        ("len(xs)", TermValue(2)),
+        ("xs[0]", TermValue(1)),
+        ("xs.pop()", TermValue(2)),
+        ("1 in xs", None),
+    ],
+)
+def test_a_helper_never_reads_the_contents_its_list_arrived_with(
+    tmp_path, read, stale_answer
+):
+    # ``xs`` reaches ``g`` by binding, and code ``g`` calls empties it: the
+    # contents the caller built are not ``xs``'s contents at the read.
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    source = (
+        _CLEAR
+        + "def g(xs):\n"
+        + "    clear(xs)\n"
+        + f"    return {read}\n"
+        + "def f():\n"
+        + "    return g([1, 2])\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    if stale_answer is None:
+        assert not any(type(value) is TrueBoolLiteralSugar for value in returns)
+    else:
+        assert stale_answer not in returns
+
+
+@pytest.mark.parametrize(
+    "body, value",
+    [
+        ("xs = [1, 2]\n    return len(xs)\n", TermValue(2)),
+        ("xs = [1, 2]\n    return xs[1]\n", TermValue(2)),
+        ("xs = [1, 2]\n    ys = xs + [3]\n    return len(ys)\n", TermValue(3)),
+        ("xs = [1, 2]\n    a, b = xs\n    return b\n", TermValue(2)),
+    ],
+)
+def test_a_list_this_frame_built_still_folds(tmp_path, body, value):
+    returns, halts = _returns(tmp_path, f"def f():\n    {body}")
+    assert returns == [value]
+    assert halts == []
+
+
+def test_a_list_a_generator_yielded_is_not_current_when_it_resumes():
+    # The consumer holds the yielded list and may change it before the
+    # generator resumes: the generator's own binding of it is released at the
+    # yield, so a read after the resume never takes the contents it yielded.
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+    from sugar_lift_py_tests.generator_construction import (
+        GeneratorAssignBindingV1,
+        GeneratorConstructionV1,
+        YieldEffect,
+    )
+
+    from test_generator_pre_yield_assign_execution import _steps
+
+    steps = _steps("def g():\n    xs = [1]\n    yield xs\n    return len(xs)\n")
+    yielded = GeneratorConstructionV1.allocate(
+        allocation_coordinate="enter:yielded-list",
+        frame_coordinate="frame:yielded-list",
+        binding_state=(),
+        steps=steps,
+    ).resume()
+    assert isinstance(yielded, YieldEffect)
+    assert not contents_current(yielded.value)
+    (held,) = [
+        binding
+        for binding in yielded.machine.binding_state
+        if isinstance(binding, GeneratorAssignBindingV1) and binding.name == "xs"
+    ]
+    assert held.value == ListValue((TermValue(1),))
+    assert not contents_current(held.value)
 
 
 def test_a_str_method_over_an_opaque_argument_keeps_its_marker():

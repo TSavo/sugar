@@ -5,6 +5,7 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.call_symbol import call_symbol
 
 from .guard_stable_value import GuardStableValue
+from .object_identity import UNNAMED_CONSTRUCTION
 
 
 @dataclass(frozen=True)
@@ -20,8 +21,12 @@ class SetValue(GuardStableValue):
     # The construction that made this object in the frame reading it, kept
     # by the one door's post-state; None for a value that arrived by binding
     # (``object_identity``: ``made_at``, ``arrived``, ``contents_current``).
+    # A value built without one was made here by a construction it does not
+    # name (``UNNAMED_CONSTRUCTION``).
     allocation: str | None = dataclass_field(
-        default=None, compare=False, metadata={"testimony": "provenance"}
+        default=UNNAMED_CONSTRUCTION,
+        compare=False,
+        metadata={"testimony": "provenance"},
     )
 
     def attribute(self, name, site, ctx):
@@ -119,12 +124,16 @@ class SetValue(GuardStableValue):
 
     def length(self, site):
         # A set knows its length when its members are decidedly distinct;
-        # members whose equality is undecided may have collapsed.
+        # members whose equality is undecided may have collapsed.  Members
+        # that are not its contents now (``object_identity.contents_current``)
+        # count nothing.
         from sugar_lift_py_tests.floor.membership import decided_distinct
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import ExitSet
 
-        if not decided_distinct(self.elements):
+        from .object_identity import contents_current
+
+        if not contents_current(self) or not decided_distinct(self.elements):
             return undecided_length(self, site)
         return ExitSet.completed(TermValue(len(self.elements)))
 
@@ -175,33 +184,37 @@ class SetValue(GuardStableValue):
 
     def subtract(self, other, site, ctx):
         if type(other) is SetValue:
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            result = _finite_difference(self.elements, other.elements)
-            if result is not None:
-                return ExitSet.completed(SetValue(result))
-            return _symbolic_set_operation("python.set.difference", self, other, site)
+            return _set_operation(
+                _finite_difference, "python.set.difference", self, other, site
+            )
         return super().subtract(other, site, ctx)
 
     def bitwise_or(self, other, site, ctx):
         if type(other) is SetValue:
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            result = _finite_union(self.elements, other.elements)
-            if result is not None:
-                return ExitSet.completed(SetValue(result))
-            return _symbolic_set_operation("python.set.union", self, other, site)
+            return _set_operation(_finite_union, "python.set.union", self, other, site)
         return super().bitwise_or(other, site, ctx)
 
     def bitwise_and(self, other, site, ctx):
         if type(other) is SetValue:
-            from sugar_lift_py_tests.outcome import ExitSet
-
-            result = _finite_intersection(self.elements, other.elements)
-            if result is not None:
-                return ExitSet.completed(SetValue(result))
-            return _symbolic_set_operation("python.set.intersection", self, other, site)
+            return _set_operation(
+                _finite_intersection, "python.set.intersection", self, other, site
+            )
         return super().bitwise_and(other, site, ctx)
+
+
+def _set_operation(finite, name, left, right, site):
+    """``left <op> right`` of two sets: the new set made here from contents
+    that are current (``object_identity.contents_current``), else the
+    operation's symbolic term."""
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    from .object_identity import contents_current, made_at
+
+    if contents_current(left) and contents_current(right):
+        result = finite(left.elements, right.elements)
+        if result is not None:
+            return ExitSet.completed(SetValue(result, allocation=made_at(site)))
+    return _symbolic_set_operation(name, left, right, site)
 
 
 def undecided_length(container, site):

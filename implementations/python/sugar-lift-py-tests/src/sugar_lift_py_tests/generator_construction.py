@@ -1265,6 +1265,40 @@ class YieldEffect:
         # generator's frame made is not current in the consumer's
         # (``object_identity``).
         object.__setattr__(self, "value", arrived(self.value))
+        # Nor is it current in the generator's own frame when it resumes: the
+        # consumer ran code this frame does not see, holding the yielded
+        # value and whatever it shares.  Which of the frame's objects that is
+        # the yielded value cannot say (the frame's own read of it may have
+        # taken its ``allocation`` off already), so every container the frame
+        # holds is released at the yield.
+        object.__setattr__(self, "machine", _released_at_yield(self.machine))
+
+
+def _released_at_yield(machine):
+    """``machine`` with every container its frame's writes hold ``arrived``
+    (``YieldEffect``)."""
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.floor.object_identity import arrived
+
+    state = getattr(machine, "binding_state", None)
+    if not state:
+        return machine
+    released = []
+    changed = False
+    for item in state:
+        if (
+            isinstance(item, (GeneratorAssignBindingV1, GeneratorLoopBindingV1))
+            and item.value is not None
+        ):
+            value = arrived(item.value)
+            if value is not item.value:
+                item = replace(item, value=value)
+                changed = True
+        released.append(item)
+    if not changed:
+        return machine
+    return replace(machine, binding_state=tuple(released))
 
 
 @dataclass(frozen=True)

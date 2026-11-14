@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 
 from .guard_stable_value import GuardStableValue
+from .object_identity import UNNAMED_CONSTRUCTION
 
 
 @dataclass(frozen=True)
@@ -18,15 +19,20 @@ class DictValue(GuardStableValue):
     # The construction that made this object in the frame reading it, kept
     # by the one door's post-state; None for a value that arrived by binding
     # (``object_identity``: ``made_at``, ``arrived``, ``contents_current``).
+    # A value built without one was made here by a construction it does not
+    # name (``UNNAMED_CONSTRUCTION``).
     allocation: str | None = dataclass_field(
-        default=None, compare=False, metadata={"testimony": "provenance"}
+        default=UNNAMED_CONSTRUCTION,
+        compare=False,
+        metadata={"testimony": "provenance"},
     )
 
     def mapping_entries(self) -> tuple:
         return self.entries
 
     def mapping_with_entries(self, entries: tuple) -> "DictValue":
-        return DictValue(entries)
+        # The same object: it keeps its ``allocation``.
+        return replace(self, entries=entries)
 
     def denotes_value(self) -> bool:
         """This floor value denotes a ``dict``."""
@@ -55,12 +61,18 @@ class DictValue(GuardStableValue):
         )
 
     def length(self, site):
-        # Keys whose equality is undecided may have collapsed into one.
+        # Keys whose equality is undecided may have collapsed into one; entries
+        # that are not its contents now (``object_identity.contents_current``)
+        # count nothing.
         from sugar_lift_py_tests.floor.membership import decided_distinct
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import ExitSet
 
-        if not decided_distinct(tuple(key for key, _value in self.entries)):
+        from .object_identity import contents_current
+
+        if not contents_current(self) or not decided_distinct(
+            tuple(key for key, _value in self.entries)
+        ):
             from sugar_lift_py_tests.floor.set_value import undecided_length
 
             return undecided_length(self, site)
@@ -69,11 +81,17 @@ class DictValue(GuardStableValue):
     def iter_with(self, operation, ctx):
         """``iter(dict)`` traverses authenticated keys in insertion order --
         once those keys are decidedly distinct; otherwise which keys survive
-        is undecided and the traversal stays a construction gap."""
+        is undecided and the traversal stays a construction gap.  Keys that
+        are not its contents now (``object_identity.contents_current``) are
+        the undecided iteration."""
         from sugar_lift_py_tests.floor.iterator_value import ListIteratorValue
         from sugar_lift_py_tests.floor.membership import decided_distinct
         from sugar_lift_py_tests.outcome import ExitSet
 
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            return self.undecided_iteration(operation.blame, owner="DictValue.iter")
         if not decided_distinct(tuple(key for key, _value in self.entries)):
             return super().iter_with(operation, ctx)
         del operation, ctx
@@ -124,7 +142,12 @@ class DictValue(GuardStableValue):
         )
 
     def bitwise_or(self, other, site, ctx):
+        from .object_identity import contents_current, made_at
+
         if type(other) is not DictValue:
+            return super().bitwise_or(other, site, ctx)
+        if not (contents_current(self) and contents_current(other)):
+            # Entries that are not the objects' contents now merge nothing.
             return super().bitwise_or(other, site, ctx)
         entries = list(self.entries)
         for right_key, right_value in other.entries:
@@ -138,7 +161,8 @@ class DictValue(GuardStableValue):
                 entries.append((right_key, right_value))
         from sugar_lift_py_tests.outcome import ExitSet
 
-        return ExitSet.completed(DictValue(tuple(entries)))
+        # A new dict made here.
+        return ExitSet.completed(DictValue(tuple(entries), allocation=made_at(site)))
 
     def attribute(self, name, site, ctx):
         # Bound methods and fields on a constructed dict (``{{}}.get``, ``mapping.items``) stay the
@@ -246,6 +270,12 @@ class DictValue(GuardStableValue):
                 site=site,
                 owner="DictValue.subscript",
             )
+        from .object_identity import contents_current
+
+        if not contents_current(self):
+            # Entries that are not its contents now find nothing: the
+            # undecided read.
+            return self.undecided_subscript(index, site, owner="DictValue.subscript")
 
         found = _key_position(self.entries, index)
         if found is not None and found >= 0:
@@ -280,7 +310,8 @@ class DictValue(GuardStableValue):
                 entries[found] = (entries[found][0], value)
             else:
                 entries.append((index, value))
-            return ExitSet.completed(DictValue(tuple(entries)))
+            # The same object: it keeps its ``allocation``.
+            return ExitSet.completed(replace(self, entries=tuple(entries)))
         from sugar_lift_py_tests.effect import (
             SubscriptStoreRuntimeEffect,
             runtime_effect_evidence,
@@ -329,7 +360,10 @@ class DictValue(GuardStableValue):
         if found is not None:
             if found >= 0:
                 return ExitSet.completed(
-                    DictValue((*self.entries[:found], *self.entries[found + 1 :]))
+                    replace(
+                        self,
+                        entries=(*self.entries[:found], *self.entries[found + 1 :]),
+                    )
                 )
             # Ground missing key: decidable KeyError — not a RuntimeEffect mint.
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
