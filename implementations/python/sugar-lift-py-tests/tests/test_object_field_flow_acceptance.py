@@ -335,10 +335,21 @@ def test_opaque_call_invalidates_only_the_exposed_object(
     assert returned.value.kind == "EvaluationRef"
     assert returned.value.place is True
     states = [node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"]
-    by_identity = {state.object_identity_cid: state for state in states}
     assert len({state.object_identity_cid for state in states}) == 2
-    assert any(state.invalidated_by_opaque_call for state in by_identity.values())
-    assert any(not state.invalidated_by_opaque_call for state in by_identity.values())
+    # The exposed object's name is rebound by the one exposure rule
+    # (``container_mutation.havoc_after``): its later read is its value after
+    # the call, which the value decides at reduce; the other object's read
+    # is still its store's key (above).  No place has its own invalidation.
+    from sugar_source_tree.container_mutation import _identity
+
+    observed = next(
+        node
+        for node in substituted.walk()
+        if node.kind == "Assign" and getattr(node.targets[0], "id", None) == "observed"
+    )
+    assert observed.value.kind == "Attribute"
+    assert _identity(observed.value.value).kind == "ReceiverAfterCall"
+    assert not any(state.invalidated_by_opaque_call for state in states)
 
 
 def test_opaque_result_mints_occurrence_identity_without_fields():

@@ -89,7 +89,20 @@ def _in_place(method) -> bool:
 
 def _immutable(value, depth=0) -> bool:
     """A value of an immutable builtin type all the way down: no call can
-    change it, and a name bound to it keeps it."""
+    change it, and a name bound to it keeps it.  A builtin function or a
+    builtin class (``len``, ``object``, ``ValueError``) is one: CPython
+    refuses to set an attribute on it, so ``object.__setattr__(self, k, v)``
+    or ``BaseException.__init__(self, m)`` leaves ``object`` and
+    ``BaseException`` as they were."""
+    from sugar_lift_py_tests.floor.builtin_exception_class_value import (
+        BuiltinExceptionClassValue,
+    )
+    from sugar_lift_py_tests.floor.builtin_object_class_value import (
+        BuiltinObjectClassValue,
+    )
+    from sugar_lift_py_tests.floor.builtin_semantic_callable import (
+        BuiltinSemanticCallable,
+    )
     from sugar_lift_py_tests.floor.bytes_value import BytesValue
     from sugar_lift_py_tests.floor.none_value import NoneValue
     from sugar_lift_py_tests.floor.string_value import StringValue
@@ -104,6 +117,11 @@ def _immutable(value, depth=0) -> bool:
 
     if depth > 32:
         return False
+    if isinstance(
+        value,
+        (BuiltinSemanticCallable, BuiltinObjectClassValue, BuiltinExceptionClassValue),
+    ):
+        return True
     if type(value) in (
         TermValue,
         StringValue,
@@ -275,6 +293,12 @@ class ContainerMutationStatementSugar(Sugar):
     # ``d.setdefault(k, v).append(x)``: ``(key, index)`` for each later
     # call's pair ``evaluated[index]``, bound under ``key`` as it completes.
     pair_evaluations: tuple = ()
+    # One call in statement position (``r.m(x)`` alone): when the receiver's
+    # value took the ordinary call, the call's value is recorded as a bare
+    # call's is (``record_statement_value``) -- an ``__init__`` call's stores
+    # reach the constructing receiver, a ``warnings.warn`` is its testimony,
+    # the call stays visible to the effect router.
+    records_value: bool = False
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -298,15 +322,31 @@ class ContainerMutationStatementSugar(Sugar):
             # as a subscript store's updated container always was; an
             # immutable receiver (``n += 1``) was not changed and testifies
             # nothing.
+            from sugar_lift_py_tests.floor import builtin_container_method as law
+            from sugar_lift_py_tests.sugar.expr_statement_sugar import (
+                record_statement_value,
+            )
+
             pair = completed[0]
+            is_pair = type(pair) is TupleValue and len(pair.elements) == 2
             entries = ()
-            if (
-                type(pair) is TupleValue
-                and len(pair.elements) == 2
-                and not _immutable(pair.elements[0])
-            ):
+            if is_pair and not _immutable(pair.elements[0]):
                 entries = (pair.elements[0],)
-            return ExitSet.completed(_ReducedBlock(entries, True, (), (), active))
+            if (
+                not self.records_value
+                or not is_pair
+                or law.container_kind(pair.elements[0]) is not None
+            ):
+                # A container's own method (cited or not) is no call whose
+                # value a statement records.
+                return ExitSet.completed(_ReducedBlock(entries, True, (), (), active))
+            return record_statement_value(pair.elements[1], active).and_then(
+                lambda recorded: ExitSet.completed(
+                    _ReducedBlock(
+                        (*entries, *recorded.statements), True, (), (), active
+                    )
+                )
+            )
 
         evaluations = ((self.evaluation, 0),) if self.evaluation else ()
         if self.result_evaluation is not None:
@@ -343,10 +383,14 @@ class PathContainerCallSugar(ConstructedTermSugar):
     result, ``_read_modify_store``), on a name or through a path.  The
     receiver is evaluated once.  A ``ListValue``/``DictValue``/
     ``SetValue`` receiver takes the cited CPython mutation; any other
-    receiver takes the ordinary operation -- the call (``fallback``), which
-    reads the receiver from this one evaluation, the floor's item store or
-    delete, the in-place operator (``operator``) -- and its contents
-    afterwards are unknown, an immutable receiver's unchanged."""
+    receiver, or a method the container law does not cite as a mutation,
+    takes the ordinary operation -- the call (``fallback``), which reads the
+    receiver from this one evaluation, the floor's item store or delete, the
+    in-place operator (``operator``) -- and its contents afterwards are
+    unknown unless its value says the call left it alone (``_may_change``:
+    an immutable receiver, a container under a method that does not mutate
+    it).  Every method call on a name a call can reach takes this door,
+    whatever the method is spelled."""
 
     receiver: Sugar
     method: str
@@ -600,7 +644,15 @@ class PathContainerCallSugar(ConstructedTermSugar):
                         *operands,
                     )
                 )
-            post = self._after(receiver)
+            # The value decides what the ordinary call did to it
+            # (``_may_change``): a decided container under a method its law
+            # does not cite as a mutation (``r.count(x)``), or an immutable
+            # value, is as it was; anything else is unknown after it.
+            post = (
+                self._after(receiver)
+                if _may_change(receiver, self.method, False, False)
+                else receiver
+            )
             if key is None:
                 return ordinary(ctx, post)
             base = ctx if ctx is not None else ReduceContext.root(

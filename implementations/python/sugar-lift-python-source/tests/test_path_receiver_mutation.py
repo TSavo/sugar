@@ -786,3 +786,186 @@ def test_the_value_an_unpacked_member_came_from_holds_it():
     )
     reads = _substituted_return_reads(source)
     assert [read.kind for read in reads] == ["ReceiverAfterCall", "PathAfterCall"]
+
+
+# -- The tree picks targets by reach; the door decides by value (#7757) -----
+#
+# ``_call_targets`` and the door's routing chose which receivers a call may
+# change by matching the method's spelling against the container law's
+# mutator names: ``c.append(1)`` on a source object took the door while
+# ``c.reset()`` did not.  Every method call on a name a call can reach now
+# takes the one door, whatever the method is spelled, and the receiver's
+# value at reduce decides what it did.
+
+
+_SOURCE_APPEND = (
+    "class C:\n"
+    "    tag = 'c'\n"
+    "    def __init__(self):\n"
+    "        self.items = [5]\n"
+    "    def append(self, x):\n"
+    "        self.items = [x]\n"
+    "    def reset(self):\n"
+    "        self.items = []\n"
+)
+
+
+def test_a_source_method_named_append_leaves_aliases_at_the_door_post_state():
+    source = _SOURCE_APPEND + (
+        "def f():\n"
+        "    c = C()\n"
+        "    alias = c\n"
+        "    c.append(1)\n"
+        "    return (alias, c)\n"
+    )
+    reads = _substituted_return_reads(source)
+    assert [read.kind for read in reads] == ["PathAfterCall"] * 2
+
+
+def test_a_source_method_named_append_is_not_the_list_rule(tmp_path):
+    # ``C.append`` is the source's method: the value (an ``ObjectValue``)
+    # takes the ordinary call, and the alias is the object after it, which
+    # the call may have changed -- never a list's cited append.
+    source = _SOURCE_APPEND + (
+        "def f():\n"
+        "    c = C()\n"
+        "    alias = c\n"
+        "    c.append(1)\n"
+        "    return alias\n"
+    )
+    assert _unknown_after_call(_only_return(tmp_path, source))
+
+
+def test_any_method_spelling_takes_the_same_door():
+    source = _SOURCE_APPEND + (
+        "def f():\n"
+        "    c = C()\n"
+        "    alias = c\n"
+        "    c.reset()\n"
+        "    return (alias, c)\n"
+    )
+    reads = _substituted_return_reads(source)
+    assert [read.kind for read in reads] == ["PathAfterCall"] * 2
+
+
+def test_a_list_method_that_does_not_mutate_keeps_the_list(tmp_path):
+    # The door's value decides: ``count`` is no mutation the list law cites,
+    # so the list and its alias are as they were.
+    source = (
+        "def f():\n"
+        "    r = [1, 2]\n"
+        "    a = r\n"
+        "    n = r.count(1)\n"
+        "    return (a, r, n)\n"
+    )
+    value = _only_return(tmp_path, source)
+    kept = fresh(ListValue, _ints(1, 2))
+    assert value.elements[:2] == (kept, kept)
+
+
+def _traced_substitution(source, name):
+    """``name``'s body substituted with the substitution trace (the
+    threading an object place rides), and the tree's ``ClassDef``s."""
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_source_tree.binding_state import SubstitutionTraceBuilderV1
+    from sugar_source_tree.nodes import _SUBSTITUTION_TRACE_BUILDER, FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    tree = SourceFile(
+        (source, "one_rule_fixture.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    function = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == name
+    )
+    return function.substitute(
+        {
+            _SUBSTITUTION_TRACE_BUILDER: SubstitutionTraceBuilderV1(
+                function.fragment.seal().cid
+            )
+        }
+    )
+
+
+def test_an_object_place_handed_to_an_opaque_call_is_rebound_by_the_one_rule():
+    # No class attribute: ``C()`` is an object place.  ``g(c)`` used to mark
+    # the place invalidated by its own rule; the one exposure rule now
+    # rebinds ``c`` and its alias to their value after the call.
+    from sugar_source_tree.container_mutation import _identity
+    from sugar_source_tree.nodes import Return
+
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        self.items = [5]\n"
+        "def f(g):\n"
+        "    c = C()\n"
+        "    alias = c\n"
+        "    g(c)\n"
+        "    return (alias, c)\n"
+    )
+    substituted = _traced_substitution(source, "f")
+    places = [
+        node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"
+    ]
+    assert places, "C() is an object place"
+    assert not any(place.invalidated_by_opaque_call for place in places)
+    returned = next(
+        statement
+        for statement in reversed(substituted.body)
+        if isinstance(statement, Return)
+    )
+    reads = [_identity(read) for read in returned.value.elts]
+    assert [read.kind for read in reads] == ["ReceiverAfterCall"] * 2
+
+
+def test_self_handed_to_an_opaque_call_in_init_is_rebound_by_the_one_rule():
+    # In an active ``__init__`` ``self`` is the receiver the class call
+    # constructs (``ConstructedReceiverRef``), after ``self.x = ...`` its
+    # field-store state: ``g(self)`` may change it, so ``self`` is its value
+    # after the call, never the stored fields read as they were.
+    from sugar_source_tree.binding_provenance import BindingCoordinateV1
+    from sugar_source_tree.binding_state import BindingEntryV1
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_source_tree.container_mutation import _identity, _state
+    from sugar_source_tree.nodes import ClassDef
+    from sugar_source_tree.tree import SourceFile
+
+    source = (
+        "class C:\n"
+        "    def __init__(self, g):\n"
+        "        self.x = [1]\n"
+        "        g(self)\n"
+    )
+    tree = SourceFile(
+        (source, "init_exposure_fixture.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    cls = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, ClassDef) and node.name == "C"
+    )
+    initializer = cls._source_initializer()
+    receiver_param = initializer.params[0]
+    # The class call's frame, as ``ClassDef`` seats it for the initializer.
+    coordinate = BindingCoordinateV1.mint(
+        cls.fragment.seal().cid, receiver_param.fragment, ("receiver", 0)
+    )
+    receiver = cls._make_constructed_receiver_ref(coordinate.cid)
+    scope = {receiver_param.name: BindingEntryV1(coordinate, receiver, None)}
+    _body, _changed, net = initializer._substitute_body_tracked(
+        initializer.body, scope
+    )
+    after = _identity(_state(net["self"]))
+    assert after.kind == "ReceiverAfterCall"
+    # Its value before the call is the receiver with ``x`` stored.
+    assert after.prior.kind == "ReceiverFieldStoreState"

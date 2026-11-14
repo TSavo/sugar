@@ -6162,51 +6162,6 @@ class Node(Typed):
         del binding
         return self
 
-    def post_binding_scope(self, scope: BindingMap) -> BindingMap:
-        """Apply statement-owned invalidations to the one temporal map."""
-        if not any(
-            isinstance(entry, BindingEntryV1)
-            and isinstance(entry.state, ObjectPlaceStateV1)
-            for entry in scope.values()
-        ):
-            return scope
-        from .container_mutation import runs_operand_code
-
-        # Only a call that may run code holding the object can change it: a
-        # cited pure builtin over builtin-typed operands leaves it as it was.
-        exposed = {
-            state.object_identity_cid
-            for call in self.walk()
-            if isinstance(call, Call) and runs_operand_code(call, scope)
-            for state in call.exposed_object_places()
-        }
-        # ``f'{c}'`` runs ``c.__format__`` (and ``!s``/``!r`` its
-        # ``__str__``/``__repr__``): user code unless ``c`` is builtin-typed.
-        from .container_mutation import builtin_typed
-
-        exposed |= {
-            node.object_identity_cid
-            for formatted in self.walk()
-            if isinstance(formatted, FormattedValue)
-            and not builtin_typed(formatted.value, scope)
-            for node in formatted.value.walk()
-            if isinstance(node, ObjectPlaceStateV1)
-        }
-        if not exposed:
-            return scope
-        replacements = {}
-        for name, entry in scope.items():
-            if (
-                isinstance(name, str)
-                and isinstance(entry, BindingEntryV1)
-                and isinstance(entry.state, ObjectPlaceStateV1)
-                and entry.state.object_identity_cid in exposed
-            ):
-                replacements[name] = replace(
-                    entry, state=entry.state.invalidate(self.fragment)
-                )
-        return {**scope, **replacements}
-
     def _make_binop(self, left: "Node", op, right: "Node") -> "Node":
         """Construct a fresh BinOp node ``<left> <op> <right>`` as a shadow that
         borrows this node's span (so it still addresses this source site). Used
@@ -6537,7 +6492,9 @@ class Node(Typed):
                         if wb:
                             wb = node._binding_entries(wb, scope)
                             scope = {**scope, **wb}
-                scope = produced_stmt.post_binding_scope(scope)
+                # Every object the statement's calls may have changed -- an
+                # object place as much as any other -- is rebound by the one
+                # exposure rule.
                 from .container_mutation import havoc_after
 
                 scope = havoc_after(produced_stmt, pre_produced_scope, scope)
@@ -11955,9 +11912,10 @@ class Assign(Statement):
         return None
 
     def _name_call_mutation(self, scope):
-        """``x = r.<mutator>(...)`` on a name ``r``: the one door
-        (``container_mutation.name_mutation_statement``); the value ``r``
-        holds at reduce decides it, whatever ``r`` was given."""
+        """``x = r.<method>(...)`` on a name ``r`` a call can reach: the one
+        door (``container_mutation.name_mutation_statement``), whatever the
+        method is spelled; the value ``r`` holds at reduce decides what the
+        call did, whatever ``r`` was given."""
         if (
             len(self.targets) != 1
             or not isinstance(self.targets[0], Name)
@@ -11966,10 +11924,10 @@ class Assign(Statement):
             or not isinstance(self.value.func.value, Name)
         ):
             return None
-        from .container_mutation import _mutating_named_call, name_mutation_statement
+        from .container_mutation import method_call, name_mutation_statement, reaches
 
         call = self.value.substitute(scope)
-        if not _mutating_named_call(call):
+        if not method_call(call) or not reaches(call.func.value, scope):
             return None
         return name_mutation_statement(
             self,
@@ -17011,10 +16969,11 @@ class Expr(Statement):
         return rewritten if mutation is None else mutation
 
     def _name_mutation(self, scope, call):
-        """``r.<mutator>(*args)`` on a name ``r``: the one door
-        (``container_mutation.name_mutation_statement``); the value ``r``
-        holds at reduce decides it, whatever ``r`` was given.  ``call`` is
-        the statement's call, already substituted against ``scope``."""
+        """``r.<method>(*args)`` on a name ``r`` a call can reach: the one
+        door (``container_mutation.name_mutation_statement``), whatever the
+        method is spelled; the value ``r`` holds at reduce decides what the
+        call did, whatever ``r`` was given.  ``call`` is the statement's
+        call, already substituted against ``scope``."""
         source = self.value
         if (
             not isinstance(source, Call)
@@ -17022,9 +16981,9 @@ class Expr(Statement):
             or not isinstance(source.func.value, Name)
         ):
             return None
-        from .container_mutation import _mutating_named_call, name_mutation_statement
+        from .container_mutation import method_call, name_mutation_statement, reaches
 
-        if not _mutating_named_call(call):
+        if not method_call(call) or not reaches(call.func.value, scope):
             return None
         return name_mutation_statement(
             self,
@@ -19944,19 +19903,6 @@ class Call(Expression):
             return func.value
         return None
 
-    def exposed_object_places(self) -> tuple["ObjectPlaceStateV1", ...]:
-        """Object states crossing this call without a frame-condition proof."""
-        roots = list(self.args) + [keyword.value for keyword in self.keywords]
-        receiver = self.receiver()
-        if receiver is not None:
-            roots.append(receiver)
-        seen = {}
-        for root in roots:
-            for node in root.walk():
-                if isinstance(node, ObjectPlaceStateV1):
-                    seen[node.object_identity_cid] = node
-        return tuple(seen.values())
-
     def _project_call_definition_occurrence(
         self, definition: object, *, coordinate: str
     ) -> "FunctionDef | AsyncFunctionDef | ClassDef":
@@ -21877,6 +21823,8 @@ class ContainerMutationStatement(Statement):
                 if isinstance(pairs, (tuple, list))
                 else ()
             ),
+            # One call in statement position (``container_mutation._statement``).
+            records_value=getattr(self, "records_value", False) is True,
         )
 
 

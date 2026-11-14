@@ -27,8 +27,9 @@ from __future__ import annotations
 
 UNDECIDED = None
 
-# Methods of each built-in container that change the receiver. A call of one
-# of these names on a receiver whose type is not decided may mutate it.
+# Methods of each built-in container that change the receiver, read only for
+# a value already decided to be that container (``container_kind``): what a
+# method call does to any other value is not decided by its spelling.
 MUTATING_METHODS = {
     "list": frozenset(
         {
@@ -76,8 +77,6 @@ MUTATING_METHODS = {
         }
     ),
 }
-
-ANY_MUTATING_METHOD = frozenset().union(*MUTATING_METHODS.values())
 
 # Cited methods whose exits and result the law decides from the operands
 # alone, never from the receiver's contents.  On a receiver whose contents
