@@ -560,6 +560,29 @@ class ExitSet(Generic[T]):
         """
         return cls((Halted(guard or true_guard(), effect, state),)).normalize()
 
+    @classmethod
+    def two_faced(
+        cls, value: T, raise_effect: Effect, *, guard: Formula, owed: tuple = _NO_OWED
+    ) -> "ExitSet[T]":
+        """Completes with ``value``, or raises something undetermined.
+
+        THE ONE CONSTRUCTOR of the two-faced outcome (#7757 item 13). An
+        operation whose body was not looked at (an unprojected call, an
+        undecided operand's dunder, a formal-selected manager step, an opaque
+        attribute or subscript) completes with ``value`` only under its
+        ``guard`` -- the site-keyed ``...completes`` atom -- and halts with
+        ``raise_effect`` (an ``UndeterminedRaiseEffect``) from no state under
+        ``complement_guard(guard)``. Both arms carry ``owed``: the debt is
+        incurred whether the operation completes or raises. Nobody assembles
+        this pair by hand.
+        """
+        return cls(
+            (
+                Completed(guard, value, owed=owed),
+                Halted(complement_guard(guard), raise_effect, None, owed=owed),
+            )
+        ).normalize()
+
     def completed_value(self):
         """The single unconditional completed value, else ``None``.
 

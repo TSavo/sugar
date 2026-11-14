@@ -100,8 +100,11 @@ class FormalSelectedManagerHeadSugar(_sugar_base()):
         value = FormalSelectedManagerValue(self.head, self.site)
         if not self.operands:
             return ExitSet.completed(value)
-        outcome = FormalSelectedManagerProtocol(self.head, self.site)._two_faced(
-            "select", None
+        protocol = FormalSelectedManagerProtocol(self.head, self.site)
+        outcome = ExitSet.two_faced(
+            None,
+            protocol.step_raise("select"),
+            guard=protocol.step_completes("select"),
         )
         for operand in self.operands:
             outcome = outcome.and_then(
@@ -120,15 +123,9 @@ class FormalSelectedManagerProtocol:
     def head_sugar(self):
         return FormalSelectedManagerHeadSugar(self.head, self.site)
 
-    def _two_faced(self, step: str, completed_value):
-        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    def step_completes(self, step: str):
+        """The site-keyed atom under which ``step`` completes."""
         from sugar_lift_py_tests.ir import atomic, ctor, str_const
-        from sugar_lift_py_tests.outcome.exit_set import (
-            Completed,
-            ExitSet,
-            Halted,
-            complement_guard,
-        )
 
         name = (
             "python:formal_manager.constructs"
@@ -141,49 +138,57 @@ class FormalSelectedManagerProtocol:
             "python:formal_manager.step",
             (str_const(self.head), str_const(step), str_const(self.site)),
         )
-        completes = atomic(name, [call])
-        return ExitSet(
-            (
-                Completed(completes, completed_value),
-                Halted(
-                    complement_guard(completes),
-                    UndeterminedRaiseEffect(
-                        blame=self.site,
-                        occurrence=f"{self.site}#{step}",
-                        producer_node_owner=f"FormalSelectedManager:{self.head}.{step}",
-                    ),
-                    None,
-                ),
-            )
-        ).normalize()
+        return atomic(name, [call])
+
+    def step_raise(self, step: str):
+        """What ``step`` raises under the complement: nothing named."""
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+
+        return UndeterminedRaiseEffect(
+            blame=self.site,
+            occurrence=f"{self.site}#{step}",
+            producer_node_owner=f"FormalSelectedManager:{self.head}.{step}",
+        )
 
     def construct_manager(self, receiver, ctx=None):
         del ctx
+        from sugar_lift_py_tests.outcome import ExitSet
+
         self._receiver(receiver)
-        return self._two_faced("construct", receiver)
+        return ExitSet.two_faced(
+            receiver,
+            self.step_raise("construct"),
+            guard=self.step_completes("construct"),
+        )
 
     def enter_resource_outcome_for(self, receiver, ctx=None):
         del ctx
         from sugar_lift_py_tests.floor.entered_manager_state_value import (
             EnteredManagerStateValue,
         )
+        from sugar_lift_py_tests.outcome import ExitSet
 
         manager = self._receiver(receiver)
-        return self._two_faced(
-            "__enter__",
+        return ExitSet.two_faced(
             EnteredManagerStateValue(
                 enter_value=FormalSelectedSlotResultValue(
                     self.head, "__enter__", self.site
                 ),
                 receiver_state=manager,
             ),
+            self.step_raise("__enter__"),
+            guard=self.step_completes("__enter__"),
         )
 
     def exit_outcome_for(self, entered, ctx=None):
         del ctx
+        from sugar_lift_py_tests.outcome import ExitSet
+
         self._receiver(entered.receiver_state)
-        return self._two_faced(
-            "__exit__", FormalSelectedSlotResultValue(self.head, "__exit__", self.site)
+        return ExitSet.two_faced(
+            FormalSelectedSlotResultValue(self.head, "__exit__", self.site),
+            self.step_raise("__exit__"),
+            guard=self.step_completes("__exit__"),
         )
 
     def _receiver(self, receiver):

@@ -285,30 +285,20 @@ def undecided_dispatch_faces(predicate, site, op_kind: str):
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        ExitSet,
-        Halted,
-        complement_guard,
-    )
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     key = occurrence_key(site)
     dispatch = ctor("python:compare", (str_const(op_kind), str_const(key)))
     completes = atomic("python:compare.completes", [dispatch])
-    return ExitSet(
-        (
-            Completed(completes, predicate),
-            Halted(
-                complement_guard(completes),
-                UndeterminedRaiseEffect(
-                    blame=str(site) if site is not None else None,
-                    occurrence=key if site is not None else None,
-                    producer_node_owner=f"UndecidedCompare:{op_kind}",
-                ),
-                None,
-            ),
-        )
-    ).normalize()
+    return ExitSet.two_faced(
+        predicate,
+        UndeterminedRaiseEffect(
+            blame=str(site) if site is not None else None,
+            occurrence=key if site is not None else None,
+            producer_node_owner=f"UndecidedCompare:{op_kind}",
+        ),
+        guard=completes,
+    )
 
 
 _ORDERING_BY_OPERATOR: dict[str, tuple[str, str]] = {

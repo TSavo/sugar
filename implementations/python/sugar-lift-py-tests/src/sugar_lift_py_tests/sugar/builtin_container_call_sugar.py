@@ -48,11 +48,6 @@ def _opaque_pair(kind, method, site):
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        Halted,
-        complement_guard,
-    )
 
     key = occurrence_key(site)
     target = f"{kind}.{method}"
@@ -64,20 +59,15 @@ def _opaque_pair(kind, method, site):
             SymbolicValue(ctor("python:builtin_method.result", (call,))),
         )
     )
-    return ExitSet(
-        (
-            Completed(completes, pair),
-            Halted(
-                complement_guard(completes),
-                UndeterminedRaiseEffect(
-                    blame=str(site) if site is not None else None,
-                    occurrence=key if site is not None else None,
-                    producer_node_owner=f"BuiltinMethodCall:{target}",
-                ),
-                None,
-            ),
-        )
-    ).normalize()
+    return ExitSet.two_faced(
+        pair,
+        UndeterminedRaiseEffect(
+            blame=str(site) if site is not None else None,
+            occurrence=key if site is not None else None,
+            producer_node_owner=f"BuiltinMethodCall:{target}",
+        ),
+        guard=completes,
+    )
 
 
 def _operands(pending, done, ctx):

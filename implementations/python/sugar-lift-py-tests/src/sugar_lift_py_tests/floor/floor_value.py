@@ -1231,12 +1231,7 @@ def undecided_binary_faces(left, right, site, operator: str):
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        ExitSet,
-        Halted,
-        complement_guard,
-    )
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     key = occurrence_key(site) if site is not None else ""
     owner = f"python:binary_op {operator} at {site}"
@@ -1255,17 +1250,12 @@ def undecided_binary_faces(left, right, site, operator: str):
         "python:binary_op.completes",
         [ctor("python:binary_op", (str_const(operator), str_const(key)))],
     )
-    return ExitSet(
-        (
-            Completed(completes, result),
-            Halted(
-                complement_guard(completes),
-                UndeterminedRaiseEffect(
-                    blame=str(site) if site is not None else None,
-                    occurrence=key if site is not None else None,
-                    producer_node_owner=f"UndecidedBinary:{operator}",
-                ),
-                None,
-            ),
-        )
-    ).normalize()
+    return ExitSet.two_faced(
+        result,
+        UndeterminedRaiseEffect(
+            blame=str(site) if site is not None else None,
+            occurrence=key if site is not None else None,
+            producer_node_owner=f"UndecidedBinary:{operator}",
+        ),
+        guard=completes,
+    )

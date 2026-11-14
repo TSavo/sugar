@@ -214,7 +214,7 @@ class OffPopulationSourceCallV1:
         from .floor.call_site_value import CallSiteValue
         from .ir import atomic, ctor, str_const
         from .occurrence import occurrence_key
-        from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
+        from .outcome.exit_set import ExitSet
         from .unanswered_calls import unanswered_call
 
         # Not bridged: nothing here answers this call, so both arms OWE it
@@ -235,21 +235,16 @@ class OffPopulationSourceCallV1:
         result = _occurrence_result(callsite, site)
         if isinstance(result, CallSiteValue):
             result = replace(result, off_population_target=self.target_name)
-        return ExitSet(
-            (
-                Completed(completes, result, owed=owed),
-                Halted(
-                    complement_guard(completes),
-                    UndeterminedRaiseEffect(
-                        blame=str(site) if site is not None else None,
-                        occurrence=key if site is not None else None,
-                        producer_node_owner=f"OffPopulationCall:{self.target_name}",
-                    ),
-                    None,
-                    owed=owed,
-                ),
-            )
-        ).normalize()
+        return ExitSet.two_faced(
+            result,
+            UndeterminedRaiseEffect(
+                blame=str(site) if site is not None else None,
+                occurrence=key if site is not None else None,
+                producer_node_owner=f"OffPopulationCall:{self.target_name}",
+            ),
+            guard=completes,
+            owed=owed,
+        )
 
 
 @dataclass(frozen=True)
@@ -275,7 +270,7 @@ class UnknownCalleeCallV1:
         from .effect.raise_effect import UndeterminedRaiseEffect
         from .ir import atomic, ctor, str_const
         from .occurrence import occurrence_key, occurrence_term
-        from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
+        from .outcome.exit_set import ExitSet
         from .unanswered_calls import unanswered_call
 
         # Nothing here answers this call: both arms OWE it (#7825, H4), and
@@ -296,21 +291,16 @@ class UnknownCalleeCallV1:
             (str_const(self.callee_name), occurrence_term(site)),
         )
         completes = atomic("python:unknown_callee_call.completes", [call])
-        return ExitSet(
-            (
-                Completed(completes, _occurrence_result(callsite, site), owed=owed),
-                Halted(
-                    complement_guard(completes),
-                    UndeterminedRaiseEffect(
-                        blame=str(site) if site is not None else None,
-                        occurrence=key if site is not None else None,
-                        producer_node_owner=f"UnknownCallee:{self.callee_name}",
-                    ),
-                    None,
-                    owed=owed,
-                ),
-            )
-        ).normalize()
+        return ExitSet.two_faced(
+            _occurrence_result(callsite, site),
+            UndeterminedRaiseEffect(
+                blame=str(site) if site is not None else None,
+                occurrence=key if site is not None else None,
+                producer_node_owner=f"UnknownCallee:{self.callee_name}",
+            ),
+            guard=completes,
+            owed=owed,
+        )
 
 
 @dataclass(frozen=True)
@@ -336,7 +326,7 @@ class BuiltinDunderCallV1:
         from .effect.raise_effect import UndeterminedRaiseEffect
         from .ir import atomic, ctor, str_const
         from .occurrence import occurrence_key
-        from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
+        from .outcome.exit_set import ExitSet
 
         key = occurrence_key(site)
         call = ctor(
@@ -344,20 +334,15 @@ class BuiltinDunderCallV1:
             (str_const(self.builtin_name), str_const(key)),
         )
         completes = atomic("python:builtin_dunder_call.completes", [call])
-        return ExitSet(
-            (
-                Completed(completes, _occurrence_result(callsite, site)),
-                Halted(
-                    complement_guard(completes),
-                    UndeterminedRaiseEffect(
-                        blame=str(site) if site is not None else None,
-                        occurrence=key if site is not None else None,
-                        producer_node_owner=f"BuiltinDunderCall:{self.builtin_name}",
-                    ),
-                    None,
-                ),
-            )
-        ).normalize()
+        return ExitSet.two_faced(
+            _occurrence_result(callsite, site),
+            UndeterminedRaiseEffect(
+                blame=str(site) if site is not None else None,
+                occurrence=key if site is not None else None,
+                producer_node_owner=f"BuiltinDunderCall:{self.builtin_name}",
+            ),
+            guard=completes,
+        )
 
 
 @dataclass(frozen=True)
@@ -381,7 +366,7 @@ class BuiltinValueCallV1:
         from .effect.raise_effect import UndeterminedRaiseEffect
         from .ir import atomic, ctor, str_const
         from .occurrence import occurrence_key
-        from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
+        from .outcome.exit_set import ExitSet
 
         key = occurrence_key(site)
         call = ctor(
@@ -389,20 +374,15 @@ class BuiltinValueCallV1:
             (str_const(self.builtin_name), str_const(key)),
         )
         completes = atomic("python:builtin_call.completes", [call])
-        return ExitSet(
-            (
-                Completed(completes, _occurrence_result(callsite, site)),
-                Halted(
-                    complement_guard(completes),
-                    UndeterminedRaiseEffect(
-                        blame=str(site) if site is not None else None,
-                        occurrence=key if site is not None else None,
-                        producer_node_owner=f"BuiltinCall:{self.builtin_name}",
-                    ),
-                    None,
-                ),
-            )
-        ).normalize()
+        return ExitSet.two_faced(
+            _occurrence_result(callsite, site),
+            UndeterminedRaiseEffect(
+                blame=str(site) if site is not None else None,
+                occurrence=key if site is not None else None,
+                producer_node_owner=f"BuiltinCall:{self.builtin_name}",
+            ),
+            guard=completes,
+        )
 
 
 def _scalar(value) -> bool:

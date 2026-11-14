@@ -297,12 +297,7 @@ def undecided_item_mutation_faces(site, *, noun: str, method: str, owner: str):
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.ir import atomic, ctor, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        ExitSet,
-        Halted,
-        complement_guard,
-    )
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _unknown_after
 
     key = occurrence_key(site)
@@ -310,17 +305,12 @@ def undecided_item_mutation_faces(site, *, noun: str, method: str, owner: str):
         f"python:{noun}.completes",
         [ctor(f"python:{noun}", (str_const(key),))],
     )
-    return ExitSet(
-        (
-            Completed(completes, _unknown_after(site, method)),
-            Halted(
-                complement_guard(completes),
-                UndeterminedRaiseEffect(
-                    blame=str(site),
-                    occurrence=key,
-                    producer_node_owner=owner,
-                ),
-                None,
-            ),
-        )
-    ).normalize()
+    return ExitSet.two_faced(
+        _unknown_after(site, method),
+        UndeterminedRaiseEffect(
+            blame=str(site),
+            occurrence=key,
+            producer_node_owner=owner,
+        ),
+        guard=completes,
+    )
