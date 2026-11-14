@@ -643,6 +643,115 @@ def test_loop_exhaustion_carrier_composes_beneath_the_stop_iteration(monkeypatch
     assert "test.exhausted" in str(arm.guard)
 
 
+def _finish_with_else(monkeypatch, otherwise):
+    """Finish a loop whose ``else`` suite reduced to ``otherwise``; each
+    publication answers ``("published", entries)``."""
+    from sugar_lift_py_tests.sugar import function_universe_sugar
+    from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
+
+    monkeypatch.setattr(
+        function_universe_sugar,
+        "reduce_block_to_exitset",
+        lambda sugars, ctx: otherwise,
+    )
+
+    def publish(
+        runtime, ctx, *, entries, carried, fall_through=(), can_fall_through=True
+    ):
+        return ExitSet.completed(("published", entries))
+
+    loop = SimpleNamespace(
+        _enter_header=lambda runtime, ctx, carried: ctx,
+        _leave_target=lambda runtime, ctx, items: ctx,
+        _after_else=lambda runtime, ctx: (),
+        _publish_runtime_bindings=publish,
+    )
+    return LoopRecurrenceSugar._finish_iterator(
+        loop,
+        SimpleNamespace(else_sugars=("else",)),
+        None,
+        entries=("before",),
+        carried=(),
+    )
+
+
+def test_loop_else_with_several_faces_publishes_beneath_each(monkeypatch):
+    # Every completed face of the ``else`` suite leaves the loop with its
+    # bindings published beneath it, under its guard and faces, owing what it
+    # owes; a halt of the suite leaves as it is.
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    face, _ = partition("carrier-bridge-sites.else")
+    first = Completed(
+        atomic("test.else.first", []),
+        _ReducedBlock(("first",), True, ()),
+        frozenset({face}),
+        ("owed.first",),
+    )
+    second = Completed(
+        atomic("test.else.second", []),
+        _ReducedBlock(("second",), True, ()),
+        owed=("owed.second",),
+    )
+    raised = Halted(atomic("test.else.raised", []), _raise_effect("else-raise"))
+
+    finished = _finish_with_else(monkeypatch, ExitSet((first, second, raised)))
+
+    assert isinstance(finished, ExitSet)
+    arms = {
+        exit_.value: exit_ for exit_ in finished.exits if isinstance(exit_, Completed)
+    }
+    assert set(arms) == {
+        ("published", ("before", "first")),
+        ("published", ("before", "second")),
+    }
+    published_first = arms[("published", ("before", "first"))]
+    published_second = arms[("published", ("before", "second"))]
+    assert "test.else.first" in str(published_first.guard)
+    assert face in published_first.faces
+    assert "owed.first" in published_first.owed
+    assert "test.else.second" in str(published_second.guard)
+    assert "owed.second" in published_second.owed
+    assert raised in finished.exits
+
+
+def test_loop_else_carrier_publishes_once_it_discharges(monkeypatch):
+    # The ``else`` suite waits on its caller's actuals. Once it discharges,
+    # the loop publishes its bindings beneath the suite's face exactly as it
+    # does beneath a suite reduced here: the face's guard and debt survive.
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    carrier, left, right = _carrier()
+    else_guard = atomic("test.else", [])
+    otherwise = carrier.and_then(
+        lambda value: ExitSet(
+            (
+                Completed(
+                    else_guard,
+                    _ReducedBlock((value,), True, ()),
+                    owed=("owed.else",),
+                ),
+            )
+        )
+    )
+
+    finished = _finish_with_else(monkeypatch, otherwise)
+
+    assert isinstance(finished, NativeOperationExitCarrierV1)
+    actuals = _actuals(left, right)
+    exits = finished.discharge(None, actuals)
+    eager = _finish_with_else(monkeypatch, otherwise.discharge(None, actuals))
+    assert isinstance(exits, ExitSet)
+    assert exits == eager
+    assert _testimony(exits) == _testimony(eager)
+    (arm,) = exits.exits
+    assert isinstance(arm, Completed)
+    # The loop did not stop at the else: its publication is the answer.
+    assert arm.value == ("published", ("before", TermValue(3)))
+    assert "test.else" in str(arm.guard)
+    assert "owed.else" in arm.owed
+
+
 def test_loop_outward_face_carrier_is_refused_by_name():
     from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
         _outward_face_partition,
