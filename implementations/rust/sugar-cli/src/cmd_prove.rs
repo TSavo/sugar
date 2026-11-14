@@ -228,12 +228,12 @@ pub(crate) fn build_prove_outcome_with_options(
         }
     }
 
-    let dependency_proofs = match crate::kit_dispatch::dependency_proofs_via_rpc(project_root) {
-        Ok(proofs) => proofs,
-        Err(error) => {
-            return Err(format!("dependency proof resolution failed: {error}"));
-        }
-    };
+    // Step 9 (ruling 3 on #7766): prove's input is the minted `.proof` plus
+    // the imported `.proof` files mint staged in `.sugar/imports`; the walk
+    // below `project_root` loads both. Prove never asks a kit for a
+    // dependency proof. A call into a dependency that is not staged is
+    // undecidable by name (its target CID is not in the pool) and its edge
+    // stays on the link surface.
 
     // #3809 PR A: CLI is the client that reads config.toml. Solve receives
     // signers + solvers already on RunnerConfig — never re-opens config.
@@ -249,7 +249,6 @@ pub(crate) fn build_prove_outcome_with_options(
         project_root: project_root.to_path_buf(),
         legacy_z3_fallback: Some(LegacyZ3Fallback::compat(z3.to_string())),
         extra_projects,
-        extra_proofs: dependency_proofs,
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
         solvers_config,
         link_bundle_cid,
@@ -769,6 +768,8 @@ mod tests {
             "fold_claim_tree",
             "fold_project",
             "plan_workspace",
+            "dependency_proofs_via_rpc",
+            "resolve_testimony",
         ] {
             assert!(
                 !production.contains(forbidden),

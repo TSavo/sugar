@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: MIT OR Apache-2.0
 //
-// Voltron pool assembly: sugar prove must ask configured kits for the
-// dependency .proof files they resolve through their own package managers, then
-// union those files into the verifier pool without teaching the substrate cargo,
-// npm, classpath, sys.path, or any other platform graph.
+// Voltron pool assembly: configured kits resolve dependency .proof files
+// through their own package managers, and the verifier unions those files into
+// its pool without teaching the substrate cargo, npm, classpath, sys.path, or
+// any other platform graph. Mint stages them in `.sugar/imports`; `sugar
+// prove` reads only what is staged and never asks a kit (step 9).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -643,22 +644,32 @@ fn dependency_rpc_union_makes_vendor_contract_reachable() {
     let _ = fs::remove_dir_all(root);
 }
 
+/// Step 9 (ruling 3 on #7766): prove reads a dependency proof only from
+/// `.sugar/imports`, where mint staged it. Staged, the vendor contract is in
+/// the pool and the cross-dependency call is refused on its merits.
 #[test]
-fn voltron_pool_refuses_cross_dependency_violation() {
+fn prove_reads_a_staged_dependency_and_refuses_cross_dependency_violation() {
     if !z3_available() {
-        eprintln!("SKIP voltron_pool_refuses_cross_dependency_violation: z3 not on PATH");
+        eprintln!("SKIP prove_reads_a_staged_dependency_and_refuses_cross_dependency_violation: z3 not on PATH");
         return;
     }
 
-    let root = unique_dir("e2e");
+    let root = unique_dir("e2e-staged");
     let project = root.join("user");
     let vendor = root.join("vendor");
     fs::create_dir_all(project.join(".sugar")).expect("mkdir project");
     let (target_cid, bundle_cid, proof_path, proof_bytes) =
         publish_vendor_positive_contract(&vendor);
     publish_user_bridge(&project, &target_cid, &bundle_cid);
-    install_dependency_proof_stub(&project, &bundle_cid, &proof_bytes);
-    fs::remove_file(&proof_path).expect("remove dependency proof path after kit reads it");
+    install_smt_compiler_manifest(&project);
+    let imports = project.join(".sugar").join("imports");
+    fs::create_dir_all(&imports).expect("mkdir imports");
+    fs::write(
+        imports.join(proof_path.file_name().expect("proof file name")),
+        &proof_bytes,
+    )
+    .expect("stage dependency proof");
+    fs::remove_file(&proof_path).expect("remove the vendor's own copy");
 
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_sugar"))
         .arg("prove")
@@ -674,6 +685,77 @@ fn voltron_pool_refuses_cross_dependency_violation() {
         "cross-dependency bridge to must_be_positive(-1) must be refused\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
+    );
+    let _ = fs::remove_dir_all(root);
+}
+
+/// Step 9 (ruling 3 on #7766): a dependency proof that mint did not stage is
+/// never fetched at prove. The configured kit would hand the vendor proof
+/// over RPC; prove does not ask it. The call that needs the vendor contract
+/// is undecidable by name (its target CID is not in the pool), and the link
+/// surface counts the unbound edge.
+#[test]
+fn prove_never_asks_a_kit_for_an_unstaged_dependency() {
+    let root = unique_dir("e2e-unstaged");
+    let project = root.join("user");
+    let vendor = root.join("vendor");
+    fs::create_dir_all(project.join(".sugar")).expect("mkdir project");
+    let (target_cid, bundle_cid, proof_path, proof_bytes) =
+        publish_vendor_positive_contract(&vendor);
+    publish_user_bridge(&project, &target_cid, &bundle_cid);
+    install_dependency_proof_stub(&project, &bundle_cid, &proof_bytes);
+    fs::remove_file(&proof_path).expect("remove dependency proof path");
+    let marker = project.join("stub-invoked");
+    let stub = project.join("resolve-deps-stub.sh");
+    let script = fs::read_to_string(&stub).expect("read stub");
+    fs::write(
+        &stub,
+        script.replacen(
+            "#!/bin/sh\n",
+            &format!("#!/bin/sh\necho invoked >> '{}'\n", marker.display()),
+            1,
+        ),
+    )
+    .expect("mark stub");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_sugar"))
+        .arg("prove")
+        .arg(&project)
+        .arg("--z3")
+        .arg("z3")
+        .arg("--json")
+        .output()
+        .expect("run sugar prove");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !marker.exists(),
+        "prove asked the kit for a dependency proof\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let report: Json = serde_json::from_str(&stdout)
+        .unwrap_or_else(|e| panic!("parse prove JSON: {e}\n{stdout}\n{stderr}"));
+    let rows = report["rows"].as_array().expect("rows");
+    let not_in_pool = format!("resolve-target: bridge target CID {target_cid} not in pool");
+    assert!(
+        rows.iter().any(|row| row["bridge"] == "must_be_positive"
+            && row["status"] == "undecidable"
+            && row["reason"].as_str().unwrap_or("") == not_in_pool),
+        "the call into the unstaged dependency must be undecidable, naming its target: {report}"
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row["status"] == "discharged" || row["status"] == "unsatisfied"),
+        "an edge whose dependency is not staged must not be decided: {report}"
+    );
+    assert!(
+        stderr.contains("unresolved link surface (1 error(s))"),
+        "the unbound edge must be on the link surface\nstderr:\n{stderr}"
+    );
+    assert_ne!(
+        output.status.code(),
+        Some(0),
+        "an unbound edge is not green"
     );
     let _ = fs::remove_dir_all(root);
 }
