@@ -222,9 +222,10 @@ def dispatch_method_call(
     contents are the object's contents at this call
     (``object_identity.contents_current``), with ground arguments, calling a
     method that does not change it, is decided by the cited fold alone
-    (``container_method_cited_fold``, #7757).  Otherwise a floor of the
-    receiver answers first (a source method body, a closed
-    builtin method).  When none does and the receiver or an operand is a
+    (``container_method_cited_fold``, #7757).  A source-class instance is
+    ``o.m`` read through the one attribute lookup, then that value called
+    (``_source_instance_method_call``).  Otherwise a floor of the
+    receiver answers first (a closed builtin method).  When none does and the receiver or an operand is a
     formal, the caller's actual selects the method: the call defers through
     ``NativeOperationExitCarrierV1`` with the ``method_call`` operator, whose
     projector re-runs this dispatch on the resolved actuals.  A built-in
@@ -254,6 +255,20 @@ def dispatch_method_call(
             )
             if folded is not None:
                 return folded
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+
+    if isinstance(receiver, ObjectValue):
+        return _source_instance_method_call(
+            name,
+            receiver,
+            positional,
+            kw_values,
+            site,
+            ctx,
+            source_call_frame=source_call_frame,
+            exception_type_coordinate=exception_type_coordinate,
+            exception_type_mro=exception_type_mro,
+        )
     call_method_value = getattr(receiver, "call_method_value", None)
     supports_closed_method = getattr(receiver, "supports_closed_method", None)
     if callable(call_method_value) and (
@@ -320,6 +335,78 @@ def dispatch_method_call(
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
     return UnknownCalleeCallV1(name).faces(callsite, site)
+
+
+def _source_instance_method_call(
+    name,
+    receiver,
+    positional,
+    kw_values,
+    site,
+    ctx,
+    *,
+    source_call_frame,
+    exception_type_coordinate,
+    exception_type_mro,
+):
+    """``o.m(*positional, **kw_values)`` on a source-class instance: one
+    attribute read, then one call.
+
+    CPython evaluates ``o.m(...)`` as ``o.m`` read by the generic lookup
+    (``object.__getattribute__``: a class data descriptor, else the instance
+    ``__dict__``, else the class), then the value it answers called.  So the
+    callee is looked up only through the one attribute lookup
+    (``ObjectValue.attribute``), never a method selected beside it, and the
+    value it answers is applied by the one routine (``apply_callee``):
+
+    - a method the class binds is a ``BoundMethodValue``, bound and applied
+      by ``bind_method_call`` (``call_method_value`` on the receiver);
+    - an instance field that shadows the method is that field's value
+      called (``self.m = lambda: 1`` -> ``o.m()`` is ``1``);
+    - on an instance whose fields are not current (it arrived by binding,
+      ``object_identity.contents_current``) every name but a class data
+      descriptor is the undecided read: its member is no callee anything
+      here resolved, so the call is the one unanswered call
+      (``UnknownCalleeCallV1``) under it, two-faced and owed.
+
+    A frame the call form authenticated (``source_call_frame``) selects the
+    method's frame only when the lookup answered that method."""
+    from sugar_lift_py_tests.floor.bound_method_value import BoundMethodValue
+    from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+    from sugar_lift_py_tests.sugar.computed_call_sugar import apply_callee
+
+    def unanswered():
+        return UnknownCalleeCallV1(name).faces(
+            _method_callsite(
+                name,
+                receiver,
+                positional,
+                kw_values,
+                site,
+                exception_type_coordinate,
+                exception_type_mro,
+            ),
+            site,
+        )
+
+    def call(callee):
+        if (
+            source_call_frame is not None
+            and type(callee) is BoundMethodValue
+            and callee.receiver is receiver
+        ):
+            return receiver.call_method_value(
+                name,
+                positional,
+                owner="MethodCallSugar",
+                blame=site,
+                ctx=ctx,
+                keywords=kw_values,
+                required_frame=source_call_frame,
+            )
+        return apply_callee(callee, positional, kw_values, site, ctx, unanswered)
+
+    return receiver.attribute(name, site, ctx).and_then(call)
 
 
 def _method_callsite(

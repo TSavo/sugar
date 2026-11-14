@@ -1383,6 +1383,65 @@ def test_a_property_wins_over_any_alias_store(tmp_path):
     assert TermValue(4) in returns
 
 
+# The residue #8153 named (#7757): ``o.m()`` selected the class's method
+# beside the one attribute lookup, so an instance field that shadows the
+# method was never called, and an instance that arrived by binding still ran
+# the class's method although another alias may have stored a field ``m``.
+# A method call is ``o.m`` read through ``ObjectValue.attribute``, then that
+# value called.
+
+
+def test_an_instance_field_that_shadows_a_method_is_what_the_call_calls(tmp_path):
+    source = (
+        "class S:\n"
+        "    def __init__(self):\n"
+        "        self.m = lambda: 1\n"
+        "    def m(self):\n"
+        "        return 2\n"
+        "def f():\n"
+        "    o = S()\n"
+        "    return o.m()\n"
+    )
+    returns, halts = _returns(tmp_path, source)
+    assert returns == [TermValue(1)]
+    assert halts == []
+
+
+def test_an_instance_this_frame_built_still_calls_its_classs_method(tmp_path):
+    source = _K + "def f():\n    o = K(5)\n    return o.m()\n"
+    returns, halts = _returns(tmp_path, source)
+    assert returns == [TermValue(1)]
+    assert halts == []
+
+
+def test_a_helper_never_calls_a_method_its_object_may_shadow(tmp_path):
+    # ``o`` arrived by binding: another alias may have stored ``o.m``, so
+    # the call is the one unanswered call, which may complete or raise.
+    source = _K + "def g(o):\n    return o.m()\ndef f():\n    return g(K(5))\n"
+    returns, halts = _returns(tmp_path, source)
+    assert returns and TermValue(1) not in returns
+    assert halts
+
+
+def test_a_helper_calls_what_a_property_answers(tmp_path):
+    # A property is a data descriptor: no instance field shadows it, so on
+    # an instance that arrived its getter answers, and the call calls that.
+    source = (
+        "class P:\n"
+        "    def __init__(self, x):\n"
+        "        self.x = x\n"
+        "    @property\n"
+        "    def m(self):\n"
+        "        return lambda: 3\n"
+        "def g(o):\n"
+        "    return o.m()\n"
+        "def f():\n"
+        "    return g(P(5))\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert TermValue(3) in returns
+
+
 @pytest.mark.parametrize(
     "expression, recorded",
     [

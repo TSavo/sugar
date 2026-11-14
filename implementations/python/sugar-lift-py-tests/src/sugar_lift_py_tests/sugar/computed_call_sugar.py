@@ -230,49 +230,59 @@ class ComputedCallSugar(ConstructedTermSugar):
                     callee.defaults if isinstance(callee, LambdaCallable) else ()
                 ),
             ).producer_outcome(ctx)
-        from sugar_lift_py_tests.floor import (
-            BoundMethodValue,
-            ClassDefinitionValue,
-            LambdaCallable,
-        )
 
-        if isinstance(
-            callee, (ClassDefinitionValue, BoundMethodValue, LambdaCallable)
-        ):
-            from sugar_lift_py_tests.callable_application import CallableApplication
-
-            # A computed callee that reduced to a source class is constructor
-            # application (``cls(None)`` after a classmethod binds cls); one
-            # that reduced to a bound method is that method's call; one that
-            # reduced to a lambda (``fs[0](x)``, a formal given a lambda) is
-            # the lambda's call.  Each binds and applies through the one
-            # routine.  Any other computed callee is the unanswered call
-            # below; this does not invent calling an import member or an
-            # unknown formal.
-            return callee.callable_application_with(
-                CallableApplication(
-                    positional + tuple(value for _, value in kw_values),
-                    tuple(name for name, _ in kw_values),
-                    self.site,
-                ),
-                ctx,
+        def unanswered():
+            callsite = CallSiteValue(
+                target_name="py.call",
+                arg_values=(callee, *positional, *(value for _, value in kw_values)),
+                parameters=(),
+                term=term,
+                body=None,  # the dig is CUED, not inlined here
+                site=self.site,
             )
-        callsite = CallSiteValue(
-            target_name="py.call",
-            arg_values=(callee, *positional, *(value for _, value in kw_values)),
-            parameters=(),
-            term=term,
-            body=None,  # the dig is CUED, not inlined here
-            site=self.site,
-        )
-        # No frame, and the callee is no class, bound method or lambda the
-        # one routine applies: a formal, an opaque call's result, a value
-        # (``len = 5; len(x)``), whatever it is, nothing here resolved what
-        # runs.  The call is the one unanswered citation, two-faced and owed
-        # (#7585, #7757), never a completion.
-        from sugar_lift_py_tests.ir import _Var
-        from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+            from sugar_lift_py_tests.ir import _Var
+            from sugar_lift_py_tests.source_call_resolution import (
+                UnknownCalleeCallV1,
+            )
 
-        callee_term = callee.to_term(owner=owner)
-        name = callee_term.name if type(callee_term) is _Var else "py.call"
-        return UnknownCalleeCallV1(name).faces(callsite, self.site)
+            callee_term = callee.to_term(owner=owner)
+            name = callee_term.name if type(callee_term) is _Var else "py.call"
+            return UnknownCalleeCallV1(name).faces(callsite, self.site)
+
+        return apply_callee(callee, positional, kw_values, self.site, ctx, unanswered)
+
+
+def apply_callee(callee, positional, kw_values, site, ctx, unanswered) -> ExitSet:
+    """``callee(*positional, **kw_values)`` for a callee already reduced to a
+    value: the one routine a called value is applied by.
+
+    A source class is constructor application (``cls(None)`` after a
+    classmethod binds cls); a bound method is that method's call
+    (``bind_method_call``); a lambda (``fs[0](x)``, a formal given a lambda,
+    an instance field holding one) is the lambda's call.  Each binds and
+    applies through ``callable_application_with``.  Any other callee -- a
+    formal, an opaque call's result, a value (``len = 5; len(x)``), an
+    undecided attribute read -- is a callee nothing here resolved: the call
+    is ``unanswered()``, the caller's one unanswered citation, two-faced and
+    owed (#7585, #7757), never a completion.  This does not invent calling an
+    import member or an unknown formal.
+    """
+    from sugar_lift_py_tests.floor import (
+        BoundMethodValue,
+        ClassDefinitionValue,
+        LambdaCallable,
+    )
+
+    applicable = (ClassDefinitionValue, BoundMethodValue, LambdaCallable)
+    if not isinstance(callee, applicable):
+        return unanswered()
+    from sugar_lift_py_tests.callable_application import CallableApplication
+
+    return callee.callable_application_with(
+        CallableApplication(
+            tuple(positional) + tuple(value for _, value in kw_values),
+            tuple(name for name, _ in kw_values),
+            site,
+        ),
+        ctx,
+    )
