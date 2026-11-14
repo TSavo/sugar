@@ -64,7 +64,7 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.floor.block_value import BlockValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.delete_effect_sugar import (
     AttributeDeleteEffectSugar,
     SubscriptDeleteEffectSugar,
@@ -600,7 +600,7 @@ def test_read_does_not_authorize_delete_on_getter_only_property() -> None:
     class _GetterBody(Sugar):
         def desugar(self, ctx=None):
             del ctx
-            return Complete(
+            return ExitSet.completed(
                 BlockValue((ReturnValue(TermValue(1)),), can_fall_through=False)
             )
 
@@ -663,7 +663,7 @@ class _FloorSugar(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     @classmethod
     def witnesses(cls):
@@ -685,10 +685,11 @@ def test_immutable_slice_delete_has_exact_typeerror_occurrence(receiver, owner):
         _FloorSugar(SliceValue(TermValue(0), TermValue(1), None)),
         site,
     ).desugar(None)
-    assert type(outcome).__name__ == "Incomplete"
-    assert outcome.effect.exception_name == "TypeError"
-    assert outcome.effect.producer_node_owner == owner
-    assert outcome.effect.occurrence_id == str(site)
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "TypeError"
+    assert halt.effect.producer_node_owner == owner
+    assert halt.effect.occurrence_id == str(site)
 
 
 @pytest.mark.parametrize(
@@ -706,7 +707,7 @@ def test_immutable_slice_delete_cannot_fabricate_mutated_receiver(receiver):
         _FloorSugar(SliceValue(TermValue(0), TermValue(1), None)),
         site,
     ).desugar(None)
-    assert not isinstance(outcome, Complete)
+    assert outcome.completed_value() is None
 
 
 def test_floor_list_delitem_completes_with_element_gone() -> None:
@@ -714,28 +715,30 @@ def test_floor_list_delitem_completes_with_element_gone() -> None:
     result = ListValue((TermValue(0), TermValue(1))).delitem(
         TermValue(0), _floor_site()
     )
-    assert isinstance(result, Complete)
-    assert result.value == ListValue((TermValue(1),))
+    assert result.completed_value() is not None
+    assert result.completed_value() == ListValue((TermValue(1),))
 
 
 def test_floor_list_delitem_out_of_range_is_named_indexerror() -> None:
     """Floor list delete IndexError (ground_index_error) — named exceptional face."""
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
     result = ListValue((TermValue(0),)).delitem(TermValue(5), _floor_site())
-    assert isinstance(result, Incomplete)
-    assert isinstance(result.effect, RaiseEffect)
-    assert result.effect.exception_name == "IndexError"
+    assert len(result.exits) == 1 and result.halts() == result.exits
+    (halt,) = result.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "IndexError"
 
 
 def test_floor_delete_is_not_the_formal_carrier_twin() -> None:
-    """Discrimination: floor Complete is not helper-alone undischarged demand."""
+    """Discrimination: a floor completion is not helper-alone undischarged demand."""
     floor = ListValue((TermValue(0),)).delitem(TermValue(0), _floor_site())
-    assert isinstance(floor, Complete)
+    assert floor.completed_value() is not None
     _, pending = _delitem_helper()
-    # Formal demand (when present) is a carrier, not a floor Complete.
-    assert not (isinstance(pending, Complete) and isinstance(pending.value, ListValue))
+    # Formal demand (when present) is a carrier, not a floor completion.
+    assert not (
+        isinstance(pending, ExitSet)
+        and isinstance(pending.completed_value(), ListValue)
+    )
     if isinstance(pending, NativeOperationExitCarrierV1):
         assert pending.demand.operator == "delitem"
     else:

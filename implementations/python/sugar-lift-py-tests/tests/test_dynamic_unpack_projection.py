@@ -41,7 +41,6 @@ from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.operations import SequenceProjectionOperation
-from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
 from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
     DynamicUnpackAssignSugar,
 )
@@ -78,8 +77,8 @@ def _outcome(tmp_path: Path, source: str, stem: str):
 
 def _unpack_effect(tmp_path: Path, source: str, stem: str):
     outcome = _outcome(tmp_path, source, stem)
-    assert isinstance(outcome, Incomplete), outcome
-    effect = outcome.effect
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits, outcome
+    effect = outcome.halts()[0].effect
     assert isinstance(effect, SequenceUnpackRuntimeEffect), effect
     return effect
 
@@ -188,17 +187,17 @@ def test_nothing_binds_on_the_runtime_arm(tmp_path: Path) -> None:
     """A later read of a target is NOT satisfied by an invented member."""
     read_target = "def A(o):\n    a, b = o\n    return a\n"
     outcome = _outcome(tmp_path, read_target, "read_target")
-    assert isinstance(outcome, Incomplete), outcome
-    assert isinstance(outcome.effect, SequenceUnpackRuntimeEffect)
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits, outcome
+    assert isinstance(outcome.halts()[0].effect, SequenceUnpackRuntimeEffect)
 
     # Discrimination: a display unpack DOES bind, and returns the paired
     # member -- so the assertion above is about this shape, not about
     # everything being red.
     display = "def A(p, q):\n    a, b = p, q\n    return a\n"
     display_outcome = _outcome(tmp_path, display, "display")
-    assert isinstance(display_outcome, Complete), display_outcome
-    assert "p" in str(display_outcome.value.record)
-    assert "q" not in str(display_outcome.value.record)
+    assert display_outcome.completed_value() is not None, display_outcome
+    assert "p" in str(display_outcome.completed_value().record)
+    assert "q" not in str(display_outcome.completed_value().record)
 
 
 # ---------------------------------------------------------------------------
@@ -215,19 +214,20 @@ def _operation(*names: str) -> SequenceProjectionOperation:
 def test_authenticated_tuple_members_bind_positionally() -> None:
     members = (TermValue(1), TermValue(2))
     outcome = _operation("a", "b").submit(TupleLiteralValue(members), None)
-    assert isinstance(outcome, Complete), outcome
-    assert outcome.value == ScopeRebinds((("a", TermValue(1)), ("b", TermValue(2))))
+    bound = outcome.completed_value()
+    assert bound is not None, outcome
+    assert bound == ScopeRebinds((("a", TermValue(1)), ("b", TermValue(2))))
     # Discrimination: the pairing is positional, not the reversed one, and not
     # the same member twice.
-    assert outcome.value != ScopeRebinds((("a", TermValue(2)), ("b", TermValue(1))))
-    assert outcome.value != ScopeRebinds((("a", TermValue(1)), ("b", TermValue(1))))
+    assert bound != ScopeRebinds((("a", TermValue(2)), ("b", TermValue(1))))
+    assert bound != ScopeRebinds((("a", TermValue(1)), ("b", TermValue(1))))
 
 
 def test_authenticated_array_members_bind_positionally() -> None:
     members = (TermValue(7), TermValue(8), TermValue(9))
     outcome = _operation("a", "b", "c").submit(ArrayLiteral(members), None)
-    assert isinstance(outcome, Complete), outcome
-    assert outcome.value == ScopeRebinds(
+    assert outcome.completed_value() is not None, outcome
+    assert outcome.completed_value() == ScopeRebinds(
         (("a", TermValue(7)), ("b", TermValue(8)), ("c", TermValue(9)))
     )
 
@@ -240,7 +240,7 @@ def test_bound_members_thread_to_the_rest_of_the_block() -> None:
     outcome = _operation("a", "b").submit(
         TupleLiteralValue((TermValue(1), TermValue(2))), None
     )
-    ctx = outcome.value.extend_scope(ReduceContext(TemporalContext.empty()))
+    ctx = outcome.completed_value().extend_scope(ReduceContext(TemporalContext.empty()))
     assert ctx.temporal.value_if_bound("a") == TermValue(1)
     assert ctx.temporal.value_if_bound("b") == TermValue(2)
     # Discrimination: a name the unpack did not bind stays unbound.
@@ -312,7 +312,7 @@ def test_list_floor_projection_is_written_and_binds(tmp_path: Path) -> None:
     # of `a` fell to the seeded unbound state, because substitution bound
     # nothing for a non-display unpack. It is now a reference to `a`'s
     # projection of the statement's one evaluation (temporal choice 1).
-    assert outcome_to_exitset(outcome).completed_value() is not None, outcome
+    assert outcome.completed_value() is not None, outcome
     assert "NameError" not in repr(outcome)
 
     # The control, and the whole point of the arm: the TUPLE twin -- which has
@@ -320,7 +320,7 @@ def test_list_floor_projection_is_written_and_binds(tmp_path: Path) -> None:
     # with its sibling rather than panicking where the sibling does not.
     tuple_src = "def A(p, q, r, s):\n    xs = [(p, q), (r, s)]\n    a, b = xs[0]\n    return a\n"
     twin = _outcome(tmp_path, tuple_src, "tuple_floor")
-    assert outcome_to_exitset(twin).completed_value() is not None, twin
+    assert twin.completed_value() is not None, twin
     assert "NameError" not in repr(twin)
 
 

@@ -15,7 +15,7 @@ from sugar_lift_py_tests.floor import (
     StringValue,
     TermValue,
 )
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.dict_setdefault_append_state_sugar import (
     DictSetDefaultAppendStateSugar,
 )
@@ -43,7 +43,7 @@ class _FloorSugar(ConstructedTermSugar):
     def desugar(self, ctx=None):
         del ctx
         self.evaluations.append(self.label)
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner):
         return self.value.to_term(owner=owner)
@@ -74,13 +74,13 @@ def _project_return(source: str):
     )
     context.source_call_frames[coordinate] = function.source_visible_call_frame()
     outcome = call.sugar().desugar(None)
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, CallSiteValue)
-    projected = outcome.value.project_operation_receiver_outcome(
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), CallSiteValue)
+    projected = outcome.completed_value().project_operation_receiver_outcome(
         None, owner="test_dict_setdefault_shadow_state"
     )
-    assert isinstance(projected, Complete)
-    return projected.value
+    assert projected.completed_value() is not None
+    return projected.completed_value()
 
 
 def test_missing_key_insert_and_append_are_visible_to_later_read() -> None:
@@ -123,11 +123,11 @@ def test_authenticated_dict_subclass_keeps_receiver_identity_and_fields() -> Non
 
     outcome = sugar.desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, MappingObjectValue)
-    assert outcome.value.identity == "receiver-coordinate"
-    assert outcome.value.fields == receiver.fields
-    assert outcome.value.entries == (
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), MappingObjectValue)
+    assert outcome.completed_value().identity == "receiver-coordinate"
+    assert outcome.completed_value().fields == receiver.fields
+    assert outcome.completed_value().entries == (
         (StringValue("members"), ListValue((StringValue("member"),))),
     )
     assert order == ["receiver", "key", "default", "appended"]
@@ -151,9 +151,9 @@ def test_authenticated_dict_subclass_setdefault_uses_existing_value() -> None:
 
     outcome = sugar.desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, MappingObjectValue)
-    assert outcome.value.entries == (
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), MappingObjectValue)
+    assert outcome.completed_value().entries == (
         (StringValue("members"), ListValue((TermValue(1), TermValue(2)))),
     )
     assert order == ["receiver", "key", "default", "appended"]

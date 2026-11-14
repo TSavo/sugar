@@ -24,7 +24,6 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import CallSiteValue, NoneValue, StringValue
 from sugar_lift_py_tests.ir import ctor
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -43,20 +42,15 @@ def _desugar(source: str, *, name: str = "context_reraise.py"):
 
 
 def _halt_effect(outcome) -> RaiseEffect:
-    if isinstance(outcome, Incomplete):
-        assert isinstance(outcome.effect, RaiseEffect), type(outcome.effect)
-        return outcome.effect
     if isinstance(outcome, ExitSet):
         halted = [face for face in outcome.exits if isinstance(face, Halted)]
         assert len(halted) == 1, outcome.exits
         assert isinstance(halted[0].effect, RaiseEffect), type(halted[0].effect)
         return halted[0].effect
-    raise AssertionError(f"expected halt Incomplete|ExitSet, got {type(outcome)}")
+    raise AssertionError(f"expected a halted ExitSet, got {type(outcome)}")
 
 
-def _halt_face(outcome) -> Halted | Incomplete:
-    if isinstance(outcome, Incomplete):
-        return outcome
+def _halt_face(outcome) -> Halted:
     if isinstance(outcome, ExitSet):
         halted = [face for face in outcome.exits if isinstance(face, Halted)]
         assert len(halted) == 1, outcome.exits
@@ -230,11 +224,12 @@ def test_bare_reraise_is_exact_inflight_effect_identity():
         in_flight_slot="handler-slot",
     )
     outcome = sugar.desugar(ctx)
-    assert isinstance(outcome, Incomplete)
-    assert outcome.effect is incoming
-    assert outcome.effect.occurrence == "body.py:1:0"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect is incoming
+    assert halt.effect.occurrence == "body.py:1:0"
     # Handler site is NOT written onto the effect.
-    assert "handler.py" not in (outcome.effect.occurrence or "")
+    assert "handler.py" not in (halt.effect.occurrence or "")
 
 
 def test_bare_reraise_without_active_exception_is_loud():

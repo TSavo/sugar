@@ -16,7 +16,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
     TupleValue,
 )
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
@@ -31,8 +31,8 @@ def _source_receiver(source: str):
     definition = next(node for node in tree.root.body if isinstance(node, ClassDef))
     context = ReduceContext.root(owner="test_enum_setitem_lineage")
     class_outcome = definition.sugar().desugar(context)
-    assert isinstance(class_outcome, Complete)
-    receiver = class_outcome.value.construct_receiver_state_from_block(
+    assert class_outcome.completed_value() is not None
+    receiver = class_outcome.completed_value().construct_receiver_state_from_block(
         None, "namespace-coordinate"
     )
     assert isinstance(receiver, MappingObjectValue)
@@ -56,9 +56,9 @@ def _source_method_outcome(receiver, context, key="member", value=7):
 
 
 def _mutation_products(outcome):
-    assert isinstance(outcome, Complete)
-    result = getattr(outcome.value, "result", None)
-    receiver = getattr(outcome.value, "receiver_after", None)
+    assert outcome.completed_value() is not None
+    result = getattr(outcome.completed_value(), "result", None)
+    receiver = getattr(outcome.completed_value(), "receiver_after", None)
     assert isinstance(result, NoneValue)
     assert isinstance(receiver, MappingObjectValue)
     return result, receiver
@@ -91,14 +91,14 @@ def test_source_setitem_runs_then_super_returns_none_with_updated_receiver() -> 
     )
 
     outcome = _source_method_outcome(receiver, context)
-    assert isinstance(outcome, Complete)
-    updated = outcome.value
+    updated = outcome.completed_value()
+    assert updated is not None
 
     assert updated.identity == receiver.identity
     assert updated.entries == ((StringValue("member"), TermValue(7)),)
     seen = updated.attribute("seen", "seen-site")
-    assert isinstance(seen, Complete)
-    assert seen.value == StringValue("member")
+    assert seen.completed_value() is not None
+    assert seen.completed_value() == StringValue("member")
 
 
 def test_super_setitem_returns_none_and_carries_updated_namespace() -> None:
@@ -159,9 +159,11 @@ def test_type_new_consumes_the_post_setitem_namespace_not_its_pre_state() -> Non
         blame="type-new-site",
     )
 
-    assert isinstance(created, Complete)
-    assert isinstance(created.value, RuntimeClassValue)
-    class_dict = created.value.attribute("__dict__", "dict-site")
-    assert isinstance(class_dict, Complete)
-    assert class_dict.value.entries == ((StringValue("_member_map_"), TermValue(7)),)
-    assert class_dict.value.entries != namespace.entries
+    assert created.completed_value() is not None
+    assert isinstance(created.completed_value(), RuntimeClassValue)
+    class_dict = created.completed_value().attribute("__dict__", "dict-site")
+    assert class_dict.completed_value() is not None
+    assert class_dict.completed_value().entries == (
+        (StringValue("_member_map_"), TermValue(7)),
+    )
+    assert class_dict.completed_value().entries != namespace.entries

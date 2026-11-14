@@ -25,7 +25,6 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor.effect_coordinate import ObservedEffectValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.tree import SourceFile
@@ -40,12 +39,7 @@ def _desugar(source: str, *, name: str = "except_as_cleanup.py"):
 
 
 def _name_error(outcome, *, name: str = "e"):
-    """Project a NameError for ``name`` from Incomplete or ExitSet halt."""
-    if isinstance(outcome, Incomplete):
-        effect = outcome.effect
-        assert type(effect).__name__ == "NameErrorEffect", type(effect)
-        assert getattr(effect, "name", None) == name
-        return effect
+    """Project a NameError for ``name`` from the ExitSet's one halt."""
     if isinstance(outcome, ExitSet):
         halted = [face for face in outcome.exits if isinstance(face, Halted)]
         assert len(halted) == 1, outcome.exits
@@ -57,9 +51,10 @@ def _name_error(outcome, *, name: str = "e"):
 
 
 def _return_value(outcome):
-    assert isinstance(outcome, Complete), outcome
-    returns = [s for s in outcome.value.record.statements if isinstance(s, ReturnValue)]
-    assert returns, outcome.value.record.statements
+    completed = outcome.completed_value()
+    assert completed is not None, outcome
+    returns = [s for s in completed.record.statements if isinstance(s, ReturnValue)]
+    assert returns, completed.record.statements
     return returns[0].value
 
 
@@ -143,11 +138,12 @@ def test_handler_halt_from_e_uses_routed_cause():
         "        raise RuntimeError('outer') from e\n",
         name="handler_halt_from_e.py",
     )
-    assert isinstance(outcome, Incomplete), outcome
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "RuntimeError"
-    assert isinstance(outcome.effect.cause_value, ObservedEffectValue)
-    assert outcome.effect.cause_value.effect.exception_name == "ValueError"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits, outcome
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "RuntimeError"
+    assert isinstance(halt.effect.cause_value, ObservedEffectValue)
+    assert halt.effect.cause_value.effect.exception_name == "ValueError"
 
 
 # ---------------------------------------------------------------------------
@@ -231,8 +227,8 @@ def test_handler_return_plus_finally_read_e_nameerror_supersedes_return():
         "        return e\n",
         name="ret_finally_e.py",
     )
-    # Not Complete(return 99) — NameError is the terminal face.
-    assert not isinstance(outcome, Complete), outcome
+    # Not a completed return 99 — NameError is the terminal face.
+    assert outcome.completed_value() is None, outcome
     effect = _name_error(outcome, name="e")
     # No return 99 surviving as the primary outcome.
     assert getattr(effect, "exception_name", None) == "NameError"
@@ -255,8 +251,8 @@ def test_handler_halt_plus_finally_read_e_keeps_handler_exception_as_context():
         "        return e\n",
         name="halt_finally_e.py",
     )
-    assert isinstance(outcome, Incomplete), outcome
-    effect = outcome.effect
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits, outcome
+    effect = outcome.halts()[0].effect
     assert type(effect).__name__ == "NameErrorEffect", type(effect)
     assert getattr(effect, "name", None) == "e"
     # Handler exception retained as authenticated implicit context — not lost.
