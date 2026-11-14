@@ -332,6 +332,10 @@ def _explicit_state(name: str, state):
 
 
 _NESTED_COMPREHENSION_TEMPLATE = object()
+# An eager comprehension's closure cells (#7757 item 7): the lambdas it stores
+# unevaluated in what it produces, and, for each name its targets bind, what
+# the cell holds once it is done (``_closure_cell_scope``).
+_CLOSURE_CELLS = object()
 
 
 class TargetPatternConstructionGapV1(TypeError):
@@ -3267,6 +3271,115 @@ def _evaluation_ref(
         ShadowNode("EvaluationRef", span, slots),
         owner.reporter,
     )
+
+
+def final_member_coordinate(member_coordinate: str) -> str:
+    """The coordinate an eager comprehension binds its final member under:
+    what the comprehension's cell for ``member_coordinate`` holds once the
+    comprehension is done (the last member iterated, filtered or not).
+
+    A closure stored in what the comprehension produces is called after the
+    comprehension (``fs = [lambda: x for x in xs]; fs[0]()``), and Python
+    reads the cell at call time, so its read of the member is a member
+    reference to this coordinate (``_closure_cell_scope``), bound by
+    ``ComprehensionSugar`` before the element is reduced."""
+    from sugar_lift_python_source.canonical import cid_of_json
+
+    return cid_of_json(
+        {
+            "kind": "comprehension-final-member",
+            "schemaVersion": "1",
+            "memberCoordinate": member_coordinate,
+        }
+    )
+
+
+def _closure_position(node: "Node") -> tuple:
+    """The source occurrence a lambda is recognised by across substitution
+    (a rewrite borrows its origin's span)."""
+    return (node.kind, node.span.start, node.span.end)
+
+
+def _stored_closures(roots) -> frozenset:
+    """The lambdas an eager comprehension stores unevaluated in what it
+    produces: an element (a dict comprehension's key or value) that is a
+    lambda, or a lambda inside a list, tuple, set or dict display there.
+
+    Nothing calls such a lambda before the comprehension is done, so it reads
+    the comprehension's final member.  A lambda anywhere else (called in
+    place, handed to a call, read by a condition) may be called while the
+    comprehension runs, when the cell holds the current member, and is not
+    one of these."""
+    found = set()
+    pending = list(roots)
+    while pending:
+        node = pending.pop()
+        if isinstance(node, Lambda):
+            found.add(_closure_position(node))
+        elif isinstance(node, (List, Tuple_, Set)):
+            pending.extend(node.elts)
+        elif isinstance(node, Dict):
+            for item in node.items:
+                if item.key is not None:
+                    pending.append(item.key)
+                pending.append(item.value)
+    return frozenset(found)
+
+
+def _closure_cell_scope(scope, roots, cells) -> "BindingMap":
+    """``scope`` for substituting ``roots`` (an eager comprehension's element,
+    or a dict comprehension's key and value) with ``cells``: each name the
+    comprehension's targets bind, to what the comprehension's cell for it
+    holds once the comprehension is done -- the last member's projection
+    when the comprehension dissolves, a member reference to the final member
+    coordinate (``final_member_coordinate``) when it does not.
+
+    ``Lambda.substitute`` reads the cells in the body of a lambda the
+    comprehension stores (``_stored_closures``), the way a lambda's body reads
+    every other enclosing binding: by substitution.  ``scope`` unchanged when
+    no lambda is stored or no name has a cell."""
+    if not cells:
+        return scope
+    stored = _stored_closures(roots)
+    if not stored:
+        return scope
+    return {**scope, _CLOSURE_CELLS: (stored, dict(cells))}
+
+
+def _member_closure_scope(owner, inner, roots) -> "BindingMap":
+    """``inner`` (the scope an eager comprehension ``owner`` that does not
+    dissolve substitutes ``roots`` in) with the comprehension's cells: each
+    target name, to a member reference to its final member coordinate
+    (``_final_member_cells``)."""
+    if not _stored_closures(roots):
+        return inner
+    return _closure_cell_scope(
+        inner, roots, _final_member_cells(owner, owner.generators, inner)
+    )
+
+
+def _final_member_cells(owner, generators, inner) -> dict:
+    """Each name ``generators`` bind whose read in ``inner`` is a member
+    reference (``ListComp._target_references``), to a member reference to
+    that member's final coordinate (``final_member_coordinate``)."""
+    names = set()
+    for gen in generators:
+        names |= owner._bound_names_in(gen.target)
+    cells = {}
+    for name in names:
+        reference = unwrap_binding_state(inner.get(name))
+        if (
+            isinstance(reference, EvaluationRef)
+            and getattr(reference, "member", False) is True
+        ):
+            cells[name] = _evaluation_ref(
+                owner,
+                reference.span,
+                final_member_coordinate(reference.evaluation),
+                reference.name,
+                member=True,
+            )
+    return cells
 
 
 def _loop_header_evaluation_key(loop, name: str, scope) -> str:
@@ -13426,11 +13539,28 @@ class Lambda(Expression):
         return _arguments_projection(self.params)
 
     def substitute(self, scope):
-        """Mask formals and mark the result as substitution-authenticated."""
+        """Mask formals and mark the result as substitution-authenticated.
+
+        A lambda an eager comprehension stores in what it produces is called
+        after the comprehension, so its body reads each comprehension name
+        through the comprehension's cell (``_closure_cell_scope``): what the
+        cell holds once the comprehension is done, never the member of the
+        iteration that built the lambda.  The formals' defaults are evaluated
+        when the lambda is built and read the current member."""
         from .shadow import rewrite
 
+        cells = scope.get(_CLOSURE_CELLS)
+        if cells is not None:
+            scope = {k: v for k, v in scope.items() if k is not _CLOSURE_CELLS}
         bound = {p.name for p in self.params}
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        if cells is not None:
+            stored, held = cells
+            if _closure_position(self) in stored:
+                cell_reads = {
+                    name: cell for name, cell in held.items() if name not in bound
+                }
+                bs = {**bs, **cell_reads}
         new_params, d = self._substitute_field(self.params, scope)
         del d
         new_body, d = self._substitute_field(self.body, bs)
@@ -13709,9 +13839,9 @@ class ListComp(Expression):
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
-        template_scope = inner
+        template_scope = _member_closure_scope(self, inner, (self.elt,))
         if ListComp._contains_forbidden_shape(self, (self.elt,)):
-            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
+            template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:
@@ -13728,7 +13858,11 @@ class ListComp(Expression):
         synchronous generator with ground-decidable filters,
         over a CONCRETE iterable whose elements destructure into the target:
         each element substitutes into `elt`, and the results are the display's
-        elements. Reuses For's readers (same structural recognition)."""
+        elements. Reuses For's readers (same structural recognition).
+
+        A lambda the display stores reads the last element's projection
+        (``_closure_cell_scope``): the cell holds it once the comprehension is
+        done, whichever members the filters kept."""
         if len(self.generators) != 1 or ListComp._contains_forbidden_shape(
             self, (self.elt,)
         ):
@@ -13748,6 +13882,9 @@ class ListComp(Expression):
         if len(elements) > For._UNROLL_FUEL:
             return None
         target = gen.target
+        final = ListComp._final_element_cells(self, target, elements, (self.elt,))
+        if final is None:
+            return None
         results = []
         for index, element in enumerate(elements):
             bindings = self.unit.require_target_pattern(self, target).bindings_for(
@@ -13761,11 +13898,25 @@ class ListComp(Expression):
                 return None
             if not filters_pass:
                 continue
-            new_elt, _d = self._substitute_field(self.elt, inner)
+            new_elt, _d = self._substitute_field(
+                self.elt, _closure_cell_scope(inner, (self.elt,), final)
+            )
             # Each member is its own evaluation of the element expression.
             (member,) = _iteration_copies(self, index, (new_elt if _d else self.elt,))
             results.append(member)
         return ListComp._make_list(self, tuple(results))
+
+    def _final_element_cells(self, target, elements, roots) -> "Optional[dict]":
+        """What a dissolving comprehension's cells hold once it is done: the
+        last element's projection through ``target``, for the lambdas
+        ``roots`` store (``_closure_cell_scope``).  Empty when ``roots`` store
+        no lambda or there is no element; None when the last element does not
+        project (the comprehension does not dissolve)."""
+        if not elements or not _stored_closures(roots):
+            return {}
+        return self.unit.require_target_pattern(self, target).bindings_for(
+            elements[-1]
+        )
 
     def _ground_filters_pass(self, filters, scope) -> "Optional[bool]":
         """The conjunction of constructed ground filters, or no testimony.
@@ -14037,9 +14188,9 @@ class SetComp(Expression):
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
-        template_scope = inner
+        template_scope = _member_closure_scope(self, inner, (self.elt,))
         if ListComp._contains_forbidden_shape(self, (self.elt,)):
-            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
+            template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         new_elt, de = self._substitute_field(self.elt, template_scope)
         changed = {}
         if gc:
@@ -14131,9 +14282,9 @@ class DictComp(Expression):
         from .shadow import rewrite
 
         new_gens, inner, gc = self._substitute_generators(self.generators, scope)
-        template_scope = inner
+        template_scope = _member_closure_scope(self, inner, (self.key, self.value))
         if ListComp._contains_forbidden_shape(self, (self.key, self.value)):
-            template_scope = {**inner, _NESTED_COMPREHENSION_TEMPLATE: True}
+            template_scope = {**template_scope, _NESTED_COMPREHENSION_TEMPLATE: True}
         changed = {}
         if gc:
             changed["generators"] = new_gens
@@ -14158,6 +14309,10 @@ class DictComp(Expression):
         elements = For._concrete_elements(self, iterable)
         if elements is None or len(elements) > For._UNROLL_FUEL:
             return None
+        roots = (self.key, self.value)
+        final = ListComp._final_element_cells(self, gen.target, elements, roots)
+        if final is None:
+            return None
         pairs = []
         key_indexes = {}
         for element in elements:
@@ -14172,8 +14327,11 @@ class DictComp(Expression):
                 return None
             if not filters_pass:
                 continue
-            key, key_changed = self._substitute_field(self.key, inner)
-            value, value_changed = self._substitute_field(self.value, inner)
+            # A lambda the display stores reads the last element's projection
+            # (``_closure_cell_scope``).
+            cell_scope = _closure_cell_scope(inner, roots, final)
+            key, key_changed = self._substitute_field(self.key, cell_scope)
+            value, value_changed = self._substitute_field(self.value, cell_scope)
             result_key = key if key_changed else self.key
             result_value = value if value_changed else self.value
             hash_key = ListComp._ground_hash_key(self, result_key)
@@ -16480,7 +16638,10 @@ class EvaluationRef(Expression):
     comprehension's element and conditions a read of a target name is an
     ``EvaluationRef`` to the coordinate the comprehension binds each member
     under (``ListComp._target_references``, ``ComprehensionSugar``), marked
-    ``member``: it reads that coordinate only.  A walrus's reference is marked
+    ``member``: it reads that coordinate only.  In the body of a lambda the
+    comprehension stores, the read is a member reference to the final
+    member's coordinate (``final_member_coordinate``, ``_closure_cell_scope``).
+    A walrus's reference is marked
     ``walrus``: it resolves through the key only, and is refused where the
     key was never bound.  In a live loop's body a carried name reads the loop
     header's evaluation of it (``_loop_header_evaluation_key``), which the

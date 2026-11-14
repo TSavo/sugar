@@ -20,6 +20,19 @@ binding of the same spelling by an enclosing statement cannot leak in, and a
 member reference whose coordinate is unbound is a construction panic, not a
 name read.
 
+A lambda the comprehension stores in what it produces (``fs = [lambda: x for
+x in xs]; fs[0]()``) is called after the comprehension, and Python reads the
+comprehension's cell at call time: the final member. Its body's read is a
+member reference to the final member coordinate
+(``sugar_source_tree.nodes.final_member_coordinate``), carried in the lambda
+by substitution as every other enclosing binding it reads
+(``nodes._closure_cell_scope``). The comprehension binds that coordinate
+before the element is reduced (``ComprehensionSugar._final_member_ctx``, the
+last finite member; ``ComprehensionSugar._symbolic_final_ctx``, the final
+member of a symbolic iterable), and the reference reads it as it reads any
+member coordinate. A comprehension that dissolves at substitution carries the
+last member's projection itself.
+
 ``with pytest.raises(...) as e`` and ``except ... as e`` bind no name at
 reduce: substitution rewrites a read of ``e`` to the statement's observation
 (``ObservationRef``) or the handler's effect (``EffectRef``), one slot per
@@ -143,8 +156,10 @@ class EvaluationRefSugar(ConstructedTermSugar):
         )
 
     def _member(self, temporal) -> Outcome:
-        """A comprehension member's coordinate, bound by the comprehension
-        before any read; unbound, the read panics and never reads the name.
+        """A comprehension member's coordinate (or, read by a lambda the
+        comprehension stores, its final member coordinate), bound by the
+        comprehension before any read; unbound, the read panics and never
+        reads the name.
         The coordinate is bound and read inside one evaluation of the
         comprehension, so it is not qualified (``evaluation_here``)."""
         from sugar_lift_py_tests.outcome import ExitSet

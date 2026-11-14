@@ -31,6 +31,7 @@ from sugar_source_tree.nodes import (
     FunctionDef,
     ListComp,
     Return,
+    final_member_coordinate,
 )
 from sugar_source_tree.tree import SourceFile
 
@@ -245,3 +246,83 @@ def test_leaf_projections_nest_as_the_source_nests() -> None:
     )
     leaf = ComprehensionTargetSugar(source_name="x")
     assert _leaf_projections(leaf, element) == (element,)
+
+
+# #7757 item 7, after #7932: a lambda the comprehension stores in what it
+# produces is called after the comprehension, and Python reads the cell at
+# call time -- the final member, never the member that built the lambda.
+
+
+def _returned(source: str):
+    (ret,) = _function(source).substitute({}).body
+    assert isinstance(ret, Return)
+    return ret.value
+
+
+def test_a_stored_lambda_in_a_dissolved_comprehension_reads_the_last_member() -> None:
+    display = _returned("def f():\n    return [lambda: x for x in [1, 2]]\n")
+    assert display.kind == "List"
+    assert [element.kind for element in display.elts] == ["Lambda", "Lambda"]
+    # fs[0]() and fs[1]() both return 2.
+    assert [element.body.kind for element in display.elts] == ["Constant"] * 2
+    assert [element.body.value for element in display.elts] == [2, 2]
+
+
+def test_a_lambda_called_in_place_reads_the_current_member() -> None:
+    display = _returned("def f():\n    return [(lambda: x)() for x in [1, 2]]\n")
+    assert [element.func.body.value for element in display.elts] == [1, 2]
+
+
+def test_only_the_stored_lambda_reads_the_last_member() -> None:
+    display = _returned("def f():\n    return [(x, lambda: x) for x in [1, 2]]\n")
+    assert [
+        (pair.elts[0].value, pair.elts[1].body.value) for pair in display.elts
+    ] == [(1, 2), (2, 2)]
+
+
+def test_a_stored_lambda_reads_the_final_member_coordinate() -> None:
+    comp = _comprehension("def f(xs):\n    return [lambda: x for x in xs]\n")
+    coordinate = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
+    assert comp.elt.kind == "Lambda"
+    read = comp.elt.body
+    assert isinstance(read, EvaluationRef)
+    assert read.member is True
+    assert read.evaluation == final_member_coordinate(coordinate)
+    assert read.evaluation != coordinate
+
+
+def test_a_lambda_called_in_place_reads_the_member_coordinate() -> None:
+    comp = _comprehension("def f(xs):\n    return [(lambda: x)() for x in xs]\n")
+    coordinate = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
+    read = comp.elt.func.body
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == coordinate
+
+
+def test_a_finite_final_member_is_what_a_stored_lambda_reads() -> None:
+    comp = _comprehension("def f(xs):\n    return [lambda: x for x in xs]\n")
+    sugar = comp.sugar()
+    generator = sugar.generators[0]
+    ctx = sugar._final_member_ctx(
+        generator, TermValue(2), ReduceContext.root(owner="comprehension-closure")
+    )
+    assert sugar.element.body.desugar(ctx) == ExitSet.completed(TermValue(2))
+
+
+def test_a_symbolic_stored_lambda_reads_the_final_member_without_a_panic() -> None:
+    comp = _comprehension("def f(xs):\n    return [lambda: x for x in xs]\n")
+    sugar = comp.sugar()
+    generator = sugar.generators[0]
+    ctx = sugar._symbolic_final_ctx(
+        generator,
+        SymbolicValue(make_var("xs")),
+        sugar._symbolic_member_ctx(
+            generator, ReduceContext.root(owner="comprehension-closure")
+        ),
+    )
+    final = ctx.temporal.value_if_bound(
+        final_member_coordinate(generator.binding_coordinate_cid)
+    )
+    assert isinstance(final, SymbolicValue)
+    assert final != ctx.temporal.value_if_bound(generator.binding_coordinate_cid)
+    assert sugar.element.body.desugar(ctx) == ExitSet.completed(final)
