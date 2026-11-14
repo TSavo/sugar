@@ -987,7 +987,9 @@ def _path_after(
 ):
     """The root or the object after ``call``.  With ``evaluation`` (the
     statement's key, ``path_mutation_statement``) it reads the call's pair
-    the statement bound under that key, never the call evaluated again."""
+    the statement bound under that key, never the call evaluated again.
+    ``root`` is the read of the root at the statement (a name's reference
+    to its key), never the expression the name was given."""
     from .backend import Child, Leaf, MaybeChild
     from .shadow import _handle_of
 
@@ -1029,8 +1031,13 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
     ):
         return None
     receiver = call.func.value
-    root, steps = path_steps(receiver)
-    root = _identity(root)
+    # ``root_read`` is the read of the root at the statement: for a name an
+    # assignment bound, a reference to its key.  ``root`` is the object it
+    # denotes (``_identity``: the display or call the name was given), which
+    # decides the shape only.  The root after the call reads ``root_read``,
+    # never the display or call evaluated again at each read of the name.
+    root_read, steps = path_steps(receiver)
+    root = _identity(root_read)
     if root is None or getattr(root, "kind", None) not in _PATH_ROOT_KINDS:
         return None
     bound = {
@@ -1076,7 +1083,7 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
     inner = _path_after(
         call,
         path_call,
-        root,
+        root_read,
         steps,
         "inner",
         "",
@@ -1087,7 +1094,7 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
     root_after = _path_after(
         call,
         path_call,
-        root,
+        root_read,
         steps,
         "root",
         "",

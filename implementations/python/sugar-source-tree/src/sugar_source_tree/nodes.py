@@ -9646,7 +9646,7 @@ def _valued_store_target_sugar(target, value_sugar, site, evaluation=None):
         if isinstance(target.value, ObjectPlaceStateV1):
             return _keyed_place_assign_sugar(
                 PlaceAssignSugar,
-                receiver=target.value.sugar(),
+                receiver=target.value.store_receiver_sugar(),
                 selector_kind="attribute",
                 selector=target.attr,
                 value_sugar=value_sugar,
@@ -9693,7 +9693,7 @@ def _valued_store_target_sugar(target, value_sugar, site, evaluation=None):
         if isinstance(target.value, ObjectPlaceStateV1):
             return _keyed_place_assign_sugar(
                 PlaceAssignSugar,
-                receiver=target.value.sugar(),
+                receiver=target.value.store_receiver_sugar(),
                 selector_kind="subscript",
                 selector=target.slice_.sugar(),
                 value_sugar=value_sugar,
@@ -9849,12 +9849,33 @@ def _place_read_sugar(evaluation: str, label: str, site):
     return EvaluationRefSugar(evaluation=evaluation, name=label, site=site, place=True)
 
 
+def _occurrence_testimony(node):
+    """The identity testimony of the expression ``node``: a key reference's
+    ``of`` (#7958), the right-hand side a name or a field was given.  It
+    names the expression (its source fragment and node shape), never a value
+    computed for it here: the statement evaluates it once, at reduce, and
+    every read reads that statement's key."""
+    from .binding_provenance import ConstructedValueTestimonyV1
+    from .binding_state import node_construction_shape_cid
+
+    return ConstructedValueTestimonyV1.mint(
+        node.fragment, node_construction_shape_cid(node)
+    )
+
+
 def _has_authenticated_source_method(receiver, name: str) -> bool:
-    """Whether this exact constructed receiver carries a source override."""
+    """Whether this exact constructed receiver may carry a source override:
+    its class statement defines ``name``.  A class with bases may inherit
+    one, and is answered yes (the special path is not taken)."""
     if not isinstance(receiver, ObjectPlaceStateV1):
         return False
-    value = receiver.constructed_value
-    return bool(getattr(value, "has_method", lambda _name: False)(name))
+    definition = receiver.unit.source_allocation_definition_for_call(receiver.base)
+    if not isinstance(definition, ClassDef) or definition.bases:
+        return True
+    return any(
+        isinstance(member, (FunctionDef, AsyncFunctionDef)) and member.name == name
+        for member in definition.body
+    )
 
 
 def _keyed_target_binding(statement, binding, keys: dict, targets) -> dict:
@@ -10673,14 +10694,14 @@ class Assign(Statement):
             definition
         ):
             return None
-        constructed = self._constructed_floor_value(self.value)
-        if constructed is None:
+        # The object's identity is the right-hand side the name was given
+        # (the reference's ``of``): the constructor call at this statement,
+        # never its value computed here.  The statement evaluates the call
+        # once, at reduce; every read of the object reads its key.
+        constructor = getattr(reference, "of", None)
+        if not isinstance(constructor, Node):
             return None
-        floor_value, testimony = constructed
-        from sugar_lift_py_tests.floor import ObjectValue
-
-        if not isinstance(floor_value, ObjectValue):
-            return None
+        testimony = _occurrence_testimony(constructor)
         # The class statement's content address is a fact of its sugar; the
         # statement is not reduced to read it.
         class_definition_cid = definition.sugar().class_definition_cid
@@ -10705,9 +10726,8 @@ class Assign(Statement):
                     ("object_coordinate", Leaf(object_coordinate)),
                     ("class_definition_cid", Leaf(class_definition_cid)),
                     ("construction_testimony", Leaf(testimony)),
-                    ("constructed_value", Leaf(floor_value)),
                     ("object_identity_cid", Leaf(object_coordinate.cid)),
-                    ("base", Child(_handle_of(self.value))),
+                    ("base", Child(_handle_of(constructor))),
                     ("selectors", Leaf(())),
                     ("values", Children(())),
                     ("value_testimonies", Leaf(())),
@@ -10716,8 +10736,8 @@ class Assign(Statement):
                     ("prior_version_cids", Leaf(())),
                     ("store_occurrence_cids", Leaf(())),
                     ("invalidated_by_opaque_call", Leaf(False)),
-                    # The constructed value above is identity testimony; a
-                    # read of the object reads this assignment's key.
+                    # The testimony above names the call; a read of the
+                    # object reads this assignment's key.
                     ("evaluation", Leaf(reference.evaluation)),
                     ("name", Leaf(reference.name)),
                     ("store_evaluations", Leaf(())),
@@ -10728,6 +10748,11 @@ class Assign(Statement):
 
     @staticmethod
     def _constructed_floor_value(value):
+        """A subscript key's value, to decide which field of an object place
+        a store or read names (``ObjectPlaceStateV1.subscript_key_projection``).
+        Never the object's constructor call nor a stored value: those are
+        named by their expression (``_occurrence_testimony``) and read
+        through their statement's key."""
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import _term_content_cid
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
@@ -19064,20 +19089,23 @@ class ObjectPlaceStateV1(Expression):
     identity source is ``object_coordinate.cid``, authenticated from the exact
     construction occurrence.
 
-    ``constructed_value`` is identity testimony only (the object's shape and
-    its source methods), never what a read yields.  A read of the object
-    reads the value its constructor call completed with at the assignment,
-    through the assignment's key (``evaluation``, the reference the name was
-    bound to): the object as the constructor's own field stores left it.  A
-    read of a field a later store put there reads that store statement's key
-    (``store_evaluations``, parallel to ``selectors``; ``attribute_read``,
-    ``subscript_read``), never the stored expression evaluated again.
+    ``construction_testimony`` names the constructor call (``base``, the
+    reference's ``of``) and each of ``value_testimonies`` names a stored
+    expression (``values``): their source fragments and node shapes, never a
+    value computed for them at substitution (``_occurrence_testimony``).
+
+    A read of the object reads its latest state: the value its constructor
+    call completed with at the assignment, through the assignment's key
+    (``evaluation``, the reference the name was bound to), after every field
+    store on it so far, each stored value read through its store statement's
+    key (``store_evaluations``, parallel to ``selectors``).  A read of one
+    field reads that store's key (``attribute_read``, ``subscript_read``).
+    Nothing is evaluated again at a read.
     """
 
     object_coordinate: object
     class_definition_cid: str
     construction_testimony: object
-    constructed_value: object
     object_identity_cid: str
     base: Expression
     selectors: Tuple[object, ...]
@@ -19109,10 +19137,46 @@ class ObjectPlaceStateV1(Expression):
             return ReceiverAfterCallSugar(
                 label=f"object:{self.object_identity_cid}", site=self.fragment
             )
-        # The value the constructor call completed with at its assignment,
-        # read through the assignment's key: the same read the name's
-        # reference makes (``EvaluationRefSugar``).  The constructed value
-        # computed at substitution is never read here.
+        # The object as its constructor call left it, then each field store
+        # on it so far: the field set to the value its store completed with,
+        # read through that store's key.  Distinct fields commute, and each
+        # field holds its latest store only.
+        from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
+            ReceiverFieldStoreStateSugar,
+        )
+        from .object_identity import AttributeFieldCoordinateV1
+
+        state = self._object_sugar()
+        for selector, evaluation in zip(self.selectors, self._store_evaluations()):
+            if not isinstance(selector, AttributeFieldCoordinateV1) or not isinstance(
+                evaluation, str
+            ):
+                raise SugarNotWritten(
+                    blame=self.fragment,
+                    owner="ObjectPlaceStateV1",
+                    observed=(
+                        "a read of the whole object after a subscript store on "
+                        "it, or a store with no key"
+                    ),
+                    requested="the object's state after every store on it",
+                    fix=(
+                        "construct the object's item store state; never read "
+                        "the object as it was before the store"
+                    ),
+                )
+            attr = selector.attribute_name
+            state = ReceiverFieldStoreStateSugar(
+                state,
+                _place_read_sugar(evaluation, f".{attr}", self.fragment),
+                attr,
+                self.fragment,
+            )
+        return state
+
+    def _object_sugar(self):
+        """The value the constructor call completed with at its assignment,
+        read through the assignment's key: the same read the name's
+        reference makes.  The call is never evaluated again here."""
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
             EvaluationRefSugar,
         )
@@ -19120,6 +19184,18 @@ class ObjectPlaceStateV1(Expression):
         return EvaluationRefSugar(
             evaluation=self.evaluation, name=self.name, site=self.fragment
         )
+
+    def store_receiver_sugar(self):
+        """The receiver of a store on this object (``o.x = v``, ``o[k] = v``):
+        which object the store writes into, read through its assignment's
+        key, or unknown after a call that may have changed it.  The store
+        target's state already holds the store itself
+        (``Assign.post_binding_statement``), so the receiver is the object,
+        never its fields read before the store."""
+        self.validate_identity()
+        if self.invalidated_by_opaque_call:
+            return self.sugar()
+        return self._object_sugar()
 
     def _store_evaluations(self) -> tuple:
         """The key of the store statement that put each field there,
@@ -19140,12 +19216,7 @@ class ObjectPlaceStateV1(Expression):
 
         coordinate = decode_object_coordinate_v1(self.object_coordinate.wire())
         ConstructedValueTestimonyV1.decode(self.construction_testimony.wire())
-        from sugar_lift_py_tests.ir import _term_content_cid
-
-        observed = _term_content_cid(
-            self.constructed_value.to_term(owner="ObjectPlaceStateV1")
-        )
-        if observed != self.construction_testimony.semantic_value_cid:
+        if self.construction_testimony.cid != _occurrence_testimony(self.base).cid:
             raise BindingProvenanceGap("object construction testimony mismatch")
         if coordinate.cid != self.object_identity_cid:
             raise BindingProvenanceGap("object place identity CID mismatch")
@@ -19211,17 +19282,20 @@ class ObjectPlaceStateV1(Expression):
             return None
         return self._with_store(selector, value, occurrence, evaluation)
 
-    def _with_store(self, selector, value, occurrence, evaluation, *, constructed=None):
+    def _with_store(self, selector, value, occurrence, evaluation):
         """The state after the store statement ``occurrence`` (keyed
-        ``evaluation``) put ``value`` in ``selector``.  ``value``'s
-        constructed testimony versions the field; a later read of the field
-        reads ``evaluation`` (``attribute_read``, ``subscript_read``)."""
+        ``evaluation``) put ``value`` in ``selector``.  The stored
+        expression's testimony (``_occurrence_testimony``: the expression,
+        never its value computed here) versions the field; a later read of
+        the field, or of the object, reads ``evaluation``.
+
+        After a call that may have changed the object
+        (``invalidated_by_opaque_call``) its fields are unknown, and a store
+        does not make them known again: the state stays unknown (None)."""
         self.validate_identity()
-        constructed = constructed or Assign._constructed_floor_value(value)
-        if constructed is None:
+        if self.invalidated_by_opaque_call:
             return None
-        floor_value, testimony = constructed
-        projected = ConstructedValueProjectionV1.create(value, floor_value, testimony)
+        testimony = _occurrence_testimony(value)
         from .object_identity import (
             AttributeFieldCoordinateV1,
             AttributeFieldVersionV1,
@@ -19255,7 +19329,7 @@ class ObjectPlaceStateV1(Expression):
         evaluations = list(self._store_evaluations())
         if selector in selectors:
             index = selectors.index(selector)
-            values[index] = projected
+            values[index] = value
             testimonies[index] = testimony
             versions[index] = version.cid
             records[index] = version
@@ -19264,7 +19338,7 @@ class ObjectPlaceStateV1(Expression):
             evaluations[index] = evaluation
         else:
             selectors.append(selector)
-            values.append(projected)
+            values.append(value)
             testimonies.append(testimony)
             versions.append(version.cid)
             records.append(version)
@@ -19313,18 +19387,16 @@ class ObjectPlaceStateV1(Expression):
     def _field_read(self, selector, read, label):
         """The value the store that put ``selector`` there completed with,
         read through its statement's key at ``read``'s site (``place``): the
-        stored expression is never inlined and evaluated again, and the
-        constructed testimony that versions the field is never what is
-        read.  None where no authenticated store put it there."""
-        projected = self.field(selector)
-        if projected is None:
+        stored expression is never inlined and evaluated again.  It rides
+        the reference as the object it denotes (``of``).  None where no
+        authenticated store put it there."""
+        stored = self.field(selector)
+        if stored is None:
             return None
         evaluation = self._store_evaluations()[self.selectors.index(selector)]
         if not isinstance(evaluation, str):
             return None
-        return _evaluation_ref(
-            read, read.span, evaluation, label, place=True, of=projected.base
-        )
+        return _evaluation_ref(read, read.span, evaluation, label, place=True, of=stored)
 
     def field(self, selector):
         self.validate_identity()
@@ -19346,11 +19418,11 @@ class ObjectPlaceStateV1(Expression):
 
         testimony = self.value_testimonies[index]
         ConstructedValueTestimonyV1.decode(testimony.wire())
-        projected = self.values[index]
-        if not isinstance(projected, ConstructedValueProjectionV1):
-            raise BindingProvenanceGap("field value lacks constructed projection")
-        projected.validate_testimony()
-        if projected.construction_testimony != testimony:
+        stored = self.values[index]
+        # The testimony names the stored expression itself.
+        if not isinstance(stored, Node) or (
+            _occurrence_testimony(stored).cid != testimony.cid
+        ):
             raise BindingProvenanceGap("field value testimony mismatch")
         version_type = (
             AttributeFieldVersionV1
@@ -19366,7 +19438,7 @@ class ObjectPlaceStateV1(Expression):
             or version.prior_version_cid != self.prior_version_cids[index]
         ):
             raise BindingProvenanceGap("field version CID mismatch")
-        return projected
+        return stored
 
     def invalidate(self, occurrence):
         self.validate_identity()
@@ -19409,7 +19481,6 @@ class ObjectPlaceStateV1(Expression):
                     ("object_coordinate", Leaf(self.object_coordinate)),
                     ("class_definition_cid", Leaf(self.class_definition_cid)),
                     ("construction_testimony", Leaf(self.construction_testimony)),
-                    ("constructed_value", Leaf(self.constructed_value)),
                     ("object_identity_cid", Leaf(self.object_identity_cid)),
                     ("base", Child(_handle_of(self.base))),
                     ("selectors", Leaf(selectors)),
@@ -19839,7 +19910,9 @@ class PathAfterCall(Expression):
 
     The statement binds the call's pair under its key (``evaluation``,
     ``path_mutation_statement``): the projection reads the pair there, never
-    the call (and its operands) evaluated again at each read of the root."""
+    the call (and its operands) evaluated again at each read of the root.
+    ``root`` is the root as the statement read it (a name's reference to its
+    assignment's key), never the display or call the name was given."""
 
     call: Expression
     root: Expression

@@ -28,6 +28,17 @@ The residue of #7976, each a second way to obtain a value:
    assignment's key; the field reads the store statement's key.
 6. ``with cm:`` over a call result a name holds evaluated the call's
    operands again at the ``with``.  It reads the assignment's key.
+
+The residue of #7990:
+
+7. A read of the whole object after a field store read the assignment's
+   key alone: the object without the store.  It reads the object's latest
+   state, every keyed field store folded over the assignment's key.
+8. A path's root (``d`` in ``d['a'].append(x)``) evaluated the display the
+   name was given at every read.  It reads the name's key.
+9. The constructor call and every stored value were reduced at
+   substitution as identity testimony.  The testimony names the expression
+   (the key reference's ``of``); nothing is reduced at substitution.
 """
 
 from __future__ import annotations
@@ -35,7 +46,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.floor import ObjectValue, TermValue
 from sugar_lift_py_tests.floor.formal_selected_manager import (
     FormalSelectedManagerHeadSugar,
 )
@@ -45,9 +56,14 @@ from sugar_lift_py_tests.outcome import Completed, outcome_to_exitset
 from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
 from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
     ContainerMutationStatementSugar,
+    PathAfterCallSugar,
 )
+from sugar_lift_py_tests.sugar.collection_sugar import DictSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.place_assign_sugar import PlaceAssignSugar
+from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
+    ReceiverFieldStoreStateSugar,
+)
 from sugar_lift_py_tests.sugar.receiver_field_store_sugar import (
     ReceiverFieldStoreSugar,
 )
@@ -68,6 +84,7 @@ from sugar_source_tree.nodes import (
     ReceiverFieldStoreStatement,
     Return,
     With,
+    _occurrence_testimony,
 )
 from sugar_source_tree.tree import SourceFile
 
@@ -127,6 +144,25 @@ PLACE = (
 )
 # 6. A call result a name holds, the head of a ``with``.
 OPAQUE_HEAD = "def f(p, q):\n    cm = p.open(q)\n    return cm\n"
+# 7. The whole object read after a field store, its operand rebound after it.
+PLACE_OBJECT = (
+    "class Box:\n"
+    "    pass\n"
+    "\n"
+    "def f():\n"
+    "    box = Box()\n"
+    "    x = 1\n"
+    "    box.size: int = x\n"
+    "    x += 1\n"
+    "    return box\n"
+)
+# 8. A path's root read twice after a path mutation.
+PATH_ROOT_TWICE = (
+    "def f():\n"
+    "    d = {'a': []}\n"
+    "    d['a'].append(1)\n"
+    "    return (d, d)\n"
+)
 
 
 def _tree(source: str, context) -> SourceFile:
@@ -387,7 +423,10 @@ def test_an_object_place_reads_its_assignments_key() -> None:
     for state in states:
         assert state.evaluation == key
         sugar = state.sugar()
-        # The key, not the constructed value computed at substitution.
+        # Every store on the object so far, over the key: never the
+        # constructed value computed at substitution.
+        while isinstance(sugar, ReceiverFieldStoreStateSugar):
+            sugar = sugar.receiver
         assert isinstance(sugar, EvaluationRefSugar)
         assert sugar.evaluation == key
 
@@ -442,3 +481,142 @@ def test_an_opaque_with_head_reads_its_assignments_key() -> None:
     assert selected.operands == ()
     assert isinstance(selected.bound, EvaluationRefSugar)
     assert selected.bound.evaluation == head.evaluation
+
+
+# ---------------------------------------------------------------------------
+# 7. ``box.size: int = x``; ``return box``: the object read carries the field.
+# ---------------------------------------------------------------------------
+
+
+def test_an_object_read_after_a_field_store_folds_the_store() -> None:
+    body = _function(PLACE_OBJECT).substitute({}).body
+    assign = next(
+        node
+        for node in body
+        if isinstance(node, Assign)
+        and isinstance(node.targets[0], Name)
+        and node.targets[0].id == "box"
+    )
+    store = next(node for node in body if isinstance(node, AnnAssign))
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    assert isinstance(ret.value, ObjectPlaceStateV1)
+    sugar = ret.value.sugar()
+    # The store's field, read through the store's key, over the object as
+    # its constructor call left it, read through the assignment's key.
+    assert isinstance(sugar, ReceiverFieldStoreStateSugar)
+    assert sugar.attr == "size"
+    assert isinstance(sugar.value, EvaluationRefSugar)
+    assert sugar.value.place
+    assert sugar.value.evaluation == store.evaluation
+    assert isinstance(sugar.receiver, EvaluationRefSugar)
+    assert sugar.receiver.evaluation == projection_key(assign.evaluation, "box")
+
+
+def test_an_object_read_after_a_field_store_carries_the_field(
+    tmp_path: Path,
+) -> None:
+    returned = _returned(_outcome(tmp_path, PLACE_OBJECT, "place_object"))
+    assert len(returned) == 1, returned
+    (value,) = returned
+    assert isinstance(value, ObjectValue), value
+    # The value the store completed with (1), never the object without it
+    # and never ``x`` read again after its rebind.
+    assert [field.value for field in value.fields if field.name == "size"] == [ONE]
+
+
+# ---------------------------------------------------------------------------
+# 8. ``d['a'].append(1)``; ``return (d, d)``: the root is read through its key.
+# ---------------------------------------------------------------------------
+
+
+def test_a_path_root_is_read_through_its_key() -> None:
+    body = _function(PATH_ROOT_TWICE).substitute({}).body
+    assign = next(
+        node
+        for node in body
+        if isinstance(node, Assign)
+        and isinstance(node.targets[0], Name)
+        and node.targets[0].id == "d"
+    )
+    key = projection_key(assign.evaluation, "d")
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    afters = [node for node in ret.value.walk() if isinstance(node, PathAfterCall)]
+    assert afters
+    for after in afters:
+        # The root as the statement read it: ``d``'s key, never the display.
+        assert after.root.kind == "EvaluationRef"
+        assert after.root.evaluation == key
+        sugar = after.sugar()
+        assert isinstance(sugar, PathAfterCallSugar)
+        assert isinstance(sugar.root, EvaluationRefSugar)
+        assert sugar.root.evaluation == key
+
+
+def test_a_path_root_read_twice_evaluates_its_root_once(
+    tmp_path: Path, monkeypatch
+) -> None:
+    path = tmp_path / "path_root_twice.py"
+    path.write_text(PATH_ROOT_TWICE, encoding="utf-8")
+    functions = SourceFile(
+        path_source(str(path)),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).functions()
+    sugar = next(node for node in functions if node.name == "f").sugar()
+    original = DictSugar.desugar
+    evaluations = 0
+
+    def counted(self, ctx=None):
+        nonlocal evaluations
+        evaluations += 1
+        return original(self, ctx)
+
+    monkeypatch.setattr(DictSugar, "desugar", counted)
+    sugar.desugar(None)
+    # Once, at ``d = {'a': []}``; neither read of ``d`` evaluates it again.
+    assert evaluations == 1, evaluations
+
+
+# ---------------------------------------------------------------------------
+# 9. No constructor call and no stored value is reduced at substitution.
+# ---------------------------------------------------------------------------
+
+
+def test_no_constructor_call_is_reduced_at_substitution(monkeypatch) -> None:
+    def refused(value):
+        raise AssertionError(f"reduced at substitution: {value.kind}")
+
+    monkeypatch.setattr(Assign, "_constructed_floor_value", staticmethod(refused))
+    body = _place_body()
+    assign = next(
+        node
+        for node in body
+        if isinstance(node, Assign)
+        and isinstance(node.targets[0], Name)
+        and node.targets[0].id == "box"
+    )
+    store = next(node for node in body if isinstance(node, AnnAssign))
+    states = [
+        node
+        for statement in body
+        for node in statement.walk()
+        if isinstance(node, ObjectPlaceStateV1)
+    ]
+    assert states
+    for state in states:
+        # No constructed value rides the state: its testimony names the
+        # constructor call, the key reference's ``of``.
+        assert getattr(state, "constructed_value", None) is None
+        assert state.base.kind == "Call"
+        assert state.base.span == assign.value.span
+        assert (
+            state.construction_testimony.cid
+            == _occurrence_testimony(state.base).cid
+        )
+        state.validate_identity()
+        for value, testimony in zip(state.values, state.value_testimonies):
+            # A stored value is named by the stored expression itself.
+            assert value.span == store.value.span
+            assert testimony.cid == _occurrence_testimony(value).cid
+    assert any(state.selectors for state in states)

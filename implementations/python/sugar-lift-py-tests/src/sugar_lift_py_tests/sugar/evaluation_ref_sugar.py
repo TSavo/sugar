@@ -71,7 +71,11 @@ name.
 A read of what a store put in a place (``place``: ``o.x`` after ``o.x = v``,
 ``d`` after ``d[k] = v``) resolves through the store's key only: the store
 binds the value it stored there, and the read never evaluates ``v`` again.
-A place has no name, so where the key is unbound the read is refused.
+A place has no name, so where the key is unbound the read is refused.  A
+read of the whole object ``o`` after ``o.x = v`` is the object's own read
+(its assignment's key) with every such field read folded over it
+(``ReceiverFieldStoreStateSugar``): its latest state, never the object as it
+was before the store.
 
 A walrus's reference (``walrus``) resolves through the key only. A walrus
 nested in a larger expression carries its bind out to the enclosing statement

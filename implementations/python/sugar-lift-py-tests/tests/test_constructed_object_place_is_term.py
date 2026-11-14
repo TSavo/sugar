@@ -79,7 +79,9 @@ def test_attribute_receiver_still_requires_constructed_term() -> None:
     assert "AttributeSugar.receiver" in _ATTR.read_text(encoding="utf-8")
 
 
-def _construct_sugar_returns(class_name: str) -> set[str]:
+def _construct_sugar_returns(
+    class_name: str, method: str = "_construct_sugar"
+) -> set[str]:
     text = _NODES.read_text(encoding="utf-8")
     tree = ast.parse(text)
     cls = next(
@@ -91,7 +93,7 @@ def _construct_sugar_returns(class_name: str) -> set[str]:
         n
         for n in cls.body
         if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-        and n.name == "_construct_sugar"
+        and n.name == method
     )
     returns: set[str] = set()
     for sub in ast.walk(construct):
@@ -113,7 +115,10 @@ def test_constructed_value_projection_still_mints_promoted_class() -> None:
 def test_object_place_state_reads_its_assignment_key() -> None:
     """ObjectPlaceStateV1 reads the value its constructor call completed with
     at the assignment, through the assignment's key (#7757 item 7): never the
-    constructed value computed at substitution."""
-    returns = _construct_sugar_returns("ObjectPlaceStateV1")
+    constructed value computed at substitution.  A read of the object folds
+    every field store on it over that read (``ReceiverFieldStoreStateSugar``)."""
+    returns = _construct_sugar_returns("ObjectPlaceStateV1", "_object_sugar")
     assert "EvaluationRefSugar" in returns, returns
     assert "ConstructedObjectPlaceSugar" not in returns, returns
+    construct = _construct_sugar_returns("ObjectPlaceStateV1")
+    assert "ConstructedObjectPlaceSugar" not in construct, construct
