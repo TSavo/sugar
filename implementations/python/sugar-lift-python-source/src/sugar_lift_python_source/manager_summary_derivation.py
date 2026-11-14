@@ -1697,27 +1697,6 @@ def _exact_never_suppresses(value: object) -> bool:
     )
 
 
-def _exception_class_testimony_or_absence(unit, node):
-    """Project one exception ClassValue, or None when authority is unavailable.
-
-    ``SourceUnit.exception_class_value`` raises ``SugarNotWritten`` when the
-    identity has no closed authenticated class graph (opaque bases, no unique
-    ClassDef, etc.). That is truthful absence for the optional class_value
-    arm of exception-type formals — identity still seals without it.
-
-    Only ``SugarNotWritten`` maps to absence. ``ConstructionPanic``, invariant
-    errors, and unexpected runtime defects propagate: a broad ``except
-    Exception`` would convert implementation failure into class_value=None and
-    certify a lie.
-    """
-    from sugar_source_tree.panic import SugarNotWritten
-
-    try:
-        return unit.exception_class_value(node)
-    except SugarNotWritten:
-        return None
-
-
 def populate_source_derived_resource_refs(
     source_file,
     *,
@@ -1738,36 +1717,20 @@ def populate_source_derived_resource_refs(
     must pass one shared session so export/frame amortization is real across
     receipts, consumer files, and same-content re-open under one workspace.
 
-    Second open of the same content (after §4 SourceFile + lexical residency):
-    prepare and lexical walks are free; this loop still re-seats into a fresh
-    consumer ``construction_context``. Frame/export projection is free only
-    when the same session is threaded (walk session). Live frame Nodes and
-    protocol-bearing CM refs are session-bound — they must not be parked under
-    a process-global content CID (same law as ``resolve_source_visible_frame``).
-    Pure gap rows alone would be content-CID-able; they are not the residual wall.
+    An imported manager is a coordinate plus an edge: its authenticated
+    definition is cited by its import target and its body is never read.
     """
     from pathlib import Path
 
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceDerivedContextManagerRefV1,
-    )
     from sugar_lift_py_tests.import_binding import (
         authenticated_import_use_receipts,
         authenticated_import_value_use_receipts,
     )
-    from sugar_lift_py_tests.ir import _term_content_cid
-    from sugar_lift_py_tests.outcome import Complete
-    from sugar_source_tree.binding_provenance import ConstructedValueTestimonyV1
 
     from .dependency_artifact import (
         ResolvedPythonObjectV1,
         resolve_import_binding,
     )
-    from .manager_construction import (
-        ConstructedCallActualV1,
-        construct_manager_behavior,
-    )
-    from .manager_protocol_construction import construct_manager_protocol
     from .resolution_session import session_or_new
 
     # Multi-resolve owner entry: one session for every receipt in this loop.
@@ -1936,422 +1899,17 @@ def populate_source_derived_resource_refs(
                 kind = getattr(resolved, "kind", None) or "no-derived-contract"
             _install_derivation_gap(context, coordinate, receipt, str(kind))
             continue
-        # A source-owned suspension is already the native manager testimony
-        # consumed by With._generator_manager_frame.  Install that exact frame
-        # before attempting object-protocol derivation: forcing a generator
-        # function's intentionally empty ordinary body only manufactures the
-        # misleading residual ``non-manager-result:BlockValue``.  The generator
-        # transition remains independently loud when its steps are opaque.
-        from sugar_source_tree.panic import SugarNotWritten
-
-        from .manager_construction import (
-            ManagerConstructionGapV1,
-            _install_source_call_frame,
-            resolve_source_visible_frame,
+        # An imported call is a coordinate plus an edge: the authenticated
+        # definition names the edge's target, and its body is never read.
+        # The manager stands cited by that target; the imported proof binds
+        # the edge.
+        _install_derivation_gap(
+            context,
+            coordinate,
+            receipt,
+            "call-target-off-population",
+            f"{resolved.module_name}.{resolved.definition.name}",
         )
-
-        # CITE, never abort: frame projection can SNW deep in a dependency
-        # (decorated FunctionDef, incomplete body) OR TypeError on construction
-        # (IfExpSugar body got SpreadCollectionSugar — #7062 second costume).
-        # Failure already parks a gap; success must not discard the open's
-        # function roster for the recensus.  One receipt's body gap is not the
-        # enrolled file's zero. Named classes only — never bare except (panics
-        # stay loud).
-        try:
-            frame_result = resolve_source_visible_frame(
-                resolved,
-                graph=graph,
-                dependency_graphs=graphs,
-                session=session,
-            )
-        except (SugarNotWritten, TypeError) as exc:
-            # Call operands authenticate their values, not the callee's
-            # enter/exit behavior. Preserve this construction refusal.
-            kind, detail = _populate_body_defect_kind_detail(exc)
-            _install_derivation_gap(
-                context,
-                coordinate,
-                receipt,
-                kind,
-                detail,
-            )
-            continue
-        if isinstance(frame_result, ManagerConstructionGapV1):
-            # Membrane / export gap: cite the same way failure does.  Do NOT
-            # fall through into construct_manager_behavior (that re-resolves
-            # and re-MaterializeModule the dependency).
-            kind, detail = _gap_kind_and_detail(frame_result)
-            _install_derivation_gap(context, coordinate, receipt, kind, detail)
-            continue
-        frame, generator_target = frame_result
-        if frame.generator_steps is not None:
-            _install_source_call_frame(context, call, frame)
-            # Seat the provider Call at the manager-use coordinate so a
-            # bare-Name With head resolves through its reaching binding
-            # rather than by spelling.  Direct Call heads already key the
-            # frame by their own span; the use-site seat is what carries
-            # assigned multi-manager projection.
-            context.source_manager_provider_calls[coordinate] = call
-            # Closed generator-backed resource contract: generator frame +
-            # native enter/exit definitions → one typed source-derived ref.
-            # Coordinates alone cannot construct the ref; non-generator
-            # frames refuse. No ObjectValue fabrication.
-            try:
-                _publish_generator_backed_resource_contract(
-                    context,
-                    coordinate,
-                    frame=frame,
-                    generator_target=generator_target,
-                    exit_face_id=exit_face_id,
-                    receipt=receipt,
-                    session=session,
-                    graph=graph,
-                    dependency_graphs=graphs,
-                    distribution_index=distribution_index,
-                    resolved_cid=resolved.cid,
-                )
-            except (SugarNotWritten, TypeError) as exc:
-                kind, detail = _populate_body_defect_kind_detail(exc)
-                _install_derivation_gap(
-                    context,
-                    coordinate,
-                    receipt,
-                    kind,
-                    detail,
-                )
-            continue
-        from sugar_lift_py_tests.context.reduce_context import ReduceContext
-        from sugar_lift_py_tests.temporal import builtin_name_temporal
-
-        actual_ctx = ReduceContext(temporal=builtin_name_temporal())
-        # Formals whose role is an exception-type operand (raises / warn / external_error).
-        _EXCEPTION_TYPE_FORMALS = frozenset(
-            {
-                "expected",
-                "expected_exception",
-                "expected_exceptions",
-                "exception",
-                "exc",
-                "exc_type",
-                "err_type",
-                "category",
-            }
-        )
-        frame_parameters = tuple(getattr(frame, "parameters", ()) or ())
-
-        def _actual_sugar(node, *, formal_name: str | None = None):
-            # Authentication is compositional: construct exception operands
-            # through their existing Sugar owners before reducing the tuple.
-            from dataclasses import replace
-
-            from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
-                AuthenticatedExceptionTypeSugar,
-            )
-            from sugar_lift_py_tests.sugar.collection_sugar import TupleSugar
-            from sugar_source_tree.nodes import Attribute, Name, Tuple_
-
-            surface = node.sugar()
-            if isinstance(node, Tuple_) and isinstance(surface, TupleSugar):
-                return replace(
-                    surface,
-                    elements=tuple(
-                        _actual_sugar(element, formal_name=formal_name)
-                        for element in node.elts
-                    ),
-                )
-            if isinstance(node, Name):
-                builtin = actual_ctx.temporal.value_if_bound(node.id)
-                if builtin is not None:
-                    return surface
-            # Exception-type formals: seal import / provider-gated identity.
-            if formal_name in _EXCEPTION_TYPE_FORMALS and isinstance(node, Name):
-                identity = None
-                mro = None
-                class_value = None
-                if isinstance(node, Name):
-                    identity = node.unit.exception_type_identity(node)
-                    if identity is None:
-                        identity = node.unit.imported_exception_type_identity(node)
-                    else:
-                        mro = node.unit.exception_type_mro(node)
-                        # Truthful absence vs loud defect: only SugarNotWritten
-                        # is authority unavailable (class_value=None). Bugs and
-                        # ConstructionPanic must not collapse to silent None.
-                        class_value = _exception_class_testimony_or_absence(
-                            node.unit, node
-                        )
-                if identity is not None:
-                    return AuthenticatedExceptionTypeSugar(
-                        surface,
-                        identity,
-                        mro,
-                        site=node.fragment,
-                        class_value=class_value,
-                    )
-            if isinstance(node, Attribute):
-                from sugar_source_tree.panic import UnattributableRefusal
-
-                from .external_exception_construction import (
-                    ExternalExceptionConstructionGap,
-                    construct_provider_exception_attribute,
-                )
-
-                try:
-                    testimony = construct_provider_exception_attribute(
-                        node,
-                        root=Path(root),
-                        path=Path(path),
-                        graph_cache=graphs,
-                        session=session,
-                        distribution_index=distribution_index,
-                    )
-                except ExternalExceptionConstructionGap as exc:
-                    raise UnattributableRefusal(
-                        owner="provider_exception_type_construction",
-                        blame=node.fragment,
-                        observed=str(exc),
-                        requested="provider-defined exception class testimony",
-                        fix=(
-                            "publish the named provider artifact source; never "
-                            "replace it with an attribute spelling"
-                        ),
-                    ) from exc
-                if testimony is not None:
-                    class_value = testimony.class_value()
-                    return AuthenticatedExceptionTypeSugar(
-                        surface,
-                        testimony.identity,
-                        testimony.ancestry,
-                        site=node.fragment,
-                        class_value=class_value,
-                    )
-                identity = node.unit.imported_exception_type_identity(node)
-                if identity is not None:
-                    qualified = getattr(identity.args[1], "value", None)
-                    if isinstance(qualified, str) and qualified:
-                        # The authenticated Sugar owns floor construction; the
-                        # imported coordinate need not re-evaluate its module.
-                        return AuthenticatedExceptionTypeSugar(
-                            surface, identity, site=node.fragment
-                        )
-            return surface
-
-        actuals = []
-        positional_sugars = []
-        actual_refusal = None
-        for index, node in enumerate(call.args):
-            formal_name = (
-                frame_parameters[index] if index < len(frame_parameters) else None
-            )
-            actual_sugar = _actual_sugar(node, formal_name=formal_name)
-            try:
-                outcome = _completed_actual(actual_sugar.desugar(actual_ctx))
-            except SugarNotWritten as exc:
-                # The actual's own named refusal (an undecided ``self.x``
-                # receiver) is this With's refusal, never a file terminal.
-                actual_refusal = exc
-                actuals = []
-                break
-            if not isinstance(outcome, Complete):
-                actuals = []
-                break
-            positional_sugars.append(actual_sugar)
-            actuals.append(
-                ConstructedCallActualV1(
-                    node,
-                    outcome.value,
-                    ConstructedValueTestimonyV1.mint(
-                        node.fragment,
-                        _term_content_cid(outcome.value.to_term(owner=resolved.cid)),
-                    ),
-                )
-            )
-        keyword_actuals = []
-        keyword_sugars = []
-        if len(actuals) == len(call.args):
-            for keyword in call.keywords:
-                if keyword.arg is None:
-                    keyword_actuals = []
-                    actuals = []
-                    break
-                actual_sugar = _actual_sugar(keyword.value, formal_name=keyword.arg)
-                try:
-                    outcome = _completed_actual(actual_sugar.desugar(actual_ctx))
-                except SugarNotWritten as exc:
-                    actual_refusal = exc
-                    keyword_actuals = []
-                    actuals = []
-                    break
-                if not isinstance(outcome, Complete):
-                    keyword_actuals = []
-                    actuals = []
-                    break
-                keyword_sugars.append((keyword.arg, actual_sugar))
-                keyword_actuals.append(
-                    (
-                        keyword.arg,
-                        ConstructedCallActualV1(
-                            keyword.value,
-                            outcome.value,
-                            ConstructedValueTestimonyV1.mint(
-                                keyword.value.fragment,
-                                _term_content_cid(
-                                    outcome.value.to_term(owner=resolved.cid)
-                                ),
-                            ),
-                        ),
-                    )
-                )
-        if actual_refusal is not None or len(actuals) != len(call.args):
-            _install_derivation_gap(
-                context,
-                coordinate,
-                receipt,
-                "incomplete-call-actuals",
-                *(
-                    ()
-                    if actual_refusal is None
-                    else (str(getattr(actual_refusal, "observed", actual_refusal)),)
-                ),
-            )
-            continue
-        from sugar_lift_py_tests.context_manager_contract import (
-            ContextManagerContractError,
-        )
-
-        try:
-            behavior = construct_manager_behavior(
-                resolved,
-                graph=graph,
-                actuals=tuple(actuals),
-                keyword_actuals=tuple(keyword_actuals),
-                call_site=call.fragment,
-                session=session,
-            )
-        except (SugarNotWritten, TypeError, ContextManagerContractError) as exc:
-            kind, detail = _populate_body_defect_kind_detail(exc)
-            _install_derivation_gap(
-                context,
-                coordinate,
-                receipt,
-                kind,
-                detail,
-            )
-            continue
-        from .manager_construction import (
-            ConstructedManagerBehaviorV1,
-            PartitionedManagerBehaviorV1,
-        )
-        from .manager_protocol_construction import ConstructedManagerProtocolV1
-
-        if isinstance(behavior, PartitionedManagerBehaviorV1):
-            # The factory returns managers of more than one kind on its faces:
-            # construct each, enter each under its own guard (#7669).
-            _publish_manager_face_partition(
-                context,
-                coordinate,
-                behavior,
-                receipt=receipt,
-                exit_face_id=exit_face_id,
-                session=session,
-                graph=graph,
-                dependency_graphs=graphs,
-                distribution_index=distribution_index,
-                positional_sugars=tuple(positional_sugars),
-                keyword_sugars=tuple(keyword_sugars),
-            )
-            continue
-        if not isinstance(behavior, ConstructedManagerBehaviorV1):
-            # Stage-keyed residual — never collapse assertion-membrane mass into
-            # a single opaque label, and never fuse the stage with its data:
-            # `value-call-target` is the key, the callee names are the row.
-            kind, detail = _gap_kind_and_detail(behavior)
-            if (
-                kind == "call-target-off-population"
-                and detail
-                and _seat_off_population_citation(
-                    context,
-                    coordinate,
-                    detail,
-                    kind,
-                    receipt.demand.get("cid", receipt.use["cid"]),
-                )
-            ):
-                # The factory returned an off-population callee's result: the
-                # citation names THAT callee, not the factory (#7667).
-                continue
-            _install_derivation_gap(context, coordinate, receipt, kind, detail)
-            continue
-        try:
-            protocol = construct_manager_protocol(behavior, exit_face_id=exit_face_id)
-        except (SugarNotWritten, TypeError) as exc:
-            # Call operands authenticate their values, not the callee's
-            # enter/exit behavior. Preserve this construction refusal.
-            kind, detail = _populate_body_defect_kind_detail(exc)
-            _install_derivation_gap(
-                context,
-                coordinate,
-                receipt,
-                kind,
-                detail,
-            )
-            continue
-        if not isinstance(protocol, ConstructedManagerProtocolV1):
-            kind, detail = _gap_kind_and_detail(protocol)
-            _install_derivation_gap(context, coordinate, receipt, kind, detail)
-            continue
-        summary = derive_manager_summary(protocol, behavior=behavior)
-        if isinstance(summary, FactoredEffectBoundarySummaryV1):
-            # Both message-pattern edges stay published; never recombine and
-            # never relabel as generic no-derived-contract.
-            from sugar_lift_py_tests.context_manager_resolution import (
-                FactoredSourceDerivedContextManagerRefV1,
-            )
-
-            context.source_derived_contract_refs[coordinate] = (
-                FactoredSourceDerivedContextManagerRefV1(
-                    coordinate,
-                    summary.protocol_construction_cid,
-                    summary.enter_testimony_cid,
-                    summary.exit_testimony_cid,
-                    summary.boundary_faces,
-                    summary.import_signature,
-                    protocol,
-                )
-            )
-            continue
-        if not isinstance(summary, DerivedManagerSummaryV1):
-            kind, detail = _gap_kind_and_detail(summary)
-            _install_derivation_gap(context, coordinate, receipt, kind, detail)
-            continue
-        # Publication: class-source __enter__/__exit__ definition coordinates
-        # at the exact use-site receiver. Consumption reads them through
-        # require_native_definition; this arm never looks them up later.
-        from sugar_lift_py_tests.context_manager_resolution import (
-            SourceCallActualSugarsV1,
-        )
-
-        _publish_class_protocol_native_definitions(context, coordinate, behavior)
-        context.source_derived_contract_refs[coordinate] = (
-            SourceDerivedContextManagerRefV1(
-                coordinate,
-                summary.summary_cid,
-                summary.semantics,
-                summary.import_signature,
-                protocol,
-                call_actual_sugars=(
-                    SourceCallActualSugarsV1(
-                        coordinate,
-                        tuple(positional_sugars),
-                        tuple(keyword_sugars),
-                        behavior.source_call_frame,
-                    )
-                    if isinstance(summary.semantics, ProtocolResourceSemanticsV1)
-                    else None
-                ),
-            )
-        )
-        _seat_projected_manager_call_frame(context, coordinate, call, behavior)
 
     # ``with open(...)`` first: it depends on no other row, and a same-module
     # manager whose own body opens a file (``@contextmanager def g(): with
@@ -2714,11 +2272,6 @@ def _populate_assigned_partition_manager_uses(
         authenticate_dependency_top_level,
         resolve_import_binding,
     )
-    from .manager_construction import (
-        ManagerConstructionGapV1,
-        resolve_source_visible_frame,
-    )
-
     def arm_coordinate(node):
         span = node.value.line_col_span()
         return SourceFragmentCoordinateV1(
@@ -2818,27 +2371,8 @@ def _populate_assigned_partition_manager_uses(
                     kind = getattr(resolved, "kind", None) or "no-derived-contract"
                     failed = (f"partition-member-{kind}", receipt.target_symbol)
                     break
-                frame_result = resolve_source_visible_frame(
-                    resolved,
-                    graph=graph,
-                    dependency_graphs=graphs,
-                    session=session,
-                )
-                if not isinstance(frame_result, ManagerConstructionGapV1):
-                    # An in-population member has a real body. Folding N
-                    # derived protocols under one selection is its own law;
-                    # keep this arm loud under a name that says so.
-                    failed = (
-                        "partition-member-derived-unfolded",
-                        f"{receipt.target_symbol} resolves to an enrolled definition",
-                    )
-                    break
-                if frame_result.kind != "call-target-off-population":
-                    failed = (
-                        f"partition-member-{frame_result.kind}",
-                        f"{receipt.target_symbol}: {frame_result.detail}",
-                    )
-                    break
+                # The member is an imported call: cited by its target, its
+                # body never read.
             demand_cid = receipt.demand.get("cid", receipt.use["cid"])
             roster = opaque_source_call_roster_of(
                 OpaqueSourceCallObligationV1(
@@ -3650,96 +3184,6 @@ def _populate_formal_selected_manager_uses(
             )
 
 
-def _seat_imported_binder_frame(
-    context, call, value_receipts_by_site, *, graphs, session, distribution_index
-) -> None:
-    """Seat the source frame of an imported, enrolled function ``call`` names.
-
-    ``zstd = import_optional_dependency("zstandard", errors="ignore")``: the
-    callee is a plain function of an enrolled module
-    (``pandas.compat._optional``).  Its identity is the authenticated value
-    receipt at the callee occurrence; its body is the frame the export door
-    projects, bound to this call's own operands -- the same seat
-    ``populate_source_visible_call_frames`` installs -- so the call reduces
-    through that body and its return arms carry what it returns.  An
-    off-population callee, a decorated definition, a class, a call whose
-    operands do not bind, or a coordinate another owner already classified is
-    left as it was (the call stays the two-faced unprojected call).
-    """
-    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-    from sugar_source_tree.nodes import FunctionDef, Name
-    from sugar_source_tree.panic import SugarNotWritten
-
-    from .dependency_artifact import (
-        DependencyArtifactAuthenticationError,
-        ResolvedPythonObjectV1,
-        resolve_import_binding,
-    )
-    from .manager_construction import (
-        ManagerConstructionGapV1,
-        _call_coordinate,
-        _dependency_graph_for_top,
-        _graph_is_off_population,
-        _install_source_call_frame,
-        resolve_source_visible_frame,
-    )
-
-    if not isinstance(call.func, Name):
-        return
-    if any(keyword.arg is None for keyword in call.keywords):
-        return
-    coordinate = _call_coordinate(call)
-    if (
-        coordinate in context.source_call_frames
-        or coordinate in context.opaque_source_call_obligations
-    ):
-        return
-    span = call.func.line_col_span()
-    receipt = value_receipts_by_site.get(
-        (
-            call.unit.source_cid,
-            span.start_line,
-            span.start_col,
-            span.end_line,
-            span.end_col,
-        )
-    )
-    if receipt is None:
-        return
-    top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-    try:
-        graph = graphs.get(top_level) or _dependency_graph_for_top(
-            top_level,
-            session=session,
-            dependency_graphs=graphs,
-            distribution_index=distribution_index,
-        )
-    except DependencyArtifactAuthenticationError:
-        return
-    resolved = resolve_import_binding(receipt, graph=graph, session=session)
-    if not isinstance(resolved, ResolvedPythonObjectV1):
-        return
-    if _graph_is_off_population(graph, session=session, module_name=resolved.module_name):
-        return
-    try:
-        projected = resolve_source_visible_frame(resolved, graph=graph, session=session)
-    except (SugarNotWritten, TypeError):
-        return
-    if isinstance(projected, ManagerConstructionGapV1):
-        return
-    frame, target = projected
-    if type(target) is not FunctionDef or target.decorators:
-        return
-    try:
-        frame = frame.bind_node_actuals(
-            call.args,
-            tuple((keyword.arg, keyword.value) for keyword in call.keywords),
-        )
-    except SourceCallBindingGap:
-        return
-    _install_source_call_frame(context, call, frame)
-
-
 def _returned_floors(value, depth: int = 0) -> tuple:
     """The floors a completed call value can be, read through its return arms.
 
@@ -3848,8 +3292,7 @@ def _populate_call_bound_module_head_uses(
     is not a module, or a head any reader seated is left alone.
 
     ``scope`` is the node whose ``with`` statements are read: a consumer
-    module's root, or one function of a dependency frame
-    (``_publish_nested_same_module_manager_uses``).
+    module's root.
     """
     from sugar_lift_py_tests.context_manager_resolution import (
         OpaqueSourceCallObligationV1,
@@ -3898,14 +3341,6 @@ def _populate_call_bound_module_head_uses(
             binder = calls_by_start.get(binder_start)
             if binder is None:
                 continue
-            _seat_imported_binder_frame(
-                context,
-                binder,
-                value_receipts_by_site,
-                graphs=graphs,
-                session=session,
-                distribution_index=distribution_index,
-            )
             module_name = _module_returned_by_call(binder)
             if module_name is None:
                 continue
@@ -4183,138 +3618,6 @@ def _publish_class_protocol_native_definitions(context, receiver, behavior) -> N
     )
     _publish_native_definition(
         context, receiver, NativeProtocolSlot.CONTEXT_EXIT, exit_
-    )
-
-
-def _publish_manager_face_partition(
-    context,
-    coordinate,
-    behavior,
-    *,
-    receipt,
-    exit_face_id,
-    session,
-    graph,
-    dependency_graphs,
-    distribution_index,
-    positional_sugars,
-    keyword_sugars,
-) -> None:
-    """Publish one resource ref whose protocol enters each face's own manager.
-
-    A factory returning ``nullcontext()`` under one guard and
-    ``assert_produces_warning(...)`` under its complement returns a class
-    manager on one face and a generator manager on the other.  Each is
-    constructed here by the door its kind already has: the class manager's
-    ``__enter__``/``__exit__`` frames, the generator's decorator-constructed
-    lifecycle.  The With enters every manager face its reduction of the
-    factory produces, under that face's guard, and unions the exits.  Never
-    one face for all.  A face whose manager cannot be constructed keeps its
-    named refusal.
-    """
-    from sugar_lift_py_tests.context_manager_contract import (
-        EnterResultContractV1,
-        ExitContractV1,
-        ImportSignatureV2,
-        ProtocolResourceSemanticsV1,
-        ReturnTruthinessDispositionV1,
-    )
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceCallActualSugarsV1,
-        SourceDerivedContextManagerRefV1,
-    )
-    from sugar_lift_py_tests.ir import PrimitiveSort
-    from sugar_source_tree.panic import SugarNotWritten
-
-    from .manager_protocol_construction import (
-        ConstructedManagerProtocolV1,
-        construct_generator_backed_protocol,
-        construct_manager_partition_protocol,
-        construct_manager_protocol,
-    )
-
-    def refuse(kind, detail=None):
-        _install_derivation_gap_for_receipt(context, coordinate, receipt, kind, detail)
-
-    class_protocol = None
-    if behavior.class_behavior is not None:
-        try:
-            class_protocol = construct_manager_protocol(
-                behavior.class_behavior, exit_face_id=exit_face_id
-            )
-        except (SugarNotWritten, TypeError) as exc:
-            refuse(*_populate_body_defect_kind_detail(exc))
-            return
-        if not isinstance(class_protocol, ConstructedManagerProtocolV1):
-            refuse(*_gap_kind_and_detail(class_protocol))
-            return
-    generator_protocols = []
-    for machine in behavior.generators:
-        # The frame that allocated this face's machine: the protocol enters
-        # exactly the machines that frame allocates.
-        frame = machine.source_frame
-        declined: list[str] = []
-        coords = _protocol_coords_from_generator_decorators(
-            frame.owner,
-            session=session,
-            graph=graph,
-            dependency_graphs=dependency_graphs,
-            distribution_index=distribution_index,
-            declined=declined,
-        )
-        if coords is None:
-            refuse(
-                "generator-protocol",
-                "native enter/exit definition coordinates unavailable"
-                + (f" [{'; '.join(declined)}]" if declined else ""),
-            )
-            return
-        enter, exit_ = coords
-        protocol = construct_generator_backed_protocol(
-            frame=frame,
-            enter_definition=enter,
-            exit_definition=exit_,
-            exit_face_id=exit_face_id,
-            construction_cid=behavior.manager_construction_cid,
-        )
-        gap = _generator_protocol_construction_gap(protocol)
-        if gap is not None:
-            refuse(*_gap_kind_and_detail(gap))
-            return
-        generator_protocols.append(protocol)
-    protocol = construct_manager_partition_protocol(
-        manager_construction_cid=behavior.manager_construction_cid,
-        exit_face_id=exit_face_id,
-        class_protocol=class_protocol,
-        generator_protocols=tuple(generator_protocols),
-    )
-    # Each member's exit result decides suppression for its own faces: a
-    # generator's GCM throw/resume result, a class manager's returned value.
-    semantics = ProtocolResourceSemanticsV1(
-        EnterResultContractV1(PrimitiveSort("Value")),
-        ExitContractV1(ReturnTruthinessDispositionV1()),
-    )
-    summary_cid = cid_of_json(
-        {
-            "kind": "source-derived-manager-partition-summary",
-            "schemaVersion": "1",
-            "protocolConstructionCid": protocol.protocol_construction_cid,
-        }
-    )
-    context.source_derived_contract_refs[coordinate] = (
-        SourceDerivedContextManagerRefV1(
-            coordinate,
-            summary_cid,
-            semantics,
-            ImportSignatureV2(()),
-            protocol,
-            call_actual_sugars=SourceCallActualSugarsV1(
-                coordinate,
-                positional_sugars,
-                keyword_sugars,
-                behavior.source_call_frame,
-            ),
-        )
     )
 
 
@@ -5627,13 +4930,11 @@ class DecoratorConstructedV1:
 
 @dataclass(frozen=True)
 class DecoratorCitedV1:
-    """The decorator is authenticated but OFF ENROLLED POPULATION.
+    """The decorator is an authenticated import: cited, its body never read.
 
-    Not an absence: the identity is known and content-addressed. The membrane
-    refuses to MaterializeModule it, which is correct -- constructing it would
-    invent testimony about a body sugar cannot see. What a consumer may do with
-    this citation is a separate ruling; what it may NOT do is mistake it for
-    "there was no decorator".
+    Not an absence: the identity is known and content-addressed. An imported
+    callee is a coordinate plus an edge; what a consumer may NOT do is mistake
+    this citation for "there was no decorator".
     """
 
     module_name: str
@@ -5659,8 +4960,6 @@ class DecoratorUnresolvedV1:
         "undecided",
         "module-absent-from-graph",
         "export-unresolved",
-        "frame-construction-gap",
-        "not-a-function-definition",
     ]
     detail: str
 
@@ -5686,10 +4985,6 @@ def _construct_decorator_function(
         ResolvedPythonObjectV1,
         authenticate_dependency_top_level,
         resolve_authenticated_module_export,
-    )
-    from .manager_construction import (
-        ManagerConstructionGapV1,
-        resolve_source_visible_frame,
     )
 
     binding = _decorator_module_export_binding(decorator)
@@ -5771,37 +5066,16 @@ def _construct_decorator_function(
             "export-unresolved",
             f"{module_name}.{exported_name} did not resolve in any authenticated graph",
         )
-    frame_result = resolve_source_visible_frame(
-        resolved,
-        graph=resolved_graph,
-        dependency_graphs=dependency_graphs,
-        session=session,
+    # An imported decorator is a coordinate plus an edge: its identity is
+    # authenticated and addressable, and its body is never read.  A citation
+    # is not absence: it is never mistaken for "there was no decorator".
+    return DecoratorCitedV1(
+        module_name=module_name,
+        exported_name=exported_name,
+        resolved=resolved,
+        membrane_kind="call-target-off-population",
+        membrane_detail=None,
     )
-    if isinstance(frame_result, ManagerConstructionGapV1):
-        # OFF-POPULATION IS NOT ABSENCE. The membrane refuses to materialize an
-        # unenrolled module -- correctly -- but the identity it refused to
-        # construct is authenticated and addressable. Returning None here made
-        # that indistinguishable from "there was no decorator", which is how a
-        # citable fact became a silent nothing.
-        if frame_result.kind == "call-target-off-population":
-            return DecoratorCitedV1(
-                module_name=module_name,
-                exported_name=exported_name,
-                resolved=resolved,
-                membrane_kind=frame_result.kind,
-                membrane_detail=frame_result.detail,
-            )
-        return DecoratorUnresolvedV1(
-            "frame-construction-gap",
-            f"{module_name}.{exported_name}: {frame_result.kind}: {frame_result.detail}",
-        )
-    _frame, target = frame_result
-    if not isinstance(target, FunctionDef):
-        return DecoratorUnresolvedV1(
-            "not-a-function-definition",
-            f"{module_name}.{exported_name} resolved to {type(target).__name__}",
-        )
-    return DecoratorConstructedV1(target)
 
 
 def _decorator_module_export_binding(decorator) -> tuple[str, str] | None:
@@ -5996,25 +5270,6 @@ def _direct_with_call_uses(root) -> dict:
                 item._exit_face_id(),
             )
     return uses
-
-
-def _seat_projected_manager_call_frame(context, coordinate, call, behavior) -> None:
-    """``ctx = cm(); with ctx:`` -- the assignment performs the manager call.
-
-    The With's use coordinate borrowed the reaching assignment's Call
-    (``_projected_manager_call_uses``).  That Call is evaluated where it is
-    written, once, and ``with ctx`` enters the value it bound; so the derived
-    frame is seated on the Call's own coordinate, where the assignment
-    constructs it, instead of leaving the assignment an unresolved callee
-    whose value the With cannot enter.  Direct ``with cm():`` heads (the use
-    coordinate IS the call) are untouched.
-    """
-    frame = getattr(behavior, "source_call_frame", None)
-    if frame is None or not getattr(call, "_borrowed_manager_call", False):
-        return
-    from .manager_construction import _install_source_call_frame
-
-    _install_source_call_frame(context, call, frame)
 
 
 def _projected_manager_call_uses(source_file, selected_arms=None):
@@ -6266,19 +5521,3 @@ def _install_derivation_gap(
         detail,
     )
     context.source_derived_contract_refs[coordinate] = gap
-
-
-def _completed_actual(outcome):
-    """The actual a manager's construction receives when it completes.
-
-    An actual that may raise (a two-faced call) halts the ``with`` statement's
-    construction, which owns that face (#7599); the manager's behavior is
-    derived over the one value its completed face carries.  More than one
-    completed face is not one actual."""
-    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
-
-    if isinstance(outcome, ExitSet):
-        completed = [face for face in outcome.exits if isinstance(face, Completed)]
-        if len(completed) == 1:
-            return Complete(completed[0].value)
-    return outcome

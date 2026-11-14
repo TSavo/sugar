@@ -220,42 +220,6 @@ def test_the_linear_projection_of_a_boundary_is_gone() -> None:
 # ---------------------------------------------------------------------------
 
 
-def _generator_resume_faces(tmp_path: Path, body: str):
-    from test_sole_path_manager_construction import _installed_generator_with
-
-    from sugar_lift_py_tests.outcome import Completed, ExitSet
-    from sugar_lift_py_tests.sugar.exit_set_routing import sugar_outcome_to_exitset
-
-    boundary = _installed_generator_with(
-        tmp_path,
-        f"def make_guard(o):\n    {body}\n    yield o\n",
-        "import arbitrary\ndef use(o):\n    with arbitrary.make_guard(o):\n        pass\n",
-    )
-    machine = sugar_outcome_to_exitset(boundary.manager.desugar()).exits[0].value
-    entered = machine.resume()
-    faces = entered.exits if isinstance(entered, ExitSet) else (entered,)
-    return [
-        (
-            type(face.value).__name__
-            if isinstance(face, Completed)
-            else type(face).__name__
-        )
-        for face in faces
-    ]
-
-
-def test_generator_truthful_half_reaches_its_yield(tmp_path: Path) -> None:
-    assert _generator_resume_faces(tmp_path, "y = 1") == ["YieldEffect"]
-
-
-def test_generator_lying_half_reaches_its_yield_when_the_store_completes(
-    tmp_path: Path,
-) -> None:
-    faces = _generator_resume_faces(tmp_path, "o.x = 1")
-
-    assert "YieldEffect" in faces
-
-
 # ---------------------------------------------------------------------------
 # 5. sugar/match_sugar.py _outcome_as_exitset / _incomplete_as_halted:
 #    struck. A guarded case has no sugar (Match.sugar refuses by name), and a

@@ -1188,10 +1188,6 @@ class TreeConstructionContextV1:
     workspace_root: str | None = None
     # Mutable frame table held by reference; the context object itself is frozen.
     source_call_frames: dict = field(default_factory=dict)
-    # Closed source-call preconstruction rows at exact use sites.  A frame is
-    # installed only beside a successful authenticated row; every other row is
-    # a typed loud classification consumed by census/linking.
-    source_call_resolutions: dict = field(default_factory=dict)
     # Unresolved named calls parked at exact source coordinates. Ordinary Sugar
     # construction consumes the testimony only when execution reaches the call.
     opaque_source_call_obligations: dict = field(default_factory=dict)
