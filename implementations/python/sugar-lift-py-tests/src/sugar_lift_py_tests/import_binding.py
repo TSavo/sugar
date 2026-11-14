@@ -485,7 +485,21 @@ def _bound_names(target: Node) -> set[str]:
 
 
 def module_name_for_path(root: Path, path: Path) -> str:
+    """The module name an import of ``path`` spells: the one speller of it.
+
+    The path under ``root``, without ``.py`` and a package's ``__init__``. A
+    src layout (``root/src/<package>/...`` with no ``root/src/__init__.py``)
+    is imported from inside ``src``: the distribution installs ``<package>``,
+    never ``src``, so a consumer's ``from <package> import <name>`` and the
+    defining module's own symbols name the same module (#7757).
+    """
     parts = list(path.relative_to(root).with_suffix("").parts)
+    if (
+        len(parts) > 1
+        and parts[0] == "src"
+        and not (Path(root) / "src" / "__init__.py").exists()
+    ):
+        parts.pop(0)
     if parts and parts[-1] == "__init__":
         parts.pop()
     return ".".join(parts)
@@ -595,6 +609,21 @@ class _Pass:
         self.module_state = module_state or {}
         self.analyze_nested = analyze_nested
         self.class_outer_states: dict[int, State] = {}
+
+    def module_import_target(self, name: str) -> str | None:
+        """The target symbol an import binds the module-level ``name`` to at
+        the module's end (#7757), or ``None`` when anything else reaches it
+        there (a rebinding, an unbound path, a provider gate, a submodule
+        chain). The table's binding, read where no reference uses it: a
+        package's re-export (``from .errors import E`` in ``__init__``)."""
+        binding = _unique_import_def_from_state(self.module_state, name)
+        if (
+            binding is None
+            or binding.submodule_tail
+            or binding.provider_gate is not None
+        ):
+            return None
+        return binding.target_symbol
 
     def _state_only_statement(
         self, node: Statement, state: State, scope: Node
