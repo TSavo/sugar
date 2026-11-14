@@ -67,6 +67,7 @@ def _opaque_pair(kind, method, site):
             producer_node_owner=f"BuiltinMethodCall:{target}",
         ),
         guard=completes,
+        site=site,
     )
 
 

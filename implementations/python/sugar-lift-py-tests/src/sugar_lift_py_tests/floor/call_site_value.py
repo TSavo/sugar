@@ -2100,6 +2100,7 @@ def _opaque_attribute_faces(receiver, name, site):
             producer_node_owner="CallSiteValue.attribute",
         ),
         guard=completes,
+        site=site,
     )
 
 
@@ -2142,6 +2143,7 @@ def _opaque_subscript_faces(outcome, site, *, producer="CallSiteValue.subscript"
             producer_node_owner=producer,
         ),
         guard=completes,
+        site=site,
         owed=owed,
     )
 

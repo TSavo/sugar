@@ -243,6 +243,7 @@ def select_boolop_operand(
                     producer_node_owner="BoolOpSugar.truth",
                 ),
                 guard=atomic("python:truth.completes", [truth]),
+                site=site,
             )
     else:
         refuse_undecided_boolean_truth(value, site, op_kind)

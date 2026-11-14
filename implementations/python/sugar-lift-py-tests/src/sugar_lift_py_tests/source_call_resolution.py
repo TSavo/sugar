@@ -551,18 +551,7 @@ class UnknownCalleeCallV1:
         from .ir import atomic, ctor, str_const
         from .occurrence import occurrence_key, occurrence_term
         from .outcome.exit_set import ExitSet
-        from .unanswered_calls import unanswered_call
 
-        # Nothing here answers this call: both arms OWE it (#7825, H4), and
-        # the full scan writes it once as the proof's `undecided` member
-        # (step 8), with the one import table's target symbol when the callee
-        # is import-bound, else none (Q5). Both arms, because the call is
-        # incurred whether it completes or raises.
-        owed = (
-            unanswered_call(
-                getattr(callsite, "authenticated_target_symbol", None), site
-            ),
-        )
         key = occurrence_key(site)
         # The call term names its occurrence by coordinate (#7808); `key`
         # stays the raise effect's own occurrence (listed on #7808).
@@ -571,6 +560,10 @@ class UnknownCalleeCallV1:
             (str_const(self.callee_name), occurrence_term(site)),
         )
         completes = atomic("python:unknown_callee_call.completes", [call])
+        # Nothing here answers this call: the one constructor makes both arms
+        # owe it (#7825, H4), and the full scan writes it once as the proof's
+        # `undecided` member (step 8), with the one import table's target
+        # symbol when the callee is import-bound, else none (Q5).
         return ExitSet.two_faced(
             _occurrence_result(callsite, site),
             UndeterminedRaiseEffect(
@@ -579,7 +572,8 @@ class UnknownCalleeCallV1:
                 producer_node_owner=f"UnknownCallee:{self.callee_name}",
             ),
             guard=completes,
-            owed=owed,
+            site=site,
+            symbol=getattr(callsite, "authenticated_target_symbol", None),
         )
 
 

@@ -22,7 +22,7 @@ evaluating its parts separately loses nothing.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from .floor_value import FloorValue
 
@@ -83,6 +83,10 @@ class FormalSelectedManagerHeadSugar(_sugar_base()):
 
     head: str
     site: str
+    # The With item's ``SourceFragmentCoordinateV1``: where each step is owed
+    # as the ``undecided`` member (``ExitSet.two_faced``).  ``site`` is its
+    # content key; this is the fragment the member names.
+    coordinate: object = field(compare=False)
     # The manager-producing call's own operands, in source order.  Python
     # selects the callee (attribute reads on the formal), then evaluates these,
     # then calls; so a head with operands is a two-faced ``select`` step,
@@ -109,12 +113,8 @@ class FormalSelectedManagerHeadSugar(_sugar_base()):
             )
         if not self.operands:
             return ExitSet.completed(value)
-        protocol = FormalSelectedManagerProtocol(self.head, self.site)
-        outcome = ExitSet.two_faced(
-            None,
-            protocol.step_raise("select"),
-            guard=protocol.step_completes("select"),
-        )
+        protocol = FormalSelectedManagerProtocol(self.head, self.site, self.coordinate)
+        outcome = protocol.step_faces("select", None)
         for operand in self.operands:
             outcome = outcome.and_then(
                 lambda _previous, operand=operand: operand.desugar(ctx)
@@ -128,9 +128,12 @@ class FormalSelectedManagerProtocol:
 
     head: str
     site: str
+    # The With item's ``SourceFragmentCoordinateV1``, where every step is
+    # owed (``step_faces``).  Testimony about the site, not part of the law.
+    coordinate: object = field(compare=False)
 
     def head_sugar(self):
-        return FormalSelectedManagerHeadSugar(self.head, self.site)
+        return FormalSelectedManagerHeadSugar(self.head, self.site, self.coordinate)
 
     def step_completes(self, step: str):
         """The site-keyed atom under which ``step`` completes."""
@@ -149,55 +152,54 @@ class FormalSelectedManagerProtocol:
         )
         return atomic(name, [call])
 
-    def step_raise(self, step: str):
-        """What ``step`` raises under the complement: nothing named."""
+    def step_faces(self, step: str, value):
+        """``step`` completes with ``value`` under its atom, or raises
+        something nothing names under the complement, through the one
+        two-faced constructor: the manager was selected by the caller, so
+        what ``step`` runs is not decided here and both faces owe it as the
+        ``undecided`` member at the With item."""
         from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return UndeterminedRaiseEffect(
-            blame=self.site,
-            occurrence=f"{self.site}#{step}",
-            producer_node_owner=f"FormalSelectedManager:{self.head}.{step}",
+        return ExitSet.two_faced(
+            value,
+            UndeterminedRaiseEffect(
+                blame=self.site,
+                occurrence=f"{self.site}#{step}",
+                producer_node_owner=f"FormalSelectedManager:{self.head}.{step}",
+            ),
+            guard=self.step_completes(step),
+            site=self.coordinate,
         )
 
     def construct_manager(self, receiver, ctx=None):
         del ctx
-        from sugar_lift_py_tests.outcome import ExitSet
-
         self._receiver(receiver)
-        return ExitSet.two_faced(
-            receiver,
-            self.step_raise("construct"),
-            guard=self.step_completes("construct"),
-        )
+        return self.step_faces("construct", receiver)
 
     def enter_resource_outcome_for(self, receiver, ctx=None):
         del ctx
         from sugar_lift_py_tests.floor.entered_manager_state_value import (
             EnteredManagerStateValue,
         )
-        from sugar_lift_py_tests.outcome import ExitSet
 
         manager = self._receiver(receiver)
-        return ExitSet.two_faced(
+        return self.step_faces(
+            "__enter__",
             EnteredManagerStateValue(
                 enter_value=FormalSelectedSlotResultValue(
                     self.head, "__enter__", self.site
                 ),
                 receiver_state=manager,
             ),
-            self.step_raise("__enter__"),
-            guard=self.step_completes("__enter__"),
         )
 
     def exit_outcome_for(self, entered, ctx=None):
         del ctx
-        from sugar_lift_py_tests.outcome import ExitSet
-
         self._receiver(entered.receiver_state)
-        return ExitSet.two_faced(
+        return self.step_faces(
+            "__exit__",
             FormalSelectedSlotResultValue(self.head, "__exit__", self.site),
-            self.step_raise("__exit__"),
-            guard=self.step_completes("__exit__"),
         )
 
     def _receiver(self, receiver):

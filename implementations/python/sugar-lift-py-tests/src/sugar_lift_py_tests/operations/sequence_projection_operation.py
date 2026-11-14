@@ -230,6 +230,7 @@ class SequenceProjectionOperation:
             ScopeRebinds(tuple(zip(names, members, strict=True))),
             effect,
             guard=guard,
+            site=self.blame,
         )
 
     def _arity_mismatch_exit(self, value: Any, members: int, display: str) -> Any:

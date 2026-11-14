@@ -314,6 +314,7 @@ def _unknown_receiver_attribute(receiver, name: str, site):
             producer_node_owner=f"UnknownAttribute:{dotted}",
         ),
         guard=completes,
+        site=site,
     )
 
 

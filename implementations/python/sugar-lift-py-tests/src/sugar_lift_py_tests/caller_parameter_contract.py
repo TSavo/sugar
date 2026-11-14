@@ -873,10 +873,10 @@ class NativeOperationExitCarrierV1:
     def unanswered_call(self):
         """The ``undecided`` member (``reason: unanswered``) this operation is
         owed as when its caller has no actual: no symbol, the operation's
-        site."""
-        from sugar_lift_py_tests.unanswered_calls import UnansweredCallV1
+        site: the one mint, ``unanswered_calls.unanswered_call``."""
+        from sugar_lift_py_tests.unanswered_calls import unanswered_call
 
-        return UnansweredCallV1(None, self.demand.source_node)
+        return unanswered_call(None, self.demand.source_node)
 
     def _unanswered_exits(self, absent):
         """This operation's own position when the caller has no actual.
@@ -912,7 +912,7 @@ class NativeOperationExitCarrierV1:
                 ),
             ),
             guard=atomic("python:unanswered_native_operation.completes", [operation]),
-            owed=(self.unanswered_call(),),
+            site=site,
             state=(
                 None if self.pre_effect_state is None else self.pre_effect_state.state
             ),
