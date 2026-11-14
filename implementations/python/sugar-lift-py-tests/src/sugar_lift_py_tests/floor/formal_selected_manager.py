@@ -89,6 +89,11 @@ class FormalSelectedManagerHeadSugar(_sugar_base()):
     # these operands' own outcomes, and only then the opaque value whose
     # construction the protocol's ``construct`` step owns.
     operands: tuple = ()
+    # A head a name holds (``cm = f.open(p); with cm:``): the read of the
+    # value its call completed with at the assignment, through the
+    # assignment's key.  The call's select step and operands ran there, once;
+    # the ``with`` only reads the name.
+    bound: object = None
 
     @classmethod
     def witnesses(cls):
@@ -98,6 +103,10 @@ class FormalSelectedManagerHeadSugar(_sugar_base()):
         from sugar_lift_py_tests.outcome import ExitSet
 
         value = FormalSelectedManagerValue(self.head, self.site)
+        if self.bound is not None:
+            return self.bound.desugar(ctx).and_then(
+                lambda _read: ExitSet.completed(value)
+            )
         if not self.operands:
             return ExitSet.completed(value)
         protocol = FormalSelectedManagerProtocol(self.head, self.site)

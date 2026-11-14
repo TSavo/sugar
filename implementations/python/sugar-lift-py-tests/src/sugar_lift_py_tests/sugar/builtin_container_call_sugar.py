@@ -534,7 +534,11 @@ def _replace_path(value, steps, post, check_shared):
 
 @dataclass(frozen=True)
 class PathAfterCallSugar(ConstructedTermSugar):
-    """A path's root (``mode='root'``) or its object (``'inner'``) after a call."""
+    """A path's root (``mode='root'``) or its object (``'inner'``) after a call.
+
+    ``call`` is the read of the call's pair the statement bound under its
+    key (``PathAfterCall``, ``ContainerMutationStatementSugar``): a read of
+    the root never runs the call again."""
 
     call: Sugar
     root: Sugar

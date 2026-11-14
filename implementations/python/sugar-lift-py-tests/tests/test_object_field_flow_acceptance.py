@@ -272,10 +272,13 @@ def test_branch_join_projects_both_authenticated_field_faces(tmp_path):
     )
     returned = next(node for node in substituted.walk() if node.kind == "Return")
     assert returned.value.kind == "IfExp"
-    assert returned.value.body.kind == "ConstructedValueProjectionV1"
-    assert returned.value.body.base.kind == "Constant"
-    assert returned.value.orelse.kind == "ConstructedValueProjectionV1"
-    assert returned.value.orelse.base.kind == "Constant"
+    # Each face reads its arm's store through that store's key; the stored
+    # constant is only the object the place holds.
+    for face in (returned.value.body, returned.value.orelse):
+        assert face.kind == "EvaluationRef"
+        assert face.place is True
+        assert face.of.kind == "Constant"
+    assert returned.value.body.evaluation != returned.value.orelse.evaluation
 
 
 def test_branch_join_with_one_unproved_field_face_stays_loud(tmp_path):
@@ -329,7 +332,8 @@ def test_opaque_call_invalidates_only_the_exposed_object(
         }
     )
     returned = next(node for node in substituted.walk() if node.kind == "Return")
-    assert returned.value.kind == "ConstructedValueProjectionV1"
+    assert returned.value.kind == "EvaluationRef"
+    assert returned.value.place is True
     states = [node for node in substituted.walk() if node.kind == "ObjectPlaceStateV1"]
     by_identity = {state.object_identity_cid: state for state in states}
     assert len({state.object_identity_cid for state in states}) == 2
@@ -613,6 +617,9 @@ def _forge_state(state, **overrides):
                     "invalidated_by_opaque_call",
                     Leaf(values["invalidated_by_opaque_call"]),
                 ),
+                ("evaluation", Leaf(state.evaluation)),
+                ("name", Leaf(state.name)),
+                ("store_evaluations", Leaf(state._store_evaluations())),
             ),
         ),
         state.reporter,

@@ -50,67 +50,14 @@ class ExprStatementSugar(Sugar):
         # would be a value, and this record entry is not one. An occurrence
         # that does not authenticate keeps its ordinary call coordinate and the
         # boundary names it unresolved; it is never read as "no warning".
-        if ctx is not None:
-            recorded = self._evaluate_receiver_field_store(ctx)
-            if recorded is not None:
-                return recorded
+        #
+        # A receiver field store's post-state (``o.x = v``,
+        # ``ReceiverFieldStoreState``) reads its stored value through the
+        # store statement's key (``KeyedStoreSugar``), so a later read of
+        # ``o`` never evaluates ``v`` again: it needs no record of its own.
         return self.value.desugar(ctx).and_then(
             lambda value: self._record_statement_value(value, ctx)
         )
-
-    def _evaluate_receiver_field_store(self, ctx):
-        """``self.attr = <rhs>`` evaluates once; later reads of ``self`` see it.
-
-        Substitution threads the stored receiver into every later read of
-        ``self`` as this same store sugar, so without a record each
-        ``self.attr`` read re-evaluates the whole store, ``<rhs>`` included
-        (``Version.__init__`` reads ``self._version`` six times, each replaying
-        ``_Version(...)`` and its three ``_parse_letter_version`` calls).  This
-        is the assignment law (``sugar/assigned_value.py``) applied to the
-        receiver store: the statement evaluates the store once, its halts leave
-        here, and each completed face records the stored receiver under the
-        store's occurrence, so a read answers that face's receiver and never
-        evaluates again.  ``None`` when the value is not a receiver field store
-        or has no occurrence to key; the ordinary path then runs unchanged.
-        """
-        from sugar_lift_py_tests.sugar.assigned_value import (
-            assigned_key,
-            evaluate_assignment_values,
-        )
-        from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            _ReducedBlock,
-            plain_completed_value,
-        )
-        from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
-            ReceiverFieldStoreStateSugar,
-        )
-
-        if not isinstance(self.value, ReceiverFieldStoreStateSugar):
-            return None
-        if assigned_key(self.value) is None:
-            return None
-
-        def tail(active, completed):
-            (value,) = completed
-            recorded = self._record_statement_value(value, active)
-            plain = plain_completed_value(recorded)
-            follow = plain.follow_rest() if plain is not None else None
-            if (
-                follow is None
-                or not follow.continues
-                or follow.continuation_guard is not None
-                or follow.transform is not None
-            ):
-                # Not one plainly continuing record: hand it to the block
-                # reducer exactly as the ordinary path does.
-                return recorded
-            return ExitSet.completed(
-                _ReducedBlock(
-                    plain.contribution(), True, (), (), plain.extend_scope(active)
-                )
-            )
-
-        return evaluate_assignment_values((self.value,), ctx, tail=tail)
 
     def _record_statement_value(self, value, ctx):
         from sugar_lift_py_tests.floor.block_value import BlockValue
