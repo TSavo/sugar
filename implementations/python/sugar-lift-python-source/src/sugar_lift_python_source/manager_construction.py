@@ -3190,14 +3190,15 @@ def _resolve_source_visible_frame_uncached(
             )
             for pin in pin_scan.mutable_global_pins
         )
-        immutable_global_bindings = _immutable_global_bindings(
-            producer_root, pin_scan, module.source_cid
+        immutable_global_bindings, immutable_global_halts = _session_module_constants(
+            session, producer_root, pin_scan, module.source_cid
         )
         module_product = (
             source_file,
             producer_root,
             mutable_global_bindings,
             immutable_global_bindings,
+            immutable_global_halts,
         )
         session.remember_module_materialize(module_key, module_product)
     (
@@ -3205,6 +3206,7 @@ def _resolve_source_visible_frame_uncached(
         producer_root,
         mutable_global_bindings,
         immutable_global_bindings,
+        immutable_global_halts,
     ) = module_product
     context = source_file.unit.construction_context
 
@@ -3213,6 +3215,7 @@ def _resolve_source_visible_frame_uncached(
             frame,
             mutable_global_bindings=mutable_global_bindings,
             immutable_global_bindings=immutable_global_bindings,
+            immutable_global_halts=immutable_global_halts,
         )
 
     definitions = tuple(
@@ -4714,19 +4717,95 @@ def _classify_named_call_target(
     return "free-name"
 
 
-def _immutable_global_bindings(producer_root, pin_scan, source_cid):
-    """Admitted module value pins, each as the ground value its source binds.
+def _session_module_constants(session, producer_root, pin_scan, source_cid):
+    """The module's constants, reduced once per module under ``session``.
+
+    A module constant's right-hand side is reduced from the module's own
+    source alone (a root context, no frame), so its result is the same for
+    every dependency frame of that module: it is keyed on ``source_cid`` and
+    every frame reads the one result.
+    """
+    product = session.module_constants_hit(source_cid)
+    if product is None:
+        product = _module_constants(producer_root, pin_scan, source_cid)
+        session.remember_module_constants(source_cid, product)
+    return product
+
+
+def _is_ground_shaped(node) -> bool:
+    """A right-hand side built only of written literals and operators on them."""
+    from sugar_source_tree.nodes import (
+        BinOp,
+        BoolOp,
+        Compare,
+        Constant,
+        List as ListNode,
+        Set as SetNode,
+        Tuple_,
+        UnaryOp,
+    )
+
+    if isinstance(node, Constant):
+        return True
+    if isinstance(node, UnaryOp):
+        return _is_ground_shaped(node.operand)
+    if isinstance(node, BinOp):
+        return _is_ground_shaped(node.left) and _is_ground_shaped(node.right)
+    if isinstance(node, BoolOp):
+        return all(_is_ground_shaped(value) for value in node.values)
+    if isinstance(node, Compare):
+        return _is_ground_shaped(node.left) and all(
+            _is_ground_shaped(value) for value in node.comparators
+        )
+    if isinstance(node, (Tuple_, ListNode, SetNode)):
+        return all(_is_ground_shaped(element) for element in node.elts)
+    return False
+
+
+def _reduce_module_constant(statement):
+    """Reduce one module constant's right-hand side; None when unwritten."""
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_source_tree.panic import SugarNotWritten
+
+    try:
+        return statement.value.sugar().desugar(
+            ReduceContext.root(owner="module value pin")
+        )
+    except (SugarNotWritten, TypeError, ValueError):
+        return None
+
+
+def _is_decided_raise(outcome) -> bool:
+    from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.outcome import Incomplete
+
+    return (
+        isinstance(outcome, Incomplete)
+        and isinstance(outcome.effect, RaiseEffect)
+        and not outcome.branch_conditions
+    )
+
+
+def _module_constants(producer_root, pin_scan, source_cid):
+    """Admitted module value pins as their values, and constants that halt.
 
     ``scan_module_value_pins`` admits a name only when the module binds it
     once to an immutable value and never rebinds it.  The value is
     constructed from that binding's own right-hand side; a pin whose
     right-hand side does not construct to one ground value is not carried
     (the name stays what it was: a free symbolic read), never guessed.
+
+    A module constant whose ground right-hand side halts (``X = 1 // 0``)
+    is not a free name either: the module never finishes importing.  Its
+    halt is published by name (``ImmutableGlobalHaltV1``), never dropped.
+    Returns ``(bindings, halts)``, halts in source order.
     """
-    from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.effect import is_lift_time_decidable
     from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_py_tests.source_call_frame import ImmutableGlobalBindingV1
+    from sugar_lift_py_tests.source_call_frame import (
+        ImmutableGlobalBindingV1,
+        ImmutableGlobalHaltV1,
+    )
     from sugar_source_tree.panic import SugarNotWritten
 
     statements = {}
@@ -4741,20 +4820,28 @@ def _immutable_global_bindings(producer_root, pin_scan, source_cid):
             statements.setdefault(
                 (target.id, statement.line_col_span().start_line), statement
             )
+    pins = {
+        (pin.name, pin.line): pin
+        for pin in pin_scan.pins.values()
+        if "." not in pin.name
+    }
     bindings = []
-    for pin in pin_scan.pins.values():
-        if "." in pin.name:
+    halts = []
+    for (name, line), statement in statements.items():
+        pin = pins.get((name, line))
+        if pin is None and not _is_ground_shaped(statement.value):
             continue
-        statement = statements.get((pin.name, pin.line))
-        if statement is None:
+        outcome = _reduce_module_constant(statement)
+        if outcome is None:
             continue
-        try:
-            outcome = statement.value.sugar().desugar(
-                ReduceContext.root(owner="module value pin")
+        if _is_decided_raise(outcome):
+            halts.append(
+                ImmutableGlobalHaltV1(
+                    source_cid=source_cid, name=name, line=line, halt=outcome
+                )
             )
-        except (SugarNotWritten, TypeError, ValueError):
             continue
-        if not isinstance(outcome, Complete):
+        if pin is None or not isinstance(outcome, Complete):
             continue
         try:
             term = outcome.value.to_term(owner="module value pin")
@@ -4813,7 +4900,7 @@ def _immutable_global_bindings(producer_root, pin_scan, source_cid):
             value=source.value,
         )
         bindings.append(carried[name])
-    return tuple(bindings)
+    return tuple(bindings), tuple(sorted(halts, key=lambda halt: halt.line))
 
 
 def _scanned_definitions(definition: Node) -> tuple[FunctionDef, ...]:

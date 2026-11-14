@@ -136,6 +136,45 @@ class ImmutableGlobalBindingV1:
         )
 
 
+@dataclass(frozen=True)
+class ImmutableGlobalHaltV1:
+    """One module constant whose own right-hand side halts, published by name.
+
+    ``X = 1 // 0`` at module level: the module never finishes importing, so
+    no frame of it is ever entered.  The halt is the ``Incomplete`` its
+    right-hand side reduced to, reduced once per module; every frame of that
+    module carries it, and a call into such a frame is that halt.
+    """
+
+    source_cid: str
+    name: str
+    line: int
+    halt: object = field(compare=False)
+    cid: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        if not self.name or "." in self.name:
+            raise SourceCallBindingGap(
+                "immutable global halt requires one module-level name"
+            )
+        object.__setattr__(
+            self,
+            "cid",
+            cid_of_json(
+                {
+                    "kind": "immutable-global-halt",
+                    "schemaVersion": "1",
+                    "sourceCid": self.source_cid,
+                    "name": self.name,
+                    "line": self.line,
+                    "exceptionName": getattr(
+                        getattr(self.halt, "effect", None), "exception_name", None
+                    ),
+                }
+            ),
+        )
+
+
 def _reauthenticate_binding_coordinates(coordinates: tuple) -> None:
     from sugar_source_tree.binding_provenance import BindingProvenanceGap
 
@@ -454,6 +493,9 @@ class SourceVisibleCallFrameV1:
     immutable_global_bindings: tuple[ImmutableGlobalBindingV1, ...] = field(
         default=(), compare=False
     )
+    immutable_global_halts: tuple[ImmutableGlobalHaltV1, ...] = field(
+        default=(), compare=False
+    )
     constructed_new_method: object | None = field(default=None, compare=False)
     #: The class a ``@classmethod`` frame is already bound to (``Class.m``
     #: looked up before the call): its ``cls`` formal is not a parameter.
@@ -471,7 +513,10 @@ class SourceVisibleCallFrameV1:
             )
         if any(
             binding.source_cid != self.source_identity_cid
-            for binding in self.immutable_global_bindings
+            for binding in (
+                *self.immutable_global_bindings,
+                *self.immutable_global_halts,
+            )
         ):
             raise SourceCallBindingGap(
                 "immutable global binding source does not match source frame identity"
@@ -545,6 +590,10 @@ class SourceVisibleCallFrameV1:
         if self.immutable_global_bindings:
             preimage["immutableGlobalBindingCids"] = [
                 item.cid for item in self.immutable_global_bindings
+            ]
+        if self.immutable_global_halts:
+            preimage["immutableGlobalHaltCids"] = [
+                item.cid for item in self.immutable_global_halts
             ]
         if self.declaration_frame_cid is not None:
             preimage["declarationFrameCid"] = self.declaration_frame_cid
