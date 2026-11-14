@@ -75,6 +75,27 @@ def test_try_import_attribute_exception_identity_truthful(tmp_path):
     )
 
 
+def test_try_import_row_carries_its_gate_fact(tmp_path):
+    """The one table holds the try-import row with its gate fact: a reader
+    that cannot carry the provider-absent face (unbound name) reads nothing."""
+    tree = _tree(
+        tmp_path,
+        "try:\n"
+        "    import pyarrow\n"
+        "except ImportError:\n"
+        "    pass\n"
+        "def f():\n"
+        "    return pyarrow.ArrowException\n",
+    )
+    attr = _attribute_named(tree, "ArrowException")
+    unit = tree.root.unit
+    assert unit.import_reference_of(attr) is None
+    assert (
+        unit.import_reference_of(attr, admit_provider_gate=True)
+        == "python:pyarrow.ArrowException"
+    )
+
+
 def test_static_import_attribute_exception_identity_still_works(tmp_path):
     """Ordinary static import remains the primary door."""
     tree = _tree(

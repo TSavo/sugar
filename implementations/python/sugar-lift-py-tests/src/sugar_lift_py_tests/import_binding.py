@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from functools import cached_property
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass, field as dataclass_field, replace
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping
@@ -116,6 +116,37 @@ class _ImportDef:
     # its member path is read after the ``("b", "c")`` it spells.  ``a.y`` is
     # a member of the package ``a``, which this binding does not name.
     submodule_tail: tuple[str, ...] = ()
+    # The optional-provider gate this binding came through, or ``None`` for an
+    # ordinary import statement (see ``ImportReference.provider_gate``).
+    provider_gate: str | None = None
+
+
+# ``name = pytest.importorskip("m")``: an absent provider halts at that call,
+# so every path past the statement reads the import.
+PROVIDER_GATE_IMPORTORSKIP = "pytest.importorskip"
+# ``try: import m`` / ``except ImportError``: an absent provider leaves the
+# name unbound, so a reference reads the import only where the provider exists.
+PROVIDER_GATE_TRY_IMPORT = "try-import"
+
+
+@dataclass(frozen=True)
+class ImportReference:
+    """One row of the import reference table (#7837, #7851).
+
+    ``target_symbol`` is the import-bound reference's target.  ``provider_gate``
+    is the gate fact the binding carries: ``None`` for an import statement,
+    ``PROVIDER_GATE_IMPORTORSKIP`` or ``PROVIDER_GATE_TRY_IMPORT`` for an
+    optional provider.  Only a try-import row is not bound on every path that
+    reaches it; a reader that cannot carry the provider-absent face (a call,
+    a value use) does not read it.
+    """
+
+    target_symbol: str
+    provider_gate: str | None = None
+
+    @property
+    def bound_on_every_path(self) -> bool:
+        return self.provider_gate != PROVIDER_GATE_TRY_IMPORT
 
 
 @dataclass(frozen=True)
@@ -426,6 +457,9 @@ def _target_symbol(binding: _ImportDef, member: tuple[str, ...]) -> str:
 
 _NON_IMPORT = "non-import"
 _UNBOUND = "unbound"
+# The unbound face of a closed try-import provider gate: the name is unbound
+# because the provider's import failed into an ``except ImportError`` handler.
+_PROVIDER_ABSENT = "provider-absent"
 Definition = _ImportDef | _ModuleFunctionDef | str
 State = dict[str, frozenset[Definition]]
 
@@ -555,8 +589,9 @@ class _Pass:
         # head is import-bound -- keyed by that reference's own coordinate.
         # One law (the strict one calls and value uses follow). Every reader
         # (calls of any callee shape, value reads, the exception
-        # authenticator, ``typing.cast``, ``importorskip``) looks here.
-        self.reference_targets: dict[tuple[int, int, int, int], str] = {}
+        # authenticator, ``typing.cast``, ``importorskip``) looks here.  A row
+        # carries its binding's provider-gate fact (``ImportReference``).
+        self.reference_targets: dict[tuple[int, int, int, int], ImportReference] = {}
         self.module_state = module_state or {}
         self.analyze_nested = analyze_nested
         self.class_outer_states: dict[int, State] = {}
@@ -603,11 +638,17 @@ class _Pass:
             # A name USE whose sole reaching definition is an import statement
             # is lexically bound to that import's target coordinate. One law:
             # unique ImportDef only -- shadowing, reassignment, an unbound join
-            # (an optional ``try: import``) and wildcard ambiguity bind nothing.
+            # and wildcard ambiguity bind nothing.  A closed try-import gate
+            # (the import, or unbound because the provider is absent) records
+            # its row with that gate fact and enrolls no value use.
             value_binding = self._unique_import_def(node.id, state, allow_unbound=False)
             if value_binding is not None and not value_binding.submodule_tail:
                 self._record_reference(node, value_binding, ())
                 self._enroll_value_use(node, value_binding, ())
+                return
+            gated = self._try_import_gated_def(node.id, state)
+            if gated is not None and not gated.submodule_tail:
+                self._record_reference(node, gated, ())
             return
         if node.kind == "Attribute":
             # Value occurrence of ``head.attr...`` when head is uniquely
@@ -621,14 +662,20 @@ class _Pass:
                 binding = self._unique_import_def(
                     local_name, state, allow_unbound=False
                 )
+                gated = (
+                    self._try_import_gated_def(local_name, state)
+                    if binding is None
+                    else None
+                )
                 member = (
-                    _member_path_after_submodule(binding, exported_path)
-                    if binding is not None
+                    _member_path_after_submodule(binding or gated, exported_path)
+                    if (binding or gated) is not None
                     else None
                 )
                 if member is not None:
-                    self._record_reference(node, binding, member)
-                    self._enroll_value_use(node, binding, member)
+                    self._record_reference(node, binding or gated, member)
+                    if binding is not None:
+                        self._enroll_value_use(node, binding, member)
             return
         if node.kind == "Call":
             self.expression(node.func, state, scope)
@@ -683,6 +730,84 @@ class _Pass:
         return next(iter(imports))
 
     @staticmethod
+    def _try_import_gated_def(local_name: str, state: State) -> _ImportDef | None:
+        """The try-import gated definition reaching ``local_name``, or None:
+        exactly that import, or unbound because its provider is absent."""
+        reaching = state.get(local_name, frozenset({_UNBOUND}))
+        if _PROVIDER_ABSENT not in reaching or len(reaching) != 2:
+            return None
+        (definition,) = reaching - {_PROVIDER_ABSENT}
+        if (
+            not isinstance(definition, _ImportDef)
+            or definition.provider_gate != PROVIDER_GATE_TRY_IMPORT
+        ):
+            return None
+        return definition
+
+    @staticmethod
+    def _catches_import_error(handler: Node, state: State) -> bool:
+        """Whether ``handler`` catches the language's ``ImportError`` (or
+        ``ModuleNotFoundError``), alone or in a tuple, read as builtins: a
+        name this pass sees bound is not the builtin."""
+
+        def builtin_import_error(node: Node) -> bool:
+            return (
+                node.kind == "Name"
+                and node.id in ("ImportError", "ModuleNotFoundError")
+                and state.get(node.id, frozenset({_UNBOUND}))
+                == frozenset({_UNBOUND})
+            )
+
+        type_node = handler.type_
+        if type_node is None:
+            return False
+        if type_node.kind == "Tuple":
+            return any(builtin_import_error(item) for item in type_node.elts)
+        return builtin_import_error(type_node)
+
+    def _provider_gate(
+        self, node: Statement, before: State, body_out: State, joined: State
+    ) -> State:
+        """Record the closed optional-provider gate ``try: import m`` /
+        ``except ImportError`` in ``joined``.
+
+        A name an ``import`` statement in the try body binds, unbound before
+        the ``try``, whose every handler catches ``ImportError`` and leaves
+        the name as it found it: after the handlers join, it reaches as that
+        import or as unbound because the provider is absent.  That unbound
+        face is recorded as ``_PROVIDER_ABSENT`` and the import carries the
+        ``PROVIDER_GATE_TRY_IMPORT`` fact, so its references have rows in the
+        one table that say so.  Any other shape keeps the plain join.
+        """
+        if not node.handlers or not all(
+            self._catches_import_error(handler, before) for handler in node.handlers
+        ):
+            return joined
+        gated = dict(joined)
+        for statement in node.body:
+            if statement.kind != "Import":
+                continue
+            for alias in statement.names:
+                local = alias.asname or alias.name.split(".")[0]
+                if before.get(local, frozenset({_UNBOUND})) != frozenset({_UNBOUND}):
+                    continue
+                bound = body_out.get(local, frozenset())
+                if len(bound) != 1:
+                    continue
+                (definition,) = bound
+                if not isinstance(definition, _ImportDef):
+                    continue
+                if joined.get(local) != frozenset({definition, _UNBOUND}):
+                    continue
+                gated[local] = frozenset(
+                    {
+                        replace(definition, provider_gate=PROVIDER_GATE_TRY_IMPORT),
+                        _PROVIDER_ABSENT,
+                    }
+                )
+        return gated
+
+    @staticmethod
     def _attribute_export_path(
         node: Node,
     ) -> tuple[str, tuple[str, ...]] | None:
@@ -702,7 +827,7 @@ class _Pass:
         span = node.line_col_span()
         self.reference_targets[
             (span.start_line, span.start_col, span.end_line, span.end_col)
-        ] = _target_symbol(binding, member)
+        ] = ImportReference(_target_symbol(binding, member), binding.provider_gate)
 
     def _enroll_value_use(
         self,
@@ -976,6 +1101,7 @@ class _Pass:
                                 _hash(payload),
                                 f"python:{module}",
                                 encode_jcs(_json_value(payload)),
+                                provider_gate=PROVIDER_GATE_IMPORTORSKIP,
                             )
                         }
                     )
@@ -1022,7 +1148,7 @@ class _Pass:
                 if handler.name:
                     handler_state[handler.name] = frozenset({_NON_IMPORT})
                 paths.append(self.statements(handler.body, handler_state, scope))
-            joined = _join(*paths)
+            joined = self._provider_gate(node, state, paths[0], _join(*paths))
             joined = self.statements(node.orelse, joined, scope)
             return self.statements(node.finalbody, joined, scope)
         if node.kind in ("With", "AsyncWith"):
