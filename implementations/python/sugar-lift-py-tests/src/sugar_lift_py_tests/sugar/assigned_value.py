@@ -45,34 +45,50 @@ _MISS = object()
 
 
 def assigned_key(sugar) -> object | None:
-    """The occurrence key of one RHS sugar: its type and source fragment.
+    """The key of one evaluation of a RHS sugar: its type, and its source
+    fragment qualified by the occurrence it is evaluated in
+    (``occurrence.occurrence_key`` of the site under
+    ``occurrence.evaluation_path``: the unrolled copy it is, the live loop
+    items and callee frames around it).
 
     Substitution shares the RHS node, but a read may sit in a different
     construction coordinate and so hold a different sugar object for it; the
-    occurrence (type + exact fragment) is what both name. A sugar without a
-    source fragment has no occurrence to key and is never recorded; the
-    statement's own targets still receive its one completed value directly.
+    type and the site's occurrence are what both name.  Every key the record
+    is written and read under is this one, so an evaluation is answered only
+    from a record of the same occurrence: a later loop item's evaluation of
+    the sugar at the same site is evaluated, never answered from an earlier
+    item's record, and a statement run once per item (a ``class``
+    statement's run, a decorated statement's application) runs at each.
+
+    A sugar without a source fragment has no occurrence to key and is never
+    recorded; the statement's own targets still receive its one completed
+    value directly.
     """
     site = getattr(sugar, "site", None)
     if site is None or not hasattr(site, "span") or not hasattr(site, "unit"):
         return None
-    # A source fragment is hashable; an unhashable site is a lifter bug, and
-    # its TypeError propagates here rather than answering "no key".
-    hash(site)
+    from sugar_lift_py_tests.occurrence import evaluation_path, occurrence_key
+
+    occurrence = occurrence_key(site, evaluation_path(sugar))
     # A shadow evaluation minted once per substitution (an unrolled
     # iteration's mutating call) shares its span with every other iteration's;
     # its evaluation coordinate (span plus occurrence tags, never a process
     # draw) is what tells their evaluations apart.
     token = getattr(sugar, "evaluation_token", None)
     if token is not None:
-        return (type(sugar), site, token)
-    return (type(sugar), site)
+        return (type(sugar), occurrence, token)
+    return (type(sugar), occurrence)
 
 
 def recorded_value(ctx, sugar):
-    """The completed value an earlier assignment recorded for ``sugar``, or _MISS."""
+    """The completed value an assignment recorded for this evaluation of
+    ``sugar`` (``assigned_key``: this occurrence), or _MISS."""
     rows = getattr(ctx, "assigned_values", None)
     if not rows:
+        return _MISS
+    kind = type(sugar)
+    if not any(candidate[0] is kind for candidate, _value in rows):
+        # No record of this sugar type: nothing to key.
         return _MISS
     key = assigned_key(sugar)
     if key is None:

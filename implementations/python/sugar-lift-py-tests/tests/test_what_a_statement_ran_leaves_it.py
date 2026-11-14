@@ -20,7 +20,11 @@ what its record carries (#7757, leftovers of #8147).
   decorated class statement lays them the same way, before what its
   decorators stored (``DecoratorApplicationSugar.runs_statement``); and a
   class statement run more than once (each item of a loop) lays them at
-  each run, never answered from a recorded read (``statement_run_token``).
+  each run, never answered from an earlier item's record.
+- Every record of an evaluation is keyed on its occurrence
+  (``assigned_value.assigned_key``): a call at one site inside a loop is
+  evaluated once per item, and only a read in the same item is answered
+  from the item's record.
 - A ``for`` the unroll dissolves evaluates its iterable's calls before the
   first item (``For._evaluated_before_the_first_item``), whatever the item's
   shape: an earlier item's ``break`` never drops a later item's call, and a
@@ -30,12 +34,13 @@ what its record carries (#7757, leftovers of #8147).
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.container_mutation import _identity
-from sugar_source_tree.nodes import Assign, Expr, FunctionDef, Name, Return
+from sugar_source_tree.nodes import Assign, Call, Expr, FunctionDef, Name, Return
 from sugar_source_tree.tree import SourceFile
 
 
@@ -518,53 +523,142 @@ def _class_in_a_loop_site():
     return next(node for node in function.walk() if isinstance(node, ClassDef)).fragment
 
 
-def test_a_class_statement_run_twice_applies_its_body_store_twice() -> None:
-    """``for i in (1, 2): class C: x = f(acc)``: each item runs the class
-    statement, and each run is its own evaluation (``statement_run_token``),
-    so ``f``'s store is applied once per item -- twice -- even where an
-    earlier item recorded a read of ``C`` (``y = C``) under the class
-    sugar's type and site: no run is answered from it."""
-    from sugar_lift_py_tests.floor import TermValue
-    from sugar_lift_py_tests.context import ReduceContext
+# A live loop's target, whose items the tests below enter
+# (``occurrence.loop_iteration_segment``).
+_LOOP_TARGET = "blake3:statement-leaves-loop-target"
+
+
+def _run_at_each_item(statement, read, store, ctx):
+    """``statement`` run as a block at each item of ``for i in (1, 2):``,
+    each item recording a read of what it bound after it (``y = C``) under
+    the read's key in that item (``assigned_key``): the context after the
+    loop, and how many times each item's record lays ``store``."""
+    from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
     from sugar_lift_py_tests.sugar.assigned_value import assigned_key
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
 
+    value = read.desugar(ctx).completed_value()
+    keys, counts = [], []
+    for index in (0, 1):
+        with entered(loop_iteration_segment(_LOOP_TARGET, index)):
+            record = reduce_block_to_exitset((statement,), ctx).completed_value()
+            counts.append(record.entries.count(store))
+            keys.append(assigned_key(read))
+            ctx = record.context.with_assigned_value(keys[-1], value)
+    # Each item keys its record on its own occurrence.
+    assert keys[0] != keys[1]
+    return ctx, counts
+
+
+def test_a_class_statement_run_twice_applies_its_body_store_twice() -> None:
+    """``for i in (1, 2): class C: x = f(acc)``: each item runs the class
+    statement, so ``f``'s store is applied once per item -- twice -- even
+    where an earlier item recorded a read of ``C`` (``y = C``) under the
+    class sugar's type and site: the record is keyed on the earlier item's
+    occurrence (``assigned_key``), so no later item's run is answered from
+    it."""
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.context import ReduceContext
+
     store = _Tally()
     statement = _class_statement(store, site=_class_in_a_loop_site())
-    root = ReduceContext.root(owner="statement-leaves")
-    read = statement.desugar(root).completed_value()
-    ctx = root.with_assigned_value(assigned_key(statement), read)
-    assert assigned_key(statement.statement_run()) != assigned_key(statement)
-    record = reduce_block_to_exitset((statement, statement), ctx).completed_value()
-    assert record.context.temporal.value_if_bound("tally") == TermValue(2)
-    assert record.entries.count(store) == 2
+    ctx, counts = _run_at_each_item(
+        statement, statement, store, ReduceContext.root(owner="statement-leaves")
+    )
+    assert ctx.temporal.value_if_bound("tally") == TermValue(2)
+    assert counts == [1, 1]
 
 
 def test_a_decorated_class_statement_run_twice_applies_its_body_store_twice():
     """``for i in (1, 2): @d class C: x = f(acc)``: the statement's own
-    application runs the body at each item, never answered from a recorded
-    read of the decorated name."""
+    application runs the body at each item, never answered from an earlier
+    item's recorded read of the decorated name."""
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.context import ReduceContext
-    from sugar_lift_py_tests.sugar.assigned_value import assigned_key
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        reduce_block_to_exitset,
-    )
 
     store = _Tally()
     definition = _class_statement(store, site=_class_in_a_loop_site())
-    statement = _decorated(definition, runs_statement=True)
-    read = _decorated(definition, runs_statement=False)
-    root = ReduceContext.root(owner="statement-leaves")
-    ctx = root.with_assigned_value(
-        assigned_key(read), read.desugar(root).completed_value()
+    ctx, counts = _run_at_each_item(
+        _decorated(definition, runs_statement=True),
+        _decorated(definition, runs_statement=False),
+        store,
+        ReduceContext.root(owner="statement-leaves"),
     )
-    assert assigned_key(statement) != assigned_key(read)
-    record = reduce_block_to_exitset((statement, statement), ctx).completed_value()
-    assert record.context.temporal.value_if_bound("tally") == TermValue(2)
-    assert record.entries.count(store) == 2
+    assert ctx.temporal.value_if_bound("tally") == TermValue(2)
+    assert counts == [1, 1]
+
+
+@dataclass(frozen=True)
+class _StoringCall(Sugar):
+    """``f(acc)`` at ``site``, where ``f`` stores ``store`` on ``acc``: each
+    evaluation appends the occurrence path it ran in to ``evaluations``.  Its
+    ``desugar`` goes through the one wrapper every sugar's does
+    (``Sugar.desugar``), which answers a recorded evaluation from
+    ``ctx.assigned_values``."""
+
+    store: object
+    site: object
+    evaluations: list = field(default_factory=list, compare=False)
+
+    @classmethod
+    def witnesses(cls):
+        from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
+
+        return NotVerdictBearing(
+            sugar_name=cls.__name__,
+            floor_name="test call",
+            reason="counts its evaluations",
+        )
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor import TermValue
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            carry_caller_stores,
+        )
+        from sugar_lift_py_tests.occurrence import current_path
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        self.evaluations.append(current_path())
+        value = TermValue(len(self.evaluations))
+        return ExitSet.completed(carry_caller_stores((self.store,), value))
+
+
+def _call_in_a_loop_site():
+    """The ``f(acc)`` call's fragment in ``for i in (1, 2): y = f(acc)``."""
+    function = _function(
+        "def g(acc):\n"
+        "    for i in (1, 2):\n"
+        "        y = f(acc)\n"
+    )
+    return next(node for node in function.walk() if isinstance(node, Call)).fragment
+
+
+def test_a_call_with_a_store_in_a_loop_is_evaluated_once_per_item() -> None:
+    """``for i in (1, 2): y = f(acc)`` where ``f`` stores on ``acc``: the
+    call at its one site is evaluated at each item -- twice, each in its own
+    item -- and never answered from an earlier item's record of it; a read
+    of it in the same item is answered from that item's record
+    (``assigned_key``: every record is keyed on its occurrence)."""
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
+    from sugar_lift_py_tests.sugar.assigned_value import assigned_key
+
+    call = _StoringCall(_Tally(), _call_in_a_loop_site())
+    ctx = ReduceContext.root(owner="statement-leaves")
+    segments = [loop_iteration_segment(_LOOP_TARGET, index) for index in (0, 1)]
+    for index, segment in enumerate(segments):
+        with entered(segment):
+            # The item's evaluation of the call: never an earlier item's.
+            value = call.desugar(ctx).completed_value()
+            assert len(call.evaluations) == index + 1
+            # ``y = f(acc)`` keeps it as this item's record.
+            ctx = ctx.with_assigned_value(assigned_key(call), value)
+            # A later read of the call in this item is answered from it.
+            assert call.desugar(ctx).completed_value() == value
+            assert len(call.evaluations) == index + 1
+    assert [path[-1] for path in call.evaluations] == segments
 
 
 # ---------------------------------------------------------------------------
