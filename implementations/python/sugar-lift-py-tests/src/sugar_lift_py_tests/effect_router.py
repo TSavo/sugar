@@ -162,7 +162,10 @@ def regroup_except_star(original, effects) -> GroupedRaiseEffect:
     nothing is a caller bug, refused by name, never answered as ``None``.
     """
     from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
-    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.effect.raise_effect import (
+        RaiseEffect,
+        UndeterminedRaiseEffect,
+    )
 
     effects = tuple(effects)
     if not effects:
@@ -173,7 +176,9 @@ def regroup_except_star(original, effects) -> GroupedRaiseEffect:
         )
 
     def leaves(effect):
-        if isinstance(effect, RaiseEffect):
+        # An undetermined leaf (its construction carried no class) is a leaf
+        # of the tree like any other: never dropped by the regroup.
+        if isinstance(effect, (RaiseEffect, UndeterminedRaiseEffect)):
             return {effect.occurrence_id}
         if isinstance(effect, GroupedRaiseEffect):
             result = set()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .raise_effect import RaiseEffect
+from .raise_effect import RaiseEffect, UndeterminedRaiseEffect
 
 
 @dataclass(frozen=True)
@@ -13,11 +13,15 @@ class GroupedRaisePartition:
 
 @dataclass(frozen=True)
 class GroupedRaiseEffect:
-    """One immutable exception-group tree; leaves retain RaiseEffect identity."""
+    """One immutable exception-group tree; leaves retain RaiseEffect identity.
+
+    A leaf whose construction carries no class (an unanswered construction,
+    ``OSError(e, 'x')``) is an ``UndeterminedRaiseEffect``: undecided, never
+    typed by its callee."""
 
     group_identity: str
     message: object
-    children: tuple[RaiseEffect | "GroupedRaiseEffect", ...]
+    children: tuple[RaiseEffect | UndeterminedRaiseEffect | "GroupedRaiseEffect", ...]
     occurrence: str | None = None
     # The builtin group class the Raise construction authenticated by runtime
     # identity (builtins.ExceptionGroup or builtins.BaseExceptionGroup). None
@@ -54,7 +58,10 @@ class GroupedRaiseEffect:
         )
 
     def derive(
-        self, children: tuple[RaiseEffect | "GroupedRaiseEffect", ...]
+        self,
+        children: tuple[
+            RaiseEffect | UndeterminedRaiseEffect | "GroupedRaiseEffect", ...
+        ],
     ) -> "GroupedRaiseEffect":
         return GroupedRaiseEffect(
             self.group_identity,
@@ -66,53 +73,28 @@ class GroupedRaiseEffect:
         )
 
 
-def _leaf_matches(effect: RaiseEffect, expected, site) -> bool:
-    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
-    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+def _leaf_matches(effect, expected, site) -> bool:
+    """Whether ``except* expected`` catches one leaf.
+
+    Asked of the one matcher ``except`` and ``with`` ask
+    (``matches_raise_effect``), over the class the leaf's raise read off the
+    value its construction made (``RaiseSugar._effect``: the coordinate and
+    ancestry on the effect).  A leaf whose class is undetermined, or whose
+    match is a real question nothing here decides, is refused by name: the
+    partition is a closed split of the group's topology."""
+    from sugar_lift_py_tests.authenticated_exception_matching import (
+        MatchDecided,
+        matches_raise_effect,
+    )
     from sugar_source_tree.panic import SugarNotWritten
 
-    raised = effect.raised_value
-    operation = getattr(raised, "test_python_subtype", None)
-    if operation is None and effect.exception_type_coordinate is not None:
-        from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
-            AuthenticatedExceptionTypeValue,
-        )
-
-        raised = AuthenticatedExceptionTypeValue(
-            raised,
-            effect.exception_type_coordinate,
-            effect.exception_type_mro,
-        )
-        operation = raised.test_python_subtype
-    if operation is None:
-        raise SugarNotWritten(
-            blame=site,
-            owner="GroupedRaiseEffect.partition",
-            observed="group leaf lacks an authenticated subtype floor",
-            requested="RaiseEffect leaf with authenticated exception type testimony",
-            fix="construct every group leaf through the ordinary exception floor",
-        )
-    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
-
-    value = _require_exit_set(
-        operation(expected, site), owner="GroupedRaiseEffect.partition"
-    ).completed_value()
-    if value is None:
-        raise SugarNotWritten(
-            blame=site,
-            owner="GroupedRaiseEffect.partition",
-            observed="symbolic subtype partition",
-            requested="closed true/false subtype partition for group topology",
-            fix="keep symbolic group partition typed loud",
-        )
-    if isinstance(value, TrueBoolLiteralSugar):
-        return True
-    if isinstance(value, FalseBoolLiteralSugar):
-        return False
+    verdict = matches_raise_effect(effect, expected)
+    if isinstance(verdict, MatchDecided):
+        return verdict.value
     raise SugarNotWritten(
         blame=site,
         owner="GroupedRaiseEffect.partition",
-        observed=type(value).__name__,
-        requested="closed boolean subtype partition",
-        fix="keep unsupported subtype results typed loud",
+        observed="symbolic subtype partition",
+        requested="closed true/false subtype partition for group topology",
+        fix="keep symbolic group partition typed loud",
     )

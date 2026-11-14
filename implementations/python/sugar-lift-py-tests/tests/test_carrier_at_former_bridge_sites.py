@@ -371,20 +371,6 @@ def test_contract_expression_truth_carrier_is_refused_by_name(monkeypatch):
     _refused(excinfo, "parse_contract_expression")
 
 
-# --- grouped_raise_effect ---------------------------------------------------
-
-
-def test_group_leaf_subtype_carrier_is_refused_by_name():
-    from sugar_lift_py_tests.effect.grouped_raise_effect import _leaf_matches
-
-    carrier, _, _ = _carrier()
-    raised = SimpleNamespace(test_python_subtype=lambda expected, site: carrier)
-    leaf = SimpleNamespace(raised_value=raised)
-    with pytest.raises(ConstructionPanic) as excinfo:
-        _leaf_matches(leaf, None, None)
-    _refused(excinfo, "GroupedRaiseEffect.partition")
-
-
 # --- guarded_binding_read_sugar ---------------------------------------------
 
 
