@@ -1075,34 +1075,14 @@ def module_alias_binding(graph, module_name: str, name: str) -> str | None:
     the module table is read, never filled.  Any disagreement or absence
     returns None.
     """
-    import ast
+    from .source_tables_adapter import module_level_import_aliases
 
     module = graph.modules.get(module_name)
     if module is None:
         return None
-    try:
-        tree = ast.parse(module.source)
-    except SyntaxError:
+    candidates = module_level_import_aliases(module.source, name)
+    if candidates is None:
         return None
-    candidates = set()
-
-    def visit(statements):
-        for statement in statements:
-            if isinstance(
-                statement, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
-            ):
-                continue
-            if isinstance(statement, ast.Import):
-                candidates.update(
-                    alias.name for alias in statement.names if alias.asname == name
-                )
-                continue
-            for field_name in ("body", "orelse", "finalbody"):
-                visit(getattr(statement, field_name, ()) or ())
-            for handler in getattr(statement, "handlers", ()) or ():
-                visit(handler.body)
-
-    visit(tree.body)
     registered = sys.modules.get(f"{module_name}.{name}")
     registered_name = getattr(registered, "__name__", None)
     if not isinstance(registered_name, str) or registered_name not in candidates:

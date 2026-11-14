@@ -16,8 +16,10 @@ def repeat_sequence(sequence, count, site, *, elements, rebuild):
         materialized  rebuild(elements * n)
         folded        python:sequence_repeat(sequence, n)
 
-    The folded form is the same closed coordinate the opaque-count arm emits,
-    so it is exact, not lossy. Which one is built is a representation choice
+    The folded form is ``GroundSequenceRepetitionValue``: the receiver, its
+    elements and the concrete count, whose term is the same closed coordinate
+    the opaque-count arm emits, so it is exact, not lossy -- its length, truth
+    and Python type stay decided. Which one is built is a representation choice
     about eager memory -- there is no cardinality at which this law refuses,
     and none at which it silently drops elements. (List and tuple each carried
     a private copy of this arm that PANICKED above 128, reporting 19 perfectly
@@ -29,6 +31,9 @@ def repeat_sequence(sequence, count, site, *, elements, rebuild):
     elements ``items``; reading ``.elements`` off the receiver was this law
     knowing one category's field name, which is why the array never joined.)
     """
+    from sugar_lift_py_tests.floor.ground_sequence_repetition_value import (
+        GroundSequenceRepetitionValue,
+    )
     from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
     from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.outcome import ExitSet
@@ -37,7 +42,9 @@ def repeat_sequence(sequence, count, site, *, elements, rebuild):
         n = count.value
         if len(elements) * max(n, 0) <= EAGER_MATERIALIZATION_BUDGET:
             return ExitSet.completed(rebuild(elements * n))
-        return ExitSet.completed(SymbolicValue(repetition_term(sequence, count, site)))
+        return ExitSet.completed(
+            GroundSequenceRepetitionValue(sequence, tuple(elements), count, int(n))
+        )
     if is_known_invalid_repetition_count(count):
         return known_invalid_repetition_type_error(sequence, count, site)
     return ExitSet.completed(SymbolicValue(repetition_term(sequence, count, site)))

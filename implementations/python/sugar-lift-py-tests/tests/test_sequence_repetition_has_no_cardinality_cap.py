@@ -4,8 +4,9 @@ List and tuple each carried a private ``multiply`` arm that PANICKED once a
 concrete repetition exceeded 128 elements, reporting perfectly ordinary
 repetitions on the installed pandas tree as construction gaps. One law now
 owns both categories: above the eager-materialization budget the repetition is
-FOLDED to the same closed ``python:sequence_repeat`` coordinate the opaque-count
-arm already emits -- the same value, not an approximation of it.
+FOLDED to ``GroundSequenceRepetitionValue``, whose term is the same closed
+``python:sequence_repeat`` coordinate the opaque-count arm already emits -- the
+same value, not an approximation of it.
 
 Each positive arm is paired with a discriminating arm: a shape that must NOT
 take the same door. Cardinalities are asserted exactly, because a repetition
@@ -17,6 +18,7 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.floor import (
+    GroundSequenceRepetitionValue,
     ListValue,
     SymbolicValue,
     TermValue,
@@ -65,8 +67,10 @@ def test_one_element_past_the_budget_folds_instead_of_panicking(
     outcome = sequence.multiply(count, SITE)
 
     assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, SymbolicValue)
-    assert outcome.value.term == repetition_term(sequence, count, SITE)
+    assert isinstance(outcome.value, GroundSequenceRepetitionValue)
+    assert outcome.value.to_term(owner=SITE) == repetition_term(sequence, count, SITE)
+    # Exact, not opaque: the folded value still knows its own cardinality.
+    assert outcome.value.length(SITE).value.value == EAGER_MATERIALIZATION_BUDGET + 1
 
 
 @pytest.mark.parametrize("sequence_type", SEQUENCES)
@@ -80,8 +84,8 @@ def test_a_cardinality_no_machine_could_materialize_still_constructs(
     outcome = sequence.multiply(count, SITE)
 
     assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, SymbolicValue)
-    term = outcome.value.term
+    assert isinstance(outcome.value, GroundSequenceRepetitionValue)
+    term = outcome.value.to_term(owner=SITE)
     assert isinstance(term, _Ctor)
     assert term.name == "python:sequence_repeat"
     assert term.args[1] == count.to_term(owner=SITE)
@@ -108,7 +112,7 @@ def test_folded_concrete_count_is_the_same_construction_as_an_opaque_count(
     sequence = sequence_type((TermValue(7),))
     opaque = SymbolicValue(TermValue(3).to_term(owner=SITE))
 
-    folded = sequence.multiply(TermValue(10**9), SITE).value.term
+    folded = sequence.multiply(TermValue(10**9), SITE).value.to_term(owner=SITE)
     opaque_folded = sequence.multiply(opaque, SITE).value.term
 
     assert isinstance(folded, _Ctor) and isinstance(opaque_folded, _Ctor)

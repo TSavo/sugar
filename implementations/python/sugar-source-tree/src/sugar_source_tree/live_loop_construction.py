@@ -52,13 +52,18 @@ from .nodes import TargetPatternV1 as LiveForTargetPatternV1
 
 @dataclass(frozen=True)
 class LiveForRuntimeV1:
-    """Unsealed execution handles paired with the sealed for construction."""
+    """Unsealed execution handles paired with the sealed for construction.
+
+    The body and ``else`` statements arrive as their constructed sugars: the
+    AST boundary constructs every child once, and the recurrence consumes only
+    those children while it reduces (``R_no_sugar_in_desugar``).
+    """
 
     target_pattern: LiveForTargetPatternV1
     carried_names: tuple[str, ...]
     initial_value_sugars: tuple[object, ...]
-    body_statements: tuple[object, ...]
-    else_statements: tuple[object, ...]
+    body_sugars: tuple[object, ...]
+    else_sugars: tuple[object, ...]
 
 
 def _initial_value_sugar_for_loop_prestate(state):
@@ -768,8 +773,8 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                     _initial_value_sugar_for_loop_prestate(entry.state)
                     for entry in pre_runtime
                 ),
-                tuple(loop.body),
-                tuple(loop.orelse),
+                tuple(statement.sugar() for statement in loop.body),
+                tuple(statement.sugar() for statement in loop.orelse),
             ),
         )
 

@@ -88,16 +88,17 @@ def test_joined_str_names_unground_interpolation_as_an_fstring_coordinate(
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
     from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
-    from sugar_source_tree.tree import SourceFile
 
     path = Path(tmp_path) / "diag.py"
     path.write_text(
         'result = f"DID NOT RAISE {unknown.__name__}"\n',
         encoding="utf-8",
     )
-    tree = SourceFile.from_path(
+    tree = open_source_file_for_construction(
         path,
+        root=Path(tmp_path),
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
     joined = next(node for node in tree.nodes() if node.kind == "JoinedStr")

@@ -23,7 +23,7 @@ import pathlib
 import textwrap
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 
 # A nested definition called from its enclosing scope: the shape that seats a
 # lexical call row, which is what made the table arm reachable.
@@ -50,13 +50,19 @@ def _unique_source(tmp_path: pathlib.Path, marker: str) -> pathlib.Path:
 def test_context_less_open_constructs_instead_of_raising_attributeerror(
     tmp_path: pathlib.Path,
 ) -> None:
-    """The planted arm: no construction context, and construction still lands.
+    """The planted arm: no workspace in the construction context, and
+    construction still lands.
 
-    ``SourceFile.from_path`` is the bare door -- it builds a tree with no
-    construction context, which is exactly the condition the census hit.
+    The file opens through the construction door with the context that claims
+    no workspace (``for_test_without_workspace``): it carries no source-call
+    frame table, which is exactly the condition the census hit.
     """
     source = _unique_source(tmp_path, "contextless")
-    module = SourceFile.from_path(source, construction_context=TreeConstructionContextV1.for_test_without_workspace()).constructed_module.root
+    module = open_source_file_for_construction(
+        source,
+        root=tmp_path,
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).constructed_module.root
 
     # The point is that this does not raise AttributeError on a None context.
     for statement in module.body:
