@@ -51,6 +51,11 @@ command = ["sugar-walk-rpc", "--rpc"]
 # working_dir = "..."   # optional
 ```
 
+An IR compiler's manifest also says `role = "ir-compiler"`. `sugar prove` reads
+`.proof` files and never starts a lift kit (step 9 of the nine steps), so its component
+plan asks only components with that role; lifting (`sugar mint`, `sugar lift`) asks
+every component, as below.
+
 That `command` is the kit's RPC entry point. (This is exactly what you saw failing in a
 fresh checkout — `spawn ["…/target/debug/sugar-walk-rpc"]: No such file` means a
 registered component's binary wasn't built yet.)

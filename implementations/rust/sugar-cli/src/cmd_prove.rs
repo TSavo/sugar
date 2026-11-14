@@ -188,11 +188,11 @@ pub(crate) fn build_prove_outcome_with_options(
     component_plan_options: ComponentPlanOptions,
 ) -> Result<sugar_compiler::orchestrate::ProvenOutcome, String> {
     let cfg_doc = read_project_config(project_root);
-    let component_plan = component_plan::plan_workspace_with_options(
-        project_root,
-        PlanIntent::Prove,
-        component_plan_options,
-    );
+    // Step 9 (ruling 2 on #7766): prove starts IR compilers only, never a
+    // lift kit. The plan holds no lift surfaces, and nothing in prove reads
+    // one: witness bodies come from the proof (#7830).
+    let component_plan =
+        component_plan::plan_ir_compilers_for_prove(project_root, component_plan_options);
     check_component_plan_errors(&component_plan)?;
     if component_plan_options.allow_failed_components {
         emit_component_plan_warnings(&component_plan);
@@ -768,6 +768,7 @@ mod tests {
             "fold_kit_to_pool",
             "fold_claim_tree",
             "fold_project",
+            "plan_workspace",
         ] {
             assert!(
                 !production.contains(forbidden),
