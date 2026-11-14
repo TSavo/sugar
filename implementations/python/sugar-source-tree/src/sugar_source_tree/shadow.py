@@ -28,6 +28,7 @@ from .backend import (
     Child,
     Children,
     Description,
+    Leaf,
     MaybeChild,
     Slot,
     materialize,
@@ -159,9 +160,19 @@ def rewrite(origin: Node, **children: object) -> Node:
     borrows the origin's span, so its memento still addresses the source the
     rewrite stands for.
     """
+    return rewrite_with_leaves(origin, {}, **children)
+
+
+def rewrite_with_leaves(origin: Node, leaves: dict, /, **children: object) -> Node:
+    """``rewrite``, also setting the leaf slots ``leaves`` names (a leaf of
+    that name is replaced, a new one appended).  A statement carries what its
+    substitution decided this way -- ``a, b = f()`` its evaluation key -- and
+    stays the same evaluation of the same source occurrence."""
     desc = origin.ref.describe()  # type: ignore[attr-defined]
     new_slots: list[Tuple[str, Slot]] = []
     for name, slot in desc.slots:
+        if name in leaves:
+            continue
         if name not in children:
             new_slots.append((name, slot))
             continue
@@ -176,6 +187,7 @@ def rewrite(origin: Node, **children: object) -> Node:
             )
         else:  # an optional single child given as a Node was handled above
             new_slots.append((name, MaybeChild(_handle_of(replacement))))
+    new_slots.extend((name, Leaf(value)) for name, value in leaves.items())
     tags = occurrence_tags_of(origin)
     if tags:
         # A rewrite of one evaluation is still that evaluation.

@@ -8,9 +8,20 @@ from sugar_lift_py_tests.floor import FloorValue
 from .temporal_binding import TemporalBinding
 
 # A statement's one evaluation is bound under this prefix plus its coordinate
-# (``AugAssign._evaluation_key``). A Python identifier never holds ``:``, so
+# (``Statement._evaluation_key``). A Python identifier never holds ``:``, so
 # an evaluation key can never be read as a source name.
 EVALUATION_PREFIX = "evaluation:"
+
+
+def projection_key(evaluation: str, name: str) -> str:
+    """The key of target ``name``'s projection of one statement's evaluation.
+
+    ``a, b = f()`` evaluates ``f()`` once and unpacks it; ``a`` and ``b`` are
+    two projections of that one evaluation, each bound under its own key.
+    The key keeps the evaluation's prefix, so it is never a source name and
+    an ``if`` carries it out of an arm like any other evaluation.
+    """
+    return f"{evaluation}/{name}"
 
 
 @dataclass(frozen=True)

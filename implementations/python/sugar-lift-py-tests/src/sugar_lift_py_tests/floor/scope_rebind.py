@@ -72,6 +72,28 @@ class ScopeRebinds(FloorValue):
         return ExitSet.completed(self)
 
 
+def bind_unpack_projections(value, evaluation: str | None):
+    """An unpack's completed answer, with each target's member also bound
+    under its projection of the statement's one evaluation.
+
+    Temporal choice 1 (#7661): a later read of ``a`` after ``a, b = f()`` is
+    an ``EvaluationRef`` to ``a``'s projection of the statement's evaluation,
+    never the name looked up by spelling. The names are bound first and the
+    projections last, so a read of a projection is the latest of the two
+    until something rebinds the name. Without an evaluation key (a statement
+    that was never substituted) the answer is unchanged.
+    """
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    if evaluation is None or not isinstance(value, ScopeRebinds):
+        return ExitSet.completed(value)
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+    bindings = value.bindings
+    projected = tuple((projection_key(evaluation, n), m) for n, m in bindings)
+    return ExitSet.completed(ScopeRebinds((*bindings, *projected)))
+
+
 @dataclass(frozen=True)
 class GuardedScopeRebind(FloorValue):
     """A branch-local rebind carried in the record under one or more guards.

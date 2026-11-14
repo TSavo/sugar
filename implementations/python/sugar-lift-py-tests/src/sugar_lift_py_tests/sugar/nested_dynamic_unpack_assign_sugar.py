@@ -45,6 +45,9 @@ class NestedDynamicUnpackAssignSugar(Sugar):
     pattern: tuple[NameUnpackPattern, ...]
     value: Sugar
     site: object = dataclass_field(compare=False)
+    # The statement's one evaluation: every leaf's member is bound under its
+    # projection of this key too (temporal choice 1; DynamicUnpackAssignSugar).
+    evaluation: str | None = None
 
     @classmethod
     def witnesses(cls):
@@ -63,8 +66,16 @@ class NestedDynamicUnpackAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        if self.evaluation is None:
+            return self.value.desugar(ctx).and_then(
+                lambda value: self._project(value, self.pattern, ctx)
+            )
+        from sugar_lift_py_tests.floor.scope_rebind import bind_unpack_projections
+
         return self.value.desugar(ctx).and_then(
-            lambda value: self._project(value, self.pattern, ctx)
+            lambda value: self._project(value, self.pattern, ctx).and_then(
+                lambda rebinds: bind_unpack_projections(rebinds, self.evaluation)
+            )
         )
 
     def _project(

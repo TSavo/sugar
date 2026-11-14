@@ -37,6 +37,11 @@ class DynamicUnpackAssignSugar(Sugar):
 
     No arm assumes the count matched, and no arm invents a member. The RHS's own
     arms are conserved because it is reduced through ``and_then`` first.
+
+    Substitution rewrote every later read of a target to an ``EvaluationRef``
+    to that target's projection of the statement's one evaluation
+    (``evaluation``, temporal choice 1): the completed arm binds each member
+    under its projection as well as under its name.
     """
 
     target_names: tuple[str, ...]
@@ -45,6 +50,7 @@ class DynamicUnpackAssignSugar(Sugar):
     star_name: str | None = None
     prefix_names: tuple[str, ...] = ()
     suffix_names: tuple[str, ...] = ()
+    evaluation: str | None = None
 
     @classmethod
     def witnesses(cls):
@@ -59,6 +65,7 @@ class DynamicUnpackAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor.scope_rebind import bind_unpack_projections
         from sugar_lift_py_tests.operations import SequenceProjectionOperation
 
         if self.star_name is None:
@@ -77,6 +84,12 @@ class DynamicUnpackAssignSugar(Sugar):
                 suffix_names=self.suffix_names,
             )
         # Python evaluates the right-hand side before it unpacks anything.
+        if self.evaluation is None:
+            return self.value.desugar(ctx).and_then(
+                lambda value: operation.submit(value, ctx)
+            )
         return self.value.desugar(ctx).and_then(
-            lambda value: operation.submit(value, ctx)
+            lambda value: operation.submit(value, ctx).and_then(
+                lambda rebinds: bind_unpack_projections(rebinds, self.evaluation)
+            )
         )
