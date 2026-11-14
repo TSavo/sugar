@@ -1422,6 +1422,26 @@ class SourceUnit:
 
         return member_target_symbol(head_target, tuple(reversed(attributes)))
 
+    def import_binding_reference(self, statement, local: str) -> Optional[object]:
+        """The one import table's row for the binding the ``import`` or
+        ``from ... import`` ``statement`` makes of ``local``
+        (``ImportReference``), or None: no typed root, or the table binds
+        ``local`` there to nothing it names (an unresolvable relative
+        import, ``import a.b`` binding the package ``a``).
+
+        The same pass, and the same speller, as every reference row
+        (``import_reference_target``): the module threading binds the name
+        to this row (``ImportBindingRef``), never to a target it spells
+        itself.
+        """
+        runner = self._lexical_import_pass()
+        if runner is None:
+            return None
+        span = statement.line_col_span()
+        return runner.binding_targets.get(
+            (span.start_line, span.start_col, span.end_line, span.end_col, local)
+        )
+
     def builtin_reference_at(self, name: str, span) -> Optional[str]:
         """``python:builtins.<name>`` when the name read at ``span`` falls
         through to the builtin namespace, else ``None``.
@@ -1517,21 +1537,26 @@ class SourceUnit:
 
         A name bound only by a ``def``, ``class`` or ``import`` statement
         (which bind no key) is not one: its reader resolves the definition
-        or the import.  Read off the typed tree, one walk per typed root.  A
-        unit with no typed root answers the empty set.
+        or the import.  Every other statement that binds a threaded name
+        carries its binding in the threading too (``module_binding_states``):
+        a ``def`` or ``class`` binds the definition, an ``import`` the one
+        import table's row for that binding (``import_binding_reference``),
+        ``except ... as`` the handler's effect slot until the handler ends,
+        ``del`` unbinds.  Read off the typed tree, one walk per typed root.
+        A unit with no typed root answers the empty set.
         """
         return self._module_global_rows()[0]
 
     def module_unthreaded_names(self) -> frozenset:
-        """The ``module_threaded_names`` the threading does not decide for a
-        reader anywhere: one a ``def``, ``class``, ``import`` (a star import
-        may bind every name), ``except ... as``, ``match`` capture, ``del``
-        or ``type`` statement also binds (none binds through a key, so the
-        threading's binding of it can be stale); one a ``for`` or ``with``
-        target binds beside any other binding (a live loop does not rebind
-        its target after the loop); and one a function or class body writes
-        through a ``global`` declaration (it changes whenever that body
-        runs).  Every reader cites these ``undecided`` by name."""
+        """The ``module_threaded_names`` no point of the module body decides
+        for a reader: every one, when a star import may bind any name or the
+        module reads a dynamic global writer (``globals``, ``exec``, ...,
+        ``_DYNAMIC_GLOBAL_WRITERS``); and one a function or class body
+        writes through a ``global`` declaration (it changes whenever that
+        body runs).  Every reader cites these ``undecided`` by name.  A
+        binding the threading does not carry past one statement (a ``match``
+        capture, a live loop's writes, a ``type`` alias) is undecided only
+        from that statement on (``_module_uncarried_names``)."""
         return self._module_global_rows()[1]
 
     def _module_global_rows(self) -> Tuple[frozenset, frozenset]:
@@ -1543,44 +1568,25 @@ class SourceUnit:
             return memo[1], memo[2]
         keyed: set[str] = set()
         loop_bound: set[str] = set()
-        unkeyed: set[str] = set()
-        binders: dict[str, int] = {}
         stack: list[Node] = list(module.body)
         while stack:
             node = stack.pop()
             if isinstance(node, (Assign, AugAssign, NamedExpr)) or (
                 isinstance(node, AnnAssign) and node.value is not None
             ):
-                names = node.names_bound_here()
-                keyed.update(names)
+                keyed.update(node.names_bound_here())
             elif isinstance(node, (For, AsyncFor, WithItem)):
-                names = node.names_bound_here()
-                loop_bound.update(names)
-            elif isinstance(node, (AnnAssign, Comprehension, Global, Nonlocal)):
-                # A bare annotation binds nothing; a comprehension target
-                # binds in the comprehension's scope; ``global`` at module
-                # level declares nothing new.
-                names = ()
-            else:
-                names = node.names_bound_here()
-                unkeyed.update(names)
-            for name in names:
-                binders[name] = binders.get(name, 0) + 1
+                loop_bound.update(node.names_bound_here())
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
                 continue
             stack.extend(child for _name, _index, child in node._child_edges())
+        bound, read = self._module_name_rows()
         reads, writes = self._nested_scope_global_rows()
         threaded = frozenset((keyed | loop_bound) & reads)
-        if "*" in unkeyed:
+        if "*" in bound or read & _DYNAMIC_GLOBAL_WRITERS:
             unthreaded = threaded
         else:
-            unthreaded = frozenset(
-                name
-                for name in threaded
-                if name in unkeyed
-                or name in writes
-                or (name in loop_bound and binders[name] > 1)
-            )
+            unthreaded = threaded & writes
         object.__setattr__(
             self, "_module_global_rows_memo", (module, threaded, unthreaded)
         )
@@ -1773,17 +1779,21 @@ class SourceUnit:
         the module body, called from outside its execution) the module's
         final binding.
 
-        Each answer is the reference to the evaluation that binds the name
-        there (``_module_reference_state``), or ``UNDECIDED_MODULE_BINDING``
-        where the module body does not decide it through a key.  The name
+        Each answer is the binding that stands there
+        (``_module_reference_state``: an evaluation's reference, an import's
+        row, a definition, an effect slot, unbound after ``del``), or
+        ``UNDECIDED_MODULE_BINDING`` where the module body does not decide
+        it.  The name
         is never read by name in its place.  It does not decide it
 
         - for a name the threading does not decide anywhere
           (``module_unthreaded_names``), nor one no reader is threaded for
           (``module_threaded_names``);
-        - for a name whose binding there is no evaluation's key (unbound
-          there, a container's mutated state, a ``with`` observation, a live
-          loop's post-binding);
+        - for a name whose binding there is not decided
+          (``_module_reference_state``: never bound there, a container's
+          mutated state, a ``with`` observation, a live loop's
+          post-binding, a decorated definition, a binding the threading
+          did not carry past a statement);
         - for a site in a generator's lazily evaluated part;
         - for a name a walrus in the site's own statements binds (it may
           run before or after the read);
@@ -4535,18 +4545,96 @@ def _walrus_targets(statement) -> frozenset:
     return frozenset(names)
 
 
+def _module_threads(scope, name: str) -> bool:
+    """Whether ``scope`` threads a module body for its readers
+    (``SourceUnit.module_binding_states``: the open ``_MODULE_STATEMENT_STATES``
+    record) and ``name`` is one some reader outside the module block reads
+    (``SourceUnit.module_threaded_names``)."""
+    record = scope.get(_MODULE_STATEMENT_STATES)
+    return record is not None and record.open and name in record.names
+
+
+def _module_uncarried_names(statement, live_loop_bindings) -> frozenset:
+    """The names ``statement`` binds whose binding the module threading does
+    not carry past it: every name a live loop binds that its recurrence
+    does not publish (its target, a write it does not carry), and every
+    name a ``match`` (its captures, its cases' writes), a ``try ...
+    except*`` or a ``del`` of a nested target (``del (a, b)``) binds --
+    none exports a binding.  From the statement on, each is
+    ``UNDECIDED_MODULE_BINDING`` for a reader, never the binding standing
+    before it."""
+    if live_loop_bindings is not None:
+        return statement.names_bound_within() - frozenset(live_loop_bindings)
+    if isinstance(statement, Delete):
+        lowered = (Name, Attribute, Subscript)
+        if all(isinstance(target, lowered) for target in statement.targets):
+            return frozenset()
+        return statement.names_bound_within()
+    if isinstance(statement, (Match, TryStar)):
+        return statement.names_bound_within()
+    return frozenset()
+
+
+def _module_import_binding(statement, scope):
+    """The binding an ``import`` or ``from ... import`` statement makes of
+    each module name a reader reads, while the module body is threaded for
+    its readers (``_module_threads``): the one import table's row for that
+    binding (``SourceUnit.import_binding_reference``) as an
+    ``ImportBindingRef``.  A binding the table rows nothing for is
+    ``UNDECIDED_MODULE_BINDING`` from here on.  Anywhere else an import
+    binds nothing in the threading: its reads resolve through the table at
+    their own coordinate."""
+    from .backend import Leaf, materialize
+    from .shadow import ShadowNode
+
+    binding = {}
+    for alias in statement.names:
+        for local in alias.names_bound_here():
+            if local == "*" or not _module_threads(scope, local):
+                continue
+            reference = statement.unit.import_binding_reference(statement, local)
+            if reference is None:
+                binding[local] = UNDECIDED_MODULE_BINDING
+                continue
+            binding[local] = materialize(
+                statement.unit,
+                ShadowNode(
+                    "ImportBindingRef",
+                    alias.span,
+                    (
+                        ("name", Leaf(local)),
+                        ("target_symbol", Leaf(reference.target_symbol)),
+                    ),
+                ),
+                statement.reporter,
+            )
+    return binding or None
+
+
 def _module_reference_state(state):
     """A module binding state as a reader outside the module block takes it:
     a reference to the evaluation of the module body's write of the name
     (``EvaluationRef``: ``x += e``, an unpack's projection, a walrus), or
     the phi the module block built over such references where the write
-    sits in an arm of an ``if``.  A comprehension member's coordinate is
-    bound only inside its comprehension, so a binding to one is
+    sits in an arm of an ``if`` or a ``try`` route; an import's row in the
+    one import table (``ImportBindingRef``), alone or as such an arm.  The
+    other statements that bind a module name decide it too: an undecorated
+    ``def`` or ``class`` binds its definition (the read is the definition's
+    own binding, as a local definition's is), an ``except ... as`` handler
+    its effect slot (``EffectRef``), and ``del`` (or the end of that
+    handler) unbinds it -- the read is a ``NameError`` halt
+    (``GuardedBindingRead``).  A comprehension member's coordinate is bound
+    only inside its comprehension, so a binding to one is
     ``UNDECIDED_MODULE_BINDING`` wherever a reader outside it reads the
-    name.  Any other state (an unbound name, a container's mutated state, a
-    ``with`` observation, a live loop's post-binding) is no evaluation's
-    key: ``UNDECIDED_MODULE_BINDING`` too, never the name read."""
+    name.  Any other state (never bound there, a container's mutated state,
+    a ``with`` observation, a live loop's post-binding, a decorated
+    definition, a binding guarded on a branch) is no decided binding:
+    ``UNDECIDED_MODULE_BINDING`` too, never the name read."""
     state = unwrap_binding_state(state)
+    if isinstance(state, UnboundBinding):
+        return state
+    if isinstance(state, (FunctionDef, AsyncFunctionDef, ClassDef, EffectRef)):
+        return state
     if not isinstance(state, Node):
         return UNDECIDED_MODULE_BINDING
     kind = _evaluation_reference_kind(state)
@@ -4557,11 +4645,14 @@ def _module_reference_state(state):
 
 def _evaluation_reference_kind(node) -> Optional[str]:
     """``"evaluation"`` for a reference to a statement's or a walrus's
-    evaluation (or a phi whose arms are such references or constants),
-    ``"member"`` where a comprehension member's coordinate is among them,
-    None for anything else."""
+    evaluation, ``"import"`` for an import's row (``ImportBindingRef``),
+    or a phi whose arms are such references or constants; ``"member"``
+    where a comprehension member's coordinate is among them, None for
+    anything else."""
     if isinstance(node, EvaluationRef):
         return "member" if getattr(node, "member", False) else "evaluation"
+    if isinstance(node, ImportBindingRef):
+        return "import"
     if not (isinstance(node, IfExp) and isinstance(node.test, BranchResultRef)):
         return None
     kinds = [
@@ -5367,6 +5458,15 @@ class Node(Typed):
             if isinstance(new_stmt, _Splice) and new_stmt.bindings:
                 projected = stmt._binding_entries(new_stmt.bindings, scope)
                 scope = {**scope, **projected}
+            if record is not None and record.open:
+                # A reader of the module never reads, past this statement, a
+                # binding the threading did not carry through it.
+                uncarried = _module_uncarried_names(stmt, live_loop_bindings)
+                uncarried &= record.names
+                if uncarried:
+                    scope = dict(scope)
+                    for name in sorted(uncarried):
+                        scope[name] = UNDECIDED_MODULE_BINDING
             trace = scope.get(_SUBSTITUTION_TRACE_BUILDER)
             if isinstance(trace, SubstitutionTraceBuilderV1):
                 trace.record(stmt, pre_statement_scope, scope)
@@ -10916,6 +11016,15 @@ class TypeAlias(Statement):
             changed["value"] = new_val
         return self if not changed else rewrite(self, **changed)
 
+    def substitution_binding(self, scope):
+        """Threading a module body for its readers, ``type X = ...`` binds a
+        name a reader reads to an alias object that is not constructed:
+        ``UNDECIDED_MODULE_BINDING`` from here on, never the binding before
+        it.  Anywhere else it binds nothing."""
+        if isinstance(self.name, Name) and _module_threads(scope, self.name.id):
+            return {self.name.id: UNDECIDED_MODULE_BINDING}
+        return None
+
 
 class For(Statement):
     _bound_target_fields = ("target",)
@@ -14657,6 +14766,9 @@ class Import(Statement):
         """Binds nothing, no hole: substitutes to itself."""
         return self
 
+    def substitution_binding(self, scope):
+        return _module_import_binding(self, scope)
+
     def _construct_sugar(self):
         """`import <module>` binds a module name that stays a FREE SYMBOLIC
         in the meaning layer: nothing about the import itself is stated as
@@ -14677,6 +14789,9 @@ class ImportFrom(Statement):
     def substitute(self, scope):
         """Binds nothing, no hole: substitutes to itself."""
         return self
+
+    def substitution_binding(self, scope):
+        return _module_import_binding(self, scope)
 
     def _construct_sugar(self):
         """`from <module> import <names>` binds free symbolics the same way
@@ -18927,11 +19042,26 @@ class Name(Expression):
         if bound is _MISSING:
             return self
         bound = unwrap_binding_state(bound)
+        if bound is UNDECIDED_MODULE_BINDING:
+            # The module threading carried no binding of the name past some
+            # statement (``_module_uncarried_names``): its own copy of a
+            # module read keeps the name, as with no binding at all; a
+            # reader outside the module block is cited undecided instead.
+            return self
         if isinstance(bound, (FunctionDef, AsyncFunctionDef, ClassDef)):
             # A local definition bound this name: the read is the ordinary
             # name, resolved by the definition's own runtime binding, never
             # the definition statement spliced into expression position.
             return self
+        if isinstance(bound, ImportBindingRef):
+            # An import bound this name: a read the one import table rows
+            # with the same target resolves through the table at its own
+            # coordinate; any other read is the import's row, never a name.
+            span = self.line_col_span()
+            read = (span.start_line, span.start_col, span.end_line, span.end_col)
+            if self.unit.import_reference_target(read) == bound.target_symbol:
+                return self
+            return bound
         if isinstance(bound, Node):
             # Formal / binding-coordinate refs carry identity in ``coordinate``,
             # not in the Param's declaration span. Replacing every use with the
@@ -19254,15 +19384,47 @@ class DecoratedDefinitionRef(Expression):
         return DecoratedDefinitionRefSugar(self.definition_name, self.fragment)
 
 
+class ImportBindingRef(Expression):
+    """The binding an ``import`` or ``from ... import`` statement makes of a
+    module name, as the module threading carries it to a reader of that name
+    outside the module block (``_module_import_binding``): the one import
+    table's row for the binding (``SourceUnit.import_binding_reference``),
+    alone or as an arm of the phi a ``try`` route or an ``if`` arm builds
+    (``try: import json`` / ``except ImportError: json = None``).
+
+    A read the table rows with this same target resolves through the table
+    at its own coordinate (``Name.substitute`` keeps the name).  Anywhere
+    else -- an arm of a phi, a read the table does not row -- the import's
+    value is not constructed: the read constructs and refuses by name when
+    reduced, never the name read in its place.
+    """
+
+    name: str
+    target_symbol: str
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.import_binding_ref_sugar import (
+            ImportBindingRefSugar,
+        )
+
+        return ImportBindingRefSugar(self.name, self.target_symbol, self.fragment)
+
+
 def _local_definition_binding(definition, scope):
     """A local ``def``/``class`` binds its name for the statements after it.
 
-    Only a name the enclosing function holds as a lexical local is threaded;
-    an undecorated definition binds itself, a decorated one binds a loud
-    ``DecoratedDefinitionRef``.
+    Only a name the enclosing function holds as a lexical local is threaded,
+    and, while a module body is threaded for its readers, a module name one
+    of them reads (``_module_threads``); an undecorated definition binds
+    itself, a decorated one binds a loud ``DecoratedDefinitionRef``.
     """
     lexical = scope.get(_LEXICALLY_BOUND_NAMES)
-    if not isinstance(lexical, frozenset) or definition.name not in lexical:
+    local = isinstance(lexical, frozenset) and definition.name in lexical
+    if not (local or _module_threads(scope, definition.name)):
         return None
     if not definition.decorators:
         return {definition.name: definition}

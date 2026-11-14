@@ -30,9 +30,10 @@ import pytest
 
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
-from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.source_call_frame import (
     frame_at_current_module_execution_site,
 )
@@ -42,6 +43,7 @@ from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_source_tree.binding_state import UnboundBinding
 from sugar_source_tree.nodes import (
     UNDECIDED_MODULE_BINDING,
     AnnAssign,
@@ -49,11 +51,15 @@ from sugar_source_tree.nodes import (
     Attribute,
     AugAssign,
     BinOp,
+    BranchResultRef,
     Call,
     ClassDef,
     EvaluationRef,
     For,
     FunctionDef,
+    GuardedBindingRead,
+    IfExp,
+    ImportBindingRef,
     ListComp,
     Name,
     Return,
@@ -218,17 +224,89 @@ def test_a_global_unbound_at_the_module_call_is_undecided() -> None:
         _returned_at(call, _function(tree))
 
 
-def test_a_global_an_import_also_binds_is_undecided() -> None:
-    tree = _source(
-        "try:\n    import json\nexcept ImportError:\n    json = None\n"
-        "def f():\n    return json\n"
-    )
-    with pytest.raises(SugarNotWritten, match="undecided module binding of `json`"):
+TRY_IMPORT_FALLBACK = (
+    "try:\n    import json\nexcept ImportError:\n    json = None\n"
+    "def f():\n    return json\n"
+)
+
+
+def test_a_try_import_fallback_decides_the_binding_per_route() -> None:
+    tree = _source(TRY_IMPORT_FALLBACK)
+    read = _returned(_function(tree))
+    # A phi over the try's route: the handler's ``json = None`` where the
+    # import failed into the handler, the import table's row for the import
+    # where it did not.  Never undecided, never the name read.
+    assert isinstance(read, IfExp)
+    assert isinstance(read.test, BranchResultRef)
+    assert isinstance(read.body, EvaluationRef)
+    assert read.body.name == "json"
+    assert isinstance(read.orelse, ImportBindingRef)
+    assert read.orelse.name == "json"
+    assert read.orelse.target_symbol == "python:json"
+
+
+def test_an_import_after_an_assignment_reads_the_import_table() -> None:
+    tree = _source("json = None\nimport json\ndef f():\n    return json\n")
+    unit = _function(tree).unit
+    final = unit.module_bindings_at(None, {"json"})["json"]
+    assert isinstance(final, ImportBindingRef)
+    assert final.target_symbol == "python:json"
+
+
+DEF_REBINDS = "X = None\ndef X():\n    pass\ndef f():\n    return X\ny = f()\n"
+
+
+def test_a_def_after_an_assignment_binds_the_definition() -> None:
+    tree = _source(DEF_REBINDS)
+    unit = _function(tree).unit
+    final = unit.module_bindings_at(None, {"X"})["X"]
+    assert isinstance(final, FunctionDef)
+    assert final.name == "X"
+    # The read is the definition's own binding, as a local definition's is:
+    # the name, never ``X = None``'s evaluation.
+    read = _returned(_function(tree))
+    assert isinstance(read, Name)
+    assert read.id == "X"
+    (call,) = _calls(tree)
+    at_call = _returned_at(call, _function(tree))
+    assert isinstance(at_call, Name)
+    assert at_call.id == "X"
+
+
+def test_a_call_before_the_def_reads_the_assignment() -> None:
+    tree = _source("X = None\ndef f():\n    return X\ny = f()\ndef X():\n    pass\n")
+    (key,) = _assignment_keys(tree, "X")
+    (call,) = _calls(tree)
+    at_call = _returned_at(call, _function(tree))
+    assert isinstance(at_call, EvaluationRef)
+    assert at_call.evaluation == key
+    after_import = _returned(_function(tree))
+    assert isinstance(after_import, Name)
+
+
+def test_a_deleted_global_read_is_a_name_error_halt() -> None:
+    tree = _source("X = 1\ndel X\ndef f():\n    return X\n")
+    read = _returned(_function(tree))
+    assert isinstance(read, GuardedBindingRead)
+    assert isinstance(read.state, UnboundBinding)
+    exits = _function(tree).sugar().desugar(None).exits
+    assert not [e for e in exits if isinstance(e, Completed)], exits
+    halted = [e for e in exits if isinstance(e, Halted)]
+    assert len(halted) == 1, exits
+    assert isinstance(halted[0].effect, NameErrorEffect)
+    assert halted[0].effect.name == "X"
+
+
+def test_a_star_import_leaves_every_global_undecided() -> None:
+    tree = _source("from os import *\nX = 1\ndef f():\n    return X\n")
+    assert _function(tree).unit.module_unthreaded_names() == frozenset({"X"})
+    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
         _returned(_function(tree))
 
 
-def test_a_global_a_def_rebinds_is_undecided() -> None:
-    tree = _source("X = 1\ndef X():\n    pass\ndef f():\n    return X\n")
+def test_a_dynamic_global_writer_leaves_every_global_undecided() -> None:
+    tree = _source("X = 1\nglobals()['X'] = 2\ndef f():\n    return X\n")
+    assert _function(tree).unit.module_unthreaded_names() == frozenset({"X"})
     with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
         _returned(_function(tree))
 
