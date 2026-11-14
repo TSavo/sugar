@@ -363,8 +363,12 @@ def test_helper_alone_is_undischarged_attribute_named_get_carrier() -> None:
     assert isinstance(pending, NativeOperationExitCarrierV1)
     # First demand is the get leg (attribute_named), not setattr.
     assert pending.demand.operator == "attribute_named"
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(None, {})
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    # No caller actual: the get leg is the cited unanswered face (#7825).
+    exits = pending.discharge(None, {})
+    assert pending.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
 
 
 def test_authenticated_discharge_get_iadd_setattr_updates_field() -> None:

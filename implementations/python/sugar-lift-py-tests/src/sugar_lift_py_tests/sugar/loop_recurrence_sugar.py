@@ -290,9 +290,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     return deferred[value.index]
                 return ExitSet.completed(value)
 
-            return NativeOperationExitCarrierV1.compose_prefix(
-                ExitSet(tuple(exits)), select
-            )
+            return ExitSet(tuple(exits)).sequence(select)
         return ExitSet(tuple(exits)).normalize()
 
     def _advance_iterator(self, iterator, runtime, ctx, *, entries, carried, index=0):

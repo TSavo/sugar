@@ -550,16 +550,24 @@ class ExitSet(Generic[T]):
 
     @classmethod
     def two_faced(
-        cls, value: T, raise_effect: Effect, *, guard: Formula, owed: tuple = _NO_OWED
+        cls,
+        value: T,
+        raise_effect: Effect,
+        *,
+        guard: Formula,
+        owed: tuple = _NO_OWED,
+        state: object | None = None,
     ) -> "ExitSet[T]":
         """Completes with ``value``, or raises something undetermined.
 
         THE ONE CONSTRUCTOR of the two-faced outcome (#7757 item 13). An
         operation whose body was not looked at (an unprojected call, an
         undecided operand's dunder, a formal-selected manager step, an opaque
-        attribute or subscript) completes with ``value`` only under its
-        ``guard`` -- the site-keyed ``...completes`` atom -- and halts with
-        ``raise_effect`` (an ``UndeterminedRaiseEffect``) from no state under
+        attribute or subscript, a native operation its caller left without an
+        actual) completes with ``value`` only under its ``guard`` -- the
+        site-keyed ``...completes`` atom -- and halts with ``raise_effect`` (an
+        ``UndeterminedRaiseEffect``) from ``state`` (none unless the producer
+        holds the state the operation began from) under
         ``complement_guard(guard)``. Both arms carry ``owed``: the debt is
         incurred whether the operation completes or raises. Nobody assembles
         this pair by hand.
@@ -567,7 +575,7 @@ class ExitSet(Generic[T]):
         return cls(
             (
                 Completed(guard, value, owed=owed),
-                Halted(complement_guard(guard), raise_effect, None, owed=owed),
+                Halted(complement_guard(guard), raise_effect, state, owed=owed),
             )
         ).normalize()
 
@@ -1240,31 +1248,54 @@ def _compose_after_discharge(resolved: tuple, deferred: tuple):
     ``resolved`` holds every arm composed already; each ``deferred`` entry is
     ``(position, prefix arm, carrier)``, its position the slot in
     ``resolved`` its continuation fills. The first carrier composes the
-    rest through its ``after_discharge``: once it discharges, its exits go
-    beneath their prefix arm at that slot, and a later carrier answered from
-    there is discharged by the same caller in turn (``discharge`` discharges
-    a carrier an ``after_discharge`` step answers).
+    rest through its ``after_discharge`` (``_SequencedBeside``): once it
+    discharges, its exits go beneath their prefix arm at that slot, and a
+    later carrier answered from there is discharged by the same caller in
+    turn (``discharge`` discharges a carrier an ``after_discharge`` step
+    answers). A carrier whose caller has no actual still discharges, to its
+    cited unanswered face, so every resolved arm stands (#7825).
     """
     position, prefix, carrier = deferred[0]
-    rest = deferred[1:]
+    return carrier.after_discharge(
+        _SequencedBeside(resolved, position, prefix, deferred[1:])
+    )
 
-    def beneath(projected):
+
+@dataclass(frozen=True, eq=False)
+class _SequencedBeside:
+    """The step that composes a carrier's exits beside ``sequence``'s arms.
+
+    ``resolved`` is every arm ``sequence`` composed already, ``position``
+    the slot the carrier's exits fill beneath ``prefix``, and ``rest`` the
+    later ``(position, prefix arm, carrier)`` entries still waiting. It is
+    a value, not a closure, so a reader of what a deferred outcome already
+    reduced reads its arms (``NativeOperationExitCarrierV1.composed_beside``).
+    """
+
+    resolved: tuple
+    position: int
+    prefix: object
+    rest: tuple
+
+    def __call__(self, projected):
         inserted: list = []
         _extend_beneath(
             inserted,
-            prefix,
+            self.prefix,
             _require_exit_set(projected, owner="ExitSet.sequence"),
         )
-        composed = (*resolved[:position], *inserted, *resolved[position:])
-        if not rest:
+        composed = (
+            *self.resolved[: self.position],
+            *inserted,
+            *self.resolved[self.position :],
+        )
+        if not self.rest:
             return ExitSet(composed).normalize()
         shift = len(inserted)
         return _compose_after_discharge(
             composed,
-            tuple((later + shift, arm, waiting) for later, arm, waiting in rest),
+            tuple((later + shift, arm, waiting) for later, arm, waiting in self.rest),
         )
-
-    return carrier.after_discharge(beneath)
 
 
 def sole_completed_value(outcome: ExitSet):

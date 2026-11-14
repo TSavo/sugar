@@ -274,15 +274,17 @@ def test_swapped_source_discharge_order_twin_fails() -> None:
 
 
 def test_dropped_variadic_pack_is_undischarged() -> None:
-    from sugar_source_tree.panic import SugarNotWritten
+    """The dropped pack leaves the store the cited unanswered face (#7825)."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
 
     _, pending = _helper()
     a_cid, i_cid, _values_cid = pending.demand.operand_coordinate_cids
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(
-            None,
-            {
-                a_cid: ListValue((TermValue(0),)),
-                i_cid: TermValue(0),
-            },
-        )
+    exits = pending.discharge(
+        None,
+        {
+            a_cid: ListValue((TermValue(0),)),
+            i_cid: TermValue(0),
+        },
+    )
+    assert pending.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None

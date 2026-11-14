@@ -40,7 +40,6 @@ from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSug
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -125,11 +124,20 @@ def test_helper_alone_is_undischarged_setitem_carrier() -> None:
     )
 
 
+def _unanswered(pending, actuals) -> None:
+    """Missing authenticated actuals leave the store the cited unanswered face
+    (#7825) — never fabricate green."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    exits = pending.discharge(None, actuals)
+    assert pending.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
+
+
 def test_missing_caller_actual_is_undischarged_not_completed() -> None:
     """Missing authenticated actuals remain undischarged — never fabricate green."""
     _, pending = _helper_definition()
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(None, {})
+    _unanswered(pending, {})
 
 
 def test_partial_caller_actual_is_undischarged_discrimination() -> None:
@@ -146,15 +154,14 @@ def test_partial_caller_actual_is_undischarged_discrimination() -> None:
     )
     assert isinstance(completed.exits[0], Completed)
 
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(
-            None,
-            {
-                obj_cid: ListValue((TermValue(0),)),
-                key_cid: TermValue(0),
-                # value_cid deliberately omitted
-            },
-        )
+    _unanswered(
+        pending,
+        {
+            obj_cid: ListValue((TermValue(0),)),
+            key_cid: TermValue(0),
+            # value_cid deliberately omitted
+        },
+    )
 
 
 # ---------------------------------------------------------------------------

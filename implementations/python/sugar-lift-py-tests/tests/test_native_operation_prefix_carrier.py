@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     ReducerPreEffectStateV1,
@@ -15,8 +13,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.effect import RaiseEffect, UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import NoneValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
-from sugar_lift_py_tests.ir import PrimitiveSort, and_, atomic, make_var
+from sugar_lift_py_tests.ir import PrimitiveSort, atomic, make_var
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
@@ -93,39 +90,37 @@ def test_completed_prefix_arms_stay_deferred_and_retain_all_testimony() -> None:
         )
     )
 
-    composed = NativeOperationExitCarrierV1.compose_prefix(
-        prefix, lambda _value: carrier
-    )
+    composed = prefix.sequence(lambda _value: carrier)
 
     assert isinstance(composed, NativeOperationExitCarrierV1)
-    exits = composed.discharge(
-        None,
-        {
-            left.coordinate_cid: NoneValue(),
-            right.coordinate_cid: TermValue(2),
-        },
-    )
+    actuals = {
+        left.coordinate_cid: NoneValue(),
+        right.coordinate_cid: TermValue(2),
+    }
+    exits = composed.discharge(None, actuals)
 
-    assert len(exits.exits) == 3
+    # The same exits eager sequencing of the discharged carrier gives: the
+    # carrier's own guard restricts its exits, never the arms beside it.
+    discharged = carrier.discharge(None, actuals)
+    assert exits == prefix.sequence(lambda _value: discharged)
     stopped = next(exit_ for exit_ in exits.exits if exit_.effect is stopped_effect)
     assert isinstance(stopped, Halted)
     assert stopped.state is stopped_state
+    assert stopped.guard == first_guard
     following = tuple(
         exit_
         for exit_ in exits.exits
         if isinstance(exit_, Halted) and exit_.effect is not stopped_effect
     )
-    assert len(following) == 2
-    assert following[0].guard == and_([first_guard, tail_guard])
-    assert following[0].faces == frozenset({first_face})
-    assert following[0].state is pre_effect_state
-    assert following[1].guard == and_([second_guard, tail_guard])
-    assert following[1].faces == frozenset({second_face})
-    assert following[1].state is pre_effect_state
+    assert following
+    for exit_ in following:
+        assert exit_.state is pre_effect_state
 
 
-def test_incompatible_prefix_carrier_demands_refuse_loudly() -> None:
-    first, _, _ = _carrier("less_than")
+def test_prefix_carriers_of_different_demands_both_discharge() -> None:
+    """``sequence`` composes carriers of different demands beneath one prefix:
+    the caller's actuals discharge each in arm order."""
+    first, left, right = _carrier("less_than")
     second, _, _ = _carrier("add")
     first_guard = atomic("test:prefix-first", [])
     second_guard = atomic("test:prefix-second", [])
@@ -135,23 +130,27 @@ def test_incompatible_prefix_carrier_demands_refuse_loudly() -> None:
             Completed(second_guard, TermValue(2)),
         )
     )
+    actuals = {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)}
 
-    with pytest.raises(
-        ConstructionPanic, match="incompatible native-operation demands"
-    ):
-        NativeOperationExitCarrierV1.compose_prefix(
-            prefix,
-            lambda value: first if value == TermValue(1) else second,
-        )
+    composed = prefix.sequence(
+        lambda value: first if value == TermValue(1) else second,
+    )
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    first_exits = first.discharge(None, actuals)
+    second_exits = second.discharge(None, actuals)
+    assert composed.discharge(None, actuals) == prefix.sequence(
+        lambda value: first_exits if value == TermValue(1) else second_exits
+    )
 
 
 def test_prefix_composition_retains_later_carrier_continuations() -> None:
     carrier, left, right = _carrier()
     guard = atomic("test:prefix", [])
     prefix = ExitSet((Completed(guard, TermValue(1)),))
-    composed = NativeOperationExitCarrierV1.compose_prefix(
-        prefix, lambda _value: carrier
-    ).and_then(lambda _predicate: ExitSet.completed(TermValue(99)))
+    composed = prefix.sequence(lambda _value: carrier).and_then(
+        lambda _predicate: ExitSet.completed(TermValue(99))
+    )
 
     exits = composed.discharge(
         None,

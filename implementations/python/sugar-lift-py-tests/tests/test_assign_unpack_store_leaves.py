@@ -645,8 +645,12 @@ def test_formal_subscript_unpack_desugar_stays_undischarged(tmp_path: Path) -> N
     outcome = sugar.desugar(None)
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "setitem"
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        outcome.discharge(None, {})
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    # No caller actual: the store is the cited unanswered face (#7825).
+    exits = outcome.discharge(None, {})
+    assert outcome.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
 
 
 def test_dual_attribute_display_unpack_constructs(tmp_path: Path) -> None:

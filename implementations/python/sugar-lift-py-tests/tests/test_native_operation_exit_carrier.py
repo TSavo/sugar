@@ -251,6 +251,10 @@ def test_short_circuit_exception_keeps_actual_map_and_exact_temporal_state():
 
 
 def test_short_circuit_missing_second_leg_actual_remains_explicitly_undischarged():
+    """The second leg's missing actual leaves it the cited unanswered face
+    (#7825); the first leg's stopping face stands beside it."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
     carrier, left, _right = _carrier(operator="less_than")
     continuing_guard = atomic("test:first-leg-truth", [])
     continuing_face, stopped_face = partition("test:short-circuit-undischarged")
@@ -261,8 +265,16 @@ def test_short_circuit_missing_second_leg_actual_remains_explicitly_undischarged
         stopped_face=stopped_face,
     )
 
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        composed.discharge(None, {left.coordinate_cid: TermValue(1)})
+    exits = composed.discharge(None, {left.coordinate_cid: TermValue(1)})
+
+    assert carrier.unanswered_call() in owed_calls(exits)
+    stopped = [
+        exit_
+        for exit_ in exits.exits
+        if isinstance(exit_, Completed) and exit_.value == TermValue(0)
+    ]
+    assert len(stopped) == 1 and stopped_face in stopped[0].faces
+    assert carrier.unanswered_call() not in stopped[0].owed
 
 
 def test_continuation_carrier_inherits_enclosing_reducer_pre_effect_state():
@@ -562,11 +574,16 @@ def test_nested_carrier_missing_its_formal_actual_stays_undischarged():
         ),
         coordinates=(inner_left, inner_right),
     )
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        outer.and_then(lambda _value: inner).discharge(
-            None,
-            {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)},
-        )
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    # The inner carrier's missing actual leaves it the cited unanswered face
+    # beneath the outer operation's completion (#7825).
+    exits = outer.and_then(lambda _value: inner).discharge(
+        None,
+        {left.coordinate_cid: TermValue(1), right.coordinate_cid: TermValue(2)},
+    )
+    assert owed_calls(exits) == (inner.unanswered_call(),)
+    assert exits.completed_value() is None
 
 
 def test_guarded_but_undischarged_carrier_cannot_report_completion():
@@ -610,10 +627,21 @@ def test_undischarged_native_operation_is_typed_loud_not_completed():
 
 
 def test_missing_authenticated_actual_is_undischarged_not_a_construction_panic():
+    """No actual for a formal: the operation is the two-faced unanswered
+    position, both faces owing it as an ``undecided`` member (#7825)."""
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
+
     carrier, left, _ = _carrier()
 
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        carrier.discharge(None, {left.coordinate_cid: TermValue(1)})
+    exits = carrier.discharge(None, {left.coordinate_cid: TermValue(1)})
+
+    completed, halted = exits.exits
+    assert isinstance(completed, Completed)
+    assert isinstance(halted, Halted)
+    assert isinstance(halted.effect, UndeterminedRaiseEffect)
+    assert halted.guard == complement_guard(completed.guard)
+    assert completed.owed == halted.owed == (carrier.unanswered_call(),)
+    assert not isinstance(completed.value, TermValue)
 
 
 def test_unavailable_native_operation_is_undischarged_not_a_construction_panic():

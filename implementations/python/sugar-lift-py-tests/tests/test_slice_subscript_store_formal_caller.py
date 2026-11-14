@@ -39,7 +39,6 @@ from sugar_lift_py_tests.sugar.store_effect_sugar import SubscriptStoreEffectSug
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -466,8 +465,17 @@ def test_helper_alone_slice_store_is_undischarged_setitem() -> None:
     assert pending.demand.operand_coordinate_cids[1] is None
     assert pending.demand.operand_coordinate_cids[0] is not None
     assert pending.demand.operand_coordinate_cids[2] is not None
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(None, {})
+    _unanswered(pending, {})
+
+
+def _unanswered(pending, actuals) -> None:
+    """An absent actual leaves the store the cited unanswered face (#7825):
+    owed as an ``undecided`` member, never an unconditional completion."""
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    exits = pending.discharge(None, actuals)
+    assert pending.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
 
 
 def test_discrimination_helper_alone_is_not_completed() -> None:
@@ -536,23 +544,18 @@ def test_wrong_coordinate_cannot_discharge_slice_store() -> None:
     assert isinstance(pending, NativeOperationExitCarrierV1)
     coords = function.formal_coordinates()
     obj_c, value_c = coords[0], coords[1]
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(
-            None,
-            {
-                f"wrong:{obj_c.coordinate_cid}": ListValue((TermValue(0),)),
-                value_c.coordinate_cid: ListValue((TermValue(1),)),
-            },
-        )
+    _unanswered(
+        pending,
+        {
+            f"wrong:{obj_c.coordinate_cid}": ListValue((TermValue(0),)),
+            value_c.coordinate_cid: ListValue((TermValue(1),)),
+        },
+    )
 
 
 def test_missing_actual_does_not_fabricate_completed_slice_store() -> None:
     _, pending = _helper("def helper(obj, value):\n    obj[1:3] = value\n")
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        fabricated = pending.discharge(None, {})
-        assert isinstance(fabricated, ExitSet) and isinstance(
-            fabricated.exits[0], Completed
-        )
+    _unanswered(pending, {})
 
 
 # ---------------------------------------------------------------------------
@@ -645,8 +648,7 @@ def test_formal_bound_demand_gap_is_executable_red_law() -> None:
         # receiver + value formals present; index may carry the formal bound
         # or the whole demand stays undischarged without green list post-state.
         assert pending.demand.operator == "setitem"
-        with pytest.raises(SugarNotWritten):
-            pending.discharge(None, {})
+        _unanswered(pending, {})
         formals = function.formal_coordinates()
         assert len(formals) >= 2
     elif (

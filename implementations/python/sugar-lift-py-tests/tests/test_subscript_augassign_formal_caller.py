@@ -33,7 +33,6 @@ from sugar_source_tree.operators import (
     BinaryOperator,
     production_augassign_inplace_operators,
 )
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -622,8 +621,12 @@ def test_formal_subscript_get_carrier_missing_actuals_undischarged() -> None:
     _, pending = _helper_definition()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     assert pending.demand.operator == "subscript"
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(None, {})
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    # No caller actual: the get leg is the cited unanswered face (#7825).
+    exits = pending.discharge(None, {})
+    assert pending.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
 
 
 def test_authenticated_caller_discharges_get_iadd_setitem_to_updated_list() -> None:

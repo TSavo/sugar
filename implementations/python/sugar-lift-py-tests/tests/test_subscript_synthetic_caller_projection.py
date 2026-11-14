@@ -15,8 +15,6 @@ claims about pandas source.
 
 from __future__ import annotations
 
-import pytest
-
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -32,9 +30,9 @@ from sugar_lift_py_tests.outcome import (
     Halted,
     NativeOperationExitCarrierV1,
 )
+from sugar_lift_py_tests.unanswered_calls import owed_calls
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 CALLER_SOURCE = (
@@ -83,8 +81,10 @@ def _caller_outcomes(source: str = CALLER_SOURCE) -> tuple[ExitSet, ...]:
 def test_helper_alone_is_named_undischarged_without_caller_actuals() -> None:
     carrier = _carrier("def helper(obj, key=1):\n    return obj[key]\n")
 
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        carrier.discharge(None, {})
+    # No caller actual: the subscript is the cited unanswered face (#7825).
+    exits = carrier.discharge(None, {})
+    assert carrier.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
 
 
 def test_positional_keyword_and_default_callers_reach_the_same_demand() -> None:

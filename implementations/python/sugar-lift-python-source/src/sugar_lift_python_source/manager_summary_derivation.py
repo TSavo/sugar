@@ -875,10 +875,12 @@ def _derive_effect_boundary_from_deferred_carrier(
         for item in getattr(obj, "entries", ())
         if isinstance(item, BranchResultAuthentication)
     ]
-    halted = ()
-    if carrier.prefix_composition is not None:
-        resolved = carrier.prefix_composition[0]
-        halted = tuple(face for face in resolved if isinstance(face, Halted))
+    halted = tuple(
+        face
+        for beside in carrier.composed_beside()
+        for face in beside.resolved
+        if isinstance(face, Halted)
+    )
     absent_effect_halts = tuple(
         face
         for face in halted

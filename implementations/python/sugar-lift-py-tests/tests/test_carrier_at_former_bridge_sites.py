@@ -248,21 +248,61 @@ def test_sequence_refuses_an_uncomposable_consume_by_name():
 # --- caller_parameter_contract ---------------------------------------------
 
 
-def test_compose_prefix_defers_a_carrier_arm():
+def test_sequence_defers_a_carrier_arm_beside_its_resolved_arms():
+    """The former ``compose_prefix`` caller: a multi-arm prefix whose one
+    completed arm answers a carrier is that carrier, composed by ``sequence``,
+    and the arms resolved beside it are read off it before discharge."""
+    carrier, left, right = _carrier()
+    halt = Halted(atomic("test.halts", []), _raise_effect("prefix"), None)
+    prefix = ExitSet((Completed(atomic("test.completes", []), TermValue(0)), halt))
+    composed = prefix.sequence(lambda _value: carrier)
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    (beside,) = composed.composed_beside()
+    assert beside.resolved == (halt,)
+    exits = composed.discharge(None, _actuals(left, right))
+    discharged = carrier.discharge(None, _actuals(left, right))
+    assert exits == prefix.sequence(lambda _value: discharged)
+
+
+def test_sequence_refuses_a_non_exit_set_beside_a_carrier_by_name():
+    with pytest.raises(ConstructionPanic) as excinfo:
+        ExitSet.completed(TermValue(0), guard=atomic("test.prefix", [])).sequence(
+            lambda _value: object()
+        )
+    assert excinfo.value.info.owner == "ExitSet.sequence"
+
+
+def test_sequence_keeps_a_halt_beside_an_undischarged_carrier():
+    """A halt is never dropped (#7825): the caller has no actual for the
+    carrier's formals, yet the plain halt composed beside it stands, and the
+    carrier's own position is the cited unanswered two-faced arm."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import UnansweredCallV1, owed_calls
+
     carrier, _, _ = _carrier()
-    composed = NativeOperationExitCarrierV1.compose_prefix(
-        ExitSet.completed(TermValue(0)), lambda _value: carrier
+    completes = atomic("test.carrier-arm", [])
+    halt = Halted(atomic("test.halt-arm", []), _raise_effect("plain-halt"), None)
+    composed = ExitSet((Completed(completes, TermValue(0)), halt)).sequence(
+        lambda _value: carrier
     )
     assert isinstance(composed, NativeOperationExitCarrierV1)
-    assert composed.prefix_composition is not None
 
+    exits = composed.discharge(None, {})
 
-def test_compose_prefix_refuses_a_non_exit_set_by_name():
-    with pytest.raises(ConstructionPanic) as excinfo:
-        NativeOperationExitCarrierV1.compose_prefix(
-            ExitSet.completed(TermValue(0)), lambda _value: object()
-        )
-    assert excinfo.value.info.owner == "NativeOperationExitCarrierV1.compose_prefix"
+    assert isinstance(exits, ExitSet)
+    assert halt in exits.exits
+    cited = UnansweredCallV1(None, carrier.demand.source_node)
+    assert owed_calls(exits) == (cited,)
+    unanswered = [arm for arm in exits.exits if cited in arm.owed]
+    assert [type(arm) for arm in unanswered] == [Completed, Halted]
+    completed, raised = unanswered
+    assert isinstance(raised.effect, UndeterminedRaiseEffect)
+    assert raised.effect.producer_node_owner == "UnansweredNativeOperation:add"
+    # Both faces lie beneath the carrier's prefix arm.
+    assert completes in completed.guard.operands
+    assert completes in raised.guard.operands
+    # The halt beside the carrier owes nothing the carrier left unanswered.
+    assert cited not in halt.owed
 
 
 def test_discharge_exitset_step_answering_a_carrier_discharges_it():

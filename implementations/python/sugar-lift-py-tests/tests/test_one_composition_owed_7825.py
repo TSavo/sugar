@@ -333,9 +333,7 @@ def test_a_deferred_carrier_owes_its_prefix_arms_debts() -> None:
             ),
         )
     )
-    composed = NativeOperationExitCarrierV1.compose_prefix(
-        prefix, lambda _value: carrier
-    )
+    composed = prefix.sequence(lambda _value: carrier)
     assert isinstance(composed, NativeOperationExitCarrierV1)
     # The resolved (halted) prefix arm first, then the deferred prefix arm.
     assert unanswered_calls.owed_calls(composed) == (second, first)

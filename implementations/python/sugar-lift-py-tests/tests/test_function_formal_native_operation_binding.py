@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -20,9 +18,9 @@ from sugar_lift_py_tests.outcome import (
     Halted,
     NativeOperationExitCarrierV1,
 )
+from sugar_lift_py_tests.unanswered_calls import owed_calls
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -160,11 +158,14 @@ def test_wrong_coordinate_actual_cannot_discharge_pending_operation() -> None:
     assert isinstance(pending, NativeOperationExitCarrierV1)
     left, right = function.formal_coordinates()
 
-    with pytest.raises(SugarNotWritten, match="caller actual absent"):
-        pending.discharge(
-            None,
-            {
-                f"wrong:{left.coordinate_cid}": TermValue(1),
-                right.coordinate_cid: TermValue(2),
-            },
-        )
+    # The wrong key answers no formal: the operation is the cited unanswered
+    # face (#7825), never a completion over the misfiled actual.
+    exits = pending.discharge(
+        None,
+        {
+            f"wrong:{left.coordinate_cid}": TermValue(1),
+            right.coordinate_cid: TermValue(2),
+        },
+    )
+    assert pending.unanswered_call() in owed_calls(exits)
+    assert exits.completed_value() is None
