@@ -29,10 +29,15 @@ name read.
 A read inside a comprehension of a name a walrus in it writes is a member
 reference too (``recurrence``): to the comprehension's running value of the
 name, which the comprehension binds to the prior binding before the first
-member and rebinds at every write it applies
-(``ComprehensionSugar._written``), so each member reads the previous member's
-write.  Where it bound no running value the read is refused by name
+member and rebinds after every element, key, value and condition that writes
+it (``ComprehensionSugar._written``), so each member reads the previous
+member's write.  Where it bound no running value the read is refused by name
 (``SugarNotWritten``), never read as the binding before the comprehension.
+Within one element, key, value or condition, a read after a walrus of the
+name in evaluation order (``(y := f(x)) and y > 0``) is a reference to that
+walrus's key instead (``nodes._scope_after``), bound in the member only by
+the consumer that evaluates the read after the walrus
+(``named_expression_value.written_by``); unbound, it is refused by name.
 
 A lambda the comprehension stores in what it produces (``fs = [lambda: x for
 x in xs]; fs[0]()``) is called after the comprehension, and Python reads the
@@ -329,10 +334,11 @@ class EvaluationRefSugar(ConstructedTermSugar):
                     f"read of `{self.name}` inside a comprehension whose walrus "
                     f"writes it, with its running value {self.evaluation} "
                     "unbound: the name had no one plain binding before the "
-                    "comprehension, the read follows a walrus of it within one "
-                    "element, key, value or condition, it is in a lambda or a "
-                    "generator expression, or the members run over a symbolic "
-                    "iterable and the read needs an earlier member's write"
+                    "comprehension, the order of a read and a walrus of it "
+                    "within one element, key, value or condition is not "
+                    "decided, it is in a lambda or a generator expression, or "
+                    "the members run over a symbolic iterable and the read "
+                    "needs an earlier member's write"
                 ),
                 requested=(
                     "the write of the previous member, or the binding before "

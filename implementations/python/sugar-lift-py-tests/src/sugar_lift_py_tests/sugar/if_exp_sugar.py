@@ -102,18 +102,18 @@ class IfExpSugar(ConstructedTermSugar):
         # `and_then` rather than reading `cond.value`.  The test is an operand:
         # a walrus in it (`a if (n := c) else b`) runs before either arm, so
         # through the one operand door its bind rides both arms' values, and
-        # both arms are reduced with it bound: an arm reads it through its
+        # both arms are reduced with it bound (``written_by``, the context
+        # every later operand is evaluated in): an arm reads it through its
         # key (``IfExp.substitute``), never the name.  An arm's own walrus
         # rides that arm's value only; the other arm holds the name's earlier
         # value under that walrus's key (``_holding``).
         from sugar_lift_py_tests.floor.named_expression_value import (
-            bind_walrus_binds,
             consume_operands,
-            peel_walrus_binds,
+            written_by,
         )
 
         def join(cond_value):
-            arm_ctx = bind_walrus_binds(peel_walrus_binds(cond_value)[0], ctx)
+            arm_ctx = written_by(cond_value, ctx)
             return consume_operands(
                 lambda presented: self._join(presented, arm_ctx), cond_value
             )
