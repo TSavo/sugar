@@ -999,11 +999,13 @@ def _frame_module_halt(frame):
 
     ``X = 1 // 0`` at module level: importing the module halts there, so a
     call into any frame of it is that halt -- the first such constant in
-    source order, reduced once per module and published by its name on the
-    frame (``ImmutableGlobalHaltV1``).  Never dropped, never a free name.
+    source order, reduced once per module and carried on the frame as its one
+    ``Halted`` arm.  Never dropped, never a free name.
     """
-    halts = getattr(frame, "immutable_global_halts", ())
-    return halts[0].halt if halts else None
+    from sugar_lift_py_tests.outcome import ExitSet
+
+    halt = getattr(frame, "module_halt", None)
+    return None if halt is None else ExitSet((halt,))
 
 
 def _with_frame_mutable_globals(ctx, frame):

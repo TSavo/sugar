@@ -3194,7 +3194,7 @@ def _resolve_source_visible_frame_uncached(
             )
             for pin in pin_scan.mutable_global_pins
         )
-        immutable_global_bindings, immutable_global_halts = _session_module_constants(
+        immutable_global_bindings, module_halt = _session_module_constants(
             session, producer_root, pin_scan, module.source_cid
         )
         module_product = (
@@ -3202,7 +3202,7 @@ def _resolve_source_visible_frame_uncached(
             producer_root,
             mutable_global_bindings,
             immutable_global_bindings,
-            immutable_global_halts,
+            module_halt,
         )
         session.remember_module_materialize(module_key, module_product)
     (
@@ -3210,7 +3210,7 @@ def _resolve_source_visible_frame_uncached(
         producer_root,
         mutable_global_bindings,
         immutable_global_bindings,
-        immutable_global_halts,
+        module_halt,
     ) = module_product
     context = source_file.unit.construction_context
 
@@ -3219,7 +3219,7 @@ def _resolve_source_visible_frame_uncached(
             frame,
             mutable_global_bindings=mutable_global_bindings,
             immutable_global_bindings=immutable_global_bindings,
-            immutable_global_halts=immutable_global_halts,
+            module_halt=module_halt,
         )
 
     definitions = tuple(
@@ -4800,16 +4800,14 @@ def _module_constants(producer_root, pin_scan, source_cid):
     (the name stays what it was: a free symbolic read), never guessed.
 
     A module constant whose ground right-hand side halts (``X = 1 // 0``)
-    is not a free name either: the module never finishes importing.  Its
-    halt is published by name (``ImmutableGlobalHaltV1``), never dropped.
-    Returns ``(bindings, halts)``, halts in source order.
+    is not a free name either: the module never finishes importing there.
+    Its halt is the one ``Halted`` arm of the first such constant in source
+    order, never dropped.  Returns ``(bindings, halt)``; ``halt`` is ``None``
+    when no constant halts.
     """
     from sugar_lift_py_tests.effect import is_lift_time_decidable
-    from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_py_tests.source_call_frame import (
-        ImmutableGlobalBindingV1,
-        ImmutableGlobalHaltV1,
-    )
+    from sugar_lift_py_tests.outcome import Complete, Halted, true_guard
+    from sugar_lift_py_tests.source_call_frame import ImmutableGlobalBindingV1
     from sugar_source_tree.panic import SugarNotWritten
 
     statements = {}
@@ -4830,7 +4828,7 @@ def _module_constants(producer_root, pin_scan, source_cid):
         if "." not in pin.name
     }
     bindings = []
-    halts = []
+    halt = None
     for (name, line), statement in statements.items():
         pin = pins.get((name, line))
         if pin is None and not _is_ground_shaped(statement.value):
@@ -4839,11 +4837,8 @@ def _module_constants(producer_root, pin_scan, source_cid):
         if outcome is None:
             continue
         if _is_decided_raise(outcome):
-            halts.append(
-                ImmutableGlobalHaltV1(
-                    source_cid=source_cid, name=name, line=line, halt=outcome
-                )
-            )
+            if halt is None:
+                halt = Halted(true_guard(), outcome.effect, None)
             continue
         if pin is None or not isinstance(outcome, Complete):
             continue
@@ -4904,7 +4899,7 @@ def _module_constants(producer_root, pin_scan, source_cid):
             value=source.value,
         )
         bindings.append(carried[name])
-    return tuple(bindings), tuple(sorted(halts, key=lambda halt: halt.line))
+    return tuple(bindings), halt
 
 
 def _scanned_definitions(definition: Node) -> tuple[FunctionDef, ...]:
