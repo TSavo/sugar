@@ -421,8 +421,11 @@ def _comparable(members) -> bool:
 def builtin_call_total(language_callee, arg_values, keyword_names=()) -> bool:
     """Whether CPython documents the builtin ``language_callee`` (the
     ``LanguageCallee`` the call's callee is bound to, never its spelling)
-    applied to ``arg_values`` over decided builtin operands as never raising.
-    Anything not listed may raise."""
+    applied to ``arg_values`` as never raising: over decided builtin
+    operands, or, for the builtins that run no code of their operands
+    (``object()``, ``id``, ``callable``, one-operand ``type``), over any.
+    Anything not listed may raise; a builtin that runs an operand's dunder
+    (``hash``, ``len``, ``iter``) is listed only over decided operands."""
     from sugar_source_tree.nodes import LanguageCallee as L
 
     from .floor.dict_value import DictValue
@@ -487,7 +490,71 @@ def builtin_call_total(language_callee, arg_values, keyword_names=()) -> bool:
         if not (1 <= n <= 3) or not all(_ground_number(v, (int,)) for v in args):
             return False
         return n < 3 or args[2].value != 0
+    # The builtins that run no code of any operand: ``object()`` allocates a
+    # bare object (``object(x)`` is a ``TypeError``), ``bytes()`` is ``b''``
+    # and ``complex()`` is ``0j``; ``id(x)`` is ``x``'s address, ``callable(x)``
+    # reads ``type(x)``'s call slot (``PyCallable_Check``) and ``type(x)``
+    # returns ``Py_TYPE(x)``, whatever ``x`` is.
+    if language_callee in (L.BUILTIN_OBJECT, L.BUILTIN_BYTES, L.BUILTIN_COMPLEX):
+        return n == 0
+    if language_callee in (L.BUILTIN_ID, L.BUILTIN_CALLABLE, L.BUILTIN_TYPE):
+        return n == 1
+    if language_callee is L.BUILTIN_ISINSTANCE:
+        # ``PyObject_IsInstance`` over a class whose metaclass is ``type``
+        # (``PyType_CheckExact``) runs no ``__instancecheck__``; it tests
+        # ``Py_TYPE(obj)``'s MRO and, on a miss, reads ``obj.__class__`` --
+        # never user code when ``obj``'s own type is a decided builtin.
+        return (
+            n == 2
+            and _builtin_container(args[0])
+            and _builtin_class_info(args[1])
+        )
     return False
+
+
+def _builtin_class_info(value) -> bool:
+    """``value`` is a builtin class the builtin namespace itself binds (the
+    very floor object, never a value of that name), or a finite tuple of
+    them: a class ``isinstance`` tests without running any code.
+
+    Only the floors that ARE classes are admitted: the exception classes,
+    ``object``, ``type``, ``dict``, ``tuple`` and ``set``.  The other
+    builtin floors (``ClassValue('len')``, ...) are host callables, some of
+    them functions, which ``isinstance`` refuses with ``TypeError``."""
+    from .floor import (
+        BuiltinExceptionClassValue,
+        BuiltinObjectClassValue,
+        BuiltinSemanticCallable,
+    )
+    from .floor.tuple_value import TupleValue
+    from .temporal.builtin_name_bindings import (
+        builtin_name_temporal,
+        builtin_type_class,
+    )
+
+    if type(value) is TupleValue:
+        return all(
+            type(element) is not TupleValue and _builtin_class_info(element)
+            for element in value.elements
+        )
+    if value is builtin_type_class():
+        return True
+    floor = builtin_name_temporal()
+    if isinstance(value, (BuiltinExceptionClassValue, BuiltinObjectClassValue)):
+        return value is floor.value_if_bound(value.name)
+    if isinstance(value, BuiltinSemanticCallable):
+        name = _CLASS_CONSTRUCTIONS.get(value.operation)
+        return name is not None and value is floor.value_if_bound(name)
+    return False
+
+
+# The builtin semantic callables that are classes, by the name the builtin
+# namespace binds each under.
+_CLASS_CONSTRUCTIONS = {
+    "python.dict.construct": "dict",
+    "python.set.construct": "set",
+    "python.tuple.construct": "tuple",
+}
 
 
 @lru_cache(maxsize=1)

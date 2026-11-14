@@ -131,36 +131,55 @@ class BuiltinSemanticCallable(FloorValue):
         return test(supertype, operation.site)
 
     def _unhandled_construct(self, operation, name: str, language_callee):
-        """Opaque construct operands stay a dig cue, not a ConstructionPanic.
+        """A construction no floor decided: the bodiless call, with its raise.
 
         ``tuple(opaque_genexp)`` must remain a CallSiteValue coordinate so later
         force_floor / field projection can refuse with a stage-keyed residual
         rather than aborting the whole manager factory membrane. The
         coordinate carries the ``LanguageCallee`` this builtin binding is, so
         a reader asks the binding, never the spelling ``name`` (#7757).
+
+        Constructing ``set``/``tuple``/``dict`` iterates the operand (its
+        ``__iter__`` and, for ``set``/``dict``, its members' ``__hash__``/
+        ``__eq__``), which may raise; the call completes outright only on a
+        shape ``builtin_call_total`` lists.  Otherwise it is the law the
+        frameless builtin call reads (``builtin_dunder_call``: a dunder not
+        CPython's own, or a decided operand CPython may still refuse), else
+        the one unanswered call (``UnknownCalleeCallV1``): two-faced, its
+        completed face this coordinate (#7757: a halt is never dropped).
         """
         from sugar_lift_py_tests.call_symbol import call_symbol
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor
         from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.source_call_resolution import (
+            UnknownCalleeCallV1,
+            builtin_call_total,
+            builtin_dunder_call,
+        )
 
         args = operation.arguments
+        keyword_names = tuple(operation.keyword_names or ())
         owner = str(operation.site)
-        return ExitSet.completed(
-            CallSiteValue(
-                target_name=name,
-                arg_values=args,
-                parameters=(),
-                term=ctor(
-                    call_symbol(name),
-                    [value.to_term(owner=owner) for value in args],
-                    symbol_kind="builtin",
-                ),
-                body=None,
-                site=operation.site,
-                language_callee=language_callee,
-            )
+        callsite = CallSiteValue(
+            target_name=name,
+            arg_values=args,
+            parameters=(),
+            term=ctor(
+                call_symbol(name),
+                [value.to_term(owner=owner) for value in args],
+                symbol_kind="builtin",
+            ),
+            body=None,
+            site=operation.site,
+            language_callee=language_callee,
         )
+        if builtin_call_total(language_callee, args, keyword_names):
+            return ExitSet.completed(callsite)
+        unanswered = builtin_dunder_call(language_callee, args, keyword_names)
+        if unanswered is None:
+            unanswered = UnknownCalleeCallV1(name)
+        return unanswered.faces(callsite, operation.site)
 
     def _len(self, operation):
         """Exact ``len(container)`` over floors that already know their size."""

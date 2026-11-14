@@ -260,6 +260,9 @@ class LanguageCallee(_enum.Enum):
     BUILTIN_ID = "python:builtins.id"
     BUILTIN_ISINSTANCE = "python:builtins.isinstance"
     BUILTIN_ISSUBCLASS = "python:builtins.issubclass"
+    # ``callable(obj)``: whether ``type(obj)`` has a call slot
+    # (``PyCallable_Check``, Objects/object.c); it runs no code of ``obj``.
+    BUILTIN_CALLABLE = "python:builtins.callable"
     # ``str.join(iterable)``: a method of the builtin ``str`` whose result is
     # always a ``str``.  No name binds it; ``StringValue``'s method fold mints
     # it on the ``OpaqueOpCallsite`` of a join over an opaque iterable.

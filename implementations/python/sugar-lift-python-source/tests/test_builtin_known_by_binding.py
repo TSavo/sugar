@@ -15,14 +15,17 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.floor import (
+    BlockValue,
     BuiltinExceptionClassValue,
     BuiltinSemanticCallable,
     SymbolicValue,
     TermValue,
+    TupleValue,
 )
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.source_call_resolution import (
     BuiltinValueCallV1,
+    builtin_call_total,
     builtin_dunder_call,
     builtin_list_construct,
 )
@@ -297,3 +300,97 @@ def test_a_head_nothing_binds_is_known_only_through_the_builtin_namespace():
     assert not _lexically_unknown_head(known.fragment, "len")
     unknown = _call("def f(o):\n    return frobnicate(o)\n", "frobnicate")
     assert _lexically_unknown_head(unknown.fragment, "frobnicate")
+
+
+def test_callable_bound_to_the_builtin_is_its_member():
+    call = _call("def f(o):\n    return callable(o)\n", "callable")
+    assert call.language_callee() is LanguageCallee.BUILTIN_CALLABLE
+
+
+@pytest.mark.parametrize("source", _shadowed("callable"))
+def test_a_rebound_callable_is_not_the_builtin(source):
+    assert _call(source, "callable").language_callee() is None
+
+
+_OPAQUE = SymbolicValue(make_var("o"))
+
+
+@pytest.mark.parametrize(
+    ("member", "args"),
+    [
+        (LanguageCallee.BUILTIN_OBJECT, ()),
+        (LanguageCallee.BUILTIN_BYTES, ()),
+        (LanguageCallee.BUILTIN_COMPLEX, ()),
+        (LanguageCallee.BUILTIN_ID, (_OPAQUE,)),
+        (LanguageCallee.BUILTIN_CALLABLE, (_OPAQUE,)),
+        (LanguageCallee.BUILTIN_TYPE, (_OPAQUE,)),
+    ],
+)
+def test_a_builtin_that_runs_no_operand_code_is_total_over_any_operand(member, args):
+    # #7757: CPython runs no code of the operand for these shapes, so no
+    # operand makes them raise.
+    assert builtin_call_total(member, args)
+
+
+@pytest.mark.parametrize(
+    ("member", "args", "keywords"),
+    [
+        # ``object(x)`` and ``bytes(x)`` / ``complex(x)`` read their operand.
+        (LanguageCallee.BUILTIN_OBJECT, (_OPAQUE,), ()),
+        (LanguageCallee.BUILTIN_BYTES, (_OPAQUE,), ()),
+        (LanguageCallee.BUILTIN_COMPLEX, (_OPAQUE,), ()),
+        # ``type(name, bases, ns)`` builds a class and may raise.
+        (LanguageCallee.BUILTIN_TYPE, (_OPAQUE, _OPAQUE, _OPAQUE), ()),
+        (LanguageCallee.BUILTIN_ID, (_OPAQUE,), ("x",)),
+        # These run the operand's dunder.
+        (LanguageCallee.BUILTIN_HASH, (_OPAQUE,), ()),
+        (LanguageCallee.BUILTIN_LEN, (_OPAQUE,), ()),
+        (LanguageCallee.BUILTIN_ITER, (_OPAQUE,), ()),
+        (LanguageCallee.BUILTIN_ISSUBCLASS, (_OPAQUE, _OPAQUE), ()),
+    ],
+)
+def test_a_builtin_shape_that_may_raise_is_not_total(member, args, keywords):
+    assert not builtin_call_total(member, args, keywords)
+
+
+def test_isinstance_over_a_builtin_class_and_a_decided_object_is_total():
+    floor = builtin_name_temporal()
+    isinstance_ = LanguageCallee.BUILTIN_ISINSTANCE
+    for classinfo in (
+        floor.value_if_bound("ValueError"),
+        floor.value_if_bound("object"),
+        floor.value_if_bound("type"),
+        floor.value_if_bound("dict"),
+        floor.value_if_bound("tuple"),
+        TupleValue((floor.value_if_bound("set"), floor.value_if_bound("KeyError"))),
+    ):
+        assert builtin_call_total(isinstance_, (TermValue(1), classinfo))
+
+
+@pytest.mark.parametrize(
+    "classinfo",
+    [
+        # ``len`` and ``print`` are builtin functions: ``isinstance(1, len)``
+        # is a TypeError.
+        builtin_name_temporal().value_if_bound("len"),
+        builtin_name_temporal().value_if_bound("print"),
+        # A value named like a builtin class is not the builtin's floor.
+        BuiltinExceptionClassValue(
+            name="ValueError", bases=(), record=BlockValue(())
+        ),
+        _OPAQUE,
+    ],
+)
+def test_isinstance_over_an_undecided_class_operand_is_not_total(classinfo):
+    assert not builtin_call_total(
+        LanguageCallee.BUILTIN_ISINSTANCE, (TermValue(1), classinfo)
+    )
+
+
+def test_isinstance_over_an_undecided_object_is_not_total():
+    # A miss reads ``obj.__class__``, which an object of a source class may
+    # answer with its own code.
+    classinfo = builtin_name_temporal().value_if_bound("ValueError")
+    assert not builtin_call_total(
+        LanguageCallee.BUILTIN_ISINSTANCE, (_OPAQUE, classinfo)
+    )

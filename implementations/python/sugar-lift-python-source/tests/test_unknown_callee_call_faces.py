@@ -18,7 +18,9 @@ from __future__ import annotations
 import pytest
 
 from sugar_lift_py_tests.floor import TermValue, TupleValue
+from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.unanswered_calls import owed_calls
+from sugar_source_tree.nodes import LanguageCallee
 
 from test_assignment_evaluates_rhs import _rows
 from test_undetermined_raise_except_matching import _exits
@@ -167,6 +169,64 @@ def test_a_builtin_the_lifter_does_not_model_is_the_unanswered_call(tmp_path, ca
 def test_a_builtin_a_law_answers_is_not_this_law(tmp_path, call):
     _returns, halts = _split(tmp_path, f"def f(p):\n    return {call}\n")
     assert not any(owner.startswith("UnknownCallee:") for owner in _owners(halts))
+
+
+@pytest.mark.parametrize(
+    ("call", "member"),
+    [
+        ("set(p)", LanguageCallee.BUILTIN_SET),
+        ("tuple(p)", LanguageCallee.BUILTIN_TUPLE),
+        ("dict(p)", LanguageCallee.BUILTIN_DICT),
+    ],
+)
+def test_a_builtin_construction_over_an_opaque_operand_may_raise(
+    tmp_path, call, member
+):
+    # #7757: constructing ``set``/``tuple``/``dict`` iterates the operand,
+    # whose ``__iter__`` (and members' ``__hash__``) nothing looked at.  The
+    # construction is two-faced; its completed face keeps the coordinate's
+    # ``LanguageCallee`` marker, read by the binding, never the spelling.
+    returns, halts = _split(tmp_path, f"def f(p):\n    return {call}\n")
+    (value,) = returns
+    assert type(value) is CallSiteValue
+    assert value.language_callee is member
+    assert value.to_term(owner="test").name == "python:call_result"
+    name = call.split("(")[0]
+    assert _owners(halts) == [f"BuiltinDunderCall:{name}"]
+
+
+@pytest.mark.parametrize(
+    "call", ["object()", "id(p)", "callable(p)", "type(p)", "bytes()", "complex()"]
+)
+def test_a_builtin_that_runs_no_operand_code_completes_outright(tmp_path, call):
+    # #7757: CPython runs no code of any operand here, so the call has no
+    # raise to carry and owes nothing.
+    exits = _exits(tmp_path, f"def f(p):\n    return {call}\n")
+    assert [kind for kind, _payload, _guard in _rows(exits)] == ["return"]
+    assert len(owed_calls(exits)) == 0
+
+
+@pytest.mark.parametrize("call", ["hash(p)", "iter(p)"])
+def test_a_builtin_that_runs_the_operand_dunder_keeps_its_raise(tmp_path, call):
+    _returns, halts = _split(tmp_path, f"def f(p):\n    return {call}\n")
+    assert _owners(halts) == [f"BuiltinDunderCall:{call.split('(')[0]}"]
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f(p):\n    return object(p)\n",
+        "def f(p):\n    callable = p\n    return callable(p)\n",
+        "from m import *\ndef f(p):\n    return id(p)\n",
+    ],
+)
+def test_a_never_raising_shape_is_read_from_the_binding(tmp_path, source):
+    # ``object(p)`` is a TypeError; a ``callable`` the function rebinds and an
+    # ``id`` a star import may bind are not the builtins: each is the one
+    # unanswered call.
+    _returns, owners = _two_faced_and_owed(tmp_path, source)
+    (owner,) = owners
+    assert owner.startswith("UnknownCallee:")
 
 
 def test_an_if_on_an_unknown_call_keeps_both_suites(tmp_path):
