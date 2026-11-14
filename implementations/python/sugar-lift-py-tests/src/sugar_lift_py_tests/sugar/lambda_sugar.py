@@ -25,7 +25,10 @@ class LambdaSugar(ConstructedTermSugar):
     lambda a walrus lets escape, ``Lambda._evaluation_coordinates``): the
     value carries, under the lambda's coordinate, the evaluation of the
     comprehension it was made in, so a call compares it with the evaluation
-    running at the call (``EvaluationRefSugar``).
+    running at the call (``EvaluationRefSugar``).  A generator expression
+    not consumed whole in place binds no final member
+    (``ComprehensionSugar.final_member``): its lambda carries none, and a
+    call outside a run of the generator is refused by name.
 
     An enclosing function's local the body reads is read through a captured
     coordinate (``Lambda._captured_bindings``) that each call binds from the
