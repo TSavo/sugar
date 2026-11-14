@@ -315,6 +315,92 @@ def function_def_memento(fn, file_rel: str):
     )
 
 
+class UndecidedRow:
+    """A function the lifter refuses by name: one ``undecided`` row (step 8).
+
+    The one member kind for what a proof does not decide, and why (the owner,
+    2026-11-12). ``symbol`` is the function's own ``bridgeSourceSymbol``, the
+    one its contract row would have carried; ``site`` is its ``def`` as a
+    ``SourceFragmentCoordinateV1`` wire plus the workspace-relative ``file``;
+    ``reason`` is the refusal's own owner and observed text. Mint turns the row
+    into the member through ``sugar_claim_envelope::mint_undecided``.
+    """
+
+    __slots__ = ("symbol", "site", "owner", "observed")
+
+    def __init__(self, *, symbol, site, owner, observed):
+        self.symbol = symbol
+        self.site = site
+        self.owner = owner
+        self.observed = observed
+
+    def to_rpc_with_term_table(self, _table):
+        return {
+            "kind": "undecided",
+            "symbol": self.symbol,
+            "site": dict(self.site),
+            "reason": {"refused": {"owner": self.owner, "observed": self.observed}},
+        }
+
+
+def refused_function_row(fn, file_rel: str, refusal) -> UndecidedRow:
+    """The ``undecided`` row for a function refused by the scope law (#7785).
+
+    One rule: a row of the function, or the formula its outcome carries,
+    names a variable outside its declared scope (formals plus ``out``). What
+    the function sees of that name is not decided here.
+    """
+    from sugar_lift_py_tests.context_manager_resolution import (
+        SourceFragmentCoordinateV1,
+    )
+
+    memento = function_def_memento(fn, file_rel)
+    coordinate = SourceFragmentCoordinateV1(
+        memento.source_cid,
+        memento.span.start_line,
+        memento.span.start_col,
+        memento.span.end_line,
+        memento.span.end_col,
+    )
+    site = {"file": file_rel, **coordinate.wire()}
+    return UndecidedRow(
+        symbol=fn.sugar().bridge_source_symbol,
+        site=site,
+        owner=refusal.info.owner,
+        observed=refusal.info.observed,
+    )
+
+
+def require_outcome_in_scope(outcome, owner) -> None:
+    """The scope law on an outcome that is not a set of arms (#7785).
+
+    One rule for every function's outcome, carrier or not. A deferred native
+    operation (``NativeOperationExitCarrierV1``) emits no row, but it carries
+    a formula: its guards and its demand, the antecedent of the only post it
+    can state. That formula goes through the same ``ScopedFormula`` over the
+    formals plus ``out`` the rows go through, so a carrier that names a
+    module-level name raises ``FreeVariableRefusal`` and the function is
+    refused by name. A carrier within scope passes and still emits nothing.
+    A bare effect carries no formula. A name read inside a deferred
+    continuation is not in the formula and is not seen here.
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+        _conjoin_guards,
+    )
+
+    if not isinstance(outcome, NativeOperationExitCarrierV1):
+        return
+    from sugar_lift_py_tests.proofir.formulas import formula_from_ir
+    from sugar_lift_py_tests.proofir.scope import ScopedFormula
+    from sugar_lift_py_tests.proofir.sorts import UnknownSort
+
+    sort = UnknownSort(reason="lift is sort-silent; the compiler decides")
+    allowed = {name: sort for name in (*owner.formals, "out")}
+    formula = _conjoin_guards((*outcome.guards, outcome.demand.demanded_formula))
+    ScopedFormula(formula_from_ir(formula, var_sorts=allowed), allowed_vars=allowed)
+
+
 def function_universe_outcome(fn):
     """Construct one function universe through its authenticated entrance.
 
@@ -536,8 +622,10 @@ def function_contract_rows(fn, file_rel: str):
     An outcome that is not a set of arms is unchanged by #7766: a deferred
     native operation (``NativeOperationExitCarrierV1``, whose arms exist only
     once a caller discharges it with actuals) or a bare effect emits no
-    contract and still carries its source testimony. A SugarNotWritten from an
-    unported body statement propagates (the whole function is a frontier gap).
+    contract and still carries its source testimony. The carrier's own
+    formula still meets the scope law (``require_outcome_in_scope``). A
+    SugarNotWritten from an unported body statement propagates (the whole
+    function is a frontier gap).
     """
     import dataclasses
 
@@ -547,6 +635,7 @@ def function_contract_rows(fn, file_rel: str):
     panic_loci, class_shapes = _source_sidecars_for_function(fn, file_rel)
     outcome = function_universe_outcome(fn)
     if not isinstance(outcome, (Complete, ExitSet)):
+        require_outcome_in_scope(outcome, fn.sugar())
         if not panic_loci and not class_shapes:
             return def_memento, None  # an effect with no source testimony
         return def_memento, [

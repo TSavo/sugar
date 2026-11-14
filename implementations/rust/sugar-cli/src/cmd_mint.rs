@@ -52,8 +52,9 @@ use sugar_canonicalizer::{blake3_512_of, cid_hex, encode_jcs, json_to_value, Val
 use sugar_claim_envelope::{
     body_discharge_policy_from_fields, body_discharge_policy_from_fields_for_kind,
     compute_contract_set_cid, contract_cid, mint_authority, mint_bridge,
-    mint_contract_with_body_cid, mint_implication, Authoring, BodyDischargePolicyWarning,
-    BridgeCallsite, MintAuthorityArgs, MintBridgeArgs, MintContractArgs, MintImplicationArgs,
+    mint_contract_with_body_cid, mint_implication, mint_undecided, Authoring,
+    BodyDischargePolicyWarning, BridgeCallsite, MintAuthorityArgs, MintBridgeArgs,
+    MintContractArgs, MintImplicationArgs, MintUndecidedArgs,
 };
 use sugar_compiler::kit_path::LiftTermTable;
 use sugar_ir_types::Sort;
@@ -62,7 +63,7 @@ use sugar_proof_envelope::{
     AtomMemento, AuthorityMemento, AuthorityMementoRef, BridgeMemento, ClaimContractMemento,
     ContractBody, ContractMementoRef, Ed25519Seed, FactoryWalkMemento, FlatAtom,
     ImplicationMemento, LibrarySugarBindingMemento, MementoCid, PlanMemento, ProofGraph,
-    SourceMemento, WitnessMemento,
+    SourceMemento, UndecidedMember, UndecidedMemento, WitnessMemento,
 };
 
 use crate::lift_plugin::{self, LiftPluginError, LiftPluginOptions};
@@ -3566,6 +3567,25 @@ fn proofir_provenance_memento_variants(
         .collect()
 }
 
+/// One kit `undecided` row -> one `undecided` member (step 8): what the
+/// proof does not decide, and why. Mint packages what the kit states, through
+/// the one constructor; a row that does not decode strictly is refused by
+/// name, never dropped.
+fn mint_undecided_from_decl(
+    decl: &Value,
+    produced_at: &str,
+    signer_seed: Ed25519Seed,
+) -> Result<(String, Vec<u8>), String> {
+    let member = UndecidedMember::from_row(decl).map_err(|error| format!("{error}: {decl}"))?;
+    let minted = mint_undecided(&MintUndecidedArgs {
+        produced_by: "sugar-cli".to_string(),
+        produced_at: produced_at.to_string(),
+        member,
+        signer_seed,
+    });
+    Ok((minted.cid, minted.canonical_bytes))
+}
+
 fn mint_bridge_from_decl(
     decl: &Value,
     produced_at: &str,
@@ -4804,6 +4824,11 @@ fn mint_ir_document_with_source_and_plan_mementos(
                         mint_bridge_from_decl(&decl, &produced_at, default_signer_seed)?;
                     push_graph_memento!(BridgeMemento, push_bridge, cid.as_str(), bytes);
                 }
+                Some("undecided") => {
+                    let (cid, bytes) =
+                        mint_undecided_from_decl(decl, &produced_at, default_signer_seed)?;
+                    push_graph_memento!(UndecidedMemento, push_undecided, cid.as_str(), bytes);
+                }
                 _ => {}
             }
         }
@@ -4832,6 +4857,11 @@ fn mint_ir_document_with_source_and_plan_mementos(
                     let (cid, bytes) =
                         mint_bridge_from_decl(&decl, &produced_at, default_signer_seed)?;
                     push_graph_memento!(BridgeMemento, push_bridge, cid.as_str(), bytes);
+                }
+                Some("undecided") => {
+                    let (cid, bytes) =
+                        mint_undecided_from_decl(decl, &produced_at, default_signer_seed)?;
+                    push_graph_memento!(UndecidedMemento, push_undecided, cid.as_str(), bytes);
                 }
                 _ => {}
             }
@@ -8557,6 +8587,57 @@ mod tests {
             spec.pointer("/toolchainPlan/expectedOutputCids").is_none(),
             "expected output CIDs are added after lifter outputs exist"
         );
+
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn mint_ir_document_mints_one_undecided_member_per_undecided_row() {
+        let root = temp_workspace("mint_undecided_member");
+        let out_dir = root.join("out");
+        std::fs::create_dir_all(&out_dir).expect("create out dir");
+        let undecided = json!({
+            "kind": "undecided",
+            "symbol": "python:m.f",
+            "site": {"file": "m.py", "sourceCid": format!("blake3-512:{}", "a".repeat(128)),
+                     "startLine": 4, "startCol": 0, "endLine": 5, "endCol": 20},
+            "reason": {"refused": {"owner": "proofir.scope",
+                                   "observed": "illegal free var(s): LIMIT"}},
+        });
+        let ir = vec![
+            json!({
+                "kind": "contract",
+                "name": "g",
+                "outBinding": "out",
+                "inv": {"kind": "atomic", "name": "=", "args": []}
+            }),
+            undecided.clone(),
+        ];
+
+        let minted = mint_ir_document(&ir, None, None, None, &root, &out_dir, true)
+            .expect("mint ir-document");
+        let graph = ProofGraph::read(&minted.bytes).expect("decode proof");
+        let members: Vec<Value> = graph
+            .members_view()
+            .filter(|v| v.kind() == Some(MemberKind::Undecided))
+            .map(|view| view.json())
+            .collect();
+        assert_eq!(members.len(), 1, "one member for the one undecided row");
+        let Ok(Member::Undecided(member)) = Member::from_value(&members[0]) else {
+            panic!("expected an undecided member");
+        };
+        assert_eq!(
+            member,
+            sugar_proof_envelope::UndecidedMember::from_row(&undecided).unwrap()
+        );
+
+        // A malformed row is refused by name, never dropped.
+        let mut bad = undecided;
+        bad["reason"] = json!({"guessed": {}});
+        let error = mint_ir_document(&[bad], None, None, None, &root, &out_dir, true)
+            .err()
+            .expect("malformed undecided row refuses the mint");
+        assert!(error.contains("unknown `reason` tag"), "{error}");
 
         let _ = std::fs::remove_dir_all(root);
     }

@@ -709,3 +709,53 @@ RealizationDesugaringMemento = {
   effects:           [* tstr],                 ; always [] for the equation itself; rhs term carries effects
   ? refines:         cid,
 }
+
+; ================================================================
+; Undecided member (step 8): what a proof does not decide, and why
+; ================================================================
+;
+; One member kind for every function or call a proof owes (the owner,
+; 2026-11-12, "Yes, one member kind"; design note #7766). A layered memento
+; like BridgeDeclarationV14: { envelope, header, metadata }. It is NOT part
+; of the Declaration union. Every header field is in the CID preimage:
+; header.cid = BLAKE3-512(JCS(header without cid)). metadata (producedBy,
+; producedAt) is outside it. Decode is strict: a missing field, a site that
+; is not the six-key shape, or a reason without exactly one known tag is
+; refused by name. Loaders older than this kind reject it (UnknownKind).
+;
+; A kit emits the row (UndecidedRow) in its universe full scan; mint turns
+; each row into one member. Prove reports each member as an `undecidable`
+; row with reason "owed: <owner>: <observed>", counts `owed`, and exits
+; non-green while owed > 0.
+
+UndecidedRow = {
+  kind:   "undecided",
+  symbol: tstr / null,          ; the owed contract's symbol; null when none
+  site:   UndecidedSite,
+  reason: UndecidedReason,
+}
+
+; The header the verifier reads (JCS-canonical on the wire).
+UndecidedHeader = {
+  kind:          "undecided",
+  schemaVersion: "2",           ; the layered schema version every layered member states
+  cid:           tstr,          ; blake3-512: of JCS(this header without cid)
+  symbol:        tstr / null,
+  site:          UndecidedSite,
+  reason:        UndecidedReason,
+}
+
+; SourceFragmentCoordinateV1 plus the workspace-relative file. Exactly
+; these six keys.
+UndecidedSite = {
+  file:      tstr,
+  sourceCid: tstr,              ; blake3-512:
+  startLine: int,
+  startCol:  int,
+  endLine:   int,
+  endCol:    int,
+}
+
+; Exactly one tag.
+UndecidedReason = { refused: { owner: tstr, observed: tstr } }
+                / { unanswered: {} }
