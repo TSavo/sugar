@@ -100,6 +100,12 @@ _RECEIVER_FIELD_PROJECTIONS = object()
 # (``AugAssign._evaluation_key``) carries these so two iterations never share
 # one key.
 _EVALUATION_OCCURRENCE = object()
+# The exit paths (innermost first) of the clause copy a body is being
+# substituted for.  A ``finally`` is substituted once for the try's completion
+# and once more for its halted faces (``Try.substitute``): the same statement,
+# under the same iterations, evaluated on two exit paths.  Its evaluation
+# coordinate carries these so the two copies never share one key.
+_EVALUATION_EXIT_PATH = object()
 # Set by a door that threads a module body for what it does AT IMPORT (the
 # export prefix).  A ``def`` statement binds a function object; its body does
 # not run until something calls it.  Under this key a body that cannot thread
@@ -3086,6 +3092,32 @@ def _iteration_scope(loop, index: int, bindings, outer):
             *outer.get(_EVALUATION_OCCURRENCE, ()),
         ),
     }
+
+
+def _exit_path_scope(clause_owner, path: str, bindings):
+    """The scope for substituting ``clause_owner``'s ``finally`` for one exit
+    path (``"completion"`` or ``"halt"``): ``bindings``, with that path's
+    segment ahead of the exit paths ``bindings`` already stood for -- a
+    ``finally`` nested inside another one's copy."""
+    span = clause_owner.span
+    return {
+        **bindings,
+        _EVALUATION_EXIT_PATH: (
+            f"finally[{span.start},{span.end})@{path}",
+            *bindings.get(_EVALUATION_EXIT_PATH, ()),
+        ),
+    }
+
+
+def _holds_evaluation(statements) -> bool:
+    """Whether a substituted suite holds a statement keyed as its own
+    evaluation (``AugAssign._evaluation_key``)."""
+    return any(
+        isinstance(node, AugAssign)
+        and isinstance(getattr(node, "evaluation", None), str)
+        for statement in statements
+        for node in statement.walk()
+    )
 
 
 class _Splice:
@@ -8208,46 +8240,82 @@ class AugAssign(Statement):
             make_read=rewritten.target._make_binding_read,
         )
         desc = rewritten.ref.describe()
+        # A re-substitution replaces the key slots it was given: a node
+        # answers its FIRST slot of a name, so an appended key would never
+        # be read.
         return materialize(
             self.unit,
             ShadowNode(
                 desc.kind,
                 desc.raw_span or self.span,
                 (
-                    *desc.slots,
+                    *(
+                        slot
+                        for slot in desc.slots
+                        if slot[0] not in ("evaluation", "evaluation_exit_path")
+                    ),
                     ("prior_read", Child(_handle_of(old_read))),
                     ("operator_site", Leaf(pre_sub_operator_site)),
                     ("evaluation", Leaf(self._evaluation_key(scope))),
+                    (
+                        "evaluation_exit_path",
+                        Leaf(self._evaluation_exit_path(scope)),
+                    ),
                 ),
             ),
             self.reporter,
         )
 
+    def _evaluation_exit_path(self, scope) -> tuple:
+        """The exit paths this evaluation is keyed under: the ones the scope
+        substitutes for (``_exit_path_scope``), or, substituted again outside
+        any duplicated clause, the ones its key was minted under."""
+        path = tuple(scope.get(_EVALUATION_EXIT_PATH, ()))
+        if path:
+            return path
+        minted = getattr(self, "evaluation_exit_path", None)
+        return minted if isinstance(minted, tuple) else ()
+
     def _evaluation_key(self, scope) -> str:
         """The coordinate of this statement's one evaluation (temporal choice
-        1, #7661): its source occurrence and the loop iterations it is
-        substituted for.  ``AugAssignSugar`` binds its completed value under
-        this key; every later read substitution rewrites is an
-        ``EvaluationRef`` to it.  A re-substitution keeps the key it was given.
+        1, #7661): its source occurrence, the loop iterations it is
+        substituted for, and the exit path whose copy of a duplicated clause
+        it sits in (a ``finally`` on completion or on a halt).
+        ``AugAssignSugar`` binds its completed value under this key; every
+        later read substitution rewrites is an ``EvaluationRef`` to it.  A
+        re-substitution on the exit path its key was minted under keeps that
+        key; a copy of it onto another exit path is another evaluation and
+        gets its own.
         """
-        existing = getattr(self, "evaluation", None)
-        if isinstance(existing, str):
-            return existing
         from sugar_lift_python_source.canonical import cid_of_json
         from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 
+        exit_path = self._evaluation_exit_path(scope)
+        existing = getattr(self, "evaluation", None)
+        if isinstance(existing, str):
+            minted = getattr(self, "evaluation_exit_path", None)
+            if exit_path == (minted if isinstance(minted, tuple) else ()):
+                return existing
+            return EVALUATION_PREFIX + cid_of_json(
+                {
+                    "kind": "python-statement-evaluation-exit-path-v1",
+                    "evaluation": existing,
+                    "exitPath": list(exit_path),
+                }
+            )
         from .shadow import occurrence_tags_of
 
-        return EVALUATION_PREFIX + cid_of_json(
-            {
-                "kind": "python-statement-evaluation-v1",
-                "statementFragmentCid": self.fragment.seal().cid,
-                "occurrence": [
-                    *scope.get(_EVALUATION_OCCURRENCE, ()),
-                    *occurrence_tags_of(self),
-                ],
-            }
-        )
+        coordinate = {
+            "kind": "python-statement-evaluation-v1",
+            "statementFragmentCid": self.fragment.seal().cid,
+            "occurrence": [
+                *scope.get(_EVALUATION_OCCURRENCE, ()),
+                *occurrence_tags_of(self),
+            ],
+        }
+        if exit_path:
+            coordinate["exitPath"] = list(exit_path)
+        return EVALUATION_PREFIX + cid_of_json(coordinate)
 
     def _mint_operator_site_from_structure(self):
         """Authenticated operator occurrence: gap between target and RHS spans.
@@ -11313,7 +11381,7 @@ class Try(Statement):
         else:
             halted_entries = {}
         new_finalbody, d, final_net = self._substitute_body_tracked(
-            self.finalbody, final_scope
+            self.finalbody, _exit_path_scope(self, "completion", final_scope)
         )
         if d:
             changed["finalbody"] = new_finalbody
@@ -11322,13 +11390,17 @@ class Try(Statement):
         # join: the same clause is substituted once more for the halted faces
         # (``TrySugar`` reduces it for every incoming halt).  The tail after
         # the try runs only on completion, so ``merged`` keeps the completion
-        # threading.
+        # threading.  Each copy is substituted for its own exit path, so a
+        # statement evaluation in it is keyed once per path; a clause holding
+        # one always gets its halted copy, or the halted faces would reduce
+        # the completion copy and bind its key a second time.
         finalbody_halted = None
         if any(
             final_scope.get(name) is not entry for name, entry in halted_entries.items()
-        ):
+        ) or _holds_evaluation(new_finalbody):
             finalbody_halted, _d = self._substitute_body(
-                self.finalbody, {**final_scope, **halted_entries}
+                self.finalbody,
+                _exit_path_scope(self, "halt", {**final_scope, **halted_entries}),
             )
 
         edge_keys = join.edge_keys() if join.minted else ()
