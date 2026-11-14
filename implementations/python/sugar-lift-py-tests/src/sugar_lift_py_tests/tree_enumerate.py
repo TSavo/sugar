@@ -460,6 +460,77 @@ def unanswered_call_rows(calls, file_rel: str) -> list:
     return rows
 
 
+EXCEPTION_ANCESTRY_SUFFIX = "::exception-ancestry"
+"""The contract-name suffix of a class's ancestry row: ``<symbol>`` + this.
+The verifier reads the class symbol off the row name by this suffix, and the
+row is a statement of fact, never a claim to check (``consistency.rs``)."""
+
+
+def class_def_memento(definition, file_rel: str):
+    """A class definition's own SourceMemento (its ancestry row's warrant)."""
+    from sugar_lift_py_tests.kit_rpc.source_memento_dto import SourceMementoDto
+    from sugar_lift_py_tests.kit_rpc.source_span_dto import SourceSpanDto
+
+    lc = definition.line_col_span()
+    return SourceMementoDto(
+        file=file_rel,
+        span=SourceSpanDto(lc.start_line, lc.start_col, lc.end_line, lc.end_col),
+        source_cid=definition.fragment.seal().cid,
+        source_function_name=definition.name,
+    )
+
+
+def exception_ancestry_rows(sf: SourceFile, file_rel: str) -> list:
+    """One row per exception class the module defines: its ancestry (#7757).
+
+    The row is a ``contract`` named ``<class symbol>::exception-ancestry``
+    whose ``inv`` states ``adt.is_python_type(<class>, <ancestor>)`` for every
+    ancestor the class's source testifies to
+    (``SourceUnit.exception_class_ancestry``). Both operands are the
+    coordinates a consumer mints for the same classes, so a consumer's open
+    ``adt.is_python_type(<class>, <handler>)`` is answered at prove by joining
+    on the class's target symbol (step 9). The row is read off the class
+    definition alone; nothing is reduced here.
+
+    Returns ``(memento, dto)`` pairs, the shape of the universe scan's rows.
+    """
+    from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
+    from sugar_lift_py_tests.ir import and_, atomic
+    from sugar_lift_py_tests.proofir.nodes import (
+        ConstructionSite,
+        Provenance,
+        Stated,
+    )
+    from sugar_lift_py_tests.proofir.nodes.universe_mint import UniverseMint
+
+    rows = []
+    for definition, symbol, identity, ancestors in sf.unit.exception_class_ancestry():
+        memento = class_def_memento(definition, file_rel)
+        locus = ConstructionSite(
+            path=file_rel, line=memento.span.start_line, column=memento.span.start_col
+        )
+        provenance = Provenance(
+            node_class="UniverseMint",
+            construction_site=locus,
+            warrant=Stated(locus=locus),
+        )
+        facts = [
+            atomic("adt.is_python_type", [identity, ancestor]) for ancestor in ancestors
+        ]
+        formula = facts[0] if len(facts) == 1 else and_(facts)
+        row = UniverseMint(
+            name=f"{symbol}{EXCEPTION_ANCESTRY_SUFFIX}",
+            slot="inv",
+            formula=claim_formula(
+                formula, formals=(), provenance=provenance, role="inv"
+            ),
+            provenance=provenance,
+            source_warrants=(memento,),
+        )
+        rows.append((memento.to_rpc(), row.to_body_universe()))
+    return rows
+
+
 def require_outcome_in_scope(outcome, owner) -> None:
     """The scope law on an outcome that is not a set of arms (#7785).
 

@@ -2797,6 +2797,12 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         continue  # an effect, not a contract
                     universes.append((fn.name, def_memento.to_rpc(), rows[0]))
                     scan_rows.extend((def_memento.to_rpc(), row) for row in rows)
+                if not seek:
+                    # The full scan mint packages: each exception class the
+                    # module defines states its ancestry, named by its target
+                    # symbol, so a consumer's `except` against the imported
+                    # class is decided at prove through the join (#7757).
+                    scan_rows.extend(_tree.exception_ancestry_rows(sf, file_rel))
 
                 def _node(memento, dto):
                     return {
