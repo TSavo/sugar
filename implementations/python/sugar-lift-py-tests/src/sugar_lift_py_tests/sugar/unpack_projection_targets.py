@@ -37,17 +37,31 @@ class UnpackProjectionTarget(ABC):
         return False
 
 
+def _rebind_name(name: str, member, evaluation: str | None) -> Outcome:
+    """Rebind a lexical leaf to its member, and under its projection of the
+    statement's one evaluation when the statement was substituted (temporal
+    choice 1: every later read is an ``EvaluationRef`` to that projection)."""
+    from sugar_lift_py_tests.floor.scope_rebind import (
+        ScopeRebind,
+        ScopeRebinds,
+        bind_unpack_projections,
+    )
+
+    if evaluation is None:
+        return Complete(ScopeRebind(name, member))
+    return bind_unpack_projections(ScopeRebinds(((name, member),)), evaluation)
+
+
 @dataclass(frozen=True)
 class NameUnpackTarget(UnpackProjectionTarget):
     """Lexical name: rebind to the projected member."""
 
     name: str
+    evaluation: str | None = None
 
     def apply_member(self, member, ctx) -> Outcome:
         del ctx
-        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
-
-        return Complete(ScopeRebind(self.name, member))
+        return _rebind_name(self.name, member, self.evaluation)
 
 
 @dataclass(frozen=True)
@@ -55,15 +69,14 @@ class StarUnpackTarget(UnpackProjectionTarget):
     """Starred name: rebind to the projected middle ``ListValue``."""
 
     name: str
+    evaluation: str | None = None
 
     def occupies_star_slot(self) -> bool:
         return True
 
     def apply_member(self, member, ctx) -> Outcome:
         del ctx
-        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
-
-        return Complete(ScopeRebind(self.name, member))
+        return _rebind_name(self.name, member, self.evaluation)
 
 
 @dataclass(frozen=True)

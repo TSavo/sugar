@@ -6,9 +6,11 @@ never to the bare name. The statement (or walrus) binds its completed value
 under that coordinate at reduce, and the read answers it: the value is not
 looked up by spelling. A comprehension's element and conditions read a target
 name the same way: the comprehension binds each member under the generator's
-(or the target leaf's) coordinate (``ComprehensionSugar._member_ctx``).
+(or the target leaf's) coordinate (``ComprehensionSugar._member_ctx``). After
+``a, b = f()`` a read of ``a`` is a reference to ``a``'s projection of the
+statement's coordinate (``projection_key``), bound by the unpack at reduce.
 
-A write of the name that substitution does not see (a dynamic unpack, a
+A write of the name that substitution does not see (an unsubstituted unpack, a
 ``raises ... as``, a live loop's next item) still binds the name. The read is
 then whichever of the two was bound last: the evaluation, or a later write of
 the name.

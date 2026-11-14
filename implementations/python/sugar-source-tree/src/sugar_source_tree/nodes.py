@@ -3139,9 +3139,10 @@ def _exit_path_scope(clause_owner, path: str, bindings):
 
 def _holds_evaluation(statements) -> bool:
     """Whether a substituted suite holds a statement (or walrus) keyed as its
-    own evaluation (``AugAssign._evaluation_key``)."""
+    own evaluation (``Statement._evaluation_key``: ``x += e``, ``a, b = f()``,
+    ``(x := e)``)."""
     return any(
-        isinstance(node, (AugAssign, NamedExpr))
+        isinstance(node, (AugAssign, Assign, NamedExpr))
         and isinstance(getattr(node, "evaluation", None), str)
         for statement in statements
         for node in statement.walk()
@@ -4280,7 +4281,58 @@ class Node(Typed):
 
 @_abstract
 class Statement(Node):
-    pass
+    def _evaluation_exit_path(self, scope) -> tuple:
+        """The exit paths this evaluation is keyed under: the ones the scope
+        substitutes for (``_exit_path_scope``), or, substituted again outside
+        any duplicated clause, the ones its key was minted under."""
+        path = tuple(scope.get(_EVALUATION_EXIT_PATH, ()))
+        if path:
+            return path
+        minted = getattr(self, "evaluation_exit_path", None)
+        return minted if isinstance(minted, tuple) else ()
+
+    def _evaluation_key(self, scope) -> str:
+        """The coordinate of this statement's one evaluation (temporal choice
+        1, #7661): its source occurrence, the loop iterations it is
+        substituted for, and the exit path whose copy of a duplicated clause
+        it sits in (a ``finally`` on completion or on a halt).  The
+        statement's sugar binds what it completed with under this key
+        (``x += e``: the inplace result; ``a, b = f()``: each target's
+        member, under its projection of the key); every later read
+        substitution rewrites is an ``EvaluationRef`` to it.  A
+        re-substitution on the exit path its key was minted under keeps that
+        key; a copy of it onto another exit path is another evaluation and
+        gets its own.
+        """
+        from sugar_lift_python_source.canonical import cid_of_json
+        from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+        exit_path = self._evaluation_exit_path(scope)
+        existing = getattr(self, "evaluation", None)
+        if isinstance(existing, str):
+            minted = getattr(self, "evaluation_exit_path", None)
+            if exit_path == (minted if isinstance(minted, tuple) else ()):
+                return existing
+            return EVALUATION_PREFIX + cid_of_json(
+                {
+                    "kind": "python-statement-evaluation-exit-path-v1",
+                    "evaluation": existing,
+                    "exitPath": list(exit_path),
+                }
+            )
+        from .shadow import occurrence_tags_of
+
+        coordinate = {
+            "kind": "python-statement-evaluation-v1",
+            "statementFragmentCid": self.fragment.seal().cid,
+            "occurrence": [
+                *scope.get(_EVALUATION_OCCURRENCE, ()),
+                *occurrence_tags_of(self),
+            ],
+        }
+        if exit_path:
+            coordinate["exitPath"] = list(exit_path)
+        return EVALUATION_PREFIX + cid_of_json(coordinate)
 
 
 @_abstract
@@ -7265,6 +7317,27 @@ def _has_authenticated_source_method(receiver, name: str) -> bool:
     return bool(getattr(value, "has_method", lambda _name: False)(name))
 
 
+def _unpack_target_names(target) -> dict:
+    """The Name leaves an unpacking target binds, by name: every Name under
+    its Tuple/List/Starred structure, never the receiver or index of an
+    Attribute/Subscript leaf.  A repeated name keeps its last leaf, the store
+    that is live after the statement."""
+    names: dict = {}
+
+    def collect(node) -> None:
+        if isinstance(node, Name):
+            names.pop(node.id, None)
+            names[node.id] = node
+        elif isinstance(node, Starred):
+            collect(node.value)
+        elif isinstance(node, (Tuple_, List)):
+            for child in node.elts:
+                collect(child)
+
+    collect(target)
+    return names
+
+
 class Assign(Statement):
     targets: Tuple[Expression, ...]
     value: Expression
@@ -7282,7 +7355,7 @@ class Assign(Statement):
         leaves thread receivers and keys. The binding this statement introduces
         for the rest of the block is reported by substitution_binding().
         """
-        from .shadow import rewrite
+        from .shadow import rewrite, rewrite_with_leaves
 
         mutation = self._builtin_container_mutation(scope)
         if mutation is not None:
@@ -7306,12 +7379,56 @@ class Assign(Statement):
             new_target = _substituted_unpack_store_leaves(self, self.targets[0], scope)
             if new_target is not None:
                 changes["targets"] = (new_target,)
-        if not changes:
-            return self
-        rewritten = rewrite(self, **changes)
         # No retention: the relation is keyed by SOURCE OCCURRENCE, and the
         # rewrite denotes the same occurrence, so its row joins by construction.
-        return rewritten
+        rewritten = self if not changes else rewrite(self, **changes)
+        if rewritten._dynamic_unpack_target() is None:
+            return rewritten
+        # ``a, b = f()``: the statement's one evaluation is unpacked at
+        # reduce.  Carry its key so every later read of a target is a
+        # reference to that target's projection of it (temporal choice 1).
+        leaves = {
+            "evaluation": self._evaluation_key(scope),
+            "evaluation_exit_path": self._evaluation_exit_path(scope),
+        }
+        return rewrite_with_leaves(rewritten, leaves)
+
+    def _dynamic_unpack_target(self):
+        """The Tuple/List target of an unpack whose right-hand side is not a
+        display, or None.  Substitution cannot pair such a target with
+        members; the statement's sugar unpacks its one evaluation at reduce
+        (``DynamicUnpackAssignSugar``, ``NestedDynamicUnpackAssignSugar``,
+        ``DynamicUnpackStoreAssignSugar``)."""
+        if len(self.targets) != 1:
+            return None
+        target = self.targets[0]
+        if not isinstance(target, (Tuple_, List)) or not target.elts:
+            return None
+        if isinstance(self.value, (Tuple_, List)):
+            return None
+        return target
+
+    def _unpack_projection_binding(self):
+        """``a, b = f()`` binds each Name target to a reference to its
+        projection of the statement's one evaluation (temporal choice 1,
+        #7661): the unpack sugar binds each member under that projection at
+        reduce.  Before, it bound nothing, and a later read fell to the
+        name's prior state (the seeded unbound state: a false NameError).
+        A statement that was never substituted carries no key and binds
+        nothing."""
+        evaluation = getattr(self, "evaluation", None)
+        target = self._dynamic_unpack_target()
+        if not isinstance(evaluation, str) or target is None:
+            return None
+        from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+        bindings = {
+            name: _evaluation_ref(
+                self, leaf.span, projection_key(evaluation, name), name
+            )
+            for name, leaf in _unpack_target_names(target).items()
+        }
+        return bindings or None
 
     def _receiver_field_store_state(self, scope, new_value):
         """Thread ``name.attr = value`` into later reads of that exact name."""
@@ -7598,11 +7715,13 @@ class Assign(Statement):
         # Every leaf must be a name (build already refused other shapes).
         return pattern
 
-    def _flat_mixed_unpack_targets(self, target):
+    def _flat_mixed_unpack_targets(self, target, evaluation=None):
         """Parse flat Name|Attribute|Subscript|*Name into typed unpack targets.
 
         At most one ``*Name``. Nested / ``*attr`` stay unadmitted. Pure Name
         leaves return ``None`` (DynamicUnpackAssignSugar owns that path).
+        A Name leaf binds its member under its projection of ``evaluation``
+        (the statement's one evaluation) too.
         """
         if not isinstance(target, (Tuple_, List)):
             return None
@@ -7624,12 +7743,14 @@ class Assign(Statement):
         has_store = False
         for element in target.elts:
             if isinstance(element, Name):
-                targets.append(NameUnpackTarget(element.id))
+                targets.append(NameUnpackTarget(element.id, evaluation=evaluation))
                 continue
             if isinstance(element, Starred):
                 if not isinstance(element.value, Name):
                     return None
-                targets.append(StarUnpackTarget(element.value.id))
+                targets.append(
+                    StarUnpackTarget(element.value.id, evaluation=evaluation)
+                )
                 continue
             if isinstance(element, Attribute):
                 has_store = True
@@ -7754,7 +7875,9 @@ class Assign(Statement):
         # A single Tuple/List target of plain Names destructures against a
         # matching display rhs (see _destructured_binding). A chain of plain
         # Name targets (`x = y = e`) binds each name to the same rhs.
-        # Attribute / subscript targets, starred/nested tuples, and arity
+        # A Tuple/List target against a non-display rhs binds each Name
+        # target to a reference to its projection of the statement's one
+        # evaluation.  Attribute / subscript targets and display arity
         # mismatches thread nothing -- their references stay honest gaps
         # rather than a wrong binding.
         if len(self.targets) == 1:
@@ -7781,7 +7904,9 @@ class Assign(Statement):
             if store_pairs is not None:
                 names = self._name_bindings_from_store_unpack(store_pairs)
                 return names if names else None
-            return None
+            # A non-display right-hand side: each Name target reads its
+            # projection of the statement's one evaluation.
+            return self._unpack_projection_binding()
         if all(isinstance(t, (Name, Attribute, Subscript)) for t in self.targets):
             # Store targets do not bind lexical names, but they also do not
             # erase the Name targets in the same left-to-right assignment.
@@ -8080,12 +8205,18 @@ class Assign(Statement):
                     DynamicUnpackAssignSugar,
                 )
 
+                # The statement's one evaluation: each target's member is
+                # bound under its projection of this key at reduce.
+                evaluation = getattr(self, "evaluation", None)
+                if not isinstance(evaluation, str):
+                    evaluation = None
                 # Exact-arity: every leaf is a plain Name (flat).
                 if all(isinstance(item, Name) for item in target.elts):
                     return DynamicUnpackAssignSugar(
                         tuple(item.id for item in target.elts),
                         self.value.sugar(),
                         self.fragment,
+                        evaluation=evaluation,
                     )
                 # Nested Name-only tree: ``(a, b), (c, d) = formal``.
                 # Construction already exists for flat dynamic unpack; this
@@ -8101,6 +8232,7 @@ class Assign(Statement):
                         pattern=nested,
                         value=self.value.sugar(),
                         site=self.fragment,
+                        evaluation=evaluation,
                     )
                 # Starred: at most one *Name among flat Name leaves. Opaque /
                 # runtime-selected RHS keeps the typed unpack obligation via
@@ -8115,9 +8247,10 @@ class Assign(Statement):
                         star_name=star_name,
                         prefix_names=prefix,
                         suffix_names=suffix,
+                        evaluation=evaluation,
                     )
                 # Store leaves (+ optional *Name) against non-display RHS.
-                mixed = self._flat_mixed_unpack_targets(target)
+                mixed = self._flat_mixed_unpack_targets(target, evaluation)
                 if mixed is not None:
                     from sugar_lift_py_tests.sugar.assign_sugar import (
                         DynamicUnpackStoreAssignSugar,
@@ -8305,57 +8438,6 @@ class AugAssign(Statement):
             ),
             self.reporter,
         )
-
-    def _evaluation_exit_path(self, scope) -> tuple:
-        """The exit paths this evaluation is keyed under: the ones the scope
-        substitutes for (``_exit_path_scope``), or, substituted again outside
-        any duplicated clause, the ones its key was minted under."""
-        path = tuple(scope.get(_EVALUATION_EXIT_PATH, ()))
-        if path:
-            return path
-        minted = getattr(self, "evaluation_exit_path", None)
-        return minted if isinstance(minted, tuple) else ()
-
-    def _evaluation_key(self, scope) -> str:
-        """The coordinate of this statement's one evaluation (temporal choice
-        1, #7661): its source occurrence, the loop iterations it is
-        substituted for, and the exit path whose copy of a duplicated clause
-        it sits in (a ``finally`` on completion or on a halt).
-        ``AugAssignSugar`` binds its completed value under this key; every
-        later read substitution rewrites is an ``EvaluationRef`` to it.  A
-        re-substitution on the exit path its key was minted under keeps that
-        key; a copy of it onto another exit path is another evaluation and
-        gets its own.
-        """
-        from sugar_lift_python_source.canonical import cid_of_json
-        from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
-
-        exit_path = self._evaluation_exit_path(scope)
-        existing = getattr(self, "evaluation", None)
-        if isinstance(existing, str):
-            minted = getattr(self, "evaluation_exit_path", None)
-            if exit_path == (minted if isinstance(minted, tuple) else ()):
-                return existing
-            return EVALUATION_PREFIX + cid_of_json(
-                {
-                    "kind": "python-statement-evaluation-exit-path-v1",
-                    "evaluation": existing,
-                    "exitPath": list(exit_path),
-                }
-            )
-        from .shadow import occurrence_tags_of
-
-        coordinate = {
-            "kind": "python-statement-evaluation-v1",
-            "statementFragmentCid": self.fragment.seal().cid,
-            "occurrence": [
-                *scope.get(_EVALUATION_OCCURRENCE, ()),
-                *occurrence_tags_of(self),
-            ],
-        }
-        if exit_path:
-            coordinate["exitPath"] = list(exit_path)
-        return EVALUATION_PREFIX + cid_of_json(coordinate)
 
     def _mint_operator_site_from_structure(self):
         """Authenticated operator occurrence: gap between target and RHS spans.
@@ -12613,8 +12695,8 @@ class NamedExpr(Expression):
     _child_fields = ("target", "value")
 
     # A walrus's evaluation is keyed exactly as a statement's is.
-    _evaluation_exit_path = AugAssign._evaluation_exit_path
-    _evaluation_key = AugAssign._evaluation_key
+    _evaluation_exit_path = Statement._evaluation_exit_path
+    _evaluation_key = Statement._evaluation_key
 
     def substitute(self, scope):
         """`(<target> := <value>)` -- substitute the value; the target is a
@@ -15795,7 +15877,9 @@ class EvaluationRef(Expression):
     Temporal choice 1 (#7661): after ``x += e`` or ``(x := e)`` substitution
     rewrites a read of ``x`` to ``EvaluationRef(<the evaluation key>)``; the
     statement (or walrus) binds its completed value under that key at reduce
-    (``AugAssign._evaluation_key``, ``EvaluationRefSugar``).  In a
+    (``Statement._evaluation_key``, ``EvaluationRefSugar``).  After
+    ``a, b = f()`` a read of ``a`` is an ``EvaluationRef`` to ``a``'s
+    projection of the statement's key (``projection_key``).  In a
     comprehension's element and conditions a read of a target name is an
     ``EvaluationRef`` to the coordinate the comprehension binds each member
     under (``ListComp._target_references``, ``ComprehensionSugar._member_ctx``).

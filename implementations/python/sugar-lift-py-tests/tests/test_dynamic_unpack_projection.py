@@ -41,7 +41,7 @@ from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.operations import SequenceProjectionOperation
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
 from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
     DynamicUnpackAssignSugar,
 )
@@ -307,19 +307,21 @@ def test_list_floor_projection_is_written_and_binds(tmp_path: Path) -> None:
     list_src = "def A(p, q, r, s):\n    xs = [[p, q], [r, s]]\n    a, b = xs[0]\n    return a\n"
     outcome = _outcome(tmp_path, list_src, "list_floor")
 
-    # The discharge: no ConstructionPanic. What remains is a typed effect, not
-    # a silent success -- the subscript read is still unresolved downstream.
-    assert isinstance(outcome, Incomplete), outcome
-    assert type(outcome.effect).__name__ == "NameErrorEffect"
+    # The discharge: no ConstructionPanic, and the read of `a` is the member
+    # the unpack bound. This row used to end in a NameError: the later read
+    # of `a` fell to the seeded unbound state, because substitution bound
+    # nothing for a non-display unpack. It is now a reference to `a`'s
+    # projection of the statement's one evaluation (temporal choice 1).
+    assert outcome_to_exitset(outcome).completed_value() is not None, outcome
+    assert "NameError" not in repr(outcome)
 
     # The control, and the whole point of the arm: the TUPLE twin -- which has
-    # had its port all along -- answers identically. The list is now at parity
-    # with its sibling rather than panicking where the sibling does not, and
-    # the residual NameError is a property of `xs[0]`, not of the list.
+    # had its port all along -- answers identically. The list is at parity
+    # with its sibling rather than panicking where the sibling does not.
     tuple_src = "def A(p, q, r, s):\n    xs = [(p, q), (r, s)]\n    a, b = xs[0]\n    return a\n"
     twin = _outcome(tmp_path, tuple_src, "tuple_floor")
-    assert isinstance(twin, Incomplete), twin
-    assert type(twin.effect).__name__ == type(outcome.effect).__name__
+    assert outcome_to_exitset(twin).completed_value() is not None, twin
+    assert "NameError" not in repr(twin)
 
 
 def test_unwritten_projection_floor_stays_loud() -> None:
