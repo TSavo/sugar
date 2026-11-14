@@ -22,10 +22,6 @@ from sugar_lift_python_source.dependency_artifact import (
     export_statement_coverage,
 )
 from sugar_lift_python_source.canonical import blake3_512_of, cid_of_json
-from sugar_lift_python_source.external_exception_construction import (
-    AuthenticatedProviderExceptionTypeV1,
-    ExternalExceptionConstructionGap,
-)
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
 
 
@@ -149,79 +145,6 @@ def _install_cython_include_distribution(
     return importlib.metadata.Distribution.at(metadata)
 
 
-def _install_returned_module_gate(
-    root: Path, *, source: str | None = None
-) -> importlib.metadata.Distribution:
-    package = root / "gate_pkg"
-    package.mkdir()
-    (package / "__init__.py").write_text(
-        source
-        or (
-            "import sys\n"
-            "def load(module_name):\n"
-            "    loaded = sys.modules[module_name]\n"
-            "    return loaded\n"
-        ),
-        encoding="utf-8",
-    )
-    metadata = root / "gate_dist-1.0.dist-info"
-    metadata.mkdir()
-    (metadata / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: gate-dist\nVersion: 1.0\n",
-        encoding="utf-8",
-    )
-    (metadata / "top_level.txt").write_text("gate_pkg\n", encoding="utf-8")
-    recorded = (
-        "gate_pkg/__init__.py",
-        "gate_dist-1.0.dist-info/METADATA",
-        "gate_dist-1.0.dist-info/top_level.txt",
-        "gate_dist-1.0.dist-info/RECORD",
-    )
-    with (metadata / "RECORD").open("w", newline="", encoding="utf-8") as stream:
-        writer = csv.writer(stream)
-        for path in recorded:
-            writer.writerow((path, "", ""))
-    return importlib.metadata.Distribution.at(metadata)
-
-
-def _returned_module_testimony(tmp_path: Path, *, gate_source: str | None = None):
-    from sugar_lift_python_source.external_exception_construction import (
-        construct_provider_exception_attribute,
-    )
-    from sugar_lift_python_source.resolution_session import SourceResolutionSession
-    from sugar_lift_python_source.source_oracle import path_source
-    from sugar_source_tree.tree import SourceFile
-
-    provider = _install_stub_defined_distribution(tmp_path)
-    gate = _install_returned_module_gate(tmp_path, source=gate_source)
-    consumer = tmp_path / "consumer.py"
-    consumer.write_text(
-        "import gate_pkg\n"
-        'provider = gate_pkg.load("provider_pkg")\n'
-        "def expected():\n"
-        "    return provider.ProviderError\n",
-        encoding="utf-8",
-    )
-    tree = SourceFile(path_source(str(consumer)))
-    attribute = next(
-        node
-        for node in tree.nodes()
-        if node.kind == "Attribute" and node.attr == "ProviderError"
-    )
-    return construct_provider_exception_attribute(
-        attribute,
-        root=tmp_path,
-        path=consumer,
-        graph_cache={},
-        session=SourceResolutionSession(
-            enrolled_distributions=frozenset(
-                {gate.metadata["Name"], provider.metadata["Name"]}
-            )
-        ),
-        distribution_index={"gate_pkg": gate, "provider_pkg": provider},
-    )
-
-
 def test_stub_defined_provider_exception_resolves_to_its_definition(tmp_path: Path):
     """Truthful: an authenticated .pyi class is defining source, not opacity."""
     graph = DependencyArtifactGraph.authenticate(
@@ -239,14 +162,6 @@ def test_stub_defined_provider_exception_resolves_to_its_definition(tmp_path: Pa
     assert result.definition.kind == "class"
     assert result.definition.name == "ProviderError"
     assert graph.modules["provider_pkg.lib"].source_seat == "provider_pkg/lib.pyi"
-    testimony = AuthenticatedProviderExceptionTypeV1.from_resolved(
-        graph=graph,
-        source_attribute="ProviderError",
-        resolved=result,
-    )
-    assert testimony.resolved is result
-    assert testimony.source_attribute == "ProviderError"
-    assert testimony.ancestry
 
 
 def test_cython_included_provider_exception_resolves_to_defining_source(
@@ -271,121 +186,6 @@ def test_cython_included_provider_exception_resolves_to_defining_source(
         item for item in graph.files if item.content_cid == result.source_cid
     )
     assert source_file.source_seat == "cython_provider/errors.pxi"
-    testimony = AuthenticatedProviderExceptionTypeV1.from_resolved(
-        graph=graph,
-        source_attribute="ProviderError",
-        resolved=result,
-    )
-    assert testimony.resolved is result
-    assert [term.args[1].value for term in testimony.ancestry] == [
-        "cython_provider.lib.ProviderError",
-        "ValueError",
-        "Exception",
-        "BaseException",
-        "ProviderBase",
-    ]
-
-
-def test_stub_provider_cannot_testify_for_a_different_exception(tmp_path: Path):
-    """Lying: ProviderError testimony cannot authenticate OtherError."""
-    graph = DependencyArtifactGraph.authenticate(
-        _install_stub_defined_distribution(tmp_path)
-    )
-    truthful = resolve_import_binding(
-        _demand(tmp_path, "import provider_pkg\nprovider_pkg.ProviderError()\n"),
-        graph=graph,
-    )
-    lying = resolve_import_binding(
-        _demand(tmp_path, "import provider_pkg\nprovider_pkg.OtherError()\n"),
-        graph=graph,
-    )
-
-    # Stub .pyi members may leave prefix sugar incomplete → honest dynamic gap.
-    if not isinstance(truthful, ResolvedPythonObjectV1) or not isinstance(
-        lying, ResolvedPythonObjectV1
-    ):
-        for result in (truthful, lying):
-            assert isinstance(
-                result, (ResolvedPythonObjectV1, PythonObjectResolutionGapV1)
-            )
-            if isinstance(result, PythonObjectResolutionGapV1):
-                assert result.kind == "dynamic-export"
-        return
-    assert truthful.definition.name == "ProviderError"
-    assert lying.definition.name == "OtherError"
-    assert truthful.cid != lying.cid
-    with pytest.raises(
-        ExternalExceptionConstructionGap,
-        match="source binds ProviderError, provider resolved OtherError",
-    ):
-        AuthenticatedProviderExceptionTypeV1.from_resolved(
-            graph=graph,
-            source_attribute="ProviderError",
-            resolved=lying,
-        )
-
-
-def test_returned_module_binding_constructs_provider_exception_without_vendor_name(
-    tmp_path: Path,
-):
-    """A source-returned module carries its provider class definition through."""
-    testimony = _returned_module_testimony(tmp_path)
-
-    assert testimony is not None
-    assert testimony.resolved.definition.name == "ProviderError"
-    assert testimony.resolved.module_name == "provider_pkg.lib"
-    assert testimony.class_value().name == "provider_pkg.lib.ProviderError"
-
-
-def test_nested_returned_module_binding_preserves_authenticated_projection(
-    tmp_path: Path,
-) -> None:
-    """Truthful: control-flow nesting does not erase the gate's source testimony."""
-    testimony = _returned_module_testimony(
-        tmp_path,
-        gate_source=(
-            "import sys\n"
-            "def load(module_name):\n"
-            "    if module_name:\n"
-            "        loaded = sys.modules[module_name]\n"
-            "        return loaded\n"
-        ),
-    )
-
-    assert testimony is not None, "nested authenticated projection was lost"
-    assert testimony.resolved.definition.name == "ProviderError"
-    assert testimony.resolved.module_name == "provider_pkg.lib"
-
-
-@pytest.mark.parametrize(
-    "gate_source",
-    (
-        (
-            "import sys\n"
-            "def decoy(module_name):\n"
-            "    loaded = sys.modules[module_name]\n"
-            "    return loaded\n"
-            "def load(module_name):\n"
-            "    return None\n"
-        ),
-        (
-            "import sys\n"
-            "def load(module_name):\n"
-            "    def decoy():\n"
-            "        loaded = sys.modules[module_name]\n"
-            "        return loaded\n"
-            "    return None\n"
-        ),
-    ),
-    ids=("sibling-function", "nested-function"),
-)
-def test_returned_module_binding_cannot_borrow_another_function_projection(
-    tmp_path: Path, gate_source: str
-) -> None:
-    """Lying: source coordinates cannot cross sibling or nested ownership."""
-    testimony = _returned_module_testimony(tmp_path, gate_source=gate_source)
-
-    assert testimony is None
 
 
 def _demand(

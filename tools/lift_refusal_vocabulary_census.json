@@ -3815,16 +3815,6 @@
       "wire_marker": "internal-only"
     },
     {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/external_exception_construction.py:5e01a0b0ae787f66:1",
-      "line": 328,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/external_exception_construction.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# refused rather than joined optimistically.",
-      "wire_marker": "internal-only"
-    },
-    {
       "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_construction.py:0553a9949395cd41:1",
       "line": 3703,
       "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/manager_construction.py",
