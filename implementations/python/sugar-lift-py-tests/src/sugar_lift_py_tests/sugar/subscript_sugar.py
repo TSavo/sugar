@@ -77,9 +77,9 @@ class SubscriptSugar(ConstructedTermSugar):
         # refusal and must never be converted into an empty outcome. One plain
         # completed arm hands its value straight to the step (``and_then``),
         # as a deferred carrier the step answers; over any other shape a
-        # carrier is refused by ``ExitSet.and_then``. Undecided lookups raise
-        # SugarNotWritten from the receiver floor (named refusal), exact exits
-        # complete.
+        # carrier is refused by ``ExitSet.and_then``. An undecided lookup is the
+        # receiver floor's two-faced unanswered read (``undecided_subscript``);
+        # exact exits complete.
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
             written_by,

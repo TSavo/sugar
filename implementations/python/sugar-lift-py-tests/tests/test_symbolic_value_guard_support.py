@@ -37,16 +37,16 @@ def test_symbolic_name_attribute_is_a_coordinate_not_an_invented_string() -> Non
 
 
 def test_symbolic_unknown_attribute_stays_undecided() -> None:
-    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
 
     value = SymbolicValue(make_var("expected"))
-    try:
-        value.attribute("not_a_data_model_name", "symbolic-unknown-attr", None)
-    except SugarNotWritten as exc:
-        assert exc.owner == "SymbolicValue.attribute"
-        assert "not_a_data_model_name" in (exc.observed or "")
-    else:
-        raise AssertionError("expected SymbolicValue.attribute to stay undecided")
+    outcome = value.attribute("not_a_data_model_name", "symbolic-unknown-attr", None)
+    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == "SymbolicValue.attribute"
+    assert "not_a_data_model_name" in repr(done.guard)
 
 
 def test_call_site_name_attribute_is_a_coordinate_not_an_invented_string() -> None:

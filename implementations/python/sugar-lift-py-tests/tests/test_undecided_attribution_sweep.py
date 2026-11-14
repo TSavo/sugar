@@ -16,11 +16,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 from sugar_lift_py_tests.floor.mutable_global_value import MutableGlobalValue
 from sugar_source_tree.fragment import SourceMemento
-from sugar_source_tree.panic import SugarNotWritten
 
 _CID = "blake3-512:" + ("ab" * 64)
 _CID2 = "blake3-512:" + ("cd" * 64)
@@ -77,11 +74,17 @@ def test_mutable_global_non_dict_contains_is_undecided_not_write_more_floor() ->
 
 
 def test_mutable_global_attribute_is_undecided_not_write_more_floor() -> None:
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
+
     v = _mutable(kind="dict")
     site = _Site()
-    with pytest.raises(SugarNotWritten, match="MutableGlobalValue.attribute") as caught:
-        v.attribute("keys", site, None)
-    assert "write more Floor" not in str(caught.value)
+    outcome = v.attribute("keys", site, None)
+    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == "MutableGlobalValue.attribute"
+    assert done.guard.name == "python:attribute.completes"
 
 
 def test_mutable_global_dict_contains_still_constructs() -> None:

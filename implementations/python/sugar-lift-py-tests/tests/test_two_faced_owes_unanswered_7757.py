@@ -92,15 +92,39 @@ def test_a_siteless_operation_is_owed_and_refused_by_name_at_the_member_door() -
 
 
 def test_an_opaque_attribute_owes_its_read() -> None:
-    from sugar_lift_py_tests.floor.call_site_value import (
-        CallSiteValue,
-        _opaque_attribute_faces,
-    )
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.ir import ctor
 
     receiver = CallSiteValue("vendor.op", (), (), ctor("call:vendor.op", []), None)
-    faces = _opaque_attribute_faces(receiver, "member", _Site())
+    faces = receiver.attribute("member", _Site(), None)
     _assert_two_faced_and_owed(faces, "CallSiteValue.attribute")
+
+
+def test_an_attribute_on_an_undecided_value_is_two_faced_and_owes_its_read() -> None:
+    faces = SymbolicValue(make_var("s")).attribute("member", _Site(), None)
+    _assert_two_faced_and_owed(faces, "SymbolicValue.attribute")
+    (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
+    assert "python:attribute.completes" in repr(done.guard)
+    assert "AttributeError" not in repr(faces)
+
+
+def test_a_subscript_on_an_undecided_value_is_two_faced_and_owes_its_read() -> None:
+    faces = SymbolicValue(make_var("s")).subscript(TermValue(0), _Site())
+    _assert_two_faced_and_owed(faces, "SymbolicValue.subscript")
+    (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
+    assert "python:subscript.completes" in repr(done.guard)
+    assert "py.subscript" in repr(done.value)
+    assert "KeyError" not in repr(faces) and "IndexError" not in repr(faces)
+
+
+def test_an_undecided_read_with_no_site_is_the_lifters_gap() -> None:
+    from sugar_source_tree.panic import SugarNotWritten
+
+    receiver = SymbolicValue(make_var("s"))
+    with pytest.raises(SugarNotWritten, match="no source site"):
+        receiver.undecided_attribute("member", None, owner="t")
+    with pytest.raises(SugarNotWritten, match="no source site"):
+        receiver.undecided_subscript(TermValue(0), None, owner="t")
 
 
 def test_an_opaque_subscript_owes_its_read() -> None:

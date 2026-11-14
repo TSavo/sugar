@@ -1,4 +1,4 @@
-"""Opaque member operations are two-faced (#7585, #7587).
+"""Opaque member and subscript reads are two-faced (#7585, #7587, #7757 item 13).
 
 An unexecuted call authenticates which call produced the receiver, but not its
 runtime type or members.  A completed coordinate alone would silently choose
@@ -15,46 +15,6 @@ import tempfile
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-
-
-def _attribute_refusal(src):
-    from sugar_source_tree.panic import SugarNotWritten
-
-    directory = tempfile.mkdtemp()
-    path = os.path.join(directory, "m.py")
-    with open(path, "w", encoding="utf-8") as source_file:
-        source_file.write(src)
-    function = next(
-        SourceFile(
-            path_source(path),
-            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-        ).functions()
-    )
-    try:
-        function.sugar().desugar(None)
-    except SugarNotWritten as refusal:
-        return refusal
-    raise AssertionError("opaque member operation invented a completed coordinate")
-
-
-def _subscript_refusal(src):
-    from sugar_source_tree.panic import SugarNotWritten
-
-    directory = tempfile.mkdtemp()
-    path = os.path.join(directory, "m.py")
-    with open(path, "w", encoding="utf-8") as source_file:
-        source_file.write(src)
-    function = next(
-        SourceFile(
-            path_source(path),
-            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
-        ).functions()
-    )
-    try:
-        function.sugar().desugar(None)
-    except SugarNotWritten as refusal:
-        return refusal
-    raise AssertionError("opaque subscript invented a completed coordinate or panic")
 
 
 def _attribute_faces(src):
@@ -100,13 +60,22 @@ def test_opaque_attribute_is_two_faced():
     assert "python:attribute.completes" in guards
 
 
-def test_opaque_subscript_is_named_undecided():
-    refusal = _subscript_refusal("def f(x):\n    return g(x)[0]\n")
+def test_opaque_subscript_is_two_faced():
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Halted
 
-    assert refusal.owner == "CallSiteValue.subscript"
-    assert "undecided receiver runtime type" in refusal.observed
-    assert "KeyError" not in refusal.observed
-    assert "IndexError" not in refusal.observed
+    exits = _attribute_faces("def f(x):\n    return g(x)[0]\n").exits
+    halts = [
+        f
+        for f in exits
+        if isinstance(f, Halted) and isinstance(f.effect, UndeterminedRaiseEffect)
+    ]
+    guards = " ".join(str(getattr(f, "guard", "")) for f in exits)
+
+    assert halts
+    assert "python:subscript.completes" in guards
+    assert "KeyError" not in repr(halts)
+    assert "IndexError" not in repr(halts)
 
 
 def test_opaque_attribute_names_no_exception_type():

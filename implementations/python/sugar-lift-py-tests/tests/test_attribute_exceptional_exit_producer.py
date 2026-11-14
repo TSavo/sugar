@@ -1,4 +1,4 @@
-"""Attribute lookup is an effect producer; undecided lookup stays named-loud."""
+"""Attribute lookup is an effect producer; an undecided lookup is two-faced."""
 
 from __future__ import annotations
 
@@ -12,7 +12,6 @@ import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, NoneValue, SymbolicValue
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.ir import ctor, make_var
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -83,28 +82,40 @@ class _ReceiverSugar(Sugar):
         return ExitSet.completed(self.value)
 
 
+def _assert_two_faced_read(outcome, owner: str):
+    """The one two-faced unanswered read: completes under the attribute's
+    completes atom, else an undetermined raise owned by ``owner``; the read
+    is owed at its site.  No AttributeError is named."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    halts = [
+        arm
+        for arm in outcome.exits
+        if isinstance(arm, Halted)
+        and isinstance(arm.effect, UndeterminedRaiseEffect)
+        and arm.effect.producer_node_owner == owner
+    ]
+    assert len(halts) == 1
+    completed = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert completed
+    assert any("python:attribute.completes" in repr(arm.guard) for arm in completed)
+    assert "AttributeError" not in repr(halts[0].effect)
+    assert any(item.site is not None for item in owed_calls(outcome))
+    return halts[0]
+
+
 def _assert_undecided(node: Attribute, receiver, *, name: str | None = None) -> None:
     operation = replace(
         node.sugar(),
         receiver=_ReceiverSugar(receiver),
         name=node.attr if name is None else name,
     )
-    with pytest.raises(SugarNotWritten) as raised:
-        operation.desugar(None)
-    refusal = raised.value
-    assert refusal.blame == node.fragment
-    assert f"{node.fragment.filename}:{node.fragment.line}:{node.fragment.col}" in str(
-        refusal
+    halt = _assert_two_faced_read(
+        operation.desugar(None), f"{type(receiver).__name__}.attribute"
     )
-    assert refusal.owner == f"{type(receiver).__name__}.attribute"
-    assert "undecided" in refusal.observed
-    assert "source-authenticated attribute success or exceptional exit" in (
-        refusal.requested
-    )
-    assert "AttributeError" not in refusal.observed
-    assert "AttributeError" not in refusal.requested
-    assert "RuntimeEffect" not in refusal.observed
-    assert "RuntimeEffect" not in refusal.requested
+    assert halt.effect.blame == str(node.fragment)
 
 
 def test_shared_table_authenticates_the_exact_assertion_manager(tmp_path: Path) -> None:
@@ -199,8 +210,8 @@ def test_replacing_bad_with_known_member_still_cannot_invent_an_exit() -> None:
 
 # --- No-call Attribute family corpus pins (denominator 41) -----------------
 # Bare desugar without bindings yields SymbolicValue receivers; the producer
-# must keep the third value as SugarNotWritten(owner=SymbolicValue.attribute)
-# rather than invent AttributeError. These sites are enrolled Attribute bodies
+# answers the two-faced unanswered read (owner SymbolicValue.attribute) rather
+# than invent AttributeError. These sites are enrolled Attribute bodies
 # under the no-Call-descendant law.
 
 
@@ -235,18 +246,7 @@ def _line_attribute(source: str, path: Path, *, line: int, attr: str) -> Attribu
 
 def _assert_bare_desugar_symbolic_attribute(node: Attribute) -> None:
     """Production door: expression.sugar().desugar(None) with no bindings."""
-    with pytest.raises(SugarNotWritten) as raised:
-        node.sugar().desugar(None)
-    refusal = raised.value
-    assert refusal.owner == "SymbolicValue.attribute"
-    assert "undecided" in refusal.observed
-    assert "source-authenticated attribute success or exceptional exit" in (
-        refusal.requested
-    )
-    assert "AttributeError" not in refusal.observed
-    assert "AttributeError" not in refusal.requested
-    assert "RuntimeEffect" not in refusal.observed
-    assert "RuntimeEffect" not in refusal.requested
+    _assert_two_faced_read(node.sugar().desugar(None), "SymbolicValue.attribute")
 
 
 @pytest.mark.parametrize(
@@ -273,9 +273,9 @@ def test_no_call_attribute_corpus_sites_stay_symbolic_undecided(
 def test_binop_child_np_nan_reattributes_to_attribute_owner() -> None:
     """BinOp ``s_0123 & np.nan`` child-evaluates ``.nan`` on SymbolicValue.
 
-    That refusal is Attribute-family coordinate (owner SymbolicValue.attribute),
-    not binary_operation_exception_floor. Keep the owner name honest when a
-    BinOp site is a parent of Attribute evaluation.
+    That read is Attribute-family (owner SymbolicValue.attribute), not
+    binary_operation_exception_floor: its two faces keep the attribute's
+    owner when a BinOp site is a parent of Attribute evaluation.
     """
     path = _authenticated_corpus_file("tests/series/test_logical_ops.py")
     source = path.read_text(encoding="utf-8")
@@ -295,11 +295,14 @@ def test_binop_child_np_nan_reattributes_to_attribute_owner() -> None:
         and node.line_col_span().start_line == 96
     )
     assert len(matches) == 1
-    with pytest.raises(SugarNotWritten) as raised:
-        matches[0].sugar().desugar(None)
-    refusal = raised.value
-    assert refusal.owner == "SymbolicValue.attribute"
-    assert "SymbolicValue.nan" in refusal.observed
-    assert "source-authenticated attribute success or exceptional exit" in (
-        refusal.requested
-    )
+    outcome = matches[0].sugar().desugar(None)
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Halted
+
+    owners = [
+        arm.effect.producer_node_owner
+        for arm in outcome.exits
+        if isinstance(arm, Halted) and isinstance(arm.effect, UndeterminedRaiseEffect)
+    ]
+    assert "SymbolicValue.attribute" in owners
+    assert "python:attribute.completes" in repr(outcome)

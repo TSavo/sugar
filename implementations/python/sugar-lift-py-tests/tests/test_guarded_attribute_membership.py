@@ -16,19 +16,23 @@ def _guard():
     return atomic("choose", [])
 
 
-def test_guarded_attribute_keeps_symbolic_face_refusal_loud():
-    from sugar_source_tree.panic import SugarNotWritten
+def test_guarded_attribute_keeps_each_symbolic_face_two_faced():
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Halted
 
     true_face = SymbolicValue(make_var("t"))
     false_face = SymbolicValue(make_var("f"))
     guarded = GuardedValue(_guard(), true_face, false_face)
-    try:
-        guarded.attribute("x", "site", None)
-    except SugarNotWritten as refusal:
-        assert refusal.owner == "SymbolicValue.attribute"
-        assert refusal.observed.endswith("SymbolicValue.x")
-    else:
-        raise AssertionError("guarded symbolic attribute invented completion")
+    outcome = guarded.attribute("x", "site", None)
+    halts = [
+        arm
+        for arm in outcome.exits
+        if isinstance(arm, Halted) and isinstance(arm.effect, UndeterminedRaiseEffect)
+    ]
+    assert halts, "guarded symbolic attribute invented a sole completion"
+    assert {halt.effect.producer_node_owner for halt in halts} == {
+        "SymbolicValue.attribute"
+    }
 
 
 def test_guarded_list_membership_opposite_faces_emit_predicate():

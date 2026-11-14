@@ -41,7 +41,6 @@ from sugar_lift_py_tests.no_call_body_attribution import (
 )
 from sugar_lift_py_tests.temporal import TemporalContext
 from sugar_lift_python_source.source_oracle import workspace_path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 from sugar_lift_py_tests.repo_root import resolve_repo_root
@@ -339,7 +338,29 @@ def test_authenticated_subscript_family_owns_no_construction_panics(
     assert row.authenticated_exceptional_exits >= 2
 
 
-def test_real_pandas_unknown_receiver_is_named_undecided(authenticated_site) -> None:
+def _assert_two_faced_read(outcome, owner: str | None = None) -> None:
+    """The one two-faced unanswered read: completes under the subscript's
+    completes atom, else an undetermined raise; owed at its site.  No
+    KeyError or IndexError is guessed."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    halts = [
+        arm
+        for arm in outcome.exits
+        if isinstance(arm, Halted) and isinstance(arm.effect, UndeterminedRaiseEffect)
+    ]
+    assert halts
+    if owner is not None:
+        assert [halt.effect.producer_node_owner for halt in halts] == [owner]
+    completed = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert any("python:subscript.completes" in repr(arm.guard) for arm in completed)
+    assert not [arm for arm in outcome.halts() if isinstance(arm.effect, RaiseEffect)]
+    assert any(item.site is not None for item in owed_calls(outcome))
+
+
+def test_real_pandas_unknown_receiver_is_two_faced(authenticated_site) -> None:
     receiver = CallSiteValue(
         "source-constructor",
         (),
@@ -349,13 +370,9 @@ def test_real_pandas_unknown_receiver_is_named_undecided(authenticated_site) -> 
     )
     temporal = TemporalContext.empty().bind_value("series", receiver)
 
-    with pytest.raises(SugarNotWritten) as raised:
+    _assert_two_faced_read(
         authenticated_site.sugar().desugar(ReduceContext(temporal))
-
-    assert raised.value.owner == "SymbolicValue.subscript"
-    assert "undecided receiver runtime type" in raised.value.observed
-    assert "KeyError" not in raised.value.observed
-    assert "KeyError" not in raised.value.requested
+    )
 
 
 def test_truthful_out_of_range_concrete_list_emits_index_error(
@@ -388,14 +405,12 @@ def test_known_non_integer_list_index_emits_type_error(local_site) -> None:
     assert halt.effect.exception_name == "TypeError"
 
 
-def test_unknown_list_index_is_a_named_third_value(local_site) -> None:
-    with pytest.raises(SugarNotWritten) as raised:
-        ListValue((TermValue(7),)).subscript(
-            SymbolicValue(make_var("index")), local_site
-        )
+def test_unknown_list_index_is_the_two_faced_unanswered_read(local_site) -> None:
+    outcome = ListValue((TermValue(7),)).subscript(
+        SymbolicValue(make_var("index")), local_site
+    )
 
-    assert raised.value.owner == "ListValue.subscript"
-    assert "undecided" in raised.value.observed
+    _assert_two_faced_read(outcome, "ListValue.subscript")
 
 
 @pytest.mark.parametrize(
@@ -432,11 +447,9 @@ def test_lying_nested_tuple_key_must_not_be_guessed_for_unknown_receiver(
         )
     )
 
-    with pytest.raises(SugarNotWritten) as raised:
-        SymbolicValue(make_var("receiver")).subscript(nested_key, local_site)
+    outcome = SymbolicValue(make_var("receiver")).subscript(nested_key, local_site)
 
-    assert raised.value.owner == "SymbolicValue.subscript"
-    assert "undecided receiver runtime type" in raised.value.observed
+    _assert_two_faced_read(outcome, "SymbolicValue.subscript")
 
 
 def test_truthful_missing_dict_key_emits_key_error(local_site) -> None:

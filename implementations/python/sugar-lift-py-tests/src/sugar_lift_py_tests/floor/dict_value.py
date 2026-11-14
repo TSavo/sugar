@@ -224,7 +224,7 @@ class DictValue(GuardStableValue):
     def subscript(self, index, site):
         # Concrete key match returns the value; concrete miss is KeyError.
         # Source-decided unhashable keys are TypeError. An index whose
-        # hash/eq semantics are not source-decided stays the named refusal.
+        # hash/eq semantics are not source-decided is the two-faced read.
         from sugar_lift_py_tests.floor.membership import decided_unhashable
         from sugar_lift_py_tests.outcome import ExitSet
 
@@ -248,42 +248,13 @@ class DictValue(GuardStableValue):
                 site=site,
                 owner="DictValue.subscript",
             )
-        if getattr(index, "formal_coordinate", None) is not None:
-            # A formal key waits for the caller's actual, which decides it.
-            return self.undecided_subscript(index, site, owner="DictValue.subscript")
-        return self._undecided_key_lookup(index, site)
-
-    def _undecided_key_lookup(self, index, site):
-        """``d[k]`` whose key's hash or equality against ``d``'s keys is open.
-
-        CPython hashes ``k`` and compares it (``is``, then ``==``) with each
-        stored key: ``__hash__``/``__eq__`` of an undecided type may raise
-        anything, and the lookup may find any entry or none (``KeyError``).
-        Nothing here decides which, so the #7587 opaque-subscript law applies:
-        the symbolic ``py.subscript(<dict>, <key>)`` completes only under
-        ``python:subscript.completes(python:subscript(<term>, <site>))`` and
-        the complement halts with an ``UndeterminedRaiseEffect``.  No entry is
-        chosen and no ``KeyError`` is guessed.
-        """
-        from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        if site is None:
-            return self.undecided_subscript(index, site, owner="DictValue.subscript")
-        # A dict or key that has no term refuses by name (SugarNotWritten);
-        # the refusal propagates and is never an undecided-subscript fallback.
-        term = ctor(
-            "py.subscript",
-            [
-                self.to_term(owner="DictValue.subscript"),
-                index.to_term(owner="DictValue.subscript"),
-            ],
-        )
-        return _opaque_subscript_faces(
-            ExitSet.completed(SymbolicValue(term)), site, producer="DictValue.subscript"
-        )
+        # ``d[k]`` whose key's hash or equality against ``d``'s keys is open
+        # (a formal key, or a key of undecided type): CPython hashes ``k`` and
+        # compares it (``is``, then ``==``) with each stored key, which may
+        # raise anything and may find any entry or none.  Nothing here decides
+        # which: the one undecided read.  A dict or key that has no term
+        # refuses by name (its ``to_term`` refusal propagates).
+        return self.undecided_subscript(index, site, owner="DictValue.subscript")
 
     def setitem(self, index, value, site, ctx):
         guarded = self._guarded_setitem(index, value, site, ctx)
