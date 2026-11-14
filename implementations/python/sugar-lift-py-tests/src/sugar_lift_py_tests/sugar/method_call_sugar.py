@@ -287,8 +287,6 @@ def dispatch_method_call(
         exception_type_coordinate=exception_type_coordinate,
         exception_type_mro=exception_type_mro,
     )
-    if site is None:
-        return ExitSet.completed(callsite)
     if may_defer:
         deferred = _defer_formal_method_call(name, receiver, positional, kw_values, site)
         if deferred is not None:
@@ -304,6 +302,9 @@ def dispatch_method_call(
     # to a caller: what runs was not looked at.  A method call is the plain
     # call with the receiver bound first, so this is the plain call to a
     # callee the lifter does not have, with its two faces (#7585, #7756).
+    # With or without a site it is never a completion (#7757: a halt is never
+    # dropped); a call with no source coordinate is refused by name where its
+    # occurrence is spelled.
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
     return UnknownCalleeCallV1(name).faces(callsite, site)

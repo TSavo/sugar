@@ -272,8 +272,8 @@ class SpreadCallSugar(ConstructedTermSugar):
 
     When an authenticated source-visible callee frame is enrolled (class
     constructor / function body), typed ``**`` expansions project through that
-    frame so the CallSiteValue carries the factory-built body. Opaque spreads
-    without a frame keep the reference bodyless coordinate.
+    frame so the CallSiteValue carries the factory-built body. A spread call
+    no frame projects is the one unanswered call (``UnknownCalleeCallV1``).
     """
 
     callee_name: str | None
@@ -425,10 +425,13 @@ class SpreadCallSugar(ConstructedTermSugar):
             body=None,
             site=self.site,
         )
-        if self.site is None:
-            return ExitSet.completed(callsite)
-        return _unprojected_spread_call_faces(
-            callsite, self.callee_name or "python:call", self.site
+        # No frame projected the call: no body, contract or floor answered for
+        # the callee at this site, so it is the one unanswered call, two-faced
+        # and owed (#7585, #7757), never a completion.
+        from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
+
+        return UnknownCalleeCallV1(self.callee_name or "python:call").faces(
+            callsite, self.site
         )
 
     def _framed_call(self, values, term, ctx) -> ExitSet | None:
@@ -499,37 +502,3 @@ class SpreadCallSugar(ConstructedTermSugar):
         except SourceCallBindingGap:
             return None
         return callsite.producer_outcome(ctx)
-
-
-def _unprojected_spread_call_faces(callsite, callee: str, site):
-    """``g(*a, **k)`` with no source frame projected here: two faces.
-
-    No body, contract or floor answered for the callee at this site, so the
-    call may raise anything.  It completes only under
-    ``python:spread_call.completes(python:spread_call(<callee>, <occurrence>))``
-    with the value ``python:call_result(<call term>, <occurrence>)`` -- each
-    evaluation its own unknown -- and halts with an ``UndeterminedRaiseEffect``
-    (owner ``UnprojectedSpreadCall:<callee>``) under the complement: the #7585
-    law for an unprojected call.  Completing it totally would claim the callee
-    never raises.
-    """
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.ir import atomic, ctor, str_const
-    from sugar_lift_py_tests.occurrence import occurrence_key
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-    from sugar_lift_py_tests.source_call_resolution import _occurrence_result
-
-    key = occurrence_key(site)
-    completes = atomic(
-        "python:spread_call.completes",
-        [ctor("python:spread_call", (str_const(callee), str_const(key)))],
-    )
-    return ExitSet.two_faced(
-        _occurrence_result(callsite, site),
-        UndeterminedRaiseEffect(
-            blame=str(site),
-            occurrence=key,
-            producer_node_owner=f"UnprojectedSpreadCall:{callee}",
-        ),
-        guard=completes,
-    )
