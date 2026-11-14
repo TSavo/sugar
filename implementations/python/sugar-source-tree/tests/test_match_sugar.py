@@ -1,16 +1,14 @@
-"""`match` -- the value-pattern subset: sequential, first-case-wins guards.
+"""`match` -- sequential, first-case-wins guards.
 
 case i runs when the subject matches P_i AND no earlier case matched, so its
-body facts ride under `match_i AND NOT match_<i`. Captures, pattern guards,
-and structural patterns stay loud.
+body facts ride under `match_i AND NOT match_<i`. Structural patterns and
+guards are built (tests/test_match_structural_patterns.py in
+sugar-lift-py-tests).
 """
 
 import tempfile
 
-import pytest
-
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 _MATCH = (
@@ -78,20 +76,6 @@ def test_capture_binds_the_subject():
     assert capture_arm.operands[1].args[1].name == "z"  # out == z (x = subject)
 
 
-def test_structural_pattern_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(z):\n    match z:\n        case [a, b]:\n            return a\n"
-        ).sugar()
-
-
-def test_pattern_guard_stays_loud():
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(z):\n    match z:\n        case 1 if z > 0:\n            return z\n"
-        ).sugar()
-
-
 def test_singleton_pattern_none_and_bool():
     invs = _invs(
         "def A(z):\n    match z:\n        case None:\n            assert z == 0\n"
@@ -118,8 +102,6 @@ if __name__ == "__main__":
     test_later_case_excludes_earlier()
     test_wildcard_guarded_by_all_negations()
     test_capture_binds_the_subject()
-    test_structural_pattern_stays_loud()
-    test_pattern_guard_stays_loud()
     test_singleton_pattern_none_and_bool()
     test_or_pattern_disjoins_alternatives()
-    print("ok: match value patterns -- sequential guarded split; the rest loud")
+    print("ok: match patterns -- sequential guarded split; opaque tests undecided")

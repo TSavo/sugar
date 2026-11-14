@@ -5043,9 +5043,10 @@ def _module_live_loop_publication(loop, carried, scope) -> dict:
     back to the builtin, so it is not unbound on that arm and is not
     published.  ``scope`` is the binding standing before the loop.
 
-    Only a live ``for`` has these keys (its recurrence runs its items, a
-    ``while``'s does not): a live ``while`` publishes nothing here, and the
-    names it writes stay undecided after it (``_module_uncarried_names``)."""
+    A live ``while`` has the same keys: it has no target, so every name it
+    writes (a walrus in its test among them) is published through its
+    header's key, the one its test, body and ``else`` read the name through
+    (``While.substitute``)."""
     import functools
 
     from .live_loop_construction import loop_post_writes
@@ -12811,24 +12812,33 @@ class While(Statement):
             return _Splice(unrolled)
 
         # Symbolic (or unsupported) while: keep the node; mask the carried
-        # names (any name the body rebinds) so the update stays symbolic.  In
-        # the body a carried name reads the loop header's evaluation of it, as
-        # in a live ``for`` (``_loop_header_bindings``); the test and the
-        # ``else`` read names as before.  The body and the ``else`` run after
-        # an evaluation of the test: a walrus in it is read through its key
-        # (``_scope_after``), never the name as it stood before the test.
+        # names (any name the body rebinds) so the update stays symbolic.  The
+        # test runs at the start of every item and the ``else`` once after the
+        # last, so each reads a carried name through the loop header's
+        # evaluation of it, as the body does and as a live ``for``'s body and
+        # ``else`` do (``_loop_header_bindings``): what the previous item
+        # handed on, bound per item by the recurrence (``LiveWhileRuntimeV1``)
+        # and once more outside every item for the ``else``.  The body and the
+        # ``else`` run after an evaluation of the test: a walrus in it is read
+        # through its key (``_scope_after``), never the name as it stood
+        # before the test.
         bound = For._stmts_bound_names(self.body)
+        else_bound = bound | For._stmts_bound_names(self.orelse)
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
+        header_scope = {**bs, **_loop_header_bindings(self, bound, scope)}
         changed = {}
-        new_test, d = self._substitute_field(self.test, bs)
+        new_test, d = self._substitute_field(self.test, header_scope)
         if d:
             changed["test"] = new_test
-        body_scope = _scope_after(
-            {**bs, **_loop_header_bindings(self, bound, scope)}, self.test, new_test
+        body_scope = _scope_after(header_scope, self.test, new_test)
+        else_scope = _scope_after(
+            {**bs, **_loop_header_bindings(self, else_bound, scope)},
+            self.test,
+            new_test,
         )
         for f, field_scope in (
             ("body", body_scope),
-            ("orelse", _scope_after(bs, self.test, new_test)),
+            ("orelse", else_scope),
         ):
             new, d = self._substitute_body(getattr(self, f), field_scope)
             if d:
@@ -16326,8 +16336,13 @@ class Match(Statement):
         innermost carrying the bindings that stood before the match.  A case
         whose body cannot complete (it returns, raises, breaks or continues)
         is no route out.  The joined bindings are spliced after the match
-        (``_Splice``), for the rest of the block and for a module reader."""
-        from .shadow import rewrite
+        (``_Splice``), for the rest of the block and for a module reader.
+
+        The match carries each case's capture keys (``capture_evaluations``:
+        per case, ``(name, key)`` for every capture but a bare one), so its
+        sugar binds each capture's projection of the subject under the key
+        its reads reference (``MatchSugar``)."""
+        from .shadow import rewrite, rewrite_with_leaves
 
         new_subject, subj_changed = self._substitute_field(self.subject, scope)
         subject = new_subject if subj_changed else self.subject
@@ -16342,8 +16357,11 @@ class Match(Statement):
         new_cases = []
         cases_changed = False
         routes = []
+        capture_keys = []
         for arm, case in enumerate(self.cases):
-            captures = self._case_captures(case, subject, scope)
+            keys = self._case_capture_keys(case, scope)
+            capture_keys.append(keys)
+            captures = self._case_captures(case, subject, keys)
             new_case, net = case.substitute_route(scope, captures)
             if new_case is not case:
                 cases_changed = True
@@ -16361,29 +16379,44 @@ class Match(Statement):
             changed["subject"] = new_subject
         if cases_changed:
             changed["cases"] = tuple(new_cases)
+        # The leaves this substitution decided: the case capture keys, and
+        # the route-slot address when a binding after the match joins over
+        # the route slots, so the sugar confirms the slots the joined
+        # bindings read.  A re-substitution replaces the keys it was given.
+        leaves = {}
+        if any(capture_keys):
+            leaves["capture_evaluations"] = tuple(capture_keys)
         if minted and not retained_site:
-            node = self._rewrite_with_route_site(changed, site_id)
+            leaves["match_route_site_id"] = site_id
+        if leaves:
+            node = rewrite_with_leaves(self, leaves, **changed)
         else:
             node = self if not changed else rewrite(self, **changed)
         return _Splice((node,), merged) if merged else node
 
-    def _case_captures(self, case, subject, scope) -> dict:
+    def _case_capture_keys(self, case, scope) -> tuple:
+        """``((name, key), ...)``: the key each name ``case``'s pattern
+        captures is read under (``_match_capture_evaluation_key``), in name
+        order; a bare capture (``case x:``) has none, it is the subject."""
+        bare = self._capture_name(case.pattern)
+        return tuple(
+            (name, _match_capture_evaluation_key(case, name, scope))
+            for name in sorted(self._pattern_bound_names(case.pattern))
+            if name != bare
+        )
+
+    def _case_captures(self, case, subject, keys) -> dict:
         """Each name ``case``'s pattern captures, bound for its guard, its
         body and its route out of the match: a bare capture (``case x:``) to
         the subject, any other to a reference to the case's key for it
-        (``_match_capture_evaluation_key``)."""
+        (``keys``, ``_case_capture_keys``)."""
+        captures = {
+            name: _evaluation_ref(case, case.pattern.span, key, name)
+            for name, key in keys
+        }
         bare = self._capture_name(case.pattern)
-        captures = {}
-        for name in sorted(self._pattern_bound_names(case.pattern)):
-            if name == bare:
-                captures[name] = subject
-                continue
-            captures[name] = _evaluation_ref(
-                case,
-                case.pattern.span,
-                _match_capture_evaluation_key(case, name, scope),
-                name,
-            )
+        if bare is not None:
+            captures[bare] = subject
         return captures
 
     @classmethod
@@ -16400,25 +16433,6 @@ class Match(Statement):
         if pattern.kind == "MatchOr":
             return any(cls._irrefutable(sub) for sub in pattern.patterns)
         return False
-
-    def _rewrite_with_route_site(self, changed, site_id):
-        """Carry the route-slot address onto the rewritten match so its
-        sugar confirms the same slots the joined bindings read."""
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode, rewrite
-
-        rewritten = rewrite(self, **changed) if changed else self
-        desc = rewritten.ref.describe()
-        return materialize(
-            self.unit,
-            ShadowNode(
-                desc.kind,
-                desc.raw_span or self.span,
-                (*desc.slots, ("match_route_site_id", Leaf(site_id))),
-            ),
-            self.reporter,
-            self.control_context,
-        )
 
     def _pattern_alternatives(self, pattern):
         """The value-pattern alternatives a case matches, as literal sugars:
@@ -16462,6 +16476,72 @@ class Match(Statement):
 
         return FalseBoolLiteralSugar(site=self.fragment)
 
+    def _pattern_spec(self, pattern, keys):
+        """The structural spec ``MatchSugar`` tests the subject against for
+        ``pattern`` (``match_sugar.match_pattern``): each sub-pattern's spec,
+        each value sugar, and the key (``keys``: name to capture key) each
+        capture binds the subject's projection under."""
+        from sugar_lift_py_tests.sugar import match_sugar as spec
+
+        def key(name):
+            return None if name is None else keys[name]
+
+        kind = pattern.kind
+        if kind == "MatchValue":
+            return spec.ValuePatternSpec(pattern.value.sugar())
+        if kind == "MatchSingleton":
+            return spec.SingletonPatternSpec(self._singleton_sugar(pattern.value))
+        if kind == "MatchAs":
+            inner = None
+            if pattern.pattern is not None:
+                inner = self._pattern_spec(pattern.pattern, keys)
+            return spec.CapturePatternSpec(inner, key(pattern.name))
+        if kind == "MatchOr":
+            return spec.OrPatternSpec(
+                tuple(self._pattern_spec(sub, keys) for sub in pattern.patterns)
+            )
+        if kind == "MatchSequence":
+            subs = tuple(pattern.patterns)
+            star = next(
+                (i for i, sub in enumerate(subs) if sub.kind == "MatchStar"), None
+            )
+            if star is None:
+                return spec.SequencePatternSpec(
+                    tuple(self._pattern_spec(sub, keys) for sub in subs)
+                )
+            return spec.SequencePatternSpec(
+                tuple(self._pattern_spec(sub, keys) for sub in subs[:star]),
+                True,
+                key(subs[star].name),
+                tuple(self._pattern_spec(sub, keys) for sub in subs[star + 1 :]),
+            )
+        if kind == "MatchMapping":
+            return spec.MappingPatternSpec(
+                tuple(item.sugar() for item in pattern.keys),
+                tuple(self._pattern_spec(sub, keys) for sub in pattern.patterns),
+                key(pattern.rest),
+            )
+        if kind == "MatchClass":
+            return spec.ClassPatternSpec(
+                pattern.cls_.sugar(),
+                tuple(self._pattern_spec(sub, keys) for sub in pattern.patterns),
+                tuple(
+                    (attr, self._pattern_spec(sub, keys))
+                    for attr, sub in zip(
+                        pattern.kwd_attrs, pattern.kwd_patterns, strict=True
+                    )
+                ),
+            )
+        from .panic import SugarNotWritten
+
+        raise SugarNotWritten(
+            owner="Match._pattern_spec",
+            blame=pattern.fragment,
+            observed=f"match pattern {kind}",
+            requested="a pattern spec MatchSugar tests the subject against",
+            fix="write the pattern's spec; never match it by guess",
+        )
+
     @staticmethod
     def _capture_name(pattern):
         """The name a bare capture pattern (`case x:`) binds, or None. A capture
@@ -16476,27 +16556,39 @@ class Match(Statement):
         return None
 
     def _construct_sugar(self):
-        """`match <subject>: case P: body ...` constructs MatchSugar -- an n-way
-        guarded split. This first cut owns VALUE patterns (`case <literal>:`) and
-        the wildcard (`case _:`), with no pattern guard and no capture. Any other
-        pattern, a `case P if g:` guard, or a capture inherits the loud throw --
-        each is real matching semantics, never guessed.
+        """`match <subject>: case P [if g]: body ...` constructs MatchSugar --
+        an n-way guarded split.  A value pattern (`case <literal>:`, an
+        or-pattern of them), the wildcard and a bare capture are value
+        alternatives; every other pattern (sequence, mapping, class, `as`,
+        an or-pattern with a capture or a structural arm) is a structural
+        pattern spec (``_pattern_spec``) whose captures bind under the case's
+        keys (``capture_evaluations``, minted by ``substitute``).  A guard is
+        the case's ``if`` sugar.  A case whose captures carry no key (the
+        match was never substituted) keeps the loud throw: a capture is never
+        read by its name.
         """
         from sugar_lift_py_tests.sugar.match_sugar import MatchCaseSpec, MatchSugar
 
+        evaluations = tuple(getattr(self, "capture_evaluations", None) or ())
         specs = []
-        for case in self.cases:
-            if case.guard is not None:
-                return super()._construct_sugar()  # `case P if g:` not written
+        for arm, case in enumerate(self.cases):
+            guard = None if case.guard is None else case.guard.sugar()
+            body = tuple(s.sugar() for s in case.body)
             alternatives = self._pattern_alternatives(case.pattern)
-            if alternatives is None:
-                return (
-                    super()._construct_sugar()
-                )  # structural pattern (sequence/class/...)
+            if alternatives is not None:
+                specs.append(
+                    MatchCaseSpec(alternatives=alternatives, body=body, guard=guard)
+                )
+                continue
+            keys = dict(evaluations[arm]) if arm < len(evaluations) else {}
+            if not set(self._pattern_bound_names(case.pattern)) <= set(keys):
+                return super()._construct_sugar()
             specs.append(
                 MatchCaseSpec(
-                    alternatives=alternatives,
-                    body=tuple(s.sugar() for s in case.body),
+                    alternatives=(),
+                    body=body,
+                    guard=guard,
+                    pattern=self._pattern_spec(case.pattern, keys),
                 )
             )
         return MatchSugar(

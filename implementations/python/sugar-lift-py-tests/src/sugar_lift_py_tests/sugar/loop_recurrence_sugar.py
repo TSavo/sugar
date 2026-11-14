@@ -134,6 +134,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     def desugar(self, ctx=None):
         from sugar_lift_py_tests.loop_construction import LoopWireError
 
+        runtime = self.construction.loop_runtime
+        if getattr(runtime, "test_sugar", None) is not None:
+            # A live ``while`` (``LiveWhileRuntimeV1``): its items run where
+            # its test decides, exactly as a live ``for``'s run.
+            return self._desugar_while(runtime, ctx)
         iterable_sugar = self.construction.iterable_sugar
         iterable_cid = self.construction.iterable_value_construction_cid
         if iterable_cid is None:
@@ -184,6 +189,64 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             writes.append(ScopeRebind(*written))
         return tuple(writes)
 
+    def _start(self, runtime, ctx):
+        """``(ctx, carried, early)``: the context the first item of a live
+        loop (a ``for``'s or a ``while``'s) begins in, with the header of each
+        carried name bound to its pre-loop value, and those values
+        (``carried``); or ``early``, the outcome a pre-loop value reduced to
+        that is not one unconditional value owing nothing, returned whole in
+        place of the loop."""
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+        from sugar_lift_py_tests.temporal import bind_temporal
+
+        from dataclasses import replace
+
+        runtime_ctx = ctx
+        if runtime_ctx is not None and runtime.carried_names:
+            runtime_ctx = replace(
+                runtime_ctx,
+                live_loop_names=frozenset(
+                    (
+                        *getattr(runtime_ctx, "live_loop_names", ()),
+                        *runtime.carried_names,
+                    )
+                ),
+            )
+        initial_values = []
+        for (header, _writes, _else_writes), sugar in zip(
+            self._carried_evaluations(runtime),
+            runtime.initial_value_sugars,
+            strict=True,
+        ):
+            initial = sugar.desugar(runtime_ctx)
+            if isinstance(initial, NativeOperationExitCarrierV1):
+                return runtime_ctx, None, initial
+            initial_value = initial.completed_value()
+            # Only one unconditional value owing nothing is bound and carried
+            # on; any other shape (a halt, several faces, an arm that owes)
+            # is returned whole, with every arm it has.
+            if initial_value is None or initial.owed_items():
+                return runtime_ctx, None, initial
+            # The pre-loop value is bound under the header's key where the
+            # loop stands (``evaluation_here``), outside every item of it: the
+            # header's evaluation before the first item.  The name is never
+            # written; each item binds its own header to what it begins with
+            # (``_enter_header``).
+            if header is not None:
+                runtime_ctx = bind_temporal(
+                    runtime_ctx,
+                    evaluation_here(header),
+                    initial_value,
+                    owner="LoopRecurrenceSugar.pre-loop",
+                    blame=str(self.site),
+                )
+            initial_values.append(initial_value)
+        # The first item begins with the pre-loop values.
+        return runtime_ctx, tuple(initial_values), None
+
     def _desugar_with_iterable(self, iterable, ctx):
         runtime = self.construction.loop_runtime
         from sugar_lift_py_tests.floor import SymbolicValue
@@ -193,61 +256,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             and runtime is not None
             and not isinstance(iterable, SymbolicValue)
         ):
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
             from sugar_lift_py_tests.operations.iterator_operation import (
                 IteratorOperation,
             )
-            from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
-                evaluation_here,
-            )
-            from sugar_lift_py_tests.temporal import bind_temporal
 
-            from dataclasses import replace
-
-            runtime_ctx = ctx
-            if runtime_ctx is not None and runtime.carried_names:
-                runtime_ctx = replace(
-                    runtime_ctx,
-                    live_loop_names=frozenset(
-                        (
-                            *getattr(runtime_ctx, "live_loop_names", ()),
-                            *runtime.carried_names,
-                        )
-                    ),
-                )
-            initial_values = []
-            for (header, _writes, _else_writes), sugar in zip(
-                self._carried_evaluations(runtime),
-                runtime.initial_value_sugars,
-                strict=True,
-            ):
-                initial = sugar.desugar(runtime_ctx)
-                if isinstance(initial, NativeOperationExitCarrierV1):
-                    return initial
-                initial_value = initial.completed_value()
-                # Only one unconditional value owing nothing is bound and
-                # carried on; any other shape (a halt, several faces, an arm
-                # that owes) is returned whole, with every arm it has.
-                if initial_value is None or initial.owed_items():
-                    return initial
-                # The pre-loop value is bound under the header's key where
-                # the loop stands (``evaluation_here``), outside every item of
-                # it: the header's evaluation before the first item.  The
-                # name is never written; each item binds its own header to
-                # what it begins with (``_enter_header``).
-                if header is not None:
-                    runtime_ctx = bind_temporal(
-                        runtime_ctx,
-                        evaluation_here(header),
-                        initial_value,
-                        owner="LoopRecurrenceSugar.pre-loop",
-                        blame=str(self.site),
-                    )
-                initial_values.append(initial_value)
-            # The first item begins with the pre-loop values.
-            carried = tuple(initial_values)
+            runtime_ctx, carried, early = self._start(runtime, ctx)
+            if early is not None:
+                return early
             return (
                 IteratorOperation(owner="LoopRecurrenceSugar", blame=self.site)
                 .submit(iterable, runtime_ctx)
@@ -356,9 +371,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         nothing for the names it carries is refused by name
         (``_require_carried``): the names are never read in its place.
         """
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.floor.block_value import BlockValue
@@ -434,6 +446,31 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
             body = reduce_block_to_exitset(runtime.body_sugars, iteration_ctx)
 
+        def resume(ctx, *, entries, carried, index):
+            # The next item takes the iterator's next element.
+            return self._advance_iterator(
+                next_result.advanced,
+                runtime,
+                ctx,
+                entries=entries,
+                carried=carried,
+                index=index,
+            )
+
+        return self._after_item(
+            body, runtime, target_bindings, resume, entries=entries, index=index
+        )
+
+    def _after_item(self, body, runtime, target_bindings, resume, *, entries, index):
+        """The loop's outcome after item ``index``'s ``body`` reduced, for a
+        live ``for`` and a live ``while`` alike.  ``resume(ctx, entries=,
+        carried=, index=)`` runs the next item: the iterator's next element,
+        or the test evaluated again."""
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
         def after_body(body):
             # Each face of this iteration is its own path, and what follows it
             # runs beneath it (``ExitSet.sequence``): a completed face carries
@@ -447,13 +484,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             if len(body.exits) != 1:
                 return body.sequence(
                     lambda state: self._after_iteration_state(
-                        state, next_result, runtime, entries=entries, index=index
+                        state, runtime, resume, entries=entries, index=index
                     ),
                     consume=lambda halt: self._after_loop_control(
                         halt,
-                        next_result,
                         runtime,
                         target_bindings,
+                        resume,
                         entries=entries,
                         index=index,
                     ),
@@ -461,9 +498,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             face = body.exits[0]
             following = self._after_iteration_face(
                 face,
-                next_result,
                 runtime,
                 target_bindings,
+                resume,
                 entries=entries,
                 index=index,
             )
@@ -486,7 +523,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         return after_body(_require_exit_set(body, owner="LoopRecurrenceSugar.body"))
 
     def _after_iteration_face(
-        self, face, next_result, runtime, target_bindings, *, entries, index
+        self, face, runtime, target_bindings, resume, *, entries, index
     ):
         """The loop's outcome after one face of an iteration, or None when the
         face leaves the loop as it is (a halt that is not this loop's control)."""
@@ -495,18 +532,18 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         if isinstance(face, Halted):
             return self._after_loop_control(
                 face,
-                next_result,
                 runtime,
                 target_bindings,
+                resume,
                 entries=entries,
                 index=index,
             )
         return self._after_iteration_state(
-            face.value, next_result, runtime, entries=entries, index=index
+            face.value, runtime, resume, entries=entries, index=index
         )
 
     def _after_loop_control(
-        self, halt, next_result, runtime, target_bindings, *, entries, index
+        self, halt, runtime, target_bindings, resume, *, entries, index
     ):
         """The loop's outcome after a halted iteration face, or None when the
         halt is not this loop's own break/continue and leaves as it is."""
@@ -522,9 +559,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 target_bindings=target_bindings,
             )
             if effect.action == "continue":
-                return self._advance_iterator(
-                    next_result.advanced,
-                    runtime,
+                return resume(
                     state,
                     entries=entries,
                     carried=self._latched(runtime, state, index),
@@ -540,7 +575,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 )
         return None
 
-    def _after_iteration_state(self, state, next_result, runtime, *, entries, index):
+    def _after_iteration_state(self, state, runtime, resume, *, entries, index):
         """The loop's outcome after a completed iteration face whose record is
         ``state``."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
@@ -548,13 +583,161 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         combined = (*entries, *state.entries)
         if not state.can_fall_through:
             return ExitSet.completed(BlockValue(combined, can_fall_through=False))
-        return self._advance_iterator(
-            next_result.advanced,
-            runtime,
+        return resume(
             state.context,
             entries=combined,
             carried=self._latched(runtime, state.context, index),
             index=index + 1,
+        )
+
+    def _desugar_while(self, runtime, ctx):
+        """A live ``while``: its first item begins with the pre-loop values
+        (``_start``).  A test that does not decide where the first item
+        begins leaves the loop its recurrence, as a ``while`` whose items do
+        not run (``_desugar_with_iterable``)."""
+        runtime_ctx, carried, early = self._start(runtime, ctx)
+        if early is not None:
+            return early
+        return self._test_item(
+            runtime, runtime_ctx, entries=(), carried=carried, index=0, before=ctx
+        )
+
+    def _test_item(self, runtime, ctx, *, entries, carried, index, before=None):
+        """Run item ``index`` of a live ``while``: bind its header to what the
+        previous item handed on (``carried``), evaluate the test there, and
+        run the body under every face whose truth is true.  A face whose
+        truth is false leaves the loop (``_after_test``).
+
+        The test decides each face or the loop does not run as items: at the
+        first item an undecided test leaves the loop its recurrence (``before``
+        is the context the loop began in); after an item ran, an undecided
+        test is refused by name, never guessed true or false.  So is a loop
+        whose test has not decided false within ``runtime.fuel`` items."""
+        from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
+        from sugar_lift_py_tests.outcome import Completed
+        from sugar_lift_py_tests.outcome.exit_set import (
+            _is_false,
+            _is_true,
+            _require_exit_set,
+        )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        if index >= runtime.fuel:
+            raise SugarNotWritten(
+                owner="LoopRecurrenceSugar.while",
+                blame=self.site,
+                observed=(
+                    f"a live while ran {index} items without its test deciding "
+                    "false"
+                ),
+                requested="the item at which the test decides false, or a break",
+                fix=(
+                    "decide the loop's exit from what its items hand on; never "
+                    "cut the loop short"
+                ),
+            )
+        with entered(loop_iteration_segment(self.target_cid, index)):
+            item_ctx = self._enter_header(runtime, ctx, carried)
+            test = _require_exit_set(
+                runtime.test_sugar.desugar(item_ctx),
+                owner="LoopRecurrenceSugar.while-test",
+            )
+            tested = test.sequence(
+                lambda value: ExitSet.completed(
+                    _WhileTest(
+                        self._test_formula(value), value.extend_scope(item_ctx)
+                    )
+                )
+            )
+            undecided = any(
+                isinstance(face, Completed)
+                and not (
+                    face.value.formula is not None
+                    and (_is_true(face.value.formula) or _is_false(face.value.formula))
+                )
+                for face in tested.exits
+            )
+            if not undecided:
+                # Each true face runs the body in this item, after the test.
+                tested = tested.sequence(
+                    lambda item: ExitSet.completed(self._with_body(item, runtime))
+                )
+        if undecided and index == 0:
+            return self._desugar_with_iterable(None, before)
+        if undecided:
+            raise SugarNotWritten(
+                owner="LoopRecurrenceSugar.while",
+                blame=self.site,
+                observed=(
+                    f"undecided while test at item {index}: its truth is not "
+                    "decided by what the previous item handed on"
+                ),
+                requested="a decided truth of the test at every item",
+                fix=(
+                    "carry the testimony that decides the test into the item; "
+                    "never guess the loop continues or stops"
+                ),
+            )
+        return tested.sequence(
+            lambda item: self._after_test(item, runtime, entries=entries, index=index)
+        )
+
+    @staticmethod
+    def _with_body(item, runtime):
+        """A true face of the test with the body reduced in its context (in
+        the item the caller has entered); a false face as it is."""
+        from dataclasses import replace
+
+        from sugar_lift_py_tests.outcome.exit_set import _is_true
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+
+        if not _is_true(item.formula):
+            return item
+        return replace(
+            item, body=reduce_block_to_exitset(runtime.body_sugars, item.ctx)
+        )
+
+    def _test_formula(self, value):
+        """The truth of a ``while`` test's value as a guard (``predicate_formula``),
+        or None when its truth is not one value."""
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
+        from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
+
+        if plain_completed_value(value.truth(self.site)) is None:
+            return None
+        return predicate_formula(value, self.site)
+
+    def _after_test(self, item, runtime, *, entries, index):
+        """The loop's outcome after item ``index``'s test decided: false
+        leaves the loop with what the test left each carried name (the
+        previous item's latch, or a walrus in the test), through the ``else``
+        suite (``_finish_iterator``); true continues from the body as a live
+        ``for``'s item does (``_after_item``)."""
+        from sugar_lift_py_tests.outcome.exit_set import _is_false
+
+        if _is_false(item.formula):
+            # Item ``index`` evaluated the test: a walrus in it wrote there,
+            # so the items the loop leaves after are ``index + 1``.
+            return self._finish_iterator(
+                runtime,
+                item.ctx,
+                entries=entries,
+                carried=self._latched(runtime, item.ctx, index),
+                items=index + 1,
+            )
+
+        def resume(ctx, *, entries, carried, index):
+            # The next item evaluates the test again.
+            return self._test_item(
+                runtime, ctx, entries=entries, carried=carried, index=index
+            )
+
+        return self._after_item(
+            item.body, runtime, (), resume, entries=entries, index=index
         )
 
     @staticmethod
@@ -683,8 +866,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         headers (a carried leaf's header is its key): the item's unpack can
         halt and the recurrence carries no face for that halt, so a read of
         a leaf is refused by name (``EvaluationRefSugar._unbound``), never
-        completed past it.  A ``while`` has no runtime and no item: the
-        context is unchanged and nothing is entered."""
+        completed past it.  A ``while`` without a runtime has no item: the
+        context is unchanged and nothing is entered; a live ``while``'s
+        symbolic item binds its headers only (it has no target)."""
         from contextlib import nullcontext
         from functools import partial
 
@@ -698,7 +882,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
             ctx = ReduceContext.root(owner="LoopRecurrenceSugar.symbolic-item")
         item = partial(entered, loop_symbolic_item_segment(self.target_cid))
-        pattern = runtime.target_pattern
+        pattern = getattr(runtime, "target_pattern", None)
+        if pattern is None:
+            with item():
+                ctx = self._enter_header(
+                    runtime, ctx, tuple(SymbolicValue(head) for head in heads)
+                )
+            return ctx, item
         named = isinstance(pattern.target, Name)
         target_keys = frozenset(self._target_keys(runtime).values())
         starts = tuple(
@@ -745,13 +935,17 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         suite reads the target as.  A carried target's header is the same
         key, and ``_enter_header`` binds it after this to what the last item
         handed on.  With no item, nothing is bound: the target was never
-        assigned."""
+        assigned.  A ``while`` has no target: nothing is bound."""
         from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
         from sugar_lift_py_tests.temporal import bind_temporal
 
         temporal = getattr(ctx, "temporal", None)
-        if temporal is None or items < 1:
+        if (
+            temporal is None
+            or items < 1
+            or getattr(runtime, "target_pattern", None) is None
+        ):
             return ctx
         keys = tuple(self._target_keys(runtime).values())
         with entered(loop_iteration_segment(self.target_cid, items - 1)):
@@ -1063,6 +1257,18 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 )
             )
         return tuple(posted)
+
+
+@dataclass(frozen=True, eq=False)
+class _WhileTest:
+    """One face of a live ``while``'s test in one item: the truth of the
+    test's value as a guard (None when it is not one value), the context the
+    body runs in (after the test: a walrus in it is bound), and, for a true
+    face, the body reduced there."""
+
+    formula: object
+    ctx: object
+    body: object = None
 
 
 @dataclass(frozen=True)

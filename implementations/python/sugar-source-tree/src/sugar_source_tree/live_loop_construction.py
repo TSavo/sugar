@@ -113,22 +113,29 @@ def loop_post_writes(loop, carried_names, scope) -> dict:
     nested definition's body is another frame (``_carried_writes``).  The
     construction (``LiveForRuntimeV1.published_evaluations``) and a module
     reader's publication (``nodes._module_live_loop_publication``) name the
-    same keys from here.  A ``while`` has no target and no items the
-    recurrence runs: it publishes nothing."""
+    same keys from here.  A ``while`` has the same keys: it has no target,
+    so every name its test (a walrus), body or ``else`` writes is published
+    through its header's key, the one its test, body and ``else`` read the
+    name through (``While.substitute``)."""
     from .nodes import (
         For,
         _loop_header_evaluation_key,
         _loop_target_evaluation_key,
     )
 
-    if not isinstance(loop, For):
-        return {}
-    target_names = frozenset(loop.unit.require_target_pattern(loop, loop.target).names)
+    if isinstance(loop, For):
+        target_names = frozenset(
+            loop.unit.require_target_pattern(loop, loop.target).names
+        )
+        items = tuple(loop.body)
+    else:
+        target_names = frozenset()
+        items = (loop.test, *loop.body)
     carried = frozenset(carried_names)
     candidates = sorted(
-        (For._stmts_bound_names((*loop.body, *loop.orelse)) | target_names) - carried
+        (For._stmts_bound_names((*items, *loop.orelse)) | target_names) - carried
     )
-    writes = _carried_writes(loop.body, candidates)
+    writes = _carried_writes(items, candidates)
     else_writes = _carried_writes(loop.orelse, candidates)
     published = {}
     for name in candidates:
@@ -139,6 +146,39 @@ def loop_post_writes(loop, carried_names, scope) -> dict:
             post_key = _loop_header_evaluation_key(loop, name, scope)
             published[name] = (post_key, writes[name], else_writes[name])
     return published
+
+
+@dataclass(frozen=True)
+class LiveWhileRuntimeV1:
+    """Unsealed execution handles paired with the sealed while construction.
+
+    A live ``while`` runs its items as a live ``for`` does
+    (``LoopRecurrenceSugar``): each item binds the header of every carried
+    name to what the previous item handed on, evaluates the test there, and
+    runs the body when the test is true; the loop leaves, with what the last
+    item handed on, when the test is false (through the ``else`` suite), by
+    a ``break``, or by a halt.  ``carried_evaluations`` is the for's
+    ``(header, writes, else_writes)`` per carried name, with the test's
+    walrus writes among ``writes`` (the test runs at the start of every
+    item).  ``fuel`` bounds the items: a loop whose test has not decided
+    false by then is refused by name, never cut short.
+    ``published_evaluations`` is the for's: each name the loop writes that it
+    does not carry (a walrus in the test), published under its post-loop key
+    as the loop leaves (``loop_post_writes``).
+    """
+
+    test_sugar: object
+    carried_names: tuple[str, ...]
+    initial_value_sugars: tuple[object, ...]
+    body_sugars: tuple[object, ...]
+    else_sugars: tuple[object, ...]
+    carried_evaluations: tuple[
+        tuple[str | None, tuple[str, ...], tuple[str, ...]], ...
+    ] = ()
+    fuel: int = 0
+    published_evaluations: tuple[
+        tuple[str, tuple[str, ...], tuple[str, ...]], ...
+    ] = ()
 
 
 def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
@@ -1025,6 +1065,39 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                 tuple(post_writes[name] for name in sorted(post_writes)),
             ),
         )
+    elif set(For._stmts_bound_names((*loop.body, *loop.orelse))) <= set(carried_names):
+        # A live ``while`` runs its items once every name its body and its
+        # ``else`` write is carried, so each item hands the next all it
+        # wrote; one that writes a name the loop cannot carry (a module
+        # global, a name no binding entry stands for) stays its recurrence.
+        from .nodes import _loop_header_evaluation_key
+
+        writes = _carried_writes((loop.test, *loop.body), carried_names)
+        else_writes = _carried_writes(loop.orelse, carried_names)
+        post_writes = loop_post_writes(loop, carried_names, scope)
+        construction = replace(
+            construction,
+            loop_runtime=LiveWhileRuntimeV1(
+                loop.test.sugar(),
+                carried_names,
+                tuple(
+                    _initial_value_sugar_for_loop_prestate(entry.state)
+                    for entry in pre_runtime
+                ),
+                tuple(statement.sugar() for statement in loop.body),
+                tuple(statement.sugar() for statement in loop.orelse),
+                tuple(
+                    (
+                        _loop_header_evaluation_key(loop, name, scope),
+                        writes[name],
+                        else_writes[name],
+                    )
+                    for name in carried_names
+                ),
+                While._FUEL,
+                tuple(post_writes[name] for name in sorted(post_writes)),
+            ),
+        )
 
     bindings = {}
     for name, entry in zip(carried_names, pre_entries, strict=True):
@@ -1053,5 +1126,6 @@ __all__ = [
     "LiveForTargetPatternV1",
     "LiveLoopProjectionV1",
     "LiveOutwardHaltedFaceV1",
+    "LiveWhileRuntimeV1",
     "construct_live_loop_recurrence",
 ]

@@ -53,6 +53,7 @@ from sugar_lift_py_tests.temporal.temporal_context import (
     projection_key,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_source_tree.live_loop_construction import LiveWhileRuntimeV1
 from sugar_source_tree.nodes import (
     Assign,
     AugAssign,
@@ -482,6 +483,34 @@ def test_an_assignment_in_the_body_is_a_keyed_write() -> None:
     assert writes == (carried_write_key(assign.site, "t"),)
     assert writes[0].startswith(EVALUATION_PREFIX)
     assert writes[0] != header
+
+
+_LIVE_WHILE = (
+    "def f(k):\n"
+    "    n = k\n"
+    "    while n:\n"
+    "        n -= 1\n"
+    "    return n\n"
+)
+
+
+def test_a_live_while_runs_its_items_through_the_header() -> None:
+    # A live ``while`` has the for's runtime: its test and its body read the
+    # carried name through the header, and its body's write is keyed.
+    runtime = _live_runtime(_LIVE_WHILE)
+    assert isinstance(runtime, LiveWhileRuntimeV1)
+    assert runtime.carried_names == ("n",)
+    [(header, writes, else_writes)] = runtime.carried_evaluations
+    assert header.startswith(EVALUATION_PREFIX)
+    assert isinstance(runtime.test_sugar, EvaluationRefSugar)
+    assert runtime.test_sugar.evaluation == header
+    [aug] = runtime.body_sugars
+    assert isinstance(aug, AugAssignSugar)
+    assert isinstance(aug.left, EvaluationRefSugar)
+    assert aug.left.evaluation == header
+    assert writes == (aug.evaluation,)
+    assert else_writes == ()
+    assert runtime.fuel > 0
 
 
 _LIVE_ELSE = (
