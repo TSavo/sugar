@@ -28,7 +28,7 @@ import time
 import traceback
 from pathlib import Path
 
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_source_tree.panic import LifterRefusal
 
 _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
@@ -118,7 +118,7 @@ def main(argv: list[str] | None = None) -> int:
                 contract_refs=contract_refs,
                 source_workspace_root=locus_root,
             )
-        except ConstructionPanic:
+        except LifterRefusal:
             raise  # a construction refusal propagates by its own name
         except BaseException as exc:  # the harness itself died on this seat
             row = {

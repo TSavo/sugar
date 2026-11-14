@@ -28,6 +28,7 @@ from sugar_lift_py_tests.lift_rpc import (
     tree_construction_context_for_workspace,
 )
 from sugar_source_tree.nodes import Node
+from sugar_source_tree.panic import LifterRefusal
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_lift_python_source.source_oracle import workspace_path_source
 from sugar_source_tree.tree import SourceFile
@@ -80,7 +81,7 @@ def _construct_all(source_file, kind):
         coordinate = (span.start_line, span.start_col)
         try:
             out[coordinate] = ("ok", repr(node.sugar()))
-        except Exception as error:  # a refusal is an answer too, and comparable
+        except (Exception, LifterRefusal) as error:  # a refusal is an answer too
             out[coordinate] = ("raised", type(error).__name__)
     return out
 
@@ -524,7 +525,7 @@ def test_an_absolute_locus_REFUSES_under_a_workspace_context(tmp_path) -> None:
             node.sugar()
         except SugarNotWritten as panic:
             refused.append((node.name, panic.owner, str(panic)))
-        except Exception as other:
+        except (Exception, LifterRefusal) as other:
             refused.append((node.name, type(other).__name__, str(other)))
 
     print("\n=== absolute locus + workspace-bearing context ===")
@@ -594,7 +595,7 @@ def test_a_method_at_an_absolute_locus_reaches_no_richer_value(tmp_path) -> None
                 text = repr(node.sugar())
                 found = re.search(r"bridge_source_symbol=('[^']*'|None)", text)
                 out[node.name] = None if found is None else found.group(1)
-            except Exception as error:
+            except (Exception, LifterRefusal) as error:
                 out[node.name] = f"<{type(error).__name__}>"
         return out
 

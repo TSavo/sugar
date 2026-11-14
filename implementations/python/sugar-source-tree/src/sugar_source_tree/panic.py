@@ -52,7 +52,24 @@ def _render_blame(blame: object) -> str:
     return str(blame)
 
 
-class SourceTreePanic(Exception):
+class LifterRefusal(BaseException):
+    """The one refusal. Every way the lifter says "not written / cannot construct".
+
+    Two families derive from it: ``SourceTreePanic`` (this module: the tree's
+    loud arm, ``SugarNotWritten``, ``BackendDefect``, ...) and
+    ``ConstructionPanic`` (``sugar_lift_py_tests.gap.panic``: the kit's
+    construction None arm). This lower-level package defines the root so the
+    kit can derive from it without the tree importing the kit.
+
+    A ``BaseException``, NOT an ``Exception``: an ordinary ``except
+    Exception`` never swallows a refusal. A refusal is held only where
+    ``scripts/construction_panic_catch_law.py`` sanctions it (a per-file corpus
+    or gap-enumeration audit that emits a loud red row, or a production
+    typed-gap classification), and is otherwise purely re-raised.
+    """
+
+
+class SourceTreePanic(LifterRefusal):
     """Common base. Every refusal carries the native coordinate it blames."""
 
     def __init__(

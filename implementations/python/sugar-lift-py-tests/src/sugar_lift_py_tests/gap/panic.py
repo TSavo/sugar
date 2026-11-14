@@ -2,15 +2,19 @@ from __future__ import annotations
 
 from typing import NoReturn
 
+from sugar_source_tree.panic import LifterRefusal
+
 from .info import ConstructionGap, GapKind, GapLocus
 
 
-class ConstructionPanic(BaseException):
+class ConstructionPanic(LifterRefusal):
     """Kit-domain construction None arm: match(Sugar) { Some => …, None => panic!() }.
 
-    A BaseException, NOT an Exception: ordinary ``except Exception:`` will not
-    catch it, so it propagates and halts loud. The production lift child admits
-    it as a sanctioned typed gap (alongside tree ``SugarNotWritten``).
+    One family of the one refusal, ``LifterRefusal`` (the tree's
+    ``SourceTreePanic`` is the other). A BaseException, NOT an Exception:
+    ordinary ``except Exception:`` will not catch it, so it propagates and
+    halts loud. The production lift child admits it as a sanctioned typed gap
+    (alongside tree ``SugarNotWritten``).
 
     Carries only ``ConstructionGap`` testimony. Unwritten code panics until written.
     """

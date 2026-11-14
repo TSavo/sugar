@@ -33,6 +33,7 @@ from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
 )
 from sugar_source_tree.binding_state import constructed_value_cid_v2
 from sugar_source_tree.nodes import With
+from sugar_source_tree.panic import LifterRefusal
 from sugar_source_tree.reporter import CollectingReporter
 
 PARTITION = (
@@ -117,7 +118,7 @@ def test_arm_that_is_not_an_import_value_stays_loud(tmp_path: Path) -> None:
     assert isinstance(ref, ContextManagerResolutionGapV1)
     assert ref.kind == "partition-member-unauthenticated"
     assert "not authenticated import values" in (ref.detail or "")
-    with pytest.raises(Exception, match="partition-member-unauthenticated"):
+    with pytest.raises(LifterRefusal, match="partition-member-unauthenticated"):
         with_node.sugar()
 
 

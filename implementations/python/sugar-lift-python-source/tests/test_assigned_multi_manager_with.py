@@ -15,6 +15,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
 )
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import With
+from sugar_source_tree.panic import LifterRefusal
 from sugar_source_tree.tree import SourceFile
 
 PANDAS_SOURCE_CID = (
@@ -265,7 +266,7 @@ def test_same_spelled_names_bound_elsewhere_do_not_authenticate(tmp_path: Path) 
     assert context.source_manager_provider_calls == {}
     assert _projected_manager_call_uses(tree) == {}
     # No reaching provider Call: construction stays loud at the use coordinate.
-    with pytest.raises(Exception) as caught:
+    with pytest.raises(LifterRefusal) as caught:
         site.sugar()
     assert "no context-manager derivation" in str(caught.value)
 

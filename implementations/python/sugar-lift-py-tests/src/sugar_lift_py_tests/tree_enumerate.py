@@ -348,7 +348,6 @@ def module_end_contexts(unit) -> tuple:
     every read that asks: the run is never run again for the next reader,
     and its refusal is never caught to read as an answer.
     """
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.occurrence import occurrence_path
     from sugar_source_tree.construction_cache import (
         abandon_row,
@@ -356,7 +355,7 @@ def module_end_contexts(unit) -> tuple:
         open_row,
         serve,
     )
-    from sugar_source_tree.panic import SourceTreePanic
+    from sugar_source_tree.panic import LifterRefusal
 
     key = id(unit)
     if key in _MODULE_RUNS_UNDER_WAY:
@@ -380,9 +379,9 @@ def module_end_contexts(unit) -> tuple:
         # is the one a later ``owner_reduction(None)`` is served.
         with occurrence_path(()):
             ends = owner_reduction(None, unit.constructed_module).ends
-    except (SourceTreePanic, ConstructionPanic) as panic:
-        # The two sanctioned construction gaps, remembered as loudly as an
-        # answer and raised on.
+    except LifterRefusal as panic:
+        # The one refusal (either family), remembered as loudly as an answer
+        # and raised on.
         _MODULE_RUN_UNITS[key] = unit
         close_row(_MODULE_RUNS, memo, computation, reporter, panic=panic)
         raise
