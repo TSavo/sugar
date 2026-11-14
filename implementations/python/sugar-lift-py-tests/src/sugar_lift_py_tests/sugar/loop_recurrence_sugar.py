@@ -779,10 +779,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
     def _finish_iterator(self, runtime, ctx, *, entries, carried, items=0):
         """The loop's outcome after its ``items`` items were exhausted."""
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
-        from sugar_lift_py_tests.outcome import Completed, ExitSet
 
         if not runtime.else_sugars:
             # The loop leaves with what the last item handed on (or the
@@ -802,22 +805,32 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 runtime, self._leave_target(runtime, ctx, items), carried
             ),
         )
-        if not isinstance(otherwise, ExitSet) or len(otherwise.exits) != 1:
-            return otherwise
-        if not isinstance(otherwise.exits[0], Completed):
-            return otherwise
-        # The published bindings run beneath the else suite's one completed
-        # face: they take its guard and faces and owe what it owes.
-        return otherwise.sequence(
-            lambda state: self._publish_runtime_bindings(
-                runtime,
-                state.context,
-                entries=(*entries, *state.entries),
-                carried=self._after_else(runtime, state.context),
-                fall_through=state.fall_through,
-                can_fall_through=state.can_fall_through,
+
+        def publish(otherwise):
+            # The published bindings run beneath every completed face of the
+            # else suite (``ExitSet.sequence``): each takes that face's guard
+            # and faces and owes what it owes; a halt leaves as it is.
+            return otherwise.sequence(
+                lambda state: self._publish_runtime_bindings(
+                    runtime,
+                    state.context,
+                    entries=(*entries, *state.entries),
+                    carried=self._after_else(runtime, state.context),
+                    fall_through=state.fall_through,
+                    can_fall_through=state.can_fall_through,
+                )
             )
-        )
+
+        if isinstance(otherwise, NativeOperationExitCarrierV1):
+            # The else suite still waits on its caller's actuals: once it
+            # discharges, the loop publishes beneath each of its faces exactly
+            # as it does beneath a suite that reduced to its faces here.
+            return otherwise.after_discharge(
+                lambda projected: publish(
+                    _require_exit_set(projected, owner="LoopRecurrenceSugar.else")
+                )
+            )
+        return publish(_require_exit_set(otherwise, owner="LoopRecurrenceSugar.else"))
 
     def _publish_runtime_bindings(
         self,
