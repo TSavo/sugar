@@ -296,6 +296,19 @@ def builtin_name_temporal():
     return temporal
 
 
+def is_builtin_floor_binding(binding) -> bool:
+    """Whether ``binding`` is one the builtin floor itself made: the root
+    every scope's temporal starts from (``builtin_name_temporal``).
+
+    Known by identity, never by the binding's name: a source binding of a
+    builtin's spelling (``int = str``, a formal named ``int``) is another
+    binding object, whatever it is named.  A floor binding answers nothing
+    about what a read means: the read's own binding decides whether the
+    builtin namespace is what it reaches (``SourceUnit.name_reference_at``).
+    """
+    return any(binding is own for own in builtin_name_temporal().bindings)
+
+
 def builtin_type_class():
     """The value the builtin namespace binds ``type`` to.
 
