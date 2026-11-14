@@ -200,9 +200,6 @@ class CallSiteValue(FloorValue):
     bound_native_actuals_by_coordinate: dict[str, FloorValue] | None = dataclass_field(
         default=None, compare=False
     )
-    bound_native_source_actuals: object | None = dataclass_field(
-        default=None, compare=False
-    )
     bound_source_actuals: object | None = dataclass_field(default=None, compare=False)
     # The language-owned builtin exception class this call applied, read from
     # the temporal binding of the callee (a user rebinding replaces it). It
@@ -1712,8 +1709,13 @@ class CallSiteValue(FloorValue):
             self.body, reduce_ctx, blame=self.target_name, frame=self
         )
 
-    def producer_outcome(self, ctx: Any = None, *, carrier_actuals: dict | None = None):
+    def producer_outcome(self, ctx: Any = None):
         """Publish authenticated source-body halts at the Call expression.
+
+        The one application of a call: every call bound by
+        ``object_value.bind_call`` -- plain, method, class, computed, with
+        ``*``/``**`` -- is applied here, so every face of the body, raises
+        included, is the call's own however the call was written.
 
         A completed source body still denotes this ordinary call coordinate;
         later consumers may demand its returned floor exactly as before.  A
@@ -1734,14 +1736,25 @@ class CallSiteValue(FloorValue):
 
             return ExitSet.completed(self)
 
-        outcome = self.reduce_source_outcome(ctx)
-        return self.project_producer_outcome(
-            outcome, ctx, carrier_actuals=carrier_actuals
-        )
+        from sugar_lift_py_tests.context.reduce_context import ReduceContext
 
-    def project_producer_outcome(
-        self, outcome, ctx, *, carrier_actuals: dict | None = None
-    ):
+        if ctx is not None and not isinstance(ctx, ReduceContext):
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="CallSiteValue.producer_outcome",
+                blame=self.site,
+                observed="source-visible call under a temporal-only reduction context",
+                requested="a ReduceContext that can record the call",
+                fix=(
+                    "keep the call loud until allocate carries a reduction "
+                    "context; do not invent the callee body"
+                ),
+            )
+        outcome = self.reduce_source_outcome(ctx)
+        return self.project_producer_outcome(outcome, ctx)
+
+    def project_producer_outcome(self, outcome, ctx):
         """Project a source-authenticated callee outcome onto this Call node.
 
         A deferred native operation in ``outcome`` discharges under ``ctx``,
