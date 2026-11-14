@@ -611,12 +611,6 @@ class CallSiteValue(FloorValue):
 
         return runtime_unary_plus(self, site)
 
-    def absolute(self, site):
-        """Cite ``abs(call(...))`` without claiming the call's concrete value."""
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-
-        return SymbolicValue(self.result_term()).absolute(site)
-
     def python_isinstance(self, type_name: str, type_term, site):
         """``type(x)`` always returns a type object.
 

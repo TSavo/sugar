@@ -638,12 +638,6 @@ class TermValue(GuardStableValue):
 
         return ExitSet.completed(TermValue(-self.value))
 
-    def absolute(self, site):
-        del site
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(TermValue(abs(self.value)))
-
     def unary_plus(self, site):
         # Unary plus: fold to +value (identity for numbers).
         del site

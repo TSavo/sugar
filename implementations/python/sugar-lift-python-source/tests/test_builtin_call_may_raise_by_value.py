@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import pytest
 
-from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.floor import ListValue, StringValue, TermValue
 
 from test_builtin_container_mutation import _returns
 from test_unknown_callee_call_faces import _two_faced_and_owed
@@ -128,3 +128,83 @@ def test_print_of_builtins_completes(tmp_path):
     returns, halts = _returns(tmp_path, "def f():\n    print('a', 1)\n    return 0\n")
     assert halts == []
     assert returns == [TermValue(0)]
+
+
+# One answerer (#7757): a builtin call, or a ``str`` method, whose every
+# operand is ground is decided by the pinned interpreter through the cited
+# fold alone -- no floor value folds it by hand.  ``len('ab')``,
+# ``'a b'.split()`` and ``','.join(['a', 'b'])`` answer what the deleted hand
+# folds answered; ``abs(-2)`` was the bare call coordinate (its hand fold,
+# ``TermValue.absolute``, had no caller) and is now ``2``.
+
+_ONE_FOLD = [
+    ("len('ab')", TermValue(2)),
+    ("abs(-2)", TermValue(2)),
+    ("'a b'.split()", ListValue((StringValue("a"), StringValue("b")))),
+    ("','.join(['a', 'b'])", StringValue("a,b")),
+]
+
+
+@pytest.mark.parametrize("expression, value", _ONE_FOLD)
+def test_a_ground_call_is_answered_by_the_one_fold(
+    tmp_path, monkeypatch, expression, value
+):
+    from sugar_lift_py_tests import source_call_resolution
+
+    applied = []
+    host_applied = source_call_resolution._host_applied
+
+    def recording(function, operands, site, **kwargs):
+        applied.append(kwargs["owner"])
+        return host_applied(function, operands, site, **kwargs)
+
+    monkeypatch.setattr(source_call_resolution, "_host_applied", recording)
+    returns, halts = _returns(
+        tmp_path, f"def f():\n    answer = {expression}\n    return answer\n"
+    )
+    assert returns == [value]
+    assert halts == []
+    assert applied, f"{expression} was not answered by the cited fold"
+    assert all(owner.startswith("cpython_cited_fold:") for owner in applied)
+
+
+def test_the_hand_written_ground_folds_are_gone():
+    from sugar_lift_py_tests.floor import string_value
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+    for floor in (FloorValue, TermValue, SymbolicValue, CallSiteValue):
+        assert not hasattr(floor, "absolute")
+    assert not hasattr(string_value, "_static_str_parts")
+
+
+def test_a_str_method_over_a_ground_non_string_is_the_one_halt(tmp_path):
+    # ``str.join`` of a list holding an ``int``: the pinned interpreter
+    # refuses it with ``TypeError``, nothing else.
+    returns, halts = _returns(tmp_path, "def f():\n    return ','.join([1])\n")
+    assert returns == []
+    assert [getattr(halt, "exception_name", None) for halt in halts] == ["TypeError"]
+
+
+def test_a_str_method_over_an_opaque_argument_keeps_its_marker():
+    from types import SimpleNamespace
+
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+    from sugar_lift_py_tests.floor.string_value import _fold_string_method
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_source_tree.nodes import LanguageCallee
+
+    for name, marker in (
+        ("join", LanguageCallee.STR_JOIN),
+        ("split", LanguageCallee.STR_SPLIT),
+    ):
+        minted = _fold_string_method(
+            StringValue(","),
+            SimpleNamespace(
+                name=name, arguments=(SymbolicValue(make_var("xs")),), blame=name
+            ),
+        ).completed_value()
+        assert type(minted) is OpaqueOpCallsite
+        assert minted.language_callee is marker

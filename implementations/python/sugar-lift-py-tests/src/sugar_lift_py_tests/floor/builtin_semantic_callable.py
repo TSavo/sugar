@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 from .closed_operation_witness import (
     ClosedSemanticOperationWitness,
@@ -35,6 +36,11 @@ class BuiltinSemanticCallable(FloorValue):
     def callable_application_with(self, operation, ctx):
         from sugar_source_tree.nodes import LanguageCallee
 
+        cited = _cited_builtins().get(self.operation)
+        if cited is not None:
+            decided = self._ground_call(operation, *cited)
+            if decided is not None:
+                return decided
         if self.operation == "python.set.construct":
             floored = self._construct_set(operation)
             if floored is not None:
@@ -130,57 +136,29 @@ class BuiltinSemanticCallable(FloorValue):
             )
         return test(supertype, operation.site)
 
-    def _unhandled_construct(self, operation, name: str, language_callee):
-        """A construction no floor decided: the bodiless call, with its raise.
+    def _ground_call(self, operation, name: str, language_callee):
+        """This builtin over ground operands: the cited fold's answer, or None.
 
-        ``tuple(opaque_genexp)`` must remain a CallSiteValue coordinate so later
-        force_floor / field projection can refuse with a stage-keyed residual
-        rather than aborting the whole manager factory membrane. The
-        coordinate carries the ``LanguageCallee`` this builtin binding is, so
-        a reader asks the binding, never the spelling ``name`` (#7757).
-
-        Constructing ``set``/``tuple``/``dict`` iterates the operand (its
-        ``__iter__`` and, for ``set``/``dict``, its members' ``__hash__``/
-        ``__eq__``), which may raise; the call completes outright only on a
-        shape ``builtin_call_total`` lists.  Over ground operands the
-        builtin's own semantics decide it (``cpython_cited_fold``:
-        ``tuple(5)`` is the one ``TypeError`` halt).  Otherwise it is the one
-        unanswered call (``builtin_dunder_call``, else
-        ``UnknownCalleeCallV1``): two-faced, its completed face this
-        coordinate (#7757: a halt is never dropped).
+        When every operand is a ground value (``builtin_ground_call``) the
+        call's one answerer is the pinned interpreter's own builtin
+        (``cpython_cited_fold``): ``len('ab')`` is ``2``, ``tuple(5)`` the one
+        ``TypeError`` halt, ``set([1, 2, 1])`` is ``{1, 2}``, ``enumerate``
+        the iterator of its pairs.  When that fold decides nothing (a host
+        ``MemoryError``) the call is the one unanswered call.  None when an
+        operand is not ground: the floor below folds what its shape decides.
         """
-        from sugar_lift_py_tests.call_symbol import call_symbol
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.source_call_resolution import (
             UnknownCalleeCallV1,
-            builtin_call_total,
-            builtin_dunder_call,
+            builtin_ground_call,
             cpython_cited_fold,
         )
 
         args = operation.arguments
         keyword_names = tuple(operation.keyword_names or ())
-        owner = str(operation.site)
-        callsite = CallSiteValue(
-            target_name=name,
-            arg_values=args,
-            parameters=(),
-            term=ctor(
-                call_symbol(name),
-                [value.to_term(owner=owner) for value in args],
-                symbol_kind="builtin",
-            ),
-            body=None,
-            site=operation.site,
-            language_callee=language_callee,
-        )
-        if builtin_call_total(language_callee, args, keyword_names):
-            return ExitSet.completed(callsite)
-        unanswered = builtin_dunder_call(language_callee, args, keyword_names)
-        if unanswered is None:
-            unanswered = UnknownCalleeCallV1(name)
+        if not builtin_ground_call(language_callee, args, keyword_names):
+            return None
+        callsite = _builtin_callsite(operation, name, language_callee)
+        unanswered = UnknownCalleeCallV1(name)
         folded = cpython_cited_fold(
             unanswered,
             args,
@@ -193,8 +171,45 @@ class BuiltinSemanticCallable(FloorValue):
             return folded
         return unanswered.faces(callsite, operation.site)
 
+    def _unhandled_construct(self, operation, name: str, language_callee):
+        """A construction no floor decided: the bodiless call, with its raise.
+
+        ``tuple(opaque_genexp)`` must remain a CallSiteValue coordinate so later
+        force_floor / field projection can refuse with a stage-keyed residual
+        rather than aborting the whole manager factory membrane. The
+        coordinate carries the ``LanguageCallee`` this builtin binding is, so
+        a reader asks the binding, never the spelling ``name`` (#7757).
+
+        Constructing ``set``/``tuple``/``dict`` iterates the operand (its
+        ``__iter__`` and, for ``set``/``dict``, its members' ``__hash__``/
+        ``__eq__``), which may raise; the call completes outright only on a
+        shape ``builtin_call_total`` lists.  Ground operands never reach here
+        (``_ground_call`` answers them).  Otherwise it is the one unanswered
+        call (``builtin_dunder_call``, else ``UnknownCalleeCallV1``):
+        two-faced, its completed face this coordinate (#7757: a halt is never
+        dropped).
+        """
+        from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_lift_py_tests.source_call_resolution import (
+            UnknownCalleeCallV1,
+            builtin_call_total,
+            builtin_dunder_call,
+        )
+
+        args = operation.arguments
+        keyword_names = tuple(operation.keyword_names or ())
+        callsite = _builtin_callsite(operation, name, language_callee)
+        if builtin_call_total(language_callee, args, keyword_names):
+            return ExitSet.completed(callsite)
+        unanswered = builtin_dunder_call(language_callee, args, keyword_names)
+        if unanswered is None:
+            unanswered = UnknownCalleeCallV1(name)
+        return unanswered.faces(callsite, operation.site)
+
     def _len(self, operation):
-        """Exact ``len(container)`` over floors that already know their size."""
+        """``len(container)`` over an operand that is not ground, whose floor
+        knows its size by its shape (a list of symbolic members, a
+        comprehension); a ground operand is the cited fold's (``_ground_call``)."""
         if operation.keyword_names or len(operation.arguments) != 1:
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -220,7 +235,10 @@ class BuiltinSemanticCallable(FloorValue):
         return length(operation.site)
 
     def _enumerate(self, operation, ctx):
-        """Construct the exact finite iterator for an authenticated sequence."""
+        """Construct the exact finite iterator for an authenticated sequence
+        that is not ground (a member known only by its type, a finite
+        comprehension): its shape decides the pairs.  A ground sequence is
+        the cited fold's (``_ground_call``)."""
         if operation.keyword_names or len(operation.arguments) != 1:
             return super().callable_application_with(operation, ctx)
         from sugar_lift_py_tests.floor import (
@@ -382,14 +400,14 @@ class BuiltinSemanticCallable(FloorValue):
         """``set(iterable)`` over decided members: CPython hashes each member
         in order, keeps the first of equal members, and raises ``TypeError`` at
         the first unhashable one.  A member whose hash or equality the floor
-        does not decide leaves the construction a dig cue."""
+        does not decide leaves the construction a dig cue.  Reached only when
+        the operand is not ground (a member known only by its type, a set):
+        a ground operand is the cited fold's (``_ground_call``)."""
         from sugar_lift_py_tests.floor import DictValue, ListValue, SetValue, TupleValue
         from sugar_lift_py_tests.outcome import ExitSet
 
-        if operation.keyword_names or len(operation.arguments) > 1:
+        if operation.keyword_names or len(operation.arguments) != 1:
             return None
-        if not operation.arguments:
-            return ExitSet.completed(SetValue(()))
         source = operation.arguments[0]
         if isinstance(source, DictValue):
             return ExitSet.completed(SetValue(tuple(key for key, _ in source.entries)))
@@ -417,7 +435,9 @@ class BuiltinSemanticCallable(FloorValue):
         Generator expressions that projected ``finite_elements`` and ordinary
         list/tuple/set floors become ``TupleValue`` here. Opaque iterables stay
         a dig cue (via ``_unhandled_construct``) rather than inventing
-        cardinality or panicking the factory membrane.
+        cardinality or panicking the factory membrane.  Reached only when the
+        operand is not ground (a member known only by its type, a set, a
+        comprehension): a ground operand is the cited fold's (``_ground_call``).
         """
         from sugar_lift_py_tests.floor import (
             ComprehensionValue,
@@ -428,10 +448,8 @@ class BuiltinSemanticCallable(FloorValue):
         )
         from sugar_lift_py_tests.outcome import ExitSet
 
-        if operation.keyword_names or len(operation.arguments) > 1:
+        if operation.keyword_names or len(operation.arguments) != 1:
             return None
-        if not operation.arguments:
-            return ExitSet.completed(TupleValue(()))
         source = operation.arguments[0]
         if isinstance(source, TupleValue):
             return ExitSet.completed(source)
@@ -470,7 +488,9 @@ class BuiltinSemanticCallable(FloorValue):
         CPython walks the pairs in order: an item that is not iterable raises
         ``TypeError``, one whose length is not 2 raises ``ValueError``, an
         unhashable key raises ``TypeError``; a repeated key keeps its first
-        position and takes the last value."""
+        position and takes the last value.  Reached only when the operand is
+        not ground (a key or value known only by its type): a ground operand
+        is the cited fold's (``_ground_call``)."""
         from sugar_lift_py_tests.floor import (
             BytesValue,
             DictValue,
@@ -487,10 +507,8 @@ class BuiltinSemanticCallable(FloorValue):
             TrueBoolLiteralSugar,
         )
 
-        if operation.keyword_names or len(operation.arguments) > 1:
+        if operation.keyword_names or len(operation.arguments) != 1:
             return None
-        if not operation.arguments:
-            return ExitSet.completed(DictValue(()))
         source = operation.arguments[0]
         if isinstance(source, DictValue):
             return ExitSet.completed(source)
@@ -557,6 +575,47 @@ class BuiltinSemanticCallable(FloorValue):
             tuple(value.to_term(owner=self.operation) for value in operands),
             result.to_term(owner=self.operation),
         )
+
+
+@lru_cache(maxsize=1)
+def _cited_builtins():
+    """``operation -> (name, LanguageCallee)``: the builtin semantic callables
+    that are dunder-invoking builtins, whose call over ground operands the
+    cited fold answers (``BuiltinSemanticCallable._ground_call``)."""
+    from sugar_source_tree.nodes import LanguageCallee
+
+    return {
+        "python.len": ("len", LanguageCallee.BUILTIN_LEN),
+        "python.enumerate.construct": ("enumerate", LanguageCallee.BUILTIN_ENUMERATE),
+        "python.set.construct": ("set", LanguageCallee.BUILTIN_SET),
+        "python.tuple.construct": ("tuple", LanguageCallee.BUILTIN_TUPLE),
+        "python.dict.construct": ("dict", LanguageCallee.BUILTIN_DICT),
+    }
+
+
+def _builtin_callsite(operation, name, language_callee):
+    """The bodiless call coordinate of this builtin's application: it carries
+    the ``LanguageCallee`` the binding is, so a reader asks the binding,
+    never the spelling ``name`` (#7757)."""
+    from sugar_lift_py_tests.call_symbol import call_symbol
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.ir import ctor
+
+    args = operation.arguments
+    owner = str(operation.site)
+    return CallSiteValue(
+        target_name=name,
+        arg_values=args,
+        parameters=(),
+        term=ctor(
+            call_symbol(name),
+            [value.to_term(owner=owner) for value in args],
+            symbol_kind="builtin",
+        ),
+        body=None,
+        site=operation.site,
+        language_callee=language_callee,
+    )
 
 
 def _ground_refusal(name, operation, owner):

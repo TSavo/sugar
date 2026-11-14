@@ -304,26 +304,6 @@ class SymbolicValue(FloorValue):
             )
         return super().unary_minus(site)
 
-    def absolute(self, site):
-        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-        from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import ExitSet
-
-        return ExitSet.completed(
-            CallSiteValue(
-                target_name="abs",
-                arg_values=(self,),
-                parameters=(),
-                term=ctor(
-                    call_symbol("abs"),
-                    [self.to_term(owner=str(site))],
-                    symbol_kind="builtin",
-                ),
-                body=None,
-                site=site,
-            )
-        )
-
     def multiply(self, other, site, ctx):
         # Symbolic numeric multiplication keeps the native coordinate. A symbolic
         # value used as a sequence repetition count has not proved Python's

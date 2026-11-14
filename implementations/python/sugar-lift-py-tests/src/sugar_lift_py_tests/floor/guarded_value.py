@@ -469,9 +469,6 @@ class GuardedValue(FloorValue):
     def unary_minus(self, site):
         return self._map("unary_minus", site)
 
-    def absolute(self, site):
-        return self._map("absolute", site)
-
     def truth(self, site):
         return self._predicate("truth", site)
 
