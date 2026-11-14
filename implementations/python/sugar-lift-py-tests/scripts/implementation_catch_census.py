@@ -409,12 +409,6 @@ def _typed_conversion_kind(handler: ast.ExceptHandler) -> tuple[str | None, list
             "emits exception_type plus diagnostic transport and exits loud"
         ]
 
-    if (
-        "_install_opaque_call_obligation" in call_leaves
-        and "obligation" in call_leaves
-    ):
-        return "attested-gap-obligation", ["installs a named opaque-call obligation"]
-
     guarded_names = _typed_guarded_return_names(handler)
     returns = [item for item in ast.walk(handler) if isinstance(item, ast.Return)]
     typed_returns = [
