@@ -125,8 +125,19 @@ def _call_name(node: ast.Call) -> str | None:
     return None
 
 
+def _is_halt_constructor(node: ast.Call) -> bool:
+    """``Incomplete(...)`` or the ExitSet form ``ExitSet.halted(...)``."""
+    if isinstance(node.func, ast.Attribute):
+        return (
+            node.func.attr == "halted"
+            and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "ExitSet"
+        ) or node.func.attr == "Incomplete"
+    return isinstance(node.func, ast.Name) and node.func.id == "Incomplete"
+
+
 def _is_typed_runtime_effect_incomplete(node: ast.Call) -> bool:
-    if _call_name(node) != "Incomplete" or not node.args:
+    if not _is_halt_constructor(node) or not node.args:
         return False
     effect = node.args[0]
     return isinstance(effect, ast.Call) and (_call_name(effect) or "").endswith(
@@ -259,7 +270,7 @@ def scan_sugar_tree(sugar_root: Path) -> list[OwnershipOffender]:
             incomplete_calls = [
                 node
                 for node in ast.walk(tree)
-                if isinstance(node, ast.Call) and _call_name(node) == "Incomplete"
+                if isinstance(node, ast.Call) and _is_halt_constructor(node)
             ]
             for call in incomplete_calls:
                 if _is_typed_runtime_effect_incomplete(call):

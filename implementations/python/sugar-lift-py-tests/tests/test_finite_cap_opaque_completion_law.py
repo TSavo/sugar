@@ -141,3 +141,23 @@ def test_bad_parse_and_missing_root_are_structured(tmp_path: Path) -> None:
     }
     assert _SCANNER.r_auditor_errors(rows) == 2
     assert _SCANNER.main([str(tmp_path), str(tmp_path / "missing")]) == 1
+
+
+def test_planted_exitset_completed_opaque_trips() -> None:
+    rows = _scan("""
+def reduce(values):
+    if len(values) > MATERIALIZE_LIMIT:
+        return ExitSet.completed(CallSiteValue(body=None, term=exact_term))
+    return build_all(values)
+""")
+    assert [row.kind for row in rows] == ["finite-cap-opaque-complete"]
+
+
+def test_exitset_completed_exact_compact_value_is_admitted() -> None:
+    rows = _scan("""
+def reduce(values):
+    if len(values) > MATERIALIZE_LIMIT:
+        return ExitSet.completed(GroundSequenceRepetitionValue(values))
+    return build_all(values)
+""")
+    assert rows == []
