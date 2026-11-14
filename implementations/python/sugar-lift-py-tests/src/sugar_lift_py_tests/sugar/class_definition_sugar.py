@@ -46,8 +46,9 @@ class _ClassBodyV1:
     called made on objects the class statement's frame sees
     (``CallerStoreValue``), laid by the one door
     (``function_universe_sugar.laid_in_record``) as an assignment lays them;
-    the class statement lays them in its block's record
-    (``ClassDefinitionValue.body_stores``)."""
+    the class statement's run carries them on the class it built
+    (``ClassDefinitionSugar.statement_run``), and the statement lays them in
+    its block's record.  The class value holds none of them."""
 
     fields: tuple
     method_defaults: tuple = field(compare=False)
@@ -87,6 +88,11 @@ class ClassDefinitionSugar(Sugar):
     # statement's defaults, evaluated before the top-level field at
     # ``position`` (after every field where it is ``len(fields)``).
     method_defaults: tuple = field(default=(), compare=False)
+    # True on the class statement's run (``statement_run``): each completed
+    # face is the class carrying what its body's callees stored
+    # (``CallerStoreValue``), for the statement to lay in its record.  False
+    # on every read of the class value, which applies nothing.
+    carries_body_stores: bool = field(default=False, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -176,18 +182,77 @@ class ClassDefinitionSugar(Sugar):
         # the statement is read in (``halt_record``), onto which the block
         # composition splices what ran before the ``class`` statement; a call
         # reading the statement re-seats it at the call (``at_the_call``).
+        #
+        # The body runs once, at the statement: what its callees stored is
+        # the statement's, laid in its record (``as_statement``), never the
+        # class value's.  Every read of the class -- ``C`` alone, a call of
+        # it, a decorator's argument -- presents the class beneath those
+        # stores and applies none of them.
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            peel_walrus_binds,
+        )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halt_record,
             halts_recorded,
         )
 
+        ran = halts_recorded(self._ran(ctx), halt_record(ctx))
+        if self.carries_body_stores:
+            return ran
+        return ran.and_then(
+            lambda carried: ExitSet.completed(peel_walrus_binds(carried)[1])
+        )
+
+    def _ran(self, ctx) -> ExitSet:
+        """The statement's one run: on each completed face, the class
+        carrying its body's callee stores.  A module statement's run is kept
+        with the sugar it was read from (``statement_run`` shares it)."""
         if not self._is_module_statement():
-            return halts_recorded(self._reduce_statement(ctx), halt_record(ctx))
-        reduced = self.__dict__.get("_statement_outcome")
+            return self._reduce_statement(ctx)
+        origin = self.__dict__.get("_run_of", self)
+        reduced = origin.__dict__.get("_statement_outcome")
         if reduced is None:
             reduced = self._reduce_statement(ctx)
-            object.__setattr__(self, "_statement_outcome", reduced)
-        return halts_recorded(reduced, halt_record(ctx))
+            object.__setattr__(origin, "_statement_outcome", reduced)
+        return reduced
+
+    def statement_run(self) -> "ClassDefinitionSugar":
+        """The class statement's run: this sugar, each completed face of it
+        the class carrying what its body's callees stored on objects the
+        statement's frame sees (``carry_caller_stores``), as a call's value
+        carries what its callee stored.  What runs the statement lays them
+        where it lays a value's callee stores: a block (``as_statement``,
+        ``record_statement_value``), an enclosing class body's field
+        (``evaluate_assignment_values``).  A shallow copy (stamps kept, as
+        ``nodes._as_evaluation_of`` keeps them) that shares this sugar's one
+        run."""
+        if self.carries_body_stores:
+            return self
+        run = self.__dict__.get("_statement_run")
+        if run is None:
+            import copy
+
+            run = copy.copy(self)
+            object.__setattr__(run, "carries_body_stores", True)
+            object.__setattr__(run, "_run_of", self.__dict__.get("_run_of", self))
+            object.__setattr__(self, "_statement_run", run)
+        return run
+
+    def as_statement(self) -> Sugar:
+        """The class statement where a block runs it: its run
+        (``statement_run``) in statement position, which lays the body's
+        callee stores in the statement's record and publishes them to the
+        block (``ExprStatementSugar``, ``record_statement_value``) -- once,
+        here, and at no read of the class."""
+        statement = self.__dict__.get("_as_statement")
+        if statement is None:
+            from sugar_lift_py_tests.sugar.expr_statement_sugar import (
+                ExprStatementSugar,
+            )
+
+            statement = ExprStatementSugar(value=self.statement_run(), site=self.site)
+            object.__setattr__(self, "_as_statement", statement)
+        return statement
 
     def _is_module_statement(self) -> bool:
         statement = self.class_definition
@@ -282,7 +347,6 @@ class ClassDefinitionSugar(Sugar):
                 tuple(base_values),
                 class_definition=self.class_definition,
                 method_defaults=method_defaults,
-                body_stores=body_stores,
             )
             # The ``__init__`` a call of the class runs is the one the one
             # class-namespace lookup selects (``initializer_class``: this
@@ -294,7 +358,14 @@ class ClassDefinitionSugar(Sugar):
             owner = value.initializer_class()
             if owner is not None:
                 value = replace(value, initializer=_written_initializer(owner))
-            return ExitSet.completed(value)
+            # What the body's callees stored ran at this statement: the run
+            # carries it on the class it built (``statement_run``); the class
+            # itself holds none of it.
+            from sugar_lift_py_tests.floor.named_expression_value import (
+                carry_caller_stores,
+            )
+
+            return ExitSet.completed(carry_caller_stores(body_stores, value))
 
         # The class exists only on a face the whole body completed under;
         # every halt of the body is the statement's halt, unchanged.

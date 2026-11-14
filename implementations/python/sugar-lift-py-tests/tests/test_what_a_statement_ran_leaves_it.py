@@ -14,12 +14,14 @@ what its record carries (#7757, leftovers of #8147).
   (``function_universe_sugar.header_applied``): its walrus binds and callee
   stores are in the context the rest runs in -- and what follows the
   statement reads -- and the stores in every record it makes.
-- A class statement publishes its body's callee stores to its block
-  (``ClassDefinitionValue.extend_scope``) and lays them once in its record.
+- A class statement lays its body's callee stores once in its record and
+  publishes them to its block (``ClassDefinitionSugar.as_statement``); the
+  class value holds none of them, so a read of it applies nothing.
 - A ``for`` the unroll dissolves evaluates its iterable's calls before the
   first item (``For._evaluated_before_the_first_item``), whatever the item's
   shape: an earlier item's ``break`` never drops a later item's call, and a
-  later item's unpack still runs where that item is taken.
+  later item's unpack still runs where that item is taken, reading the
+  element under the item's evaluation key -- no name is made up for it.
 """
 
 from __future__ import annotations
@@ -29,7 +31,7 @@ from dataclasses import dataclass
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.container_mutation import _identity
-from sugar_source_tree.nodes import Assign, FunctionDef, Return
+from sugar_source_tree.nodes import Assign, Expr, FunctionDef, Name, Return
 from sugar_source_tree.tree import SourceFile
 
 
@@ -320,39 +322,106 @@ def test_a_symbolic_ifs_test_callee_store_reaches_what_follows_the_if() -> None:
     assert record.context.temporal.value_for("box") == stored
 
 
-def test_a_class_statement_publishes_its_body_stores_to_its_block() -> None:
-    """``class C: y = g(box)``: the statement after the class reads ``box``
-    as ``g`` left it, and the class statement's record lays the store once,
-    before the class (``ClassDefinitionValue.extend_scope``,
-    ``contribution``)."""
+@dataclass(frozen=True)
+class _Tally:
+    """A store a callee made on an object the caller sees: each time a
+    context applies it, its ``tally`` counts one more."""
+
+    def extend_scope(self, ctx):
+        from sugar_lift_py_tests.floor import TermValue
+
+        held = ctx.temporal.value_if_bound("tally")
+        count = 0 if held is None else held.value
+        tallied = ctx.temporal.bind_value("tally", TermValue(count + 1))
+        return ctx.with_temporal(tallied)
+
+
+def _class_statement(store):
+    """``class C: x = f(acc)`` where ``f`` made ``store``: the class
+    statement's sugar, its one field's value carrying the store."""
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceFragmentCoordinateV1,
     )
+    from sugar_lift_py_tests.floor import ConstructedClassFieldV1
+    from sugar_lift_py_tests.sugar.class_definition_sugar import ClassDefinitionSugar
+
+    occurrence = SourceFragmentCoordinateV1("statement_leaves.py", 2, 4, 2, 5)
+    return ClassDefinitionSugar(
+        class_name="C",
+        source_identity_cid="statement_leaves.py",
+        definition_fragment_cid="class-c",
+        methods=(),
+        fields=(
+            ConstructedClassFieldV1(
+                "x",
+                "field-x",
+                _carrying(store),
+                SourceFragmentCoordinateV1("statement_leaves.py", 3, 4, 3, 5),
+            ),
+        ),
+        docstring_cid=None,
+        annotation_cids=(),
+        decorator_cids=(),
+        binding_target_occurrence=occurrence,
+        base_sugars=(),
+        base_fragment_cids=(),
+        site=None,
+    )
+
+
+def test_a_class_statement_lays_its_body_store_once_and_c_alone_applies_none():
+    """``class C: x = f(acc)``, then ``C`` on its own line, then a read of
+    ``acc``: the body ran once, at the class statement, so the read sees one
+    store, not two.  The class statement's record lays the store and
+    publishes it to the block (``ClassDefinitionSugar.as_statement``); the
+    class value holds none of it, so evaluating ``C`` applies nothing."""
+    from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.floor.class_definition_value import (
         ClassDefinitionValue,
     )
-    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
 
-    ctx, store, stored = _caller_holding_a_receiver()
-    cls = ClassDefinitionValue(
-        "C",
-        "class-c",
-        (),
-        None,
-        SourceFragmentCoordinateV1("statement_leaves.py", 2, 0, 3, 0),
-        body_stores=(store,),
-    )
+    store = _Tally()
+    statement = _class_statement(store)
+    ctx = ReduceContext.root(owner="statement-leaves")
     record = reduce_block_to_exitset(
-        (_Answers(ExitSet.completed(cls)),), ctx
+        (statement, ExprStatementSugar(value=statement, site=None)), ctx
     ).completed_value()
-    assert record.context.temporal.value_for("box") == stored
-    stored_first, laid = record.entries
-    assert stored_first == store
-    assert laid == cls
-    assert laid.body_stores == ()
+    assert record.context.temporal.value_if_bound("tally") == TermValue(1)
+    assert record.entries.count(store) == 1
+    classes = [
+        entry for entry in record.entries if isinstance(entry, ClassDefinitionValue)
+    ]
+    assert len(classes) == 2
+    assert all(not hasattr(cls, "body_stores") for cls in classes)
+
+
+def test_a_read_of_the_class_value_carries_no_body_store() -> None:
+    """Every read of the class (``C`` alone, a call of it) presents the
+    class beneath its body's stores: only the statement's run carries them
+    (``ClassDefinitionSugar.statement_run``)."""
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        caller_stores_of,
+        peel_walrus_binds,
+    )
+    from sugar_lift_py_tests.context import ReduceContext
+
+    store = _Tally()
+    statement = _class_statement(store)
+    ctx = ReduceContext.root(owner="statement-leaves")
+    read = statement.desugar(ctx).completed_value()
+    assert isinstance(read, ClassDefinitionValue)
+    run = statement.statement_run().desugar(ctx).completed_value()
+    binds, ran = peel_walrus_binds(run)
+    assert caller_stores_of(binds)[1] == (store,)
+    assert ran == read
 
 
 # ---------------------------------------------------------------------------
@@ -390,10 +459,10 @@ def test_an_unrolled_for_evaluates_a_later_items_call_before_the_first_item():
     assert called[0] < first_item[0]
 
 
-def _unrolled_unpacking(body: str):
-    """``f``'s statements after substitution: a ``for`` unpacking each item
-    into two names over a display whose later item is a call."""
-    rewritten = _function(
+def _unrolled_unpacking_function(body: str):
+    """``f`` after substitution: a ``for`` unpacking each item into two
+    names over a display whose later item is a call."""
+    return _function(
         "def f():\n"
         "    acc = []\n"
         "    for a, b in [(1, 2), g(acc)]:\n"
@@ -403,7 +472,14 @@ def _unrolled_unpacking(body: str):
         "    acc.append(1)\n"
         "    return (3, 4)\n"
     ).substitute({})
-    return [node for node in rewritten.body if isinstance(node, Assign)]
+
+
+def _unrolled_unpacking(body: str):
+    """``f``'s assignments and expression statements after substitution:
+    the later item's call is evaluated before the first item as an
+    expression statement held under the item's evaluation key."""
+    rewritten = _unrolled_unpacking_function(body)
+    return [node for node in rewritten.body if isinstance(node, (Assign, Expr))]
 
 
 def _value_kind(node):
@@ -441,3 +517,19 @@ def test_an_unrolled_unpacking_for_unpacks_a_later_item_where_it_is_taken():
     assert len(called) == 1
     assert first_item and unpacked
     assert called[0] < first_item[0] < unpacked[-1]
+    # The call's value is held under the item's evaluation key, and the
+    # later item's unpack reads that key.
+    held = stores[called[0]]
+    assert isinstance(held, Expr)
+    assert stores[unpacked[-1]].value.evaluation == held.evaluation
+
+
+def test_an_unrolled_unpacking_for_makes_up_no_name():
+    # The element evaluated before the first item is held under the item's
+    # evaluation key: no synthetic Name (``for-item:<i>``) is bound in the
+    # user's namespace, for any reader of the rewritten tree's Name targets.
+    for body in ("pass", "break"):
+        rewritten = _unrolled_unpacking_function(body)
+        names = [node.id for node in rewritten.walk() if isinstance(node, Name)]
+        assert names
+        assert not [name for name in names if name.startswith("for-item:")]

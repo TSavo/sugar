@@ -87,16 +87,10 @@ class ClassDefinitionValue(GuardStableValue):
     # to ``bind_call``'s ``defaults``, as a lambda value's are, and a class
     # call its constructor's, ``constructor_defaults``).
     method_defaults: tuple = field(default=(), compare=False)
-    # The stores a callee the class body's field values called made on
-    # objects the class statement's frame sees (``_ClassBodyV1.entries``):
-    # the class statement lays them in its block's record before the class
-    # (``contribution``), as an assignment lays the stores its value carried
-    # (``function_universe_sugar.laid_in_record``), so the frame's exit hands
-    # them to its caller (``caller_visible_stores``), and publishes them to
-    # its block (``extend_scope``), so the statement after it reads the
-    # objects as the body left them.  What ran is no part of the class's
-    # identity.
-    body_stores: tuple = field(default=(), compare=False)
+    # What the class body's callees stored is no part of the class: the
+    # body ran once, at the class statement, whose record lays those stores
+    # (``ClassDefinitionSugar.statement_run``).  The class contributes and
+    # scopes as any value does, so a read of it anywhere applies nothing.
 
     def __post_init__(self):
         if type(self.binding_target_occurrence) is not SourceFragmentCoordinateV1:
@@ -104,27 +98,6 @@ class ClassDefinitionValue(GuardStableValue):
                 "ClassDefinitionValue binding target must be an exact "
                 "SourceFragmentCoordinateV1"
             )
-
-    def contribution(self):
-        # The class statement's record: what its body's callees stored, then
-        # the class.  A class read elsewhere contributes as any value does:
-        # a record splices a statement's value, never the values it holds
-        # (``BlockValue.contribution``).  The class the record holds has its
-        # stores laid ahead of it, so it holds none of its own: a record's
-        # entries publish each store once (``extend_scope``).
-        if not self.body_stores:
-            return (self,)
-        from dataclasses import replace
-
-        return (*self.body_stores, replace(self, body_stores=()))
-
-    def extend_scope(self, ctx):
-        # The class statement publishes to its block what its body's callees
-        # stored, in order, as any statement publishes the stores its values
-        # carried (``BlockValue.extend_scope`` over a statement's record).
-        for store in self.body_stores:
-            ctx = store.extend_scope(ctx)
-        return ctx
 
     def callable_application_with(self, operation, ctx):
         """``Cls(*args, **kw)`` reached as a value: the same call as by name.

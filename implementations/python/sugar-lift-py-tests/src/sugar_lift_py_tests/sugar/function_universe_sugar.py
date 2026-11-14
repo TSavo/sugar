@@ -876,6 +876,11 @@ def reduce_block_to_exitset(
                     statement_ctx = statement_ctx.with_observed_effect(
                         binding.slot_id, binding.effect
                     )
+            # The statement as a block runs it (``Sugar.as_statement``): a
+            # ``class`` statement runs its body here, once, and lays what the
+            # body's callees stored in its record.
+            if isinstance(statement, Sugar):
+                statement = statement.as_statement()
             outcome = statement.desugar(statement_ctx)
 
             def project(value):
