@@ -32,6 +32,15 @@ class AuthenticatedExceptionTypeSugar(ConstructedTermSugar):
             lying="def f(x):\n    return 0\n",
         )
 
+    def _identity_term(self):
+        """The identity coordinate: the undecided citation's is its read's
+        (``UndecidedExceptionClassV1.coordinate``)."""
+        from sugar_source_tree.nodes import UndecidedExceptionClassV1
+
+        if isinstance(self.identity, UndecidedExceptionClassV1):
+            return self.identity.coordinate()
+        return self.identity
+
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor
 
@@ -39,7 +48,7 @@ class AuthenticatedExceptionTypeSugar(ConstructedTermSugar):
             "python:authenticated-exception-type-construction",
             (
                 self.occurrence_term(owner=owner),
-                self.identity,
+                self._identity_term(),
                 self.value.to_term(owner=owner),
             ),
             symbol_kind="coordinate",
@@ -57,12 +66,29 @@ class AuthenticatedExceptionTypeSugar(ConstructedTermSugar):
         must not invent ``SymbolicValue.attribute`` success or AttributeError.
         MRO is only whatever was supplied at construction; this door never
         fabricates it.
+
+        The undecided citation (``UndecidedExceptionClassV1``: a class a star
+        import the lifter cannot read may bind) names no class and is never
+        refused: the read completes with its own undecided coordinate, which
+        no match decides (``adt.is_python_type`` is retained against it, as
+        against an import coordinate), and owes the ``undecided`` member
+        (reason ``unanswered``) on that arm.
         """
         from sugar_lift_py_tests.floor.authenticated_exception_type_value import (
             AuthenticatedExceptionTypeValue,
         )
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.outcome import ExitSet
+        from sugar_source_tree.nodes import UndecidedExceptionClassV1
+
+        if isinstance(self.identity, UndecidedExceptionClassV1):
+            coordinate = self.identity.coordinate()
+            return ExitSet.completed(
+                AuthenticatedExceptionTypeValue(
+                    SymbolicValue(coordinate), coordinate, None, None
+                ),
+                owed=self.identity.owed(),
+            )
 
         # When construction already projected the exception-class floor (import
         # Attribute paths, source ClassDef graphs), do not re-enter Attribute

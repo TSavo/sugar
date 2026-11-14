@@ -126,11 +126,56 @@ _MODULE_STATEMENT_STATES = object()
 # (``SourceUnit.module_bindings_at``): the reader cites it by name and never
 # reads the name in its place.
 UNDECIDED_MODULE_BINDING = object()
-# An exception class a star import the lifter cannot read may bind
-# (``SourceUnit._exception_type_binding``): its identity is cited undecided
-# by name, never answered.
-UNDECIDED_EXCEPTION_CLASS = object()
 _MISSING = object()
+
+
+@dataclass(frozen=True)
+class UndecidedExceptionClassV1:
+    """The identity of an exception class a star import the lifter cannot
+    read may bind (#7757): the one undecided citation.
+
+    ``SourceUnit.exception_type_identity`` answers it for a ``Name`` read
+    that nothing the source spells binds under ``from m import *``.  It
+    names no class and refuses nothing.  Every reader handles it one way:
+
+    - the read owes the ``undecided`` member, reason ``unanswered``
+      (``owed``: the one ``unanswered_call``, with no symbol (Q5), at the
+      read);
+    - which class it is stays open: its ``coordinate`` is the read's own
+      source coordinate under the ``undecided`` kind, which is not a
+      canonical class identity, so an ``except``, expected-exception or
+      warning-category match against it is retained
+      (``adt.is_python_type``), exactly as an import coordinate's is, and no
+      ancestry is stated for it;
+    - no class value is read through it (``SourceUnit.exception_class_value``
+      is None for it and for a class with it among its bases), and a call of
+      it, or of such a class, is the one unanswered call
+      (``UnknownCalleeCallV1``).
+
+    ``read`` is ``<source cid>:<start line>:<start col>:<end line>:<end
+    col>`` of the read, so two reads never name one class; ``site`` is the
+    read's fragment.
+    """
+
+    name: str
+    read: str
+    site: object = field(compare=False, repr=False)
+
+    def coordinate(self):
+        """``python:exception_type_identity("undecided", <read>)``."""
+        from sugar_lift_py_tests.ir import ctor, str_const
+
+        return ctor(
+            "python:exception_type_identity",
+            [str_const("undecided"), str_const(self.read)],
+        )
+
+    def owed(self) -> tuple:
+        """What the read owes: the ``undecided`` member at the read."""
+        from sugar_lift_py_tests.unanswered_calls import unanswered_call
+
+        return (unanswered_call(None, self.site),)
+
 
 # Names the interpreter binds without a source binding: the module attributes
 # the import system sets, the class-body names, and the implicit ``__class__``
@@ -3396,9 +3441,9 @@ class SourceUnit:
 
         The one lookup every reader of an exception class in ``raise``,
         ``except``, ``except*``, an expected-exception operand
-        (``pytest.raises``) and a warning category goes through
-        (``_exception_type_binding``): the binding the read reaches at its
-        own position, never its spelling.
+        (``pytest.raises``), a warning category and an ancestry walk goes
+        through: the binding the read reaches at its own position, never its
+        spelling.
 
         - an import-bound ``Name`` or static ``Name.attr...`` chain: the one
           import table's row (``import_reference_of``), provider-gated rows
@@ -3416,33 +3461,14 @@ class SourceUnit:
           (``module_definition_at``): its ``source-class`` coordinate.
 
         A ``Name`` a star import the lifter cannot read may bind is the one
-        undecided citation: refused by name, never answered.  Any other
-        binding (a parameter, a reassigned or computed name, any other
-        expression) names no exception class: ``None``.
-        """
-        identity = self._exception_type_binding(node)
-        if identity is UNDECIDED_EXCEPTION_CLASS:
-            raise SugarNotWritten(
-                blame=node.fragment,
-                owner="SourceUnit.exception_type_identity",
-                observed=(
-                    f"exception class `{node.id}` is undecided: a star import "
-                    "the lifter cannot read may bind it"
-                ),
-                requested="the binding the read of the exception class reaches",
-                fix=(
-                    "read the star-imported module's names; never answer the "
-                    "class in its place"
-                ),
-            )
-        return identity
+        undecided citation, ``UndecidedExceptionClassV1``: never refused and
+        never answered; each reader handles it the one way that class states.
+        Any other binding (a parameter, a reassigned or computed name, any
+        other expression) names no exception class: ``None``.
 
-    def _exception_type_binding(self, node: "Expression"):
-        """``exception_type_identity``'s answer, with the star-import case as
-        ``UNDECIDED_EXCEPTION_CLASS`` instead of its citation: a reader that
-        only collects what the source testifies to (an ancestry walk) states
-        nothing for it.  Memoized by the reference's span and spelling -- a
-        full ``module.walk()`` per Raise was ~12ms on pandas asserters."""
+        Memoized by the reference's span and spelling -- a full
+        ``module.walk()`` per Raise was ~12ms on pandas asserters.
+        """
         from sugar_lift_py_tests.ir import ctor, str_const
 
         link = node
@@ -3491,7 +3517,12 @@ class SourceUnit:
             elif "*" in self._module_name_rows()[
                 0
             ] and self._read_falls_through_the_source(node.id, span):
-                result = UNDECIDED_EXCEPTION_CLASS
+                result = UndecidedExceptionClassV1(
+                    node.id,
+                    f"{self.source_cid}:{span.start_line}:{span.start_col}:"
+                    f"{span.end_line}:{span.end_col}",
+                    node.fragment,
+                )
             else:
                 result = None
         cache[cache_key] = result
@@ -3540,13 +3571,14 @@ class SourceUnit:
         is an ``Exception``, so the ancestry is cited, never assumed. Source
         class identities carry every base coordinate the class statement the
         read reaches (``module_definition_at``) testifies to, walked through
-        the one lookup (``_exception_type_binding``). An imported class's
+        the one lookup (``exception_type_identity``). An imported class's
         ancestry is its defining proof's to state (step 9): ``None`` here, as
-        for a computed, imported, undecided or cyclic base -- the testimony is
+        for an undecided class (``UndecidedExceptionClassV1``) and for a
+        computed, imported, undecided or cyclic base -- the testimony is
         unavailable, never guessed.
         """
         identity = self.exception_type_identity(node)
-        if identity is None:
+        if identity is None or isinstance(identity, UndecidedExceptionClassV1):
             return None
         builtin_ancestry = self._builtin_exception_ancestry(identity)
         if builtin_ancestry is not None:
@@ -3569,8 +3601,10 @@ class SourceUnit:
                 return False
             visiting.add(id(definition))
             for base in definition.bases:
-                base_identity = self._exception_type_binding(base)
-                if base_identity is None or base_identity is UNDECIDED_EXCEPTION_CLASS:
+                base_identity = self.exception_type_identity(base)
+                if base_identity is None or isinstance(
+                    base_identity, UndecidedExceptionClassV1
+                ):
                     return False
                 builtin_ancestry = self._builtin_exception_ancestry(base_identity)
                 if builtin_ancestry is not None:
@@ -3681,8 +3715,8 @@ class SourceUnit:
             for base in definition.bases:
                 # The one lookup; a base a star import may bind is undecided
                 # and, like any base nothing testifies to, states nothing.
-                identity = self._exception_type_binding(base)
-                if identity is None or identity is UNDECIDED_EXCEPTION_CLASS:
+                identity = self.exception_type_identity(base)
+                if identity is None or isinstance(identity, UndecidedExceptionClassV1):
                     continue
                 kind = getattr(identity.args[0], "value", None)
                 if kind == "builtins":
@@ -3782,6 +3816,12 @@ class SourceUnit:
         - a source class: the class statement the read reaches
           (``module_definition_at``), with each base's class value in turn.
 
+        The undecided citation (``UndecidedExceptionClassV1``) names no class,
+        so no class value is read through it: ``None``, and ``None`` for a
+        source class with it among its bases (its base graph is not read).  A
+        call of such a class is the one unanswered class call
+        (``ClassDef.construction_order`` is None: ``UnknownCalleeCallV1``).
+
         A read that names no exception class binding, and a base graph that
         is computed or cyclic, refuse by name.
         """
@@ -3797,6 +3837,8 @@ class SourceUnit:
         )
 
         identity = self.exception_type_identity(node)
+        if isinstance(identity, UndecidedExceptionClassV1):
+            return None
         if identity is None or identity in _visiting:
             raise SugarNotWritten(
                 blame=node.fragment,
@@ -3822,13 +3864,16 @@ class SourceUnit:
         else:
             definition = self.module_definition_at(node.id, node.line_col_span())
             visiting = _visiting | {identity}
-            value = LocalExceptionClassValue(
-                name=definition.name,
-                bases=tuple(
-                    self.exception_class_value(base, visiting)
-                    for base in definition.bases
-                ),
-                record=BlockValue(()),
+            bases = tuple(
+                self.exception_class_value(base, visiting)
+                for base in definition.bases
+            )
+            value = (
+                None
+                if any(base is None for base in bases)
+                else LocalExceptionClassValue(
+                    name=definition.name, bases=bases, record=BlockValue(())
+                )
             )
         cache[identity] = value
         return value
@@ -14971,8 +15016,10 @@ class With(Statement):
                     ),
                 )
             # The one lookup at the operand's position: a local class, a
-            # builtin exception class, or an imported symbol (identified by
-            # its target symbol, never refused for not being local).
+            # builtin exception class, an imported symbol (identified by its
+            # target symbol, never refused for not being local), or the
+            # undecided citation (its read owes the member and its match
+            # stays open: ``AuthenticatedExceptionTypeSugar``).
             identity = self.unit.exception_type_identity(node)
             if identity is None:
                 return sugar
@@ -15330,6 +15377,14 @@ class Raise(Statement):
             ):
                 identity = self.unit.exception_type_identity(type_operand)
                 mro = self.unit.exception_type_mro(type_operand)
+        if isinstance(identity, UndecidedExceptionClassV1) and isinstance(node, Call):
+            # ``raise X(...)`` of a class a star import may bind: the call is
+            # the one unanswered class call (``UnknownCalleeCallV1``),
+            # two-faced and owing the undecided member, and what it raises is
+            # of undetermined class, so nothing is handed to it.  A bare
+            # ``raise X`` reads the class: ``AuthenticatedExceptionTypeSugar``
+            # owes the member and names only the read's undecided coordinate.
+            identity = mro = None
 
         with reduction_span(sugar="Raise.exc.sugar", role="construction", site=where):
             exception_sugar = node.sugar()
@@ -16308,9 +16363,11 @@ class Try(Statement):
             for type_node in type_nodes:
                 # The one lookup at the arm type's position, the same one
                 # ``raise`` operands go through: a local class, a builtin
-                # exception class, or an imported symbol (``except E`` under
+                # exception class, an imported symbol (``except E`` under
                 # ``from m import E``, ``except re.error``) by its target
-                # symbol.  Only a type that is none of them -- a computed,
+                # symbol, or the undecided citation of a class a star import
+                # may bind (its read owes the member; the match against it is
+                # retained).  Only a type that is none of them -- a computed,
                 # shadowed, or instance-attribute except type -- stays loud.
                 identity = self.unit.exception_type_identity(type_node)
                 mro = (
@@ -20324,7 +20381,9 @@ class Call(Expression):
         An operand the one lookup (``SourceUnit.exception_type_identity``)
         names no exception class for is left exactly as constructed: the call then stays an
         ordinary unresolved call site and the consuming boundary reports it as
-        an unresolved warning producer. Absent identity is never inferred.
+        an unresolved warning producer. Absent identity is never inferred.  A
+        category a star import may bind is the undecided citation: its read
+        owes the member and a match against it is retained.
         """
         from sugar_lift_py_tests.sugar.authenticated_exception_type_sugar import (
             AuthenticatedExceptionTypeSugar,

@@ -318,6 +318,12 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
 
     Minting ``MatchDecided(False)`` here would be a second mechanism: ad-hoc
     Python fabricating a miss outside the tree→sugar path.
+
+    Returns ``(verdict, owed)``: ``owed`` is what reading the arm's type owes
+    (``ExitSet.owed_items`` of its one completed arm; the undecided citation
+    of a class a star import may bind owes the ``undecided`` member).  Python
+    reads the type whenever a raise reaches the arm, matched or not, so the
+    router carries it beneath every face that passed the arm.
     """
     from sugar_lift_py_tests.effect.raise_effect import (
         RaiseEffect,
@@ -344,14 +350,13 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
             fix="keep ordinary except and except* distinct",
         )
     if matcher is None:
-        return MatchDecided(True)
+        return MatchDecided(True), ()
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
     # The handler's matcher is read here, not retained: a deferred carrier is
     # refused by name.
-    expected = _require_exit_set(
-        matcher.desugar(ctx), owner="TrySugar.handler-matcher"
-    ).completed_value()
+    read = _require_exit_set(matcher.desugar(ctx), owner="TrySugar.handler-matcher")
+    expected = read.completed_value()
     if expected is None:
         raise SugarNotWritten(
             blame=effect.occurrence_id,
@@ -360,7 +365,20 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
             requested="an authenticated exception-type value",
             fix="keep unresolved handler types loud",
         )
-    return matches_raise_effect(effect, expected)
+    return matches_raise_effect(effect, expected), read.owed_items()
+
+
+def _beneath_type_read(exits, owed: tuple):
+    """``exits`` continued beneath an arm type's read that owes ``owed``.
+
+    The one composition of a continuation beneath an arm
+    (``ExitSet.sequence``): the read's debt rides onto every exit, halts
+    included.  A read that owes nothing leaves ``exits`` as they are."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+    if not owed:
+        return exits
+    return ExitSet.completed(None, owed=owed).sequence(lambda _read: exits)
 
 
 def _binding_facts_for(slot_id, effect, site) -> tuple:
@@ -640,12 +658,21 @@ def _route_one_halt(
         if not residual.exits:
             return done()
         residual_guard = residual.exits[0].guard
-        verdict = _effect_match_verdict(exit_.effect, matcher, ctx, site=site)
+        verdict, read_owes = _effect_match_verdict(
+            exit_.effect, matcher, ctx, site=site
+        )
         if isinstance(verdict, MatchDecided):
             if not verdict.value:
+                residual = _beneath_type_read(residual, read_owes)
                 continue
             parts.append(
-                (index, handler_exits(handler_body, slot_id).guarded(residual_guard))
+                (
+                    index,
+                    _beneath_type_read(
+                        handler_exits(handler_body, slot_id).guarded(residual_guard),
+                        read_owes,
+                    ),
+                )
             )
             return done()
         if not isinstance(verdict, MatchRetained):
@@ -659,12 +686,17 @@ def _route_one_halt(
         parts.append(
             (
                 index,
-                handler_exits(handler_body, slot_id)
-                .guarded(verdict.obligation, caught_face)
-                .guarded(residual_guard),
+                _beneath_type_read(
+                    handler_exits(handler_body, slot_id)
+                    .guarded(verdict.obligation, caught_face)
+                    .guarded(residual_guard),
+                    read_owes,
+                ),
             )
         )
-        residual = residual.guarded(not_(verdict.obligation), missed_face)
+        residual = _beneath_type_read(
+            residual.guarded(not_(verdict.obligation), missed_face), read_owes
+        )
     if residual.exits:
         parts.append((None, residual))
     return done()
