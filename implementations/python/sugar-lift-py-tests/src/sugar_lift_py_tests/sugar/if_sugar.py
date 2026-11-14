@@ -455,10 +455,43 @@ class IfSugar(Sugar):
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
         from sugar_lift_py_tests.outcome import Completed, Halted
         from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
-        from sugar_lift_py_tests.sugar.function_universe_sugar import face_record
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            face_record,
+            past_prior_returns,
+        )
 
         exits = then_exits.guarded(formula, then_face).union(
             else_exits.guarded(not_formula, else_face)
+        )
+        # A suite arm that falls through after a guarded ``return`` (``if a:
+        # if b: return 1``) took that ``return`` where its guard held: what
+        # follows the ``if`` is not a statement of that suite, so the arm is
+        # split there by the one composition a block gives a statement after
+        # a guarded ``return`` (``past_prior_returns``). The ``return`` leaves
+        # the ``if`` as its own completed arm (``left``), its record unable
+        # to fall through; the arm goes on into the join (``went_on``) only
+        # under the guard that it was not taken, without the ``return``
+        # entries that guard excludes -- so the statement after the ``if``
+        # never stands beside it unguarded. An arm with no earlier ``return``
+        # goes on as it is.
+        left = ExitSet(
+            tuple(exit_ for exit_ in exits.exits if isinstance(exit_, Completed))
+        ).sequence(
+            lambda record: past_prior_returns(
+                record, record.context, lambda _went_on: ExitSet(()), ExitSet.completed
+            )
+        )
+        went_on = (
+            exits.sequence(
+                lambda record: past_prior_returns(
+                    record,
+                    record.context,
+                    ExitSet.completed,
+                    lambda _left: ExitSet(()),
+                )
+            )
+            if left.exits
+            else exits
         )
         # A ground condition never uses the branch-result slot as the arm
         # guard (formula is already true_guard/false_guard). Authenticating
@@ -472,7 +505,7 @@ class IfSugar(Sugar):
         )
 
         entries = []
-        for exit_ in exits.exits:
+        for exit_ in went_on.exits:
             if isinstance(exit_, Completed):
                 entries.extend(
                     entry.guarded(exit_.guard) for entry in exit_.value.entries
@@ -521,9 +554,9 @@ class IfSugar(Sugar):
             unconditional_entries=unconditional_entries,
             # Each suite's arms under its polarity: a key's value on each
             # path is read under that path's own guard.
-            evaluations=_arm_evaluations((exits,), incoming),
+            evaluations=_arm_evaluations((went_on,), incoming),
         )
-        if not exits.halts() and not exits.owed_items():
+        if not exits.halts() and not exits.owed_items() and not left.exits:
             return ExitSet.completed(faces)
 
         def halted_after_condition(halt):
@@ -548,7 +581,20 @@ class IfSugar(Sugar):
         # under the disjunction of their guards, owing every debt of the arms
         # it stands for. Each halt continues as itself over the condition's
         # testimony. Both compose through ``ExitSet.sequence``, so no guard,
-        # face or ``owed`` is restated by hand.
-        return exits.sequence(
+        # face or ``owed`` is restated by hand. A ``return`` an arm took before
+        # it fell through (``left``) leaves beside them, over the condition's
+        # testimony, its record unable to fall through.
+        joined = went_on.sequence(
             lambda _suite: ExitSet.completed(faces), consume=halted_after_condition
+        )
+        if not left.exits:
+            return joined
+        return joined.union(
+            left.sequence(
+                lambda record: ExitSet.completed(
+                    _replace(
+                        record, entries=(*unconditional_entries, *record.entries)
+                    )
+                )
+            )
         )

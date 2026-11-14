@@ -548,14 +548,27 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         def exhausted(entries=()):
             if otherwise is None:
                 return recurrence(entries)
+            from sugar_lift_py_tests.sugar.function_universe_sugar import (
+                past_prior_returns,
+            )
+
+            def after_suite(record):
+                return self._left_with(
+                    (*entries, *record.entries),
+                    published_after_else(record.context),
+                    fall_through=record.fall_through,
+                    can_fall_through=record.can_fall_through,
+                )
 
             def leave_after_else(otherwise):
+                # A completed face of the suite that falls through after a
+                # guarded ``return`` leaves by that ``return`` as its own arm,
+                # and as a loop only under the guard that it was not taken
+                # (``past_prior_returns``), as a concrete loop's ``else``
+                # does (``_finish_iterator``).
                 return otherwise.sequence(
-                    lambda state: self._left_with(
-                        (*entries, *state.entries),
-                        published_after_else(state.context),
-                        fall_through=state.fall_through,
-                        can_fall_through=state.can_fall_through,
+                    lambda state: past_prior_returns(
+                        state, state.context, after_suite, after_suite
                     ),
                     consume=lambda halt: self._left_with(
                         entries,
@@ -1745,6 +1758,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         )
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            past_prior_returns,
             reduce_block_to_exitset,
         )
 
@@ -1777,6 +1791,14 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 **how,
             )
 
+        def after_suite(record):
+            return leave(
+                record.context,
+                (*entries, *record.entries),
+                fall_through=record.fall_through,
+                can_fall_through=record.can_fall_through,
+            )
+
         def publish(otherwise):
             # The published bindings run beneath every face of the else suite
             # (``ExitSet.sequence``): each takes that face's guard and faces
@@ -1784,13 +1806,17 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # items and the suite left; a halt (a ``raise``, a call's halt,
             # an enclosing loop's ``break``/``continue``) leaves with what the
             # items left, its own record, and what the loop publishes where
-            # the suite halted (``_else_left_from``, ``_left_with``).
+            # the suite halted (``_else_left_from``, ``_left_with``).  A
+            # completed face that falls through after a guarded ``return``
+            # (``else: if c: return 1``) took that ``return`` where its guard
+            # held: the loop leaves by it as its own arm, and leaves as a
+            # loop only under the guard that it was not taken, through the
+            # one composition a block gives a statement after a guarded
+            # ``return`` (``past_prior_returns``) -- so the statement after
+            # the loop never stands beside it unguarded.
             return otherwise.sequence(
-                lambda state: leave(
-                    state.context,
-                    (*entries, *state.entries),
-                    fall_through=state.fall_through,
-                    can_fall_through=state.can_fall_through,
+                lambda state: past_prior_returns(
+                    state, state.context, after_suite, after_suite
                 ),
                 consume=lambda halt: leave(
                     _else_left_from(
