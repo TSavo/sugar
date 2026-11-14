@@ -10,8 +10,13 @@ name the same way: the comprehension binds each member under the generator's
 ``a, b = f()`` a read of ``a`` is a reference to ``a``'s projection of the
 statement's coordinate (``projection_key``), bound by the unpack at reduce.
 
+``with pytest.raises(...) as e`` and ``except ... as e`` bind no name at
+reduce: substitution rewrites a read of ``e`` to the statement's observation
+(``ObservationRef``) or the handler's effect (``EffectRef``), one slot per
+evaluation (``Statement._evaluation_slot``).
+
 A write of the name that substitution does not see (an unsubstituted unpack, a
-``raises ... as``, a live loop's next item) still binds the name. The read is
+live loop's next item) still binds the name. The read is
 then whichever of the two was bound last: the evaluation, or a later write of
 the name.
 

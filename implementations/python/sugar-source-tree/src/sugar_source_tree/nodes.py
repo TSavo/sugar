@@ -848,6 +848,12 @@ def _ordered_binding_keys(names):
         _SUBSTITUTION_TRACE_BUILDER,
         _BINDING_ENTRY_FACTORY,
         _RECEIVER_FIELD_PROJECTIONS,
+        # The evaluation a scope substitutes for (a loop iteration, a
+        # duplicated clause's exit path): a full scope carries them, so a
+        # try's halt-edge states inside an unrolled loop or a ``finally``
+        # copy hold them too.
+        _EVALUATION_OCCURRENCE,
+        _EVALUATION_EXIT_PATH,
     )
     ordered = sorted(name for name in names if isinstance(name, str))
     ordered.extend(name for name in internal_names if name in names)
@@ -4204,10 +4210,11 @@ class Statement(Node):
         statement's sugar binds what it completed with under this key
         (``x += e``: the inplace result; ``a, b = f()``: each target's
         member, under its projection of the key); every later read
-        substitution rewrites is an ``EvaluationRef`` to it.  A
-        re-substitution on the exit path its key was minted under keeps that
-        key; a copy of it onto another exit path is another evaluation and
-        gets its own.
+        substitution rewrites is an ``EvaluationRef`` to it.  A ``with ...
+        as`` / ``try`` statement qualifies the effect slots its ``as`` names
+        read with it (``_evaluation_slot``).  A re-substitution on the exit
+        path its key was minted under keeps that key; a copy of it onto
+        another exit path is another evaluation and gets its own.
         """
         from sugar_lift_python_source.canonical import cid_of_json
         from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
@@ -4238,6 +4245,57 @@ class Statement(Node):
         if exit_path:
             coordinate["exitPath"] = list(exit_path)
         return EVALUATION_PREFIX + cid_of_json(coordinate)
+
+    def _duplicated_evaluation_key(self, scope) -> "Optional[str]":
+        """This statement's evaluation key when it is one of several
+        evaluations of its source -- a loop iteration's copy or a duplicated
+        clause's exit-path copy -- or was keyed as one already; else None.
+        A statement evaluated once keeps the source occurrence's slots."""
+        from .shadow import occurrence_tags_of
+
+        if not (
+            isinstance(getattr(self, "evaluation", None), str)
+            or scope.get(_EVALUATION_OCCURRENCE)
+            or scope.get(_EVALUATION_EXIT_PATH)
+            or occurrence_tags_of(self)
+        ):
+            return None
+        return self._evaluation_key(scope)
+
+    def _keyed_evaluation(self, rewritten: "Node", scope) -> "Node":
+        """``rewritten`` (this statement substituted) carrying its evaluation
+        key, when it is one of several evaluations of its source
+        (``_duplicated_evaluation_key``); else ``rewritten`` unchanged."""
+        evaluation = self._duplicated_evaluation_key(scope)
+        if evaluation is None:
+            return rewritten
+        from .shadow import rewrite_with_leaves
+
+        return rewrite_with_leaves(
+            rewritten,
+            {
+                "evaluation": evaluation,
+                "evaluation_exit_path": self._evaluation_exit_path(scope),
+            },
+        )
+
+    def _evaluation_slot(self, slot: str) -> str:
+        """``slot`` (a source occurrence's effect slot) for the evaluation
+        this statement is keyed as: each evaluation of a duplicated statement
+        observes its own effect, so the name it binds reads that evaluation
+        and never a sibling's.  Unchanged for a statement evaluated once."""
+        evaluation = getattr(self, "evaluation", None)
+        if not isinstance(evaluation, str):
+            return slot
+        from sugar_lift_python_source.canonical import cid_of_json
+
+        return cid_of_json(
+            {
+                "kind": "python-effect-slot-evaluation-v1",
+                "slot": slot,
+                "evaluation": evaluation,
+            }
+        )
 
 
 @_abstract
@@ -4437,6 +4495,13 @@ class ExceptHandler(Node):
     @property
     def type(self) -> Optional[Expression]:
         return self.type_
+
+    def _effect_slot_id(self) -> str:
+        """The source occurrence's slot, for the evaluation of the ``try``
+        this handler was keyed under (``Try.substitute``): the ``as`` name's
+        ``EffectRef``, the arm's routing and a bare re-raise in its body all
+        read this one slot, one per evaluation (temporal choice 1, #7661)."""
+        return Statement._evaluation_slot(self, super()._effect_slot_id())
 
     def substitute(self, scope):
         """except <type> as <name>: rewrite name → EffectRef(slot) in the body.
@@ -10773,7 +10838,13 @@ class With(Statement):
             new_body, d = self._substitute_body(self.body, body_scope)
             if d:
                 changed["body"] = new_body
-            return self if not changed else rewrite(self, **changed)
+            # A with evaluated more than once (a loop iteration's copy, a
+            # duplicated ``finally``'s exit-path copy) observes one effect per
+            # evaluation; keyed, its ``as`` name reads its own observation
+            # (``_effect_boundary_binding``), never a sibling's.
+            return self._keyed_evaluation(
+                self if not changed else rewrite(self, **changed), scope
+            )
         for item in items:
             if item.optional_vars is not None:
                 for name in self._bound_names_in(item.optional_vars):
@@ -10825,7 +10896,12 @@ class With(Statement):
             )
             testify(self.reporter, "report_gap", self, panic)
             raise panic
-        return f"{item._manager_slot_id()}#observation", projection
+        # One observation per evaluation of this with (``_keyed_evaluation``):
+        # the ``as`` name's ObservationRef and the boundary's deposit both
+        # read this slot, so a read of one iteration's ``e`` is never the
+        # next iteration's effect.
+        observation = self._evaluation_slot(item._manager_slot_id())
+        return f"{observation}#observation", projection
 
     def _effect_boundary_observation_slot(self, item, resolved_ref):
         return self._effect_boundary_binding(item, resolved_ref)[0]
@@ -11346,7 +11422,17 @@ class Try(Statement):
 
         handler_nets = []
         new_handlers = []
+        # A try evaluated more than once (a loop iteration's copy, a
+        # duplicated ``finally``'s exit-path copy) observes one effect per
+        # evaluation: each handler is keyed as this evaluation's, so its
+        # slot -- the ``as`` name's EffectRef, the routing and a bare
+        # re-raise -- is never a sibling evaluation's (temporal choice 1).
+        evaluation = self._duplicated_evaluation_key(scope)
         for handler_index, handler in enumerate(self.handlers):
+            if evaluation is not None:
+                from .shadow import rewrite_with_leaves
+
+                handler = rewrite_with_leaves(handler, {"evaluation": evaluation})
             handler_changed = {}
             new_type, type_changed = handler._substitute_field(handler.type_, scope)
             if type_changed:
@@ -11470,6 +11556,7 @@ class Try(Statement):
             )
         else:
             node = self if not changed else rewrite(self, **changed)
+        node = self._keyed_evaluation(node, scope)
         return _Splice((node,), merged) if merged else node
 
     def _rewrite_with_route_site(
