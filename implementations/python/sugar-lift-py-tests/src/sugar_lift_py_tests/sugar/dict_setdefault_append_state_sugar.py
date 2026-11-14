@@ -92,10 +92,6 @@ class DictSetDefaultAppendStateSugar(ConstructedTermSugar):
 
         appended_outcome = selected.append_with(appended, self.site)
 
-        def with_appended(appended_value):
-            setitem_with_context = getattr(updated, "setitem_with_context", None)
-            if setitem_with_context is not None:
-                return setitem_with_context(key, appended_value, self.site, ctx)
-            return updated.setitem(key, appended_value, self.site)
-
-        return appended_outcome.and_then(with_appended)
+        return appended_outcome.and_then(
+            lambda appended_value: updated.setitem(key, appended_value, self.site, ctx)
+        )

@@ -771,7 +771,7 @@ class CallSiteValue(FloorValue):
             return decided
         return self.undecided_subscript(index, site, owner="CallSiteValue.subscript")
 
-    def setitem(self, index, value, site):
+    def setitem(self, index, value, site, ctx):
         """Rebind an opaque mapping/list-shaped callsite after ``xs[k] = v``.
 
         Concrete containers fold post-state. A callsite receiver has no element
@@ -1004,7 +1004,7 @@ class CallSiteValue(FloorValue):
             ),
         )
 
-    def delitem(self, index, site):
+    def delitem(self, index, site, ctx):
         """Rebind an opaque mapping/list-shaped callsite after ``del xs[k]``.
 
         Concrete containers fold post-state. A callsite receiver (for example

@@ -723,7 +723,7 @@ def test_immutable_slice_delete_cannot_fabricate_mutated_receiver(receiver):
 def test_floor_list_delitem_completes_with_element_gone() -> None:
     """Floor ``ListValue.delitem`` already implements the delete post-state law."""
     result = ListValue((TermValue(0), TermValue(1))).delitem(
-        TermValue(0), _floor_site()
+        TermValue(0), _floor_site(), None
     )
     assert result.completed_value() is not None
     assert result.completed_value() == ListValue((TermValue(1),))
@@ -732,7 +732,7 @@ def test_floor_list_delitem_completes_with_element_gone() -> None:
 def test_floor_list_delitem_out_of_range_is_named_indexerror() -> None:
     """Floor list delete IndexError (ground_index_error) — named exceptional face."""
     from sugar_lift_py_tests.effect import RaiseEffect
-    result = ListValue((TermValue(0),)).delitem(TermValue(5), _floor_site())
+    result = ListValue((TermValue(0),)).delitem(TermValue(5), _floor_site(), None)
     assert len(result.exits) == 1 and result.halts() == result.exits
     (halt,) = result.halts()
     assert isinstance(halt.effect, RaiseEffect)
@@ -741,7 +741,7 @@ def test_floor_list_delitem_out_of_range_is_named_indexerror() -> None:
 
 def test_floor_delete_is_not_the_formal_carrier_twin() -> None:
     """Discrimination: a floor completion is not helper-alone undischarged demand."""
-    floor = ListValue((TermValue(0),)).delitem(TermValue(0), _floor_site())
+    floor = ListValue((TermValue(0),)).delitem(TermValue(0), _floor_site(), None)
     assert floor.completed_value() is not None
     _, pending = _delitem_helper()
     # Formal demand (when present) is a carrier, not a floor completion.

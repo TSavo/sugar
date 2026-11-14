@@ -96,7 +96,7 @@ class AttributeUnpackTarget(UnpackProjectionTarget):
         # never a second value.desugar, never a panic placeholder Sugar field.
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: AttributeStoreEffectSugar.project_setattr(
-                receiver, self.attr, member, self.site
+                receiver, self.attr, member, self.site, ctx
             )
         )
 
@@ -117,7 +117,7 @@ class SubscriptUnpackTarget(UnpackProjectionTarget):
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.index.desugar(ctx).and_then(
                 lambda index: SubscriptStoreEffectSugar.project_setitem(
-                    receiver, index, member, self.site
+                    receiver, index, member, self.site, ctx
                 )
             )
         )

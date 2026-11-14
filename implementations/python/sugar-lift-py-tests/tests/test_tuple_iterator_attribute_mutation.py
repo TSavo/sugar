@@ -13,11 +13,15 @@ def _outcomes(tmp_path):
     value = TupleIteratorValue((TermValue(1),))
     return (
         (
-            value.setattr("attr", TermValue(7), store_site),
+            value.setattr("attr", TermValue(7), store_site, None),
             "TupleIteratorValue.setattr",
             store_site,
         ),
-        (value.delattr("attr", delete_site), "TupleIteratorValue.delattr", delete_site),
+        (
+            value.delattr("attr", delete_site, None),
+            "TupleIteratorValue.delattr",
+            delete_site,
+        ),
     )
 
 

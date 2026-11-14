@@ -180,13 +180,15 @@ class SubscriptAugAssignSugar(Sugar):
                             projector=self.operation,
                             site=self.op_site,
                             ctx=ctx,
-                        ).and_then(lambda result: self._store(receiver, index, result))
+                        ).and_then(
+                            lambda result: self._store(receiver, index, result, ctx)
+                        )
                     )
                 )
             )
         )
 
-    def _store(self, receiver, index, result) -> Outcome:
+    def _store(self, receiver, index, result, ctx) -> Outcome:
         coordinates = tuple(
             getattr(operand, "formal_coordinate", None)
             for operand in (receiver, index, result)
@@ -218,7 +220,7 @@ class SubscriptAugAssignSugar(Sugar):
                     "law (same door as Assign); do not invent setitem completion"
                 ),
             )
-        return receiver.setitem(index, result, self.set_site)
+        return receiver.setitem(index, result, self.set_site, ctx)
 
 
 @dataclass(frozen=True)
@@ -275,7 +277,7 @@ class AttributeAugAssignSugar(Sugar):
                         ctx=ctx,
                     ).and_then(
                         lambda result: AttributeStoreEffectSugar.project_setattr(
-                            receiver, self.attr, result, self.set_site
+                            receiver, self.attr, result, self.set_site, ctx
                         )
                     )
                 )

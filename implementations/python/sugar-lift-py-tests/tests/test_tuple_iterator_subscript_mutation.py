@@ -13,12 +13,12 @@ def _outcomes(tmp_path):
     value = TupleIteratorValue((TermValue(1),))
     return (
         (
-            value.setitem(TermValue(0), TermValue(7), store_site),
+            value.setitem(TermValue(0), TermValue(7), store_site, None),
             "TupleIteratorValue.setitem",
             store_site,
         ),
         (
-            value.delitem(TermValue(0), delete_site),
+            value.delitem(TermValue(0), delete_site, None),
             "TupleIteratorValue.delitem",
             delete_site,
         ),

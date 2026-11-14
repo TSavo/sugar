@@ -55,7 +55,7 @@ def test_missing_field_panics_but_written_twin_projects(tmp_path, class_name, me
 def test_deleted_field_keeps_authenticated_attribute_error(tmp_path):
     site = _site(tmp_path, "payload")
     receiver = ObjectValue("Renamed", (ObjectField("payload", TermValue(7)),))
-    deleted = receiver.delattr("payload", site)
+    deleted = receiver.delattr("payload", site, None)
     deleted_value = deleted.completed_value()
     assert deleted_value is not None
     outcome = deleted_value.attribute("payload", site, None)

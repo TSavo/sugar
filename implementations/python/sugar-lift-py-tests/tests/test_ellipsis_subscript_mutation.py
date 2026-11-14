@@ -12,8 +12,12 @@ def _outcomes(tmp_path):
     s, d = body[0].fragment, body[1].fragment
     value = EllipsisValue()
     return (
-        (value.setitem(TermValue(0), TermValue(7), s), "EllipsisValue.setitem", s),
-        (value.delitem(TermValue(0), d), "EllipsisValue.delitem", d),
+        (
+            value.setitem(TermValue(0), TermValue(7), s, None),
+            "EllipsisValue.setitem",
+            s,
+        ),
+        (value.delitem(TermValue(0), d, None), "EllipsisValue.delitem", d),
     )
 
 

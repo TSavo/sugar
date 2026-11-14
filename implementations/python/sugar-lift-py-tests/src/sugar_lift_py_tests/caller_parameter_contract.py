@@ -412,8 +412,7 @@ def _project_delitem(receiver, index, site, ctx):
     Ordered operands and formal coordinates match this signature exactly.
     Name deletion (``del name``) is out of scope for this projector.
     """
-    del ctx
-    return receiver.delitem(index, site)
+    return receiver.delitem(index, site, ctx)
 
 
 def _project_delattr_named(receiver, name, site, ctx):
@@ -423,8 +422,7 @@ def _project_delattr_named(receiver, name, site, ctx):
     Readability never authorizes deletion: Floor ``delattr`` refuses
     getter-only properties without consulting the read path.
     """
-    del ctx
-    return receiver.delattr(name.value, site)
+    return receiver.delattr(name.value, site, ctx)
 
 
 def _project_inplace(left, right, site, ctx, *, surface):
@@ -552,8 +550,8 @@ _INPLACE_NATIVE_OPERATION_PROJECTORS = {
 # chain, and these projectors own the call signature.
 #
 # Delete protocol (store-family twin):
-#   delitem        → ``receiver.delitem(index, site)``   (__delitem__)
-#   delattr_named  → ``receiver.delattr(name.value, site)`` (__delattr__)
+#   delitem        → ``receiver.delitem(index, site, ctx)``   (__delitem__)
+#   delattr_named  → ``receiver.delattr(name.value, site, ctx)`` (__delattr__)
 # Name deletion (``del name`` / DeleteNameSugar) is out of scope here.
 #
 # In-place protocol (AugAssign formal path):
@@ -653,13 +651,13 @@ _NATIVE_OPERATION_PROJECTORS = {
     # Ternary store protocol (receiver, index|name, value + site).
     # Discharge order: receiver, index, value — never RHS-first.
     "setitem": lambda receiver, index, value, site, ctx: receiver.setitem(
-        index, value, site
+        index, value, site, ctx
     ),
     # Attribute store: name arrives as StringValue; unwrap with .value.
     # Window 17534 mints operator="setattr_named" with operands
     # (receiver, StringValue(name), value).
     "setattr_named": lambda receiver, name, value, site, ctx: receiver.setattr(
-        name.value, value, site
+        name.value, value, site, ctx
     ),
     # Binary delete protocol — explicit projectors (Python protocol signatures).
     "delitem": _project_delitem,

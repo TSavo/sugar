@@ -160,9 +160,9 @@ def test_production_receiver_evaluated_once_for_get_and_set() -> None:
             box["get"] += 1
             return super().attribute(name, site, ctx)
 
-        def setattr(self, name, value, site):
+        def setattr(self, name, value, site, ctx):
             box["set"] += 1
-            return super().setattr(name, value, site)
+            return super().setattr(name, value, site, ctx)
 
     receiver = _CountingObject(
         "Widget",
@@ -204,9 +204,9 @@ def test_production_getattr_before_rhs_order() -> None:
             order.append("get")
             return super().attribute(name, site_, ctx)
 
-        def setattr(self, name, value, site_):
+        def setattr(self, name, value, site_, ctx):
             order.append("set")
-            return super().setattr(name, value, site_)
+            return super().setattr(name, value, site_, ctx)
 
     @dataclass(frozen=True)
     class _RhsOrder(Sugar):
@@ -270,9 +270,9 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
             return ()
 
     class _StoreCounting(ObjectValue):
-        def setattr(self, name, value, site_):
+        def setattr(self, name, value, site_, ctx):
             box["set"] += 1
-            return super().setattr(name, value, site_)
+            return super().setattr(name, value, site_, ctx)
 
     # Empty fields — attribute read is undecided / AttributeError path
     receiver = _StoreCounting("Widget", (), (), (), "empty")
@@ -298,9 +298,9 @@ def test_production_arithmetic_halt_blocks_store() -> None:
     box = {"set": 0}
 
     class _StoreCounting(ObjectValue):
-        def setattr(self, name, value, site):
+        def setattr(self, name, value, site, ctx):
             box["set"] += 1
-            return super().setattr(name, value, site)
+            return super().setattr(name, value, site, ctx)
 
     from sugar_lift_py_tests.floor import NoneValue
 
@@ -325,7 +325,7 @@ def test_production_store_halt_is_incomplete_not_complete_raisevalue() -> None:
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
     class _RefuseSet(ObjectValue):
-        def setattr(self, name, value, site_):
+        def setattr(self, name, value, site_, ctx):
             return ground_exceptional_exit(
                 exception_name="AttributeError",
                 site=site_,
@@ -449,10 +449,10 @@ def test_enum_attribute_augassign_uses_one_authenticated_read_op_store(
             ctx=ctx,
         )
 
-    def store(receiver, member, value, site):
+    def store(receiver, member, value, site, ctx):
         if at_target(site):
             events.append(("store", receiver, member, site))
-        return original_store(receiver, member, value, site)
+        return original_store(receiver, member, value, site, ctx)
 
     monkeypatch.setattr(AttributeSugar, "project_attribute", staticmethod(read))
     monkeypatch.setattr(aug_module, "project_augmented", operate)

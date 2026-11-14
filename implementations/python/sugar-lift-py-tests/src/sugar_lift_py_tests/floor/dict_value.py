@@ -183,18 +183,18 @@ class DictValue(GuardStableValue):
     def supports_closed_method(self, name: str) -> bool:
         return name == "items"
 
-    def setattr(self, name, value, site):
+    def setattr(self, name, value, site, ctx):
         """Dicts have no instance ``__dict__``; store is AttributeError."""
-        del name, value
+        del name, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="AttributeError", site=site, owner="DictValue.setattr"
         )
 
-    def delattr(self, name, site):
+    def delattr(self, name, site, ctx):
         """Dicts have no instance ``__dict__``; delete is AttributeError."""
-        del name
+        del name, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
@@ -282,8 +282,8 @@ class DictValue(GuardStableValue):
             ExitSet.completed(SymbolicValue(term)), site, producer="DictValue.subscript"
         )
 
-    def setitem(self, index, value, site):
-        guarded = self._guarded_setitem(index, value, site)
+    def setitem(self, index, value, site, ctx):
+        guarded = self._guarded_setitem(index, value, site, ctx)
         if guarded is not None:
             return guarded
         from sugar_lift_py_tests.outcome import ExitSet
@@ -311,7 +311,7 @@ class DictValue(GuardStableValue):
             )
         )
 
-    def _guarded_setitem(self, index, value, site):
+    def _guarded_setitem(self, index, value, site, ctx):
         """Store once on every authenticated guarded key/value face.
 
         A GuardedValue's conditional term is lift-time decidable and therefore
@@ -330,14 +330,15 @@ class DictValue(GuardStableValue):
             def project(face):
                 selected = list(operands)
                 selected[position] = face
-                return self.setitem(*selected, site)
+                return self.setitem(*selected, site, ctx)
 
             when_true = project(operand.when_true).guarded(operand.guard)
             when_false = project(operand.when_false).guarded(not_(operand.guard))
             return when_true.union(when_false)
         return None
 
-    def delitem(self, index, site):
+    def delitem(self, index, site, ctx):
+        del ctx
         from sugar_lift_py_tests.outcome import ExitSet
 
         found = _key_position(self.entries, index)

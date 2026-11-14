@@ -55,7 +55,7 @@ def test_floor_to_term_arms_project_through_the_value_s_own_to_term() -> None:
     index, value = TermValue(0), TermValue(7)
     receiver = SymbolicValue(make_var("xs"))
 
-    outcome = receiver.setitem(index, value, "setitem-site")
+    outcome = receiver.setitem(index, value, "setitem-site", None)
 
     assert outcome.completed_value() is not None
     term = outcome.completed_value().term

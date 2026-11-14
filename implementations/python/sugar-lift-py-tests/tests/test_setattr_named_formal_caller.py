@@ -221,7 +221,7 @@ def test_source_defined_property_without_setter_named_attribute_error() -> None:
     # Floor store path (not the read path) refuses the set.
     site = helper.body[0].fragment
     from sugar_lift_py_tests.effect import RaiseEffect
-    direct = receiver.setattr("field", TermValue(7), site)
+    direct = receiver.setattr("field", TermValue(7), site, None)
     assert direct.halts() == direct.exits
     (direct_halt,) = direct.halts()
     assert isinstance(direct_halt.effect, RaiseEffect)
@@ -474,7 +474,7 @@ def test_property_without_setter_reads_fine_and_halts_on_store_after_discharge()
     # completed field write licensed by the getter.
     function, pending = _helper_definition()
     site = function.body[0].fragment
-    store = receiver.setattr("field", TermValue(7), site)
+    store = receiver.setattr("field", TermValue(7), site, None)
     from sugar_lift_py_tests.effect import RaiseEffect
     assert store.halts() == store.exits
     (store_halt,) = store.halts()

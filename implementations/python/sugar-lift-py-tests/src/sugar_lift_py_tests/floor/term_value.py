@@ -697,18 +697,18 @@ class TermValue(GuardStableValue):
             owner="TermValue.bitwise_invert",
         )
 
-    def setattr(self, name, value, site):
+    def setattr(self, name, value, site, ctx):
         """``(1).x = v`` raises AttributeError — store path, not read path."""
-        del name, value
+        del name, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="AttributeError", site=site, owner="TermValue.setattr"
         )
 
-    def delattr(self, name, site):
+    def delattr(self, name, site, ctx):
         """``del (1).x`` raises AttributeError — delete, not read."""
-        del name
+        del name, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
@@ -726,18 +726,18 @@ class TermValue(GuardStableValue):
             owner="TermValue.subscript",
         )
 
-    def setitem(self, index, value, site):
+    def setitem(self, index, value, site, ctx):
         """Numeric values reject subscript store with exact TypeError."""
-        del index, value
+        del index, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="TermValue.setitem"
         )
 
-    def delitem(self, index, site):
+    def delitem(self, index, site, ctx):
         """Numeric values reject subscript delete with exact TypeError."""
-        del index
+        del index, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(

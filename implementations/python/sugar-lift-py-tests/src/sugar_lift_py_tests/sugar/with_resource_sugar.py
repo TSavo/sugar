@@ -111,9 +111,10 @@ class WithResourceSugar(Sugar):
             reduce_block_to_exitset,
         )
 
-        del ctx
-
-        manager_es = sugar_outcome_to_exitset(self.manager.desugar())
+        # The manager, the enter, the body and the exit all run under the
+        # ``with`` statement's own context: there is no second way to reduce
+        # them without it (#7757).
+        manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
         parts: list = []
 
         for mgr_exit in manager_es.exits:
@@ -132,7 +133,7 @@ class WithResourceSugar(Sugar):
             # and faces and owes what it owes; the exit routing carries a body
             # face's debts onto every arm it leaves through.
             enter_es = ExitSet((mgr_exit,)).sequence(
-                lambda _manager: sugar_outcome_to_exitset(self.enter.desugar())
+                lambda _manager: sugar_outcome_to_exitset(self.enter.desugar(ctx))
             )
             for enter_exit in enter_es.exits:
                 if isinstance(enter_exit, Halted):
@@ -153,11 +154,11 @@ class WithResourceSugar(Sugar):
                     ).to_facts(site=self.site)
 
                 body_es = ExitSet((enter_exit,)).sequence(
-                    lambda _entered: reduce_block_to_exitset(self.body)
+                    lambda _entered: reduce_block_to_exitset(self.body, ctx)
                 )
 
                 # Parametric exit: materialize once, fan over every body face.
-                exit_es = sugar_outcome_to_exitset(self.exit.desugar())
+                exit_es = sugar_outcome_to_exitset(self.exit.desugar(ctx))
 
                 for body_exit in body_es.exits:
                     face_facts = ExitFaceBinding.from_body_exit(

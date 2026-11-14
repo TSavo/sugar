@@ -23,9 +23,9 @@ class AttributeStoreEffectSugar(Sugar):
        ``(receiver, StringValue(name), value)`` and coordinates
        ``(receiver.formal_coordinate, None, value_coordinate)``.
        The n-ary projector (#6614) unwraps the name and calls
-       ``receiver.setattr(name.value, value, site)``.  Helper alone stays
+       ``receiver.setattr(name.value, value, site, ctx)``.  Helper alone stays
        undischarged; an ordinary source caller supplies actuals.
-    2. **Decided runtime type** → ``receiver.setattr(attr, value, site)``
+    2. **Decided runtime type** → ``receiver.setattr(attr, value, site, ctx)``
        projecting its completed or halted faces through the store path
        (never the read path).
     3. **Undecided non-formal** → ``AttributeStoreRuntimeEffect`` dual faces
@@ -54,21 +54,23 @@ class AttributeStoreEffectSugar(Sugar):
         # Python constructs the RHS before evaluating an assignment target.
         return self.value.desugar(ctx).and_then(
             lambda value: self.receiver.desugar(ctx).and_then(
-                lambda receiver: self._store(receiver, value)
+                lambda receiver: self._store(receiver, value, ctx)
             )
         )
 
     def desugar_store(self, ctx: object, value) -> Outcome:
         """Store an RHS already reduced once by a chained assignment."""
         return self.receiver.desugar(ctx).and_then(
-            lambda receiver: self.project_setattr(receiver, self.attr, value, self.site)
+            lambda receiver: self.project_setattr(
+                receiver, self.attr, value, self.site, ctx
+            )
         )
 
-    def _store(self, receiver, value) -> Outcome:
-        return self.project_setattr(receiver, self.attr, value, self.site)
+    def _store(self, receiver, value, ctx) -> Outcome:
+        return self.project_setattr(receiver, self.attr, value, self.site, ctx)
 
     @staticmethod
-    def project_setattr(receiver, attr: str, value, site) -> Outcome:
+    def project_setattr(receiver, attr: str, value, site, ctx) -> Outcome:
         """Producer-owned attribute **store** projection (one door).
 
         The law shared by ordinary AttributeStoreEffectSugar and
@@ -90,7 +92,7 @@ class AttributeStoreEffectSugar(Sugar):
             )
 
         if receiver.runtime_type_is_decided():
-            return receiver.setattr(attr, value, site)
+            return receiver.setattr(attr, value, site, ctx)
 
         from sugar_lift_py_tests.effect import (
             AttributeStoreRuntimeEffect,
@@ -122,7 +124,7 @@ class AttributeStoreEffectSugar(Sugar):
         """Producer-side contract for n-ary ``setattr_named`` discharge.
 
         Operand order matches the projector table (#6614):
-        ``receiver.setattr(name.value, value, site)`` after unwrap.
+        ``receiver.setattr(name.value, value, site, ctx)`` after unwrap.
         Coordinates: ``(receiver.formal, None, value.formal)`` — lengths and
         order are load-bearing (#6613 ``__post_init__``).
         """
@@ -158,9 +160,9 @@ class SubscriptStoreEffectSugar(Sugar):
     1. **Any formal operand** → ``NativeOperationExitCarrierV1`` demand
        ``setitem`` with operands and coordinates in *discharge* order
        ``(receiver, index, value)``.  The n-ary projector calls
-       ``receiver.setitem(index, value, site)``.  Helper alone stays
+       ``receiver.setitem(index, value, site, ctx)``.  Helper alone stays
        undischarged; an ordinary source caller supplies actuals.
-    2. **Decided runtime type** → ``receiver.setitem(index, value, site)``
+    2. **Decided runtime type** → ``receiver.setitem(index, value, site, ctx)``
        projecting its completed or halted faces through the store path
        (never the load path).
     3. **Undecided non-formal** → two faces (#7585): no floor decides
@@ -200,7 +202,16 @@ class SubscriptStoreEffectSugar(Sugar):
             )
         )
 
-    def _store(self, receiver, index, value, ctx=None) -> Outcome:
+    def _store(self, receiver, index, value, ctx) -> Outcome:
+        return self.project_setitem(receiver, index, value, self.site, ctx)
+
+    @staticmethod
+    def project_setitem(receiver, index, value, site, ctx) -> Outcome:
+        """Producer-owned subscript **store** projection (one door).
+
+        Shared by the ordinary store statement and an unpack target's
+        member store; the store applies under the statement's ``ctx``.
+        """
         receiver = receiver.project_operation_receiver(
             ctx, owner="SubscriptStoreEffectSugar receiver"
         )
@@ -216,27 +227,22 @@ class SubscriptStoreEffectSugar(Sugar):
         )
         if any(coordinate is not None for coordinate in coordinates):
             # Undischarged demand awaiting caller actuals — not a refusal.
-            return self.mint_setitem_carrier(
-                site=self.site,
+            return SubscriptStoreEffectSugar.mint_setitem_carrier(
+                site=site,
                 receiver=receiver,
                 index=index,
                 value=value,
             )
         if not receiver.runtime_type_is_decided():
-            return _undecided_setitem_faces(receiver, self.site)
-        source_aware = getattr(receiver, "setitem_with_context", None)
-        return (
-            source_aware(index, value, self.site, ctx)
-            if callable(source_aware)
-            else receiver.setitem(index, value, self.site)
-        )
+            return _undecided_setitem_faces(receiver, site)
+        return receiver.setitem(index, value, site, ctx)
 
     @staticmethod
     def mint_setitem_carrier(*, site, receiver, index, value):
         """Producer-side contract for n-ary ``setitem`` discharge.
 
         Operand order matches the projector table (#6614):
-        ``receiver.setitem(index, value, site)``.  This is *discharge* order
+        ``receiver.setitem(index, value, site, ctx)``.  This is *discharge* order
         (receiver, index, value) — not source evaluation order (value,
         receiver, index).  Coordinates are exactly one slot per ordered
         operand; lengths and order are load-bearing (#6613 ``__post_init__``).

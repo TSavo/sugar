@@ -309,9 +309,9 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
         def __init__(self, elements):
             object.__setattr__(self, "elements", tuple(elements))
 
-        def setitem(self, index, value, site_):
+        def setitem(self, index, value, site_, ctx):
             box["set"] += 1
-            return super().setitem(index, value, site_)
+            return super().setitem(index, value, site_, ctx)
 
     sugar = SubscriptAugAssignSugar(
         receiver=_FloorSugar(_HaltList((TermValue(0),))),
@@ -340,9 +340,9 @@ def test_production_arithmetic_halt_blocks_store() -> None:
         def __init__(self, elements):
             object.__setattr__(self, "elements", tuple(elements))
 
-        def setitem(self, index, value, site):
+        def setitem(self, index, value, site, ctx):
             box["set"] += 1
-            return super().setitem(index, value, site)
+            return super().setitem(index, value, site, ctx)
 
     from sugar_lift_py_tests.floor import NoneValue
 
@@ -378,9 +378,9 @@ class _CountingList(ListValueCls):
         self._box["get"] = self._box.get("get", 0) + 1
         return super().subscript(index, site)
 
-    def setitem(self, index, value, site):
+    def setitem(self, index, value, site, ctx):
         self._box["set"] = self._box.get("set", 0) + 1
-        return super().setitem(index, value, site)
+        return super().setitem(index, value, site, ctx)
 
 
 def test_production_receiver_index_evaluated_once_for_get_and_set() -> None:
@@ -418,9 +418,9 @@ def test_production_getitem_before_rhs_order() -> None:
             order.append("get")
             return super().subscript(index, site_)
 
-        def setitem(self, index, value, site_):
+        def setitem(self, index, value, site_, ctx):
             order.append("set")
-            return super().setitem(index, value, site_)
+            return super().setitem(index, value, site_, ctx)
 
     @dataclass(frozen=True)
     class _RhsOrder(Sugar):

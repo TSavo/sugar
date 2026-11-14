@@ -19,17 +19,17 @@ class AuthenticatedExceptionTypeValue(FloorValue):
     def to_term(self, *, owner: str):
         return self.value.to_term(owner=owner)
 
-    def setitem(self, index, value, site):
-        return self.value.setitem(index, value, site)
+    def setitem(self, index, value, site, ctx):
+        return self.value.setitem(index, value, site, ctx)
 
-    def delitem(self, index, site):
-        return self.value.delitem(index, site)
+    def delitem(self, index, site, ctx):
+        return self.value.delitem(index, site, ctx)
 
-    def setattr(self, name, value, site):
-        return self.value.setattr(name, value, site)
+    def setattr(self, name, value, site, ctx):
+        return self.value.setattr(name, value, site, ctx)
 
-    def delattr(self, name, site):
-        return self.value.delattr(name, site)
+    def delattr(self, name, site, ctx):
+        return self.value.delattr(name, site, ctx)
 
     def exception_type_identity(self) -> Term:
         return self.identity

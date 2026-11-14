@@ -558,7 +558,7 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
         (getter_only, "ObjectValue.setattr"),
         (TupleValue((TermValue(1),)), "TupleValue.setattr"),
     ):
-        direct = receiver.setattr("name", StringValue("foo"), store.site)
+        direct = receiver.setattr("name", StringValue("foo"), store.site, None)
         assert len(direct.exits) == 1 and direct.halts() == direct.exits
         (direct_halt,) = direct.halts()
         assert isinstance(direct_halt.effect, RaiseEffect)

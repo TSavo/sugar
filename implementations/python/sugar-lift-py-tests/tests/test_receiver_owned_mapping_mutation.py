@@ -79,7 +79,7 @@ def test_receiver_transition_updates_every_exact_identity_alias_only():
 def test_source_setitem_body_projects_updated_receiver_not_none_result():
     _definition, receiver = _definition_and_receiver()
 
-    outcome = receiver.setitem_with_context(
+    outcome = receiver.setitem(
         StringValue("member"),
         TermValue(7),
         "caller",
