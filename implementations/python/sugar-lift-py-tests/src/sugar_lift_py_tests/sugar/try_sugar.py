@@ -202,27 +202,25 @@ def _and_finally_with_raise_context(
 ):
     """try/finally over ExitSet, retaining body raise as implicit context.
 
-    Mirrors ``ExitSet.and_finally`` laws (restore / cleanup-halt supersede /
-    terminal cleanup supersede) without editing ExitSet. When a finally raise
-    supersedes an incoming RaiseEffect halt, attach that halt as
-    ``context_effect`` on the cleanup raise if it has none — Python's
-    implicit ``__context__`` for a raise in finally after a body exception.
+    The ``ExitSet.and_finally`` laws (restore / cleanup-halt supersede /
+    terminal cleanup supersede), composed through ``ExitSet.sequence``: the
+    ``finally`` runs beneath every completed arm (``step``) and beneath every
+    halted arm (``consume`` -- the try owns every halt that reaches its
+    ``finally``), so each outgoing arm carries the incoming arm's guard, faces
+    and ``owed`` conjoined with the cleanup arm's. A halt that a restoring
+    ``finally`` lets through owes what the body owed AND what the ``finally``
+    owed. When a finally raise supersedes an incoming RaiseEffect halt, attach
+    that halt as ``context_effect`` on the cleanup raise if it has none —
+    Python's implicit ``__context__`` for a raise in finally after a body
+    exception.
 
     For halted incoming faces, finally is reduced under
     ``bind_in_flight_effect`` so bare re-raise / context-sensitive raises in
     finally can resolve the authentic body effect when they carry a slot.
     """
-    from dataclasses import replace
-
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.in_flight_effect import bind_in_flight_effect
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        ExitSet,
-        Halted,
-        _and_guards,
-        owed_union,
-    )
+    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
@@ -237,20 +235,26 @@ def _and_finally_with_raise_context(
 
     finally_slot = f"try-finally-in-flight:{site_coordinate_cid(site)}"
 
-    exits: list = []
-    for incoming in pre_finally.exits:
-        if isinstance(incoming, Halted) and isinstance(incoming.effect, RaiseEffect):
+    def after_completion(value):
+        return _finally_beneath(
+            neutral_cleanup,
+            None,
+            lambda clean: Completed(clean.guard, value, clean.faces, clean.owed),
+        )
+
+    def after_halt(halt):
+        if isinstance(halt.effect, RaiseEffect):
             # Only a body halt that left untouched by every arm says which
             # body statement raised; a halt an arm raised (or re-raised) after
             # its own stores leaves the edges undecided.
             edge_ctx = (
-                _ground_edges(ctx, edge_keys, incoming.effect)
-                if any(incoming.effect is effect for effect in body_effects)
-                and not any(incoming.effect is effect for effect in arm_effects)
+                _ground_edges(ctx, edge_keys, halt.effect)
+                if any(halt.effect is effect for effect in body_effects)
+                and not any(halt.effect is effect for effect in arm_effects)
                 else ctx
             )
             finally_ctx = bind_in_flight_effect(
-                edge_ctx, finally_slot, incoming.effect, blame=site
+                edge_ctx, finally_slot, halt.effect, blame=site
             )
             cleanup_es = reduce_block_to_exitset(
                 finalbody if finalbody_halted is None else finalbody_halted,
@@ -258,40 +262,51 @@ def _and_finally_with_raise_context(
             )
         else:
             cleanup_es = neutral_cleanup
+        return _finally_beneath(
+            cleanup_es,
+            halt.effect,
+            lambda clean: Halted(
+                clean.guard, halt.effect, halt.state, clean.faces, clean.owed
+            ),
+        )
 
-        for clean in cleanup_es.exits:
-            guard = _and_guards(incoming.guard, clean.guard)
-            faces = incoming.faces | clean.faces
-            owed = owed_union(incoming.owed, clean.owed)
-            if isinstance(clean, Halted):
-                effect = clean.effect
-                # Supersede: cleanup halt wins; retain body raise as context.
-                if (
-                    isinstance(effect, RaiseEffect)
-                    and effect.context_effect is None
-                    and isinstance(incoming, Halted)
-                    and isinstance(incoming.effect, RaiseEffect)
-                    and effect is not incoming.effect
-                ):
-                    effect = replace(effect, context_effect=incoming.effect)
-                exits.append(Halted(guard, effect, clean.state, faces, owed))
-                continue
-            if _finally_restores(clean.value):
-                if isinstance(incoming, Completed):
-                    exits.append(Completed(guard, incoming.value, faces, owed))
-                else:
-                    exits.append(
-                        Halted(
-                            guard,
-                            incoming.effect,
-                            incoming.state,
-                            faces,
-                            owed,
-                        )
-                    )
-            else:
-                exits.append(Completed(guard, clean.value, faces, owed))
-    return ExitSet(tuple(exits)).normalize()
+    return pre_finally.sequence(after_completion, consume=after_halt)
+
+
+def _finally_beneath(cleanup_es, in_flight, restored):
+    """The ``finally``'s arms as the continuation beneath one incoming arm.
+
+    Each cleanup arm keeps its own guard, faces and ``owed``; ``sequence``
+    conjoins the incoming arm's onto them. A cleanup halt supersedes (with the
+    in-flight body raise as its implicit context), a restoring completion
+    hands back the incoming destination (``restored``), and a terminal
+    completion (return in finally) supersedes with its own value.
+    """
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+
+    arms: list = []
+    for clean in cleanup_es.exits:
+        if isinstance(clean, Halted):
+            effect = clean.effect
+            # Supersede: cleanup halt wins; retain body raise as context.
+            if (
+                isinstance(effect, RaiseEffect)
+                and effect.context_effect is None
+                and isinstance(in_flight, RaiseEffect)
+                and effect is not in_flight
+            ):
+                effect = replace(effect, context_effect=in_flight)
+                clean = replace(clean, effect=effect)
+            arms.append(clean)
+        elif _finally_restores(clean.value):
+            arms.append(restored(clean))
+        else:
+            arms.append(clean)
+    # Not normalized here: ``sequence`` conjoins the incoming guard first and
+    # normalizes the composed set once, so merged guards keep the shape the
+    # composition gives them.
+    return ExitSet(tuple(arms))
 
 
 def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
