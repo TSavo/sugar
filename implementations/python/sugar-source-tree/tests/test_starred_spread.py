@@ -6,7 +6,6 @@ import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.floor import ReturnValue
-from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
@@ -21,9 +20,10 @@ def _function(source: str):
 
 def _returned_term(expression: str):
     out = _function(f"def f(a, b, d):\n    return {expression}\n").sugar().desugar()
-    assert isinstance(out, Complete)
+    value = out.completed_value()
+    assert value is not None
     returns = [
-        entry for entry in out.value.record.statements if isinstance(entry, ReturnValue)
+        entry for entry in value.record.statements if isinstance(entry, ReturnValue)
     ]
     assert len(returns) == 1
     return returns[0].value.to_term(owner="starred-spread-test")

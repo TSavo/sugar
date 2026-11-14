@@ -406,7 +406,7 @@ def _three_deep_manager_halt(exception_name: str):
     """Route an innermost construction halt through the same three routers."""
     from sugar_lift_py_tests.effect import RaiseEffect
     from sugar_lift_py_tests.ir import ctor, str_const
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     source = (
         "def test_close_on_error():\n"
@@ -445,18 +445,18 @@ def _three_deep_manager_halt(exception_name: str):
     )
     inner = replace(
         inner,
-        manager=_FixedOutcomeSugar(Incomplete(effect)),
+        manager=_FixedOutcomeSugar(ExitSet.halted(effect)),
         enter=_FixedOutcomeSugar(
-            Complete(StringValue("inner-enter")), probe=inner_enter
+            ExitSet.completed(StringValue("inner-enter")), probe=inner_enter
         ),
-        exit=_FixedOutcomeSugar(Complete(StringValue("inner-exit")), probe=inner_exit),
+        exit=_FixedOutcomeSugar(ExitSet.completed(StringValue("inner-exit")), probe=inner_exit),
     )
     middle = replace(
         middle,
-        manager=_FixedOutcomeSugar(Complete(StringValue("bytes-io"))),
-        enter=_FixedOutcomeSugar(Complete(StringValue("buffer"))),
+        manager=_FixedOutcomeSugar(ExitSet.completed(StringValue("bytes-io"))),
+        enter=_FixedOutcomeSugar(ExitSet.completed(StringValue("buffer"))),
         exit=_FixedOutcomeSugar(
-            Complete(StringValue("bytes-io-exit")), probe=middle_exit
+            ExitSet.completed(StringValue("bytes-io-exit")), probe=middle_exit
         ),
         body=tuple(
             inner if child is original_inner else child for child in middle.body
@@ -562,7 +562,7 @@ def _three_deep_level_receipts(exception_name: str):
         AuthenticatedExceptionTypeValue,
     )
     from sugar_lift_py_tests.ir import ctor, str_const
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     source = (
         "def test_close_on_error():\n"
@@ -598,18 +598,18 @@ def _three_deep_level_receipts(exception_name: str):
     )
     inner = replace(
         inner,
-        manager=_FixedOutcomeSugar(Incomplete(effect)),
-        enter=_FixedOutcomeSugar(Complete(StringValue("inner-enter"))),
-        exit=_FixedOutcomeSugar(Complete(StringValue("inner-exit"))),
+        manager=_FixedOutcomeSugar(ExitSet.halted(effect)),
+        enter=_FixedOutcomeSugar(ExitSet.completed(StringValue("inner-enter"))),
+        exit=_FixedOutcomeSugar(ExitSet.completed(StringValue("inner-exit"))),
     )
     inner_receipt, inner_outcome = _account_level("inner", effect, inner.desugar)
     assert inner_outcome is not None, inner_receipt
 
     middle = replace(
         middle,
-        manager=_FixedOutcomeSugar(Complete(StringValue("bytes-io"))),
-        enter=_FixedOutcomeSugar(Complete(StringValue("buffer"))),
-        exit=_FixedOutcomeSugar(Complete(StringValue("bytes-io-exit"))),
+        manager=_FixedOutcomeSugar(ExitSet.completed(StringValue("bytes-io"))),
+        enter=_FixedOutcomeSugar(ExitSet.completed(StringValue("buffer"))),
+        exit=_FixedOutcomeSugar(ExitSet.completed(StringValue("bytes-io-exit"))),
         body=(_FixedOutcomeSugar(inner_outcome),),
     )
     middle_receipt, middle_outcome = _account_level("middle", effect, middle.desugar)
@@ -633,7 +633,7 @@ def _three_deep_level_receipts(exception_name: str):
     )
     outer = replace(
         outer,
-        manager=_FixedOutcomeSugar(Complete(manager_call)),
+        manager=_FixedOutcomeSugar(ExitSet.completed(manager_call)),
         body=(_FixedOutcomeSugar(middle_outcome),),
     )
     outer_receipt, outer_outcome = _account_level("outer", effect, outer.desugar)

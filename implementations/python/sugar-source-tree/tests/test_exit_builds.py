@@ -5,7 +5,6 @@ from __future__ import annotations
 import tempfile
 
 from sugar_lift_py_tests.floor import NoneValue, ReturnValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
@@ -26,16 +25,17 @@ def _statement(source: str, kind: str):
 def test_bare_return_builds_the_language_none_exit() -> None:
     outcome = _statement("def A():\n    return\n", "Return").sugar().desugar()
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, ReturnValue)
-    assert isinstance(outcome.value.value, NoneValue)
+    value = outcome.completed_value()
+    assert isinstance(value, ReturnValue)
+    assert isinstance(value.value, NoneValue)
 
 
 def test_valued_return_carries_its_built_child() -> None:
     outcome = _statement("def A():\n    return 7\n", "Return").sugar().desugar()
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.value.value == 7
+    value = outcome.completed_value()
+    assert value is not None
+    assert value.value.value == 7
 
 
 def test_implicit_falloff_builds_the_same_none_post() -> None:
@@ -47,9 +47,10 @@ def test_implicit_falloff_builds_the_same_none_post() -> None:
 def test_raise_name_points_at_the_built_value() -> None:
     outcome = _statement("def A(exc):\n    raise exc\n", "Raise").sugar().desugar()
 
-    assert isinstance(outcome, Incomplete)
-    assert outcome.effect.exception_name == "exc"
-    assert outcome.effect.raised_value.to_term(owner="test").name == "exc"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "exc"
+    assert halt.effect.raised_value.to_term(owner="test").name == "exc"
 
 
 def test_raise_constructor_carries_its_built_call_coordinate() -> None:
@@ -57,8 +58,9 @@ def test_raise_constructor_carries_its_built_call_coordinate() -> None:
         _statement("def A():\n    raise ValueError(7)\n", "Raise").sugar().desugar()
     )
 
-    assert isinstance(outcome, Incomplete)
-    raised = outcome.effect.raised_value
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    raised = halt.effect.raised_value
     assert raised.term.name == "call:ValueError"
     assert raised.term.args[0].value == 7
     assert raised.body is None
@@ -67,13 +69,14 @@ def test_raise_constructor_carries_its_built_call_coordinate() -> None:
 def test_raise_of_constructed_lambda_is_typed_incomplete() -> None:
     """Live law (replaces factory SugarNotWritten): raise lambda constructs.
 
-    The raised value is a constructed LambdaCallable under Incomplete RaiseEffect
+    The raised value is a constructed LambdaCallable under a halted RaiseEffect
     — typed halt, not a missing-sugar refuse at the Raise node.
     """
     outcome = _statement("def A():\n    raise (lambda: 1)\n", "Raise").sugar().desugar()
-    assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "RaiseEffect"
-    assert type(outcome.effect.raised_value).__name__ == "LambdaCallable"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert type(halt.effect).__name__ == "RaiseEffect"
+    assert type(halt.effect.raised_value).__name__ == "LambdaCallable"
 
 
 def test_raise_from_carries_the_built_cause() -> None:
@@ -83,5 +86,6 @@ def test_raise_from_carries_the_built_cause() -> None:
         .desugar()
     )
 
-    assert isinstance(outcome, Incomplete)
-    assert outcome.effect.cause_value.to_term(owner="raise-cause").name == "KeyError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.cause_value.to_term(owner="raise-cause").name == "KeyError"

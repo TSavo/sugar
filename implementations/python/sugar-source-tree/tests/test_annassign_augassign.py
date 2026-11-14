@@ -14,7 +14,7 @@ from sugar_lift_py_tests.effect import (
     AttributeStoreRuntimeEffect,
     SubscriptStoreRuntimeEffect,
 )
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
@@ -97,7 +97,12 @@ def _red_effects(source):
 
     outcome = sole_completed_outcome(_fn(source).sugar().desugar())
     entries = outcome.value.record.statements
-    return [entry.effect for entry in entries if isinstance(entry, Incomplete)]
+    return [
+        halt.effect
+        for entry in entries
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+    ]
 
 
 def test_attribute_aug_assign_formal_get_is_attribute_named_carrier():
@@ -224,9 +229,7 @@ def test_aug_assign_with_no_prior_binding_is_sound():
     # May be ExitSet dual faces, completed fold, or formal binary carrier —
     # never a construction panic / silent drop of the binding.
     assert type(outcome).__name__ in {
-        "Complete",
         "ExitSet",
-        "Incomplete",
         "NativeOperationExitCarrierV1",
     }
     # AugAssign sugar is present — the binding was not dropped.

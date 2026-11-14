@@ -6,7 +6,7 @@ floor value: `return True` -> out == True; a ground `assert True` states nothing
 import tempfile
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
 
@@ -19,8 +19,8 @@ def _uni(src):
         path = f.name
     function = next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
     outcome = function.sugar().desugar()
-    if isinstance(outcome, Complete):
-        return outcome.value
+    if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
+        return outcome.completed_value()
     # Deleted expectation: a formal equality was an immediate completed universe.
     return authenticated_function_value(function, operator="equals")
 

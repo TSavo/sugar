@@ -67,8 +67,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 from sugar_lift_py_tests.ir import PrimitiveSort
-from sugar_lift_py_tests.outcome import Complete
-from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
@@ -284,7 +283,7 @@ class _Record(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(BlockValue(self.entries))
+        return ExitSet.completed(BlockValue(self.entries))
 
 
 def _mixed_no_warning_sugar(tmp_path, *, entries=()):
@@ -449,17 +448,21 @@ def test_discrimination_a_matched_halt_leaves_no_outgoing_halt(tmp_path):
 
 
 def _outgoing_halts(outcome):
-    """The typed red effects the routed site still emits, in linear view.
+    """The typed red arms the routed site still emits, read off the block.
 
-    ``WithResourceSugar.desugar`` returns the collapsed linear ``Outcome``, so
-    a restored halt rides as an ``Incomplete`` entry of the block, not as an
-    ``ExitSet`` arm. Read it where it lives; re-projecting the ``Complete``
-    through ``sugar_outcome_to_exitset`` would manufacture a single completed
-    arm and hide every red the block carries.
+    ``WithResourceSugar.desugar`` completes with the routed block, so a
+    restored halt rides as an all-halting entry of the block, not as an arm of
+    the outer set. Read it where it lives: the halted arms of each block entry
+    in which every arm halts.
     """
-    from sugar_lift_py_tests.outcome import Incomplete
-
-    return [e for e in outcome.value.contribution() if isinstance(e, Incomplete)]
+    value = outcome.completed_value()
+    assert value is not None, outcome
+    return [
+        halt
+        for entry in value.contribution()
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+    ]
 
 
 # ------------------------- LAW: a routed inner block reduces inside the outer
@@ -631,7 +634,7 @@ def test_each_mixed_item_keeps_its_own_runtime_outcome(tmp_path):
 
     inner_outcome = inner.desugar()
     outer_outcome = outer.desugar()
-    assert isinstance(inner_outcome, Complete)
+    assert inner_outcome.completed_value() is not None
     assert len(outer_outcome.exits) == 1
     assert isinstance(outer_outcome.exits[0], Halted)
     assert isinstance(outer_outcome.exits[0].effect, ExpectationNotMetEffect)
@@ -649,9 +652,10 @@ def test_no_warning_expected_operand_remains_literal_none(tmp_path):
     outer, _inner = _mixed_no_warning_sugar(tmp_path)
 
     manager = outer.manager.desugar(None)
-    assert isinstance(manager, Complete)
-    assert len(manager.value.arg_values) == 1
-    assert isinstance(manager.value.arg_values[0], NoneValue)
+    manager_value = manager.completed_value()
+    assert manager_value is not None
+    assert len(manager_value.arg_values) == 1
+    assert isinstance(manager_value.arg_values[0], NoneValue)
 
 
 def test_parametrized_warning_classes_survive_native_multi_item_construction(

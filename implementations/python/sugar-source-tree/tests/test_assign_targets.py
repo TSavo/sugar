@@ -12,7 +12,7 @@ import tempfile
 import pytest
 
 from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
-from sugar_lift_py_tests.outcome import Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -103,7 +103,12 @@ def test_mixed_chain_sequences_existing_store_obligation_and_name_binding():
     entries = _completed_entries(
         "def arbitrary():\n    renamed = o.field = 5\n    return renamed\n"
     )
-    red = [entry for entry in entries if isinstance(entry, Incomplete)]
+    red = [
+        halt
+        for entry in entries
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+    ]
     assert len(red) == 1
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
 
@@ -233,7 +238,12 @@ def test_mixed_chained_targets_stay_loud():
 
 def test_attribute_store_target_lifts_a_typed_red_effect():
     entries = _completed_entries("def A():\n    o.a = 1\n    return 1\n")
-    red = [e for e in entries if isinstance(e, Incomplete)]
+    red = [
+        halt
+        for e in entries
+        if isinstance(e, ExitSet) and e.halts() == e.exits
+        for halt in e.halts()
+    ]
     assert len(red) == 1
     assert isinstance(red[0].effect, AttributeStoreRuntimeEffect)
 

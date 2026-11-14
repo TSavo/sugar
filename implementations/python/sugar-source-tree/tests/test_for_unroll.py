@@ -8,7 +8,7 @@ import tempfile
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_source_tree.tree import SourceFile
@@ -26,8 +26,8 @@ def _fn(src):
 def _invs(src):
     function = _fn(src)
     outcome = function.sugar().desugar()
-    if isinstance(outcome, Complete):
-        return outcome.value.invs()
+    if isinstance(outcome, ExitSet) and outcome.completed_value() is not None:
+        return outcome.completed_value().invs()
     # Deleted expectation: each formal loop-body equality completed before binding.
     return authenticated_function_value(function, operator="equals").invs()
 
@@ -63,7 +63,7 @@ def test_symbolic_carried_accumulator_is_loop_post_binding():
     """Live law (replaces py.fold.Add on linear .value.post): ExitSet + post_binding.
 
     Symbolic carried total is recurrence / loop.post_binding, not a factory
-    fold coordinate on an unconditional Complete universe.
+    fold coordinate on an unconditional completed universe.
     """
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, Completed
 

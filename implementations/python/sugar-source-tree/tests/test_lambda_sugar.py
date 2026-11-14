@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.lambda_sugar import LambdaSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_source_tree.nodes import Lambda
@@ -38,7 +37,7 @@ def test_unsubstituted_lambda_constructs_by_substituting_first(tmp_path) -> None
     assert sugar.formals == ("x", "y")
     assert len(sugar.formal_coordinate_cids) == 2
     assert sugar.source_call_frame is not None
-    assert isinstance(sugar.desugar(None), Complete)
+    assert sugar.desugar(None).completed_value() is not None
 
 
 def test_lambda_default_formal_folds_into_the_owner(tmp_path) -> None:

@@ -33,7 +33,7 @@ from sugar_lift_py_tests.context_manager_resolution import (
 )
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.ir import PrimitiveSort
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
 from sugar_source_tree.tree import SourceFile
@@ -55,11 +55,11 @@ def _coord_of_with_manager(sf: SourceFile) -> SourceFragmentCoordinateV1:
 class _Protocol:
     def enter_resource_outcome(self, ctx=None):
         del ctx
-        return Complete(SimpleNamespace(enter_value=TermValue(1)))
+        return ExitSet.completed(SimpleNamespace(enter_value=TermValue(1)))
 
     def exit_outcome_for(self, entered, ctx=None):
         del entered, ctx
-        return Complete(TermValue(False))
+        return ExitSet.completed(TermValue(False))
 
 
 def test_absent_contract_panics_named_with_door():

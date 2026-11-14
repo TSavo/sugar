@@ -7,7 +7,7 @@ import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.floor import CallSiteValue, NoneValue, TermValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_source_tree.panic import SugarNotWritten
@@ -25,9 +25,10 @@ def _raise(source: str):
 
 def _effect(source: str):
     outcome = _raise(source).sugar().desugar()
-    assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect).__name__ == "RaiseEffect"
-    return outcome.effect
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert type(halt.effect).__name__ == "RaiseEffect"
+    return halt.effect
 
 
 def test_raise_from_constructs_exception_and_cause_on_the_halt_effect() -> None:
@@ -76,7 +77,7 @@ class _RecordingSugar(Sugar):
     def desugar(self, ctx=None):
         del ctx
         self.events.append(self.label)
-        return Complete(TermValue(self.value))
+        return ExitSet.completed(TermValue(self.value))
 
 
 def test_exception_then_cause_each_desugar_exactly_once() -> None:
@@ -91,7 +92,8 @@ def test_exception_then_cause_each_desugar_exactly_once() -> None:
 
     outcome = sugar.desugar()
 
-    assert isinstance(outcome, Incomplete)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
     assert events == ["exception", "cause"]
-    assert outcome.effect.raised_value == TermValue(1)
-    assert outcome.effect.cause_value == TermValue(2)
+    assert halt.effect.raised_value == TermValue(1)
+    assert halt.effect.cause_value == TermValue(2)

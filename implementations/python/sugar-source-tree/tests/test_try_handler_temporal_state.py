@@ -58,13 +58,20 @@ def _out(src: str):
 
 
 def _incompletes(src: str):
-    """The Incomplete effects the whole function carries, outer or recorded."""
-    from sugar_lift_py_tests.outcome import Incomplete
+    """The halted arms the whole function carries, outer or recorded."""
+    from sugar_lift_py_tests.outcome import ExitSet
 
     out = _out(src)
-    if isinstance(out, Incomplete):
-        return [out]
-    return [e for e in out.value.record.contribution() if isinstance(e, Incomplete)]
+    if out.exits and out.halts() == out.exits:
+        return list(out.halts())
+    value = out.completed_value()
+    assert value is not None, out
+    return [
+        halt
+        for entry in value.record.contribution()
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
+    ]
 
 
 def _post(src: str):
@@ -336,12 +343,11 @@ def test_unmatched_halt_preserves_its_exact_state_and_occurrence():
     """A base-class raise does not match a leaf arm.  The edge is not routed,
     not absorbed, and not reconstructed -- the same RootFault occurrence leaves
     the try, and the leaf arm receives no edge at all."""
-    from sugar_lift_py_tests.outcome import Incomplete
-
     out = _out(UNMATCHED)
-    assert isinstance(out, Incomplete)
-    assert type(out.effect).__name__ == "RaiseEffect"
-    assert out.effect.exception_name == "RootFault"
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert type(halt.effect).__name__ == "RaiseEffect"
+    assert halt.effect.exception_name == "RootFault"
 
     with _observed() as log:
         _fn(UNMATCHED).sugar()
@@ -354,7 +360,10 @@ def test_unmatched_halt_preserves_its_exact_state_and_occurrence():
     }
     try:
         absorbed = _out(UNMATCHED)
-        assert not isinstance(absorbed, Incomplete) or absorbed.effect is not out.effect
+        assert absorbed.halts() != absorbed.exits or all(
+            absorbed_halt.effect is not halt.effect
+            for absorbed_halt in absorbed.halts()
+        )
     finally:
         Try._route_halt_edges = original
 

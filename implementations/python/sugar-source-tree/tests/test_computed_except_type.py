@@ -16,18 +16,20 @@ from test_try_sugar import _fn
 
 def _raised(src: str) -> list:
     """Exception names on the faces that leave ``A`` raising."""
-    from sugar_lift_py_tests.outcome import Incomplete
-    from sugar_lift_py_tests.outcome.exit_set import Halted, outcome_to_exitset
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 
     names = []
-    for face in outcome_to_exitset(_fn(src).sugar().desugar()).exits:
+    for face in _fn(src).sugar().desugar().exits:
         if isinstance(face, Halted):
             names.append(face.effect.exception_name)
             continue
         record = getattr(face.value, "record", None)
         for entry in getattr(record, "statements", ()) or ():
-            if isinstance(entry, Incomplete):
-                names.append(getattr(entry.effect, "exception_name", None))
+            if isinstance(entry, ExitSet) and entry.halts() == entry.exits:
+                names.extend(
+                    getattr(halt.effect, "exception_name", None)
+                    for halt in entry.halts()
+                )
     return names
 
 

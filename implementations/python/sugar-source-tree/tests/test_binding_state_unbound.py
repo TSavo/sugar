@@ -7,7 +7,7 @@ import pytest
 from sugar_lift_py_tests.effect import NameErrorEffect, RaiseEffect
 from sugar_lift_py_tests.floor import ReturnValue, TermValue, UniverseValue
 from sugar_lift_py_tests.ir import and_, make_var, not_, or_, py_truthy
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_source_tree.binding_state import (
     BranchResultSlot,
@@ -57,8 +57,9 @@ def _assert_unpack_arity_obligation(out, *, arity: int, names: tuple[str, ...]):
     matched (which would be the one forbidden move). CPython binds nothing when
     `UNPACK_SEQUENCE` raises, so this asserts nothing bound too.
     """
-    assert isinstance(out, Incomplete), type(out).__name__
-    return _assert_unpack_effect(out.effect, arity=arity, names=names)
+    assert out.halts() == out.exits, out
+    (halt,) = out.halts()
+    return _assert_unpack_effect(halt.effect, arity=arity, names=names)
 
 
 def _return(exit_):
@@ -93,21 +94,24 @@ def test_delete_one_branch_then_read_has_exact_guard_partition() -> None:
 
 def test_delete_both_branches_then_read_is_unconditionally_unbound() -> None:
     out = _out("def f(c):\n x=1\n if c:\n  del x\n else:\n  del x\n return x\n")
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, NameErrorEffect)
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, NameErrorEffect)
 
 
 def test_neither_branch_deletes_keeps_ordinary_value_phi() -> None:
     out = _out("def f(c):\n x=1\n if c:\n  x=2\n else:\n  x=3\n return x\n")
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, UniverseValue)
-    assert not any(isinstance(e, NameErrorEffect) for e in out.value.record.statements)
+    value = out.completed_value()
+    assert value is not None
+    assert isinstance(value, UniverseValue)
+    assert not any(isinstance(e, NameErrorEffect) for e in value.record.statements)
 
 
 def test_unconditional_reassignment_replaces_tombstone_but_read_rhs_does_not() -> None:
     out = _out("def f(c):\n x=1\n if c:\n  del x\n x=2\n return x\n")
-    assert isinstance(out, Complete)
-    returns = [e for e in out.value.record.statements if isinstance(e, ReturnValue)]
+    value = out.completed_value()
+    assert value is not None
+    returns = [e for e in value.record.statements if isinstance(e, ReturnValue)]
     assert returns[0].value == TermValue(2)
 
     bad = _out("def f(c):\n x=1\n if c:\n  del x\n x=x+1\n return x\n")
@@ -127,11 +131,13 @@ def test_delete_after_halt_does_not_create_a_reachable_name_error() -> None:
 
 def test_delete_already_unbound_and_second_delete_are_loud() -> None:
     out = _out("def f():\n del x\n")
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, NameErrorEffect)
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, NameErrorEffect)
     twice = _out("def f():\n x=1\n del x\n del x\n")
-    assert isinstance(twice, Incomplete)
-    assert isinstance(twice.effect, NameErrorEffect)
+    assert twice.halts() == twice.exits
+    (twice_halt,) = twice.halts()
+    assert isinstance(twice_halt.effect, NameErrorEffect)
 
 
 def test_nested_conditional_delete_retains_both_source_guards() -> None:
@@ -229,16 +235,18 @@ def test_pandas_converter_if_augassign_reads_unbound_binding_as_a_node() -> None
 
 def test_augassign_over_explicitly_unbound_local_builds_guarded_read() -> None:
     out = _out("def f():\n x += 1\n return x\n")
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, NameErrorEffect)
-    assert out.effect.name == "x"
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, NameErrorEffect)
+    assert halt.effect.name == "x"
 
 
 def test_bound_augassign_control_remains_completed_value() -> None:
     out = _out("def f():\n x = 1\n x += 2\n return x\n")
-    assert isinstance(out, Complete)
+    value = out.completed_value()
+    assert value is not None
     returns = [
-        entry for entry in out.value.record.statements if isinstance(entry, ReturnValue)
+        entry for entry in value.record.statements if isinstance(entry, ReturnValue)
     ]
     assert returns[0].value == TermValue(3)
 
@@ -267,10 +275,11 @@ def test_try_handler_binding_exports_on_the_handler_completion_edge() -> None:
         " except ValueError as first:\n  a=first\n"
         " return a\n"
     )
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, UniverseValue)
+    value = out.completed_value()
+    assert value is not None
+    assert isinstance(value, UniverseValue)
     assert not any(
-        isinstance(entry, NameErrorEffect) for entry in out.value.record.statements
+        isinstance(entry, NameErrorEffect) for entry in value.record.statements
     )
 
 
@@ -281,18 +290,20 @@ def test_try_exception_alias_is_tombstoned_after_handler() -> None:
         " except ValueError as first:\n  pass\n"
         " return first\n"
     )
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, NameErrorEffect)
-    assert out.effect.name == "first"
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, NameErrorEffect)
+    assert halt.effect.name == "first"
 
 
 def test_try_uncaught_raise_remains_a_halted_face() -> None:
     out = _out(
         "def f():\n" " try:\n  raise TypeError\n" " except ValueError:\n  pass\n"
     )
-    assert isinstance(out, Incomplete)
-    assert isinstance(out.effect, RaiseEffect)
-    assert out.effect.exception_name == "TypeError"
+    assert out.halts() == out.exits
+    (halt,) = out.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_try_finally_rebinding_applies_to_normal_and_handler_completions() -> None:
@@ -303,8 +314,9 @@ def test_try_finally_rebinding_applies_to_normal_and_handler_completions() -> No
         " finally:\n  x=9\n"
         " return x\n"
     )
-    assert isinstance(out, Complete)
-    returns = [e for e in out.value.record.statements if isinstance(e, ReturnValue)]
+    value = out.completed_value()
+    assert value is not None
+    returns = [e for e in value.record.statements if isinstance(e, ReturnValue)]
     assert returns[0].value == TermValue(9)
 
 
@@ -315,5 +327,4 @@ def test_try_conditional_raise_routes_to_handler_and_joins_bindings() -> None:
         " except ValueError:\n  x=2\n"
         " return x\n"
     )
-    assert isinstance(out, Complete)
-    assert isinstance(out.value, UniverseValue)
+    assert isinstance(out.completed_value(), UniverseValue)

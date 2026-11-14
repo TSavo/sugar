@@ -74,7 +74,6 @@ from sugar_lift_py_tests.context_manager_resolution import (
 from sugar_lift_py_tests.effect import ExpectationNotMetEffect, RaiseEffect
 from sugar_lift_py_tests.floor.call_site_value import ExitSuppressionContract
 from sugar_lift_py_tests.ir import PrimitiveSort, and_, atomic, make_var, str_const
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
@@ -442,9 +441,9 @@ def test_both_contracts_route_through_generic_exitset_machinery(tmp_path):
 def test_discrimination_the_reconstructed_resource_route_matches_production(tmp_path):
     """The ``and_exit`` call above is not a test-local shortcut.
 
-    ``WithResourceSugar.desugar`` projects its routed ExitSet back to the linear
-    ``Complete(BlockValue)`` view. Its halted entries must carry exactly the
-    effect and guard the reconstructed route produced.
+    ``WithResourceSugar.desugar`` completes with the routed block. Its halted
+    entries must carry exactly the effect and guard the reconstructed route
+    produced.
     """
     resource, _ = _both_arms(tmp_path)
     body_es = _body_exitset(resource.body)
@@ -452,13 +451,18 @@ def test_discrimination_the_reconstructed_resource_route_matches_production(tmp_
     expected = _sole(routed, Halted)
 
     produced = resource.desugar()
+    block = produced.completed_value()
+    assert block is not None, produced
     incompletes = [
-        entry for entry in produced.value.statements if isinstance(entry, Incomplete)
+        halt
+        for entry in block.statements
+        if isinstance(entry, ExitSet) and entry.halts() == entry.exits
+        for halt in entry.halts()
     ]
     assert len(incompletes) == 1
     assert incompletes[0].effect == expected.effect
     assert incompletes[0].effect.occurrence == expected.effect.occurrence
-    assert incompletes[0].branch_conditions == (expected.guard,)
+    assert incompletes[0].guard == expected.guard
 
 
 # ---------------------------------------------------------------------------
