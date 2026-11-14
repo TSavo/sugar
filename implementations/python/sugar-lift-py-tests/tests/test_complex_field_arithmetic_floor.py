@@ -28,7 +28,6 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.floor.complex_arithmetic import complex_field_coordinate
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
@@ -36,9 +35,9 @@ SITE = "complex-site"
 
 
 def _folded(outcome) -> complex:
-    assert isinstance(outcome, Complete)
-    assert type(outcome.value) is ComplexValue
-    return complex(outcome.value.real, outcome.value.imag)
+    assert outcome.completed_value() is not None
+    assert type(outcome.completed_value()) is ComplexValue
+    return complex(outcome.completed_value().real, outcome.completed_value().imag)
 
 
 # -- positive arm: the mixed-operand pairs the census actually found ----------
@@ -100,7 +99,9 @@ def test_multiplication_mirrors_python(left, right, expected) -> None:
 
 def test_i_squared_is_exactly_negative_one() -> None:
     """The identity that makes the field a field, asserted exactly."""
-    product = ComplexValue(0.0, 1.0).multiply(ComplexValue(0.0, 1.0), SITE).value
+    product = (
+        ComplexValue(0.0, 1.0).multiply(ComplexValue(0.0, 1.0), SITE).completed_value()
+    )
 
     assert product.real == -1.0
     assert product.imag == 0.0
@@ -113,17 +114,17 @@ def test_two_integers_still_fold_on_the_number_floor() -> None:
     """No operand was silently widened: int + int is still an int TermValue."""
     outcome = TermValue(3).add(TermValue(4), SITE)
 
-    assert isinstance(outcome, Complete)
-    assert type(outcome.value) is TermValue
-    assert outcome.value.value == 7
-    assert type(outcome.value.value) is int
+    assert outcome.completed_value() is not None
+    assert type(outcome.completed_value()) is TermValue
+    assert outcome.completed_value().value == 7
+    assert type(outcome.completed_value().value) is int
 
 
 def test_two_floats_still_fold_on_the_number_floor() -> None:
     outcome = TermValue(1.5).add(TermValue(2.5), SITE)
 
-    assert type(outcome.value) is TermValue
-    assert outcome.value.value == 4.0
+    assert type(outcome.completed_value()) is TermValue
+    assert outcome.completed_value().value == 4.0
 
 
 class _FragmentSite:
@@ -147,12 +148,11 @@ class _FragmentSite:
 def test_a_non_member_operand_is_authenticated_type_error(off_field) -> None:
     """Decided non-field peers are a TypeError halt, never a complex coordinate."""
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
     outcome = ComplexValue(0.0, 1.0).add(off_field, _FragmentSite())
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_an_integer_too_large_for_the_float_field_stays_loud() -> None:
@@ -201,8 +201,8 @@ def test_a_finite_result_at_the_edge_of_the_field_still_folds() -> None:
     """
     outcome = ComplexValue(1e308, 0.0).add(ComplexValue(1.0, 0.0), SITE)
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.real == 1e308 + 1.0
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().real == 1e308 + 1.0
 
 
 def test_no_folded_result_ever_projects_a_non_numeric_real() -> None:
@@ -210,7 +210,7 @@ def test_no_folded_result_ever_projects_a_non_numeric_real() -> None:
     from sugar_lift_py_tests.ir import _ConstReal
 
     outcome = ComplexValue(1e200, 0.0).multiply(ComplexValue(1e-200, 0.0), SITE)
-    term = outcome.value.to_term(owner=SITE)
+    term = outcome.completed_value().to_term(owner=SITE)
 
     for arg in term.args:
         assert isinstance(arg, _ConstReal)

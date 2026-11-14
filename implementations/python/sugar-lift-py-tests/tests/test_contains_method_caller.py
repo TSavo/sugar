@@ -45,7 +45,7 @@ from sugar_lift_py_tests.floor import (
     ObjectValue,
     TermValue,
 )
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -167,9 +167,11 @@ def _only_halted(outcome: object, *, require_pre_effect_state: bool = True) -> H
 
 
 def _assert_completed_call(outcome) -> CallSiteValue:
-    assert isinstance(outcome, Complete), outcome
-    assert isinstance(outcome.value, CallSiteValue), outcome.value
-    return outcome.value
+    assert outcome.completed_value() is not None, outcome
+    assert isinstance(
+        outcome.completed_value(), CallSiteValue
+    ), outcome.completed_value()
+    return outcome.completed_value()
 
 
 def _container_item_cids(pending: NativeOperationExitCarrierV1):
@@ -236,8 +238,6 @@ def _unwrap_return(value):
 
 def _membership_bool(outcome) -> bool:
     """Project a completed membership result to a Python bool."""
-    if isinstance(outcome, Complete):
-        return _unwrap_return(outcome.value)
     completed = _only_completed(outcome)
     return _unwrap_return(completed.value)
 
@@ -375,14 +375,12 @@ def test_non_container_method_call_binds_and_floor_refuses_contains() -> None:
     site = _method_callsite(METHOD_BODY + "\nChecker().has(None, 1)\n")
     _assert_bound_self_first(site)
     assert site.arg_values[2] == TermValue(1)
-    from sugar_lift_py_tests.outcome import Incomplete
-
     _, method, _pending = _method_definition()
     floor_site = method.body[0].fragment
     direct = NoneValue().contains(TermValue(1), floor_site)
-    # A raise is a halt: Incomplete(effect), never a completion.
-    assert isinstance(direct, Incomplete)
-    assert direct.effect.exception_name == "TypeError"
+    # A raise is a halt: one halted arm, never a completion.
+    assert len(direct.exits) == 1 and direct.halts() == direct.exits
+    assert direct.halts()[0].effect.exception_name == "TypeError"
 
     # When producer_outcome yields a sole Halted, require pre-effect state
     # (honest red behind #6659 until codex-1 lossless reduce_body).
@@ -393,7 +391,7 @@ def test_non_container_method_call_binds_and_floor_refuses_contains() -> None:
             assert halted.effect.exception_type_coordinate == _identity("TypeError")
             assert halted.state is not None, (
                 "bound-method producer_outcome TypeError halt lacks pre-effect "
-                "state — sole Halted still collapses through Incomplete (#6659)"
+                "state — sole Halted still drops its state (#6659)"
             )
 
 

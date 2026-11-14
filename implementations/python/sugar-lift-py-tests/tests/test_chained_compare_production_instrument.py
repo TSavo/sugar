@@ -9,7 +9,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 )
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.ir import and_, atomic, make_var, not_
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
@@ -67,8 +67,8 @@ def test_successful_chain_selects_the_true_body() -> None:
         .sugar()
         .desugar(None)
     )
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), TrueBoolLiteralSugar)
 
 
 def test_false_first_leg_selects_false_body_and_emits_no_second_occurrence() -> None:
@@ -80,10 +80,10 @@ def test_false_first_leg_selects_false_body_and_emits_no_second_occurrence() -> 
         .desugar(None)
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, FalseBoolLiteralSugar)
-    assert _occurrence(outcome.value.site) == _occurrence(first_site)
-    assert _occurrence(outcome.value.site) != _occurrence(second_site)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), FalseBoolLiteralSugar)
+    assert _occurrence(outcome.completed_value().site) == _occurrence(first_site)
+    assert _occurrence(outcome.completed_value().site) != _occurrence(second_site)
     assert _occurrence(first_site) != _occurrence(second_site)
 
 
@@ -181,4 +181,4 @@ def test_identity_first_leg_is_not_a_native_operation_carrier() -> None:
     outcome = compare.sugar().values[0].desugar(None)
 
     assert not isinstance(outcome, NativeOperationExitCarrierV1)
-    assert isinstance(outcome, (Complete, ExitSet))
+    assert isinstance(outcome, ExitSet)

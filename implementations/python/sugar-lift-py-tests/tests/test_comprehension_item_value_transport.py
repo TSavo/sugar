@@ -11,13 +11,11 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.object_field import ObjectField
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_source_tree.nodes import ListComp, TargetPatternConstructionGapV1
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.effect import RaiseEffect
 
 
@@ -55,12 +53,12 @@ def test_swapped_finite_members_preserve_each_object_identity() -> None:
     forward = comprehension.desugar(_context_with_items(ListValue((first, second))))
     swapped = comprehension.desugar(_context_with_items(ListValue((second, first))))
 
-    assert isinstance(forward, Complete)
-    assert isinstance(swapped, Complete)
-    assert forward.value.finite_elements == (first, second)
-    assert swapped.value.finite_elements == (second, first)
-    assert swapped.value.finite_elements[0] is second
-    assert swapped.value.finite_elements[1] is first
+    assert forward.completed_value() is not None
+    assert swapped.completed_value() is not None
+    assert forward.completed_value().finite_elements == (first, second)
+    assert swapped.completed_value().finite_elements == (second, first)
+    assert swapped.completed_value().finite_elements[0] is second
+    assert swapped.completed_value().finite_elements[1] is first
 
 
 def test_filtered_out_member_never_reaches_element_binding() -> None:
@@ -80,10 +78,10 @@ def test_filtered_out_member_never_reaches_element_binding() -> None:
 
     outcome = comprehension.desugar(_context_with_items(ListValue((first, second))))
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.finite_elements == (second,)
-    assert outcome.value.finite_elements[0] is second
-    assert all(value is not first for value in outcome.value.finite_elements)
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().finite_elements == (second,)
+    assert outcome.completed_value().finite_elements[0] is second
+    assert all(value is not first for value in outcome.completed_value().finite_elements)
 
 
 def test_halted_constructor_arm_is_absent_from_finite_items() -> None:
@@ -98,8 +96,8 @@ def test_halted_constructor_arm_is_absent_from_finite_items() -> None:
 
     outcome = comprehension.desugar(_context_with_items(ListValue((first, second))))
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    assert isinstance(outcome.halts()[0].effect, RaiseEffect)
 
 
 def test_tuple_target_coordinate_swap_is_refused_by_source_owner() -> None:

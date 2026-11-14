@@ -15,7 +15,7 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
     ExpectationNotMetEffect,
 )
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -224,5 +224,5 @@ def test_identity_law_never_acquires_a_native_operation_carrier() -> None:
         .sugar()
         .desugar(None)
     )
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     assert not isinstance(outcome, NativeOperationExitCarrierV1)

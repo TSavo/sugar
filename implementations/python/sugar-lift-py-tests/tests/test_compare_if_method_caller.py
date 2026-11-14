@@ -48,7 +48,7 @@ from sugar_lift_py_tests.floor import (
     ReturnValue,
     TermValue,
 )
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
@@ -164,9 +164,11 @@ def _only_halted(outcome: object, *, require_pre_effect_state: bool = True) -> H
 
 
 def _assert_completed_call(outcome) -> CallSiteValue:
-    assert isinstance(outcome, Complete), outcome
-    assert isinstance(outcome.value, CallSiteValue), outcome.value
-    return outcome.value
+    assert outcome.completed_value() is not None, outcome
+    assert isinstance(
+        outcome.completed_value(), CallSiteValue
+    ), outcome.completed_value()
+    return outcome.completed_value()
 
 
 def _returned_term(completed: Completed) -> TermValue:
@@ -273,18 +275,9 @@ def test_bound_self_does_not_shift_left_right_coordinates() -> None:
     assert site.arg_values[1] == TermValue(1)
     assert site.arg_values[2] == TermValue(2)
     outcome = site.producer_outcome(None)
-    # Free-function path yields ExitSet(Completed); method may Complete(callsite).
-    if isinstance(outcome, Complete):
-        completed = Completed(
-            __import__(
-                "sugar_lift_py_tests.outcome.exit_set", fromlist=["true_guard"]
-            ).true_guard(),
-            outcome.value,
-        )
-        # Prefer reading via dig of callsite body completion.
-        assert _returned_term(completed).value == 1
-    else:
-        assert _returned_term(_only_completed(outcome)).value == 1
+    # Free-function and method paths both yield one completed arm (a method's
+    # holds the callsite); read it via dig of the callsite body completion.
+    assert _returned_term(_only_completed(outcome)).value == 1
 
 
 def test_discrimination_self_is_not_a_less_than_operand() -> None:
@@ -310,12 +303,7 @@ def test_positional_keyword_and_default_calls_select_correct_branch() -> None:
         assert site.arg_values[1] == TermValue(1)
         assert site.arg_values[2] == TermValue(2)
         outcome = site.producer_outcome(None)
-        if isinstance(outcome, Complete):
-            from sugar_lift_py_tests.outcome.exit_set import true_guard
-
-            assert _returned_term(Completed(true_guard(), outcome.value)).value == 1
-        else:
-            assert _returned_term(_only_completed(outcome)).value == 1
+        assert _returned_term(_only_completed(outcome)).value == 1
 
 
 def test_discrimination_branch_selection_twin_fails() -> None:
@@ -324,10 +312,6 @@ def test_discrimination_branch_selection_twin_fails() -> None:
     else_out = _method_call_outcome(METHOD_BODY + "\nChooser().choose(2, 1)\n")
 
     def _branch_value(outcome):
-        if isinstance(outcome, Complete):
-            from sugar_lift_py_tests.outcome.exit_set import true_guard
-
-            return _returned_term(Completed(true_guard(), outcome.value)).value
         return _returned_term(_only_completed(outcome)).value
 
     assert _branch_value(then_out) == 1
@@ -379,7 +363,7 @@ def test_incompatible_ordering_method_call_halts_with_named_typeerror() -> None:
     # None may floor as NoneValue / TermValue-like; right is 2.
     assert site.arg_values[2] == TermValue(2)
     outcome = site.producer_outcome(None)
-    # Prefer ExitSet halt; Complete would be a silent wrong completion.
+    # Prefer the halted arm; a completion would be a silent wrong completion.
     assert isinstance(outcome, ExitSet), outcome
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
@@ -388,13 +372,13 @@ def test_incompatible_ordering_method_call_halts_with_named_typeerror() -> None:
     # Honest instrument for codex-1: state must be non-None after lossless fix.
     assert halted.state is not None, (
         "bound-method producer_outcome TypeError halt lacks pre-effect state "
-        "— sole Halted still collapses through Incomplete (codex-1)"
+        "— sole Halted still drops its state (codex-1)"
     )
 
 
 def test_discrimination_compatible_ordering_is_not_typeerror() -> None:
     outcome = _method_call_outcome(METHOD_BODY + "\nChooser().choose(1, 2)\n")
-    if isinstance(outcome, Complete):
+    if outcome.completed_value() is not None:
         _assert_completed_call(outcome)
     else:
         assert isinstance(_only_completed(outcome), Completed)
@@ -441,9 +425,4 @@ def test_discrimination_truthful_binding_selects_then_branch() -> None:
     _assert_bound_self_first(site)
     assert site.arg_values[1:] == (TermValue(1), TermValue(2))
     outcome = site.producer_outcome(None)
-    if isinstance(outcome, Complete):
-        from sugar_lift_py_tests.outcome.exit_set import true_guard
-
-        assert _returned_term(Completed(true_guard(), outcome.value)).value == 1
-    else:
-        assert _returned_term(_only_completed(outcome)).value == 1
+    assert _returned_term(_only_completed(outcome)).value == 1

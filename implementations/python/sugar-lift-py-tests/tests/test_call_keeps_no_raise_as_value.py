@@ -1,12 +1,12 @@
 """Plan row 7 (step 6), part of #7799: a call keeps no raise as its value.
 
 ``CallSiteValue.project_producer_outcome`` projects a callee body's outcome
-onto the Call node.  Its ``Complete`` arm asked only "is it one ``Complete``"
+onto the Call node.  Its completed arm asked only "is it one completed value"
 and seated the value as the call's retained completion.  A raise carried as
-data (``Complete(RaiseValue)``, removed by #7821), became a completed ``CallSiteValue``: the
+data (a completed ``RaiseValue``, removed by #7821), became a completed ``CallSiteValue``: the
 statement after the call ran, and the raise was gone.
 
-The arm now goes through ``Complete.and_then``, the rule every expression
+The arm now goes through ``and_then``, the rule every expression
 step already uses: an ordinary value is seated, a carried raise is handed
 back unchanged, and the enclosing statement turns it into its halt the way
 it does for ``1 // 0`` (``follow`` stops the block, ``promote_raise_halts``
@@ -68,12 +68,13 @@ def _function(source: str, name: str = "test_f"):
 
 def _faces(outcome) -> tuple[int, tuple[str, ...]]:
     """(completed faces, the effect of each halted face) of an outcome."""
-    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
-    if isinstance(outcome, Complete):
-        assert outcome.follow().continues, outcome
-        return 1, ()
     assert isinstance(outcome, ExitSet), outcome
+    value = outcome.completed_value()
+    if value is not None:
+        assert value.follow_rest().continues, outcome
+        return 1, ()
     return (
         sum(isinstance(face, Completed) for face in outcome.exits),
         tuple(repr(face.effect) for face in outcome.exits if isinstance(face, Halted)),
@@ -156,28 +157,28 @@ def callsite(monkeypatch):
 def test_the_projection_seats_an_ordinary_value(callsite) -> None:
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
 
-    projected = callsite.project_producer_outcome(Complete(TermValue(1)))
+    projected = callsite.project_producer_outcome(ExitSet.completed(TermValue(1)))
 
-    assert isinstance(projected, Complete)
-    assert isinstance(projected.value, CallSiteValue)
-    assert projected.value.retained_source_completion_outcome() == Complete(
-        TermValue(1)
+    assert projected.completed_value() is not None
+    assert isinstance(projected.completed_value(), CallSiteValue)
+    assert projected.completed_value().retained_source_completion_outcome() == (
+        ExitSet.completed(TermValue(1))
     )
 
 
 def test_the_projection_makes_a_callee_raise_the_calls_halt(callsite) -> None:
-    """Since #7821 the ground exit is a halt, not ``Complete(RaiseValue)``.
+    """Since #7821 the ground exit is a halt, not a completed ``RaiseValue``.
     It takes the projection's halt arm, as every other callee raise does:
     one halted face, owned by the Call, and no completion."""
     from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
-    from sugar_lift_py_tests.outcome import ExitSet, Halted, Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet, Halted
 
     raised = ground_exceptional_exit(
         exception_name="ZeroDivisionError", site=callsite.site, owner="BinOp"
     )
-    assert isinstance(raised, Incomplete)
+    assert len(raised.exits) == 1 and raised.halts() == raised.exits
 
     projected = callsite.project_producer_outcome(raised)
 

@@ -18,7 +18,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import true_guard
 from sugar_lift_py_tests.sugar.comprehension_sugar import (
     ComprehensionGeneratorSugar,
@@ -46,7 +46,7 @@ class _ConstructedOutcomeSugar(ConstructedTermSugar):
 
     def to_term(self, *, owner: str):
         del owner
-        return self.outcome.value.to_term(owner="test fixture")
+        return self.outcome.completed_value().to_term(owner="test fixture")
 
 
 def _comprehension(element_outcome):
@@ -57,7 +57,7 @@ def _comprehension(element_outcome):
                 target=ComprehensionTargetSugar(source_name="x"),
                 binding_coordinate_cid="element-cid",
                 iterable=_ConstructedOutcomeSugar(
-                    Complete(SymbolicValue(make_var("outer_xs"))),
+                    ExitSet.completed(SymbolicValue(make_var("outer_xs"))),
                     site="synthetic-comprehension-iterable",
                 ),
                 filters=(),
@@ -89,10 +89,12 @@ def _source_outcome(source: str):
 
 
 def test_completed_element_builds_fold_without_exporting_target_binding():
-    result = _comprehension(Complete(SymbolicValue(make_var("outer_x")))).desugar()
+    result = _comprehension(
+        ExitSet.completed(SymbolicValue(make_var("outer_x")))
+    ).desugar()
 
-    assert isinstance(result, Complete)
-    term = result.value.to_term(owner="test")
+    assert result.completed_value() is not None
+    term = result.completed_value().to_term(owner="test")
     assert term.name == "py.listcomp"
     assert term.args[0] == make_var("outer_xs")
     assert term.args[1].body == make_var("outer_x")
@@ -125,8 +127,8 @@ def test_real_source_comprehension_keeps_the_enclosing_x_binding():
         "    return x\n"
     )
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.post().args[1] == make_var("outer")
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().post().args[1] == make_var("outer")
 
 
 def test_real_source_element_halt_keeps_exact_pre_comprehension_state():
@@ -148,9 +150,9 @@ def test_real_source_element_halt_keeps_exact_pre_comprehension_state():
         and node.func.attr == "run"
     )
     constructed = call.sugar().desugar(None)
-    assert isinstance(constructed, Complete)
-    assert isinstance(constructed.value, CallSiteValue)
-    outcome = constructed.value.producer_outcome(None)
+    assert constructed.completed_value() is not None
+    assert isinstance(constructed.completed_value(), CallSiteValue)
+    outcome = constructed.completed_value().producer_outcome(None)
 
     assert isinstance(outcome, ExitSet), repr(outcome)
     assert len(outcome.exits) == 1
@@ -191,8 +193,8 @@ def test_comprehension_target_coordinate_cannot_escape_into_enclosing_x():
         statements=(*function.statements[:-1], mutated_return),
     ).desugar()
 
-    assert isinstance(outcome, Complete)
-    post = outcome.value.post().args[1]
+    assert outcome.completed_value() is not None
+    post = outcome.completed_value().post().args[1]
     outer, mutated_fold = post.args
     assert outer == make_var("outer")
     assert mutated_fold.args[1].param_name == "outer"
@@ -219,8 +221,8 @@ def test_finite_comprehensions_transport_exact_constructed_objects_in_order():
     )[-1]
     outcome = call.sugar().desugar(None)
 
-    assert isinstance(outcome, Complete)
-    returned = outcome.value.project_operation_receiver(
+    assert outcome.completed_value() is not None
+    returned = outcome.completed_value().project_operation_receiver(
         None, owner="finite-comprehension-transport-test"
     )
     assert isinstance(returned, DictValue)

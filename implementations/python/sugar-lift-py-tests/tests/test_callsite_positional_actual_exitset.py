@@ -16,7 +16,7 @@ from sugar_lift_py_tests.floor import (
     TermValue,
 )
 from sugar_lift_py_tests.ir import atomic, ctor
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -198,8 +198,8 @@ def test_bodyless_operation_actual_projection_is_identity() -> None:
     outcome = callsite.project_operation_receiver_outcome(
         None, owner="CallSiteSugar positional actual"
     )
-    assert isinstance(outcome, Complete)
-    assert outcome.value is callsite
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value() is callsite
 
 
 def test_ordinary_floor_operation_actual_projection_is_identity() -> None:
@@ -208,8 +208,8 @@ def test_ordinary_floor_operation_actual_projection_is_identity() -> None:
     outcome = value.project_operation_receiver_outcome(
         None, owner="CallSiteSugar positional actual"
     )
-    assert isinstance(outcome, Complete)
-    assert outcome.value is value
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value() is value
 
 
 def test_retained_source_completion_is_private_and_remint_closed() -> None:

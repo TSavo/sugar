@@ -1,8 +1,8 @@
 """Plan row 7 (steps 5 and 6), map item 1: a class field is an assignment.
 
 A class body used to sequence its own fields.  It asked of each right-hand
-side only "is it one ``Complete``" and stored the value, so ``limit = 1 // 0``
-(a ``Complete`` that carries the raise as data) became the field's value and
+side only "is it one completed value" and stored the value, so ``limit = 1 // 0``
+(a completion that carried the raise as data) became the field's value and
 the class statement completed (#7799).  The same question, asked with no
 context, stored ``int("x")`` as a plain value: a call reduced with no context
 has no raise face.
@@ -104,22 +104,13 @@ def _function(body: str, use: str):
 
 def _faces(outcome) -> tuple[int, tuple[str, ...]]:
     """(completed faces, the effect of each halted face) of an outcome."""
-    from sugar_lift_py_tests.outcome import (
-        Complete,
-        Completed,
-        ExitSet,
-        Halted,
-        Incomplete,
-    )
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
-    if isinstance(outcome, Incomplete):
-        # A halt spelled linearly (a class statement whose body raises).
-        assert not outcome.follow().continues, outcome
-        return 0, (repr(outcome.effect),)
-    if isinstance(outcome, Complete):
-        assert outcome.follow().continues, outcome
-        return 1, ()
     assert isinstance(outcome, ExitSet), outcome
+    value = outcome.completed_value()
+    if value is not None:
+        assert value.follow_rest().continues, outcome
+        return 1, ()
     return (
         sum(isinstance(face, Completed) for face in outcome.exits),
         tuple(repr(face.effect) for face in outcome.exits if isinstance(face, Halted)),
@@ -176,12 +167,10 @@ def test_a_function_that_calls_the_raising_class_halts_with_its_raise(use: str) 
 def test_a_read_through_the_raising_class_call_is_its_raise() -> None:
     """``assert Box(1).n == 1``: the call is the assert's own operand, so the
     assert is that effect, not a completion and not an ``AssertionError``."""
-    from sugar_lift_py_tests.outcome import Incomplete
-
     outcome = _function(_ALWAYS_RAISES["only-field"], "    assert Box(1).n == 1\n")
 
-    assert isinstance(outcome, Incomplete), outcome
-    assert "ZeroDivisionError" in repr(outcome.effect)
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits, outcome
+    assert "ZeroDivisionError" in repr(outcome.halts()[0].effect)
 
 
 def test_naming_the_raising_class_without_calling_it_completes() -> None:
@@ -262,15 +251,13 @@ def test_a_field_that_may_raise_keeps_its_faces(body: str, halted: int) -> None:
 
 
 def test_the_class_holds_each_field_value_in_source_order() -> None:
-    from sugar_lift_py_tests.outcome import Complete
-
     outcome = _class_statement(
         "    a = b = 1\n    c: int = 2\n    if True:\n        d = 3\n    else:\n        e = 4\n",
         with_context=True,
     )
 
-    assert isinstance(outcome, Complete), outcome
-    fields = outcome.value.class_fields
+    assert outcome.completed_value() is not None, outcome
+    fields = outcome.completed_value().class_fields
     assert [field.name for field in fields] == ["a", "b", "c", "d"]
     assert fields[0].value is fields[1].value
 
@@ -316,10 +303,8 @@ _READS_AN_UNDEFINED_NAME = {
 
 
 def _halt_effects(outcome) -> tuple[object, ...]:
-    from sugar_lift_py_tests.outcome import ExitSet, Halted, Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet, Halted
 
-    if isinstance(outcome, Incomplete):
-        return (outcome.effect,)
     if isinstance(outcome, ExitSet):
         return tuple(face.effect for face in outcome.exits if isinstance(face, Halted))
     return ()

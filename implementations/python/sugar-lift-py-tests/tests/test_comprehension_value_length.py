@@ -10,7 +10,7 @@ from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import CallSiteValue, ComprehensionValue, TermValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import atomic, ctor
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
 
 @dataclass(frozen=True)
@@ -31,8 +31,7 @@ def test_listcomp_finite_roster_length_counts_exact_members(elements, expected) 
 
     outcome = value.length(object())
 
-    assert type(outcome) is Complete
-    assert outcome.value == TermValue(expected)
+    assert outcome == ExitSet.completed(TermValue(expected))
 
 
 def test_listcomp_without_finite_roster_is_exact_bodyless_builtin_call() -> None:
@@ -42,8 +41,8 @@ def test_listcomp_without_finite_roster_is_exact_bodyless_builtin_call() -> None
 
     outcome = value.length(site)
 
-    assert type(outcome) is Complete
-    result = outcome.value
+    result = outcome.completed_value()
+    assert result is not None
     assert type(result) is CallSiteValue
     assert result.target_name == "len"
     assert len(result.arg_values) == 1
@@ -82,8 +81,8 @@ def test_valid_foreign_listcomp_constructor_and_site_are_retained_exactly() -> N
     first_site = object()
     foreign_site = object()
 
-    first = first_value.length(first_site).value
-    foreign = foreign_value.length(foreign_site).value
+    first = first_value.length(first_site).completed_value()
+    foreign = foreign_value.length(foreign_site).completed_value()
 
     assert type(first) is CallSiteValue
     assert type(foreign) is CallSiteValue

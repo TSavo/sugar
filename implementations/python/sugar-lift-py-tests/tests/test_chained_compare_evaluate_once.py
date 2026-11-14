@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field, replace
 
 from sugar_lift_py_tests.floor import TermValue
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.comparison_op_sugar import ComparisonOpSugar
 from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
@@ -54,7 +54,7 @@ class _ChangingMiddleSugar(ConstructedTermSugar):
         del ctx
         observed = len(self.evaluations) + 1
         self.evaluations.append(observed)
-        return Complete(TermValue(observed))
+        return ExitSet.completed(TermValue(observed))
 
     def to_term(self, *, owner: str):
         return self.inner.to_term(owner=owner)
@@ -108,7 +108,7 @@ def test_chained_compare_desugars_middle_operand_exactly_once() -> None:
 
     outcome = chain.desugar(None)
 
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     assert evaluations == [1]
 
 
@@ -117,8 +117,8 @@ def test_second_middle_evaluation_would_change_the_comparison_result() -> None:
 
     outcome = chain.desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, TrueBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(),TrueBoolLiteralSugar)
 
 
 def test_chained_compare_evaluates_operands_once_in_left_to_right_order() -> None:
@@ -148,8 +148,8 @@ def test_false_first_leg_does_not_evaluate_the_later_operand() -> None:
 
     outcome = instrumented.desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, FalseBoolLiteralSugar)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(),FalseBoolLiteralSugar)
     assert evaluations == ["left", "middle"]
 
 
