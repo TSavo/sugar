@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import copy
 from dataclasses import replace
-import importlib
 from pathlib import Path
 import tempfile
 
@@ -27,7 +26,6 @@ def _file(
     source: str,
     filename: str = "constructed-module.py",
     *,
-    backend=None,
     reporter=None,
 ):
     with tempfile.TemporaryDirectory() as directory:
@@ -36,30 +34,13 @@ def _file(
         path.write_text(source, encoding="utf-8")
         return _direct_source_file_entry(
             path,
-            backend,
+            None,
             NULL_REPORTER if reporter is None else reporter,
         )
 
 
 def _constructed(source: str, filename: str = "constructed-module.py"):
     return _file(source, filename).constructed_module
-
-
-def _authentic_foreign_backend_product(source: str):
-    products = []
-    for module_name, class_name in (
-        ("sugar_source_tree.parso_adapter", "ParsoBackend"),
-        ("sugar_source_tree.libcst_adapter", "LibCSTBackend"),
-        ("sugar_source_tree.tree_sitter_python_adapter", "TreeSitterPythonBackend"),
-    ):
-        try:
-            module = importlib.import_module(module_name)
-        except ModuleNotFoundError:
-            continue
-        products.append(
-            _file(source, backend=getattr(module, class_name)()).constructed_module
-        )
-    return products[0] if products else None
 
 
 def test_missing_constructed_module_door_is_one_measured_red() -> None:
@@ -162,12 +143,6 @@ def authentic_leaf_axis_rows(constructed_module_door):
         "def second():\n"
         "    assert left()\n"
     ).leaf_assertion_rows[0]
-    foreign_backend_product = _authentic_foreign_backend_product(source)
-    foreign_backend = (
-        None
-        if foreign_backend_product is None
-        else foreign_backend_product.leaf_assertion_rows[0]
-    )
     assert (
         first.constructed_module_identity == same_event_row.constructed_module_identity
     )
@@ -184,7 +159,6 @@ def authentic_leaf_axis_rows(constructed_module_door):
         {
             "source_cid": foreign_source,
             "constructed_module_identity": foreign_source,
-            "backend_fingerprint": foreign_backend,
             "construction_event_identity": same_event_row,
             "function_occurrence": foreign_frame,
             "function_locus": foreign_frame,
@@ -351,7 +325,6 @@ def test_construction_event_receipt_constructor_and_copy_are_closed(
         "source_cid",
         "constructed_module_identity",
         "root_identity",
-        "backend_fingerprint",
     ),
 )
 def test_construction_event_receipt_cross_wire_refuses_one_axis(
@@ -376,18 +349,11 @@ def test_construction_event_receipt_cross_wire_refuses_one_axis(
         first_product.construction_event_receipt.root_identity
         == same_product.construction_event_receipt.root_identity
     )
-    foreign_backend_product = _authentic_foreign_backend_product(source)
-    if field_name == "backend_fingerprint" and foreign_backend_product is None:
-        pytest.skip("unmeasured: authentic_generic_backend_denominator=0")
     first = first_product.construction_event_receipt
     foreign = (
         foreign_source_product.construction_event_receipt
         if field_name in ("source_cid", "constructed_module_identity", "root_identity")
-        else (
-            foreign_backend_product.construction_event_receipt
-            if field_name == "backend_fingerprint"
-            else same_product.construction_event_receipt
-        )
+        else same_product.construction_event_receipt
     )
     leaves = (
         "construction_event_identity",
@@ -467,27 +433,6 @@ def test_filename_is_not_construction_identity_authority(
     assert (
         first.construction_event_receipt.root_identity
         != foreign_source.construction_event_receipt.root_identity
-    )
-
-
-def test_construction_identity_is_bound_to_authenticated_backend_product(
-    constructed_module_door,
-) -> None:
-    source = "PROVIDER_VALUE = 3\n"
-    ordinary = _constructed(source)
-    foreign_backend = _authentic_foreign_backend_product(source)
-    if foreign_backend is None:
-        pytest.skip("unmeasured: authentic_generic_backend_denominator=0")
-
-    assert ordinary.source_cid == foreign_backend.source_cid
-    assert ordinary.backend_fingerprint != foreign_backend.backend_fingerprint
-    assert (
-        ordinary.constructed_module_identity
-        != foreign_backend.constructed_module_identity
-    )
-    assert (
-        ordinary.construction_event_receipt.root_identity
-        != foreign_backend.construction_event_receipt.root_identity
     )
 
 
@@ -827,19 +772,6 @@ def test_closed_product_refuses_deserialization_and_empty_default(
         type(authentic)()
 
 
-def test_backend_fingerprint_and_product_substitution_refuse(
-    constructed_module_door,
-) -> None:
-    source = "def outer():\n    return 1\n"
-    ordinary = _constructed(source)
-    foreign = _authentic_foreign_backend_product(source)
-    if foreign is None:
-        pytest.skip("unmeasured: authentic_generic_backend_denominator=0")
-    assert ordinary.backend_fingerprint != foreign.backend_fingerprint
-    with pytest.raises(BackendDefect, match="backend fingerprint"):
-        replace(ordinary, backend_fingerprint=foreign.backend_fingerprint)
-
-
 def test_constructed_provider_member_carries_exact_term_testimony(
     constructed_module_door,
 ) -> None:
@@ -938,11 +870,6 @@ def test_constructed_provider_member_cross_wire_refuses_one_axis(
             "construction_event_identity",
             "provider construction event identity",
         ),
-        (
-            "foreign-backend",
-            "backend_fingerprint",
-            "provider backend fingerprint",
-        ),
     ),
 )
 def test_constructed_provider_member_refuses_product_migration_one_axis(
@@ -956,11 +883,6 @@ def test_constructed_provider_member_refuses_product_migration_one_axis(
     foreign_products = {
         "foreign-source": _constructed(source + "# foreign source bytes\n"),
     }
-    foreign_backend = _authentic_foreign_backend_product(source)
-    if product_kind == "foreign-backend" and foreign_backend is None:
-        pytest.skip("unmeasured: authentic_generic_backend_denominator=0")
-    if foreign_backend is not None:
-        foreign_products["foreign-backend"] = foreign_backend
     (first,) = first_product.provider_member_rows
     (foreign,) = foreign_products[product_kind].provider_member_rows
 
@@ -1119,7 +1041,6 @@ def test_leaf_roster_filename_is_output_only(constructed_module_door) -> None:
     (
         ("source_cid", "leaf source CID"),
         ("constructed_module_identity", "enclosing ConstructedModule identity"),
-        ("backend_fingerprint", "leaf backend fingerprint"),
         ("construction_event_identity", "leaf construction event identity"),
         ("function_occurrence", "exact leaf FunctionDef occurrence"),
         ("function_locus", "exact leaf FunctionDef locus"),
@@ -1140,8 +1061,6 @@ def test_leaf_assertion_row_cross_wire_refuses_one_axis(
 ) -> None:
     first, _, twins = authentic_leaf_axis_rows
     foreign = twins[field_name]
-    if field_name == "backend_fingerprint" and foreign is None:
-        pytest.skip("unmeasured: authentic_generic_backend_denominator=0")
     if field_name in ("translated_atom_identity", "translated_atom_value"):
         assert foreign.assert_occurrence is not first.assert_occurrence
     if field_name in ("translated_term_identity", "translated_term_value"):

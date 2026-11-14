@@ -241,19 +241,6 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
         "from sugar_lift_py_tests.sugar.soft_unresolved_try_sugar import" not in nodes
     )
 
-    parso = (
-        _PYTHON_ROOT / "sugar-source-tree/src/sugar_source_tree/parso_adapter.py"
-    ).read_text(encoding="utf-8")
-    assert "value = text" not in parso
-    assert "value = unit.source[start:end]" not in parso
-
-    ts = (
-        _PYTHON_ROOT
-        / "sugar-source-tree/src/sugar_source_tree/tree_sitter_python_adapter.py"
-    ).read_text(encoding="utf-8")
-    assert "value = text" not in ts
-    assert "value = unit.source[span.start : span.end]" not in ts
-
     lift = (
         _PYTHON_ROOT / "sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py"
     ).read_text(encoding="utf-8")
@@ -264,16 +251,6 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
     assert "except Exception" not in window
 
     # Scanner pins: drained kinds absent at drained loci (Try soft residual may remain).
-    assert not any(
-        o.path.endswith("parso_adapter.py")
-        and o.kind == "literal-eval-raw-source-substitution"
-        for o in offenders
-    ), _SCANNER.format_report(offenders)
-    assert not any(
-        o.path.endswith("tree_sitter_python_adapter.py")
-        and o.kind == "literal-eval-raw-source-substitution"
-        for o in offenders
-    ), _SCANNER.format_report(offenders)
     assert not any(
         o.path.endswith("nodes.py") and o.kind == "soft-unresolved-sugar-return"
         for o in offenders

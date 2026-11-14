@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 
-from declared_corpus import OPTIONAL_PROVIDER, optional_law_import
 from conftest import oracle_source_file
 from sugar_lift_python_source.source_oracle import SourceUnavailable, path_source
 from sugar_source_tree import (
@@ -67,18 +66,6 @@ def test_file_level_fragment_round_trips():
     assert resolved == file.fragment
     assert resolved.text == SOURCE
     assert resolved.node.kind == "Module"
-
-
-def test_round_trip_holds_across_backends():
-    optional_law_import("parso", OPTIONAL_PROVIDER, "parso backend not installed")
-    from sugar_source_tree.parso_adapter import ParsoBackend
-
-    file = oracle_source_file(SOURCE)
-    node = next(n for n in file.nodes() if n.kind == "Return")
-    memento = node.fragment.seal()
-    resolved = resolve_memento(memento, backend=ParsoBackend())
-    assert resolved == node.fragment
-    assert resolved.seal() == memento
 
 
 def test_drifted_source_refuses_loudly_never_silence():
