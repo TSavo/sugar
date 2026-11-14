@@ -113,6 +113,11 @@ class BuiltinSuperValue(FloorValue):
             return self._absent(name, blame)
         if isinstance(found, str):
             return self._builtin_method(found, name, arguments, keywords, blame, ctx)
+        if not found.namespace_value_is_body(name):
+            # The selected class holds ``name``, but not as its body bound it:
+            # a decorator wrote it (a dataclass's generated ``__init__``) or
+            # creation or a store may have.  That value is not run here.
+            return self._unanswered(name, arguments, keywords, blame)
         selected = type_value.class_value_of_statement(found)
         if selected is None:
             from sugar_source_tree.panic import SugarNotWritten
@@ -203,10 +208,13 @@ class BuiltinSuperValue(FloorValue):
         )
 
     def _unanswered(self, name, arguments, keywords, site):
-        """``super().<name>(...)`` whose receiver's MRO is not read: the one
-        unanswered call (``UnknownCalleeCallV1``), two-faced and owed, its
-        completion the call's own result coordinate.  Neither a direct base
-        nor any other class is assumed to answer."""
+        """``super().<name>(...)`` whose receiver's MRO is not read, or not
+        decided for ``name`` (a class whose decorator or a store may have
+        written it, ``ClassDef.namespace_binds``), or whose selected class
+        holds a value its body did not bind (``namespace_value_is_body``):
+        the one unanswered call (``UnknownCalleeCallV1``), two-faced and
+        owed, its completion the call's own result coordinate.  Neither a
+        direct base nor any other class is assumed to answer."""
         from sugar_lift_py_tests.call_symbol import call_symbol
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
