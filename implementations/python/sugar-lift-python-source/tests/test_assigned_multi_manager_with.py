@@ -173,6 +173,20 @@ def test_one_assigned_call_reaching_two_with_sites_is_every_site_s_provider(
     _projected, index = tree.root.unit.projected_manager_heads()
     assert sorted(index) == [(3, 9, 3, 10), (5, 9, 5, 10)]
 
+    # Population reads its rows from that index: one row per use site, both
+    # over the one Call, never one row per Call at the later site.
+    projected = _projected_manager_call_uses(tree)
+    rows = sorted(
+        (
+            (coordinate.start_line, coordinate.start_col),
+            call.line_col_span().start_line,
+            call.line_col_span().start_col,
+        )
+        for coordinate, call, _exit_face in projected.values()
+    )
+    assert rows == [((3, 9), 2, 8), ((5, 9), 2, 8)]
+    assert sorted(projected) == [(3, 9, 3, 10), (5, 9, 5, 10)]
+
 
 def test_pandas_303_single_assigned_manager_projects_reaching_call() -> None:
     """Same corpus file, single-item ``with opt:`` — general single-Name projection."""
