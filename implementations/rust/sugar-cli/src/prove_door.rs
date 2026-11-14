@@ -43,8 +43,8 @@ pub fn build_prove_outcome_with_options(
     );
 
     // Ruling 3c on #7766: prove reads no other project. There is no `--with`,
-    // and prove does not consult the `[verify]` callee list (that is
-    // `sugar verify --project`'s, item 39); a sibling project's proof reaches
+    // and there is no `[verify]` callee list (it went with
+    // `sugar verify --project`, item 39); a sibling project's proof reaches
     // prove only when mint stages it in `.sugar/imports`.
 
     // Step 9 (ruling 3 on #7766): prove's input is the minted `.proof` plus

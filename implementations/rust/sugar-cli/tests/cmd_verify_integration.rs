@@ -4,7 +4,7 @@
 //
 // Builds a real `.proof` catalog on disk (a contract claim + its bridge,
 // minted via the claim-envelope kit, exactly as `sugar lift`/`mint`
-// would emit), then invokes the `sugar verify --project <dir> --json`
+// would emit), then invokes the `sugar verify <dir> --emit-witnesses <w> --json`
 // binary and asserts the verification receipt:
 //
 //   - the contract claim is enumerated and discharged,
@@ -180,11 +180,10 @@ fn z3_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Run `sugar verify --project <p> --json` and return (receipt, exit_code).
+/// Run `sugar verify <p> --emit-witnesses <w> --json` and return (receipt, exit_code).
 fn run_verify_json_with_code(project: &Path, witness_dir: &Path) -> (Json, i32) {
     let out = Command::new(sugar_bin())
         .arg("verify")
-        .arg("--project")
         .arg(project)
         .arg("--emit-witnesses")
         .arg(witness_dir)

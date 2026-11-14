@@ -171,7 +171,7 @@ case "$platform" in
 esac
 
 set +e
-/usr/bin/time "${time_args[@]}" "$sugar_bin" verify --project "$project_root" "${verify_args[@]}" \
+/usr/bin/time "${time_args[@]}" "$sugar_bin" prove "$project_root" "${verify_args[@]}" \
   2> >(tee "$time_log" >&2)
 verify_status=$?
 set -e

@@ -104,10 +104,6 @@ pub struct RunnerConfig {
     /// `.sugar/config.toml` for `[solvers]` — faces load and set this.
     /// When `None`, only `legacy_z3_fallback` (if any) builds the plan.
     pub solvers_config: Option<SolversConfig>,
-    /// Additional project directories whose .proof files should
-    /// also be loaded (e.g., OpenAPI spec project for cross-kit
-    /// verification).
-    pub extra_projects: Vec<PathBuf>,
     /// Additional individual .proof files resolved by kit-owned package
     /// managers. These are still loaded by content address; the verifier
     /// never interprets the package graph that surfaced them.
@@ -612,12 +608,6 @@ impl Runner {
 
         let mut report = Report::default();
         let mut pool = load_all_proofs::run(&self.cfg.project_root);
-
-        // Load contracts from extra project dirs (e.g., OpenAPI spec)
-        for extra in &self.cfg.extra_projects {
-            let extra_pool = load_all_proofs::run(extra);
-            pool.merge(extra_pool);
-        }
         load_all_proofs::load_files_into_pool(&self.cfg.extra_proof_files, &mut pool);
         load_all_proofs::load_proof_bytes_into_pool(&self.cfg.extra_proofs, &mut pool);
 
@@ -885,10 +875,6 @@ impl Runner {
 
     pub fn run_load_and_enumerate(&self) -> (MementoPool, Vec<CallSite>) {
         let mut pool = load_all_proofs::run(&self.cfg.project_root);
-        for extra in &self.cfg.extra_projects {
-            let extra_pool = load_all_proofs::run(extra);
-            pool.merge(extra_pool);
-        }
         load_all_proofs::load_files_into_pool(&self.cfg.extra_proof_files, &mut pool);
         load_all_proofs::load_proof_bytes_into_pool(&self.cfg.extra_proofs, &mut pool);
         let cs = enumerate_callsites::run(&pool);
@@ -1226,10 +1212,6 @@ fn build_solve_pool() -> Option<rayon::ThreadPool> {
 /// prove request.
 pub fn load_pool(cfg: &RunnerConfig) -> MementoPool {
     let mut pool = load_all_proofs::run(&cfg.project_root);
-    for extra in &cfg.extra_projects {
-        let extra_pool = load_all_proofs::run(extra);
-        pool.merge(extra_pool);
-    }
     load_all_proofs::load_files_into_pool(&cfg.extra_proof_files, &mut pool);
     load_all_proofs::load_proof_bytes_into_pool(&cfg.extra_proofs, &mut pool);
     pool

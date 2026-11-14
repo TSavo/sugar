@@ -28,15 +28,16 @@ pub fn verify_project() -> Result<(), Box<dyn std::error::Error>> {
     println!("cargo:rerun-if-changed=.sugar/config.toml");
     println!("cargo:rerun-if-changed=.sugar/");
 
-    // Run sugar verify
+    // Prove the crate's project (item 39: proving a project is `sugar prove`).
     let output = Command::new("sugar")
-        .arg("verify")
+        .arg("prove")
+        .arg(".")
         .current_dir(&manifest_dir)
         .output()?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("sugar verify failed:\n{}", stderr).into());
+        return Err(format!("sugar prove failed:\n{}", stderr).into());
     }
 
     Ok(())

@@ -177,20 +177,22 @@ fn sugar_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_sugar"))
 }
 
-fn run_verify(project: &Path, json_out: bool) -> Output {
+/// Proving a project is `sugar prove` (item 39: `sugar verify --project` was
+/// a second door to it and is gone).
+fn run_prove(project: &Path, json_out: bool) -> Output {
     let mut cmd = Command::new(sugar_bin());
-    cmd.arg("verify").arg("--project").arg(project);
+    cmd.arg("prove").arg(project);
     if json_out {
         cmd.arg("--json");
     }
-    cmd.output().expect("spawn sugar verify")
+    cmd.output().expect("spawn sugar prove")
 }
 
 fn stdout_json(out: &Output) -> Json {
     let stdout = String::from_utf8_lossy(&out.stdout);
     serde_json::from_str(&stdout).unwrap_or_else(|e| {
         panic!(
-            "verify JSON parse failed: {e}\nstdout:\n{stdout}\nstderr:\n{}",
+            "prove JSON parse failed: {e}\nstdout:\n{stdout}\nstderr:\n{}",
             String::from_utf8_lossy(&out.stderr)
         )
     })
@@ -247,14 +249,14 @@ fn assert_fixture_lacks_provenance_kind_fields(project: &Path) {
 
 fn assert_loud_provenance_kind_refusal(receipt: &Json) {
     assert_eq!(
-        receipt["claims"][0]["status"], "refused",
+        receipt["rows"][0]["status"], "refused",
         "fixture lacks provenance-kind fields, so discharge must refuse before solver dispatch; receipt: {receipt}"
     );
     assert_ne!(
-        receipt["claims"][0]["status"], "discharged",
+        receipt["rows"][0]["status"], "discharged",
         "missing provenance kind must never green the claim; receipt: {receipt}"
     );
-    let reason = receipt["claims"][0]["reason"].as_str().unwrap_or("");
+    let reason = receipt["rows"][0]["reason"].as_str().unwrap_or("");
     assert!(
         reason.contains(MISSING_PROVENANCE_KIND_REASON),
         "refusal must name the discharge-law violation; receipt: {receipt}"
@@ -274,22 +276,25 @@ fn fixture_contract_memento_lacks_provenance_kind_fields() {
 }
 
 #[test]
-fn refused_row_fails_artifact_project_verify() {
+fn refused_row_fails_project_prove() {
     let project = publish_inv_project("missing-seat-json", SolverFixture::MissingSeat);
     assert_fixture_lacks_provenance_kind_fields(&project);
-    let out = run_verify(&project, true);
+    let out = run_prove(&project, true);
     let receipt = stdout_json(&out);
     let code = out.status.code().unwrap_or(-1);
 
-    assert_eq!(receipt["kind"], "verification-receipt");
-    assert_eq!(receipt["totalClaims"], 1, "receipt: {receipt}");
+    assert_eq!(
+        receipt["rows"].as_array().map(Vec::len),
+        Some(1),
+        "receipt: {receipt}"
+    );
     assert_loud_provenance_kind_refusal(&receipt);
     assert_eq!(
         code, EXIT_VERIFY_FAIL,
-        "refused rows must hard-fail artifact/project verify; receipt: {receipt}"
+        "refused rows must hard-fail project prove; receipt: {receipt}"
     );
-    assert_eq!(
-        receipt["ok"], false,
+    assert_ne!(
+        receipt["verdict"], "green",
         "refused rows must preserve the not-green law; receipt: {receipt}"
     );
 
@@ -300,7 +305,7 @@ fn refused_row_fails_artifact_project_verify() {
 fn refused_reason_is_printed() {
     let project = publish_inv_project("missing-seat-human", SolverFixture::MissingSeat);
     assert_fixture_lacks_provenance_kind_fields(&project);
-    let out = run_verify(&project, false);
+    let out = run_prove(&project, false);
     let code = out.status.code().unwrap_or(-1);
     let text = combined_output(&out);
 
@@ -328,7 +333,7 @@ fn refused_reason_is_printed() {
 fn stale_fixture_refuses_before_stub_solver_can_green() {
     let project = publish_inv_project("stub-green", SolverFixture::StubPass);
     assert_fixture_lacks_provenance_kind_fields(&project);
-    let out = run_verify(&project, true);
+    let out = run_prove(&project, true);
     let receipt = stdout_json(&out);
     let code = out.status.code().unwrap_or(-1);
 
@@ -336,10 +341,14 @@ fn stale_fixture_refuses_before_stub_solver_can_green() {
         code, EXIT_VERIFY_FAIL,
         "missing provenance kind refuses before a stub solver can green the row; receipt: {receipt}"
     );
-    assert_eq!(receipt["totalClaims"], 1, "receipt: {receipt}");
-    assert_loud_provenance_kind_refusal(&receipt);
     assert_eq!(
-        receipt["ok"], false,
+        receipt["rows"].as_array().map(Vec::len),
+        Some(1),
+        "receipt: {receipt}"
+    );
+    assert_loud_provenance_kind_refusal(&receipt);
+    assert_ne!(
+        receipt["verdict"], "green",
         "stub solver must not green a claim whose ambient testimony lacks provenance kind; receipt: {receipt}"
     );
 

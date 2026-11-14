@@ -177,7 +177,7 @@ run_suite() {
 
     echo "== verify $suite witness =="
     set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify.json"
+    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.verify.json"
     set -e
     local verify_verdict
     verify_verdict="$(witness_verdict "$dir/.verify.json")"

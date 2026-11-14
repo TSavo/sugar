@@ -156,5 +156,5 @@ print("  witness:", w.outcome, w.cid[:34], "->", p[0])
 PY
 
 echo "== VERIFY (consumer): rust recomputes; the kit oracle is untrusted =="
-PATH="$VENV/bin:$PATH" "$BIN" verify --project .
+PATH="$VENV/bin:$PATH" "$BIN" prove .
 [ -z "${SHOWCASE_SUBJECT_WITNESS:-}" ] || printf '%s\n' "${SHOWCASE_SUBJECT_ID:?}" > "$SHOWCASE_SUBJECT_WITNESS"

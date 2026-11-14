@@ -740,7 +740,7 @@ PY
   echo "== verify $case_name $suite =="
   local verify_status
   set +e
-  (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify.json"
+  (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.verify.json"
   verify_status=$?
   set -e
 
@@ -784,7 +784,7 @@ PY
 
   rm -rf "$dir/.sugar/witnesses"
   set +e
-  (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json) > "$dir/.verify_recompute.json"
+  (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.verify_recompute.json"
   set -e
   local recompute verified
   recompute="$(recompute_strategy "$dir/.verify_recompute.json")"

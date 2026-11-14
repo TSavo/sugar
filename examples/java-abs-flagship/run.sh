@@ -141,7 +141,7 @@ PY
 
   echo "-- verify: durable artifact --"
   local verify_json="$dir/.verify.json"
-  ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" verify --project . --json 2>/dev/null ) > "$verify_json" || true
+  ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json 2>/dev/null ) > "$verify_json" || true
 
   python3 - "$suite" "$expect_consistency" "$verify_json" <<'PY'
 import json, sys
