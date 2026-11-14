@@ -216,9 +216,7 @@ fn kit_resolution_from_entry(config_root: &Path, entry: &KitAliasEntry) -> KitRe
 /// catalog in memory and `proof_file` is the CANONICAL destination path
 /// (`out_dir/proof_filename(filename_cid)`) -- callers that genuinely
 /// need a file on disk persist via `persist_proof_file` at their edge
-/// (the CLI `run`, `mint_lift_plugins_for_report`). The daemon scratch
-/// path (`mint_project_scratch_proof`) loads the bytes straight into its
-/// overlay pool and never touches disk for output.
+/// (`mint_project`, `mint_lift_plugins_for_report`).
 #[derive(Debug, Clone)]
 struct DispatchResult {
     filename_cid: String,
@@ -1903,193 +1901,6 @@ pub fn contract_bindings_from_dependency_proofs(project_root: &Path) -> Vec<Valu
     result
 }
 
-/// Whether `project_root` declares vendor dependencies via staged imports.
-///
-/// True when `.sugar/imports/` holds at least one `*.proof` file -- the same
-/// surface `contract_bindings_from_dependency_proofs` reads.
-#[allow(dead_code)] // called by sugar-lsp prove_engine warm overlay (external crate)
-pub fn project_declares_import_dependencies(project_root: &Path) -> bool {
-    let imports_dir = project_root.join(".sugar").join("imports");
-    let Ok(entries) = std::fs::read_dir(&imports_dir) else {
-        return false;
-    };
-    entries.flatten().any(|entry| {
-        entry
-            .path()
-            .extension()
-            .and_then(|s| s.to_str())
-            .is_some_and(|ext| ext == "proof")
-    })
-}
-
-/// True when any dependency binding carries a post-bearing universe that
-/// needs a consumer→vendor bridge for ambient-post specialization (case-2).
-#[allow(dead_code)] // called by sugar-lsp prove_engine warm overlay (external crate)
-pub fn dependency_bindings_need_bridges(bindings: &[Value]) -> bool {
-    bindings.iter().any(|binding| {
-        let has_post = binding
-            .get("has_post")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-            || binding.get("post").is_some_and(|p| p.is_object());
-        if !has_post {
-            return false;
-        }
-        // A bridge needs a resolvable target CID and a callsite symbol.
-        let has_target = binding
-            .get("contract_cid")
-            .and_then(Value::as_str)
-            .is_some_and(|s| !s.is_empty());
-        has_target
-    })
-}
-
-/// #3808: inject consumer→vendor bridges into `pool` from the project's
-/// declared import proofs, and load those proofs so bridge targets resolve.
-///
-/// The warm overlay deliberately excludes `.sugar/imports` from the scratch
-/// tree and does not run a full mint (library_bindings=false / enumerate→fold).
-/// Without this pass, case-2 (universe via binding, e.g. base64 str.eq-bv-blocks)
-/// loses its law: consumer members load, ambient-post specialization has no
-/// bridge, and the warm path returns un-degraded 0 rows (false green).
-///
-/// Returns the number of bridges minted into `pool`.
-#[allow(dead_code)] // called by sugar-lsp prove_engine warm overlay (external crate)
-pub fn inject_dependency_bridges_into_pool(
-    project_root: &Path,
-    pool: &mut sugar_verifier::types::MementoPool,
-) -> usize {
-    let imports_dir = project_root.join(".sugar").join("imports");
-    let mut proof_files = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&imports_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|s| s.to_str()) == Some("proof") {
-                proof_files.push(path);
-            }
-        }
-    }
-    if proof_files.is_empty() {
-        return 0;
-    }
-
-    // Stage vendor members (contract bodies + atoms) into the overlay pool so
-    // `collect_ambient_posts` can resolve `targetContractCid` when it walks the
-    // bridges we mint below. First-writer-wins: CIDs already present stay.
-    sugar_verifier::load_all_proofs::load_files_into_pool(&proof_files, pool);
-
-    let bindings = contract_bindings_from_dependency_proofs(project_root);
-    if bindings.is_empty() {
-        return 0;
-    }
-
-    let mut graph = ProofGraph::new();
-    let mut minted = 0usize;
-    let produced_at = "1970-01-01T00:00:00.000Z".to_string();
-    let mut seen_symbols: BTreeSet<String> = BTreeSet::new();
-
-    for binding in &bindings {
-        let has_post = binding
-            .get("has_post")
-            .and_then(Value::as_bool)
-            .unwrap_or(false)
-            || binding.get("post").is_some_and(|p| p.is_object());
-        if !has_post {
-            continue;
-        }
-        let Some(target_cid) = binding
-            .get("contract_cid")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-        else {
-            continue;
-        };
-        // Prefer an explicit bridgeSourceSymbol; fall back to call:<leaf>
-        // from the contract name so ambient-post matching still fires on
-        // ctor names the consumer assertion emits.
-        let source_symbol = binding
-            .get("bridgeSourceSymbol")
-            .or_else(|| binding.get("bridge_source_symbol"))
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .or_else(|| {
-                binding
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .filter(|s| !s.is_empty())
-                    .map(|name| {
-                        let leaf = name.rsplit("::").next().unwrap_or(name);
-                        if leaf.starts_with("call:") || leaf.starts_with("method:") {
-                            leaf.to_string()
-                        } else {
-                            format!("call:{leaf}")
-                        }
-                    })
-            });
-        let Some(source_symbol) = source_symbol else {
-            continue;
-        };
-        if !seen_symbols.insert(source_symbol.clone()) {
-            continue;
-        }
-
-        let target_proof_cid = binding
-            .get("target_proof_cid")
-            .and_then(Value::as_str)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string);
-
-        // ContractMementoRef::new panics on untagged CIDs; only accept
-        // blake3-512: forms that already survived the dependency binder.
-        if !target_cid.starts_with("blake3-512:") {
-            continue;
-        }
-        let target_ref = ContractMementoRef::new(target_cid.to_string());
-        let bridge = mint_bridge(&MintBridgeArgs {
-            produced_by: "sugar-cli/inject_dependency_bridges".to_string(),
-            produced_at: produced_at.clone(),
-            source_symbol,
-            source_layer: "source".to_string(),
-            target_contract: target_ref,
-            target_layer: "kit".to_string(),
-            ir_arg_sorts: vec![],
-            ir_return_sort: String::new(),
-            notes: "auto-minted warm-overlay dependency bridge (#3808)".to_string(),
-            signer_seed: DEV_SIGNER_SEED,
-            target_proof_cid,
-            callsite: None,
-        });
-        graph.push_bridge(BridgeMemento::new(bridge.canonical_bytes));
-        minted += 1;
-    }
-
-    if minted == 0 {
-        return 0;
-    }
-
-    // Seal the bridge graph and merge into the overlay pool (consumer speaker:
-    // these bridges are the consumer's binding of vendor law, not vendor
-    // testimony itself).
-    match sugar_compiler::orchestrate::pool_from_graph_with_speaker(
-        &graph,
-        sugar_verifier::Speaker::consumer("sugar-overlay-dependency-bridges"),
-    ) {
-        Ok(bridge_pool) => {
-            pool.merge(bridge_pool);
-            minted
-        }
-        Err(err) => {
-            warn!(
-                target: "sugar_cli::cmd_mint",
-                error = %err,
-                "inject_dependency_bridges_into_pool: failed to load bridge graph"
-            );
-            0
-        }
-    }
-}
-
 impl Kit for MintKit {
     fn dialect(&self) -> Dialect {
         Dialect::Other("sugar-mint".to_string())
@@ -2172,86 +1983,6 @@ pub fn mint_lift_plugins_for_report(
     // Edge write (#3810): the lift-report callers (cmd_lift) genuinely
     // consume a `.proof` file on disk, so THIS caller persists the bytes.
     persist_proof_file(&session.result)
-}
-
-/// A freshly-minted scratch proof held as a VALUE (#3810): the catalog
-/// bytes plus their content CID (the same blake3-512 trust root a `.proof`
-/// filename would carry). Consumers stage it via
-/// `sugar_verifier::load_all_proofs::ProofBytes` /
-/// `load_proof_bytes_into_pool` -- the SAME catalog-loading core every
-/// on-disk `.proof` goes through, so member validation and origin
-/// semantics are identical to a disk load.
-#[allow(dead_code)] // fields read by sugar-lsp prove_engine / in_process_prove (external crate)
-pub struct ScratchProof {
-    pub cid: String,
-    pub bytes: Vec<u8>,
-}
-
-/// Daemon-facing seam (#3774 v2, #3810 bytes-in-memory): mint a project's
-/// `.sugar/config.toml` `[[plugins]]` lift set and return the minted
-/// catalog as an in-memory `ScratchProof`, reusing the SAME
-/// `dispatch_multi` path `sugar mint`'s CLI `run()` uses for the
-/// config-declared multi-plugin case (see the `project_cfg.plugins...
-/// is_lift_plugin()` branch above). Pure reuse: no reshaping of the
-/// ir-document/witness-discharge output, so members minted this way carry
-/// the same `inv`/`proofirProvenance`/`sourceWarrants` fields
-/// `is_consistency_candidate` requires, unlike the LSP `parse` shape (see
-/// `sugar-linkerd::methods::handle_prove_consistency`'s doc comment).
-///
-/// This primitive never writes the catalog to disk. `out_dir` still
-/// receives the mint pipeline's INTERMEDIATE outputs (ORP witness
-/// emission via `emit_witnesses_by_contract`), never the final `.proof`.
-/// A caller that genuinely needs a file writes `ScratchProof::bytes`
-/// itself at its edge.
-///
-/// Returns `Ok(None)` when the project declares no lift plugins, or when
-/// the mint produced no catalog (lifter-missing empty-set attestation) --
-/// callers should treat this as "not applicable", not an error.
-#[allow(dead_code)] // called by sugar-lsp prove_engine / in_process_prove (external crate)
-pub fn mint_project_scratch_proof(
-    project_root: &Path,
-    out_dir: &Path,
-    library_bindings: bool,
-) -> Result<Option<ScratchProof>, String> {
-    let project_cfg = read_project_config(project_root);
-    let lift_plugins = project_cfg
-        .plugins
-        .iter()
-        .filter(|plugin| plugin.is_lift_plugin())
-        .cloned()
-        .collect::<Vec<_>>();
-    if lift_plugins.is_empty() {
-        return Ok(None);
-    }
-    let session = dispatch_multi(project_root, &lift_plugins, out_dir, true, library_bindings)?;
-    let result = session.result;
-    match result.proof_bytes {
-        Some(bytes) => Ok(Some(ScratchProof {
-            cid: result.filename_cid,
-            bytes,
-        })),
-        None => Ok(None),
-    }
-}
-
-/// Convenience: run configured lift plugins for a project and return the report JSON.
-/// Best-effort face for sugar-lsp report mode (dig green→red + Minority yellow).
-#[allow(dead_code)] // called by sugar-lsp prove_engine report mode (external crate)
-pub fn report_lift_response_for_project(
-    project_root: &Path,
-    out_dir: &Path,
-) -> Result<Value, String> {
-    let project_cfg = read_project_config(project_root);
-    let lift_plugins = project_cfg
-        .plugins
-        .iter()
-        .filter(|plugin| plugin.is_lift_plugin())
-        .cloned()
-        .collect::<Vec<_>>();
-    if lift_plugins.is_empty() {
-        return Err("no lift plugins configured for report".to_string());
-    }
-    lift_plugins_response_for_report(project_root, &lift_plugins, out_dir, false, true)
 }
 
 /// Lift plugins and return the kit report JSON (factoryWalk + liftCoverage).
@@ -5721,7 +5452,7 @@ pub struct MintArgs {
     pub flags: OutputFlags,
 }
 
-pub fn run(args: MintArgs) -> u8 {
+fn mint_session(args: &MintArgs) -> Result<(PathBuf, MintSession), (u8, String)> {
     let _span = tracing::info_span!("cmd_mint").entered();
     info!(
         kit = args.kit.as_deref().unwrap_or("(none)"),
@@ -5742,8 +5473,7 @@ pub fn run(args: MintArgs) -> u8 {
             None => {
                 let aliases =
                     configured_kit_alias_names_from_configs(&alias_project_cfg, &alias_user_cfg);
-                eprintln!("{}", format_unknown_kit_error(kit, &aliases));
-                return EXIT_USER_ERROR;
+                return Err((EXIT_USER_ERROR, format_unknown_kit_error(kit, &aliases)));
             }
         }
     } else {
@@ -5752,12 +5482,14 @@ pub fn run(args: MintArgs) -> u8 {
     };
 
     if !project_root.exists() {
-        eprintln!(
-            "{}: project not found: {}",
-            "error".red().bold(),
-            project_root.display()
-        );
-        return EXIT_USER_ERROR;
+        return Err((
+            EXIT_USER_ERROR,
+            format!(
+                "{}: project not found: {}",
+                "error".red().bold(),
+                project_root.display()
+            ),
+        ));
     }
 
     let project_cfg = read_project_config(&project_root);
@@ -5826,20 +5558,21 @@ pub fn run(args: MintArgs) -> u8 {
             .cloned()
             .collect::<Vec<_>>();
         if lift_plugins.is_empty() {
-            if let Some(diagnostic) = component_plan.diagnostics.iter().find(|diagnostic| {
-                matches!(
-                    diagnostic.level,
-                    crate::component_plan::DiagnosticLevel::Error
-                )
-            }) {
-                eprintln!("{}: {}", "error".red().bold(), diagnostic.message);
+            let message = if let Some(diagnostic) =
+                component_plan.diagnostics.iter().find(|diagnostic| {
+                    matches!(
+                        diagnostic.level,
+                        crate::component_plan::DiagnosticLevel::Error
+                    )
+                }) {
+                format!("{}: {}", "error".red().bold(), diagnostic.message)
             } else {
-                eprintln!(
+                format!(
                     "{}: no lift surface configured. Set [[plugins]] or [authoring] surface in .sugar/config.toml, pass --surface/--kit, or install a Sugar kit component for this workspace.",
                     "error".red().bold()
-                );
-            }
-            return EXIT_USER_ERROR;
+                )
+            };
+            return Err((EXIT_USER_ERROR, message));
         }
         if !args.flags.quiet {
             println!(
@@ -5874,11 +5607,13 @@ pub fn run(args: MintArgs) -> u8 {
             {
                 Some(s) => s,
                 None => {
-                    eprintln!(
-                        "{}: no lift surface configured. Set [[plugins]] or [authoring] surface in .sugar/config.toml, or pass --surface/--kit.",
-                        "error".red().bold()
-                    );
-                    return EXIT_USER_ERROR;
+                    return Err((
+                        EXIT_USER_ERROR,
+                        format!(
+                            "{}: no lift surface configured. Set [[plugins]] or [authoring] surface in .sugar/config.toml, or pass --surface/--kit.",
+                            "error".red().bold()
+                        ),
+                    ));
                 }
             }
         };
@@ -5893,74 +5628,109 @@ pub fn run(args: MintArgs) -> u8 {
         )
     };
 
-    match session {
-        Ok(session) => {
-            let result = session.result;
-            // Edge write (#3810): the CLI's product IS the on-disk `.proof`;
-            // persist the in-memory catalog bytes here, at the edge.
-            if let Err(e) = persist_proof_file(&result) {
-                eprintln!("{}: {e}", "error".red().bold());
-                return EXIT_VERIFY_FAIL;
-            }
-            let contract_set_cid = if result.contract_set_cid.is_empty() {
-                compute_contract_set_cid(vec![])
-            } else {
-                result.contract_set_cid.clone()
-            };
+    session
+        .map(|session| (project_root, session))
+        .map_err(|e| (EXIT_VERIFY_FAIL, format!("{}: {e}", "error".red().bold())))
+}
 
-            if args.flags.json {
+/// What one `sugar mint` produced: the `.proof` it wrote and the lift
+/// response it minted from.
+pub struct MintedProof {
+    pub project_root: PathBuf,
+    pub surface: String,
+    pub out_dir: PathBuf,
+    pub filename_cid: String,
+    pub contract_set_cid: String,
+    /// The `.proof` file written at its canonical path, or `None` when the
+    /// mint produced no catalog (the lifter-missing empty-set attestation).
+    pub proof_file: Option<PathBuf>,
+    pub proof_byte_len: usize,
+    pub lift_result: Value,
+}
+
+/// The one mint door: what `sugar mint` does, without printing its summary.
+/// Resolves the project's lift surface(s) exactly as the CLI does, mints,
+/// and writes the `.proof` at `out` (default: the project root). The LSP
+/// mints an edited buffer through this door.
+pub fn mint_project(args: &MintArgs) -> Result<MintedProof, (u8, String)> {
+    let (project_root, session) = mint_session(args)?;
+    let result = session.result;
+    // Edge write (#3810): the product IS the on-disk `.proof`.
+    let proof_file = persist_proof_file(&result)
+        .map_err(|e| (EXIT_VERIFY_FAIL, format!("{}: {e}", "error".red().bold())))?;
+    let contract_set_cid = if result.contract_set_cid.is_empty() {
+        compute_contract_set_cid(vec![])
+    } else {
+        result.contract_set_cid.clone()
+    };
+    let proof_byte_len = result.proof_byte_len();
+    Ok(MintedProof {
+        project_root,
+        surface: session.surface,
+        out_dir: session.out_dir,
+        filename_cid: result.filename_cid,
+        contract_set_cid,
+        proof_file: proof_file.or(result.proof_file),
+        proof_byte_len,
+        lift_result: result.lift_result,
+    })
+}
+
+pub fn run(args: MintArgs) -> u8 {
+    let minted = match mint_project(&args) {
+        Ok(minted) => minted,
+        Err((code, message)) => {
+            eprintln!("{message}");
+            return code;
+        }
+    };
+    let contract_set_cid = &minted.contract_set_cid;
+    if args.flags.json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "ok": true,
+                "project": &minted.project_root,
+                "surface": &minted.surface,
+                "filenameCid": &minted.filename_cid,
+                "contractSetCid": contract_set_cid,
+                "bytesWritten": minted.proof_byte_len,
+                "proofFile": &minted.proof_file,
+                "lift": &minted.lift_result,
+            }))
+            .expect("serialize mint JSON")
+        );
+    } else if !args.flags.quiet {
+        println!();
+        if !minted.filename_cid.is_empty() {
+            println!("  catalog CID:        {}", minted.filename_cid);
+        }
+        println!("  contractSetCid:     {contract_set_cid}");
+        if minted.proof_byte_len > 0 {
+            println!("  proof bytes:        {}", minted.proof_byte_len);
+            if let Some(proof_file) = &minted.proof_file {
+                println!("  .proof file:        {}", proof_file.display());
+            } else {
                 println!(
-                    "{}",
-                    serde_json::to_string_pretty(&json!({
-                        "ok": true,
-                        "project": &project_root,
-                        "surface": &session.surface,
-                        "filenameCid": &result.filename_cid,
-                        "contractSetCid": &contract_set_cid,
-                        "bytesWritten": result.proof_byte_len(),
-                        "proofFile": &result.proof_file,
-                        "lift": &result.lift_result,
-                    }))
-                    .expect("serialize mint JSON")
+                    "  .proof file:        {}",
+                    minted
+                        .out_dir
+                        .join(proof_filename(&minted.filename_cid))
+                        .display()
                 );
-            } else if !args.flags.quiet {
-                println!();
-                if !result.filename_cid.is_empty() {
-                    println!("  catalog CID:        {}", result.filename_cid);
-                }
-                println!("  contractSetCid:     {contract_set_cid}");
-                if result.proof_byte_len() > 0 {
-                    println!("  proof bytes:        {}", result.proof_byte_len());
-                    if let Some(proof_file) = &result.proof_file {
-                        println!("  .proof file:        {}", proof_file.display());
-                    } else {
-                        println!(
-                            "  .proof file:        {}",
-                            session
-                                .out_dir
-                                .join(proof_filename(&result.filename_cid))
-                                .display()
-                        );
-                    }
-                } else {
-                    println!("  (no .proof written: lifter binary not found)");
-                }
-            } else {
-                // Quiet mode: first line = bundle CID, second line = contractSetCid.
-                // The Makefile captures contractSetCid via grep.
-                if !result.filename_cid.is_empty() {
-                    println!("{}", result.filename_cid);
-                }
-                println!("contractSetCid: {contract_set_cid}");
             }
-
-            EXIT_OK
+        } else {
+            println!("  (no .proof written: lifter binary not found)");
         }
-        Err(e) => {
-            eprintln!("{}: {e}", "error".red().bold());
-            EXIT_VERIFY_FAIL
+    } else {
+        // Quiet mode: first line = bundle CID, second line = contractSetCid.
+        // The Makefile captures contractSetCid via grep.
+        if !minted.filename_cid.is_empty() {
+            println!("{}", minted.filename_cid);
         }
+        println!("contractSetCid: {contract_set_cid}");
     }
+    EXIT_OK
 }
 
 // ---------------------------------------------------------------------------

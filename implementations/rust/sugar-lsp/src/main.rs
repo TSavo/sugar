@@ -33,16 +33,13 @@
 //
 // `sugar-lsp --in-process` proves buffers IN-PROCESS by linking the engine
 // directly (`prove_engine.rs`): no daemon RPC, no subprocess solver. On
-// `initialize` the resident `ProveContext` (vendor-only base pool + solver
-// plan/registry + IR-compiler registry + consistency index) is built once
-// from the workspace root's `.sugar/imports`. On `didOpen`/`didSave` (and
-// `didChange`, debounced 250ms), the edited buffer is staged into a
-// SOURCE-OVERLAY and FEED via enumerate→fold
-// (`sugar_compiler::feed_from_tree` / `pool_from_graph_with_speaker`), then solved against the resident
-// base index via THE ONE DOOR
-// (`sugar_verifier::consistency::verify_consistency_scoped_with_base_index`
-// — #3809 one feed + one solve; no parallel mint-as-feed).
-// Non-discharged consistency rows become `publishDiagnostics` entries whose
+// `didOpen`/`didSave` (and `didChange`, debounced 250ms), the edited buffer
+// is staged into a source overlay, minted through `sugar mint`'s door
+// (`sugar_cli::cmd_mint::mint_project`) and proved through `sugar prove`'s
+// door (`sugar_cli::prove_door::build_prove_outcome_with_options`); the LSP
+// reports prove's rows (`sugar_cli::prove_door::prove_rows`). Lifting and
+// proving are never conflated (item 35 on #7757).
+// Non-discharged rows become `publishDiagnostics` entries whose
 // message is the three-fact block (vendor fact / vendor universe / your
 // fact / conjoined / the fix), rendered by `fol_format.rs` (a port of
 // `editors/vscode-sugar/src/proveClient.ts`'s `formatDetail`/`prettyFol`).
@@ -106,15 +103,10 @@ struct SugarLanguageServer {
     /// THE TERMINUS: `--in-process` mode active. Mutually exclusive with
     /// per-plugin routing (see `update_document`'s dispatch).
     in_process: bool,
-    /// THE `proofs` MAP (`.proofs: Map<Cid, ProofGraph>` in the re-plumb
-    /// spec): the vendor-only base pool parsed from `.sugar/imports`, built
-    /// once at `initialize` and refreshed whole-map when the `.proof` file
-    /// watcher (`did_change_watched_files`, or the drift check every solve
-    /// already runs) sees a manifest change. `ProveContext` bundles the
-    /// parsed pool with the derived `ConsistencyIndex`/solver plan so a
-    /// refresh recomputes both together (see `get_or_refresh_prove_ctx`).
-    /// `None` until `initialize` runs (or if the workspace root has no
-    /// resolvable project).
+    /// The project the in-process mode proves, set at `initialize`. Each
+    /// solve mints the buffer through `sugar mint`'s door and proves it
+    /// through `sugar prove`'s door, which reads the staged imports afresh.
+    /// `None` until `initialize` runs.
     prove_ctx: Arc<Mutex<Option<Arc<prove_engine::ProveContext>>>>,
     /// THE `lifted` MAP (`.lifted: Map<File, ProofGraph>` in the re-plumb
     /// spec): last-known raw buffer text per open uri, refreshed per-entry
@@ -176,9 +168,7 @@ impl LanguageServer for SugarLanguageServer {
             .unwrap_or_else(|| PathBuf::from("."));
 
         if self.in_process {
-            // THE TERMINUS: build the resident `ProveContext` once, in-process
-            // (loads `.sugar/imports`, builds plan/registry/compilers, indexes
-            // the consistency candidates). Warm because the LSP process lives.
+            // Record the project the in-process mode proves.
             let build_root = root.clone();
             let ctx = tokio::task::spawn_blocking(move || {
                 prove_engine::build_prove_context_for(&build_root)
@@ -793,33 +783,13 @@ fn overlaps_range(a: Range, b: Range) -> bool {
     a.start.line <= b.end.line && a.end.line >= b.start.line
 }
 
-/// Return the resident `ProveContext`, rebuilding it in place first if
-/// `.sugar/imports` has drifted since the last (re)build. `None` means
-/// `initialize` never built one (no workspace root, or the build panicked).
-/// A rebuild failure keeps serving the stale-but-present context rather
-/// than regressing a working session.
+/// Return the `ProveContext` `initialize` built. `None` means `initialize`
+/// never built one (no workspace root, or the build panicked). Every solve
+/// reads the staged imports afresh through the prove door.
 async fn get_or_refresh_prove_ctx(
     prove_ctx: &Arc<Mutex<Option<Arc<prove_engine::ProveContext>>>>,
 ) -> Option<Arc<prove_engine::ProveContext>> {
-    let mut guard = prove_ctx.lock().await;
-    let current = guard.clone()?;
-    let imports_root = current.project_root.join(".sugar").join("imports");
-    let current_manifest = prove_engine::scan_proof_manifest(&imports_root);
-    if current_manifest == current.proof_manifest {
-        return Some(current);
-    }
-    let project_root = current.project_root.clone();
-    let rebuilt =
-        tokio::task::spawn_blocking(move || prove_engine::build_prove_context_for(&project_root))
-            .await;
-    match rebuilt {
-        Ok(ctx) => {
-            let arc = Arc::new(ctx);
-            *guard = Some(arc.clone());
-            Some(arc)
-        }
-        Err(_) => Some(current),
-    }
+    prove_ctx.lock().await.clone()
 }
 
 /// THE TERMINUS: solve one buffer in-process against the resident base index
@@ -871,25 +841,10 @@ async fn in_process_solve_and_publish(
         }
     };
 
-    if let Some(reason) = &outcome.degraded_reason {
+    if let Some(reason) = &outcome.failure {
         client
-            .log_message(
-                MessageType::INFO,
-                format!("in-process solve degraded: {reason}"),
-            )
+            .log_message(MessageType::WARNING, format!("in-process solve: {reason}"))
             .await;
-    }
-    for line in &outcome.auto_logs {
-        client
-            .log_message(MessageType::INFO, format!("#4007 {line}"))
-            .await;
-        // Maven-class "Download sources" affordance (#4106): surface fetch
-        // events as a user-visible toast, not only Output log.
-        if line.starts_with("download-sources:") && !line.contains(" skip:") {
-            client
-                .show_message(MessageType::INFO, format!("Sugar: {line}"))
-                .await;
-        }
     }
 
     let project_root = prove_ctx
@@ -923,9 +878,6 @@ async fn in_process_solve_and_publish(
     // #4149 report mode: facts (blue) / dig green→red / Minority yellow / unsat.
     let mut payload =
         report_mode::project_from_prove_rows(uri.as_str(), &outcome.rows, &file, &project_root);
-    if let Some(report) = &outcome.report_lift {
-        report_mode::merge_report_lift_response(&mut payload, report, &file, &project_root);
-    }
     let workspace = report_rollup.lock().await.update(payload.clone());
     payload.workspace = Some(workspace);
     client
@@ -1000,25 +952,6 @@ fn build_diagnostics(result: &backend::VerifyResult, range: Range) -> Vec<Diagno
     }
 }
 
-fn apply_auto_config_env(auto: &config::AutoConfig) {
-    // Only fill unset env so operators can still override from the shell.
-    if std::env::var_os("SUGAR_LSP_AUTO_LIFT").is_none() {
-        std::env::set_var("SUGAR_LSP_AUTO_LIFT", if auto.lift { "1" } else { "0" });
-    }
-    if std::env::var_os("SUGAR_LSP_DOWNLOAD_SOURCES").is_none() {
-        std::env::set_var(
-            "SUGAR_LSP_DOWNLOAD_SOURCES",
-            if auto.download_sources { "1" } else { "0" },
-        );
-    }
-    if std::env::var_os("SUGAR_LSP_DOWNLOAD_RECURSIVE").is_none() {
-        std::env::set_var(
-            "SUGAR_LSP_DOWNLOAD_RECURSIVE",
-            if auto.download_recursive { "1" } else { "0" },
-        );
-    }
-}
-
 #[tokio::main]
 async fn main() {
     let mut config_path = ".sugar/config.toml".to_string();
@@ -1044,8 +977,6 @@ async fn main() {
 
     // Read config
     let config = config::load_config(&config_path).unwrap_or_default();
-    // Workspace [auto] → env defaults (env already set wins).
-    apply_auto_config_env(&config.auto);
 
     let backend_path = config.server.backend.clone();
 

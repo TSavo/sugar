@@ -771,46 +771,41 @@ fn real_python_kit_prove_instrument_is_enrolled() {
     eprintln!("RECEIPT #3928 gap2 pin: real_python_kit_prove instrument enrolled");
 }
 
-/// #3928 gap-3 always-on pin: LSP buffer re-solve discharges through the
-/// resident-base one door. `warm_solve` was deleted (#3981); warmth is
-/// derived (resident base index + pre-fed overlay), not a second function.
-/// Identity: LSP door = `verify_consistency_scoped_with_base_index`;
-/// Runner door = `solve_project_with_pool`. Both are pool-resident discharge.
+/// Item 35 on #7757: the LSP mints a buffer through `sugar mint`'s door and
+/// proves it through `sugar prove`'s door. It starts no kit, folds no pool,
+/// mints no bridges or vendor proofs, and walks nothing below
+/// `.sugar/imports`.
 #[test]
-fn lsp_solve_buffer_uses_resident_base_one_door() {
+fn lsp_solve_buffer_goes_through_the_mint_and_prove_doors() {
     let src_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src/prove_engine.rs");
     let text = fs::read_to_string(&src_path).expect("read prove_engine.rs");
 
-    assert!(
-        text.contains("verify_consistency_scoped_with_base_index"),
-        "R(gap3 warm_face)>0: solve_buffer must call the resident-base one door\n\
-         replacement: discharge via sugar_verifier::consistency::verify_consistency_scoped_with_base_index\n\
-         (warmth = resident base index; do not reintroduce a parallel cold load_pool path)"
-    );
-    // Count call sites in the solve_buffer body region: the function name must
-    // appear as an actual call, not only in docs.
-    let call_needle = "sugar_verifier::consistency::verify_consistency_scoped_with_base_index(";
-    assert!(
-        text.contains(call_needle),
-        "R(gap3 warm_face)>0: missing call {call_needle}\n\
-         prove_engine must route buffer re-solve through the one resident-base door"
-    );
-    // Parallel mint-as-feed is the illegal dual path (#4030 closed it).
-    // Call-site only: docs may name the banned symbol as the thing not to do.
-    assert!(
-        !text.contains("mint_project_scratch_proof("),
-        "R(gap3 warm_face)>0: mint-as-feed call reappeared in prove_engine\n\
-         replacement: keep enumerate→fold→resident-base door only; mint is seal/publish"
-    );
-    // Must not reintroduce the deleted dual warm_solve symbol as a second door.
-    assert!(
-        !text.contains("warm_solve("),
-        "R(gap3 warm_face)>0: warm_solve( call reintroduced — one door was the point of #3981\n\
-         warmth is derived residency, not a second function name"
-    );
-    eprintln!(
-        "RECEIPT #3928 gap3 pin: solve_buffer → verify_consistency_scoped_with_base_index (one door)"
-    );
+    for door in [
+        "sugar_cli::cmd_mint::mint_project(",
+        "sugar_cli::prove_door::build_prove_outcome_with_options(",
+        "sugar_cli::prove_door::prove_rows(",
+    ] {
+        assert!(
+            text.contains(door),
+            "prove_engine must go through {door} (item 35 on #7757)"
+        );
+    }
+    for second_way in [
+        "Kit::rendezvous",
+        "fold_project",
+        "pool_from_graph_with_speaker",
+        "verify_consistency_scoped_with_base_index",
+        "inject_dependency_bridges_into_pool",
+        "mint_project_scratch_proof",
+        "load_all_proofs::run(",
+        "WalkDir",
+        "report_lift_response_for_project",
+    ] {
+        assert!(
+            !text.contains(second_way),
+            "prove_engine reintroduced a second way: {second_way} (item 35 on #7757)"
+        );
+    }
 }
 
 #[test]

@@ -25,9 +25,8 @@ toml = "0.8"
 # THE TERMINUS (lsp-links-engine lane): prove buffers IN-PROCESS by linking
 # the engine directly -- no daemon RPC, no subprocess solver (the daemon this
 # once routed through, sugar-linkerd, is retired; see #3844 + daemon-3-delete):
-# sugar-verifier owns the resident pool / consistency index / solve door;
-# sugar-compiler owns enumerate→fold feed (`fold_project` / `pool_from_graph_with_speaker`);
-# sugar-cli owns project config + lift manifest resolution for kit rendezvous.
+# sugar-cli owns the two doors the LSP goes through: `cmd_mint::mint_project`
+# (what `sugar mint` does) and `prove_door` (what `sugar prove` does).
 sugar-verifier = { path = "../sugar-verifier" }
 sugar-proof-envelope = { path = "../sugar-proof-envelope" }
 sugar-cli = { path = "../sugar-cli" }

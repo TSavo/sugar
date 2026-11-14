@@ -50,6 +50,7 @@ mod kit_dispatch;
 mod lift_plugin;
 pub mod panic_annotations_runtime;
 mod project_config;
+mod prove_door;
 mod report_fmt;
 mod report_witness;
 mod source_partition;
