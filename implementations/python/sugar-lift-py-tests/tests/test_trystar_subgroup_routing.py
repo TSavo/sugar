@@ -7,7 +7,8 @@ ExceptionGroup testimony is partitioned by authenticated handler type through
 - unmatched residual continues to subsequent handlers (source order)
 - handler halt regroups with residual; finally restore / terminate override
 - leaf occurrence identities and nested group topology survive partition
-- ordinary ``Try`` never consumes grouped testimony
+- ordinary ``Try`` matches a group by its class: ``except ValueError`` passes
+  it through, ``except ExceptionGroup`` catches it whole
 - type and occurrence lying twins refuse
 
 Does not touch nodes.py, ExitSet/carrier algebra, assertion/resource routing,
@@ -16,8 +17,6 @@ or exception spelling rules. Acceptance is this file.
 
 from __future__ import annotations
 
-import pytest
-
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
@@ -25,7 +24,6 @@ from sugar_lift_py_tests.floor.effect_coordinate import ObservedEffectValue
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.effect.authenticated_raise_locus import AuthenticatedRaiseLocus
 
@@ -446,49 +444,23 @@ def test_occurrence_lying_twin_matched_binding_is_not_residual_leaf():
 # ---------------------------------------------------------------------------
 
 
-def test_ordinary_try_refuses_grouped_raise_effect():
-    """Ordinary except must not decide miss on GroupedRaiseEffect.
-
-    GroupedRaiseEffect is a sibling of RaiseEffect, not a subclass. Returning
-    MatchDecided(False) fabricates a miss on an effect kind ordinary Try
-    cannot read. Mirror TryStarSugar: named SugarNotWritten, membrane stays
-    loud both directions.
-    """
-    with pytest.raises(SugarNotWritten) as excinfo:
-        _desugar(
-            "def f():\n"
-            "    try:\n"
-            "        raise ExceptionGroup('g', [ValueError()])\n"
-            "    except ValueError:\n"
-            "        pass\n",
-            name="ordinary_try.py",
-        )
-    gap = excinfo.value
-    assert gap.owner == "TrySugar._effect_match_verdict"
-    assert gap.observed == "GroupedRaiseEffect"
-    assert "RaiseEffect" in gap.requested
-    assert "except*" in gap.fix
-
-
-def test_ordinary_try_except_exceptiongroup_still_refuses_without_split():
-    """even except ExceptionGroup on ordinary Try does not enter TryStar partition.
-
-    The arm still cannot read GroupedRaiseEffect through RaiseEffect matching;
-    deciding miss would be the same fabricated verdict. Loud until ordinary
-    Try owns grouped routing (it does not).
-    """
-    with pytest.raises(SugarNotWritten) as excinfo:
-        _desugar(
-            "def f():\n"
-            "    try:\n"
-            "        raise ExceptionGroup('g', [ValueError()])\n"
-            "    except ExceptionGroup:\n"
-            "        pass\n",
-            name="ordinary_eg.py",
-        )
-    gap = excinfo.value
-    assert gap.owner == "TrySugar._effect_match_verdict"
-    assert gap.observed == "GroupedRaiseEffect"
+def test_ordinary_except_exceptiongroup_catches_the_group_whole():
+    """Ordinary ``except`` matches a raised group by the group's own class,
+    as CPython does (``PyErr_GivenExceptionMatches`` over the group
+    instance): ``except ExceptionGroup`` catches the whole group, with no
+    split.  The miss of ``except ValueError`` over the same group is
+    ``test_try_exitset_law``'s
+    ``test_ordinary_except_does_not_absorb_grouped_raise_silently``."""
+    outcome = _desugar(
+        "def f():\n"
+        "    try:\n"
+        "        raise ExceptionGroup('g', [ValueError()])\n"
+        "    except ExceptionGroup:\n"
+        "        return 1\n",
+        name="ordinary_eg.py",
+    )
+    assert outcome.halts() == (), outcome.exits
+    assert "TermValue(value=1)" in repr(outcome.exits)
 
 
 def test_trystar_handles_a_plain_raise_as_its_one_member_group():

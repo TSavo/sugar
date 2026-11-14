@@ -427,13 +427,19 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
     (authenticated operands in, ``MatchDecided`` / ``MatchRetained`` out).
     This function does not decide miss. It either:
 
-    - refuses with ``SugarNotWritten`` when the effect kind is not what ordinary
-      except sugar reads (``GroupedRaiseEffect`` is a sibling of ``RaiseEffect``,
-      not a subclass — same membrane as ``TryStarSugar``), or when the handler
-      type did not construct; or
+    - refuses with ``SugarNotWritten`` when the effect is not a raised
+      exception (not a raise, an undetermined raise or a group), or when the
+      handler type did not construct; or
     - returns the one matcher's verdict for typed arms; or
-    - returns ``MatchDecided(True)`` for bare except over a real ``RaiseEffect``
+    - returns ``MatchDecided(True)`` for bare except over a raised exception
       (written bare-except sugar — no type operand to match).
+
+    A raised group (``GroupedRaiseEffect``) is one exception instance to
+    ordinary ``except``, as CPython matches it (``PyErr_GivenExceptionMatches``
+    over the group itself, never its members): the one matcher tests the
+    group's own class, so ``except ValueError`` passes an ``ExceptionGroup``
+    through and ``except ExceptionGroup`` catches it whole.  Splitting by
+    member type is ``except*``'s alone (``TryStarSugar``).
 
     Minting ``MatchDecided(False)`` here would be a second mechanism: ad-hoc
     Python fabricating a miss outside the tree→sugar path.
@@ -444,6 +450,7 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
     reads the type whenever a raise reaches the arm, matched or not, so the
     router carries it beneath every face that passed the arm.
     """
+    from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
     from sugar_lift_py_tests.effect.raise_effect import (
         RaiseEffect,
         UndeterminedRaiseEffect,
@@ -458,15 +465,18 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
     # whose class nobody testified to. Ordinary ``except`` reads it like any
     # other leaf raise: the one matcher states the type test over the raised
     # exception value it carries (``exception_value``), so no class is
-    # invented and no arm is decided by its absence.
-    if not isinstance(effect, (RaiseEffect, UndeterminedRaiseEffect)):
+    # invented and no arm is decided by its absence.  A group is read by its
+    # own class, likewise through the one matcher.
+    if not isinstance(
+        effect, (RaiseEffect, UndeterminedRaiseEffect, GroupedRaiseEffect)
+    ):
         blame = getattr(effect, "occurrence_id", None) or site
         raise SugarNotWritten(
             blame=blame,
             owner="TrySugar._effect_match_verdict",
             observed=type(effect).__name__,
-            requested="RaiseEffect for ordinary except routing",
-            fix="keep ordinary except and except* distinct",
+            requested="a raised exception (plain, undetermined or a group)",
+            fix="route only raised exceptions through except arms",
         )
     if matcher is None:
         return MatchDecided(True), ()
