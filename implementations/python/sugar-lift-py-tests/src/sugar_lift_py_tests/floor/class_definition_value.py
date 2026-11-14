@@ -258,27 +258,6 @@ class ClassDefinitionValue(GuardStableValue):
             None,
         )
 
-    def builtin_initializer_class(self):
-        """The builtin exception class whose ``__init__`` is the first of this
-        class's MRO (``ClassDef.initializer_entry``), as the builtin namespace
-        binds it; None when that ``__init__`` is a source class's,
-        ``object``'s, or is not decided."""
-        definition = self.class_definition
-        if definition is None:
-            return None
-        owner = definition.initializer_entry()
-        if not isinstance(owner, str) or owner == "object":
-            return None
-        from sugar_lift_py_tests.floor.builtin_exception_class_value import (
-            BuiltinExceptionClassValue,
-        )
-        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
-            builtin_name_temporal,
-        )
-
-        value = builtin_name_temporal().value_if_bound(owner)
-        return value if isinstance(value, BuiltinExceptionClassValue) else None
-
     def call_method_value(
         self,
         name,
@@ -364,17 +343,24 @@ class ClassDefinitionValue(GuardStableValue):
         ctx=None,
         keywords=(),
     ):
-        """Run method ``name`` resolved from THIS class's MRO, bound to an
-        explicit ``receiver``.
+        """Run THIS class's own method ``name``, bound to an explicit
+        ``receiver``.
 
-        Zero-argument ``super()`` uses this to invoke a selected source-defined
-        base method: the original instance stays the bound ``self`` while the
-        base body reduces with ``__class__`` seeded to the method's defining
-        class, so a chained ``super`` inside that body selects the next class.
-        It is the same bound-method call as ``ObjectValue.call_method_value``
-        (``bind_method_call`` then ``producer_outcome``); only the method table (this
-        class's ``_object_methods`` MRO) and the explicit receiver differ.
+        Zero-argument ``super()`` selects the class by its one lookup
+        (``ClassDef.namespace_owner`` over ``type(receiver).__mro__`` after
+        ``__class__``, ``BuiltinSuperValue``): this class's namespace binds
+        ``name``, so the function its body wrote for it (the last ``def``,
+        Python's live binding) is the one that runs -- never one this class
+        inherits.  The original instance stays the bound ``self`` while the
+        body reduces with ``__class__`` seeded to this class (its defining
+        class), so a chained ``super`` inside it continues along the
+        receiver's MRO after this class.  It is the same bound-method call
+        as ``ObjectValue.call_method_value`` (``bind_method_call`` then
+        ``producer_outcome``).  A name the body binds by anything but a
+        ``def`` (an assignment, an import) has no method here and refuses by
+        name.
         """
+        from sugar_lift_py_tests.floor import ObjectMethodValue
         from sugar_lift_py_tests.floor.object_value import bind_method_call
 
         def refuse(*, owner, blame, observed, requested, fix):
@@ -386,36 +372,37 @@ class ClassDefinitionValue(GuardStableValue):
                 fix=fix,
             )
 
-        if name == "__init__":
-            # The first ``__init__`` of this class's MRO, by the one base
-            # walk: a builtin exception's is BaseException's law on the
-            # receiver, wherever a source class stands after it.
-            builtin = self.builtin_initializer_class()
-            if builtin is not None:
-                return builtin.initialize_instance(
-                    receiver, arguments, keywords, blame=blame, owner=owner
-                )
-        for method in reversed(self._object_methods()):
-            if method.name != name:
-                continue
-            return bind_method_call(
-                receiver,
-                method,
-                arguments,
-                keywords,
-                class_name=self.class_name,
-                ctx=ctx,
+        written = tuple(method for method in self.methods if method.name == name)
+        if not written:
+            raise SugarNotWritten(
                 owner=owner,
                 blame=blame,
-                refuse=refuse,
-            ).producer_outcome(ctx)
-        raise SugarNotWritten(
+                observed=f"{self.class_name}.{name}",
+                requested="the source method zero-argument super selected",
+                fix=f"construct a diggable body for `{self.class_name}.{name}` or keep loud",
+            )
+        method = written[-1]
+        frame = method.source_call_frame
+        return bind_method_call(
+            receiver,
+            ObjectMethodValue(
+                method.name,
+                frame.parameters,
+                frame.body,
+                frame.frame_cid,
+                tuple(coordinate.cid for coordinate in frame.formal_coordinates),
+                frame,
+                method.descriptor_kind,
+                defining_class=self,
+            ),
+            arguments,
+            keywords,
+            class_name=self.class_name,
+            ctx=ctx,
             owner=owner,
             blame=blame,
-            observed=f"{self.class_name}.{name}",
-            requested="a source-defined base method for zero-argument super",
-            fix=f"construct a diggable body for `{self.class_name}.{name}` or keep loud",
-        )
+            refuse=refuse,
+        ).producer_outcome(ctx)
 
     def to_term(self, *, owner: str):
         del owner

@@ -224,6 +224,25 @@ def _scope_body_bounds(node) -> "tuple | None":
     return (first.start_line, first.start_col), (last.end_line, last.end_col)
 
 
+def _order_position(order, statement) -> "int | None":
+    """The index of the class statement ``statement`` in a base walk's
+    ``order`` (``ClassDef.method_resolution_order`` or its head), matched by
+    source occurrence as the walk keys its entries; None when absent."""
+    identity = SourceOccurrenceIdentityV1.of(statement)
+    return next(
+        (
+            index
+            for index, entry in enumerate(order)
+            if isinstance(entry, ClassDef)
+            and (
+                entry is statement
+                or SourceOccurrenceIdentityV1.of(entry) == identity
+            )
+        ),
+        None,
+    )
+
+
 class LanguageCallee(_enum.Enum):
     """A callee whose behaviour the Python language fixes, named by identity
     (and ``pytest.importorskip``, fixed by the harness lifted tests run under).
@@ -1478,6 +1497,77 @@ class SourceUnit:
             owner = generator
         answers[position] = owner
         return owner
+
+    def frame_class_cell(self, span) -> "tuple[bool, ClassDef | None]":
+        """``(decided, cell)``: whether the code object running at ``span``
+        (``frame_holding``) has a ``__class__`` cell, and the class statement
+        whose class that cell holds.
+
+        CPython's ``super_init_without_args`` (Objects/typeobject.c) looks
+        ``__class__`` up among the running code's free variables and raises
+        ``RuntimeError: super(): __class__ cell not found`` when it is not
+        one.  The compiler makes it one exactly when the frame's own
+        ``symtable`` block lists ``__class__`` free (``get_frees``): a
+        function, lambda or generator expression that reads ``super`` (or
+        ``__class__``) inside a class statement's body, through any depth of
+        nested functions.  The cell holds the class the nearest enclosing
+        class statement makes (PEP 3135).  It is read off the frame's own
+        block, never off a binding a caller made: a module-level ``def
+        f(self): return super().m()`` has no cell wherever it is called from.
+
+        ``(True, None)``: decided, no cell.  ``(True, statement)``: the cell,
+        and the class statement it holds.  ``(False, None)``: not decided --
+        the position runs in no function frame (module level, a class body:
+        a frame with no argument, whose ``super()`` raises before it reads a
+        cell), or the frame's block is not singled out (several blocks of
+        that kind start on its line and disagree).
+        """
+        frame = self.frame_holding(span)
+        if not isinstance(
+            frame, (FunctionDef, AsyncFunctionDef, Lambda, GeneratorExp)
+        ):
+            return False, None
+        verdicts = {
+            "__class__" in table.get_frees() for table in self._frame_symtables(frame)
+        }
+        if len(verdicts) != 1:
+            return False, None
+        if not verdicts.pop():
+            return True, None
+        holder = frame
+        while holder is not None:
+            holder = self.scope_holding(holder.line_col_span())
+            if isinstance(holder, ClassDef):
+                return True, holder
+        return False, None
+
+    def _frame_symtables(self, frame) -> tuple:
+        """CPython's symtable blocks of the function frame ``frame`` (a
+        ``def``, a lambda, a generator expression): selected by kind, name,
+        line and, for a lambda, its formals.  A symtable carries no column,
+        so when several blocks match, those that read ``super`` are kept."""
+        line = frame.line_col_span().start_line
+        if isinstance(frame, Lambda):
+            tables = self.lambda_symtables(
+                line, frozenset(param.name for param in frame.params)
+            )
+        elif isinstance(frame, GeneratorExp):
+            tables = (
+                *self._function_symtables("genexpr", line),
+                *self._function_symtables("<genexpr>", line),
+            )
+        else:
+            tables = self._function_symtables(frame.name, line)
+        if len(tables) <= 1:
+            return tuple(tables)
+
+        def reads_super(table) -> bool:
+            try:
+                return table.lookup("super").is_referenced()
+            except KeyError:
+                return False
+
+        return tuple(table for table in tables if reads_super(table))
 
     def lexical_call_enrollment(self, call: "Call") -> LexicalCallEnrollmentV1:
         """The producer's ONE closed applicability decision for a call.
@@ -9900,7 +9990,9 @@ class ClassDef(Statement):
         ``Base[T]``) is walked in turn; ``object`` reached through the
         builtin namespace (``LanguageCallee.BUILTIN_OBJECT``) is the entry
         ``"object"``, the builtin ``dict`` (``LanguageCallee.BUILTIN_DICT``)
-        the entry ``"dict"``, whose base is ``object``; a builtin exception
+        the entry ``"dict"`` and the builtin ``type``
+        (``LanguageCallee.BUILTIN_TYPE``) the entry ``"type"``, each of whose
+        base is ``object``; a builtin exception
         class the read reaches
         (``SourceUnit.name_reference_at``) is its canonical builtins name,
         whose bases are the language's (``BUILTIN_EXCEPTION_BASES``).  A
@@ -9916,9 +10008,11 @@ class ClassDef(Statement):
         Every reader of a class's bases reads this walk: the constructor
         frame's admission (``SourceUnit.source_class_has_plain_source_body``),
         the ``__init__`` a call of the class runs (``initializer_entry``),
-        the class a name read on its type resolves to (``namespace_owner``)
-        and the constructor defaults a class value binds
-        (``ClassDefinitionValue.constructor_defaults``).
+        the class a name read on its type resolves to (``namespace_owner``),
+        the class a zero-argument ``super()`` reaches and its instance check
+        (``namespace_owner(name, after=...)``, ``mro_holds``;
+        ``BuiltinSuperValue``) and the constructor defaults a class value
+        binds (``ClassDefinitionValue.constructor_defaults``).
         """
         from sugar_lift_py_tests.floor.class_definition_value import c3_tail
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
@@ -9979,8 +10073,10 @@ class ClassDef(Statement):
         where it stands: the module ``class`` statement the read reaches
         (also under a subscript ``Base[T]``), ``"object"`` for the builtin
         ``object``, ``"dict"`` for the builtin ``dict`` (a mapping object's
-        storage base, ``namespace_owner``), a builtin exception class's
-        canonical name, else None."""
+        storage base, ``namespace_owner``), ``"type"`` for the builtin
+        ``type`` (a metaclass's base, whose ``__new__`` a zero-argument
+        ``super()`` reaches), a builtin exception class's canonical name,
+        else None."""
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
             BUILTIN_EXCEPTION_NAMES,
             canonical_builtin_exception_name,
@@ -10000,6 +10096,8 @@ class ClassDef(Statement):
             return "object"
         if LanguageCallee.of(target) is LanguageCallee.BUILTIN_DICT:
             return "dict"
+        if LanguageCallee.of(target) is LanguageCallee.BUILTIN_TYPE:
+            return "type"
         builtins_prefix = "python:builtins."
         if target is None or not target.startswith(builtins_prefix):
             return None
@@ -10115,11 +10213,36 @@ class ClassDef(Statement):
             return False
         return symbol.is_assigned() or symbol.is_imported() or symbol.is_namespace()
 
-    def namespace_owner(self, name: str) -> "tuple[bool, object]":
+    def mro_holds(self, statement: "ClassDef") -> "bool | None":
+        """Whether the class statement ``statement`` stands in this class's
+        MRO -- ``issubclass(self, statement)`` read off the one base walk
+        (``method_resolution_order``), the entry matched by its source
+        occurrence as the walk keys its entries.
+
+        True or False when the order is read.  When it is not, only its head
+        is (``method_resolution_head``): True when the head holds it,
+        otherwise None -- a class after the head may be it.
+        """
+        order = self.method_resolution_order()
+        if order is not None:
+            return _order_position(order, statement) is not None
+        if _order_position(self.method_resolution_head(), statement) is not None:
+            return True
+        return None
+
+    def namespace_owner(
+        self, name: str, *, after: "ClassDef | None" = None
+    ) -> "tuple[bool, object]":
         """``(decided, owner)``: the first class of this class's MRO whose
         namespace binds ``name`` -- Python's lookup of a name on the type,
         which every implicit dunder read (``obj[k]``, ``del obj[k]``,
         ``len(obj)``, ...) makes.
+
+        ``after`` starts the lookup at the class after that class statement
+        in the order: ``super()``'s lookup, which walks ``type(obj).__mro__``
+        from the class after its ``__class__`` cell (``super_getattro``,
+        Objects/typeobject.c).  When ``after`` is not in the order read,
+        nothing is decided.
 
         The order is the one base walk (``method_resolution_order``).  A
         ``ClassDef`` binds the name when its body does (``body_binds``); a
@@ -10140,6 +10263,11 @@ class ClassDef(Statement):
         decided = order is not None
         if order is None:
             order = self.method_resolution_head()
+        if after is not None:
+            position = _order_position(order, after)
+            if position is None:
+                return False, None
+            order = order[position + 1 :]
         for entry in order:
             if isinstance(entry, ClassDef):
                 if entry.body_binds(name):
