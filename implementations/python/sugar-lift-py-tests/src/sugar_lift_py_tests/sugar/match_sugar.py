@@ -26,6 +26,12 @@ ExitSet law (advisor #6716 rework):
   - a match with no catch-all case has a fall-through arm: completed under
     the negation of every case's selection, owing what every failed
     equality, pattern and guard owed (#7757)
+  - each case's body arms and the fall-through arm are the match's routes
+    (``route_site``, minted by ``Match.substitute`` when a binding after the
+    match joins over them): every completed arm of a route confirms the
+    match's route slots -- its own true, every other false -- and grounds
+    them for the code after it, as a ``try``'s routed outcome does
+    (``try_sugar._route_confirmation``, ``_ground_route_on_faces``)
 
 Value patterns and catch-all / bare capture are owned. Structural patterns
 stay loud at the construction door (nodes.py).
@@ -279,10 +285,13 @@ def _equality_outcome_under(eq_out, not_prev, site):
     return side, formula, path
 
 
-def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula, path):
+def _guard_faces_under(
+    guard_out, reached, site, body, body_ctx, match_formula, path, routed
+):
     """Fan a guard outcome into ExitSets under ``reached``.
 
-    Returns ``(parts, earlier_bits, guard_path)``.
+    Returns ``(parts, earlier_bits, guard_path)``.  ``routed`` turns the
+    body's exits into the case's route (``MatchSugar._routed``).
 
     ``path`` is the match step owing what the path into this guard incurred
     (patterns and equalities of this and every earlier case); every part is
@@ -315,7 +324,7 @@ def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula, 
         if isinstance(face, Completed):
             truth = _formula_from_floor_value(face.value, site)
             selection = _and_parts(reached, face.guard, truth)
-            body_exits = reduce_block_to_exitset(body, body_ctx)
+            body_exits = routed(reduce_block_to_exitset(body, body_ctx))
             parts.append(
                 _after(selection, _then(path, _debt(face.owed)), body_exits)
             )
@@ -333,6 +342,10 @@ class MatchSugar(Sugar):
     subject: Sugar
     cases: tuple  # MatchCaseSpec, in source order
     site: object = dataclass_field(compare=False)
+    # The address of the match's route slots (``match_route_site``), when a
+    # binding after the match joins over them (``Match.substitute``); None
+    # when nothing reads them.
+    route_site: object = dataclass_field(compare=False, default=None)
 
     @classmethod
     def witnesses(cls):
@@ -376,7 +389,9 @@ class MatchSugar(Sugar):
                     # recurse by building a one-shot match over the face's
                     # value via a synthetic sugar wrapper.
                     sub = _CompleteValueSugar(face.value, self.site)
-                    nested = MatchSugar(sub, self.cases, self.site).desugar(ctx)
+                    nested = MatchSugar(
+                        sub, self.cases, self.site, self.route_site
+                    ).desugar(ctx)
                     # Sequenced under the face: its guard, its partition
                     # testimony and what it owes ride onto every nested arm.
                     parts = parts.union(
@@ -396,7 +411,7 @@ class MatchSugar(Sugar):
         # ran, so its arms are sequenced after this.
         running = _debt()
 
-        for case in self.cases:
+        for arm, case in enumerate(self.cases):
             if not isinstance(case, MatchCaseSpec):
                 raise TypeError(
                     f"MatchSugar.cases requires MatchCaseSpec, got {type(case).__name__}"
@@ -426,7 +441,9 @@ class MatchSugar(Sugar):
             body_ctx = _tentative_capture_ctx(ctx, case.capture_name, subject)
 
             if case.guard is None:
-                body_exits = reduce_block_to_exitset(case.body, body_ctx)
+                body_exits = self._routed(
+                    arm, reduce_block_to_exitset(case.body, body_ctx)
+                )
                 accumulated = accumulated.union(_after(reached, running, body_exits))
                 earlier.append(match_formula)
                 continue
@@ -440,6 +457,7 @@ class MatchSugar(Sugar):
                 body_ctx,
                 match_formula,
                 running,
+                lambda exits, arm=arm: self._routed(arm, exits),
             )
             for part in parts:
                 accumulated = accumulated.union(part)
@@ -463,15 +481,55 @@ class MatchSugar(Sugar):
             # and guard on that path owed.
             from sugar_lift_py_tests.floor.block_value import BlockValue
 
+            # The fall-through route: every case slot is false on it.
             accumulated = accumulated.union(
                 _after(
                     _not_earlier(earlier),
                     running,
-                    ExitSet.completed(BlockValue((), can_fall_through=True)),
+                    ExitSet.completed(
+                        BlockValue(self._route_facts(None), can_fall_through=True)
+                    ),
                 )
             )
         # Shared ExitSet projection — no output-kind membrane on value shape.
         return accumulated.normalize()
+
+    def _route_facts(self, arm) -> tuple:
+        """What a completed arm of route ``arm`` (case ``arm``, or the
+        fall-through for ``None``) states about the match's route slots
+        (``try_sugar._route_confirmation``); nothing without a route site."""
+        from sugar_lift_py_tests.sugar.try_sugar import _route_confirmation
+
+        return _route_confirmation(self.route_site, len(self.cases), arm, self.site)
+
+    def _routed(self, arm, exits):
+        """Case ``arm``'s body ``exits`` as the match's route ``arm``: every
+        completed arm confirms the route slots (``_route_facts``) and decides
+        them for the code after it (``try_sugar._ground_route_on_faces``), so
+        a phi after the match (``Match.substitute``) reads that case's
+        binding there.  A body still waiting on its caller's actuals is
+        routed once they discharge it."""
+        if self.route_site is None:
+            return exits
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+        from sugar_lift_py_tests.sugar.try_sugar import (
+            _ground_route_on_faces,
+            _prepend_facts,
+        )
+
+        if isinstance(exits, NativeOperationExitCarrierV1):
+            return exits.after_discharge(
+                lambda discharged: self._routed(arm, discharged)
+            )
+        return _ground_route_on_faces(
+            _prepend_facts(exits, self._route_facts(arm)),
+            self.route_site,
+            len(self.cases),
+            arm,
+            self.site,
+        )
 
 
 @dataclass(frozen=True)

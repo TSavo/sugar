@@ -39,13 +39,16 @@ from sugar_lift_py_tests.source_call_frame import (
     frame_at_current_module_execution_site,
 )
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
+from sugar_lift_py_tests.sugar.binding_projection import UnboundProjection
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
+from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import read_binding
+from sugar_lift_py_tests.sugar.match_sugar import MatchSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.binding_state import UnboundBinding
+from sugar_source_tree.binding_state import GuardedBinding, UnboundBinding
 from sugar_source_tree.nodes import (
     UNDECIDED_MODULE_BINDING,
     AnnAssign,
@@ -352,7 +355,142 @@ def test_an_except_star_name_bound_before_stays_undecided() -> None:
         _returned(_function(tree))
 
 
-DEF_REBINDS = "X = None\ndef X():\n    pass\ndef f():\n    return X\ny = f()\n"
+# -- a match joins what its cases bind, as an if joins its arms (#7757 item 7) -
+
+
+def _match_route_phi(read, name: str) -> None:
+    """``read`` is the phi over the match's first case route slot."""
+    assert isinstance(read, IfExp), read
+    assert isinstance(read.test, BranchResultRef)
+    assert read.test.slot_id.startswith("match-route:")
+    assert read.test.slot_id.endswith(":0")
+    assert isinstance(read.body, EvaluationRef)
+    assert read.body.name == name
+
+
+MATCH_CASE_WRITES = (
+    "    match v:\n"
+    "        case 1:\n"
+    "            x = 'a'\n"
+    "        case _:\n"
+    "            x = 'b'\n"
+)
+
+
+def test_a_match_in_a_function_joins_its_case_writes() -> None:
+    tree = _source("def f(v):\n" + MATCH_CASE_WRITES + "    return x\n")
+    read = _returned(_function(tree))
+    # ``x = 'a' if <case 1 selected> else 'b'``: never the binding before the
+    # match, never the name read.
+    assert isinstance(read, IfExp), read
+    assert isinstance(read.test, BranchResultRef)
+    assert read.test.slot_id.startswith("match-route:")
+    assert read.test.slot_id.endswith(":0")
+    assert read.body is not read.orelse
+    # The match's sugar confirms the route slots the phi reads.
+    statement = _function(tree).sugar().statements[0]
+    assert isinstance(statement, MatchSugar)
+    assert statement.route_site is not None
+    assert read.test.slot_id == f"{statement.route_site}:0"
+
+
+def test_a_module_match_joins_its_case_writes_for_a_reader() -> None:
+    tree = _source(
+        "v = 1\n"
+        + "".join(line[4:] + "\n" for line in MATCH_CASE_WRITES.splitlines())
+        + "def f():\n    return x\n"
+    )
+    read = _returned(_function(tree))
+    _match_route_phi(read, "x")
+    assert isinstance(read.orelse, EvaluationRef)
+    assert read.orelse.name == "x"
+    assert read.orelse.evaluation != read.body.evaluation
+
+
+def test_a_match_capture_is_read_after_the_match() -> None:
+    tree = _source(
+        "a = None\nv = (1, 2)\n"
+        "match v:\n    case [a, b]:\n        pass\n"
+        "def f():\n    return a\n"
+    )
+    (prior,) = _assignment_keys(tree, "a")
+    read = _returned(_function(tree))
+    # The capture where case ``[a, b]`` was selected; ``a = None`` where no
+    # case was (the fall-through route).
+    _match_route_phi(read, "a")
+    assert read.body.evaluation != prior
+    assert isinstance(read.orelse, EvaluationRef)
+    assert read.orelse.evaluation == prior
+
+
+# -- a module live loop publishes what it writes (#7757 item 7) ---------------
+
+
+LOOP_FIRST_BOUND = (
+    "def g():\n    return (1, 2)\n"
+    "def f():\n    return last\n"
+    "for i in g():\n    last = i\n"
+)
+
+
+def test_a_name_first_bound_in_a_module_live_loop_is_published() -> None:
+    tree = _source(LOOP_FIRST_BOUND)
+    final = _function(tree).unit.module_bindings_at(None, {"last"})["last"]
+    # ``last`` is the loop's post-loop key where an item wrote it, unbound
+    # where none did: never undecided, never the name read.
+    assert isinstance(final, GuardedBinding), final
+    assert final.slot.slot_id.startswith("loop-wrote:")
+    assert isinstance(final.when_true, EvaluationRef)
+    assert final.when_true.name == "last"
+    assert isinstance(final.when_false, UnboundBinding)
+    read = _returned(_function(tree))
+    assert isinstance(read, GuardedBindingRead)
+    # The arm no item wrote is read as unbound: a ``NameError`` halt.
+    projection = read.sugar().state
+    assert isinstance(projection.when_false, UnboundProjection)
+    unwritten = read_binding(
+        projection.when_false, read_name="last", read_site=read.fragment, ctx=None
+    ).exits
+    assert len(unwritten) == 1 and isinstance(unwritten[0], Halted)
+    assert isinstance(unwritten[0].effect, NameErrorEffect)
+    assert unwritten[0].effect.name == "last"
+
+
+def test_a_module_live_loop_target_is_published() -> None:
+    tree = _source(
+        "def g():\n    return (1, 2)\n"
+        "def f():\n    return i\n"
+        "for i in g():\n    pass\n"
+    )
+    final = _function(tree).unit.module_bindings_at(None, {"i"})["i"]
+    assert isinstance(final, GuardedBinding), final
+    assert isinstance(final.when_true, EvaluationRef)
+    assert final.when_true.name == "i"
+    assert isinstance(final.when_false, UnboundBinding)
+
+
+def test_a_module_live_loop_publishes_its_accumulator() -> None:
+    tree = _source(
+        "def g():\n    return (1, 2)\n"
+        "def f():\n    return total\n"
+        "total = 0\n"
+        "for i in g():\n    total += i\n"
+    )
+    (prior,) = _assignment_keys(tree, "total")
+    read = _returned(_function(tree))
+    # What the items handed on where an item wrote it, ``total = 0`` where
+    # none did.
+    assert isinstance(read, IfExp), read
+    assert isinstance(read.test, BranchResultRef)
+    assert read.test.slot_id.startswith("loop-wrote:")
+    assert isinstance(read.body, EvaluationRef)
+    assert read.body.name == "total"
+    assert read.body.evaluation != prior
+    assert isinstance(read.orelse, EvaluationRef)
+    assert read.orelse.evaluation == prior
+
+
+DEF_REBINDS ="X = None\ndef X():\n    pass\ndef f():\n    return X\ny = f()\n"
 
 
 def test_a_def_after_an_assignment_binds_the_definition() -> None:

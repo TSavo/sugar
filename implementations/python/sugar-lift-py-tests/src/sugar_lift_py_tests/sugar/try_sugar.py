@@ -387,7 +387,8 @@ def _binding_facts_for(slot_id, effect, site) -> tuple:
 
 
 def _route_confirmation(route_site, handler_count, arm, site):
-    """The facts one routed outcome states about the try's route slots.
+    """The facts one routed outcome states about the route slots of a try
+    (or of a match: ``MatchSugar``, whose arms are its cases).
 
     Handler ``arm`` ran: its slot is true and every other handler's is false.
     The body route (``arm is None``): every handler slot is false.  Each fact
@@ -399,11 +400,11 @@ def _route_confirmation(route_site, handler_count, arm, site):
         BranchResultAuthentication,
     )
     from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
-    from sugar_source_tree.binding_state import try_route_slot
+    from sugar_source_tree.binding_state import route_slot
 
     return tuple(
         BranchResultAuthentication(
-            try_route_slot(route_site, index),
+            route_slot(route_site, index),
             true_guard() if index == arm else false_guard(),
             site,
         )
@@ -412,7 +413,8 @@ def _route_confirmation(route_site, handler_count, arm, site):
 
 
 def _ground_route_on_faces(exits, route_site, handler_count, arm, site):
-    """Decide the route slots on each completed face of ONE route.
+    """Decide the route slots (a try's, or a match's) on each completed face
+    of ONE route.
 
     A face that left the try by handler ``arm`` (or by the body, ``arm is
     None``) knows which route it took: the code after the try, reduced under
@@ -429,10 +431,10 @@ def _ground_route_on_faces(exits, route_site, handler_count, arm, site):
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
         TrueBoolLiteralSugar,
     )
-    from sugar_source_tree.binding_state import try_route_slot
+    from sugar_source_tree.binding_state import route_slot
 
     decided = {
-        try_route_slot(route_site, index).slot_id: (
+        route_slot(route_site, index).slot_id: (
             TrueBoolLiteralSugar(site=site)
             if index == arm
             else FalseBoolLiteralSugar(site=site)
@@ -483,10 +485,10 @@ def _ground_decided_route(routed, route_site, handler_count, ctx, site):
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
         TrueBoolLiteralSugar,
     )
-    from sugar_source_tree.binding_state import try_route_slot
+    from sugar_source_tree.binding_state import route_slot
 
     for index in range(handler_count):
-        table[try_route_slot(route_site, index).slot_id] = (
+        table[route_slot(route_site, index).slot_id] = (
             TrueBoolLiteralSugar(site=site)
             if index == arm
             else FalseBoolLiteralSugar(site=site)

@@ -82,9 +82,11 @@ from .binding_state import (
     binding_state_read_node,
     branch_result_slot,
     join_binding_state,
+    loop_write_slot,
+    match_route_site,
+    route_slot,
     try_route_site,
     try_edge_slot,
-    try_route_slot,
     unwrap_binding_state,
 )
 
@@ -1531,7 +1533,8 @@ class SourceUnit:
         binds, as it runs at import, through a statement the threading
         rebinds it at -- ``y = e`` (any target shape), ``y: T = e``, ``x +=
         e``, ``(x := e)`` (in a comprehension too), a ``for`` target, a
-        ``with ... as`` target -- that some function, lambda or class body
+        ``with ... as`` target, a ``match`` capture -- that some function,
+        lambda or class body
         reads as a global (CPython's ``symtable``).  A name no such body
         reads is never threaded for a reader: the threading records only
         these (``module_binding_states``).
@@ -1555,9 +1558,10 @@ class SourceUnit:
         ``_DYNAMIC_GLOBAL_WRITERS``); and one a function or class body
         writes through a ``global`` declaration (it changes whenever that
         body runs).  Every reader cites these ``undecided`` by name.  A
-        binding the threading does not carry past one statement (a ``match``
-        capture, a live loop's uncarried writes, a ``try ... except*``
-        write) is undecided only from that statement on
+        binding the threading does not carry past one statement (a binding
+        in a ``match`` case or a live loop's body that neither the match's
+        route merge nor the loop's publication carries out, a ``try ...
+        except*`` write) is undecided only from that statement on
         (``_module_uncarried_names``)."""
         return self._module_global_rows()[1]
 
@@ -1573,9 +1577,11 @@ class SourceUnit:
         stack: list[Node] = list(module.body)
         while stack:
             node = stack.pop()
-            if isinstance(node, (Assign, AugAssign, NamedExpr)) or (
-                isinstance(node, AnnAssign) and node.value is not None
-            ):
+            if isinstance(
+                node, (Assign, AugAssign, NamedExpr, MatchAs, MatchStar, MatchMapping)
+            ) or (isinstance(node, AnnAssign) and node.value is not None):
+                # A match capture is carried out of its case by the match's
+                # route merge (``Match.substitute``), as an assignment is.
                 keyed.update(node.names_bound_here())
             elif isinstance(node, (For, AsyncFor, WithItem)):
                 loop_bound.update(node.names_bound_here())
@@ -1793,9 +1799,8 @@ class SourceUnit:
           (``module_threaded_names``);
         - for a name whose binding there is not decided
           (``_module_reference_state``: never bound there, a container's
-          mutated state, a ``with`` observation, a live loop's
-          post-binding, a decorated definition, a binding the threading
-          did not carry past a statement);
+          mutated state, a ``with`` observation, a decorated definition, a
+          binding the threading did not carry past a statement);
         - for a site in a generator's lazily evaluated part;
         - for a name a walrus in the site's own statements binds (it may
           run before or after the read);
@@ -4491,6 +4496,34 @@ def _loop_target_evaluation_key(loop, name: str, scope) -> str:
     )
 
 
+def _match_capture_evaluation_key(case, name: str, scope) -> str:
+    """The coordinate a ``match`` case's capture of ``name`` is read under
+    (``Match._case_captures``): ``case [a, b]:``, ``case P as p:``,
+    ``*rest``, ``**rest``.  The case's guard, its body and every read after
+    the match the case's route reaches read the capture through it, never
+    the name.  As a loop header's key (``_loop_header_evaluation_key``), a
+    function of the case's source occurrence, the name, the iterations the
+    match is substituted for and the exit path of the clause copy it sits
+    in."""
+    from sugar_lift_python_source.canonical import cid_of_json
+    from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+    from .shadow import occurrence_tags_of
+
+    return EVALUATION_PREFIX + cid_of_json(
+        {
+            "kind": "python-match-capture-evaluation-v1",
+            "caseFragmentCid": case.fragment.seal().cid,
+            "name": name,
+            "occurrence": [
+                *scope.get(_EVALUATION_OCCURRENCE, ()),
+                *occurrence_tags_of(case),
+            ],
+            "exitPath": list(scope.get(_EVALUATION_EXIT_PATH, ())),
+        }
+    )
+
+
 def _loop_target_bindings(loop, names, scope) -> dict:
     """The body (and ``else``) scope's binding of each name a live ``for``'s
     target binds: a reference to the target's per-item evaluation
@@ -4773,25 +4806,95 @@ def _module_threads(scope, name: str) -> bool:
     return record is not None and record.open and name in record.names
 
 
-def _module_uncarried_names(statement, live_loop_bindings, scope) -> frozenset:
+def _module_uncarried_names(statement, carried, scope) -> frozenset:
     """The names ``statement`` binds whose binding the module threading does
-    not carry past it: every name a live loop binds that its recurrence
-    does not publish (its target, a write it does not carry), every name a
-    ``match`` binds (its captures, its cases' writes), and every name a
-    ``try ... except*`` binds other than an ``as`` name it unbinds
-    (``_except_star_unbound_names``) -- none exports a binding.  ``scope``
-    is the binding standing before the statement.  From the statement on,
-    each is ``UNDECIDED_MODULE_BINDING`` for a reader, never the binding
-    standing before it."""
-    if live_loop_bindings is not None:
-        return statement.names_bound_within() - frozenset(live_loop_bindings)
+    not carry past it: every name a live loop or a ``match`` binds that it
+    does not carry out (``carried``: what a live loop's recurrence and its
+    publication carry, ``_module_live_loop_publication``; what a match's
+    route merge joins, ``Match.substitute``) -- a nested definition's,
+    import's or ``with``'s binding in its body, a name a route never bound
+    -- and every name a ``try ... except*`` binds other than an ``as`` name
+    it unbinds (``_except_star_unbound_names``), which exports no binding.
+    ``carried`` is None for any other statement.  ``scope`` is the binding
+    standing before the statement.  From the statement on, each is
+    ``UNDECIDED_MODULE_BINDING`` for a reader, never the binding standing
+    before it."""
+    if carried is not None:
+        return statement.names_bound_within() - frozenset(carried)
     if isinstance(statement, TryStar):
         return statement.names_bound_within() - _except_star_unbound_names(
             statement, scope
         )
-    if isinstance(statement, Match):
-        return statement.names_bound_within()
     return frozenset()
+
+
+def _module_live_loop_publication(loop, carried, scope) -> dict:
+    """What a live loop at module level leaves each name it writes bound to,
+    for a reader outside the module block (``_module_threads``), beside the
+    names its recurrence carries (``carried``, published under their binding
+    coordinates: ``LoopProjectedBinding``).
+
+    Every name the loop's items write in the module's scope -- its target,
+    and each name a write in its body or ``else`` binds a key for
+    (``live_loop_construction._carried_writes``: ``x += e``, a walrus, an
+    assignment of any target shape; a nested definition's body is another
+    frame) -- is published through the loop's post-loop key of it: the
+    target's key (``_loop_target_evaluation_key``, #7974) or the header's
+    (``_loop_header_evaluation_key``, #7954), each bound outside every item
+    to what the last item handed on.  Whether an item wrote it is the loop's
+    write slot (``loop_write_slot``), so the name after the loop is the
+    phi ``<post-loop key> if <an item wrote it> else <the binding before
+    the loop>``: a name first bound inside the loop is unbound on the arm no
+    item wrote it (the read there is a ``NameError`` halt), a carried
+    accumulator keeps its pre-loop binding there.  A name undecided before
+    the loop stays undecided; a builtin name with no module binding falls
+    back to the builtin, so it is not unbound on that arm and is not
+    published.  ``scope`` is the binding standing before the loop.
+
+    Only a live ``for`` has these keys (its recurrence runs its items, a
+    ``while``'s does not): a live ``while`` publishes nothing here, and the
+    names it writes stay undecided after it (``_module_uncarried_names``)."""
+    import functools
+
+    from .live_loop_construction import _carried_writes
+
+    if not isinstance(loop, For):
+        return {}
+    target_names = frozenset(
+        loop.unit.require_target_pattern(loop, loop.target).names
+    )
+    statements = (*loop.body, *loop.orelse)
+    candidates = sorted(
+        name
+        for name in For._stmts_bound_names(statements)
+        if _module_threads(scope, name)
+    )
+    writes = _carried_writes(statements, candidates)
+    written = {name for name, keys in writes.items() if keys} | {
+        name for name in target_names if _module_threads(scope, name)
+    }
+    make_ifexp = functools.partial(If._make_ifexp, loop)
+    published = {}
+    for name in sorted(written - frozenset(carried)):
+        prior = scope.get(name, _MISSING)
+        if prior is UNDECIDED_MODULE_BINDING:
+            continue
+        if prior is _MISSING:
+            if hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
+                continue
+            prior = UnboundBinding(name=name, cause=loop.fragment)
+        post_key = (
+            _loop_target_evaluation_key(loop, name, scope)
+            if name in target_names
+            else _loop_header_evaluation_key(loop, name, scope)
+        )
+        published[name] = join_binding_state(
+            slot=loop_write_slot(post_key),
+            when_true=_evaluation_ref(loop, loop.span, post_key, name),
+            when_false=prior,
+            make_ifexp=make_ifexp,
+        )
+    return published
 
 
 def _except_star_unbound_names(statement, scope) -> frozenset:
@@ -4880,9 +4983,16 @@ def _module_reference_state(state):
     (``GuardedBindingRead``).  A comprehension member's coordinate is bound
     only inside its comprehension, so a binding to one is
     ``UNDECIDED_MODULE_BINDING`` wherever a reader outside it reads the
-    name.  Any other state (never bound there, a container's mutated state,
-    a ``with`` observation, a live loop's post-binding, a decorated
-    definition, a binding guarded on a branch) is no decided binding:
+    name.  A binding joined over a slot where one arm is unbound (a live
+    loop's write slot, ``_module_live_loop_publication``; an ``if`` or a
+    ``match`` route arm that never bound the name after a ``del``) is
+    decided when each arm is such a reference or unbound
+    (``GuardedBinding``: the read is that arm under its slot's guard, a
+    ``NameError`` halt on the unbound one), and so is a live loop's
+    publication of a name it carries (``LoopProjectedBinding`` whose faces
+    are its ``LoopBindingRef`` coordinates).  Any other state (never bound
+    there, a container's mutated state, a ``with`` observation, a decorated
+    definition, a guarded binding with another arm) is no decided binding:
     ``UNDECIDED_MODULE_BINDING`` too, never the name read."""
     state = unwrap_binding_state(state)
     if isinstance(state, UnboundBinding):
@@ -4891,12 +5001,30 @@ def _module_reference_state(state):
         state, (FunctionDef, AsyncFunctionDef, ClassDef, TypeAlias, EffectRef)
     ):
         return state
+    if _decided_arm(state):
+        return state
+    if isinstance(state, LoopProjectedBinding) and all(
+        isinstance(face.state, LoopBindingRef) or _decided_arm(face.state)
+        for face in state.completed_faces
+    ):
+        return state
+    return UNDECIDED_MODULE_BINDING
+
+
+def _decided_arm(state) -> bool:
+    """Whether ``state`` is a decided module binding a phi's arm may hold:
+    unbound, a reference to an evaluation or an import's row, a phi over
+    such references (``_evaluation_reference_kind``), or a ``GuardedBinding``
+    whose every arm is one of these."""
+    state = unwrap_binding_state(state)
+    if isinstance(state, UnboundBinding):
+        return True
+    if isinstance(state, GuardedBinding):
+        return _decided_arm(state.when_true) and _decided_arm(state.when_false)
     if not isinstance(state, Node):
-        return UNDECIDED_MODULE_BINDING
+        return False
     kind = _evaluation_reference_kind(state)
-    if kind is None or kind == "member":
-        return UNDECIDED_MODULE_BINDING
-    return state
+    return kind is not None and kind != "member"
 
 
 def _evaluation_reference_kind(node) -> Optional[str]:
@@ -5696,12 +5824,20 @@ class Node(Typed):
             ):
                 new_stmt = stmt.substitute(scope)
                 live_loop_bindings = None
+                published = {}
                 if isinstance(new_stmt, (For, While)):
                     from .live_loop_construction import (
                         construct_live_loop_recurrence,
                     )
 
                     live_loop = construct_live_loop_recurrence(new_stmt, scope)
+                    if record is not None and record.open:
+                        # Threading a module body for its readers: the names
+                        # the loop writes that it does not carry are
+                        # published through its post-loop keys.
+                        published = _module_live_loop_publication(
+                            new_stmt, live_loop.bindings, pre_statement_scope
+                        )
                     new_stmt = live_loop.statement
                     live_loop_bindings = live_loop.bindings
             if new_stmt is not stmt:
@@ -5760,8 +5896,21 @@ class Node(Typed):
             if record is not None and record.open:
                 # A reader of the module never reads, past this statement, a
                 # binding the threading did not carry through it.
+                if published:
+                    scope = {
+                        **scope,
+                        **stmt._binding_entries(published, scope),
+                    }
+                if live_loop_bindings is not None:
+                    carried = frozenset(live_loop_bindings) | frozenset(published)
+                elif isinstance(stmt, Match):
+                    carried = frozenset(
+                        new_stmt.bindings if isinstance(new_stmt, _Splice) else ()
+                    )
+                else:
+                    carried = None
                 uncarried = _module_uncarried_names(
-                    stmt, live_loop_bindings, pre_statement_scope
+                    stmt, carried, pre_statement_scope
                 )
                 uncarried &= record.names
                 if uncarried:
@@ -6727,17 +6876,25 @@ class MatchCase(Node):
     _child_fields = ("pattern", "guard", "body")
 
     def substitute(self, scope, extra_bindings=None):
+        """The case alone (``substitute_route``), its net dropped."""
+        return self.substitute_route(scope, extra_bindings or {})[0]
+
+    def substitute_route(self, scope, captures):
         """`case <pattern> [if <guard>]: <body>` -- the pattern captures bind for
         the guard and body. Pattern value-exprs evaluate in the enclosing scope;
-        guard and body are masked by the captures, then any ``extra_bindings``
-        (a capture bound to the match SUBJECT, threaded by ``Match.substitute``)
-        are re-applied so a `case x:` body sees x = subject, not a free name."""
+        guard and body are masked by the captures, then ``captures`` (each
+        name the pattern captures, bound by ``Match._case_captures``) are
+        re-applied so a `case x:` body sees x = subject, not a free name.
+
+        Returns ``(case, net)``: ``net`` is what the body's own threading
+        binds (``_substitute_body_tracked``), the case's route out of the
+        match together with ``captures`` (``Match.substitute``)."""
         from .shadow import rewrite
 
         bound = self._pattern_bound_names(self.pattern)
         inner = {k: v for k, v in scope.items() if k not in bound} if bound else scope
-        if extra_bindings:
-            inner = {**inner, **extra_bindings}
+        if captures:
+            inner = {**inner, **captures}
         changed = {}
         new_pat, d = self._substitute_field(self.pattern, scope)
         if d:
@@ -6747,12 +6904,12 @@ class MatchCase(Node):
             changed["guard"] = new_guard
         # The guard is evaluated before its case's body: a walrus in it is
         # read there through its key (``_scope_after``).
-        new_body, d = self._substitute_body(
+        new_body, d, net = self._substitute_body_tracked(
             self.body, _scope_after(inner, self.guard, new_guard)
         )
         if d:
             changed["body"] = new_body
-        return self if not changed else rewrite(self, **changed)
+        return (self if not changed else rewrite(self, **changed)), net
 
 
 # --------------------------------------------------------------------------
@@ -12418,11 +12575,14 @@ class If(Statement):
         self, slot: BranchResultSlot, body: "Node", orelse: "Node"
     ) -> "Node":
         """Synthesize ``<body> if <test> else <orelse>`` as a shadow IfExp that
-        borrows this if's span (so the phi still addresses this source site)."""
+        borrows this if's span (so the phi still addresses this source site).
+        Every statement that joins a binding over a slot builds its phi here
+        with itself as ``self``: a ``try`` or a ``match`` over its route
+        slots, a live loop over its write slots (``loop_write_slot``)."""
         from .backend import Child, materialize
         from .shadow import ShadowNode, _handle_of
 
-        test = self._make_branch_result_ref(slot)
+        test = If._make_branch_result_ref(self, slot)
         slots = (
             ("body", Child(_handle_of(body))),
             ("test", Child(_handle_of(test))),
@@ -14902,7 +15062,9 @@ class Try(Statement):
         return True
 
     def _merge_completion_nets(self, scope, routes, *, site_id):
-        """Join each name over the routes the try can complete by.
+        """Join each name over the routes the try can complete by (a
+        ``match`` joins its case routes through this same merge,
+        ``Match.substitute``).
 
         THE LAW: a name whose state depends on which route left the try is
         joined exactly like an ``if``'s branch result -- an if-expression over
@@ -14944,7 +15106,7 @@ class Try(Statement):
             joined = ordered[-1][1]
             for arm, state in reversed(ordered[:-1]):
                 joined = join_binding_state(
-                    slot=try_route_slot(site_id, arm),
+                    slot=route_slot(site_id, arm),
                     when_true=state,
                     when_false=joined,
                     make_ifexp=self._make_ifexp,
@@ -15644,12 +15806,33 @@ class Match(Statement):
     cases: Tuple[MatchCase, ...]
     _child_fields = ("subject", "cases")
 
+    # A match leaves by one route, as a try does: case ``k`` was selected and
+    # its body completed, or no case was selected.  Its bindings join over
+    # those routes through the try's one route merge, over the match's route
+    # slots (``match_route_site``, ``route_slot``), each confirmed by
+    # ``MatchSugar`` on the arms of its route.
+    _merge_completion_nets = Try._merge_completion_nets
+    _block_has_completed_fallthrough = Try._block_has_completed_fallthrough
+    _make_ifexp = Try._make_ifexp
+
     def substitute(self, scope):
         """The subject evaluates in the enclosing scope; each case's captures
         bind to that SUBJECT for its body. `case x:` is x = subject, so the
         subject node is threaded into that case's body substitution as the
         capture binding -- the temporal half of a capture, exactly as an
-        assignment's rhs threads to the rest of a block."""
+        assignment's rhs threads to the rest of a block. Any other capture
+        (``case [a, b]:``, ``case P as p:``, ``*rest``, ``**rest``) is read
+        through its case's key for it (``_match_capture_evaluation_key``).
+
+        Every case is a branch guarded by its selection, and the path where
+        no case matched (a match with no irrefutable last case, #7934) is one
+        more: what a case binds (its captures, its body's writes) joins after
+        the match exactly as an ``if`` joins its arms -- a phi over the case
+        route slots (``Try._merge_completion_nets``), the fall-through route
+        innermost carrying the bindings that stood before the match.  A case
+        whose body cannot complete (it returns, raises, breaks or continues)
+        is no route out.  The joined bindings are spliced after the match
+        (``_Splice``), for the rest of the block and for a module reader."""
         from .shadow import rewrite
 
         new_subject, subj_changed = self._substitute_field(self.subject, scope)
@@ -15658,24 +15841,90 @@ class Match(Statement):
         # there through its key (``_scope_after``).
         scope = _scope_after(scope, self.subject, subject)
 
+        site_id = getattr(self, "match_route_site_id", None)
+        retained_site = site_id is not None
+        if not retained_site:
+            site_id = match_route_site(self)
         new_cases = []
         cases_changed = False
-        for case in self.cases:
-            capture = self._capture_name(case.pattern)
-            if capture is not None:
-                new_case = case.substitute(scope, extra_bindings={capture: subject})
-            else:
-                new_case = case.substitute(scope)
+        routes = []
+        for arm, case in enumerate(self.cases):
+            captures = self._case_captures(case, subject, scope)
+            new_case, net = case.substitute_route(scope, captures)
             if new_case is not case:
                 cases_changed = True
             new_cases.append(new_case)
+            if self._block_has_completed_fallthrough(case.body):
+                routes.append((arm, {**captures, **net}))
+        if not (self.cases and self._irrefutable_case(self.cases[-1])):
+            # No case was selected: the match completes with what stood
+            # before it.
+            routes.append((None, {}))
+        merged, minted = self._merge_completion_nets(scope, routes, site_id=site_id)
 
         changed = {}
         if subj_changed:
             changed["subject"] = new_subject
         if cases_changed:
             changed["cases"] = tuple(new_cases)
-        return self if not changed else rewrite(self, **changed)
+        if minted and not retained_site:
+            node = self._rewrite_with_route_site(changed, site_id)
+        else:
+            node = self if not changed else rewrite(self, **changed)
+        return _Splice((node,), merged) if merged else node
+
+    def _case_captures(self, case, subject, scope) -> dict:
+        """Each name ``case``'s pattern captures, bound for its guard, its
+        body and its route out of the match: a bare capture (``case x:``) to
+        the subject, any other to a reference to the case's key for it
+        (``_match_capture_evaluation_key``)."""
+        bare = self._capture_name(case.pattern)
+        captures = {}
+        for name in sorted(self._pattern_bound_names(case.pattern)):
+            if name == bare:
+                captures[name] = subject
+                continue
+            captures[name] = _evaluation_ref(
+                case,
+                case.pattern.span,
+                _match_capture_evaluation_key(case, name, scope),
+                name,
+            )
+        return captures
+
+    @classmethod
+    def _irrefutable_case(cls, case) -> bool:
+        """An unguarded case whose pattern always matches (``case _:``,
+        ``case x:``, ``case (y as z):``, an or-pattern with such an
+        alternative): no path leaves the match unselected past it."""
+        return case.guard is None and cls._irrefutable(case.pattern)
+
+    @classmethod
+    def _irrefutable(cls, pattern) -> bool:
+        if pattern.kind == "MatchAs":
+            return pattern.pattern is None or cls._irrefutable(pattern.pattern)
+        if pattern.kind == "MatchOr":
+            return any(cls._irrefutable(sub) for sub in pattern.patterns)
+        return False
+
+    def _rewrite_with_route_site(self, changed, site_id):
+        """Carry the route-slot address onto the rewritten match so its
+        sugar confirms the same slots the joined bindings read."""
+        from .backend import Leaf, materialize
+        from .shadow import ShadowNode, rewrite
+
+        rewritten = rewrite(self, **changed) if changed else self
+        desc = rewritten.ref.describe()
+        return materialize(
+            self.unit,
+            ShadowNode(
+                desc.kind,
+                desc.raw_span or self.span,
+                (*desc.slots, ("match_route_site_id", Leaf(site_id))),
+            ),
+            self.reporter,
+            self.control_context,
+        )
 
     def _pattern_alternatives(self, pattern):
         """The value-pattern alternatives a case matches, as literal sugars:
@@ -15757,7 +16006,10 @@ class Match(Statement):
                 )
             )
         return MatchSugar(
-            subject=self.subject.sugar(), cases=tuple(specs), site=self.fragment
+            subject=self.subject.sugar(),
+            cases=tuple(specs),
+            site=self.fragment,
+            route_site=getattr(self, "match_route_site_id", None),
         )
 
 
