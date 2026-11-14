@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-import json
-import logging
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from sugar_lift_py_tests.context.sink_protocols import (
@@ -21,7 +19,6 @@ class ReduceContext:
     proof_sink: ProofSink | None = None
     report_sink: Any = None
     construction_audit_sink: AuditSink | None = None
-    operation_log: list[tuple[str, str, str]] = field(default_factory=list)
     # The DIG QUEUE. When a bridge emits `call:h(args)`, it appends the actual
     # CallSiteValue here -- a bridge OBLIGATES the dig of the tower it points at.
     # A bridge without its enqueued dig is a dangling uninterpreted symbol, a false
@@ -73,7 +70,6 @@ class ReduceContext:
             proof_sink=source.proof_sink,
             report_sink=source.report_sink,
             construction_audit_sink=source.construction_audit_sink,
-            operation_log=source.operation_log,
             dig_sink=source.dig_sink,
             external_bridge_sink=getattr(source, "external_bridge_sink", None),
             in_flight_effects=getattr(source, "in_flight_effects", ()),
@@ -83,59 +79,12 @@ class ReduceContext:
             live_loop_names=getattr(source, "live_loop_names", frozenset()),
         )
 
-    def record_operation(
-        self, *, owner: str, method_name: str, operation: object
-    ) -> None:
-        operation_name = type(operation).__name__
-        self.operation_log.append((owner, method_name, operation_name))
-        logging.getLogger("sugar_lift_py_tests.engine").debug(
-            json.dumps(
-                {
-                    "schema": "sugar.engine.log.v1",
-                    "event": "operation",
-                    "owner": owner,
-                    "method": method_name,
-                    "operation": operation_name,
-                    "operation_sequence": len(self.operation_log),
-                },
-                sort_keys=True,
-            )
-        )
-
     def with_temporal(self, temporal: TemporalContext) -> "ReduceContext":
-        return ReduceContext(
-            temporal=temporal,
-            module_temporal=self.module_temporal,
-            source_oracle=self.source_oracle,
-            proof_sink=self.proof_sink,
-            report_sink=self.report_sink,
-            construction_audit_sink=self.construction_audit_sink,
-            operation_log=self.operation_log,
-            dig_sink=self.dig_sink,
-            external_bridge_sink=self.external_bridge_sink,
-            in_flight_effects=self.in_flight_effects,
-            observed_effects=self.observed_effects,
-            ground_branch_results=self.ground_branch_results,
-            assigned_values=self.assigned_values,
-            live_loop_names=self.live_loop_names,
-        )
+        return replace(self, temporal=temporal)
 
     def with_in_flight_effect(self, slot_id: str, effect: object) -> "ReduceContext":
-        return ReduceContext(
-            temporal=self.temporal,
-            module_temporal=self.module_temporal,
-            source_oracle=self.source_oracle,
-            proof_sink=self.proof_sink,
-            report_sink=self.report_sink,
-            construction_audit_sink=self.construction_audit_sink,
-            operation_log=self.operation_log,
-            dig_sink=self.dig_sink,
-            external_bridge_sink=self.external_bridge_sink,
-            in_flight_effects=(*self.in_flight_effects, (slot_id, effect)),
-            observed_effects=self.observed_effects,
-            ground_branch_results=self.ground_branch_results,
-            assigned_values=self.assigned_values,
-            live_loop_names=self.live_loop_names,
+        return replace(
+            self, in_flight_effects=(*self.in_flight_effects, (slot_id, effect))
         )
 
     def in_flight_effect_for(self, slot_id: str):
@@ -145,8 +94,6 @@ class ReduceContext:
         return None
 
     def with_observed_effect(self, slot_id: str, effect: object) -> "ReduceContext":
-        from dataclasses import replace
-
         return replace(
             self, observed_effects=(*self.observed_effects, (slot_id, effect))
         )
@@ -158,8 +105,6 @@ class ReduceContext:
         return None
 
     def with_assigned_value(self, key: object, value: object) -> "ReduceContext":
-        from dataclasses import replace
-
         return replace(
             self,
             assigned_values=(
@@ -171,8 +116,6 @@ class ReduceContext:
     def without_assigned_value(self, key: object) -> "ReduceContext":
         if not any(row[0] == key for row in self.assigned_values):
             return self
-        from dataclasses import replace
-
         return replace(
             self,
             assigned_values=tuple(

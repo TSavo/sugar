@@ -5,9 +5,6 @@ from typing import Any
 
 from sugar_lift_py_tests.floor import FloorValue
 
-from .bind_value_operation import BindValueOperation
-from .curry_arguments_operation import CurryArgumentsOperation
-from .perform_temporal_operation import perform_temporal_operation
 from .temporal_context import TemporalContext
 
 
@@ -19,20 +16,9 @@ def bind_temporal(
     owner: str,
     blame: str,
 ) -> Any:
+    del owner
     return _ctx_with_temporal(
-        ctx,
-        perform_temporal_operation(
-            owner=owner,
-            blame=blame,
-            receiver=_ctx_temporal(ctx),
-            operation=BindValueOperation(
-                name=name,
-                value=value,
-                owner=owner,
-                blame=blame,
-            ),
-            ctx=ctx,
-        ),
+        ctx, _ctx_temporal(ctx).bind_value(name, value, blame=blame)
     )
 
 
@@ -44,21 +30,15 @@ def curry_temporal(
     owner: str,
     blame: str,
 ) -> Any:
-    return _ctx_with_temporal(
-        ctx,
-        perform_temporal_operation(
-            owner=owner,
-            blame=blame,
-            receiver=_ctx_temporal(ctx),
-            operation=CurryArgumentsOperation(
-                parameters=parameters,
-                arg_values=arg_values,
-                owner=owner,
-                blame=blame,
-            ),
-            ctx=ctx,
-        ),
-    )
+    if len(parameters) != len(arg_values):
+        raise TypeError(
+            f"write more Floor for {owner}: temporal curry argument count "
+            "does not match parameters"
+        )
+    temporal = _ctx_temporal(ctx)
+    for name, value in zip(parameters, arg_values, strict=True):
+        temporal = temporal.bind_value(name, value, blame=blame)
+    return _ctx_with_temporal(ctx, temporal)
 
 
 def _ctx_temporal(ctx: Any) -> TemporalContext:
@@ -68,8 +48,6 @@ def _ctx_temporal(ctx: Any) -> TemporalContext:
 
 
 def _ctx_with_temporal(ctx: Any, temporal: TemporalContext) -> Any:
-    if hasattr(ctx, "with_temporal"):
-        return ctx.with_temporal(temporal)
     if ctx is None:
         from sugar_lift_py_tests.context.reduce_context import ReduceContext
 

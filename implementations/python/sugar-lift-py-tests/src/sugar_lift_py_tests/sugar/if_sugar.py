@@ -9,8 +9,8 @@ effect red under `c`. That is the whole of `if`'s MEANING.
 The other half of an if -- what a name BINDS to after the branch (the phi
 `x = then_x if c else else_x`) -- is temporal, and lives entirely in
 `If.substitute` as an `IfExp` rewrite. So this sugar does NO binding join:
-`joined_bindings`/`guarded_bindings` on the `GuardedFaces` it builds are empty
-by construction. substitute ages the bindings; this reads off the guarded facts.
+the `GuardedFaces` it builds carries no bindings. substitute ages the
+bindings; this reads off the guarded facts.
 
 The guard here is written from the pure-meaning primitives:
 `reduce_block_to_exitset` (block reduction), `entry.guarded(formula)`
@@ -524,8 +524,6 @@ class IfSugar(Sugar):
             entries=tuple(entries),
             then_exits=then_branch_exits,
             else_exits=else_branch_exits,
-            joined_bindings=(),  # bindings are substitute's job (the IfExp phi)
-            guarded_bindings=(),
             can_fall_through=can_fall_through,
             continuation_guard=continuation_guard,
             unconditional_entries=unconditional_entries,

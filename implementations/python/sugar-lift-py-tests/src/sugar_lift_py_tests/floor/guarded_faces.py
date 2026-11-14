@@ -20,20 +20,12 @@ class GuardedFaces(FloorValue):
     entries: tuple
     then_exits: bool
     else_exits: bool
-    joined_bindings: tuple = ()
-    guarded_bindings: tuple = ()
     can_fall_through: bool = True
     continuation_guard: Formula | None = None
     unconditional_entries: tuple = ()
 
     def contribution(self):
-        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
-
-        return (
-            *self.unconditional_entries,
-            *self.entries,
-            *(ScopeRebind(name, value) for name, value in self.joined_bindings),
-        )
+        return (*self.unconditional_entries, *self.entries)
 
     def inv_contribution(self):
         return tuple(
@@ -54,16 +46,6 @@ class GuardedFaces(FloorValue):
             for entry in self.entries
             for edge in entry.edge_contribution(source_contract)
         )
-
-    def extend_scope(self, ctx):
-        from dataclasses import replace
-
-        temporal = ctx.temporal
-        for name, value in self.joined_bindings:
-            temporal = temporal.bind_value(name, value)
-        for guard, name, value in self.guarded_bindings:
-            temporal = temporal.bind_guarded(guard, name, value)
-        return replace(ctx, temporal=temporal)
 
     def follow_rest(self):
         # Exits decide what the continuation rides -- no type interrogation:
