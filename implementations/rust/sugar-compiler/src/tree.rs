@@ -163,8 +163,8 @@ pub enum EnumerateError {
     RpcError { plugin: String, error: Value },
     #[error("sugar.enumerate response from `{plugin}` malformed: {reason}")]
     Malformed { plugin: String, reason: String },
-    /// A singular seek (`Kit::source_file`, `SourceFile::function`, ...)
-    /// found no matching node -- distinct from a wire/decode failure.
+    /// A singular seek (`Kit::export`) found no matching node -- distinct
+    /// from a wire/decode failure.
     #[error(
         "sugar.enumerate seek on `{plugin}` at level `{level}` found no node for the given memento"
     )]
@@ -420,28 +420,12 @@ fn canonical_row_key(value: &Value) -> String {
     sorted(value).to_string()
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct SourceFile {
-    conn: KitConn,
-    memento: SourceMemento,
-}
-
-impl Sourced for SourceFile {
-    fn source_memento(&self) -> &SourceMemento {
-        &self.memento
-    }
-}
-
 /// One raw node the wire returned, before it is dressed into a typed
 /// node. Never escapes this module.
 struct WireNode {
     memento: SourceMemento,
     audit: Option<Value>,
     payload: Option<Value>,
-}
-
-fn memento_to_json(m: &SourceMemento) -> Value {
-    m.to_json()
 }
 
 fn decode_memento(value: &Value) -> Result<SourceMemento, String> {
@@ -805,8 +789,8 @@ fn enumerate_result_from_response(plugin: &str, response: Value) -> Result<Value
 ///
 /// There is no `lift` RPC. What used to be called "lift" is this walk:
 /// `source_files` → per-file `universe` (all function contracts). Mint and
-/// any other full-tree client must call this (or the typed `Kit::source_files`
-/// API) and must never send JSON-RPC method `"lift"`.
+/// any other full-tree client must call this and must never send JSON-RPC
+/// method `"lift"`.
 pub fn fold_enumerate_source_tree(kit: &Kit, workspace_root: &Path) -> Result<Value, KitError> {
     let conn = kit.enumerate_conn(workspace_root);
     let (files, source_gaps) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
@@ -959,69 +943,6 @@ impl Kit {
                 reason,
             })
             .map_err(KitError::from)
-    }
-
-    /// `sugar.enumerate` at `level="source_files"`. Scan: every python file
-    /// the kit's `_iter_python_files` walk finds under `workspace_root`.
-    pub fn source_files(&self, workspace_root: &Path) -> Result<Vec<SourceFile>, KitError> {
-        let conn = self.enumerate_conn(workspace_root);
-        let (nodes, _gaps) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
-        Ok(nodes
-            .into_iter()
-            .map(|n| SourceFile {
-                conn: conn.clone(),
-                memento: n.memento,
-            })
-            .collect())
-    }
-
-    /// Gaps alongside the last `source_files()` scan would need this same
-    /// RPC re-run; kept as a separate accessor per level rather than
-    /// threading a tuple through every call site.
-    pub fn source_files_gaps(&self, workspace_root: &Path) -> Result<Vec<GapInfo>, KitError> {
-        let conn = self.enumerate_conn(workspace_root);
-        let (_nodes, gaps) = enumerate_rpc(&conn, Level::SourceFiles, None, false)?;
-        Ok(gaps)
-    }
-
-    /// Seek: `level="source_files"`, `at=memento`, `seek=true` -- exactly
-    /// one node back, or `SeekMiss`. The driver never fabricates the
-    /// memento; it replays one handed back from a prior `source_files()`.
-    pub fn source_file(
-        &self,
-        workspace_root: &Path,
-        memento: &SourceMemento,
-    ) -> Result<SourceFile, KitError> {
-        let conn = self.enumerate_conn(workspace_root);
-        let (nodes, _gaps) = enumerate_rpc(
-            &conn,
-            Level::SourceFiles,
-            Some(memento_to_json(memento)),
-            true,
-        )?;
-        let node = nodes.into_iter().next().ok_or(EnumerateError::SeekMiss {
-            plugin: conn.surface.clone(),
-            level: "source_files",
-        })?;
-        Ok(SourceFile {
-            conn,
-            memento: node.memento,
-        })
-    }
-}
-
-impl SourceFile {
-    /// The source verb (SEAM 4, unchanged): resolve this file's own span
-    /// against `sugar.plugin.resolve_source_memento`. Reuses
-    /// `resolve::resolve_source` rather than a second implementation.
-    pub fn source(&self) -> Result<crate::resolve::ResolvedSource, crate::resolve::SourceRefusal> {
-        crate::resolve::resolve_source(
-            &self.conn.surface,
-            &self.conn.command,
-            self.conn.working_dir.as_deref(),
-            &self.conn.workspace_root,
-            &self.memento,
-        )
     }
 }
 

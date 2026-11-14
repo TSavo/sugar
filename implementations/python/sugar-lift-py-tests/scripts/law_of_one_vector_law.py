@@ -234,42 +234,6 @@ def _cite_construction_panic_catch(repo: Path) -> Citation:
         )
 
 
-def _cite_enumeration_soft_skip(repo: Path) -> Citation:
-    rel = "implementations/python/sugar-lift-py-tests/scripts/enumeration_binding_soft_skip_law.py"
-    mod, err = _load_script(repo, rel, "loo_cite_enum_soft")
-    if err:
-        return Citation(
-            "product",
-            "enumeration_binding_soft_skip",
-            rel,
-            -1,
-            {},
-            [err],
-            "missing_owner" if "missing" in err else "collect_error",
-        )
-    try:
-        kit = repo / "implementations/python/sugar-lift-py-tests"
-        paths = mod.production_scan_roots(kit)
-        offenders = mod.scan_sources(paths, root=kit)
-        return Citation(
-            "product",
-            "enumeration_binding_soft_skip",
-            rel,
-            len(offenders),
-            {"source": "enumeration_binding_soft_skip_law.scan_sources"},
-        )
-    except Exception as exc:  # noqa: BLE001
-        return Citation(
-            "product",
-            "enumeration_binding_soft_skip",
-            rel,
-            -1,
-            {},
-            [f"{type(exc).__name__}: {exc}"],
-            "collect_error",
-        )
-
-
 def _cite_source_audit_presence(repo: Path) -> Citation:
     rel = "implementations/python/sugar-lift-py-tests/scripts/source_audit_presence_identity_law.py"
     mod, err = _load_script(repo, rel, "loo_cite_presence")
@@ -451,8 +415,8 @@ MEMBRANE_HONEST = (
         "stance": "membrane",
         "owner_axis": (
             "builtin_name_or_vendor_gates (climb residual) + "
-            "open_lexical_ast_id + open_lexical_attr_name (permanent) + "
-            "enumeration_binding_soft_skip; see docs/spelling-dispatch-partition.md"
+            "open_lexical_ast_id + open_lexical_attr_name (permanent); "
+            "see docs/spelling-dispatch-partition.md"
         ),
         "why": (
             "Open grammar/vendor Name.id and attr.name projection; type cannot close "
@@ -493,12 +457,6 @@ COLLECTORS: list[tuple[str, str, str, Callable[[Path], Citation]]] = [
         "construction_panic_catch",
         "construction_panic_catch_law",
         _cite_construction_panic_catch,
-    ),
-    (
-        "product",
-        "enumeration_binding_soft_skip",
-        "enumeration_binding_soft_skip_law",
-        _cite_enumeration_soft_skip,
     ),
     (
         "product",

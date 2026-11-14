@@ -4,12 +4,12 @@
 Exercises `_handle_enumerate` directly (in-process, no subprocess spawn).
 The Rust side drives this handler only through mint's one door
 (`fold_enumerate_source_tree`: source_files -> universe); the assertion ->
-fact descent is gone (#7757 entry 5 / item 25).
+fact descent is gone (#7757 entry 5 / item 25), and so are the `call_sites`
+level and the universe seek by a call-site cue (#7757).
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from sugar_lift_py_tests.repo_root import resolve_repo_root
@@ -377,12 +377,18 @@ def test_rpc_entry_preserves_tree_panic_role(
     }
 
 
-def test_source_files_seek_matches_by_file(project: Path) -> None:
-    scanned = _enumerate("source_files", project)["nodes"]
-    memento = scanned[0]["memento"]
-    seeked = _enumerate("source_files", project, at=memento, seek=True)["nodes"]
-    assert len(seeked) == 1
-    assert seeked[0]["memento"] == memento
+@pytest.mark.parametrize("level", ["source_files", "functions", "universe"])
+def test_a_seek_off_the_board_door_leaf_is_refused_by_name(
+    project: Path, level: str
+) -> None:
+    """Every level is a scan (#7757). The seeks that read one node back (a
+    file, a function, a universe by its own memento or by a call-site cue)
+    had no driver; a seek is refused by name, never answered with the scan."""
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    response = _enumerate_raw(level, project, at=file_memento, seek=True)
+    assert "result" not in response, response
+    assert response["error"]["code"] == -32602
+    assert "auditFrontier" in response["error"]["message"]
 
 
 def test_functions_finds_both_the_contract_owner_and_the_enclosing_test(
@@ -407,7 +413,7 @@ def test_double():
 """
 
 
-@pytest.mark.parametrize("level", ["call_sites", "universe"])
+@pytest.mark.parametrize("level", ["functions", "universe"])
 def test_every_level_answers_the_same_when_asked_first(
     tmp_path: Path, level: str
 ) -> None:
@@ -421,21 +427,10 @@ def test_every_level_answers_the_same_when_asked_first(
 
     (tmp_path / "dbl.py").write_text(CALLING_SOURCE, encoding="utf-8")
     file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
-    functions = {
-        n["memento"]["function_name"]: n["memento"]
-        for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
-    }
-    call_site = _enumerate("call_sites", tmp_path, at=functions["test_double"])[
-        "nodes"
-    ][0]["memento"]
-    at, seek = {
-        "call_sites": (functions["test_double"], False),
-        "universe": (call_site, True),
-    }[level]
 
-    warm = _enumerate(level, tmp_path, at=at, seek=seek)
+    warm = _enumerate(level, tmp_path, at=file_memento)
     clear_process_resident_files()
-    cold = _enumerate(level, tmp_path, at=at, seek=seek)
+    cold = _enumerate(level, tmp_path, at=file_memento)
 
     assert cold == warm
 
@@ -468,24 +463,6 @@ def test_functions_level_uses_the_canonical_construction_open(
     assert filename == "mathy.py"
 
 
-def test_call_sites_scoped_to_enclosing_function(project: Path) -> None:
-    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
-    functions = {
-        n["memento"].get("function_name")
-        or n["memento"].get("source_function_name"): n["memento"]
-        for n in _enumerate("functions", project, at=file_memento)["nodes"]
-    }
-    add_call_sites = _enumerate("call_sites", project, at=functions["mathy.add"])[
-        "nodes"
-    ]
-    assert add_call_sites == []
-
-    test_add_call_sites = _enumerate("call_sites", project, at=functions["test_add"])[
-        "nodes"
-    ]
-    assert len(test_add_call_sites) == 1
-
-
 def test_facts_is_answered_under_audit_frontier_only(project: Path) -> None:
     """The assertion -> fact descent is gone (#7757 entry 5 / item 25).
 
@@ -493,31 +470,17 @@ def test_facts_is_answered_under_audit_frontier_only(project: Path) -> None:
     typed refusal, never a second walk of a function's asserts.
     """
     file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
-    response = _enumerate_raw("facts", project, at=file_memento, seek=True)
+    response = _enumerate_raw("facts", project, at=file_memento)
     assert response["error"]["code"] == -32602
     assert "auditFrontier" in response["error"]["message"]
 
 
-def test_universe_cue_rewrites_temporal_callee_alias(tmp_path: Path) -> None:
-    """Callee discovery and argument application see the same rewritten tree."""
-    (tmp_path / "temporal_alias.py").write_text(
-        "def target(a):\n    return a\n\n"
-        "def test_alias():\n    callee = target\n    assert callee(1) == 1\n",
-        encoding="utf-8",
-    )
-    file_key = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
-    functions = {
-        n["memento"]["function_name"]: n["memento"]
-        for n in _enumerate("functions", tmp_path, at=file_key)["nodes"]
-    }
-    call_site = _enumerate("call_sites", tmp_path, at=functions["test_alias"])["nodes"][
-        0
-    ]["memento"]
-
-    universe = _enumerate("universe", tmp_path, at=call_site, seek=True)
-    assert universe["gaps"] == []
-    assert len(universe["nodes"]) == 1
-    assert universe["nodes"][0]["memento"]["source_function_name"] == "target"
+def test_the_call_sites_level_is_gone(project: Path) -> None:
+    """The cue a universe seek read had no driver (#7757): unknown level."""
+    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
+    response = _enumerate_raw("call_sites", project, at=file_memento)
+    assert response["error"]["code"] == -32602
+    assert "unknown level" in response["error"]["message"]
 
 
 def test_every_formula_bearing_enumerate_level_is_closed(project: Path) -> None:
@@ -556,15 +519,6 @@ def test_every_formula_bearing_enumerate_level_is_closed(project: Path) -> None:
     file_memento = file_result["nodes"][0]["memento"]
     function_result = _enumerate("functions", project, at=file_memento)
     assert_closed(function_result)
-    function_memento = next(
-        node["memento"]
-        for node in function_result["nodes"]
-        if (node["memento"].get("function_name") or "").endswith("test_add")
-    )
-    callsite_result = _enumerate("call_sites", project, at=function_memento)
-    assert_closed(callsite_result)
-    callsite_memento = callsite_result["nodes"][0]["memento"]
-    assert_closed(_enumerate("universe", project, at=callsite_memento, seek=True))
     assert_closed(_enumerate("universe", project, at=file_memento))
 
 
@@ -765,9 +719,7 @@ def test_enumerate_refuses_path_traversal(project) -> None:
     the workspace root is refused as a gap, never lifted."""
     outside = project.parent / "outside_secret.py"
     outside.write_text("def f():\n    assert 1 == 1\n", encoding="utf-8")
-    response = _enumerate_raw(
-        "call_sites", project, at={"file": "../outside_secret.py"}
-    )
+    response = _enumerate_raw("functions", project, at={"file": "../outside_secret.py"})
     assert "error" not in response, response
     result = response["result"]
     assert result["nodes"] == []
@@ -778,7 +730,7 @@ def test_enumerate_refuses_path_traversal(project) -> None:
 def test_enumerate_empty_file_is_an_empty_level_not_an_error(project) -> None:
     """A comments-only file has no source sites: empty level, not -32603."""
     (project / "empty_mod.py").write_text("# nothing here\n", encoding="utf-8")
-    response = _enumerate_raw("call_sites", project, at={"file": "empty_mod.py"})
+    response = _enumerate_raw("functions", project, at={"file": "empty_mod.py"})
     assert "error" not in response, response
     assert response["result"]["nodes"] == []
 
@@ -866,274 +818,3 @@ def test_callable_universe_identity_uses_content_and_qualified_spelling(
     assert module_a_once == module_a_twice
     assert module_a_once[1] == "module_a.add"
     assert module_b_once[1] == "module_b.add"
-
-
-def test_same_leaf_callsite_scan_is_broad_but_each_seek_is_exact(
-    tmp_path: Path,
-) -> None:
-    source = """\
-def add(value):
-    return value + 1
-
-def test_add():
-    assert add(1) == 2
-    assert add(2) == 3
-"""
-    (tmp_path / "repeated.py").write_text(source, encoding="utf-8")
-    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
-    functions = {
-        n["memento"].get("function_name")
-        or n["memento"].get("source_function_name"): n["memento"]
-        for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
-    }
-
-    scanned = _enumerate("call_sites", tmp_path, at=functions["test_add"])["nodes"]
-    assert len(scanned) == 2
-    assert [node["audit"]["bridgeSourceSymbol"] for node in scanned] == [
-        "call:add",
-        "call:add",
-    ]
-    assert len({json.dumps(node["memento"], sort_keys=True) for node in scanned}) == 2
-    assert len({node["memento"]["span"]["start_line"] for node in scanned}) == 2
-
-    for observed in scanned:
-        sought = _enumerate("call_sites", tmp_path, at=observed["memento"], seek=True)
-        assert sought["gaps"] == []
-        assert len(sought["nodes"]) == 1
-        assert sought["nodes"][0]["memento"] == observed["memento"]
-
-        universe = _enumerate("universe", tmp_path, at=observed["memento"], seek=True)
-        assert universe["gaps"] == []
-        assert len(universe["nodes"]) == 1
-        assert universe["nodes"][0]["memento"]["function_name"] == "repeated.add"
-
-
-def test_same_leaf_calls_in_qualified_nested_owners_keep_distinct_identity(
-    tmp_path: Path,
-) -> None:
-    source = """\
-def add(value):
-    return value + 1
-
-class A:
-    def check(self):
-        assert add(1) == 2
-
-class B:
-    def check(self):
-        assert add(2) == 3
-"""
-    (tmp_path / "nested.py").write_text(source, encoding="utf-8")
-    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
-    functions = {
-        n["memento"].get("function_name")
-        or n["memento"].get("source_function_name"): n["memento"]
-        for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
-    }
-
-    observed = []
-    for owner in ("nested.A.check", "nested.B.check"):
-        sites = _enumerate("call_sites", tmp_path, at=functions[owner])["nodes"]
-        assert len(sites) == 1
-        assert sites[0]["audit"]["bridgeSourceSymbol"] == "call:add"
-        sought = _enumerate("call_sites", tmp_path, at=sites[0]["memento"], seek=True)
-        assert len(sought["nodes"]) == 1
-        assert sought["nodes"][0]["memento"] == sites[0]["memento"]
-        observed.append(sites[0]["memento"])
-
-    assert observed[0] != observed[1]
-    assert observed[0]["source_function_name"] == "nested.A.check"
-    assert observed[1]["source_function_name"] == "nested.B.check"
-    assert observed[0]["span"] != observed[1]["span"]
-
-
-def test_callsite_bridge_lookup_uses_exact_locus_not_first_caller_edge(
-    tmp_path: Path,
-) -> None:
-    source = """\
-def add(value):
-    return value + 1
-
-def other(value):
-    return value + 2
-
-def test_calls():
-    assert add(1) == 2
-    assert other(1) == 3
-"""
-    (tmp_path / "distinct.py").write_text(source, encoding="utf-8")
-    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
-    functions = {
-        n["memento"].get("function_name")
-        or n["memento"].get("source_function_name"): n["memento"]
-        for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
-    }
-
-    sites = _enumerate("call_sites", tmp_path, at=functions["test_calls"])["nodes"]
-    assert [node["audit"]["bridgeSourceSymbol"] for node in sites] == [
-        "call:add",
-        "call:other",
-    ]
-    sought = _enumerate("universe", tmp_path, at=sites[1]["memento"], seek=True)
-    assert sought["gaps"] == []
-    assert len(sought["nodes"]) == 1
-    assert sought["nodes"][0]["memento"]["function_name"] == "distinct.other"
-
-
-def test_exact_seek_for_unknown_callsite_is_a_loud_gap_not_substitution(
-    project: Path,
-) -> None:
-    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
-    forged = dict(file_memento)
-    forged["function_name"] = "test_add"
-    forged["span"] = {
-        "start_line": 999,
-        "start_col": 0,
-        "end_line": 999,
-        "end_col": 1,
-    }
-    forged["source_cid"] = "blake3-512:not-an-observed-callsite"
-
-    for level in ("call_sites", "universe"):
-        result = _enumerate(level, project, at=forged, seek=True)
-
-        assert result["nodes"] == []
-        assert len(result["gaps"]) == 1
-        assert "no call site for exact memento" in result["gaps"][0]["reason"]
-        assert result["gaps"][0]["memento"] == forged
-
-
-def test_call_site_exact_seek_returns_the_identical_observed_locus(
-    project: Path,
-) -> None:
-    """An exact call-site seek is identity, never a second parent scan."""
-    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
-    function = next(
-        node["memento"]
-        for node in _enumerate("functions", project, at=file_memento)["nodes"]
-        if node["memento"]["function_name"] == "test_add"
-    )
-    observed = _enumerate("call_sites", project, at=function)["nodes"][0]
-
-    result = _enumerate("call_sites", project, at=observed["memento"], seek=True)
-
-    assert result["gaps"] == []
-    assert result["nodes"] == [observed]
-
-
-def test_unknown_exact_callsite_seek_is_a_named_miss(project: Path) -> None:
-    """Silence is not a valid answer for an exact locus the tree cannot find."""
-    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
-    function = next(
-        node["memento"]
-        for node in _enumerate("functions", project, at=file_memento)["nodes"]
-        if node["memento"]["function_name"] == "test_add"
-    )
-    observed = _enumerate("call_sites", project, at=function)["nodes"][0]["memento"]
-    unknown = {
-        **observed,
-        "span": {
-            "start_line": 999,
-            "start_col": 0,
-            "end_line": 999,
-            "end_col": 1,
-        },
-        "source_cid": "blake3-512:not-an-observed-callsite",
-    }
-
-    result = _enumerate("call_sites", project, at=unknown, seek=True)
-
-    assert result["nodes"] == []
-    assert result["gaps"] == [
-        {"memento": unknown, "reason": "no call site for exact memento"}
-    ]
-
-
-def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
-    """CallSite-style seek: call:add → qualified mathy.add universe."""
-    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
-    functions = {
-        n["memento"].get("function_name")
-        or n["memento"].get("source_function_name"): n["memento"]
-        for n in _enumerate("functions", project, at=file_memento)["nodes"]
-    }
-    call_site_memento = _enumerate("call_sites", project, at=functions["test_add"])[
-        "nodes"
-    ][0]["memento"]
-    result = _enumerate("universe", project, at=call_site_memento, seek=True)
-    assert len(result["nodes"]) == 1
-    node = result["nodes"][0]
-    name = (node["audit"] or {}).get("name") or node["memento"].get("function_name")
-    assert name == "mathy.add"
-    assert node["memento"].get("function_name") == name
-    assert node["audit"]["bridgeSourceSymbol"] == "add"
-    assert result["gaps"] == []
-
-
-def test_term_ref_bridge_recovery_is_shared_by_callsite_and_universe(
-    project: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The response-owned term table is the one bridge-recovery boundary.
-
-    Remove callEdges so every level must follow the assertion's closed term-ref
-    graph. No level may depend on an inline constructor or invent a first edge.
-    """
-    original = lift_rpc._lift_file_for_enumeration
-    lift_rpc._ENUMERATION_FILE_CONTEXTS.clear()
-
-    def without_call_edges(workspace_root, root, file_rel):
-        items, _edges, term_table = original(workspace_root, root, file_rel)
-        return items, [], term_table
-
-    monkeypatch.setattr(lift_rpc, "_lift_file_for_enumeration", without_call_edges)
-    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
-    functions = {
-        n["memento"].get("function_name")
-        or n["memento"].get("source_function_name"): n["memento"]
-        for n in _enumerate("functions", project, at=file_memento)["nodes"]
-    }
-    callsite_result = _enumerate("call_sites", project, at=functions["test_add"])
-    call_site = callsite_result["nodes"][0]
-
-    assert call_site["audit"]["bridgeSourceSymbol"] == "call:add"
-    assert callsite_result["termTable"]
-
-    universe = _enumerate("universe", project, at=call_site["memento"], seek=True)
-    assert universe["gaps"] == []
-    assert len(universe["nodes"]) == 1
-    assert universe["nodes"][0]["memento"]["function_name"] == "mathy.add"
-    assert universe["termTable"]
-
-
-def test_universe_seek_refuses_ambiguous_leaf_bridge(tmp_path: Path) -> None:
-    source = """\
-class A:
-    def add(self, value):
-        return value + 1
-
-class B:
-    def add(self, value):
-        return value + 2
-
-def test_add():
-    assert add(1) == 2
-"""
-    (tmp_path / "ambiguous.py").write_text(source, encoding="utf-8")
-    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
-    functions = {
-        n["memento"].get("function_name")
-        or n["memento"].get("source_function_name"): n["memento"]
-        for n in _enumerate("functions", tmp_path, at=file_memento)["nodes"]
-    }
-    call_site_memento = _enumerate("call_sites", tmp_path, at=functions["test_add"])[
-        "nodes"
-    ][0]["memento"]
-
-    result = _enumerate("universe", tmp_path, at=call_site_memento, seek=True)
-
-    assert result["nodes"] == []
-    assert len(result["gaps"]) == 1
-    reason = result["gaps"][0]["reason"]
-    assert "ambiguous universe sugar for callee call:add" in reason
-    assert "ambiguous.A.add" in reason
-    assert "ambiguous.B.add" in reason

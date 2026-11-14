@@ -1841,14 +1841,12 @@ fn handle_enumerate(id: &Value, params: &Value) -> Value {
             Ok(context) => context,
             Err(gaps) => return enumerate_result(id, Vec::new(), gaps),
         };
-        let seek = params.get("seek").and_then(Value::as_bool).unwrap_or(false);
+        // A census only: no driver seeks one file here (#7757); the one walk
+        // is source_files -> universe.
         let nodes = context
             .parsed_sources
             .iter()
             .map(|source| file_memento(&source.rel, Some(&source.source_cid)))
-            .filter(|memento| {
-                !seek || at.is_none_or(|requested| memento_matches(memento, requested))
-            })
             .map(
                 |memento| json!({"memento": memento, "audit": Value::Null, "payload": Value::Null}),
             )
