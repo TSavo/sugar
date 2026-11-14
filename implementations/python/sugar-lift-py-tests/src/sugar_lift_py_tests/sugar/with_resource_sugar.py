@@ -105,6 +105,9 @@ class WithResourceSugar(Sugar):
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
+            face_record,
+            halt_record,
+            halts_recorded,
             reduce_block_to_exitset,
         )
 
@@ -112,8 +115,13 @@ class WithResourceSugar(Sugar):
         # ``with`` statement's own context: there is no second way to reduce
         # them without it (#7757). Each is routed face by face here: a
         # deferred native-operation carrier at any of them is refused by name.
-        manager_es = _require_exit_set(
-            self.manager.desugar(ctx), owner="WithResourceSugar.manager"
+        # A manager or enter halt is at the head of the ``with``: it carries
+        # the record of where it halted (``halts_recorded``).
+        manager_es = halts_recorded(
+            _require_exit_set(
+                self.manager.desugar(ctx), owner="WithResourceSugar.manager"
+            ),
+            halt_record(ctx),
         )
         parts: list = []
 
@@ -133,8 +141,11 @@ class WithResourceSugar(Sugar):
             # and faces and owes what it owes; the exit routing carries a body
             # face's debts onto every arm it leaves through.
             enter_es = ExitSet((mgr_exit,)).sequence(
-                lambda _manager: _require_exit_set(
-                    self.enter.desugar(ctx), owner="WithResourceSugar.enter"
+                lambda _manager: halts_recorded(
+                    _require_exit_set(
+                        self.enter.desugar(ctx), owner="WithResourceSugar.enter"
+                    ),
+                    halt_record(ctx),
                 )
             )
             for enter_exit in enter_es.exits:
@@ -174,6 +185,14 @@ class WithResourceSugar(Sugar):
                         self.exit_face_id, body_exit
                     ).to_facts(site=self.site, guard=body_exit.guard)
                     face = ExitSet((body_exit,))
+                    # The exit runs after this body face: a halt of it
+                    # carries the record the face left (``face_record``).
+                    face_exit_es = halts_recorded(
+                        exit_es,
+                        face_record(
+                            body_exit, owner="WithResourceSugar.exit", blame=self.site
+                        ),
+                    )
                     from sugar_lift_py_tests.context_manager_contract import (
                         NeverSuppressesDispositionV1,
                         ReturnTruthinessDispositionV1,
@@ -199,7 +218,9 @@ class WithResourceSugar(Sugar):
                             (RaiseEffect, GroupedRaiseEffect, UndeterminedRaiseEffect),
                         )
                     ):
-                        after = face.and_exit_truthiness(exit_es, site=self.site)
+                        after = face.and_exit_truthiness(
+                            face_exit_es, site=self.site
+                        )
                     else:
                         disposition = (
                             NeverSuppressesDispositionV1()
@@ -208,7 +229,7 @@ class WithResourceSugar(Sugar):
                             )
                             else self.disposition
                         )
-                        after = face.and_exit(exit_es, disposition=disposition)
+                        after = face.and_exit(face_exit_es, disposition=disposition)
                     after = prepend_facts_to_exitset(
                         after, (*mgr_facts, *enter_facts, *face_facts)
                     )

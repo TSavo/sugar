@@ -69,10 +69,20 @@ class WithEffectBoundarySugar(Sugar):
 
         from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+        )
+
         # The manager is routed face by face: a deferred native-operation
-        # carrier is refused by name.
-        manager_es = _require_exit_set(
-            self.manager.desugar(ctx), owner="WithEffectBoundarySugar.manager"
+        # carrier is refused by name. A manager or constructor halt is at the
+        # head of the ``with``: it carries the record of where it halted
+        # (``halts_recorded``).
+        manager_es = halts_recorded(
+            _require_exit_set(
+                self.manager.desugar(ctx), owner="WithEffectBoundarySugar.manager"
+            ),
+            halt_record(ctx),
         )
         construction_halts, construction_guard = self._construction_faces()
         routed = []
@@ -88,7 +98,9 @@ class WithEffectBoundarySugar(Sugar):
             for halt in construction_halts:
                 routed.append(
                     ExitSet((manager_exit,)).sequence(
-                        lambda _manager, halt=halt: ExitSet((halt,))
+                        lambda _manager, halt=halt: halts_recorded(
+                            ExitSet((halt,)), halt_record(ctx)
+                        )
                     )
                 )
             if construction_guard is not None:

@@ -1729,17 +1729,19 @@ def test_a_halt_with_nothing_to_carry_leaves_as_it_is() -> None:
 
 
 @pytest.mark.parametrize("bare", ["none", "context"])
-def test_a_halt_without_a_record_is_given_one_with_what_the_items_did(
-    bare: str,
-) -> None:
+@pytest.mark.parametrize("entries", [(), (TermValue(0),)])
+def test_a_halt_without_a_record_is_refused_by_name(bare: str, entries) -> None:
+    from sugar_source_tree.panic import SugarNotWritten
+
+    # Every halt carries a record built by its producer (``halt_record``):
+    # a bare halt is refused by name, never given an empty record in its
+    # place, whether or not there is anything to carry beside it.
     context = (
         None if bare == "none" else ReduceContext.root(owner="live-loop-bare-halt")
     )
-    (left,) = _recurrence()._left_with(
-        (TermValue(0),), (), halt=_outer_break(context)
-    ).exits
-    assert left.state.entries == (TermValue(0),)
-    assert left.state.context is context
+    with pytest.raises(SugarNotWritten) as refused:
+        _recurrence()._left_with(entries, (), halt=_outer_break(context))
+    assert refused.value.owner == "LoopRecurrenceSugar.left-with"
 
 
 def test_a_halt_whose_state_is_no_record_is_refused_by_name() -> None:

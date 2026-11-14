@@ -132,14 +132,98 @@ def _prefixed(state: _ReducedBlock, inner: object) -> object:
 def _halt_state(state: _ReducedBlock, exit_) -> object:
     """The temporal record a halted arm of a nested statement carries.
 
-    Normally ``_prefixed``: the nested reduction's own record with this block's
-    prefix spliced in front. A nested payload that is not a block record has
-    nothing to splice onto and is left alone -- ``ExitSet.halted(effect)``
-    builds ``Halted(guard, effect, None)`` because its producer has no record
-    to offer, and ``and_finally`` / ``and_exit`` fan cleanup and exit halts
-    across incoming arms the same way.
+    ``_prefixed``: the nested reduction's own record with this block's prefix
+    spliced in front. Every halt a compound statement hands back carries a
+    record (``halt_record``, ``halts_recorded``): one at its head, before
+    anything of the statement ran, carries the empty record in the context
+    it halted in, and the prefix spliced here is then its whole record.
     """
     return _prefixed(state, exit_.state)
+
+
+def halt_record(ctx) -> _ReducedBlock:
+    """The record a halt carries where nothing of its producer ran before
+    it: no entries, in ``ctx``, the context it halted in.
+
+    The one record constructor every halt's record starts from: the block
+    composition splices what ran ahead of the halt onto it (``_prefixed``),
+    a loop carries what its items did onto it (``_left_with``), and a suite
+    that catches it resumes from it (``resumed``). A ``break``/``continue``
+    halts with it (``LoopControlSugar``); so does a compound statement's
+    head -- an ``if`` test, a loop's iterable, ``iter``, ``next`` and target
+    unpack, a ``while`` test, a ``with`` manager and its enter, a ``match``
+    subject (``halts_recorded``) -- since nothing of the statement ran
+    before it.
+    """
+    return _ReducedBlock((), False, (), context=ctx)
+
+
+def face_record(face, *, owner: str, blame: object) -> _ReducedBlock:
+    """The record a suite's face left: a completed face's value (the
+    block's record), a halted face's state (the record it halted with).
+
+    What runs after the face (a ``with``'s ``__exit__``, a suppressed halt
+    continuing after the ``with``) runs where it left. A face whose record
+    is no record is refused by name, never given an empty one: what the
+    suite did before it is never dropped.
+    """
+    record = face.state if isinstance(face, Halted) else face.value
+    if isinstance(record, _ReducedBlock):
+        return record
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        owner=owner,
+        blame=blame if blame is not None else owner,
+        observed=(
+            f"a {type(face).__name__} face whose record is a "
+            f"{type(record).__name__}, not a block's record"
+        ),
+        requested="the record the suite left on this face",
+        fix=(
+            "halt with a record at the producer (halt_record, "
+            "halts_recorded); never make one up in its place"
+        ),
+    )
+
+
+def halts_recorded(outcome, record: _ReducedBlock):
+    """``outcome`` with every halted arm that offers no record of its own
+    carrying ``record``: what ran before it, nothing of its own producer
+    having run before it halted.
+
+    At a compound statement's head (an ``if`` test, a loop's iterable,
+    ``next`` or ``while`` test, a ``with`` manager or enter, a ``match``
+    subject) that is ``halt_record(ctx)``, the empty record where it
+    halted, onto which the block composition splices what ran before the
+    statement. After a ``with`` body face (its ``__exit__``) it is the
+    record that face left (``face_record``).
+
+    An arm that carries its own record (a call's halt: the callee's) keeps
+    it, and every arm keeps its guard, faces and ``owed``. A deferred
+    native-operation carrier is handed back as it is: its halt is recorded
+    by the block composition that enrolled its pre-effect state.
+    """
+    from dataclasses import replace as _replace
+
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    if isinstance(outcome, NativeOperationExitCarrierV1):
+        return outcome
+    if not any(
+        isinstance(exit_, Halted) and exit_.state is None for exit_ in outcome.exits
+    ):
+        return outcome
+    return ExitSet(
+        tuple(
+            _replace(exit_, state=record)
+            if isinstance(exit_, Halted) and exit_.state is None
+            else exit_
+            for exit_ in outcome.exits
+        )
+    )
 
 
 def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
@@ -160,25 +244,18 @@ def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
     its fall-through), so it is not stated again. A record reduced with no
     context (a nested record its producer built bare) reads ``ctx``.
 
-    A halt with no record of its own -- ``None``, which a compound
-    statement hands back when it offers none (``_halt_state``), or the bare
-    context a target unpack's halt holds -- is given one with no entries,
-    in that context or in ``ctx``. Any other payload holds no entries to
-    resume from and is refused by name: nothing is resumed from a state
-    that is not this block's.
+    Every halt carries a record (``halt_record``): its producer builds it.
+    A halt whose state is no record -- ``None``, a bare context, any other
+    payload -- holds nothing to resume from, and an empty record made up in
+    its place would drop what ran before the halt: it is refused by name,
+    never given one.
     """
-    from sugar_lift_py_tests.context import ReduceContext
-
     if isinstance(state, _ReducedBlock):
         return replace(
             state,
             can_fall_through=True,
             fall_through=(),
             context=state.context if state.context is not None else ctx,
-        )
-    if state is None or isinstance(state, ReduceContext):
-        return _ReducedBlock(
-            (), True, (), context=ctx if state is None else state
         )
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -194,8 +271,9 @@ def resumed(state, ctx, *, owner: str, blame: object) -> _ReducedBlock:
             "to resume the suite after"
         ),
         fix=(
-            "halt with a record (a block's halt state); never resume a suite "
-            "from a state that is not the block's"
+            "halt with a record at the producer (halt_record, "
+            "halts_recorded); never resume a suite from a record made up "
+            "in place of the halt's"
         ),
     )
 

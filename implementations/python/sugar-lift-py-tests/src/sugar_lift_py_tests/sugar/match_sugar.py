@@ -838,6 +838,8 @@ class MatchSugar(Sugar):
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.ir import or_
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
             plain_completed_value,
             reduce_block_to_exitset,
         )
@@ -847,6 +849,9 @@ class MatchSugar(Sugar):
             raise NotImplementedError(
                 f"match subject outcome not lifted: {type(subject_out).__name__}"
             )
+        # A halt of the subject is at the head of the ``match``, before any
+        # case: it carries the record of where it halted (``halts_recorded``).
+        subject_out = halts_recorded(subject_out, halt_record(ctx))
         if subject_out.exits and subject_out.halts() == subject_out.exits:
             # Subject halt is before any case; no later case can run.
             return subject_out
