@@ -673,7 +673,9 @@ def test_a_name_first_bound_in_a_symbolic_loop_is_its_value_or_a_name_error() ->
     # ``last`` is first bound in the loop: where some item wrote it the read
     # after the loop is the recurrence's value of it, where none did (``xs``
     # empty) it is a ``NameError``.  The loop's write slot of ``last`` is
-    # authenticated as the guard that some item wrote it.
+    # authenticated as the guard that some item wrote it.  The loop leaves
+    # by two records -- where the symbolic item ran, with what it left, and
+    # where none ran -- so the read is reduced after each.
     function = _function(
         "def f(xs):\n"
         "    for x in xs:\n"
@@ -687,7 +689,8 @@ def test_a_name_first_bound_in_a_symbolic_loop_is_its_value_or_a_name_error() ->
         for exit_ in outcome.exits
         if isinstance(exit_, Halted) and isinstance(exit_.effect, NameErrorEffect)
     ]
-    assert [exit_.effect.name for exit_ in name_errors] == ["last"]
+    assert name_errors
+    assert {exit_.effect.name for exit_ in name_errors} == {"last"}
 
 
 # -- a read after the loop is what the loop published, or refused (#7757) ------
@@ -1257,6 +1260,147 @@ def test_each_exit_of_the_symbolic_item_is_reported_once() -> None:
     returned = _returned_values(outcome)
     assert len(returned) == 2, returned
     assert returned[0] != returned[1], returned
+
+
+# -- what the symbolic item did leaves the loop with it (#7757 item 7) --------
+
+
+_SYMBOLIC_APPEND = (
+    "def f(xs):\n"
+    "    acc = []\n"
+    "    for x in xs:\n"
+    "        acc.append(x)\n"
+    "    return acc\n"
+)
+
+
+def _records(outcome) -> list:
+    """The record of every completed exit of ``outcome``."""
+    return [
+        tuple(getattr(getattr(exit_.value, "record", exit_.value), "statements", ()))
+        for exit_ in outcome.exits
+        if isinstance(exit_, Completed)
+    ]
+
+
+def test_a_symbolic_items_append_leaves_the_loop_with_it() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``xs`` is symbolic and the body has no ``return``/``raise``: the
+    # symbolic item still runs it, and what ``acc.append(x)`` left (the
+    # receiver's post-state) leaves the loop on the arm where an item ran,
+    # as a concrete item's entries do.  Where no item ran the loop leaves
+    # without it: two records, never the item's append dropped into one.
+    function = _function(_SYMBOLIC_APPEND)
+    loop = next(
+        statement
+        for statement in function.sugar().statements
+        if isinstance(statement, LoopRecurrenceSugar)
+    )
+    assert not loop.outward_faces
+    records = _records(function_universe_outcome(function))
+    assert len(records) >= 2, records
+    shortest = min(len(record) for record in records)
+    assert any(len(record) > shortest for record in records), records
+
+
+def _left_by_the_item(body):
+    """The loop's exits from the symbolic item's ``body``, the recurrence
+    standing as ``TermValue(0)`` after what the item left."""
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+
+    return LoopRecurrenceSugar._leave_symbolic_item(
+        SimpleNamespace(target_cid=LOOP),
+        body,
+        lambda entries=(): ExitSet.completed(BlockValue((*entries, TermValue(0)))),
+        atomic("test.item", []),
+    )
+
+
+def _arm_of(left, value):
+    """The one exit of ``left`` holding ``value``."""
+    (arm,) = [exit_ for exit_ in left.exits if exit_.value == value]
+    return arm
+
+
+def test_the_symbolic_items_fall_through_leaves_with_its_entries() -> None:
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    # The item fell through having left an entry (a store, a mutation): the
+    # loop goes on as its recurrence with it, under the item guard; where no
+    # item ran, without it.
+    left = _left_by_the_item(
+        ExitSet.completed(_ReducedBlock((TermValue(1),), True, ()))
+    )
+    went_on = _arm_of(left, BlockValue((TermValue(1), TermValue(0))))
+    assert "test.item" in str(went_on.guard)
+    assert _arm_of(left, BlockValue((TermValue(0),))) is not None
+
+
+def test_what_the_symbolic_item_owes_rides_onto_the_loops_result() -> None:
+    from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    # An unanswered call in the body left a debt on the arm that fell
+    # through, and on the arm that broke: the loop's arms continuing each
+    # owe it, as every continuation of an arm does.
+    test = atomic("test.x", [])
+    body = ExitSet(
+        (
+            Halted(
+                test,
+                LoopControlEffect("break", LOOP, "blake3-512:test-break"),
+                owed=("owed.before-break",),
+            ),
+            Completed(
+                not_(test),
+                _ReducedBlock((TermValue(1),), True, ()),
+                owed=("owed.fell-through",),
+            ),
+        )
+    )
+    left = _left_by_the_item(body)
+    went_on = _arm_of(left, BlockValue((TermValue(1), TermValue(0))))
+    assert "owed.fell-through" in went_on.owed
+    broke = _arm_of(left, BlockValue((TermValue(0),)))
+    assert "owed.before-break" in broke.owed
+
+
+def test_a_break_under_a_condition_keeps_its_partition_face() -> None:
+    from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.outcome.exit_set import partition
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    # ``if x: break`` then a store: the item breaks on the ``if``'s then
+    # face and falls through on its else face.  The arm that went on keeps
+    # the else face and the guard it went on under; the arm that broke
+    # leaves as the recurrence under the ``if``'s test.
+    test = atomic("test.x", [])
+    then_face, else_face = partition(("test.if", test))
+    body = ExitSet(
+        (
+            Halted(
+                test,
+                LoopControlEffect("break", LOOP, "blake3-512:test-break"),
+                None,
+                frozenset({then_face}),
+            ),
+            Completed(
+                not_(test),
+                _ReducedBlock((TermValue(1),), True, ()),
+                frozenset({else_face}),
+            ),
+        )
+    )
+    left = _left_by_the_item(body)
+    went_on = _arm_of(left, BlockValue((TermValue(1), TermValue(0))))
+    assert else_face in went_on.faces
+    assert "test.x" in str(went_on.guard)
+    broke = _arm_of(left, BlockValue((TermValue(0),)))
+    assert "test.x" in str(broke.guard)
 
 
 def test_each_read_of_an_evaluation_is_spanned_at_its_use() -> None:
