@@ -1045,9 +1045,11 @@ def enter_source_frame(
     A plain call, a computed callee and a call with ``*``/``**`` enter the
     frame here: it is the one typed variant, a closure body has its captured
     coordinates (``covered``: the captured names the call carries), the
-    frame's module globals are installed, and a module whose constant halts
-    is the call's halt.  Returns ``(ctx, halt)``: ``halt`` is that module
-    halt, else ``None``.
+    keys of the module-final bindings its body reads are bound when the
+    call runs after import (``with_module_final_globals``, at the site the
+    frame's body is read at: ``source_frame_body``), and a module whose
+    constant halts is the call's halt.  Returns ``(ctx, halt)``: ``halt``
+    is that module halt, else ``None``.
     """
     from sugar_lift_py_tests.source_call_frame import SourceVisibleCallFrameV1
     from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef
@@ -1073,7 +1075,38 @@ def enter_source_frame(
             requested="producer-owned captured binding coordinates for every closure read",
             fix="construct closure bindings at the lexical frame boundary or keep loud",
         )
-    return _with_frame_mutable_globals(ctx, frame), _frame_module_halt(frame)
+    ctx = with_module_final_globals(
+        ctx,
+        _frame_global_readers(frame),
+        site=frame.module_execution_site,
+    )
+    return ctx, _frame_module_halt(frame)
+
+
+def _frame_global_readers(frame) -> tuple:
+    """The function bodies a call into ``frame`` runs: its ``def``, ``async
+    def`` or lambda; for a class call, the source ``__init__`` and the
+    source ``__new__`` the class call runs."""
+    from sugar_source_tree.nodes import (
+        AsyncFunctionDef,
+        ClassDef,
+        FunctionDef,
+        Lambda,
+    )
+
+    owner = frame.owner
+    if isinstance(owner, (FunctionDef, AsyncFunctionDef, Lambda)):
+        return (owner,)
+    if not isinstance(owner, ClassDef):
+        return ()
+    readers = []
+    initializer = owner._source_initializer()
+    if initializer is not None:
+        readers.append(initializer)
+    new_method = frame.constructed_new_method
+    if new_method is not None:
+        readers.append(new_method.source_call_frame.owner)
+    return tuple(readers)
 
 
 def source_frame_body(frame, *, owner: str, blame: object):
@@ -1199,31 +1232,119 @@ def _frame_module_halt(frame):
     return None if halt is None else ExitSet((halt,))
 
 
-def _with_frame_mutable_globals(ctx, frame):
-    bindings = frame.mutable_global_bindings
-    immutable_bindings = getattr(frame, "immutable_global_bindings", ())
-    if not bindings and not immutable_bindings:
+def with_module_final_globals(ctx, readers, *, site):
+    """``ctx`` at the entry of the bodies of ``readers`` (``def``, ``async
+    def`` or lambda nodes), called at the module execution ``site``: the key
+    of each module-final binding a body reads, bound.
+
+    A function called after import (``site`` None, or another module's) is
+    "called from outside the module's run" (#7945, #7956): its body reads a
+    global through the module's final binding of it, a reference to the
+    evaluation of the module body's last write
+    (``nodes.module_final_global_references``: the one reader,
+    ``_module_references_where_called``, with no site).  No
+    statement of the module body runs in its frame, so nothing else binds
+    that key there.  Each reference's key is bound here, at the frame
+    entry, to the value the write completed with where the write assigned a
+    ground immutable literal (``_bind_ground_evaluation``).  Any other final
+    binding (``x += e``, a call's result, a mutable display) is not bound:
+    its read is refused by name, naming the key (``EvaluationRefSugar.
+    _unbound``).  A global the module body does not decide was refused by
+    name when the body was constructed.  The name is never bound.
+
+    Called while the reader's own module body runs, the body reads the
+    binding standing at ``site``, whose key that run bound: nothing is
+    bound here.  ``ctx`` comes back unchanged when nothing is bound.
+    """
+    from sugar_source_tree.nodes import module_final_global_references
+
+    references = []
+    for reader in readers:
+        references.extend(
+            state
+            for _name, state in sorted(
+                module_final_global_references(reader, site).items()
+            )
+        )
+    evaluations = []
+    for state in references:
+        _collect_final_evaluations(state, evaluations)
+    if not evaluations:
         return ctx
+    from sugar_lift_py_tests.context import ReduceContext
+
+    entered = (
+        ReduceContext.root(owner="with_module_final_globals") if ctx is None else ctx
+    )
+    bound_any = False
+    for reference in evaluations:
+        entered, bound = _bind_ground_evaluation(entered, reference)
+        bound_any = bound_any or bound
+    return entered if bound_any else ctx
+
+
+def _collect_final_evaluations(state, evaluations: list) -> None:
+    """Every evaluation reference a module-final binding ``state`` reads
+    through: the reference itself, each arm of the phi the module block
+    built over a module ``if`` or ``try`` route (``IfExp`` on a
+    ``BranchResultRef``), and each arm of a binding joined over a slot
+    (``GuardedBinding``).  A definition, an import's row, an effect slot or
+    an unbound state reads no key."""
+    from sugar_source_tree.binding_state import GuardedBinding, unwrap_binding_state
+    from sugar_source_tree.nodes import BranchResultRef, EvaluationRef, IfExp
+
+    state = unwrap_binding_state(state)
+    if isinstance(state, EvaluationRef):
+        evaluations.append(state)
+    elif isinstance(state, IfExp) and isinstance(state.test, BranchResultRef):
+        _collect_final_evaluations(state.body, evaluations)
+        _collect_final_evaluations(state.orelse, evaluations)
+    elif isinstance(state, GuardedBinding):
+        _collect_final_evaluations(state.when_true, evaluations)
+        _collect_final_evaluations(state.when_false, evaluations)
+
+
+def _bind_ground_evaluation(ctx, reference):
+    """``(ctx, bound)``: ``ctx`` with ``reference``'s key bound to the value
+    its write completed with, when that write assigned a ground immutable
+    literal (``EvaluationRef.ground_value``: a constant, signed or int
+    arithmetic over ground ints, a tuple of such).  A literal has no effect
+    and denotes one value wherever it is reduced, so its value here is the
+    value the module body's write bound.  A ground value that reads another
+    key (``N = 3; X = N + 1``) binds that key first, the same way; when one
+    cannot be bound, neither is this one.  A display holding a list is not
+    bound: each evaluation of it is a new object, not the module's.  A key
+    already bound is left as it is."""
     from dataclasses import replace
 
-    from sugar_lift_py_tests.context import ReduceContext
-    from sugar_lift_py_tests.floor.mutable_global_value import MutableGlobalValue
-    from sugar_lift_py_tests.temporal import TemporalContext
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
+    from sugar_source_tree.nodes import EvaluationRef
 
-    if ctx is None:
-        ctx = ReduceContext.root(owner="CallSiteSugar mutable module globals")
-    module_temporal = ctx.module_temporal or TemporalContext.empty()
-    temporal = ctx.temporal
-    for binding in bindings:
-        value = MutableGlobalValue(
-            name=binding.name,
-            kind=binding.kind,
-            pin_source_cid=binding.source_cid,
-            binding_memento=binding.binding_occurrence,
-        )
-        module_temporal = module_temporal.bind_value(binding.name, value)
-        temporal = temporal.bind_value(binding.name, value)
-    for binding in immutable_bindings:
-        module_temporal = module_temporal.bind_value(binding.name, binding.value)
-        temporal = temporal.bind_value(binding.name, binding.value)
-    return replace(ctx, temporal=temporal, module_temporal=module_temporal)
+    key = reference.evaluation
+    if ctx.temporal.value_if_bound(key) is not None:
+        return ctx, True
+    if any(
+        getattr(reference, flag, False) is True
+        for flag in ("member", "place", "deferred")
+    ):
+        # A comprehension member, a store's place, or a generator's walrus
+        # (written only if the generator is consumed): not a write the
+        # module body completed.
+        return ctx, False
+    ground = reference.ground_value()
+    if ground is None:
+        return ctx, False
+    for node in ground.walk():
+        if node.kind == "List":
+            return ctx, False
+        if isinstance(node, EvaluationRef):
+            ctx, bound = _bind_ground_evaluation(ctx, node)
+            if not bound:
+                return ctx, False
+    value = plain_completed_value(ground.sugar().desugar(ctx))
+    if value is None:
+        return ctx, False
+    temporal = ctx.temporal.bind_value(key, value, blame="with_module_final_globals")
+    return replace(ctx, temporal=temporal), True

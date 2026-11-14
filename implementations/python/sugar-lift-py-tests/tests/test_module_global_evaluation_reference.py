@@ -1163,3 +1163,122 @@ def test_a_name_a_live_loop_carries_binds_only_the_evaluation_too() -> None:
     assert isinstance(rebind, ScopeRebinds)
     assert rebind.bindings == ((KEY, TermValue(5)),)
     assert rebind.extend_scope(ctx).temporal.value_if_bound("x") is None
+
+
+# -- a function reduced on its own reads the module-final binding -------------
+#
+# Reduced on its own (``tree_enumerate.function_universe_outcome``, the
+# per-function lift and census) or called after import, a function is called
+# from outside its module's run: no module statement ran in its frame, so its
+# entry binds the key of each module-final binding its body reads
+# (``call_site_sugar.with_module_final_globals``).
+
+
+def _returned_value(outcome):
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.floor.universe_value import UniverseValue
+
+    universe = outcome.completed_value()
+    assert isinstance(universe, UniverseValue), outcome
+    (returned,) = [
+        entry
+        for entry in universe.record.statements
+        if isinstance(entry, ReturnValue)
+    ]
+    return returned.value
+
+
+def test_a_function_reduced_on_its_own_reads_the_module_final_binding() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _source("X = 1\ndef f():\n    return X\nX = 2\n")
+    outcome = function_universe_outcome(_function(tree))
+    assert _returned_value(outcome) == TermValue(2)
+
+
+def test_a_call_after_import_binds_the_final_key_at_frame_entry() -> None:
+    from sugar_lift_py_tests.sugar.call_site_sugar import enter_source_frame
+
+    tree = _source("X = 1\ndef f():\n    return X\nX = 2\n")
+    first, second = _assignment_keys(tree, "X")
+    function = _function(tree)
+    ctx, halt = enter_source_frame(
+        function.source_visible_call_frame(),
+        None,
+        owner="test",
+        blame=function.fragment,
+    )
+    assert halt is None
+    assert ctx.temporal.value_if_bound(second) == TermValue(2)
+    assert ctx.temporal.value_if_bound(first) is None
+    # The key only: the name is never bound.
+    assert ctx.temporal.value_if_bound("X") is None
+
+
+def test_a_call_the_module_body_runs_binds_nothing_at_frame_entry() -> None:
+    # ``y = f()`` runs while the module body runs: the body reads ``X = 1``'s
+    # key, which the module body's own reduction binds.
+    from sugar_lift_py_tests.sugar.call_site_sugar import enter_source_frame
+
+    tree = _source(REBOUND_AROUND_A_CALL)
+    (call,) = _calls(tree)
+    site = call.unit.module_execution_site(call)
+    function = _function(tree)
+    frame = construct_at_module_execution_site(
+        site, function.source_visible_call_frame
+    )
+    assert frame.module_execution_site == site
+    ctx, halt = enter_source_frame(frame, None, owner="test", blame=call.fragment)
+    assert ctx is None and halt is None
+
+
+def test_a_ground_value_reading_another_key_binds_both() -> None:
+    from sugar_lift_py_tests.sugar.call_site_sugar import enter_source_frame
+
+    tree = _source("N = 3\nX = N + 1\ndef f():\n    return X\n")
+    (n_key,) = _assignment_keys(tree, "N")
+    (x_key,) = _assignment_keys(tree, "X")
+    function = _function(tree)
+    ctx, _halt = enter_source_frame(
+        function.source_visible_call_frame(),
+        None,
+        owner="test",
+        blame=function.fragment,
+    )
+    assert ctx.temporal.value_if_bound(n_key) == TermValue(3)
+    assert ctx.temporal.value_if_bound(x_key) is not None
+
+
+def test_a_final_binding_to_a_list_display_is_not_bound() -> None:
+    # Each evaluation of ``[1, 2]`` is a new list, not the module's.
+    from sugar_lift_py_tests.sugar.call_site_sugar import enter_source_frame
+
+    tree = _source("X = [1, 2]\ndef f():\n    return X\n")
+    function = _function(tree)
+    ctx, _halt = enter_source_frame(
+        function.source_visible_call_frame(),
+        None,
+        owner="test",
+        blame=function.fragment,
+    )
+    assert ctx is None
+
+
+def test_an_undecided_global_still_refuses_a_function_reduced_on_its_own() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _source("X = 1\nglobals()['X'] = 2\ndef f():\n    return X\n")
+    with pytest.raises(SugarNotWritten, match="undecided module binding of `X`"):
+        function_universe_outcome(_function(tree))
+
+
+def test_a_final_binding_that_is_not_ground_is_refused_by_its_key() -> None:
+    # ``x += 1``'s value is its evaluation's: nothing but the module body's
+    # reduction binds it, so the read is refused by name, naming the key.
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    tree = _source("x = 1\nx += 1\ndef f():\n    return x\n")
+    (key,) = _module_evaluations(tree)
+    with pytest.raises(ConstructionPanic) as refused:
+        function_universe_outcome(_function(tree))
+    assert key in refused.value.info.observed

@@ -5274,14 +5274,37 @@ def _module_references_where_called(reader, reads, *, owner: str) -> dict:
     this one was imported), the module's final binding.  The one reader of
     module globals for every function body."""
     unit = reader.unit
-    site = _MODULE_EXECUTION_SITE.get()
-    if site is not None and site.unit is not unit:
-        # Another module's body calls this one's function after this
-        # module was imported: it reads this module's final binding.
-        site = None
+    site = _site_where_called(unit, _MODULE_EXECUTION_SITE.get())
     return _bound_module_references(
         reader, unit.module_bindings_at(site, reads), owner=owner
     )
+
+
+def _site_where_called(unit, site):
+    """``site`` as a reader of ``unit``'s globals is called at it: the
+    site itself while ``unit``'s body runs; None (the module's final
+    binding) when no module body runs the call, or when another module's
+    body does, after ``unit`` was imported."""
+    if site is not None and site.unit is not unit:
+        return None
+    return site
+
+
+def module_final_global_references(reader, site) -> dict:
+    """What the body of ``reader`` (a ``def``, ``async def`` or lambda),
+    called at the module execution ``site``, reads each module global it
+    reads through, when that is the module's final binding: the reader
+    ``_module_references_where_called`` answers with no site
+    (``reader._module_global_references``), one reference per name.
+
+    Empty when ``site`` runs while the reader's own module body runs: the
+    body reads the binding standing there, whose key the module body's
+    own reduction binds as it runs.  A reader called after import reads
+    keys nothing in its frame bound; its frame entry binds them from
+    here (``call_site_sugar.with_module_final_globals``)."""
+    if _site_where_called(reader.unit, site) is not None:
+        return {}
+    return construct_at_module_execution_site(None, reader._module_global_references)
 
 
 class _Splice:

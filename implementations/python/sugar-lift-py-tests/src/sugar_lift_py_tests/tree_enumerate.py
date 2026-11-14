@@ -578,11 +578,20 @@ def function_universe_outcome(fn):
     receiver and runs this universe on it (``enter_initializer``).  So the
     class statement's halts (#7794) are this universe's halts, an unrun
     source ``__new__`` refuses it by name, and no receiver is made here.
+
+    A function reduced on its own is called from outside its module's run:
+    its body reads each module global through the module's final binding,
+    and the frame entry every call takes binds those keys
+    (``call_site_sugar.with_module_final_globals``) before the body runs.
     """
+    from sugar_lift_py_tests.sugar.call_site_sugar import with_module_final_globals
+    from sugar_source_tree.nodes import current_module_execution_site
+
     sugar = fn.sugar()
+    site = current_module_execution_site()
     owner = fn._active_initializer_owner()
     if owner is None:
-        return sugar.desugar(None)
+        return sugar.desugar(with_module_final_globals(None, (fn,), site=site))
 
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_source_tree.panic import SugarNotWritten
@@ -606,7 +615,9 @@ def function_universe_outcome(fn):
             fix="construct the initializer through its lexical class owner",
         )
     return constructor.enter_initializer(
-        ReduceContext.root(owner="function_universe_outcome"),
+        with_module_final_globals(
+            ReduceContext.root(owner="function_universe_outcome"), (fn,), site=site
+        ),
         lambda _definition, initializer_ctx: sugar.desugar(initializer_ctx),
     )
 
