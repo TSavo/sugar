@@ -240,6 +240,58 @@ def test_a_type_operand_the_builtin_may_not_bind_stays_free(source):
     assert resolved is free
 
 
+def _int_value_read(source: str, ctx=None):
+    """``int`` read as a value (``isinstance(o, int)``'s operand) in
+    ``source``, desugared under the builtin temporal floor (or ``ctx``)."""
+    from sugar_lift_py_tests.context import ReduceContext
+    from sugar_lift_py_tests.sugar.name_sugar import NameSugar
+
+    operand = _call(source, "isinstance").args[1]
+    assert isinstance(operand, Name) and operand.id == "int"
+    if ctx is None:
+        ctx = ReduceContext.root(owner="test_builtin_value_read")
+    return NameSugar(name="int", site=operand.fragment).desugar(ctx)
+
+
+def test_int_bound_to_the_builtin_is_the_builtin_class_as_a_value():
+    outcome = _int_value_read("def f(o):\n    return isinstance(o, int)\n")
+    assert outcome.completed_value() is builtin_name_temporal().value_if_bound(
+        "int"
+    )
+
+
+@pytest.mark.parametrize(
+    "source",
+    [
+        # A star import the lifter cannot read may bind ``int``.
+        "from m import *\n\ndef f(o):\n    return isinstance(o, int)\n",
+        # The module rebinds it.
+        "int = str\n\ndef f(o):\n    return isinstance(o, int)\n",
+        # The function rebinds it.
+        "def f(o):\n    int = str\n    return isinstance(o, int)\n",
+        # A parameter binds it.
+        "def f(o, int):\n    return isinstance(o, int)\n",
+    ],
+)
+def test_int_the_builtin_may_not_bind_is_not_the_builtin_class_as_a_value(source):
+    # The temporal floor still holds ``int`` by spelling; the read's binding
+    # does not reach it, so the read is the free operand, never the builtin.
+    value = _int_value_read(source).completed_value()
+    assert value is not builtin_name_temporal().value_if_bound("int")
+    assert isinstance(value, SymbolicValue)
+    assert value.term.name == "int"
+
+
+def test_a_source_binding_in_the_temporal_is_read_over_the_builtin():
+    from sugar_lift_py_tests.context import ReduceContext
+
+    ctx = ReduceContext.root(owner="test_builtin_value_read")
+    bound = TermValue(5)
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("int", bound))
+    source = "def f(o, int):\n    return isinstance(o, int)\n"
+    assert _int_value_read(source, ctx).completed_value() is bound
+
+
 def test_a_head_nothing_binds_is_known_only_through_the_builtin_namespace():
     known = _call("def f(o):\n    return len(o)\n", "len")
     assert not _lexically_unknown_head(known.fragment, "len")
