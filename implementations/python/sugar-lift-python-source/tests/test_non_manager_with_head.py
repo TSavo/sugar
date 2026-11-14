@@ -63,14 +63,19 @@ def test_the_refusal_text_is_the_interpreters():
 
 
 def test_cited_bases_are_read_from_the_interpreter():
-    obj = cited_language_base("builtins.object")
-    abc_base = cited_language_base("abc.ABC")
+    from sugar_source_tree.nodes import LanguageCallee
+
+    obj = cited_language_base(LanguageCallee.BUILTIN_OBJECT)
+    abc_base = cited_language_base(LanguageCallee.ABC_ABC)
     assert obj.linearization == ("builtins.object",)
     assert abc_base.linearization == ("abc.ABC", "builtins.object")
+    assert obj.tail == ()
+    assert abc_base.tail == (LanguageCallee.BUILTIN_OBJECT,)
     assert not obj.protocol_names and not abc_base.protocol_names
     assert not abc_base.metaclass_overrides_call
     assert not abc_base.subclass_gains & {"__enter__", "__exit__"}
-    assert cited_language_base("collections.abc.Mapping") is None
+    # A binding no citation answers for (the builtin ``list``) is not cited.
+    assert cited_language_base(LanguageCallee.BUILTIN_LIST) is None
 
 
 def test_asynccontextmanager_at_a_sync_with_raises_type_error(tmp_path):
