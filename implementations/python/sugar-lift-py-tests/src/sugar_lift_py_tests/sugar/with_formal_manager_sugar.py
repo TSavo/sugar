@@ -86,8 +86,13 @@ class WithFormalManagerSugar(Sugar):
                     enter_facts = EnterResultBinding(
                         self.enter_slot_id, enter_value
                     ).to_facts(site=self.site)
-                body_es = ExitSet((enter_face,)).sequence(
-                    lambda _entered: reduce_block_to_exitset(self.body, ctx)
+                # The exit is routed per body face: a body whose carrier
+                # ``sequence`` composed is refused by name here.
+                body_es = _require_exit_set(
+                    ExitSet((enter_face,)).sequence(
+                        lambda _entered: reduce_block_to_exitset(self.body, ctx)
+                    ),
+                    owner="WithFormalManagerSugar.body",
                 )
                 exit_es = _require_exit_set(
                     self.protocol.exit_outcome_for(entered, ctx),
