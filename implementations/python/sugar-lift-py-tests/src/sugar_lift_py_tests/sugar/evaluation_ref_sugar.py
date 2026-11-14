@@ -26,6 +26,14 @@ binding of the same spelling by an enclosing statement cannot leak in, and a
 member reference whose coordinate is unbound is a construction panic, not a
 name read.
 
+A read inside a comprehension of a name a walrus in it writes is a member
+reference too (``recurrence``): to the comprehension's running value of the
+name, which the comprehension binds to the prior binding before the first
+member and rebinds at every write it applies
+(``ComprehensionSugar._written``), so each member reads the previous member's
+write.  Where it bound no running value the read is refused by name
+(``SugarNotWritten``), never read as the binding before the comprehension.
+
 A lambda the comprehension stores in what it produces (``fs = [lambda: x for
 x in xs]; fs[0]()``) is called after the comprehension, and Python reads the
 comprehension's cell at call time: the final member. Its body's read is a
@@ -111,6 +119,9 @@ class EvaluationRefSugar(ConstructedTermSugar):
     # A generator expression's walrus: it writes when the generator is
     # consumed, not where it is made.
     deferred: bool = False
+    # A member reference to a comprehension's running value of a name a
+    # walrus in it writes (``ComprehensionSugar.walrus_recurrence``).
+    recurrence: bool = False
 
     @classmethod
     def witnesses(cls):
@@ -188,18 +199,56 @@ class EvaluationRefSugar(ConstructedTermSugar):
             ),
         )
 
+    def unwritten_recurrence(self, ctx) -> bool:
+        """True for a ``recurrence`` reference whose running value ``ctx``
+        does not hold: its read would be refused by name."""
+        if not self.recurrence:
+            return False
+        temporal = getattr(ctx, "temporal", None) if ctx is not None else None
+        return temporal is None or temporal.value_if_bound(self.evaluation) is None
+
     def _member(self, temporal) -> ExitSet:
         """A comprehension member's coordinate (or, read by a lambda the
         comprehension stores, its final member coordinate), bound by the
         comprehension before any read; unbound, the read panics and never
         reads the name.
         The coordinate is bound and read inside one evaluation of the
-        comprehension, so it is not qualified (``evaluation_here``)."""
+        comprehension, so it is not qualified (``evaluation_here``).
+
+        A ``recurrence`` reference reads the comprehension's running value
+        of a name its walrus writes.  Unbound, no write and no one plain
+        prior binding of the name reaches the read in evaluation order, and
+        the read is refused by name (``SugarNotWritten``): it is never the
+        binding before the comprehension read again."""
         from sugar_lift_py_tests.outcome import ExitSet
 
         bound = (
             temporal.value_if_bound(self.evaluation) if temporal is not None else None
         )
+        if bound is None and self.recurrence:
+            from sugar_source_tree.panic import SugarNotWritten
+
+            raise SugarNotWritten(
+                owner="EvaluationRefSugar",
+                blame=self.site,
+                observed=(
+                    f"read of `{self.name}` inside a comprehension whose walrus "
+                    f"writes it, with its running value {self.evaluation} "
+                    "unbound: the name had no one plain binding before the "
+                    "comprehension, the read follows a walrus of it within one "
+                    "element, key, value or condition, it is in a lambda or a "
+                    "generator expression, or the members run over a symbolic "
+                    "iterable and the read needs an earlier member's write"
+                ),
+                requested=(
+                    "the write of the previous member, or the binding before "
+                    "the comprehension for the first, reaching the read"
+                ),
+                fix=(
+                    "carry the recurrence of the members' writes to this read; "
+                    "never read the binding before the comprehension in its place"
+                ),
+            )
         if bound is None:
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 

@@ -18,6 +18,14 @@ still had no bind:
    PEP 572.)
 4. An empty finite comprehension writes nothing: the read after it takes the
    prior binding.
+5. A read inside a comprehension of a name its walrus writes reads the
+   members' recurrence: the binding before the comprehension for the first
+   member, the previous member's write for every later one
+   (``[(s := s + x) for x in [1, 2, 3]]`` after ``s = 0`` is ``[1, 3, 6]``,
+   never ``[1, 2, 3]``).  Two walruses of one name compose in evaluation
+   order within each member.  Where the recurrence is not held (a symbolic
+   iterable, a read after a walrus of the name in the same condition) the
+   read is refused by name.
 """
 
 from __future__ import annotations
@@ -307,3 +315,145 @@ def test_an_unbound_prior_carries_no_write() -> None:
     carried = _value(comprehension.sugar().desugar(_root("walrus-unbound")))
     binds, _presented = peel_walrus_binds(carried)
     assert binds == ()
+
+
+# ---------------------------------------------------------------------------
+# 5. A read inside the comprehension reads the members' recurrence
+# ---------------------------------------------------------------------------
+
+_RUNNING = "def f():\n    s = 0\n    ys = [(s := s + x) for x in [1, 2, 3]]\n    return s\n"
+_TWO = (
+    "def f():\n"
+    "    s = 0\n"
+    "    ys = [(s := s + x) for x in [1, 2, 3] if (s := s * 10) >= 0]\n"
+    "    return s\n"
+)
+
+
+def test_a_read_inside_a_comprehension_reads_its_running_value() -> None:
+    rewritten = _function(_RUNNING).substitute({})
+    (walrus,) = _walruses(rewritten)
+    reads = [
+        node
+        for node in walrus.value.walk()
+        if node.kind == "EvaluationRef" and node.name == "s"
+    ]
+    # Not the `s = 0` binding substituted in: a reference to the running
+    # value the comprehension binds.
+    assert len(reads) == 1
+    assert getattr(reads[0], "recurrence", False) is True
+    assert getattr(reads[0], "member", False) is True
+    comprehension = _comprehension(rewritten, "ListComp")
+    ((name, coordinate, ordered),) = comprehension.sugar().walrus_recurrence
+    assert (name, ordered) == ("s", True)
+    assert reads[0].evaluation == coordinate
+
+
+def test_the_running_sum_reads_the_previous_members_write() -> None:
+    rewritten = _function(_RUNNING).substitute({})
+    (walrus,) = _walruses(rewritten)
+    comprehension = _comprehension(rewritten, "ListComp")
+    carried = _value(comprehension.sugar().desugar(_root("walrus-running")))
+    binds, presented = peel_walrus_binds(carried)
+    assert presented.finite_elements == (TermValue(1), TermValue(3), TermValue(6))
+    # Never every member reading `s = 0`.
+    assert presented.finite_elements != (TermValue(1), TermValue(2), TermValue(3))
+    assert [(bind.name, bind.evaluation, bind.assigned_value) for bind in binds] == [
+        ("s", walrus.evaluation, TermValue(6))
+    ]
+
+
+def test_a_read_after_the_running_sum_is_its_last_write() -> None:
+    returned = _returned_value(_call_outcome(_RUNNING + "\nf()\n"))
+    assert returned == TermValue(6)
+
+
+def test_two_walruses_of_one_name_compose_in_evaluation_order() -> None:
+    rewritten = _function(_TWO).substitute({})
+    walruses = _walruses(rewritten)
+    assert len(walruses) == 2
+    comprehension = _comprehension(rewritten, "ListComp")
+    carried = _value(comprehension.sugar().desugar(_root("walrus-two")))
+    binds, presented = peel_walrus_binds(carried)
+    # Each member: the condition multiplies what the previous member left,
+    # then the element adds to the condition's write.
+    assert presented.finite_elements == (
+        TermValue(1),
+        TermValue(12),
+        TermValue(123),
+    )
+    # Both walruses write `s`: each key holds the name's last write.
+    assert len(binds) == 2
+    assert {bind.evaluation for bind in binds} == {
+        walrus.evaluation for walrus in walruses
+    }
+    assert all(bind.assigned_value == TermValue(123) for bind in binds)
+
+
+def test_a_read_after_two_walruses_of_one_name_is_the_last_write() -> None:
+    returned = _returned_value(_call_outcome(_TWO + "\nf()\n"))
+    assert returned == TermValue(123)
+
+
+def test_two_walruses_of_one_name_over_a_symbolic_iterable_carry_one_write() -> None:
+    rewritten = _function(
+        "def f(xs):\n"
+        "    n = 0\n"
+        "    ys = [(n := x) for x in xs if (n := x) > 0]\n"
+        "    return n\n"
+    ).substitute({})
+    walruses = _walruses(rewritten)
+    comprehension = _comprehension(rewritten, "ListComp")
+    carried = _value(comprehension.sugar().desugar(_root("walrus-two-symbolic")))
+    binds, presented = peel_walrus_binds(carried)
+    assert presented.finite_elements is None
+    # No longer refused: one guarded last write of `n`, under both keys.
+    assert {bind.evaluation for bind in binds} == {
+        walrus.evaluation for walrus in walruses
+    }
+    first, second = binds
+    assert first.assigned_value == second.assigned_value
+    written = first.assigned_value
+    assert isinstance(written, GuardedValue)
+    assert written.when_false == TermValue(0)
+    last = written.when_true.to_term(owner="walrus-two-symbolic")
+    assert last.name == "python:comprehension.last_write"
+    # The condition's writes, then the element's, member by member.
+    assert len(last.args) == 2
+
+
+def test_a_running_read_over_a_symbolic_iterable_is_refused_by_name() -> None:
+    rewritten = _function(
+        "def f(xs):\n    s = 0\n    ys = [(s := s + x) for x in xs]\n    return s\n"
+    ).substitute({})
+    comprehension = _comprehension(rewritten, "ListComp")
+    # Each member would read the previous member's write: the fold over a
+    # symbolic member does not hold it, and it never reads `s = 0` instead.
+    with pytest.raises(SugarNotWritten):
+        comprehension.sugar().desugar(_root("walrus-running-symbolic"))
+
+
+def test_a_read_after_the_members_own_write_over_a_symbolic_iterable() -> None:
+    rewritten = _function(
+        "def f(xs):\n    return [y for x in xs if (y := x) > 0]\n"
+    ).substitute({})
+    comprehension = _comprehension(rewritten, "ListComp")
+    # The element reads the condition's write of the same member.
+    carried = _value(comprehension.sugar().desugar(_root("walrus-member-symbolic")))
+    _binds, presented = peel_walrus_binds(carried)
+    assert isinstance(presented, ComprehensionValue)
+    assert presented.finite_elements is None
+
+
+def test_a_read_after_a_walrus_in_the_same_condition_is_refused_by_name() -> None:
+    rewritten = _function(
+        "def f():\n    return [y for x in [1, 2] if (y := x) and y > 0]\n"
+    ).substitute({})
+    comprehension = _comprehension(rewritten, "ListComp")
+    sugar = comprehension.sugar()
+    # One condition is evaluated whole before its write is applied: the
+    # read of `y` after the walrus would see a stale value.
+    ((name, _coordinate, ordered),) = sugar.walrus_recurrence
+    assert (name, ordered) == ("y", False)
+    with pytest.raises(SugarNotWritten):
+        sugar.desugar(_root("walrus-unordered"))
