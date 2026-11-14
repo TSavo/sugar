@@ -8,9 +8,12 @@ and an ``if`` carries the keys its arms bound out to the phi.
 
 from __future__ import annotations
 
+import pytest
+
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor import GuardedFaces, SymbolicValue, TermValue
+from sugar_lift_py_tests.floor import GuardedFaces, TermValue
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import ExitSet, true_guard
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
@@ -89,12 +92,13 @@ def test_a_reference_reads_the_evaluation() -> None:
     assert _ref().desugar(ctx) == ExitSet.completed(TermValue(5))
 
 
-def test_a_later_write_of_the_name_is_read_instead() -> None:
-    # A dynamic unpack rebinds the name at reduce; substitution never saw it.
+def test_a_later_write_of_the_name_is_not_read() -> None:
+    # The reference reads its key only: a binding of the name, before or
+    # after the key, is never read in its place.
     ctx = ReduceContext.root(owner="evaluation-ref")
     ctx = ctx.with_temporal(ctx.temporal.bind_value(KEY, TermValue(5)))
     ctx = ctx.with_temporal(ctx.temporal.bind_value("x", TermValue(7)))
-    assert _ref().desugar(ctx) == ExitSet.completed(TermValue(7))
+    assert _ref().desugar(ctx) == ExitSet.completed(TermValue(5))
 
 
 def test_an_evaluation_written_after_the_name_is_read() -> None:
@@ -104,10 +108,24 @@ def test_an_evaluation_written_after_the_name_is_read() -> None:
     assert _ref().desugar(ctx) == ExitSet.completed(TermValue(5))
 
 
-def test_no_evaluation_is_the_name_read() -> None:
-    outcome = _ref().desugar(ReduceContext.root(owner="evaluation-ref"))
-    assert outcome.completed_value() is not None
-    assert isinstance(outcome.completed_value(), SymbolicValue)
+@pytest.mark.parametrize("name_bound", [False, True])
+def test_an_unbound_key_is_refused_by_name(name_bound: bool) -> None:
+    # No evaluation bound: refused by name, naming the key.  Never the name
+    # read (whatever it holds), never a free symbolic name.
+    ctx = ReduceContext.root(owner="evaluation-ref")
+    if name_bound:
+        ctx = ctx.with_temporal(ctx.temporal.bind_value("x", TermValue(7)))
+    with pytest.raises(ConstructionPanic) as refused:
+        _ref().desugar(ctx)
+    assert refused.value.info.owner == "EvaluationRefSugar"
+    assert KEY in refused.value.info.observed
+    assert "`x`" in refused.value.info.observed
+
+
+def test_no_temporal_is_refused_by_name() -> None:
+    with pytest.raises(ConstructionPanic) as refused:
+        _ref().desugar(None)
+    assert KEY in refused.value.info.observed
 
 
 def _arm(ctx) -> ExitSet:

@@ -526,6 +526,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     state,
                     entries=entries,
                     carried=self._latched(runtime, state, index),
+                    items=index + 1,
                 )
         return None
 
@@ -835,7 +836,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # The loop leaves with what the last item handed on (or the
             # pre-loop values when there was no item).
             return self._publish_runtime_bindings(
-                runtime, ctx, entries=entries, carried=carried
+                runtime, ctx, entries=entries, carried=carried, items=items
             )
         # The else runs once, after every item.  It reads each carried name
         # through the header, bound here, outside every item, to what the last
@@ -862,6 +863,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                     carried=self._after_else(runtime, state.context),
                     fall_through=state.fall_through,
                     can_fall_through=state.can_fall_through,
+                    items=items,
+                    else_ran=True,
                 )
             )
 
@@ -885,6 +888,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         carried,
         fall_through=(),
         can_fall_through=True,
+        items=0,
+        else_ran=False,
     ):
         """Publish each carried name's value as the loop leaves: ``carried``,
         what the leaving item (``_latched``) or the ``else`` suite
@@ -894,7 +899,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         ``LoopBindingRef`` to it (``project_loop_post_binding``), and the
         name is never written nor read.  The iterable's walrus writes of the
         names the loop does not carry (``iterable_writes``) are published
-        first, under their keys: the iterable ran before every item."""
+        first, under their keys: the iterable ran before every item.  Each
+        name the items write that the loop does not carry is published last,
+        under its post-loop key (``_post_loop_writes``): ``items`` items ran,
+        and the ``else`` suite ran when ``else_ran``."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 
@@ -909,13 +917,53 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             if value is None:
                 raise TypeError("loop recurrence omitted a carried binding")
             projected.append(ScopeRebind(coordinate_cid, value))
+        posted = self._post_loop_writes(
+            runtime, temporal, items=items, else_suite=else_ran
+        )
         return ExitSet.completed(
             BlockValue(
-                (*self.iterable_writes, *entries, *projected),
+                (*self.iterable_writes, *entries, *projected, *posted),
                 fall_through=fall_through,
                 can_fall_through=can_fall_through,
             )
         )
+
+    def _post_loop_writes(self, runtime, temporal, *, items, else_suite):
+        """``ScopeRebind(<post-loop key>, value)`` for each name the items
+        write that the loop does not carry
+        (``LiveForRuntimeV1.published_evaluations``): the post-loop key bound
+        outside every item (``evaluation_here``) to the latest write of the
+        name on the path the loop leaves by -- the ``else`` suite's when it
+        ran and wrote it, else that of the last of the ``items`` items that
+        wrote it (each item's writes are keyed by that item).  A read after
+        the loop reads the name through this key, as a function-level live
+        loop's ``else`` reads its target's and header's keys bound after the
+        last item (``_leave_target``, ``_enter_header``).  A name no item and
+        no ``else`` wrote binds nothing: the read after the loop is the
+        binding before it (``nodes._module_live_loop_publication``), and
+        never the name."""
+        from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+        from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+
+        posted = []
+        for post_key, writes, else_writes in getattr(
+            runtime, "published_evaluations", ()
+        ):
+            binding = None
+            if else_suite and else_writes:
+                binding = temporal.latest(
+                    *(evaluation_here(key) for key in else_writes)
+                )
+            index = items - 1
+            while binding is None and index >= 0 and writes:
+                with entered(loop_iteration_segment(self.target_cid, index)):
+                    keys = tuple(evaluation_here(key) for key in writes)
+                binding = temporal.latest(*keys)
+                index -= 1
+            if binding is not None:
+                posted.append(ScopeRebind(evaluation_here(post_key), binding.value))
+        return tuple(posted)
 
 
 @dataclass(frozen=True)

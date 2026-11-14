@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass, replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -34,14 +35,20 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.source_call_frame import (
     frame_at_current_module_execution_site,
 )
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.binding_projection import UnboundProjection
-from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
+from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
+    EvaluationRefSugar,
+    evaluation_here,
+)
 from sugar_lift_py_tests.sugar.guarded_binding_read_sugar import read_binding
+from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 from sugar_lift_py_tests.sugar.match_sugar import MatchSugar
 from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
@@ -67,6 +74,7 @@ from sugar_source_tree.nodes import (
     IfExp,
     ImportBindingRef,
     ListComp,
+    LoopRecurrenceStatement,
     Name,
     Return,
     Subscript,
@@ -488,6 +496,112 @@ def test_a_module_live_loop_publishes_its_accumulator() -> None:
     assert read.body.evaluation != prior
     assert isinstance(read.orelse, EvaluationRef)
     assert read.orelse.evaluation == prior
+
+
+def _module_loop_runtime(tree: SourceFile):
+    """The runtime the module body's live loop hands its recurrence."""
+    (statement,) = [
+        node
+        for node in tree.root.substitute({}).body
+        if isinstance(node, LoopRecurrenceStatement)
+    ]
+    return statement.construction.loop_runtime
+
+
+def test_a_module_live_loop_hands_its_recurrence_the_readers_post_loop_key() -> None:
+    # ``for i in g(): last = i`` at module level: ``last`` is bound first in
+    # the loop, so the loop does not carry it, yet the reader's post-loop key
+    # is one the recurrence binds as the loop leaves, with the keys
+    # ``last = i`` writes.
+    tree = _source(LOOP_FIRST_BOUND)
+    final = _function(tree).unit.module_bindings_at(None, {"last"})["last"]
+    runtime = _module_loop_runtime(tree)
+    assert "last" not in runtime.carried_names
+    published = {
+        post_key: writes for post_key, writes, _else in runtime.published_evaluations
+    }
+    assert final.when_true.evaluation in published
+    assert published[final.when_true.evaluation]
+    # The target is published through its own per-item key.
+    (target_key,) = runtime.target_evaluations
+    assert target_key in published
+
+
+MODULE_LOOP = "blake3-512:module-live-loop"
+POST_KEY = EVALUATION_PREFIX + "blake3-512:module-live-loop-post"
+WRITE_KEY = EVALUATION_PREFIX + "blake3-512:module-live-loop-write"
+ELSE_WRITE_KEY = EVALUATION_PREFIX + "blake3-512:module-live-loop-else-write"
+_PUBLISHING = SimpleNamespace(
+    carried_names=(),
+    carried_evaluations=(),
+    published_evaluations=((POST_KEY, (WRITE_KEY,), (ELSE_WRITE_KEY,)),),
+)
+
+
+def _module_recurrence() -> LoopRecurrenceSugar:
+    return LoopRecurrenceSugar(
+        target_cid=MODULE_LOOP,
+        loop_construction_cid="blake3-512:module-live-loop-construction",
+        binding_coordinate_cids=(),
+        outward_faces=(),
+        construction=None,
+        site="module-live-loop",
+    )
+
+
+def _item_wrote(ctx, index: int, value):
+    """``last = i`` ran in item ``index``: its write key, keyed by the item."""
+    with entered(loop_iteration_segment(MODULE_LOOP, index)):
+        key = evaluation_here(WRITE_KEY)
+    return ctx.with_temporal(ctx.temporal.bind_value(key, value))
+
+
+def _after_the_loop(ctx, items: int, *, else_ran: bool = False):
+    left = _module_recurrence()._publish_runtime_bindings(
+        _PUBLISHING, ctx, entries=(), carried=(), items=items, else_ran=else_ran
+    )
+    return left.completed_value().extend_scope(ctx)
+
+
+def _read_last():
+    return EvaluationRefSugar(evaluation=POST_KEY, name="last", site=None)
+
+
+def test_a_read_after_a_module_live_loop_decides_through_its_post_loop_key() -> None:
+    # ``for i in g(): last = i`` over two items: after the loop ``last`` is
+    # the last item's write, read through the post-loop key; the name is
+    # never written.
+    ctx = ReduceContext.root(owner="module-live-loop")
+    ctx = _item_wrote(_item_wrote(ctx, 0, TermValue(1)), 1, TermValue(2))
+    after = _after_the_loop(ctx, 2)
+    assert _read_last().desugar(after) == ExitSet.completed(TermValue(2))
+    assert after.temporal.value_if_bound("last") is None
+
+
+def test_an_item_that_left_before_its_write_leaves_the_earlier_write() -> None:
+    # Item 1 broke before ``last = i``: the latest write is item 0's.
+    ctx = _item_wrote(ReduceContext.root(owner="module-live-loop"), 0, TermValue(1))
+    after = _after_the_loop(ctx, 2)
+    assert _read_last().desugar(after) == ExitSet.completed(TermValue(1))
+
+
+def test_the_else_suites_write_is_the_latest() -> None:
+    ctx = _item_wrote(ReduceContext.root(owner="module-live-loop"), 0, TermValue(1))
+    ctx = ctx.with_temporal(ctx.temporal.bind_value(ELSE_WRITE_KEY, TermValue(9)))
+    after = _after_the_loop(ctx, 1, else_ran=True)
+    assert _read_last().desugar(after) == ExitSet.completed(TermValue(9))
+
+
+def test_no_item_wrote_it_so_the_post_loop_key_is_refused_by_name() -> None:
+    # Nothing wrote ``last``: the post-loop key stays unbound and its read is
+    # refused by name, naming the key; the name is never read in its place.
+    ctx = ReduceContext.root(owner="module-live-loop")
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("last", TermValue(7)))
+    after = _after_the_loop(ctx, 0)
+    assert after.temporal.value_if_bound(POST_KEY) is None
+    with pytest.raises(ConstructionPanic) as refused:
+        _read_last().desugar(after)
+    assert POST_KEY in refused.value.info.observed
 
 
 DEF_REBINDS ="X = None\ndef X():\n    pass\ndef f():\n    return X\ny = f()\n"
