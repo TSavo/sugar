@@ -137,7 +137,12 @@ class TryStarSugar(Sugar):
             reduce_block_to_exitset,
             resumed,
         )
-        from sugar_lift_py_tests.sugar.try_sugar import _beneath_type_read
+        from sugar_lift_py_tests.sugar.try_sugar import (
+            _and_finally_with_raise_context,
+            _beneath_type_read,
+            _halt_resumption,
+            _try_outcome,
+        )
         from sugar_source_tree.panic import SugarNotWritten
 
         body = reduce_block_to_exitset(self.body, ctx)
@@ -176,12 +181,14 @@ class TryStarSugar(Sugar):
                     fix="route this halt kind through except* or let it pass",
                 )
             # Frontier: one face per body halt, then each handler branches it.
-            # The face begins from the state the halt carries (``resumed``).
+            # The face begins from the state the halt carries (``resumed``),
+            # without the ``return`` entries its record holds: none is live
+            # on the halt's arm (``_halt_resumption``, as for ``except``).
             frontier: list[_StarFace] = [
                 _StarFace(
                     path=ExitSet.completed(
                         resumed(
-                            exit_.state,
+                            _halt_resumption(exit_.state),
                             ctx,
                             owner="TryStarSugar.handler",
                             blame=self.site,
@@ -408,17 +415,17 @@ class TryStarSugar(Sugar):
                 # The one ``finally`` (``try_sugar``): it continues from the
                 # state each arm brings it -- a completed record, or the
                 # record a halt carries -- and re-emits that arm's exit after
-                # it unless it exits itself.
-                from sugar_lift_py_tests.sugar.try_sugar import (
-                    _and_finally_with_raise_context,
-                )
-
+                # it unless it exits itself. A ``finally`` still waiting on
+                # the caller's actuals is composed once they discharge
+                # (``_finally_beneath``).
                 result = _and_finally_with_raise_context(
                     result, self.finalbody, ctx=ctx, site=self.site
                 )
-            # The try*'s own faces: a halt stays a halted arm, never an entry of
-            # a completed record (#7826).
-            return result.normalize()
+            # The try*'s own faces, read the one way a ``try``'s are
+            # (``_try_outcome``): a halt stays a halted arm, never an entry
+            # of a completed record (#7826), and faces still waiting on the
+            # caller's actuals are read once they discharge.
+            return _try_outcome(result)
 
         def route(body):
             """Route the body's faces: completed arms run the ``else``, the
