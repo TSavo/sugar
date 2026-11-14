@@ -143,3 +143,95 @@ def test_an_owing_except_star_handler_makes_the_result_owe_it() -> None:
     assert "body.guard" in str(completed.guard), completed.guard
     # ...and owes what the body halt owed and what the handler owed.
     assert completed.owed == ("debt:body", "debt:handler")
+
+
+def _one_leaf_try_star(tag: str, handler_body: tuple):
+    """A try* whose body halts with one ValueError leaf, handled by one arm."""
+    from sugar_lift_py_tests.ir import atomic, str_const
+    from sugar_lift_py_tests.sugar.try_star_sugar import TryStarSugar
+
+    ve_typed, ve_id = _synthetic_class("ValueError")
+    leaf = RaiseEffect(
+        exception_name="ValueError",
+        occurrence=AuthenticatedRaiseLocus.of(f"leaf:ve:{tag}"),
+        exception_type_coordinate=ve_id,
+        exception_type_mro=(ve_id,),
+        raised_value=ve_typed,
+    )
+    group = GroupedRaiseEffect(
+        f"group:root:{tag}",
+        "g",
+        (leaf,),
+        occurrence=AuthenticatedRaiseLocus.of(f"group:root:{tag}"),
+    )
+    body_atom = atomic("body.guard", [str_const(tag)])
+    site = SimpleNamespace(
+        filename=f"{tag}.py",
+        line=1,
+        col=0,
+        unit=SimpleNamespace(source="try-star"),
+    )
+    sugar = TryStarSugar(
+        body=(_Fixed(lambda _c: ExitSet((Halted(body_atom, group, None),))),),
+        handlers=(
+            (
+                (_Fixed(lambda _c: Complete(ve_typed)),),
+                handler_body(leaf),
+                f"slot-ve-{tag}",
+            ),
+        ),
+        site=site,
+    )
+    return sugar, leaf
+
+
+def test_a_reraising_handler_yields_only_the_halt() -> None:
+    # The body's only face is handled by a handler that re-raises the matched
+    # leaf: a raise is never a completion, so the try* answers the halt alone.
+    sugar, leaf = _one_leaf_try_star(
+        "reraise_7825",
+        lambda leaf: (
+            _Fixed(lambda _c: ExitSet((Halted(true_guard(), leaf, None),))),
+        ),
+    )
+    result = sugar.desugar(ReduceContext.root(owner="reraise_7825"))
+
+    assert [type(arm) for arm in result.exits] == [Halted], result.exits
+    (halt,) = result.exits
+    assert isinstance(halt.effect, GroupedRaiseEffect), halt.effect
+    assert [child.occurrence_id for child in halt.effect.children] == [
+        leaf.occurrence_id
+    ]
+    assert "body.guard" in str(halt.guard), halt.guard
+
+
+def test_a_try_star_with_no_reachable_arm_yields_no_completion() -> None:
+    # The handler's only arm is unsatisfiable, so no path leaves the handlers.
+    # The try* answers exactly what ``sequence`` composed (nothing), never an
+    # invented completion.
+    from sugar_lift_py_tests.outcome.exit_set import false_guard
+
+    sugar, _leaf = _one_leaf_try_star(
+        "unreachable_7825",
+        lambda _leaf: (
+            _Fixed(
+                lambda c: ExitSet(
+                    (
+                        Completed(
+                            false_guard(),
+                            _ReducedBlock(
+                                entries=(),
+                                can_fall_through=True,
+                                fall_through=(),
+                                context=c,
+                            ),
+                        ),
+                    )
+                )
+            ),
+        ),
+    )
+    result = sugar.desugar(ReduceContext.root(owner="unreachable_7825"))
+
+    assert not any(isinstance(arm, Completed) for arm in result.exits), result.exits
+    assert result.exits == (), result.exits
