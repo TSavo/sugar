@@ -75,11 +75,15 @@ def test_lease_tools_are_deleted():
 
 
 def test_a_newer_push_cancels_the_superseded_run():
-    """Owner ruling 2026-11-14, overrules #7118."""
+    """Owner ruling 2026-11-14, overrules #7118.
+
+    On main a running run finishes first and the newest push replaces the
+    queued run; on other refs a newer push cancels the running run.
+    """
     block = (
         "concurrency:\n"
         "  group: ${{ github.workflow }}-${{ github.ref }}\n"
-        "  cancel-in-progress: true\n"
+        "  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}\n"
     )
     for path in sorted(WORKFLOWS.glob("*.yml")):
         if path.name == "issue-claim-labels.yml":
