@@ -1641,11 +1641,11 @@ def test_a_return_inside_a_try_leaves_past_a_finally_that_spares_self(tmp_path):
     assert _only_return(tmp_path, source) == TermValue(2)
 
 
-def test_a_finally_that_stores_on_self_after_the_return_is_never_skipped(
+def test_a_finally_that_stores_on_self_after_the_return_lands_its_store(
     tmp_path,
 ):
-    # The ``finally`` runs after the ``return``'s read: the read there is not
-    # what the frame left, so the object is unknown -- never ``z`` missing.
+    # The ``finally`` runs after the ``return``: its store is applied to the
+    # object the ``return`` leaves with -- never ``z`` missing, never unknown.
     source = (
         "class C:\n"
         "    def __init__(self):\n"
@@ -1655,11 +1655,31 @@ def test_a_finally_that_stores_on_self_after_the_return_is_never_skipped(
         "        finally:\n"
         "            self.z = 5\n"
         "def f():\n"
-        "    return C()\n"
+        "    c = C()\n"
+        "    return (c.y, c.z)\n"
     )
     returns, _halts = _returns(tmp_path, source)
-    assert returns
-    assert all(_unknown_after_call(value) for value in returns)
+    assert TupleValue(_ints(2, 5)) in returns
+    assert not any(_unknown_after_call(value) for value in returns)
+
+
+def test_a_finally_store_after_the_return_overwrites_the_returned_state(
+    tmp_path,
+):
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        try:\n"
+        "            self.y = 2\n"
+        "            return\n"
+        "        finally:\n"
+        "            self.y = self.y + 3\n"
+        "def f():\n"
+        "    return C().y\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert TermValue(5) in returns
+    assert TermValue(2) not in returns
 
 
 def test_a_return_inside_a_with_leaves_with_its_receiver(tmp_path):
@@ -1679,3 +1699,171 @@ def test_a_return_inside_a_with_leaves_with_its_receiver(tmp_path):
     )
     returns, _halts = _returns(tmp_path, source)
     assert TermValue(2) in returns
+
+
+# A field store reaches every holder of the object exactly as the one door's
+# mutation does: a name whose value holds the object inside another value
+# reads the opaque post-state after ``o.x = v``, never the old state.
+
+_PLAIN_OBJECT = "class O:\n    def __init__(self):\n        self.x = 0\n"
+
+
+def test_a_list_holding_an_object_is_not_stale_after_a_field_store(tmp_path):
+    source = _PLAIN_OBJECT + (
+        "def f():\n"
+        "    o = O()\n"
+        "    lst = [o]\n"
+        "    o.x = 1\n"
+        "    return lst\n"
+    )
+    assert _unknown_after_call(_only_return(tmp_path, source))
+
+
+def test_a_dict_holding_an_object_is_not_stale_after_a_field_store(tmp_path):
+    source = _PLAIN_OBJECT + (
+        "def f():\n"
+        "    o = O()\n"
+        "    d = {'k': o}\n"
+        "    o.x = 1\n"
+        "    return d\n"
+    )
+    assert _unknown_after_call(_only_return(tmp_path, source))
+
+
+def test_a_tuple_holding_an_object_is_not_stale_after_a_field_store(tmp_path):
+    source = _PLAIN_OBJECT + (
+        "def f():\n"
+        "    o = O()\n"
+        "    t = (o,)\n"
+        "    o.x = 1\n"
+        "    return t\n"
+    )
+    assert _unknown_after_call(_only_return(tmp_path, source))
+
+
+def test_an_object_whose_field_holds_another_is_not_stale_after_its_store(
+    tmp_path,
+):
+    source = _PLAIN_OBJECT + (
+        "def f():\n"
+        "    o = O()\n"
+        "    p = O()\n"
+        "    p.f = o\n"
+        "    o.x = 1\n"
+        "    return p\n"
+    )
+    assert _unknown_after_call(_only_return(tmp_path, source))
+
+
+def test_a_list_holding_self_is_not_stale_after_a_store_on_self(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        box = [self]\n"
+        "        self.x = 1\n"
+        "        self.box = box\n"
+        "def f():\n"
+        "    return C().box\n"
+    )
+    assert _unknown_after_call(_only_return(tmp_path, source))
+
+
+def test_the_exact_alias_still_reads_the_store_beside_a_holder(tmp_path):
+    source = _PLAIN_OBJECT + (
+        "def f():\n"
+        "    o = O()\n"
+        "    s = o\n"
+        "    lst = [o]\n"
+        "    o.x = 1\n"
+        "    return s.x\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(1)
+
+
+def test_a_value_the_object_only_holds_keeps_its_state_after_a_field_store(
+    tmp_path,
+):
+    # A field store is the plain store of one field: what the object holds
+    # is not changed by it (no ordinary call's ``sharer`` rule).
+    source = _PLAIN_OBJECT + (
+        "def f():\n"
+        "    o = O()\n"
+        "    items = [1]\n"
+        "    o.items = items\n"
+        "    o.x = 1\n"
+        "    return items\n"
+    )
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
+
+
+# A ``super().m(...)`` nested in a larger expression of the initializer is a
+# call on ``self`` through the one door: the base method reads ``self`` as the
+# statement reads it, and ``self`` after it is what the call left.
+
+_BASE_DOUBLES_X = (
+    "class B:\n"
+    "    def double(self):\n"
+    "        return self.x * 2\n"
+)
+
+
+def test_a_super_call_inside_an_operator_reads_self_as_it_stands(tmp_path):
+    source = _BASE_DOUBLES_X + (
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.x = 2\n"
+        "        self.y = 1 + super().double()\n"
+        "def f():\n"
+        "    return D().y\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(5)
+
+
+def test_a_super_call_as_an_argument_reads_self_as_it_stands(tmp_path):
+    source = _BASE_DOUBLES_X + (
+        "def g(v):\n"
+        "    return v + 1\n"
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.x = 2\n"
+        "        self.y = g(super().double())\n"
+        "def f():\n"
+        "    return D().y\n"
+    )
+    assert _only_return(tmp_path, source) == TermValue(5)
+
+
+def test_a_nested_super_call_lands_its_stores_on_self(tmp_path):
+    source = (
+        "class B:\n"
+        "    def setup(self):\n"
+        "        self.z = 3\n"
+        "        return 1\n"
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.x = 1\n"
+        "        self.y = 1 + super().setup()\n"
+        "def f():\n"
+        "    d = D()\n"
+        "    return (d.x, d.y, d.z)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(_ints(1, 2, 3))
+
+
+def test_a_super_call_in_an_if_test_lands_its_stores_on_self(tmp_path):
+    source = (
+        "class B:\n"
+        "    def ready(self):\n"
+        "        self.z = 3\n"
+        "        return True\n"
+        "class D(B):\n"
+        "    def __init__(self):\n"
+        "        self.y = 0\n"
+        "        if super().ready():\n"
+        "            self.y = 1\n"
+        "def f():\n"
+        "    d = D()\n"
+        "    return (d.y, d.z)\n"
+    )
+    returns, _halts = _returns(tmp_path, source)
+    assert TupleValue(_ints(1, 3)) in returns

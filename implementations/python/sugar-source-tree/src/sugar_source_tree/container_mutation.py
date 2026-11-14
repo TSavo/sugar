@@ -1833,6 +1833,72 @@ def setdefault_mutation_statement(statement, scope, *, name, call, target_name=N
     )
 
 
+def holder_states(
+    site,
+    scope,
+    *,
+    receiver,
+    root,
+    containing,
+    method,
+    tags,
+    skip=(),
+    ordinary=True,
+):
+    """``[(name, state)]``: the one holder rule, for every operation that
+    changes the object ``root`` denotes -- the one door's mutation
+    (``name_mutation_statement``) and a field store on it
+    (``nodes.ReceiverFieldStoreStatement``).  The names bound to the object
+    itself read its post-state (the caller's); every other name ``scope``
+    binds (``skip`` excepted) whose value may see the change is rebound to
+    its value after the operation, which the value decides at reduce
+    (``ReceiverAfterCall``, ``_may_change`` by ``receiver``'s value under
+    ``method``): the opaque post-state, never its old value.
+
+    - A name whose value holds the object (``containing``, ``aliases``:
+      ``lst = [o]``, ``d = {'k': o}``, ``t = (o,)``, another object's field)
+      holds the changed object.
+    - A receiver whose identity is undecided -- a member of an opaque value
+      (``a, b = g()``), an item the source does not say (``r[i]``) -- may be
+      any object the value it was read from reaches: a name sharing one may
+      hold it, never only share with it.
+    - ``ordinary``: the operation may be an ordinary call -- code that
+      reaches whatever the object holds (``sharer``), which its value
+      decides at reduce.  A builtin container's cited mutation changes the
+      container only; a field store is the plain store of one field
+      (``ReceiverFieldStoreStateSugar``), which changes the object only.
+      Neither reaches a name that merely shares something with the object."""
+    from .nodes import Node
+
+    undecided = _undecided_member(root)
+    graph = _graph(root) if ordinary or undecided else set()
+    found = []
+    for alias, value in scope.items():
+        if not isinstance(alias, str) or alias in skip:
+            continue
+        state = _state(value)
+        if not isinstance(state, Node):
+            continue
+        if getattr(state, "kind", None) in _NEVER_HAVOC_KINDS:
+            continue
+        shares = bool(graph) and bool(_graph(state) & graph)
+        holds = alias in containing or (undecided and shares)
+        if holds or (ordinary and shares):
+            found.append(
+                (
+                    alias,
+                    _havoc(
+                        site,
+                        alias,
+                        tags,
+                        prior=_read_of(value),
+                        conditions=[(receiver, (method, False, not holds))],
+                    ),
+                )
+            )
+    return found
+
+
 def name_mutation_statement(
     statement,
     scope,
@@ -1872,7 +1938,7 @@ def name_mutation_statement(
 
     ``frame_receiver``: ``super().m(...)``, a call on the frame's receiver
     formal ``name`` (``nodes._super_door``)."""
-    from .nodes import Node, _evaluation_ref
+    from .nodes import _evaluation_ref
     from .shadow import occurrence_tags_of
 
     tags = occurrence_tags_of(statement)
@@ -1934,37 +2000,21 @@ def name_mutation_statement(
             if alias == name or alias not in scope
             else after_for(_read_of(scope[alias]))
         )
-    # A name whose value holds the object, or shares anything with it: its
-    # value after the call is decided at reduce by the receiver's value.  A
-    # builtin container's cited mutation changes the container only (its
-    # holders are unknown after it); an ordinary call may change anything it
-    # reaches (``sharer``).  A receiver whose identity is undecided -- a
-    # member of an opaque value (``a, b = g()``), an item the source does
-    # not say (``r[i]``) -- may be any object the value it was read from
-    # reaches: a name sharing one may hold it, never only share with it.
-    graph = _graph(root)
-    undecided = _undecided_member(root)
-    for alias, value in scope.items():
-        if not isinstance(alias, str) or alias in names or alias == target_name:
-            continue
-        state = _state(value)
-        if not isinstance(state, Node):
-            continue
-        if getattr(state, "kind", None) in _NEVER_HAVOC_KINDS:
-            continue
-        shares = bool(graph) and bool(_graph(state) & graph)
-        holds = alias in containing or (undecided and shares)
-        if holds or shares:
-            holder = _havoc(
-                site,
-                alias,
-                tags,
-                prior=_read_of(value),
-                conditions=[(receiver, (method, False, not holds))],
-            )
-            names.append(alias)
-            states.append(holder)
-            evaluated.append(holder)
+    # Every name whose value holds the object, or shares anything with it
+    # (the one holder rule, ``holder_states``).
+    for alias, holder in holder_states(
+        site,
+        scope,
+        receiver=receiver,
+        root=root,
+        containing=containing,
+        method=method,
+        tags=tags,
+        skip=(*names, target_name),
+    ):
+        names.append(alias)
+        states.append(holder)
+        evaluated.append(holder)
     rebinds = None
     if target_name is not None:
         result = _projection(site, call, 1, tags, pair_key)
