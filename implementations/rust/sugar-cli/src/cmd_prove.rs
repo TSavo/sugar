@@ -48,17 +48,13 @@ pub fn run(args: ProveArgs) -> u8 {
     let component_plan_options = ComponentPlanOptions {
         allow_failed_components: args.allow_failed_components,
     };
-    let proven = match build_prove_outcome_with_options(
-        &project_root,
-        &args.z3,
-        &args.with,
-        component_plan_options,
-    ) {
-        Ok(proven) => proven,
-        Err(error) => {
-            return emit_prove_setup_error(&error, args.out.json);
-        }
-    };
+    let proven =
+        match build_prove_outcome_with_options(&project_root, &args.z3, component_plan_options) {
+            Ok(proven) => proven,
+            Err(error) => {
+                return emit_prove_setup_error(&error, args.out.json);
+            }
+        };
     let report = &proven.artifact.report;
     let report_json = report_fmt::report_to_json(report);
     if let Some(witness_dir) = &args.emit_witnesses {
@@ -159,32 +155,11 @@ fn emit_prove_setup_error(error: &str, json: bool) -> u8 {
     crate::EXIT_USER_ERROR
 }
 
-pub(crate) fn build_prove_report_with_options(
-    project_root: &Path,
-    z3: &str,
-    with: &[String],
-    component_plan_options: ComponentPlanOptions,
-) -> Result<sugar_verifier::Report, String> {
-    build_prove_artifact_with_options(project_root, z3, with, component_plan_options)
-        .map(|artifact| artifact.report)
-}
-
-pub(crate) fn build_prove_artifact_with_options(
-    project_root: &Path,
-    z3: &str,
-    with: &[String],
-    component_plan_options: ComponentPlanOptions,
-) -> Result<ProofRunArtifact, String> {
-    build_prove_outcome_with_options(project_root, z3, with, component_plan_options)
-        .map(|proven| proven.artifact)
-}
-
 /// Production prove door: full `ProvenOutcome` so the face can apply the
 /// #3893 exit-code law (unresolved links redden) without a second solve.
 pub(crate) fn build_prove_outcome_with_options(
     project_root: &Path,
     z3: &str,
-    with: &[String],
     component_plan_options: ComponentPlanOptions,
 ) -> Result<sugar_compiler::orchestrate::ProvenOutcome, String> {
     let cfg_doc = read_project_config(project_root);
@@ -205,28 +180,10 @@ pub(crate) fn build_prove_outcome_with_options(
         &component_plan,
     );
 
-    // Resolve `--with` paths relative to project_root unless absolute,
-    // matching how `[verify].callees` is resolved (project-root-anchored).
-    // Without this, `--with foo` depends on CWD and breaks when prove is
-    // invoked outside the project root.
-    let mut extra_projects: Vec<PathBuf> = with
-        .iter()
-        .map(|s| {
-            let p = PathBuf::from(s);
-            if p.is_absolute() {
-                p
-            } else {
-                project_root.join(p)
-            }
-        })
-        .collect();
-
-    for callee in &cfg_doc.callees {
-        let p = project_root.join(callee);
-        if p.exists() {
-            extra_projects.push(p);
-        }
-    }
+    // Ruling 3c on #7766: prove reads no other project. There is no `--with`,
+    // and prove does not consult the `[verify]` callee list (that is
+    // `sugar verify --project`'s, item 39); a sibling project's proof reaches
+    // prove only when mint stages it in `.sugar/imports`.
 
     // Step 9 (ruling 3 on #7766): prove's input is the minted `.proof` plus
     // the imported `.proof` files mint staged in `.sugar/imports`; the walk
@@ -248,7 +205,6 @@ pub(crate) fn build_prove_outcome_with_options(
     let cfg = RunnerConfig {
         project_root: project_root.to_path_buf(),
         legacy_z3_fallback: Some(LegacyZ3Fallback::compat(z3.to_string())),
-        extra_projects,
         trusted_implication_signers: cfg_doc.trusted_implication_signers.clone(),
         solvers_config,
         link_bundle_cid,
@@ -275,10 +231,7 @@ pub(crate) fn build_prove_outcome_with_options(
     // and location -- the minted `.proof` at the root and the staged
     // `.sugar/imports/*.proof` -- not by walking the root, so prove never
     // takes its own earlier output (`.sugar/runs/*.proof`) back as input.
-    let mut pool = sugar_verifier::load_all_proofs::run_prove_inputs(project_root);
-    for extra in &cfg.extra_projects {
-        pool.merge(sugar_verifier::load_all_proofs::run(extra));
-    }
+    let pool = sugar_verifier::load_all_proofs::run_prove_inputs(project_root);
     let mut proven = sugar_compiler::orchestrate::solve_project_with_pool(cfg, compilers, pool)
         .map_err(|error| error.to_string())?;
     proven.artifact = cli_persist_proof_run(project_root, proven.artifact);
@@ -779,6 +732,8 @@ mod tests {
             "plan_workspace",
             "dependency_proofs_via_rpc",
             "resolve_testimony",
+            "extra_projects",
+            "callees",
         ] {
             assert!(
                 !production.contains(forbidden),
@@ -791,6 +746,29 @@ mod tests {
             !production.contains("orchestrate::solve_project("),
             "sugar prove walks the root for .proof files through `solve_project`"
         );
+    }
+
+    /// Ruling 3c on #7766: prove takes no other project (`--with`), and lift
+    /// never proves (`--prove`, `--z3`, `--with` are gone from `sugar lift`).
+    #[test]
+    fn prove_takes_no_other_project_and_lift_never_proves() {
+        use clap::Parser;
+        for argv in [
+            &["sugar", "prove", ".", "--with", "elsewhere"][..],
+            &["sugar", "lift", ".", "--report", "--prove"][..],
+            &["sugar", "lift", ".", "--report", "--z3", "z3"][..],
+            &["sugar", "lift", ".", "--report", "--with", "elsewhere"][..],
+        ] {
+            let error = crate::Cli::try_parse_from(argv)
+                .expect_err("the flag is gone and must be refused by name");
+            assert_eq!(
+                error.kind(),
+                clap::error::ErrorKind::UnknownArgument,
+                "{argv:?}: {error}"
+            );
+        }
+        assert!(crate::Cli::try_parse_from(["sugar", "prove", "."]).is_ok());
+        assert!(crate::Cli::try_parse_from(["sugar", "lift", ".", "--report"]).is_ok());
     }
 
     #[test]

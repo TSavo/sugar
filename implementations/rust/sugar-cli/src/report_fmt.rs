@@ -45,11 +45,9 @@ pub fn report_to_json(r: &Report) -> Json {
         .collect();
     // Criterion 14 (#3706, part of #3686) total-line accounting: warrant
     // and effect entries derivable from rows alone (no source text needed).
-    // `support` entries require source-file access this crate does not have;
-    // callers with source access build the full `SourcePartition` and render
-    // `lineAccounting` + `lineAccountingPartition` from it (see
-    // `cmd_lift::render_report_json` / `source_partition::build_line_accounting`)
-    // -- one partition, never a second, parallel classifier.
+    // `support` entries require source-file access this crate does not have.
+    // (Lift used to append this report with source-tiled `support` lines under
+    // `lift --report --prove`; lift never proves now, ruling 3c on #7766.)
     let line_accounting = entries_to_json(&row_line_accounting(&r.rows));
     json!({
         "totalCallsites": r.total_callsites,

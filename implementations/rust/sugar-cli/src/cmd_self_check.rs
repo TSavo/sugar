@@ -300,24 +300,27 @@ fn run_inner(args: &SelfCheckArgs) -> Result<SelfCheckScoreboard, String> {
         "self-check: imports proof set snapshotted"
     );
 
-    let target_out = scratch.join("target");
+    // Ruling 3c on #7766: mint writes the target's `.proof` at the target's
+    // own root, where prove reads it by name; prove takes no `--with`. A
+    // stale proof from an earlier run is removed first, so prove reads only
+    // this run's mint.
+    remove_root_proof_files(&target_abs)?;
     info!(
         target = %target_rel,
         oracle = args.oracle,
         "self-check: minting target"
     );
-    let target_mint = mint_project(&bin, &repo_root, &target_abs, &target_out, args.oracle)?;
-    let target_proof_count = count_proof_files(&target_out)?;
+    let target_mint = mint_project(&bin, &repo_root, &target_abs, &target_abs, args.oracle)?;
+    let target_proof_count = count_proof_files(&target_abs)?;
     let imports_proof_count = count_proof_files(&imports)?;
     info!(
         target_proof_count,
         imports_proof_count,
-        with_dir = %target_out.display(),
         imports = %imports.display(),
         "self-check: target proof ready; starting prove"
     );
     assert_imports_proof_set_unchanged(&imports, &imports_snapshot, "target mint")?;
-    let prove_result = prove_project(&bin, &repo_root, &target_abs, &target_out);
+    let prove_result = prove_project(&bin, &repo_root, &target_abs);
     let imports_result = assert_imports_proof_set_unchanged(&imports, &imports_snapshot, "prove");
     let prove_json = match (prove_result, imports_result) {
         (Ok(json), Ok(())) => json,
@@ -329,7 +332,7 @@ fn run_inner(args: &SelfCheckArgs) -> Result<SelfCheckScoreboard, String> {
     };
     info!("self-check: prove complete; building scoreboard");
 
-    let annotation_mementos = load_effect_site_annotation_mementos(&target_abs, &target_out)?;
+    let annotation_mementos = load_effect_site_annotation_mementos(&target_abs)?;
     let scoreboard = build_scoreboard_with_runtime_annotations_and_mementos(
         &target_rel,
         &target_abs,
@@ -472,6 +475,17 @@ fn recreate_dir(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|e| format!("mkdir {}: {e}", path.display()))
 }
 
+fn remove_root_proof_files(dir: &Path) -> Result<(), String> {
+    for entry in fs::read_dir(dir).map_err(|e| format!("read {}: {e}", dir.display()))? {
+        let entry = entry.map_err(|e| format!("read {} entry: {e}", dir.display()))?;
+        if entry.path().is_file() && entry.path().extension() == Some(OsStr::new("proof")) {
+            fs::remove_file(entry.path())
+                .map_err(|e| format!("remove {}: {e}", entry.path().display()))?;
+        }
+    }
+    Ok(())
+}
+
 fn recreate_imports(path: &Path) -> Result<(), String> {
     fs::create_dir_all(path).map_err(|e| format!("mkdir {}: {e}", path.display()))?;
     for entry in fs::read_dir(path).map_err(|e| format!("read {}: {e}", path.display()))? {
@@ -498,28 +512,12 @@ fn count_proof_files(path: &Path) -> Result<usize, String> {
     Ok(count)
 }
 
-fn proof_files_in(path: &Path) -> Result<Vec<PathBuf>, String> {
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let mut files = Vec::new();
-    for entry in fs::read_dir(path).map_err(|e| format!("read {}: {e}", path.display()))? {
-        let entry = entry.map_err(|e| format!("read {} entry: {e}", path.display()))?;
-        let path = entry.path();
-        if path.extension() == Some(OsStr::new("proof")) {
-            files.push(path);
-        }
-    }
-    files.sort();
-    Ok(files)
-}
-
+/// The annotations prove saw: read from the same inputs prove reads (the
+/// target's minted `.proof` and its `.sugar/imports`), by name and location.
 fn load_effect_site_annotation_mementos(
     target_abs: &Path,
-    target_out: &Path,
 ) -> Result<Vec<EffectSiteAnnotation>, String> {
-    let target_proofs = proof_files_in(target_out)?;
-    let pool = load_all_proofs::run_with_files(target_abs, &target_proofs);
+    let pool = load_all_proofs::run_prove_inputs(target_abs);
     effect_site_annotations_from_pool(pool)
 }
 
@@ -706,18 +704,11 @@ fn dependency_mint_uses_oracle(self_check_oracle: bool) -> bool {
     self_check_oracle
 }
 
-fn prove_project(
-    bin: &Path,
-    repo_root: &Path,
-    target: &Path,
-    with_dir: &Path,
-) -> Result<Value, String> {
+fn prove_project(bin: &Path, repo_root: &Path, target: &Path) -> Result<Value, String> {
     let output = Command::new(bin)
         .current_dir(repo_root)
         .arg("prove")
         .arg(target)
-        .arg("--with")
-        .arg(with_dir)
         .arg("--json")
         .stdout(Stdio::piped())
         .stderr(child_stderr()?)

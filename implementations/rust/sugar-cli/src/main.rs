@@ -198,10 +198,6 @@ pub struct ProveArgs {
     pub emit_witnesses: Option<PathBuf>,
     #[command(flatten)]
     pub out: OutputFlags,
-    /// Additional project directories whose .proof files should also be loaded
-    /// (e.g., an OpenAPI spec project for cross-kit verification).
-    #[arg(long = "with", num_args = 0..)]
-    pub with: Vec<String>,
     /// Continue after a discovered component crashes, times out, or returns malformed planning RPC.
     #[arg(long = "allow-failed-components")]
     pub allow_failed_components: bool,
@@ -264,20 +260,11 @@ pub struct LiftArgs {
     #[arg(long, conflicts_with_all = ["output", "identify_only", "library_bindings"])]
     pub report: bool,
     /// With --report, print only source/factory summary accounting and keep the lift-plugin response slim.
-    #[arg(long = "report-summary", requires = "report", conflicts_with_all = ["prove", "contract"])]
+    #[arg(long = "report-summary", requires = "report", conflicts_with = "contract")]
     pub report_summary: bool,
     /// With --report, print the source walk as ANSI green/red lines with the first effect inline.
     #[arg(long, requires = "report", conflicts_with = "report_summary")]
     pub visual: bool,
-    /// With --report, append the verifier discharge report from the current .proof set.
-    #[arg(long = "prove", requires = "report")]
-    pub prove: bool,
-    /// Path to z3 binary for --report --prove.
-    #[arg(long, default_value = "z3", requires = "prove")]
-    pub z3: String,
-    /// Additional project directories whose .proof files should also be loaded by --report --prove.
-    #[arg(long = "with", num_args = 0.., requires = "prove")]
-    pub with: Vec<String>,
     /// Restrict --report to source audits whose contract name contains this string.
     #[arg(long = "contract", requires = "report")]
     pub contract: Option<String>,
@@ -289,7 +276,7 @@ pub struct LiftArgs {
     #[arg(
         long,
         requires_all = ["allowed_broken_components", "continue_on_construction_gaps"],
-        conflicts_with_all = ["report", "identify_only", "library_bindings", "prove", "report_summary", "visual", "contract"]
+        conflicts_with_all = ["report", "identify_only", "library_bindings", "report_summary", "visual", "contract"]
     )]
     pub audit_frontier: bool,
     /// Explicit #4203 runtime override: inventory mandatory construction panics
@@ -297,7 +284,7 @@ pub struct LiftArgs {
     #[arg(
         long,
         requires = "audit_frontier",
-        conflicts_with_all = ["report", "identify_only", "library_bindings", "prove", "report_summary", "visual", "contract"]
+        conflicts_with_all = ["report", "identify_only", "library_bindings", "report_summary", "visual", "contract"]
     )]
     pub continue_on_construction_gaps: bool,
     /// Component ids whose FactoryPanics may be held at the single audit boundary.
