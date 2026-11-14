@@ -67,7 +67,13 @@ class WithEffectBoundarySugar(Sugar):
                     fix="keep other effect-boundary variants loud until their typed router exists",
                 )
 
-        manager_es = self.manager.desugar(ctx)
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+        # The manager is routed face by face: a deferred native-operation
+        # carrier is refused by name.
+        manager_es = _require_exit_set(
+            self.manager.desugar(ctx), owner="WithEffectBoundarySugar.manager"
+        )
         construction_halts, construction_guard = self._construction_faces()
         routed = []
         for manager_exit in manager_es.exits:

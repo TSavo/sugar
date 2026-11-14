@@ -96,7 +96,7 @@ class WithResourceSugar(Sugar):
         # Construction boundary: only ExitSet algebra + binding facts.
         # No sugar-class imports or construction on this path.
         from sugar_lift_py_tests.floor import EnteredManagerStateValue
-        from sugar_lift_py_tests.outcome.exit_set import Halted
+        from sugar_lift_py_tests.outcome.exit_set import Halted, _require_exit_set
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             ExitFaceBinding,
@@ -110,8 +110,11 @@ class WithResourceSugar(Sugar):
 
         # The manager, the enter, the body and the exit all run under the
         # ``with`` statement's own context: there is no second way to reduce
-        # them without it (#7757).
-        manager_es = self.manager.desugar(ctx)
+        # them without it (#7757). Each is routed face by face here: a
+        # deferred native-operation carrier at any of them is refused by name.
+        manager_es = _require_exit_set(
+            self.manager.desugar(ctx), owner="WithResourceSugar.manager"
+        )
         parts: list = []
 
         for mgr_exit in manager_es.exits:
@@ -130,7 +133,9 @@ class WithResourceSugar(Sugar):
             # and faces and owes what it owes; the exit routing carries a body
             # face's debts onto every arm it leaves through.
             enter_es = ExitSet((mgr_exit,)).sequence(
-                lambda _manager: self.enter.desugar(ctx)
+                lambda _manager: _require_exit_set(
+                    self.enter.desugar(ctx), owner="WithResourceSugar.enter"
+                )
             )
             for enter_exit in enter_es.exits:
                 if isinstance(enter_exit, Halted):
@@ -155,7 +160,9 @@ class WithResourceSugar(Sugar):
                 )
 
                 # Parametric exit: materialize once, fan over every body face.
-                exit_es = self.exit.desugar(ctx)
+                exit_es = _require_exit_set(
+                    self.exit.desugar(ctx), owner="WithResourceSugar.exit"
+                )
 
                 for body_exit in body_es.exits:
                     face_facts = ExitFaceBinding.from_body_exit(

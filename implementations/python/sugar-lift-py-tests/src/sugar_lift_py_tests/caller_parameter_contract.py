@@ -848,6 +848,7 @@ class NativeOperationExitCarrierV1:
         share one authenticated demand; different demands are not mergeable.
         """
         from sugar_lift_py_tests.outcome import ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
         resolved = []
         deferred = []
@@ -859,6 +860,9 @@ class NativeOperationExitCarrierV1:
             if isinstance(following, cls):
                 deferred.append((prefix_exit, following))
                 continue
+            following = _require_exit_set(
+                following, owner="NativeOperationExitCarrierV1.compose_prefix"
+            )
             sequenced = ExitSet((prefix_exit,)).sequence(
                 lambda _value, *, exits=following: exits
             )
@@ -958,13 +962,16 @@ class NativeOperationExitCarrierV1:
         )
         from sugar_lift_py_tests.outcome.exit_set import (
             _is_true,
+            _require_exit_set,
         )
 
         def apply_exitset_step(projected, step):
             projected = step(projected)
             if isinstance(projected, NativeOperationExitCarrierV1):
                 projected = projected.discharge(ctx, actuals_by_formal_coordinate)
-            return projected
+            return _require_exit_set(
+                projected, owner="NativeOperationExitCarrierV1.discharge"
+            )
 
         def apply_exitset_steps(projected, continuation_count):
             for enrolled_count, step in self.exitset_continuations:
@@ -1045,8 +1052,12 @@ class NativeOperationExitCarrierV1:
         # its Floor signature; this is not a generic method splat.  The site
         # and the caller's context close every projector's parameters.
         # A projector answers its ExitSet.  Never reinterpret an unresolved
-        # carrier as a normal completion.
-        exits = projector(*actual_operands, self.site, ctx)
+        # carrier as a normal completion: a projector that defers again (an
+        # actual that is still its own caller's formal) is refused by name.
+        exits = _require_exit_set(
+            projector(*actual_operands, self.site, ctx),
+            owner="NativeOperationExitCarrierV1.discharge",
+        )
         # One arm that halts: the shape a projector's own effect takes.
         sole_halt = (
             exits.exits[0]

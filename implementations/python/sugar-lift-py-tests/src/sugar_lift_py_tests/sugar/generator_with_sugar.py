@@ -11,6 +11,7 @@ from sugar_lift_py_tests.generator_construction import (
     YieldEffect,
 )
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -41,7 +42,11 @@ class GeneratorWithSugar(Sugar):
             reduce_block_to_exitset,
         )
 
-        manager_es = self.manager.desugar(ctx)
+        # The manager is routed face by face: a deferred native-operation
+        # carrier is refused by name.
+        manager_es = _require_exit_set(
+            self.manager.desugar(ctx), owner="GeneratorWithSugar.manager"
+        )
         if not manager_es.exits:
             # No manager face is reachable: the statement completes with an
             # empty record and its tail is unreachable.
@@ -200,7 +205,9 @@ class GeneratorObjectWithSugar(Sugar):
 
         refusal = observed_generator_object_with_refusal(self.object_kind)
         blame = str(self.site)
-        manager_es = self.manager.desugar(ctx)
+        manager_es = _require_exit_set(
+            self.manager.desugar(ctx), owner="GeneratorObjectWithSugar.manager"
+        )
         exits = []
         for manager_exit in manager_es.exits:
             if isinstance(manager_exit, Halted):
@@ -280,7 +287,9 @@ class NonManagerObjectWithSugar(Sugar):
             self.type_name, has_enter=self.has_enter, has_exit=self.has_exit
         )
         blame = str(self.site)
-        manager_es = self.manager.desugar(ctx)
+        manager_es = _require_exit_set(
+            self.manager.desugar(ctx), owner="NonManagerObjectWithSugar.manager"
+        )
         exits = []
         for manager_exit in manager_es.exits:
             if isinstance(manager_exit, Halted):

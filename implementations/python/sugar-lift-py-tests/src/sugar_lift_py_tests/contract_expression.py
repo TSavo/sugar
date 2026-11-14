@@ -20,6 +20,7 @@ from sugar_source_tree.nodes import Expression, SourceUnit
 from .context import ReduceContext
 from .floor import PredicateValue
 from .ir import Formula
+from .outcome.exit_set import _require_exit_set
 
 
 def parse_contract_expression(expr: str, available_names: list[str]) -> Formula:
@@ -49,14 +50,21 @@ def parse_contract_expression(expr: str, available_names: list[str]) -> Formula:
         )
 
     constructed = node.substitute({}).sugar()
-    outcome = constructed.desugar(ReduceContext.root(owner="contract-expression"))
+    # A contract predicate is read here, never retained for a caller: a
+    # deferred native-operation carrier is refused by name.
+    outcome = _require_exit_set(
+        constructed.desugar(ReduceContext.root(owner="contract-expression")),
+        owner="parse_contract_expression",
+    )
     value = outcome.completed_value()
     if value is None:
         raise ValueError(
             "contract expression did not complete through ordinary construction: "
             f"ExitSet with {len(outcome.exits)} exits"
         )
-    truth = value.truth(node.fragment)
+    truth = _require_exit_set(
+        value.truth(node.fragment), owner="parse_contract_expression"
+    )
     predicate = truth.completed_value()
     if not isinstance(predicate, PredicateValue):
         raise ValueError(

@@ -53,7 +53,7 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
     face's guard and faces and owes what the face owes. The exit routing
     carries a body face's debts onto every arm it leaves through.
     """
-    from sugar_lift_py_tests.outcome.exit_set import Halted
+    from sugar_lift_py_tests.outcome.exit_set import Halted, _require_exit_set
     from sugar_lift_py_tests.outcome.resource_bindings import (
         EnterResultBinding,
         ExitFaceBinding,
@@ -64,9 +64,14 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
         reduce_block_to_exitset,
     )
 
+    # The manager, its enter and its exit are each routed face by face here:
+    # a deferred native-operation carrier at any of them is refused by name.
     # A manager call coordinate is not its returned receiver. Perform its
     # source outcome once, preserving exceptional faces before enter.
-    manager_es = resource.manager.desugar(ctx).sequence(
+    manager_out = _require_exit_set(
+        resource.manager.desugar(ctx), owner="WithSourceResourceSugar.manager"
+    )
+    manager_es = manager_out.sequence(
         lambda value: _project_manager_receiver(value, ctx)
     )
     parts = []
@@ -78,7 +83,10 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
             resource.manager_slot_id, manager_face.value
         ).to_facts(site=resource.site)
         enter_es = ExitSet((manager_face,)).sequence(
-            lambda manager: resource.protocol.enter_resource_outcome_for(manager, ctx)
+            lambda manager: _require_exit_set(
+                resource.protocol.enter_resource_outcome_for(manager, ctx),
+                owner="WithSourceResourceSugar.enter",
+            )
         )
         for enter_face in enter_es.exits:
             if isinstance(enter_face, Halted):
@@ -100,11 +108,17 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
             abstract_exit = (
                 None
                 if concrete_exit is not None
-                else resource.protocol.exit_outcome_for(entered, ctx)
+                else _require_exit_set(
+                    resource.protocol.exit_outcome_for(entered, ctx),
+                    owner="WithSourceResourceSugar.exit",
+                )
             )
             for body_face in body_es.exits:
                 exit_es = (
-                    concrete_exit(entered, body_face, ctx)
+                    _require_exit_set(
+                        concrete_exit(entered, body_face, ctx),
+                        owner="WithSourceResourceSugar.exit",
+                    )
                     if concrete_exit is not None
                     else abstract_exit
                 )
@@ -200,8 +214,13 @@ def _project_manager_receiver(value, ctx, seen=frozenset()):
         # kwds)``, whose ``self.gen`` is this allocated generator: the generator
         # protocol enters and exits exactly this machine.
         return ExitSet.completed(value)
-    projected = value.project_operation_receiver_outcome(
-        ctx, owner="WithSourceResourceSugar.manager"
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+    projected = _require_exit_set(
+        value.project_operation_receiver_outcome(
+            ctx, owner="WithSourceResourceSugar.manager"
+        ),
+        owner="WithSourceResourceSugar.manager",
     )
     return projected.sequence(
         lambda receiver: (

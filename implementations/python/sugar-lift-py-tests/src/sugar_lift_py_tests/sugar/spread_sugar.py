@@ -100,7 +100,19 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
         prefix = ExitSet(completed)
         values.append(completed[0].value)
 
-    return leave(finish(tuple(values)), prefix=prefix, halted=halted)
+    finished = finish(tuple(values))
+    if isinstance(finished, NativeOperationExitCarrierV1):
+        # ``finish`` itself waits on a caller's actual (a call whose callee
+        # or receiver is a formal): exactly as a deferred operand, its exits
+        # leave beneath the prefix beside every collected halt once the
+        # carrier discharges.
+        collected = tuple(halted)
+        return finished.after_discharge(
+            lambda projected, *, prefix=prefix: leave(
+                projected, prefix=prefix, halted=collected
+            )
+        )
+    return leave(finished, prefix=prefix, halted=halted)
 
 
 @dataclass(frozen=True)

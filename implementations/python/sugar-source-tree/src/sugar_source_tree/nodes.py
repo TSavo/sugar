@@ -10186,9 +10186,14 @@ class Assign(Statement):
     def _constructed_floor_value(value):
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import _term_content_cid
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from .binding_provenance import ConstructedValueTestimonyV1
 
-        outcome = value.sugar().desugar()
+        # The value is read here as testimony: a deferred native-operation
+        # carrier is refused by name, never read as "not constructed".
+        outcome = _require_exit_set(
+            value.sugar().desugar(), owner="Assign._constructed_floor_value"
+        )
         constructed = outcome.completed_value()
         # A construction testimony has no arm to carry an owed item on: an
         # owing value is not constructed here.
