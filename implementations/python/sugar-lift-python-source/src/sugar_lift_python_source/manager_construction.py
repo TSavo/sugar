@@ -3513,30 +3513,6 @@ def _resolve_source_visible_frame_uncached(
             receipt, graph=dependency_graph, session=session
         )
         if not isinstance(imported, ResolvedPythonObjectV1):
-            from .language_owned_c_export import floor_language_owned_import_use
-
-            value_receipt = matching_values[0] if matching_values else receipt
-            call_floor = floor_language_owned_import_use(
-                imported,
-                value_receipt,
-                graph=dependency_graph,
-                session=session,
-            )
-            if call_floor is not None:
-                # Hang the floor on this exact call site (the receipt span
-                # is the Call span) so a dotted ``os.getcwd()`` applies it
-                # the way a bare imported name does, instead of standing as
-                # a bodiless coordinate that silently completes.
-                context.language_owned_call_floors[
-                    _language_owned_call_site_key(
-                        raw_site.get("sourceCid") or getattr(receipt, "source_cid", None), raw_site
-                    )
-                ] = call_floor
-                # A language-owned C-floor callable or ContextVar method has
-                # no source frame. Leave the call unparked so MethodCallSugar
-                # or the seated value-use applies the floor instead of citing
-                # call-target-source-absent.
-                continue
             hopped = _resolve_through_runtime_module_alias(
                 imported, receipt, session=session
             )
@@ -3651,21 +3627,6 @@ def _resolve_source_visible_frame_uncached(
                 if isinstance(outcome, _ExternalCallTargetGap):
                     blocked.append((call, name, outcome.kind))
                     continue
-                from sugar_lift_py_tests.floor.floor_value import FloorValue
-
-                if isinstance(outcome, FloorValue):
-                    coordinate = _call_coordinate(call)
-                    context.language_owned_call_floors[
-                        (
-                            "call-site",
-                            coordinate.source_cid,
-                            coordinate.start_line,
-                            coordinate.start_col,
-                            coordinate.end_line,
-                            coordinate.end_col,
-                        )
-                    ] = outcome
-                    continue
                 _install_source_call_frame(context, call, outcome)
                 continue
             declined = external_opaque.get(name)
@@ -3674,11 +3635,6 @@ def _resolve_source_visible_frame_uncached(
                     name, resolved=resolved, graph=graph, session=session
                 )
                 if not isinstance(outcome, _ExternalCallTargetGap):
-                    from sugar_lift_py_tests.floor.floor_value import FloorValue
-
-                    if isinstance(outcome, FloorValue):
-                        context.language_owned_call_floors[name] = outcome
-                        continue
                     external_frames[name] = outcome
                     continue
                 declined = outcome.kind
@@ -4279,18 +4235,6 @@ def _construct_reachable_decorated_class_bindings(
     return tuple(result)
 
 
-def _language_owned_call_site_key(source_cid, site) -> tuple:
-    """Key a language-owned call floor by its exact Call span, not a spelling."""
-    return (
-        "call-site",
-        source_cid,
-        site["startLine"],
-        site["startCol"],
-        site["endLine"],
-        site["endCol"],
-    )
-
-
 def _resolve_external_call_frame(
     name: str,
     *,
@@ -4337,16 +4281,9 @@ def _resolve_external_call_frame(
         session=session,
     )
     if not isinstance(callee, _Resolved):
-        from .language_owned_c_export import floor_artifact_module_absent_export
-
-        floored = floor_artifact_module_absent_export(callee)
-        if floored is not None:
-            return floored
-        hopped = _follow_into_owning_artifact(callee, session=session)
+        hopped = _resolve_in_owning_artifact(callee, session=session)
         if hopped is None:
             return _ExternalCallTargetGap("call-target-source-absent")
-        if not isinstance(hopped, tuple):
-            return hopped
         callee, graph = hopped
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -4387,9 +4324,8 @@ def _resolve_local_import_call_frame(
 
     The same static export door as a module-level import, entered at ``m``
     instead of at this module's top-level binding: ``m`` in this artifact,
-    otherwise in its own authenticated artifact (the stdlib included), with
-    the language-owned C floor for an interpreter-owned export. The decline
-    kinds are the module-level ones.
+    otherwise in its own authenticated artifact (the stdlib included). The
+    decline kinds are the module-level ones.
     """
     from .dependency_artifact import ResolvedPythonObjectV1 as _Resolved
 
@@ -4404,16 +4340,9 @@ def _resolve_local_import_call_frame(
         session=session,
     )
     if not isinstance(callee, _Resolved):
-        from .language_owned_c_export import floor_artifact_module_absent_export
-
-        floored = floor_artifact_module_absent_export(callee)
-        if floored is not None:
-            return floored
-        hopped = _follow_into_owning_artifact(callee, session=session)
+        hopped = _resolve_in_owning_artifact(callee, session=session)
         if hopped is None:
             return _ExternalCallTargetGap("call-target-source-absent")
-        if not isinstance(hopped, tuple):
-            return hopped
         callee, graph = hopped
     from sugar_source_tree.panic import SugarNotWritten
 
@@ -4519,30 +4448,6 @@ def _resolve_in_owning_artifact(gap, *, session: SourceResolutionSession):
     if hopped is None or not isinstance(hopped[0], _Resolved):
         return None
     return hopped
-
-
-def _follow_into_owning_artifact(gap, *, session: SourceResolutionSession):
-    """The callee an ``artifact-module-absent`` export names in its owner.
-
-    Returns ``(resolved, graph)`` when the owning artifact defines the name in
-    source, a language-owned floor value when the owning artifact's own export
-    of it is in turn a C module's (``contextlib`` binds ``deque`` from
-    ``collections``, which binds it from the interpreter-owned
-    ``_collections``), or ``None`` to keep ``call-target-source-absent``.  The
-    floor is the same runtime-identity floor applied to a direct C export,
-    asked at the module that actually owns the object; a Python object behind
-    the owner's gap is never floored.
-    """
-    from .dependency_artifact import ResolvedPythonObjectV1 as _Resolved
-    from .language_owned_c_export import floor_artifact_module_absent_export
-
-    hopped = _owning_artifact_export(gap, session=session)
-    if hopped is None:
-        return None
-    callee, _owning = hopped
-    if isinstance(callee, _Resolved):
-        return hopped
-    return floor_artifact_module_absent_export(callee)
 
 
 def _owning_artifact_export(gap, *, session: SourceResolutionSession):
@@ -5490,19 +5395,6 @@ def _seat_import_value_use_receipts(
                 # The member lives in the alias module's own artifact.
                 imported, dependency_graph = aliased
         if not isinstance(imported, ResolvedPythonObjectV1):
-            from .language_owned_c_export import floor_language_owned_import_use
-
-            floored = floor_language_owned_import_use(
-                imported, receipt, graph=dependency_graph, session=session
-            )
-            if floored is not None:
-                # The unit seater only admits a receipt or a resolved
-                # source object. Keep the receipt seated and hang the
-                # language-owned floor on the construction context so
-                # ImportMemberSugar can project it.
-                seat_receipt()
-                context.source_import_value_resolutions[coordinate] = floored
-                continue
             if imported.kind in {
                 "dynamic-export",
                 "static-export-absent",

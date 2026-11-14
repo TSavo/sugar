@@ -325,9 +325,12 @@ class _Occurrence:
     span: tuple
 
 
+_PAYLOAD = ObjectValue("Payload", (), identity="payload-1")
+
+
 @dataclass(frozen=True)
 class _CountedCCall(ConstructedTermSugar):
-    """A two-faced RHS (a C class call) that counts its evaluations."""
+    """A two-faced RHS (a call that may raise) that counts its evaluations."""
 
     calls: list
 
@@ -336,17 +339,28 @@ class _CountedCCall(ConstructedTermSugar):
         return ()
 
     def desugar(self, ctx=None):
-        from sugar_lift_py_tests.callable_application import CallableApplication
-        from sugar_lift_py_tests.floor.language_owned_c_type import (
-            LanguageOwnedCTypeValue,
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.ir import atomic, str_const
+        from sugar_lift_py_tests.outcome.exit_set import (
+            Completed as CompletedFace,
+            ExitSet,
+            Halted,
+            complement_guard,
         )
 
         del ctx
         self.calls.append(1)
-        return LanguageOwnedCTypeValue("itertools", "dropwhile").callable_application_with(
-            CallableApplication(arguments=(), keyword_names=(), site=None, owner="test"),
-            None,
-        )
+        completes = atomic("test.counted_call.completes", [str_const("counted")])
+        return ExitSet(
+            (
+                CompletedFace(completes, _PAYLOAD),
+                Halted(
+                    complement_guard(completes),
+                    UndeterminedRaiseEffect(producer_node_owner="test"),
+                    None,
+                ),
+            )
+        ).normalize()
 
     def to_term(self, *, owner: str):
         return TermValue("counted").to_term(owner=owner)
@@ -369,10 +383,6 @@ class _ReadStoredPayload(Sugar):
 
 
 def _store_then_read(store_site, read_site):
-    from sugar_lift_py_tests.floor.language_owned_c_type import (
-        LanguageOwnedCInstanceValue,
-    )
-
     calls: list = []
     receiver = ObjectValue("Version", (), identity="receiver-1")
     rhs = _CountedCCall(calls)
@@ -391,7 +401,7 @@ def _store_then_read(store_site, read_site):
         entry
         for exit_ in completed
         for entry in exit_.value.entries
-        if isinstance(entry, LanguageOwnedCInstanceValue)
+        if entry == _PAYLOAD
     ]
     return calls, completed, read_values
 

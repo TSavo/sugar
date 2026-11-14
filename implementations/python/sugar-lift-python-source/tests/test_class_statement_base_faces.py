@@ -292,38 +292,3 @@ def test_import_member_subscript_refusal_is_still_reachable():
     with pytest.raises(SugarNotWritten) as raised:
         member.subscript(_KeyWithNoTerm(), "m.py:1:0")
     assert raised.value.owner == "ImportMemberValue.subscript"
-
-
-# ---------------------------------------------------------------------------
-# Mechanism: the cited C-type subscript keys its atom on its site.
-# ---------------------------------------------------------------------------
-
-
-def _c_type_subscript(blame):
-    from sugar_lift_py_tests.floor.language_owned_c_type import LanguageOwnedCTypeValue
-    from sugar_lift_py_tests.floor.term_value import TermValue
-    from sugar_lift_py_tests.operations.subscript_operation import SubscriptOperation
-
-    return LanguageOwnedCTypeValue("_io", "TextIOWrapper").subscript_with(
-        SubscriptOperation(index=TermValue(1), owner="test", blame=blame), None
-    )
-
-
-def test_an_unsited_c_type_subscript_refuses_by_name():
-    with pytest.raises(SugarNotWritten) as raised:
-        _c_type_subscript(None)
-    assert raised.value.owner == "LanguageOwnedCType.subscript:_io.TextIOWrapper"
-
-
-def test_two_sited_c_type_subscripts_never_share_an_atom():
-    """Lying twin of the above: the same subscript given a site is two-faced,
-    blamed on that site, and two sites give two atoms."""
-
-    def completed_guard(site):
-        exits = _c_type_subscript(site).exits
-        (halted,) = [face for face in exits if isinstance(face, Halted)]
-        assert halted.effect.blame == site
-        (completed,) = [face for face in exits if isinstance(face, Completed)]
-        return repr(completed.guard)
-
-    assert completed_guard("m.py:3:4") != completed_guard("m.py:9:4")

@@ -177,23 +177,7 @@ class ComputedCallSugar(ConstructedTermSugar):
                 )
             )
         from sugar_lift_py_tests.floor import ClassDefinitionValue
-        from sugar_lift_py_tests.floor.language_owned_contextvar import (
-            LanguageOwnedCExtensionResultValue,
-        )
 
-        if isinstance(callee, LanguageOwnedCExtensionResultValue) and self.site is not None:
-            from sugar_lift_py_tests.callable_application import CallableApplication
-
-            # An opaque C result (or a C class's instance) runs its native
-            # ``__call__``: two faces, owned by the result's own law.
-            return callee.callable_application_with(
-                CallableApplication(
-                    positional + tuple(value for _, value in kw_values),
-                    tuple(name for name, _ in kw_values),
-                    self.site,
-                ),
-                ctx,
-            )
         if isinstance(callee, ClassDefinitionValue):
             from sugar_lift_py_tests.callable_application import CallableApplication
 

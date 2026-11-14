@@ -1204,13 +1204,10 @@ class TreeConstructionContextV1:
     # of the frame's own SourceUnit (source_cid-matched).  Never carries
     # cross-unit spans; keyed by SourceFragmentCoordinateV1 of this unit.
     source_import_value_resolutions: dict = field(default_factory=dict)
-    # Language-owned floors for named calls that have no source frame
-    # (Cut 2 C-extension callables and ContextVar methods), keyed by the
-    # called name in the enclosing module.
-    language_owned_call_floors: dict = field(default_factory=dict)
     # Authenticated source-defined callees whose body was not projected at
-    # this module's own call site, keyed like ``language_owned_call_floors``
-    # call-site keys. The call stays a CallSiteValue that may also raise.
+    # this module's own call site, keyed by ``("call-site", source_cid,
+    # start_line, start_col, end_line, end_col)``. The call stays a
+    # CallSiteValue that may also raise.
     unprojected_source_calls: dict = field(default_factory=dict)
     # Producer-minted value-use receipt roster, retained once per exact source
     # CID so repeated frame/class publication transports object identity rather

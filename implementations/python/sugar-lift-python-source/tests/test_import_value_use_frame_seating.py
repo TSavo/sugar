@@ -781,9 +781,6 @@ def test_imported_generic_base_is_the_same_terminal_cold_and_warm(
             )
         )
     assert observed[0] == observed[1]
-    # ``Generic[T]`` subscripts a cited C class: the class constructs on the
-    # completed face, and the base's undetermined raise is the other face.
-    assert observed[0] == (
-        ["LanguageOwnedCType.subscript:_typing.Generic"],
-        ["ClassDefinitionValue"],
-    )
+    # ``Generic[T]`` subscripts a class with no Python body behind it: not
+    # bridged, and never asked what it is written in (#7757 item 3).
+    assert not any(owner.startswith("LanguageOwned") for owner in observed[0][0])

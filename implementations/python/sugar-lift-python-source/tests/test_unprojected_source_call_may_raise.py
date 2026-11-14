@@ -84,9 +84,14 @@ def test_each_unprojected_call_site_has_its_own_raise_face(tmp_path) -> None:
     assert len({face.effect.blame for face in halts}) == 2
 
 
-def test_c_function_call_keeps_the_c_call_law(tmp_path) -> None:
+def test_a_callee_with_no_source_is_not_asked_its_language(tmp_path) -> None:
+    # ``decimal.getcontext`` has no Python body behind it: not bridged, the
+    # one two-faced call to a callee the lifter does not have. No law keyed
+    # on what the callee is written in answers it (#7757 item 3).
     exits = _exits(tmp_path, "import decimal\ndef f():\n    return decimal.getcontext()\n")
-    assert _owners(exits) == ["LanguageOwnedCExtensionCallableValue:_decimal.getcontext"]
+    owners = _owners(exits)
+    assert len(owners) == 1
+    assert not owners[0].startswith("LanguageOwned")
 
 
 def test_local_function_call_is_not_floored(tmp_path) -> None:

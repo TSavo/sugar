@@ -1,24 +1,16 @@
 """#7838, inventory item 44: no CID depends on what the process lifted before.
 
-Two process-wide counters used to stand for "one evaluation":
+A process-wide counter used to stand for "one evaluation":
 ``container_mutation._TOKENS`` (the ``token`` leaf of every mutation shadow
-node) and ``language_owned_contextvar._TOKEN_IDS`` (a ``ContextVar.set``
-token). Both were draws, so the same source got different content in a process
-that had drawn more before. Both are now coordinates: the site's source extent
-plus the occurrence tags of the copy, and the ``set`` call's occurrence key.
+node). It was a draw, so the same source got different content in a process
+that had drawn more before. It is now a coordinate: the site's source extent
+plus the occurrence tags of the copy.
 """
 
 from __future__ import annotations
 
-from types import SimpleNamespace
-
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.floor.language_owned_contextvar import (
-    LanguageOwnedContextVarToken,
-    LanguageOwnedContextVarValue,
-)
-from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_source_tree import nodes
 from sugar_source_tree.binding_state import backend_node_shape_cid_v2
 from sugar_source_tree.tree import SourceFile
@@ -87,29 +79,3 @@ def test_two_iterations_stay_two_evaluations() -> None:
     ]
     assert len(cids) >= 2
     assert len(set(cids)) == len(cids)
-
-
-def _set(var, site):
-    operation = SimpleNamespace(
-        name="set", arguments=(TermValue(1),), keyword_names=(), blame=site
-    )
-    return var.call_method_with(operation, None).value
-
-
-def test_a_contextvar_token_is_its_set_occurrence() -> None:
-    var = LanguageOwnedContextVarValue(name="probe")
-    first = _set(var, "mod.py:3:4")
-    for _ in range(3):
-        _set(var, "elsewhere.py:1:0")
-    again = _set(var, "mod.py:3:4")
-    assert isinstance(first, LanguageOwnedContextVarToken)
-    assert first == again
-    assert first.to_term(owner="test") == again.to_term(owner="test")
-
-
-def test_two_set_sites_are_two_tokens() -> None:
-    var = LanguageOwnedContextVarValue(name="probe")
-    left = _set(var, "mod.py:3:4")
-    right = _set(var, "mod.py:9:4")
-    assert left != right
-    assert left.to_term(owner="test") != right.to_term(owner="test")

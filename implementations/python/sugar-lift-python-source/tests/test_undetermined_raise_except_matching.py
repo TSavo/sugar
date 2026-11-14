@@ -1,6 +1,6 @@
 """``except T`` around a may-raise operation tests the exception it threw.
 
-A C call, an unprojected source call, an imported source-class construction,
+An unanswered call, an unprojected source call, an imported source-class construction,
 and an opaque subscript each halt with an ``UndeterminedRaiseEffect``: the
 operation may raise, and nothing testified to the class. Ordinary ``except``
 refused every such halt (``SugarNotWritten [TrySugar._effect_match_verdict]``)
@@ -33,7 +33,8 @@ from sugar_source_tree.nodes import FunctionDef
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
 
-C_CALL = ("import decimal\n", "decimal.getcontext()", "LanguageOwnedCExtensionCallableValue:_decimal.getcontext")
+# A call nothing here answers (not bridged): the one two-faced unknown callee.
+C_CALL = ("", "h()", "UnknownCallee:h")
 SOURCE_CALL = ("import textwrap\n", 'textwrap.dedent("x")', "UnprojectedSourceCall:textwrap.dedent")
 
 
@@ -109,7 +110,7 @@ def _handler(name: str) -> str:
         ("import json\n", 'json.JSONDecodeError("m", "d", 0)', "UnprojectedSourceConstruction:json.decoder.JSONDecodeError"),
         ("import textwrap\n", 'textwrap.dedent("x")[0]', "CallSiteValue.subscript"),
     ],
-    ids=["c-call", "source-call", "construction", "opaque-subscript"],
+    ids=["unanswered-call", "source-call", "construction", "opaque-subscript"],
 )
 def test_typed_except_splits_on_the_raised_exception(tmp_path, prelude, operation, producer) -> None:
     exits = _exits(tmp_path, _try(prelude, operation, ("ValueError", "return 1")))

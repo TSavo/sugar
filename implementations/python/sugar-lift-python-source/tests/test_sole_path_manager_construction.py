@@ -8529,15 +8529,16 @@ def test_exception_argument_cannot_turn_nonsuppressing_manager_into_assertion(
             isinstance(face, Completed) and face.value.can_fall_through
             for face in exits
         ), exits
-        # The only halts are the enter's C call to get_ident, which may raise
-        # anything; the ValueError actual never becomes an expected raise.
+        # The only halts are the enter's call to get_ident, which is not
+        # bridged and may raise anything; the ValueError actual never becomes
+        # an expected raise.
         from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 
         for face in exits:
             if isinstance(face, Halted):
                 assert isinstance(face.effect, UndeterminedRaiseEffect), face
-                assert face.effect.producer_node_owner == (
-                    "LanguageOwnedCExtensionCallableValue:_thread.get_ident"
+                assert not face.effect.producer_node_owner.startswith(
+                    "LanguageOwned"
                 ), face
     else:
         assert any(

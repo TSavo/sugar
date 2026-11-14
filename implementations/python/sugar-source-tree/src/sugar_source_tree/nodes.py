@@ -15524,17 +15524,8 @@ class Name(Expression):
                 )
 
         from sugar_lift_py_tests.sugar.name_sugar import NameSugar
-        from sugar_lift_python_source.language_owned_c_export import (
-            source_contextvar_global_read,
-        )
 
-        return NameSugar(
-            name=self.id,
-            site=self.fragment,
-            module_contextvar=source_contextvar_global_read(
-                self.unit.source, self.id, span.start_line, span.start_col
-            ),
-        )
+        return NameSugar(name=self.id, site=self.fragment)
 
 
 class FormalRef(Expression):

@@ -58,18 +58,3 @@ def test_a_repr_spelling_is_refused() -> None:
     fragment = _call_fragment(SOURCE, "m.py")
     with pytest.raises(ConstructionPanic):
         occurrence_key(repr(fragment), ())
-
-
-def test_a_c_extension_result_term_carries_the_coordinate() -> None:
-    from sugar_lift_py_tests.floor.language_owned_c_type import (
-        LanguageOwnedCInstanceValue,
-    )
-
-    fragment = _call_fragment(SOURCE, "m.py")
-    value = LanguageOwnedCInstanceValue.__new__(LanguageOwnedCInstanceValue)
-    object.__setattr__(value, "module_name", "_m")
-    object.__setattr__(value, "exported_name", "T")
-    object.__setattr__(value, "occurrence", None)
-    object.__setattr__(value, "site", fragment)
-    term = value.to_term(owner="test")
-    assert term.args[2].value == site_coordinate_cid(fragment)

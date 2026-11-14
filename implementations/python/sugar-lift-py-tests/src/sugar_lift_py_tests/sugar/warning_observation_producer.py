@@ -56,12 +56,6 @@ def project_warning_observation(value):
     """
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 
-    # The completed result of the interpreter's own ``warnings.warn`` (the
-    # language-owned C callable, ``LanguageOwnedCExtensionCallableValue``)
-    # carries the observation its operands authenticated.
-    carried = getattr(value, "warning_observation", None)
-    if carried is not None:
-        return carried
     if not isinstance(value, CallSiteValue):
         return None
     if value.target_name != WARNING_OCCURRENCE_SYMBOL:
