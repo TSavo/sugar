@@ -11,7 +11,7 @@ from sugar_lift_python_source.dependency_export_adapter import (
     _is_stdlib_extension_module,
 )
 from sugar_lift_py_tests.context_manager_resolution import (
-    LanguageOwnedContextManagerRefV1,
+    OpaqueCitedContextManagerRefV1,
 )
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
@@ -51,8 +51,8 @@ def test_import_from_an_interpreter_c_module_cannot_raise() -> None:
 def test_decimal_localcontext_resolves_to_its_c_origin(tmp_path: Path) -> None:
     # decimal.py is ``try: from _decimal import * except ImportError: ...``.
     # The interpreter decides the try arm, so the export is no longer dynamic;
-    # it names the C module that owns it, and that C function constructs the
-    # manager under the C-owned protocol (test_language_owned_c_manager.py).
+    # it names a module no artifact holds source for, so the manager is not
+    # bridged and is cited naming its import target.
     source = (
         "import decimal\n"
         "def f():\n"
@@ -62,6 +62,5 @@ def test_decimal_localcontext_resolves_to_its_c_origin(tmp_path: Path) -> None:
     source_file = _open(_corpus(tmp_path, source))
     refs = source_file.root.unit.construction_context.source_derived_contract_refs
     (reference,) = refs.values()
-    assert isinstance(reference, LanguageOwnedContextManagerRefV1)
-    assert reference.protocol.module_name == "_decimal"
-    assert reference.exported_name == "localcontext"
+    assert isinstance(reference, OpaqueCitedContextManagerRefV1)
+    assert reference.roster.resolution_kind == "call-target-off-population"

@@ -5,11 +5,11 @@ which reaches three things no source stands behind (#7676):
 
 * ``deque()`` in ``ExitStack.__init__``: ``contextlib`` binds ``deque`` from
   ``collections`` (``artifact-module-absent`` in contextlib's artifact), and
-  ``collections`` binds it in turn from the interpreter-owned C module
-  ``_collections``.  The owning artifact's own export of the name is followed
-  and the existing runtime-identity C floor is asked THERE.  A Python object
-  behind the hop is still projected, and a name the owner does not define
-  keeps ``call-target-source-absent``.
+  ``collections`` binds it in turn from ``_collections``, which has no
+  source.  The owning artifact's own export of the name is followed; no
+  source stands behind it, so it is not bridged, and what it is written in is
+  never asked (#7757 item 3).  A Python object behind the hop is projected,
+  and a name the owner does not define keeps ``call-target-source-absent``.
 * ``sys.exc_info()`` in ``ExitStack.__exit__``: no artifact authenticates
   ``sys``, so the lifter does not have it: the call is not bridged and is cited
   as such (``call-target-off-population``), whatever it is implemented in.
@@ -21,14 +21,12 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from sugar_lift_py_tests.floor.language_owned_c_type import LanguageOwnedCTypeValue
 from sugar_lift_python_source.dependency_artifact import (
     ResolvedPythonObjectV1,
     authenticate_dependency_top_level,
 )
 from sugar_lift_python_source.dependency_export_adapter import resolve_export
 from sugar_lift_python_source.manager_construction import (
-    _follow_into_owning_artifact,
     _resolve_in_owning_artifact,
 )
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
@@ -48,24 +46,20 @@ def _absent(module_name, exported_name):
     )
 
 
-def test_contextlib_deque_is_floored_where_collections_binds_it_from_c():
+def test_contextlib_deque_has_no_source_behind_the_hop():
     session = _session()
     graph = authenticate_dependency_top_level("contextlib")
     gap = resolve_export(
         graph, "bind-cid", "contextlib", "deque", (), frozenset(), session=session
     )
     assert (gap.kind, gap.module_name) == ("artifact-module-absent", "collections")
-    floored = _follow_into_owning_artifact(gap, session=session)
-    assert floored == LanguageOwnedCTypeValue(
-        module_name="_collections", type_name="deque"
-    )
-    # The resolved-only door is unchanged: a floor is not a source object.
+    # No source object behind the owner's export: not bridged.
     assert _resolve_in_owning_artifact(gap, session=session) is None
 
 
-def test_a_python_object_behind_the_hop_is_projected_not_floored():
+def test_a_python_object_behind_the_hop_is_projected():
     session = _session()
-    hopped = _follow_into_owning_artifact(
+    hopped = _resolve_in_owning_artifact(
         _absent("collections", "namedtuple"), session=session
     )
     assert isinstance(hopped, tuple)
@@ -77,7 +71,7 @@ def test_a_python_object_behind_the_hop_is_projected_not_floored():
 def test_a_name_the_owner_does_not_define_keeps_the_gap():
     session = _session()
     assert (
-        _follow_into_owning_artifact(
+        _resolve_in_owning_artifact(
             _absent("collections", "no_such_name_here"), session=session
         )
         is None

@@ -24,6 +24,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from sugar_lift_py_tests.context_manager_resolution import (
     OpaqueCitedContextManagerRefV1,
     SourceFragmentCoordinateV1,
@@ -187,3 +189,31 @@ def test_only_a_run_time_string_selection_qualifies():
     assert head("def f(m, n):\n    with k(1):\n        pass\n    k = getattr(m, n)\n", 2) is None
     # A module that binds its own ``getattr`` is not the builtin.
     assert head("getattr = g\n" + picked, 4) is None
+
+
+_NOT_BRIDGED_HEADS = {
+    # ``_decimal`` holds no source in any artifact.
+    "decimal.localcontext": ("import decimal\n", "decimal.localcontext()"),
+    # ``io.StringIO`` is ``_io.StringIO``: no source in any artifact.
+    "io.StringIO": ("import io\n", "io.StringIO()"),
+    # A builtin name the module never binds: ``builtins`` has no artifact.
+    "open": ("", "open(fd)"),
+}
+
+
+@pytest.mark.parametrize("head", sorted(_NOT_BRIDGED_HEADS))
+def test_a_head_with_no_source_is_cited_as_not_bridged(tmp_path, head):
+    prelude, call = _NOT_BRIDGED_HEADS[head]
+    template = (
+        prelude
+        + "def f(fd):\n"
+        + f"    with {call} as m:\n"
+        + "        {body}\n"
+        + "    return 7\n"
+    )
+    seated, consumer, rows = _lifted(tmp_path, template, "pass")
+    assert type(seated) is OpaqueCitedContextManagerRefV1
+    assert seated.roster.resolution_kind == "call-target-off-population"
+    assert consumer is WithOpaqueCitedManagerSugar
+    assert ("halt", None) in rows
+    assert ("return", 7) in rows

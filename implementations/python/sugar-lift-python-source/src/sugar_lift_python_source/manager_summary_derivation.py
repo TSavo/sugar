@@ -1985,19 +1985,18 @@ def populate_source_derived_resource_refs(
                 session.dependency_graphs[top_level] = graph
         resolved = resolve_import_binding(receipt, graph=graph, session=session)
         if not isinstance(resolved, ResolvedPythonObjectV1):
-            from .language_owned_io_resource import mint_language_owned_io_resource_ref
+            from .manager_construction import _absent_module_is_off_population
 
-            owned = mint_language_owned_io_resource_ref(coordinate, receipt, resolved)
-            if owned is None:
-                from .language_owned_c_manager import (
-                    mint_language_owned_c_manager_ref,
-                )
-
-                owned = mint_language_owned_c_manager_ref(coordinate, receipt, resolved)
-            if owned is not None:
-                context.source_derived_contract_refs[coordinate] = owned
-                continue
-            kind = getattr(resolved, "kind", None) or "no-derived-contract"
+            # The export door found no source for the head callee here.  When
+            # the module that would hold it is not bridged, the manager is
+            # cited naming its import target; what it is implemented in is
+            # never asked.  Any other gap stays its named gap.
+            if _absent_module_is_off_population(
+                resolved, session=session, dependency_graphs=graphs
+            ):
+                kind = "call-target-off-population"
+            else:
+                kind = getattr(resolved, "kind", None) or "no-derived-contract"
             _install_derivation_gap(context, coordinate, receipt, str(kind))
             continue
         # A source-owned suspension is already the native manager testimony
@@ -2421,7 +2420,7 @@ def populate_source_derived_resource_refs(
     # manager whose own body opens a file (``@contextmanager def g(): with
     # open(p) as f: yield f``) builds its frame from that nested row, so it
     # must be seated before any same-module reader reads the body (#7732).
-    _populate_builtin_c_manager_uses(context, uses)
+    _populate_builtin_name_manager_uses(context, uses, session=session)
 
     # A callee Name assigned in every arm of a selection (``m = a.A`` /
     # ``elif``: ``m = b.B`` / ``with m(...)``) has no receipt at the call, but
@@ -2462,20 +2461,10 @@ def populate_source_derived_resource_refs(
     _populate_formal_selected_manager_uses(
         source_file, context, selected_coordinates=selected_coordinates
     )
-    _floor_language_owned_module_calls(
+    _seat_unprojected_source_calls(
         context,
         call_receipts_by_site,
-        value_receipts_by_site,
         manager_use_keys=frozenset(uses),
-        graphs=graphs,
-        session=session,
-        distribution_index=distribution_index,
-    )
-    _floor_language_owned_module_type_reads(
-        source_file,
-        context,
-        call_receipts_by_site,
-        value_receipts_by_site,
         graphs=graphs,
         session=session,
         distribution_index=distribution_index,
@@ -2516,99 +2505,22 @@ def _seat_selected_manager_refs(context, selected_arms, selected_coordinates) ->
         )
 
 
-def _floor_language_owned_module_type_reads(
-    source_file,
+def _seat_unprojected_source_calls(
     context,
     call_receipts_by_site,
-    value_receipts_by_site,
-    *,
-    graphs,
-    session,
-    distribution_index,
-) -> None:
-    """Seat a C class at this module's own non-call reads (``io.TextIOWrapper``).
-
-    ``isinstance(handle, io.TextIOWrapper)`` reads the class as a value.  The
-    consumer module's own value reads were never seated, so the read stood as
-    an unknown attribute and the isinstance as a dynamic type operand.  When
-    the read resolves to an ``artifact-module-absent`` export whose runtime
-    object is a C heap class of an interpreter-owned module, the read is that
-    language-owned C class (the type rule, never the C-function rule).  A read
-    that is a call's callee stays with the call floor.
-    """
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceFragmentCoordinateV1,
-    )
-    from sugar_lift_py_tests.floor.language_owned_c_type import (
-        LanguageOwnedCTypeValue,
-    )
-
-    from .dependency_artifact import (
-        DependencyArtifactAuthenticationError,
-        authenticate_dependency_top_level,
-        resolve_import_binding,
-    )
-    from .language_owned_c_export import floor_artifact_module_absent_export
-
-    unit = source_file.unit
-    callee_starts = {
-        (source_cid, start_line, start_col)
-        for source_cid, start_line, start_col, *_rest in call_receipts_by_site
-    }
-    for site_key, receipt in value_receipts_by_site.items():
-        source_cid, start_line, start_col, end_line, end_col = site_key
-        if source_cid != unit.source_cid:
-            continue
-        if (source_cid, start_line, start_col) in callee_starts:
-            continue
-        span = (start_line, start_col, end_line, end_col)
-        if unit.import_value_use_resolution(span) is not None:
-            continue
-        top_level = receipt.target_symbol.removeprefix("python:").split(".", 1)[0]
-        graph = graphs.get(top_level)
-        if graph is None and session.enabled:
-            graph = session.dependency_graphs.get(top_level)
-        if graph is None:
-            try:
-                graph = authenticate_dependency_top_level(
-                    top_level, distribution_index=distribution_index
-                )
-            except DependencyArtifactAuthenticationError:
-                continue
-            graphs[top_level] = graph
-            if session.enabled:
-                session.dependency_graphs[top_level] = graph
-        imported = resolve_import_binding(receipt, graph=graph, session=session)
-        floored = floor_artifact_module_absent_export(imported)
-        if type(floored) is not LanguageOwnedCTypeValue:
-            continue
-        unit.seat_import_value_use_resolution(span, receipt, source_cid=source_cid)
-        context.source_import_value_resolutions[
-            SourceFragmentCoordinateV1(source_cid, *span)
-        ] = floored
-
-
-def _floor_language_owned_module_calls(
-    context,
-    call_receipts_by_site,
-    value_receipts_by_site,
     *,
     manager_use_keys,
     graphs,
     session,
     distribution_index,
 ) -> None:
-    """Hang the language-owned floor on this module's own imported calls.
+    """Seat the may-raise testimony at this module's own source-defined calls.
 
-    Frame projection already floors an imported call inside a dependency
-    frame (``manager_construction``); the consumer module's own calls never
-    pass through it, so ``return decimal.getcontext()`` stood as a bodiless
-    ``CallSiteValue`` that silently completed. The same door applies here:
-    the exact call receipt is resolved through the authenticated import
-    graph, and only an ``artifact-module-absent`` export whose runtime object
-    is a C function (or ContextVar) is floored, at its exact Call span. The
-    floor's application is the two-faced C-call law. With-head manager calls
-    keep their own contract and are never floored here.
+    The exact call receipt is resolved through the authenticated import
+    graph; a source-defined callee whose body is not projected at this call
+    is seated at its exact Call span. Any other callee is left to the call's
+    own door: what it is written in is never asked. With-head manager calls
+    keep their own contract and are never seated here.
     """
     from .dependency_artifact import (
         DependencyArtifactAuthenticationError,
@@ -2616,8 +2528,6 @@ def _floor_language_owned_module_calls(
         authenticate_dependency_top_level,
         resolve_import_binding,
     )
-    from .language_owned_c_export import floor_language_owned_import_use
-    from .manager_construction import _language_owned_call_site_key
 
     for site_key, receipt in call_receipts_by_site.items():
         source_cid, *span = site_key
@@ -2633,8 +2543,7 @@ def _floor_language_owned_module_calls(
                     top_level, distribution_index=distribution_index
                 )
             except DependencyArtifactAuthenticationError:
-                # No authenticated graph: no runtime identity to key on. The
-                # call keeps its ordinary (unfloored) construction.
+                # No authenticated graph: no source-defined callee to seat.
                 continue
             graphs[top_level] = graph
             if session.enabled:
@@ -2653,44 +2562,22 @@ def _floor_language_owned_module_calls(
                 UnprojectedSourceCallV1,
             )
 
+            site = receipt.use["useSite"]
             context.unprojected_source_calls[
-                _language_owned_call_site_key(source_cid, receipt.use["useSite"])
+                (
+                    "call-site",
+                    source_cid,
+                    site["startLine"],
+                    site["startCol"],
+                    site["endLine"],
+                    site["endCol"],
+                )
             ] = UnprojectedSourceCallV1(
                 imported.module_name,
                 imported.definition.name,
                 imported.definition.kind,
                 imported.cid,
             )
-            continue
-        if isinstance(imported, ResolvedPythonObjectV1):
-            continue
-        # The value receipt at the exact callee occurrence (same binding,
-        # same target symbol, same start, inside this Call) carries the
-        # member path a ContextVar method floor needs.
-        call_site = receipt.use["useSite"]
-        callee_receipts = [
-            value
-            for value in value_receipts_by_site.values()
-            if value.target_symbol == receipt.target_symbol
-            and value.import_binding.cid == receipt.import_binding.cid
-            and value.use["useSite"]["sourceCid"] == source_cid
-            and value.use["useSite"]["startLine"] == call_site["startLine"]
-            and value.use["useSite"]["startCol"] == call_site["startCol"]
-            and (value.use["useSite"]["endLine"], value.use["useSite"]["endCol"])
-            < (call_site["endLine"], call_site["endCol"])
-        ]
-        value_receipt = callee_receipts[0] if len(callee_receipts) == 1 else None
-        floored = floor_language_owned_import_use(
-            imported,
-            value_receipt if value_receipt is not None else receipt,
-            graph=graph,
-            session=session,
-        )
-        if floored is None:
-            continue
-        context.language_owned_call_floors[
-            _language_owned_call_site_key(source_cid, receipt.use["useSite"])
-        ] = floored
 
 
 def _rewrite_installed_generator_frames(context) -> None:
@@ -3741,29 +3628,45 @@ def _populate_same_module_generator_manager_uses(
             )
 
 
-def _populate_builtin_c_manager_uses(context, uses) -> None:
-    """Seat the C-manager law at ``with open(...)``.
+def _populate_builtin_name_manager_uses(context, uses, *, session) -> None:
+    """``with open(...)``: a head calling a builtin name is not bridged.
 
     Import receipts never fire for a builtin name.  When the head calls a name
-    the module binds nowhere, and that builtin is the C function its own
-    interpreter-owned module exports (``builtins.open`` is ``_io.open``), the
-    head is a two-faced C call and the ``with`` law runs over its opaque
-    result exactly as for an imported C function (``decimal.localcontext``):
-    enter and exit are two-faced slot calls and suppression is ``py.truthy`` of
-    the opaque exit result.  Nothing is claimed about the result's type.
+    the module binds nowhere, the callee is ``builtins.<name>``.  No artifact
+    authenticates ``builtins``, so the lifter does not have it: the manager is
+    cited naming ``python:builtins.<name>``, exactly as any other callee the
+    lifter does not have.  What it is implemented in is never asked.
     """
+    from sugar_source_tree.builtin_reference import module_reads_builtin
     from sugar_source_tree.nodes import Call, Name
 
-    from .language_owned_c_manager import mint_builtin_c_manager_ref
+    from .manager_construction import _graph_is_off_population
 
+    if not _graph_is_off_population(None, session=session, module_name="builtins"):
+        return
     for _key, (coordinate, call, _exit_face_id) in uses.items():
         if coordinate in context.source_derived_contract_refs:
             continue
         if not isinstance(call, Call) or not isinstance(call.func, Name):
             continue
-        owned = mint_builtin_c_manager_ref(coordinate, call.func.id, call.unit.source)
-        if owned is not None:
-            context.source_derived_contract_refs[coordinate] = owned
+        name = call.func.id
+        if not module_reads_builtin(call.unit.source, name):
+            continue
+        target_symbol = f"python:builtins.{name}"
+        _seat_off_population_citation(
+            context,
+            coordinate,
+            target_symbol,
+            "call-target-off-population",
+            cid_of_json(
+                {
+                    "kind": "builtin-name-callee",
+                    "schemaVersion": "1",
+                    "targetSymbol": target_symbol,
+                    "useSite": coordinate.wire(),
+                }
+            ),
+        )
 
 
 def _populate_formal_selected_manager_uses(

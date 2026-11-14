@@ -14,9 +14,7 @@ it never completes totally: the manager is opaque and keyed on its site.
 * Suppression is ``py.truthy`` of the opaque exit result: never assumed False,
   never assumed True.
 
-This is the same With law as an interpreter C manager
-(:mod:`language_owned_c_manager`), keyed on the With's own site instead of a C
-export.  The head is recognized only when evaluating it has no effect other
+Every partition atom is keyed on the With's own site.  The head is recognized only when evaluating it has no effect other
 than these faces (a chain of attribute reads and calls with constant
 arguments, rooted at a parameter the function never rebinds), so not
 evaluating its parts separately loses nothing.

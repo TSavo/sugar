@@ -59,31 +59,6 @@ _NO_LEXICAL_SOURCE_CALL_ROW = DefinitionOccurrenceAbsentV1(
 
 
 
-def _language_owned_call_floor(sugar):
-    """Return the Cut 2 floor hung on this named call, if any."""
-    unit = getattr(sugar.site, "unit", None)
-    context = getattr(unit, "construction_context", None) if unit is not None else None
-    floors = getattr(context, "language_owned_call_floors", None) if context is not None else None
-    if not floors:
-        return None
-    named = floors.get(sugar.target_name)
-    if named is not None:
-        return named
-    try:
-        span = sugar.site.line_col_span
-        key = (
-            "call-site",
-            sugar.site.source_cid,
-            span.start_line,
-            span.start_col,
-            span.end_line,
-            span.end_col,
-        )
-    except (AttributeError, TypeError):
-        return None
-    return floors.get(key)
-
-
 def _unprojected_source_call(sugar):
     """Return the may-raise testimony seated at this exact call, if any."""
     unit = getattr(sugar.site, "unit", None)
@@ -113,8 +88,6 @@ def _off_population_source_call(sugar):
     """The may-raise testimony for a call cited off the enrolled population."""
     gap = sugar.contract_resolution_gap
     if not isinstance(gap, str) or not gap.startswith(_OFF_POPULATION):
-        return None
-    if _language_owned_call_floor(sugar) is not None:
         return None
     from sugar_lift_py_tests.source_call_resolution import OffPopulationSourceCallV1
 
@@ -190,15 +163,13 @@ def _unknown_callee_call(sugar, ctx):
 
     The callee name has no binding in this reduction's scope (an undefined
     name, or a dotted module member the import door did not cite), and no
-    contract, gap, language-owned floor or source frame speaks for it."""
+    contract, gap or source frame speaks for it."""
     if sugar.contract_resolution_gap is not None:
         return None
     if sugar.site is None or sugar.formal_function_sugar is not None:
         return None
     temporal = getattr(ctx, "temporal", None)
     if temporal is None or temporal.value_if_bound(sugar.target_name) is not None:
-        return None
-    if _language_owned_call_floor(sugar) is not None:
         return None
     if not _lexically_unknown_callee(sugar):
         return None
@@ -507,8 +478,6 @@ class CallSiteSugar(ConstructedTermSugar):
                 "call-target-off-population"
             ):
                 return self._collect(self.args, (), ctx)
-            if _language_owned_call_floor(self) is not None:
-                return self._collect(self.args, (), ctx)
             from sugar_source_tree.panic import OpaqueSourceCallResolutionGap
 
             raise OpaqueSourceCallResolutionGap(
@@ -639,17 +608,6 @@ class CallSiteSugar(ConstructedTermSugar):
                 and not kw_values
             ):
                 return receiver.callable_application_with(
-                    CallableApplication(
-                        positional + tuple(value for _, value in kw_values),
-                        tuple(name for name, _ in kw_values),
-                        self.site,
-                        call_occurrence=self.call_occurrence,
-                    ),
-                    ctx,
-                )
-            floored = _language_owned_call_floor(self)
-            if floored is not None:
-                return floored.callable_application_with(
                     CallableApplication(
                         positional + tuple(value for _, value in kw_values),
                         tuple(name for name, _ in kw_values),

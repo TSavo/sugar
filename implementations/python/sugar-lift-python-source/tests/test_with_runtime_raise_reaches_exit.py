@@ -18,16 +18,11 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect, RuntimeEffect
-from sugar_lift_py_tests.floor.language_owned_c_manager import (
-    LanguageOwnedCSlotResultValue,
-)
-from sugar_lift_py_tests.ir import py_truthy
 from sugar_lift_py_tests.outcome import Completed, Halted, outcome_to_exitset
 from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
 from sugar_source_tree.nodes import FunctionDef, With
 
 from test_contextlib_suppress_source_exit_faces import _corpus, _open, _suppress
-from test_language_owned_c_manager import _completed, _exit_site, _localcontext
 
 _MANAGERS = (
     "class Swallows:\n"
@@ -103,30 +98,6 @@ def test_suppress_reraises_an_unrelated_runtime_raise(tmp_path):
     assert _raised(exits) == ["KeyError"]
 
 
-def test_c_manager_splits_a_runtime_raise_on_exit_truth(tmp_path):
-    exits = _localcontext(tmp_path, "1/0")
-    (reraise,) = [
-        face
-        for face in _halts(exits)
-        if isinstance(face.effect, RaiseEffect)
-        and face.effect.exception_name == "ZeroDivisionError"
-    ]
-    (suppressed,) = _completed(exits)
-    truthy = repr(
-        py_truthy(
-            LanguageOwnedCSlotResultValue(
-                module_name="_decimal",
-                exported_name="localcontext",
-                slot="__exit__",
-                site=_exit_site(suppressed),
-            ).to_term(owner="test")
-        )
-    )
-    assert truthy in repr(suppressed.guard)
-    assert f"not', operands=({truthy}" not in repr(suppressed.guard)
-    assert f"not', operands=({truthy}" in repr(reraise.guard)
-
-
 def _returns(exits):
     """Values a completed function face returns (statements after the With)."""
     from sugar_lift_py_tests.floor import ReturnValue
@@ -176,7 +147,7 @@ def test_a_reraised_runtime_raise_skips_the_tail(tmp_path):
     assert _raised(exits) == ["ZeroDivisionError"]
 
 
-def test_c_manager_keeps_a_runtime_boundary_as_residue(tmp_path):
+def test_a_cited_manager_keeps_a_runtime_boundary_as_residue(tmp_path):
     """An unpack of an opaque operand is undecided, not a raise: no split."""
     exits = _function(tmp_path, "decimal.localcontext()", "a, b = x", params="x")
     residues = [

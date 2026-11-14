@@ -27,10 +27,6 @@ class NameSugar(ConstructedTermSugar):
 
     name: str
     site: object = dataclass_field(compare=False)
-    # A function body's read of a module global that the module binds by the
-    # ContextVar law (``contextvar_bound_in_tree``): the language-owned
-    # ContextVar itself, not a free Var a later store application replaces.
-    module_contextvar: object = None
 
     @classmethod
     def witnesses(cls):
@@ -68,8 +64,6 @@ class NameSugar(ConstructedTermSugar):
             bound = temporal.value_if_bound(self.name)
             if bound is not None:
                 return Complete(bound)
-        if self.module_contextvar is not None:
-            return Complete(self.module_contextvar)
         # A name nothing binds -- not local, not a parameter, not module-level,
         # not imported, not a builtin -- is no free variable: reading it raises
         # NameError, and that halt is its meaning.
