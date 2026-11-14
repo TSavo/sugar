@@ -26,10 +26,13 @@ class AugAssignSugar(Sugar):
       4. On success: the iadd result IS the binding.  It is bound under the
          statement's evaluation key (``evaluation``, qualified by the live
          loop item it runs in: ``evaluation_here``), which every later read
-         substitution rewrote (``EvaluationRef``) answers; and under the name,
-         for the writers substitution does not see (a dynamic unpack) and the
-         readers it does not reach (a frame reading a module global, a module
-         class reduced in its caller's context).
+         answers: a read substitution rewrote in the same body, a function's
+         read of a module global (``FunctionDef._module_global_references``)
+         and a module class body's read of a module name
+         (``ClassDef._module_name_references``) are all ``EvaluationRef``.
+         Inside a live loop a name the loop carries is also bound under the
+         name, as every assignment there is (``assigned_value._bind_names``):
+         the recurrence reads its body through the temporal.
       5. On halt: no rebind (a halted arm bypasses and_then) — prior binding stands
 
     Substitute does **not** thread ``_make_binop`` (__add__) as the rebind.
@@ -66,11 +69,11 @@ class AugAssignSugar(Sugar):
                     operator=self.operator,
                     projector=self.operation,
                     site=self.op_site,
-                ).and_then(self._rebind)
+                ).and_then(lambda result: self._rebind(result, ctx))
             )
         )
 
-    def _rebind(self, result) -> Outcome:
+    def _rebind(self, result, ctx) -> Outcome:
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind, ScopeRebinds
         from sugar_lift_py_tests.outcome import ExitSet
 
@@ -78,14 +81,13 @@ class AugAssignSugar(Sugar):
 
         if self.evaluation is None:
             return ExitSet.completed(ScopeRebind(self.name, result))
+        # In a live loop each item's evaluation is its own key.
+        evaluation = (evaluation_here(self.evaluation), result)
+        if self.name not in getattr(ctx, "live_loop_names", frozenset()):
+            return ExitSet.completed(ScopeRebinds((evaluation,)))
         # The name first, the evaluation last: a read of the evaluation is the
-        # latest of the two until something rebinds the name.  In a live loop
-        # each item's evaluation is its own key.
-        return ExitSet.completed(
-            ScopeRebinds(
-                ((self.name, result), (evaluation_here(self.evaluation), result))
-            )
-        )
+        # latest of the two until something rebinds the name.
+        return ExitSet.completed(ScopeRebinds(((self.name, result), evaluation)))
 
 
 def project_augmented(
