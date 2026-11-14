@@ -686,34 +686,6 @@ class IfStepV1:
 
 
 @dataclass(frozen=True)
-class NestedManagerStepV1:
-    """Nested source-defined manager enter wrapping a body step sequence.
-
-    Real shape: ``with inner(): yield outer_resource`` (and peers with
-    Assign/If setup inside the With). Enter runs the nested protocol once,
-    records :class:`NestedEnteredBindingV1`, splices ``body_steps`` plus an
-    exit step, then continues. Unhandled nested shapes stay Opaque and loud.
-    """
-
-    nested_protocol: object = field(compare=False, repr=False)
-    body_steps: tuple
-    fragment_cid: str
-    occurrence_cid: str
-
-
-@dataclass(frozen=True)
-class NestedManagerExitStepV1:
-    """Exit the nested manager entered by the matching NestedManagerStepV1.
-
-    Sits after the With body (after the yield suspension for the classic
-    nested form). On resume *and* on throw, nested cleanup runs before the
-    outer machine continues — inner cleanup before outer yield-resume.
-    """
-
-    occurrence_cid: str
-
-
-@dataclass(frozen=True)
 class NestedCitedOpaqueManagerStepV1:
     """Nested ``with`` over a cited-opaque manager, not a source-defined generator.
 
@@ -806,8 +778,6 @@ GeneratorStepV1 = (
     | _ForIteratorStepV1
     | _YieldFromIteratorStepV1
     | IfStepV1
-    | NestedManagerStepV1
-    | NestedManagerExitStepV1
     | NestedCitedOpaqueManagerStepV1
     | NestedCitedOpaqueExitStepV1
 )
@@ -853,13 +823,6 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
         else:
             payload["fragmentCid"] = value.fragment_cid
         return payload
-    if isinstance(value, NestedEnteredBindingV1):
-        return {
-            "kind": "nested-entered-binding",
-            "occurrenceCid": value.occurrence_cid,
-            "nestedProtocolConstructionCid": value.nested_protocol_construction_cid,
-            "nestedEntryCid": value.nested_entry_cid,
-        }
     if isinstance(value, NestedCitedOpaqueEnteredBindingV1):
         return {
             "kind": "nested-cited-opaque-entered-binding",
@@ -1125,22 +1088,6 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
                 _generator_step_testimony(item, owner=owner) for item in step.else_steps
             ],
         }
-    if isinstance(step, NestedManagerStepV1):
-        nested_cid = getattr(step.nested_protocol, "protocol_construction_cid", None)
-        return {
-            "kind": "nested-manager",
-            "fragmentCid": step.fragment_cid,
-            "occurrenceCid": step.occurrence_cid,
-            "nestedProtocolConstructionCid": nested_cid,
-            "bodySteps": [
-                _generator_step_testimony(item, owner=owner) for item in step.body_steps
-            ],
-        }
-    if isinstance(step, NestedManagerExitStepV1):
-        return {
-            "kind": "nested-manager-exit",
-            "occurrenceCid": step.occurrence_cid,
-        }
     if isinstance(step, NestedCitedOpaqueManagerStepV1):
         return {
             "kind": "nested-cited-opaque-manager",
@@ -1250,21 +1197,6 @@ class NestedCitedOpaqueEnteredBindingV1:
     contract_ref: object = field(compare=False, repr=False)
     manager_value: object = field(compare=False, repr=False)
     site: object = field(compare=False)
-
-
-@dataclass(frozen=True)
-class NestedEnteredBindingV1:
-    """Nested manager entered while executing NestedManagerStepV1.
-
-    Carries enough to exit the nested layer exactly once (occurrence + nested
-    protocol construction CID + nested entry CID + the entered state handle).
-    """
-
-    occurrence_cid: str
-    nested_protocol_construction_cid: str
-    nested_entry_cid: str
-    nested_protocol: object = field(compare=False, repr=False)
-    nested_entered: object = field(compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -1503,17 +1435,6 @@ class GeneratorConstructionV1:
         ):
             return self._throw_into_except_arms(self.steps[self.cursor], effect)
         if self.cursor < len(self.steps) and isinstance(
-            self.steps[self.cursor], NestedManagerExitStepV1
-        ):
-            # Halted edge: nested cleanup BEFORE outer yield-resume / halt.
-            step = self.steps[self.cursor]
-            after = self._exit_nested_manager(step, requested="throw")
-            if isinstance(after, GeneratorTransitionGapV1):
-                return ExitSet.halted(effect, state=self)
-            if isinstance(after, GeneratorConstructionV1):
-                return ExitSet.halted(effect, state=after)
-            return incoming
-        if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], NestedCitedOpaqueExitStepV1
         ):
             step = self.steps[self.cursor]
@@ -1545,15 +1466,6 @@ class GeneratorConstructionV1:
             ):
                 return self._gap("close", "except arm may catch GeneratorExit")
             return replace(self, cursor=self.cursor + 1).close()
-        if self.cursor < len(self.steps) and isinstance(
-            self.steps[self.cursor], NestedManagerExitStepV1
-        ):
-            step = self.steps[self.cursor]
-            after = self._exit_nested_manager(step, requested="close")
-            if isinstance(after, GeneratorConstructionV1):
-                return after.close()
-            if isinstance(after, GeneratorTransitionGapV1):
-                return after
         if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], NestedCitedOpaqueExitStepV1
         ):
@@ -1757,7 +1669,6 @@ class GeneratorConstructionV1:
                         later,
                         (
                             FinallyStepV1,
-                            NestedManagerExitStepV1,
                             NestedCitedOpaqueExitStepV1,
                         ),
                     )
@@ -1982,13 +1893,6 @@ class GeneratorConstructionV1:
             return self._transition_yield_from(step, requested)
         if isinstance(step, _YieldFromIteratorStepV1):
             return self._transition_yield_from_iterator(step, requested)
-        if isinstance(step, NestedManagerStepV1):
-            return self._transition_nested_manager(step, requested)
-        if isinstance(step, NestedManagerExitStepV1):
-            after = self._exit_nested_manager(step, requested=requested)
-            if isinstance(after, GeneratorTransitionGapV1):
-                return after
-            return after._transition(requested)
         if isinstance(step, NestedCitedOpaqueManagerStepV1):
             return self._transition_nested_cited_opaque(step, requested)
         if isinstance(step, NestedCitedOpaqueExitStepV1):
@@ -2614,52 +2518,6 @@ class GeneratorConstructionV1:
         )
         return machine._transition(requested)
 
-    def _transition_nested_manager(self, step: NestedManagerStepV1, requested: str):
-        """Enter nested protocol, bind entered state, splice body + exit step."""
-        enter = getattr(step.nested_protocol, "enter_resource_outcome", None)
-        if not callable(enter):
-            return self._gap(requested, "nested manager without enter_resource_outcome")
-        outcome = enter()
-        if (
-            isinstance(outcome, ExitSet)
-            and outcome.exits
-            and outcome.halts() == outcome.exits
-        ):
-            return outcome
-        if (
-            not isinstance(outcome, ExitSet)
-            or outcome.completed_value() is None
-            or outcome.owed_items()
-        ):
-            return self._gap(
-                requested, f"nested enter observed {type(outcome).__name__}"
-            )
-        nested_entered = outcome.completed_value()
-        nested_cid = getattr(
-            step.nested_protocol, "protocol_construction_cid", ""
-        ) or getattr(nested_entered, "protocol_construction_cid", "")
-        entry_cid = getattr(nested_entered, "entry_cid", "")
-        binding = NestedEnteredBindingV1(
-            occurrence_cid=step.occurrence_cid,
-            nested_protocol_construction_cid=nested_cid,
-            nested_entry_cid=entry_cid,
-            nested_protocol=step.nested_protocol,
-            nested_entered=nested_entered,
-        )
-        steps = (
-            *self.steps[: self.cursor],
-            *step.body_steps,
-            NestedManagerExitStepV1(step.occurrence_cid),
-            *self.steps[self.cursor + 1 :],
-        )
-        machine = replace(
-            self,
-            steps=steps,
-            binding_state=(*self.binding_state, binding),
-            # cursor stays at first body step (same index as NestedManagerStep)
-        )
-        return machine._transition(requested)
-
     def _transition_nested_cited_opaque(
         self, step: NestedCitedOpaqueManagerStepV1, requested: str
     ):
@@ -2979,26 +2837,6 @@ class GeneratorConstructionV1:
                 for face in result.exits
             )
         )
-
-    def _exit_nested_manager(self, step: NestedManagerExitStepV1, *, requested: str):
-        """Exit the nested layer for this occurrence; advance past the exit step."""
-        binding = None
-        for item in reversed(self.binding_state):
-            if (
-                isinstance(item, NestedEnteredBindingV1)
-                and item.occurrence_cid == step.occurrence_cid
-            ):
-                binding = item
-                break
-        if binding is None:
-            return self._gap(
-                requested, f"nested exit without enter ({step.occurrence_cid})"
-            )
-        exit_for = getattr(binding.nested_protocol, "exit_outcome_for", None)
-        if not callable(exit_for):
-            return self._gap(requested, "nested manager without exit_outcome_for")
-        exit_for(binding.nested_entered)
-        return replace(self, cursor=self.cursor + 1)
 
     def _transition_branch(self, step: "IfStepV1", requested: str):
         """A branch is a two-face partition, or a splice when the guard decides.
