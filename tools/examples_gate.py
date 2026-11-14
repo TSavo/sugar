@@ -215,12 +215,6 @@ FAILURE_PATTERNS: tuple[FailurePattern, ...] = (
         "toolchain-plan/witness-memento-not-loaded",
         re.compile(r"no matching witness-memento was loaded"),
     ),
-    # std-core-bodyguard-precondition: the JSON claims report itself carries
-    # nonzero failed/undecided counts; there is no separate FAIL[..] line.
-    FailurePattern(
-        "prove-red/bodyguard-claims-failed-or-undecided",
-        re.compile(r'"totalClaims":\s*\d+,\s*"failed":\s*[1-9]'),
-    ),
     # rust-coretests-report: the rust factory has no Sugar recognizer for a
     # for-loop AST shape it met walking coretests, and the lift plugin then
     # closes stdout before responding -- a factory coverage gap.

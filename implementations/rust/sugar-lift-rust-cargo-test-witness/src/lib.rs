@@ -19,7 +19,7 @@
 // ONE contract whose custom evidence pins the bundle cid.
 //
 // DISCHARGE has two faces, mirroring python:
-//   - `verify --project` (rust witness axis): the verifier asks this kit (over
+//   - `prove` (rust witness axis): the prover asks this kit (over
 //     `sugar.plugin.resolve_witness`) to RESOLVE the bundle body; the kit
 //     re-runs the suite, rebuilds the bundle, returns the bytes; the rust
 //     verifier blake3's them and compares to the pinned witness_cid. The kit

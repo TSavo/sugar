@@ -88,9 +88,7 @@ Rust v1 evidence:
 Substrate check names:
 
 - `proof.dependency_resolver.available`
-- `proof.dependency_resolver.protocol`
 - `proof.dependency_pool.stable`
-- `proof.dependency_pool.byte_consistent`
 
 Mechanism:
 
