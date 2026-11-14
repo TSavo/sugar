@@ -1136,6 +1136,11 @@ class SourceUnit:
     _function_span_index: object = field(
         init=False, default=None, repr=False, compare=False
     )
+    # ``(typed module, scope body rows, answers by position)``: the body of
+    # every class, function and lambda, for ``class_body_holding``.
+    _scope_body_index: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
     # ``(typed module, names some scope binds, names read)``: one walk of the
     # typed tree, rebuilt if the typed root is replaced.
     _module_name_rows_memo: object = field(
@@ -1192,6 +1197,7 @@ class SourceUnit:
         object.__setattr__(self, "_lexical_call_enrollment_index", None)
         object.__setattr__(self, "_function_symtable_index", None)
         object.__setattr__(self, "_function_span_index", None)
+        object.__setattr__(self, "_scope_body_index", None)
         object.__setattr__(self, "_module_name_rows_memo", None)
         object.__setattr__(self, "_dynamic_global_writer_memo", None)
         object.__setattr__(self, "_module_global_rows_memo", None)
@@ -1254,6 +1260,56 @@ class SourceUnit:
             ):
                 owner = candidate
                 owner_line = start[0]
+        answers[position] = owner
+        return owner
+
+    def class_body_holding(self, span) -> "ClassDef | None":
+        """The class whose body is the scope the position ``span`` reads in,
+        or None.
+
+        Python's scopes: the innermost class, function or lambda body around
+        the position owns the read.  A class owns it only when its own body
+        is that innermost body -- a method's or a lambda's body skips the
+        class scope, while a method's decorators and defaults sit in the
+        class body itself.  A unit with no typed root answers None.
+        """
+        module = self.typed_module
+        if module is None:
+            return None
+        index = self._scope_body_index
+        if index is None or index[0] is not module:
+            rows = []
+            for node in module.walk():
+                if isinstance(node, (ClassDef, FunctionDef, AsyncFunctionDef)):
+                    if not node.body:
+                        continue
+                    first = node.body[0].line_col_span()
+                    last = node.body[-1].line_col_span()
+                elif isinstance(node, Lambda):
+                    first = last = node.body.line_col_span()
+                else:
+                    continue
+                rows.append(
+                    (
+                        (first.start_line, first.start_col),
+                        (last.end_line, last.end_col),
+                        node if isinstance(node, ClassDef) else None,
+                    )
+                )
+            index = (module, tuple(rows), {})
+            object.__setattr__(self, "_scope_body_index", index)
+        position = (span.start_line, span.start_col)
+        answers = index[2]
+        if position in answers:
+            return answers[position]
+        owner = None
+        owner_start = None
+        for start, end, candidate in index[1]:
+            if start <= position <= end and (
+                owner_start is None or start > owner_start
+            ):
+                owner = candidate
+                owner_start = start
         answers[position] = owner
         return owner
 
@@ -1563,10 +1619,14 @@ class SourceUnit:
         Python's own resolution, read off this unit's CPython ``symtable``: the
         innermost function around the read neither takes ``name`` as a
         parameter nor binds it (locally, ``nonlocal`` or from an enclosing
-        function), the module binds no ``name`` of its own, and the language's
-        builtin floor holds it.  The answer is the binding, not the spelling:
+        function), a class body the read sits directly in binds no ``name``,
+        the module binds no ``name`` of its own (anywhere at top level, a
+        branch included) and no star import may, and the language's builtin
+        floor holds it.  The answer is the binding, not the spelling:
         ``getattr = g`` at module level, ``def f(getattr)`` or ``getattr = 1``
-        in the function each leave the read with no builtin reference.  A unit
+        in the function, or ``getattr = g`` earlier in the class body each
+        leave the read with no builtin reference; a method of that class
+        still reads the builtin.  A unit
         with no typed root has no function index to consult and answers
         ``None``.
         """
@@ -1606,10 +1666,12 @@ class SourceUnit:
 
     def _read_falls_through_the_source(self, name: str, span) -> bool:
         """Whether a read of ``name`` at ``span`` is bound by nothing the
-        source spells: the module binds no ``name`` of its own, and the
-        innermost function around the read neither takes it as a parameter
-        nor binds it (locally, ``nonlocal`` or from an enclosing function),
-        read off this unit's CPython ``symtable``."""
+        source spells: the module binds no ``name`` of its own, the innermost
+        function around the read neither takes it as a parameter nor binds
+        it (locally, ``nonlocal`` or from an enclosing function), and, for a
+        read directly in a class body (``class_body_holding``), that class
+        body binds no ``name`` either -- read off this unit's CPython
+        ``symtable``.  A method's body skips its class's scope."""
         if name in self.module_bound_names:
             return False
         owner = self.innermost_function_containing(span)
@@ -1624,6 +1686,17 @@ class SourceUnit:
                 or symbol.is_local()
                 or symbol.is_free()
                 or symbol.is_nonlocal()
+            ):
+                return False
+        holder = self.class_body_holding(span)
+        if holder is not None:
+            table = self.class_symtable(holder.name, holder.line_col_span().start_line)
+            try:
+                symbol = table.lookup(name)
+            except KeyError:
+                symbol = None
+            if symbol is not None and (
+                symbol.is_local() or symbol.is_free() or symbol.is_nonlocal()
             ):
                 return False
         return True
@@ -2820,9 +2893,9 @@ class SourceUnit:
             )
         return module  # type: ignore[return-value]
 
-    def _function_symtables(self, name: str, lineno: int) -> tuple:
-        """Every CPython function symtable named ``name`` that starts on
-        ``lineno`` (a lambda's is named ``lambda``)."""
+    def _scope_symtables(self, kind: str, name: str, lineno: int) -> tuple:
+        """Every CPython ``kind`` (``function`` or ``class``) symtable named
+        ``name`` that starts on ``lineno``."""
         index = self._function_symtable_index
         if index is None:
             # One walk of the CPython symtable tree, which is fixed for the
@@ -2831,15 +2904,38 @@ class SourceUnit:
 
             def visit(table) -> None:
                 for child in table.get_children():
-                    if child.get_type() == "function":
+                    kind_of = child.get_type()
+                    if kind_of in ("function", "class"):
                         index.setdefault(
-                            (child.get_name(), child.get_lineno()), []
+                            (str(kind_of), child.get_name(), child.get_lineno()),
+                            [],
                         ).append(child)
                     visit(child)
 
             visit(self.module_symtable)
             object.__setattr__(self, "_function_symtable_index", index)
-        return tuple(index.get((name, lineno), ()))
+        return tuple(index.get((kind, name, lineno), ()))
+
+    def _function_symtables(self, name: str, lineno: int) -> tuple:
+        """Every CPython function symtable named ``name`` that starts on
+        ``lineno`` (a lambda's is named ``lambda``)."""
+        return self._scope_symtables("function", name, lineno)
+
+    def class_symtable(self, name: str, lineno: int):
+        """The one CPython class symtable named ``name`` that starts on
+        ``lineno``."""
+        matches = self._scope_symtables("class", name, lineno)
+        if len(matches) != 1:
+            raise SourceTreePanic(
+                blame=f"{self.filename}:{lineno}:0",
+                owner="SourceUnit.class_symtable",
+                observed=(
+                    f"{len(matches)} class symtables for {name!r} at line {lineno}"
+                ),
+                requested="one CPython class symtable selected by type, name, and line",
+                fix="preserve the source class's exact CPython symtable identity",
+            )
+        return matches[0]
 
     def lambda_symtables(self, lineno: int, parameters: frozenset) -> tuple:
         """CPython's symtables of the lambdas that start on ``lineno`` with

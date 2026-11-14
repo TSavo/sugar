@@ -135,6 +135,58 @@ def test_a_rebound_call_head_is_not_builtin(source):
     assert _sugar(_call(source, "len"))._builtin_reference() is None
 
 
+def _len_reads(source: str) -> list:
+    """``(unit, span)`` of every bare ``len`` callee in ``source``, in order."""
+    unit = _unit(source)
+    spans = sorted(
+        (
+            node.func.line_col_span()
+            for node in unit.typed_module.walk()
+            if isinstance(node, Call)
+            and isinstance(node.func, Name)
+            and node.func.id == "len"
+        ),
+        key=lambda span: (span.start_line, span.start_col),
+    )
+    return [(unit, span) for span in spans]
+
+
+_CLASS_BODY_LEN = (
+    "def mine(*args):\n    return 7\n\n"
+    "class C:\n"
+    "    len = mine\n"
+    "    size = len(1)\n\n"
+    "    def m(self, o):\n"
+    "        return len(o)\n"
+)
+
+
+def test_a_class_body_rebinding_is_not_the_builtin_in_that_body():
+    (unit, body_read), _ = _len_reads(_CLASS_BODY_LEN)
+    assert unit.builtin_reference_at("len", body_read) is None
+    assert unit.language_callee_at("len", body_read) is None
+
+
+def test_a_method_skips_the_class_scope_and_reads_the_builtin():
+    _, (unit, method_read) = _len_reads(_CLASS_BODY_LEN)
+    assert unit.builtin_reference_at("len", method_read) == "python:builtins.len"
+    assert unit.language_callee_at("len", method_read) is LanguageCallee.BUILTIN_LEN
+
+
+def test_a_module_level_branch_rebinding_is_not_the_builtin():
+    source = (
+        "PY2 = False\n\n"
+        "if PY2:\n"
+        "    str = unicode\n\n"
+        "def f(o):\n"
+        "    return str(o)\n"
+    )
+    call = _call(source, "str")
+    span = call.func.line_col_span()
+    assert call.unit.builtin_reference_at("str", span) is None
+    assert call.language_callee() is None
+
+
 def test_a_head_nothing_binds_is_known_only_through_the_builtin_namespace():
     known = _call("def f(o):\n    return len(o)\n", "len")
     assert not _lexically_unknown_head(known.fragment, "len")
