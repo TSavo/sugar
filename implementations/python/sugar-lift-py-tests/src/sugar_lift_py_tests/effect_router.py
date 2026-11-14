@@ -22,7 +22,6 @@ from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.ir import atomic, ctor, eq, str_const
-from sugar_lift_py_tests.outcome.incomplete import Incomplete
 
 _EFFECT_ABSENT_NAME = "py.effect.none"
 _EFFECT_EXPECTED_OBLIGATION = "py.effect.expected"
@@ -205,8 +204,8 @@ def regroup_except_star(original, effects):
 
 
 def _observed_effect(entry):
-    if isinstance(entry, Incomplete) and isinstance(entry.effect, RaiseEffect):
-        return "raise", entry.effect.exception_name, None, entry.effect
+    # A record holds no halt (#7826): a raise reaches a boundary as a halted
+    # arm, never as a record entry, so only a warning observation is read here.
     if isinstance(entry, WarningObservationValue):
         return (
             "warning",

@@ -503,7 +503,6 @@ def _account_level(level: str, effect, evaluate):
     from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.no_call_body_attribution import AttributionOutcome
     from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-    from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
@@ -526,16 +525,13 @@ def _account_level(level: str, effect, evaluate):
             None,
         )
 
-    # Observe the exact projection the next enclosing boundary consumes. The
-    # linear Outcome adapter may carry a hard raise inside BlockValue; routing
-    # sees it only after the ordinary block reduction promotes that native
-    # entry back to a Halted ExitSet face.
+    # Observe the exact projection the next enclosing boundary consumes: the
+    # boundary's own faces, or the ordinary block reduction of a linear one.
+    # No record holds a halt (#7826), so nothing is promoted.
     exits = (
-        promote_raise_halts(outcome)
+        outcome
         if isinstance(outcome, ExitSet)
-        else promote_raise_halts(
-            reduce_block_to_exitset((_FixedOutcomeSugar(outcome),), None)
-        )
+        else reduce_block_to_exitset((_FixedOutcomeSugar(outcome),), None)
     )
     passed = any(
         isinstance(face, Halted) and face.effect is effect for face in exits.exits

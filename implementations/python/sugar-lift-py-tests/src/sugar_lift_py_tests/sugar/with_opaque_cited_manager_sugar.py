@@ -227,7 +227,6 @@ class WithOpaqueCitedManagerSugar(Sugar):
             prepend_facts_to_exitset,
         )
         from sugar_lift_py_tests.sugar.exit_set_routing import (
-            promote_raise_halts,
             sugar_outcome_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -272,9 +271,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
                         self.enter_slot_id, enter_exit.value
                     ).to_facts(site=self.site)
 
-                body_es = promote_raise_halts(
-                    reduce_block_to_exitset(self.body, ctx)
-                ).guarded(face_guard)
+                body_es = reduce_block_to_exitset(self.body, ctx).guarded(face_guard)
 
                 for body_exit in body_es.exits:
                     if isinstance(body_exit, Halted) and body_exit.state is None:
@@ -312,8 +309,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
         # constructed ``with`` (``_route_manager_faces``) does.  Collapsing them
         # here to the linear ``BlockValue`` view lost the head, enter, exit and
         # suppressed faces whenever the body always raised and a ``return``
-        # followed: ``promote_raise_halts`` keeps a completed arm only on
-        # fall-through, and a block that returns does not fall through.
+        # followed, and put a halt inside a completed record (#7826).
         return routed.normalize()
 
 

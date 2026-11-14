@@ -200,7 +200,6 @@ def reduce_block_to_exitset(
                         binding.slot_id, binding.effect
                     )
             outcome = statement.desugar(statement_ctx)
-            from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
 
             def project(value):
                 if isinstance(value, _ReducedBlock):
@@ -264,99 +263,6 @@ def reduce_block_to_exitset(
                     pre_effect_state=ReducerPreEffectStateV1._from_reducer(state),
                 )
 
-            if (
-                isinstance(outcome, Complete)
-                and isinstance(outcome.value, GuardedFaces)
-                and any(
-                    isinstance(entry, Incomplete)
-                    for entry in outcome.value.contribution()
-                )
-            ):
-                faces = outcome.value
-                entries = []
-                exits = []
-                # The condition's own testimony (a branch-result slot's
-                # authentication) was established before either arm ran, so a
-                # halted arm carries it too: its guard reads that slot, and a
-                # face whose guard names an unauthenticated slot reads as
-                # reachable on routes that can never take it.
-                halted_state = state
-                if faces.unconditional_entries:
-                    from dataclasses import replace as _replace
-
-                    halted_state = _replace(
-                        state,
-                        entries=(*state.entries, *faces.unconditional_entries),
-                    )
-                for entry in faces.contribution():
-                    if isinstance(entry, Incomplete):
-                        # A store inside a guarded face is NOT re-split here.
-                        # The branch body was already reduced by
-                        # reduce_block_to_exitset, so the store's success/halt
-                        # partition has already happened; IfSugar then absorbs
-                        # each halted arm as guarded red testimony (if_sugar.py,
-                        # `Incomplete(exit_.effect).guarded(exit_.guard)`), the
-                        # same seam every halt inside an `if` goes through.
-                        # Splitting again here would emit the same occurrence
-                        # twice.
-                        if entry.follow().continues:
-                            entries.append(entry)
-                            continue
-                        from sugar_lift_py_tests.ir import and_
-
-                        guard = (
-                            entry.branch_conditions[0]
-                            if len(entry.branch_conditions) == 1
-                            else and_(list(entry.branch_conditions))
-                        )
-                        exits.append(Halted(guard, entry.effect, halted_state))
-                    else:
-                        entries.append(entry)
-                completed_state = _ReducedBlock(
-                    (*state.entries, *entries),
-                    faces.can_fall_through,
-                    (),
-                    state.transforms,
-                    active_ctx,
-                )
-                if faces.can_fall_through:
-                    exits.append(
-                        Completed(
-                            (
-                                faces.continuation_guard
-                                if faces.continuation_guard is not None
-                                else true_guard()
-                            ),
-                            completed_state,
-                        )
-                    )
-                elif any(_is_return_entry(entry) for entry in entries):
-                    # Neither arm falls through, but one RETURNS while another
-                    # halts (``if c: return 7`` / ``raise``).  The return is a
-                    # completed exit of the block: it holds exactly where no
-                    # halted arm does.  Dropping it claimed the block always
-                    # raised.
-                    from sugar_lift_py_tests.ir import and_
-                    from sugar_lift_py_tests.outcome.exit_set import complement_guard
-
-                    remainders = [
-                        complement_guard(exit_.guard)
-                        for exit_ in exits
-                        if isinstance(exit_, Halted)
-                    ]
-                    exits.append(
-                        Completed(
-                            (
-                                true_guard()
-                                if not remainders
-                                else remainders[0]
-                                if len(remainders) == 1
-                                else and_(remainders)
-                            ),
-                            completed_state,
-                        )
-                    )
-                return ExitSet(tuple(exits)).normalize()
             if isinstance(outcome, ExitSet):
                 returned = _prior_return_face(state, active_ctx)
                 if state.fall_through:
@@ -427,19 +333,25 @@ def reduce_block_to_exitset(
                 # store's own completion testimony is absent from it, because
                 # this store did not complete.
                 #
-                # Completed arm carries `entries` -- the prefix PLUS this
-                # store's red testimony. Only this arm is fed to the tail by
-                # `ExitSet.sequence`, so no later target can execute after an
-                # earlier store halt.
+                # Completed arm carries the prefix PLUS this store's red
+                # testimony, which is not a halt (#7826). Only this arm is fed
+                # to the tail by `ExitSet.sequence`, so no later target can
+                # execute after an earlier store halt.
+                from sugar_lift_py_tests.floor.runtime_effect_testimony import (
+                    RuntimeEffectTestimony,
+                )
                 from sugar_lift_py_tests.outcome.exit_set import complement_guard
 
+                testimony = (RuntimeEffectTestimony(outcome.effect),)
+                for transform in reversed(state.transforms):
+                    testimony = transform(testimony)
                 return ExitSet(
                     (
                         Halted(follow.halt_guard, outcome.effect, state),
                         Completed(
                             complement_guard(follow.halt_guard),
                             _ReducedBlock(
-                                entries,
+                                (*state.entries, *testimony),
                                 True,
                                 state.fall_through,
                                 state.transforms,
@@ -530,20 +442,9 @@ def reduce_block_to_exitset(
 
     if isinstance(exits, NativeOperationExitCarrierV1):
         return exits
-    from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
-
-    return promote_raise_halts(exits)
-
-
-def reduce_statements(statements: tuple, ctx: object = None):
-    """Return the legacy tuple only after ExitSet proves one unconditional exit."""
-    collapsed = reduce_block_to_exitset(statements, ctx).collapse()
-    if isinstance(collapsed, Incomplete):
-        return ((collapsed,), False, ())
-    if not isinstance(collapsed, Complete):
-        return collapsed
-    state = collapsed.value
-    return state.entries, state.can_fall_through, state.fall_through
+    # No completed record holds a halt (#7826): every halt is already a halted
+    # arm, so there is nothing to promote out of a record here.
+    return exits
 
 
 def reduce_body(statements: tuple, ctx: object = None):
@@ -597,15 +498,9 @@ def reduce_body(statements: tuple, ctx: object = None):
             )
         )
     state = collapsed.value
-    entries = state.entries
-    # A body that is nothing but a single propagating effect IS that effect --
-    # there is no value, no fact, no exit to make a contract from. Propagate it
-    # so the def surfaces as an effect (a halt), never a None-returning contract.
-    if len(entries) == 1 and isinstance(entries[0], Incomplete):
-        return entries[0]
     return Complete(
         BlockValue(
-            entries,
+            state.entries,
             fall_through=state.fall_through,
             can_fall_through=state.can_fall_through,
         )

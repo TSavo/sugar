@@ -200,9 +200,8 @@ def _binds_live_name(ctx, bind, index) -> bool:
 
 
 def _carries_halts(outcome) -> bool:
-    """A continuing ``Complete`` whose linear view holds a conditional halt."""
-    from sugar_lift_py_tests.outcome import Incomplete
+    """A continuing ``Complete`` whose linear view holds a conditional halt.
 
-    if outcome.follow().halt_guard is not None:
-        return True
-    return any(isinstance(entry, Incomplete) for entry in outcome.contribution())
+    Only the store family's second face is one: a completed record holds no
+    halt (#7826)."""
+    return outcome.follow().halt_guard is not None

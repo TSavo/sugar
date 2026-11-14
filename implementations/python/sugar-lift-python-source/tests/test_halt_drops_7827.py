@@ -28,7 +28,7 @@ Confirmed (pinned expected-red):
 
 Struck (each test below records why): ``sugar/for_universal_sugar.py``
 (since deleted),
-``sugar/exit_set_routing.py`` ``exitset_to_outcome``'s untyped completed arm,
+``sugar/exit_set_routing.py`` ``exitset_to_outcome`` (since deleted, #7826),
 ``sugar/match_sugar.py`` ``_outcome_as_exitset`` / ``_incomplete_as_halted``,
 and of item 6: ``sugar_outcome_to_exitset``, ``Incomplete.and_then`` and
 ``caller_parameter_contract.py``'s ``undischarged`` arm.
@@ -199,46 +199,17 @@ def test_a_source_loop_keeps_its_body_halt_beside_the_completion(
 
 
 # ---------------------------------------------------------------------------
-# 3. sugar/exit_set_routing.py exitset_to_outcome: struck. Every completed arm
-#    that reaches it from source (try, try/finally, try*) holds a
-#    _ReducedBlock; the with family does not construct from one source file
-#    (no context-manager derivation), so the solver harness cannot reach it.
+# 3. sugar/exit_set_routing.py exitset_to_outcome: deleted (#7826). The try
+#    family hands back its own faces; no converter projects them onto a
+#    linear record, so none can drop an untyped completed arm.
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    "body",
-    [
-        "    try:\n        return 1\n    except ValueError:\n        a = 2\n",
-        "    try:\n        return 1\n    finally:\n        a = 2\n",
-        "    try:\n        raise ExceptionGroup('g', [ValueError()])\n"
-        "    except* ValueError:\n        a = 2\n    return 3\n",
-    ],
-    ids=["try", "try-finally", "try-star"],
-)
-def test_every_completed_arm_reaching_exitset_to_outcome_is_a_reduced_block(
-    body: str, monkeypatch
-) -> None:
+def test_the_linear_projection_of_a_boundary_is_gone() -> None:
     import sugar_lift_py_tests.sugar.exit_set_routing as routing
-    from sugar_lift_py_tests.outcome.exit_set import Completed
-    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
-    seen: list = []
-    original = routing.exitset_to_outcome
-
-    def spy(exits):
-        seen.extend(
-            type(arm.value)
-            for arm in exits.normalize().exits
-            if isinstance(arm, Completed)
-        )
-        return original(exits)
-
-    monkeypatch.setattr(routing, "exitset_to_outcome", spy)
-    _function("def test_f():\n" + body)
-
-    assert seen
-    assert set(seen) == {_ReducedBlock}
+    assert not hasattr(routing, "exitset_to_outcome")
+    assert not hasattr(routing, "promote_raise_halts")
 
 
 # ---------------------------------------------------------------------------

@@ -31,20 +31,11 @@ def _reduce(tmp_path: Path, stem: str, text: str):
     return source, function, reduce_block_to_exitset(function.sugar().statements, None)
 
 
-def test_raise_owner_seats_exact_paired_lineage(tmp_path: Path, monkeypatch):
-    from sugar_lift_py_tests.sugar import exit_set_routing
-
-    seen = []
-    original = exit_set_routing.promote_raise_halts
-
-    def observe(exits):
-        seen.append(exits)
-        return original(exits)
-
-    monkeypatch.setattr(exit_set_routing, "promote_raise_halts", observe)
+def test_raise_owner_seats_exact_paired_lineage(tmp_path: Path):
+    # A raise is a halted arm from its own statement (#7826): no record holds
+    # it, so there is no promotion step to observe.
     with pytest.raises(owner._HaltLineageProducerMissingV1):
         _reduce(tmp_path, "raise", "def target():\n    raise ValueError('x')\n")
-    assert len(seen) == 1
 
 
 @pytest.mark.parametrize("statement", ["break", "continue"])

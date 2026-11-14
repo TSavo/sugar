@@ -104,8 +104,6 @@ class WithResourceSugar(Sugar):
             prepend_facts_to_exitset,
         )
         from sugar_lift_py_tests.sugar.exit_set_routing import (
-            exitset_to_outcome,
-            promote_raise_halts,
             sugar_outcome_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -160,9 +158,7 @@ class WithResourceSugar(Sugar):
                         self.enter_slot_id, entered.enter_value
                     ).to_facts(site=self.site)
 
-                body_es = promote_raise_halts(
-                    reduce_block_to_exitset(self.body)
-                ).guarded(face_guard)
+                body_es = reduce_block_to_exitset(self.body).guarded(face_guard)
 
                 # Parametric exit: materialize once, fan over every body face.
                 exit_es = sugar_outcome_to_exitset(self.exit.desugar())
@@ -221,7 +217,8 @@ class WithResourceSugar(Sugar):
             for part in parts[1:]:
                 routed = routed.union(part)
 
-        return exitset_to_outcome(routed)
+        # The with's own faces: a halt stays a halted arm (#7826).
+        return routed.normalize()
 
 
 def _and_guards(left, right):

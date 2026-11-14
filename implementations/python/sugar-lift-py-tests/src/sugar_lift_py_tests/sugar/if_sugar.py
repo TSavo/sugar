@@ -12,9 +12,11 @@ The other half of an if -- what a name BINDS to after the branch (the phi
 `joined_bindings`/`guarded_bindings` on the `GuardedFaces` it builds are empty
 by construction. substitute ages the bindings; this reads off the guarded facts.
 
-The guard here is written from the pure-meaning primitives: `reduce_statements`
-(block reduction), `entry.guarded(formula)` (implication), and the `GuardedFaces`
-floor value the block reducer already consumes.
+The guard here is written from the pure-meaning primitives:
+`reduce_block_to_exitset` (block reduction), `entry.guarded(formula)`
+(implication), and the `GuardedFaces` floor value the block reducer already
+consumes. A halt in either suite stays a halted arm of the if's `ExitSet`; the
+`GuardedFaces` record holds completed testimony only (#7826).
 """
 
 from __future__ import annotations
@@ -431,39 +433,20 @@ class IfSugar(Sugar):
         observed_formula,
         authentication,
     ) -> Outcome:
+        from dataclasses import replace as _replace
+
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
-        from sugar_lift_py_tests.outcome import Completed, Halted, Incomplete
-        from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
+        from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import (
+            _or_guards,
+            false_guard,
+            true_guard,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
         exits = then_exits.guarded(formula, then_face).union(
             else_exits.guarded(not_formula, else_face)
         )
-        entries = []
-        for exit_ in exits.exits:
-            if isinstance(exit_, Halted):
-                entries.append(Incomplete(exit_.effect).guarded(exit_.guard))
-            else:
-                entries.extend(
-                    entry.guarded(exit_.guard) for entry in exit_.value.entries
-                )
-
-        def can_fall_through(branch_exits):
-            return any(
-                isinstance(exit_, Completed) and exit_.value.can_fall_through
-                for exit_ in branch_exits.exits
-            )
-
-        then_branch_exits = not can_fall_through(then_exits)
-        else_branch_exits = not can_fall_through(else_exits)
-        can_fall_through = not (then_branch_exits and else_branch_exits)
-        # The tail rides under the polarity of whichever branch did NOT exit; if
-        # both fall through it is unconditional, if both exit it is unreachable.
-        continuation_guard = None
-        if then_branch_exits and not else_branch_exits:
-            continuation_guard = not_formula
-        elif else_branch_exits and not then_branch_exits:
-            continuation_guard = formula
-
         # A ground condition never uses the branch-result slot as the arm
         # guard (formula is already true_guard/false_guard). Authenticating
         # that unused slot would inject BranchResultAuthentication into every
@@ -474,16 +457,81 @@ class IfSugar(Sugar):
             if observed_formula in (false_guard(), true_guard())
             else (authentication,)
         )
-        return Complete(
-            GuardedFaces(
-                guard=formula,
-                entries=tuple(entries),
-                then_exits=then_branch_exits,
-                else_exits=else_branch_exits,
-                joined_bindings=(),  # bindings are substitute's job (the IfExp phi)
-                guarded_bindings=(),
-                can_fall_through=can_fall_through,
-                continuation_guard=continuation_guard,
-                unconditional_entries=unconditional_entries,
+
+        # A halt in either suite stays a halted arm of the if (#7826): no
+        # completed record holds a halt.  The condition's own testimony (the
+        # branch-result slot's authentication) was established before either
+        # suite ran, so the halted arm's state carries it ahead of what the
+        # suite reached before halting.
+        halted = []
+        entries = []
+        completed_guard = None
+        for exit_ in exits.exits:
+            if isinstance(exit_, Halted):
+                inner = exit_.state
+                if isinstance(inner, _ReducedBlock):
+                    state = _replace(
+                        inner, entries=(*unconditional_entries, *inner.entries)
+                    )
+                elif inner is None:
+                    state = _ReducedBlock(tuple(unconditional_entries), True, ())
+                else:
+                    state = inner
+                halted.append(Halted(exit_.guard, exit_.effect, state, exit_.faces))
+                continue
+            entries.extend(entry.guarded(exit_.guard) for entry in exit_.value.entries)
+            completed_guard = (
+                exit_.guard
+                if completed_guard is None
+                else _or_guards(completed_guard, exit_.guard)
             )
+
+        def falls_through(branch_exits):
+            return any(
+                isinstance(exit_, Completed) and exit_.value.can_fall_through
+                for exit_ in branch_exits.exits
+            )
+
+        def only_halts(branch_exits):
+            # A suite whose every exit is a halt sets no continuation guard:
+            # its halts are arms of their own, and the completed face's arm
+            # guard already excludes them.
+            return bool(branch_exits.exits) and all(
+                isinstance(exit_, Halted) for exit_ in branch_exits.exits
+            )
+
+        then_branch_exits = not falls_through(then_exits)
+        else_branch_exits = not falls_through(else_exits)
+        can_fall_through = not (then_branch_exits and else_branch_exits)
+        # The tail rides under the polarity of whichever branch did NOT exit; if
+        # both fall through it is unconditional, if both exit it is unreachable.
+        continuation_guard = None
+        if (
+            then_branch_exits
+            and not else_branch_exits
+            and not only_halts(then_exits)
+        ):
+            continuation_guard = not_formula
+        elif (
+            else_branch_exits
+            and not then_branch_exits
+            and not only_halts(else_exits)
+        ):
+            continuation_guard = formula
+
+        faces = GuardedFaces(
+            guard=formula,
+            entries=tuple(entries),
+            then_exits=then_branch_exits,
+            else_exits=else_branch_exits,
+            joined_bindings=(),  # bindings are substitute's job (the IfExp phi)
+            guarded_bindings=(),
+            can_fall_through=can_fall_through,
+            continuation_guard=continuation_guard,
+            unconditional_entries=unconditional_entries,
         )
+        if not halted:
+            return Complete(faces)
+        if completed_guard is None:
+            return ExitSet(tuple(halted)).normalize()
+        return ExitSet((*halted, Completed(completed_guard, faces))).normalize()

@@ -8,8 +8,7 @@ shared ``ExitSet`` algebra it pins here.
 algebra ``Store`` established and ``With`` rode:
 
     body
-      → reduce_block_to_exitset  (the shared reducer)
-      → promote_raise_halts      (the shared Completed/Halted promotion)
+      → reduce_block_to_exitset  (the shared reducer; a halt is a halted arm)
       → handler routing over Halted arms, ``else`` over Completed arms
       → ExitSet.and_finally      (the shared cleanup fold)
 
@@ -708,22 +707,18 @@ def test_shared_fold_spy_bites_on_a_behavior_identical_private_fold():
 
     def desugar_via_private_fold(self, ctx=None):
         from sugar_lift_py_tests.floor.return_value import ReturnValue
-        from sugar_lift_py_tests.sugar.exit_set_routing import (
-            exitset_to_outcome,
-            promote_raise_halts,
-        )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
             reduce_block_to_exitset,
         )
         from sugar_lift_py_tests.sugar.try_sugar import _route_handlers_over_exits
 
-        body_es = promote_raise_halts(reduce_block_to_exitset(self.body, ctx))
+        body_es = reduce_block_to_exitset(self.body, ctx)
         pre_finally = _route_handlers_over_exits(
             body_es, self.handlers, self.orelse, site=self.site, ctx=ctx
         )
         if not self.finalbody:
-            return exitset_to_outcome(pre_finally)
+            return pre_finally.normalize()
         cleanup_es = reduce_block_to_exitset(self.finalbody, ctx)
 
         def _restores(value):
@@ -733,9 +728,9 @@ def test_shared_fold_spy_bites_on_a_behavior_identical_private_fold():
                 return not any(isinstance(e, ReturnValue) for e in value.entries)
             return True
 
-        return exitset_to_outcome(
-            _private_fold(pre_finally, lambda: cleanup_es, cleanup_restores=_restores)
-        )
+        return _private_fold(
+            pre_finally, lambda: cleanup_es, cleanup_restores=_restores
+        ).normalize()
 
     TrySugar.desugar = desugar_via_private_fold
     seen, real = _spy_and_finally()
@@ -806,8 +801,7 @@ def _arm_shape(exits):
 
 
 def _routed(src):
-    """Body -> promote -> handler routing, through the shared reducer."""
-    from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
+    """Body -> handler routing, through the shared reducer."""
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
@@ -815,7 +809,7 @@ def _routed(src):
 
     node = _find_try(_fn(src).sugar())
     assert node is not None
-    body_es = promote_raise_halts(reduce_block_to_exitset(node.body, None))
+    body_es = reduce_block_to_exitset(node.body, None)
     return (
         node,
         body_es,
@@ -935,7 +929,6 @@ def test_first_match_is_source_order_and_bites_when_the_arms_are_reversed():
     must select the other body -- if it did not, the source-order twin above
     would be passing for a reason unrelated to its law.
     """
-    from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
@@ -945,7 +938,7 @@ def test_first_match_is_source_order_and_bites_when_the_arms_are_reversed():
     )
 
     node = _find_try(_fn(_TWO_ARM_MRO).sugar())
-    body_es = promote_raise_halts(reduce_block_to_exitset(node.body, None))
+    body_es = reduce_block_to_exitset(node.body, None)
     halted = [e for e in body_es.exits if type(e).__name__ == "Halted"]
     assert len(halted) == 1
 
