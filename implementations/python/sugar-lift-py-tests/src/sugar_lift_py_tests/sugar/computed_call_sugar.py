@@ -34,6 +34,13 @@ class ComputedCallSugar(ConstructedTermSugar):
     site: object = dataclass_field(compare=False)
     keywords: tuple[tuple[str, ConstructedTermSugar], ...] = ()
     source_call_frame: object | None = dataclass_field(default=None, compare=False)
+    # ``((name, coordinate cid, sugar), ...)``: a call of a lambda carries,
+    # for each enclosing local its body reads, the binding the calling scope
+    # holds at the call (``Call._closure_cells``), as a call of a local
+    # ``def`` does (``CallSiteSugar.captured``).  Read here, at the call, and
+    # bound under the frame's captured coordinate before the body runs
+    # (``with_captured_values``); never the binding the lambda was made in.
+    captured: tuple = dataclass_field(default=(), compare=False)
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(self.callee, owner="ComputedCallSugar.callee")
@@ -143,17 +150,26 @@ class ComputedCallSugar(ConstructedTermSugar):
     def _call(self, callee, positional: tuple, kw_values: tuple, ctx) -> ExitSet:
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.sugar.call_site_sugar import read_captured_values
 
         owner = str(self.site)
         keyword_terms = [
             ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
             for name, value in kw_values
         ]
+        # What the lambda reads from its enclosing scope is an input of this
+        # call as its actuals are (``CallSiteSugar._collect_kwargs``).
+        captured_values = read_captured_values(self.captured, ctx, site=self.site)
+        closure_terms = [
+            ctor("py.closure", [str_const(name), value.to_term(owner=owner)])
+            for name, _cid, value in captured_values
+        ]
         term = ctor(
             "py.call",
             [callee.to_term(owner=owner)]
             + [value.to_term(owner=owner) for value in positional]
-            + keyword_terms,
+            + keyword_terms
+            + closure_terms,
             symbol_kind="coordinate",
         )
         frame = self.source_call_frame
@@ -163,10 +179,22 @@ class ComputedCallSugar(ConstructedTermSugar):
             from sugar_lift_py_tests.sugar.call_site_sugar import (
                 bind_source_frame_call,
                 enter_source_frame,
+                with_captured_values,
             )
 
             ctx, module_halt = enter_source_frame(
-                frame, ctx, owner="ComputedCallSugar.desugar", blame=self.site
+                frame,
+                ctx,
+                owner="ComputedCallSugar.desugar",
+                blame=self.site,
+                covered=frozenset(name for name, _cid, _value in captured_values),
+            )
+            # Every name the lambda reads from its enclosing function is bound
+            # from the calling scope at this call, as a local ``def``'s call
+            # binds it, or the call is refused by name: the body never reads
+            # the binding the lambda was made under.
+            ctx = with_captured_values(
+                ctx, frame, captured_values, site=self.site, blame="py.call"
             )
             if module_halt is not None:
                 return module_halt

@@ -18,7 +18,12 @@ class LambdaSugar(ConstructedTermSugar):
     ``Lambda._closure_coordinates``).  The comprehension binds them before it
     reduces the element; the lambda value carries each binding (its closure,
     ``LambdaCallable.closure``), so its body reduces after the comprehension
-    is done, when the context no longer binds them."""
+    is done, when the context no longer binds them.
+
+    An enclosing function's local the body reads is not carried here: the
+    body reads it through a captured coordinate (``Lambda._captured_bindings``)
+    that each call binds from the calling scope at the call
+    (``ComputedCallSugar.captured``), never the binding at construction."""
 
     formals: tuple[str, ...]
     body: Sugar
