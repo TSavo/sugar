@@ -15783,9 +15783,11 @@ def _nearer_bound_names(owner, span) -> set:
 
 def _coordinates_read(body, captured) -> tuple:
     """The ``(name, coordinate)`` pairs of ``captured`` whose coordinate
-    ``body`` reads: a ``BindingCoordinateRef`` to it, or the cell a call in
+    ``body`` reads: a ``BindingCoordinateRef`` to it, the cell a call in
     ``body`` carries for its own callee (``Call._closure_cells``, a leaf, not
-    a child).  A name an inner scope rebinds is not read through it."""
+    a child), or the cell a lambda argument in ``body`` carries into the call
+    it is passed to (``Call._carry_argument_cells``, a leaf too).  A name an
+    inner scope rebinds is not read through it."""
     if not captured:
         return ()
     wanted = {coordinate.cid: (name, coordinate) for name, coordinate in captured}
@@ -15801,7 +15803,112 @@ def _coordinates_read(body, captured) -> tuple:
                 for _name, binding in getattr(node, "closure_cells", None) or ():
                     if isinstance(binding, Node):
                         pending.append(binding)
+            elif isinstance(node, (Lambda, EvaluationRef)):
+                for _name, binding in getattr(node, "carried_cells", None) or ():
+                    if isinstance(binding, Node):
+                        pending.append(binding)
     return tuple(pair for cid, pair in wanted.items() if cid in found)
+
+
+# Builtins that call a ``key=`` callback only while they run and keep no
+# reference to it once they return.  ``map`` and ``filter`` are not here:
+# each returns an iterator that holds the callback and calls it when the
+# iterator is consumed, after the call (``Call._runs_argument_only_during_call``).
+_KEY_CALLBACK_BUILTINS = frozenset(
+    ("python:builtins.sorted", "python:builtins.min", "python:builtins.max")
+)
+
+
+def _cell_sugars(cells, names, coordinates) -> tuple:
+    """``((name, coordinate cid, sugar), ...)``: for each captured name of a
+    function (``names``, read through ``coordinates``), the sugar of the
+    binding a call carries for it (``cells``: ``(name, binding)``, from
+    ``Call._cells_at_call``); empty unless every one is carried.  The one
+    reader for a call of the function (``Call._captured_cells``) and for a
+    lambda argument a callee runs during the call (``carried_cells``)."""
+    names = tuple(names or ())
+    if not names or not cells:
+        return ()
+    by_name = dict(cells)
+    if any(name not in by_name for name in names):
+        return ()
+    return tuple(
+        (name, coordinate.cid, by_name[name].sugar())
+        for name, coordinate in zip(names, tuple(coordinates or ()), strict=True)
+    )
+
+
+def _receiving_formal(params, position) -> "Optional[str]":
+    """The formal of ``params`` an argument at ``position`` binds:
+    ``("positional", index)`` or ``("keyword", name)``.  ``None`` for one a
+    ``*args`` or ``**kwargs`` collects (the callee holds it in a container)
+    or that binds no formal."""
+    kind, key = position
+    if kind == "positional":
+        positional = tuple(
+            param
+            for param in params
+            if param.param_kind in ("positional_only", "positional_or_keyword")
+        )
+        return positional[key].name if key < len(positional) else None
+    return next(
+        (
+            param.name
+            for param in params
+            if param.name == key
+            and param.param_kind in ("positional_or_keyword", "keyword_only")
+        ),
+        None,
+    )
+
+
+def _formal_only_called(definition, formal: str) -> bool:
+    """Whether ``definition`` reads its formal ``formal`` only as the callee
+    of a call in its own body, so the value it is given is called during a
+    call of ``definition`` and never kept past it: not returned, stored,
+    passed on, rebound or deleted (each a read or write of the name that is
+    not a call's callee), not read in a nested function, lambda, class or
+    comprehension (which may outlive the call), and ``definition`` is no
+    generator (its frame, holding the formal, outlives the call) and reads
+    no namespace builtin (``locals()``, ``vars()``: the frame's names as a
+    value)."""
+    scopes = []
+    called = set()
+    reads = []
+    for statement in definition.body:
+        for node in statement.walk():
+            if isinstance(node, (Yield, YieldFrom)):
+                return False
+            if isinstance(
+                node,
+                (
+                    FunctionDef,
+                    AsyncFunctionDef,
+                    ClassDef,
+                    Lambda,
+                    ListComp,
+                    SetComp,
+                    DictComp,
+                    GeneratorExp,
+                ),
+            ):
+                scopes.append(node.span)
+            elif (
+                isinstance(node, Call)
+                and isinstance(node.func, Name)
+                and node.func.id == formal
+            ):
+                called.add((node.func.span.start, node.func.span.end))
+            elif isinstance(node, Name):
+                if node.id in _DYNAMIC_GLOBAL_WRITERS:
+                    return False
+                if node.id == formal:
+                    reads.append(node.span)
+    return all(
+        (span.start, span.end) in called
+        and not any(_encloses(scope, span) for scope in scopes)
+        for span in reads
+    )
 
 
 class Lambda(Expression):
@@ -15836,6 +15943,10 @@ class Lambda(Expression):
         binding the lambda was made under is never read.  A lambda in a
         ``def``'s defaults or decorators stands in the scope around the
         ``def`` (``_function_holding``) and captures that function's locals.
+        A lambda passed to a callee that runs it during the call
+        (``sorted(xs, key=lambda v: d[v])``) is called there: the call it is
+        passed to carries the binding at that call
+        (``Call._carry_argument_cells``).
 
         A module global the body reads is read where the lambda is called,
         as a ``def``'s body reads one (``_module_global_references``): this
@@ -15886,11 +15997,18 @@ class Lambda(Expression):
         captured = prior + _coordinates_read(new_body, fresh)
         # Always rewrite, even when the children are identical.  A ShadowNode
         # is the construction-time testimony that capture substitution ran.
-        if not captured:
+        leaves = {"captured_bindings": captured} if captured else {}
+        if getattr(self, "carried_cells", None):
+            # What a call carries into this lambda is that call's decision,
+            # made after its arguments substitute
+            # (``Call._carry_argument_cells``); never one a substitution
+            # elsewhere left behind.
+            leaves["carried_cells"] = ()
+        if not leaves:
             return rewrite(self, params=new_params, body=new_body)
         return rewrite_with_leaves(
             self,
-            {"captured_bindings": captured},
+            leaves,
             params=new_params,
             body=new_body,
         )
@@ -16148,6 +16266,14 @@ class Lambda(Expression):
             body_fragment_cid=body.fragment.seal().cid,
             site=self.fragment,
             closure_coordinates=self._closure_coordinates(),
+            # Passed to a callee that runs it during the call: the caller's
+            # binding at the call of each enclosing local the body reads
+            # (``Call._carry_argument_cells``).
+            captured=_cell_sugars(
+                getattr(self, "carried_cells", None),
+                frame.captured_names,
+                frame.captured_coordinates,
+            ),
         )
 
     def _closure_coordinates(self) -> tuple:
@@ -17440,6 +17566,7 @@ class Call(Expression):
             from .shadow import rewrite_with_leaves
 
             rewritten = rewrite_with_leaves(rewritten, {"closure_cells": cells})
+        rewritten = self._carry_argument_cells(scope, rewritten)
         if (
             rewritten is not self
             and isinstance(rewritten, Call)
@@ -17470,18 +17597,29 @@ class Call(Expression):
 
         Empty when the callee is neither a local ``def`` this scope binds
         nor a lambda (``(lambda: y)()``, or a name bound to one,
-        ``rewritten``'s callee through ``of``), when a read name is
-        ``nonlocal`` (the body writes the cell), or when a read name has no
-        value binding here (unbound, or bound to a definition or an import):
-        the call then stays refused by name (``CallSiteSugar``,
-        ``ComputedCallSugar``).  Empty, too, when this scope's binding of a
+        ``rewritten``'s callee through ``of``), and otherwise as
+        ``_cells_at_call`` answers: the call then stays refused by name
+        (``CallSiteSugar``, ``ComputedCallSugar``)."""
+        definition = self._closure_definition(scope, rewritten)
+        if definition is None:
+            return ()
+        return self._cells_at_call(scope, definition)
+
+    def _cells_at_call(self, scope, definition) -> tuple:
+        """``((name, binding), ...)``: the binding this scope holds here, at
+        the call, for each enclosing local ``definition`` (a local ``def`` or
+        a lambda) reads (``_captured_bindings``) -- what Python reads from the
+        cell when the function runs during this call.  The one reader for a
+        call of the function (``_closure_cells``) and for a lambda passed to
+        a callee that runs it during the call (``_carry_argument_cells``).
+
+        Empty when a read name is ``nonlocal`` (the body writes the cell), or
+        when a read name has no value binding here (unbound, or bound to a
+        definition or an import).  Empty, too, when this scope's binding of a
         read name is not the cell's: a lambda reached in another function (a
         formal specialized to it, ``bind_node_actuals``), or a name a
         comprehension or lambda around this call rebinds
         (``_nearer_bound_names``)."""
-        definition = self._closure_definition(scope, rewritten)
-        if definition is None:
-            return ()
         names, _coordinates = definition._captured_bindings()
         if not names or definition.lacks_captured_binding_testimony(
             covered=frozenset(names)
@@ -17512,6 +17650,145 @@ class Call(Expression):
             cells.append((name, binding))
         return tuple(cells)
 
+    def _carry_argument_cells(self, scope, rewritten) -> "Node":
+        """``rewritten`` with each lambda argument the callee runs only while
+        this call runs carrying, as its ``carried_cells`` leaf, the binding
+        this scope holds at the call for each enclosing local the lambda
+        reads (``_cells_at_call``): a lambda literal, or a name bound to one
+        (an ``EvaluationRef`` whose ``of`` is the lambda).
+
+        Python runs such a callback during the call it is passed to and reads
+        the enclosing cells then, and the caller's bindings cannot change
+        during that call except through the callback, which rebinds none of
+        them.  So the lambda value the argument reduces to carries those
+        bindings (``LambdaCallable.captured``), and its call inside the callee
+        binds them under the lambda's captured coordinates
+        (``LambdaCallable.callable_application_with``).  A lambda the callee
+        may keep past the call (``_runs_argument_only_during_call``) carries
+        nothing, and its call stays refused by name."""
+        if not isinstance(rewritten, Call):
+            return rewritten
+        args = tuple(rewritten.args)
+        keywords = tuple(rewritten.keywords)
+        carried_args = tuple(
+            self._carried_argument(scope, argument, ("positional", index))
+            for index, argument in enumerate(args)
+        )
+        carried_keywords = []
+        for keyword in keywords:
+            value = keyword.value
+            carried = (
+                value
+                if keyword.arg is None
+                else self._carried_argument(scope, value, ("keyword", keyword.arg))
+            )
+            carried_keywords.append(carried)
+        if all(
+            new is old for new, old in zip(carried_args, args, strict=True)
+        ) and all(
+            new is keyword.value
+            for new, keyword in zip(carried_keywords, keywords, strict=True)
+        ):
+            return rewritten
+        from .shadow import rewrite
+
+        return rewrite(
+            rewritten,
+            args=carried_args,
+            keywords=tuple(
+                keyword
+                if new is keyword.value
+                else rewrite(keyword, value=new)
+                for new, keyword in zip(carried_keywords, keywords, strict=True)
+            ),
+        )
+
+    def _carried_argument(self, scope, argument, position) -> "Node":
+        """``argument`` carrying the cells a lambda it denotes reads at this
+        call (``_carry_argument_cells``), or ``argument`` itself."""
+        definition = argument
+        while isinstance(definition, EvaluationRef) and isinstance(
+            getattr(definition, "of", None), Node
+        ):
+            definition = definition.of
+        if not isinstance(definition, Lambda):
+            return argument
+        names = frozenset(definition._captured_bindings()[0])
+        if not names or not self._runs_argument_only_during_call(position, names):
+            return argument
+        cells = self._cells_at_call(scope, definition)
+        if not cells:
+            return argument
+        from .shadow import rewrite_with_leaves
+
+        return rewrite_with_leaves(argument, {"carried_cells": cells})
+
+    def _runs_argument_only_during_call(self, position, names) -> bool:
+        """Whether the callee calls the argument at ``position`` only while
+        this call runs and keeps no reference to it once it returns, and
+        nothing in the call but the callback can change what the caller binds
+        to ``names`` (the enclosing locals the lambda reads).
+
+        A builtin that calls a ``key=`` callback and keeps nothing
+        (``_KEY_CALLBACK_BUILTINS``: ``sorted``, ``min``, ``max``) does.
+        ``map`` and ``filter`` do not: each returns an iterator that holds the
+        callback and calls it when it is consumed, after the call.  A source
+        function does when it is a plain undecorated ``def`` that is not a
+        generator, its formal receiving the argument is read only as the
+        callee of a call in its own body (``_formal_only_called``: never
+        returned, stored, passed on, captured or rebound), it reads none of
+        the names from the caller's frame itself, and no other argument of
+        the call reads one (an object of the caller's it could change).
+        Never when a function in the caller declares one of the names
+        ``nonlocal`` (a callee could rebind it) or a walrus in the call's
+        arguments rebinds one, and never for any other callee."""
+        func = self.func
+        if not isinstance(func, Name):
+            return False
+        owner = _function_holding(self)
+        if owner is None or any(
+            isinstance(node, Nonlocal) and names & set(node.names)
+            for node in owner.walk()
+        ):
+            return False
+        operands = tuple(self.args) + tuple(keyword.value for keyword in self.keywords)
+        if any(
+            isinstance(node, NamedExpr)
+            and isinstance(node.target, Name)
+            and node.target.id in names
+            for operand in operands
+            for node in operand.walk()
+        ):
+            # A walrus in an argument rebinds the name in the caller after
+            # this binding is read and before the callee runs the lambda.
+            return False
+        builtin = self.unit.builtin_reference_at(func.id, func.line_col_span())
+        if builtin is not None:
+            return builtin in _KEY_CALLBACK_BUILTINS and position == ("keyword", "key")
+        definition = self.unit.source_function_definition_for_call(self)
+        if not isinstance(definition, FunctionDef) or definition.decorators:
+            return False
+        formal = _receiving_formal(definition.params, position)
+        if formal is None or not _formal_only_called(definition, formal):
+            return False
+        if names & set(definition._captured_bindings()[0]):
+            return False
+        others = tuple(
+            argument
+            for index, argument in enumerate(self.args)
+            if ("positional", index) != position
+        ) + tuple(
+            keyword.value
+            for keyword in self.keywords
+            if ("keyword", keyword.arg) != position
+        )
+        return not any(
+            (isinstance(node, Name) and node.id in names)
+            or (isinstance(node, EvaluationRef) and node.name in names)
+            for other in others
+            for node in other.walk()
+        )
+
     def _closure_definition(self, scope, rewritten):
         """The function this call runs whose captured names it binds: the
         local ``def`` the callee name is bound to here, or the lambda the
@@ -17536,20 +17813,10 @@ class Call(Expression):
         """``((name, coordinate cid, sugar), ...)`` for ``frame``'s captured
         names (``FunctionDef._captured_bindings``) from the cells this call
         carries (``_closure_cells``); empty unless every one is carried."""
-        names = tuple(getattr(frame, "captured_names", ()) or ())
-        if not names:
-            return ()
-        cells = getattr(self, "closure_cells", None)
-        if not cells:
-            return ()
-        by_name = dict(cells)
-        if any(name not in by_name for name in names):
-            return ()
-        return tuple(
-            (name, coordinate.cid, by_name[name].sugar())
-            for name, coordinate in zip(
-                names, frame.captured_coordinates, strict=True
-            )
+        return _cell_sugars(
+            getattr(self, "closure_cells", None),
+            getattr(frame, "captured_names", ()),
+            getattr(frame, "captured_coordinates", ()),
         )
 
     def _locals_snapshot(self, scope) -> "Optional[Node]":
@@ -19766,6 +20033,13 @@ class EvaluationRef(Expression):
 
     def substitute(self, scope):
         del scope
+        if getattr(self, "carried_cells", None):
+            # What a call carries into a lambda passed by this name is that
+            # call's decision (``Call._carry_argument_cells``), never one a
+            # substitution elsewhere left behind.
+            from .shadow import rewrite_with_leaves
+
+            return rewrite_with_leaves(self, {"carried_cells": ()})
         return self
 
     def ground_value(self) -> "Optional[Node]":
@@ -19788,7 +20062,26 @@ class EvaluationRef(Expression):
             deferred=getattr(self, "deferred", False) is True,
             recurrence=getattr(self, "recurrence", False) is True,
             place=getattr(self, "place", False) is True,
+            captured=self._carried_captures(),
         )
+
+    def _carried_captures(self) -> tuple:
+        """A name bound to a lambda passed to a callee that runs it during
+        the call (``Call._carry_argument_cells``): the caller's binding at
+        the call of each enclosing local the lambda reads, under the lambda's
+        captured coordinates (``_cell_sugars``).  Empty for every other
+        reference."""
+        cells = getattr(self, "carried_cells", None)
+        if not cells:
+            return ()
+        definition = self
+        while isinstance(definition, EvaluationRef) and isinstance(
+            getattr(definition, "of", None), Node
+        ):
+            definition = definition.of
+        if not isinstance(definition, Lambda):
+            return ()
+        return _cell_sugars(cells, *definition._captured_bindings())
 
 
 class LoopBindingRef(Expression):

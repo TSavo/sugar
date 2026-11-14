@@ -20,10 +20,14 @@ class LambdaSugar(ConstructedTermSugar):
     ``LambdaCallable.closure``), so its body reduces after the comprehension
     is done, when the context no longer binds them.
 
-    An enclosing function's local the body reads is not carried here: the
-    body reads it through a captured coordinate (``Lambda._captured_bindings``)
-    that each call binds from the calling scope at the call
-    (``ComputedCallSugar.captured``), never the binding at construction."""
+    An enclosing function's local the body reads is read through a captured
+    coordinate (``Lambda._captured_bindings``) that each call binds from the
+    calling scope at the call (``ComputedCallSugar.captured``), never the
+    binding at construction.  ``captured`` is that binding at a call this
+    lambda is passed to, whose callee runs it during the call
+    (``Call._carry_argument_cells``): ``((name, coordinate cid, sugar),
+    ...)``, read where the argument is evaluated and carried on the value
+    (``LambdaCallable.captured``)."""
 
     formals: tuple[str, ...]
     body: Sugar
@@ -32,6 +36,7 @@ class LambdaSugar(ConstructedTermSugar):
     body_fragment_cid: str
     site: object = dataclass_field(compare=False)
     closure_coordinates: tuple[str, ...] = ()
+    captured: tuple = dataclass_field(default=(), compare=False)
 
     def __post_init__(self) -> None:
         from sugar_source_tree.panic import SugarNotWritten
@@ -105,6 +110,7 @@ class LambdaSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor import LambdaCallable
+        from sugar_lift_py_tests.sugar.call_site_sugar import carried_captured_values
 
         sealed = self.site.seal()
         construction_identity = (
@@ -117,6 +123,7 @@ class LambdaSugar(ConstructedTermSugar):
                 construction_identity=construction_identity,
                 source_call_frame=self.source_call_frame,
                 closure=self._closure(ctx),
+                captured=carried_captured_values(self.captured, ctx),
             )
         )
 
