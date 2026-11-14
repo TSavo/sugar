@@ -11417,20 +11417,15 @@ class ClassDef(Statement):
         fields = tuple(body_fields)
         base_sugars = ()
         if self.bases:
-            context = self._require_construction_context(
-                owner="ClassDef._construct_sugar"
-            )
-            table = getattr(context, "source_class_bases", None)
-            enrolled = () if table is None else table.get(self.fragment.seal().cid, ())
-            # A source-base table carries already-authenticated local class
-            # definitions.  Otherwise unwrap a local ``Base`` / ``Base[T]``
-            # through the module binding door, and retain any other base
-            # expression as Sugar so desugaring evaluates it through the
-            # temporal floor. Dropping an unenrolled builtin base here erased
-            # ``dict`` from ``class _EnumDict(dict)`` and fabricated a
-            # plain-object receiver. Dropping ``AbstractRaises[T]`` left
-            # ``super()`` with zero direct bases.
-            base_sugars = enrolled or tuple(
+            self._require_construction_context(owner="ClassDef._construct_sugar")
+            # Each base is built by the tree itself: a local ``Base`` /
+            # ``Base[T]`` unwraps through the module binding door, and any
+            # other base expression is retained as Sugar so desugaring
+            # evaluates it through the temporal floor. Dropping a builtin
+            # base here erased ``dict`` from ``class _EnumDict(dict)`` and
+            # fabricated a plain-object receiver. Dropping
+            # ``AbstractRaises[T]`` left ``super()`` with zero direct bases.
+            base_sugars = tuple(
                 self._sugar_source_class_base(base) for base in self.bases
             )
         return ClassDefinitionSugar(
