@@ -36,13 +36,20 @@ class LambdaCallable(FloorValue):
     coordinates.  A lambda value that does not carry every captured name
     (returned, stored, or passed to a callee that may keep it) is refused by
     name there.
+
+    ``defaults`` are ``((key, value), ...)``: each default the lambda
+    expression evaluated where it was evaluated, under the default's key
+    (``nodes._default_evaluation_key``, ``LambdaSugar.defaults``).  Every
+    call binds them (``bind_call``), so a formal the call omits binds the
+    same object for every call; ``to_term`` names them, since two values of
+    one lambda over different defaults are different callables.
     """
 
     parameters: tuple[str, ...]
     body: Any
     construction_identity: str
     source_call_frame: Any = None
-    default_values: tuple[Any, ...] = ()
+    defaults: tuple[tuple[str, Any], ...] = ()
     keyword_only_parameters: tuple[str, ...] = ()
     keyword_only_default_values: tuple[Any | None, ...] = ()
     vararg_parameter: str | None = None
@@ -64,17 +71,12 @@ class LambdaCallable(FloorValue):
         del owner
         from sugar_lift_py_tests.ir import ctor, str_const
 
-        default_offset = len(self.parameters) - len(self.default_values)
-        encoded_parameters = []
-        for index, parameter in enumerate(self.parameters):
-            if index < default_offset:
-                encoded_parameters.append(str_const(parameter))
-                continue
-            default = self.default_values[index - default_offset]
+        encoded_parameters = [str_const(parameter) for parameter in self.parameters]
+        for key, default in self.defaults:
             encoded_parameters.append(
                 ctor(
                     "python:lambda_default",
-                    [str_const(parameter), default.to_term(owner="LambdaCallable")],
+                    [str_const(key), default.to_term(owner="LambdaCallable")],
                 )
             )
         if self.vararg_parameter is not None:
@@ -203,4 +205,5 @@ class LambdaCallable(FloorValue):
             blame=operation.site,
             term=term,
             closure=self.closure,
+            defaults=self.defaults,
         ).producer_outcome(ctx)

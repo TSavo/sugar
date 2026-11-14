@@ -7400,7 +7400,6 @@ class FunctionDef(Statement):
                 _default_value_sugar(self, index)
                 for index, _param in enumerate(params)
             ),
-            default_nodes=tuple(param.default for param in params),
             default_fragments=tuple(
                 param.default.fragment if param.default is not None else None
                 for param in params
@@ -7522,6 +7521,7 @@ class FunctionDef(Statement):
             AssignStepV1,
             AttributeAssignStepV1,
             AssertStepV1,
+            DefinitionDefaultsStepV1,
             ImportFromStepV1,
             ImportStepV1,
             WhileStepV1,
@@ -7878,15 +7878,38 @@ class FunctionDef(Statement):
             if (
                 isinstance(statement, (FunctionDef, AsyncFunctionDef))
                 and not statement.decorators
-                and all(param.default is None for param in statement.params)
             ):
                 # A ``def`` statement binds its name (substitution bound every
-                # later read of it to the definition) and runs nothing: its
-                # body runs at a call, as ``_sugar_body_statement`` reduces it.
-                # One with defaults evaluates them here and is not a step this
-                # vocabulary performs: it stays absent, never advanced.
+                # later read of it to the definition); its body runs at a
+                # call, as ``_sugar_body_statement`` reduces it.  Without
+                # defaults it runs nothing.  With defaults it evaluates each,
+                # once, here, and binds it under its key
+                # (``_definition_defaults_sugar``), as the plain body's
+                # statement does; a default that suspends is refused by name.
+                defaults = tuple(
+                    param.default
+                    for param in statement.params
+                    if param.default is not None
+                )
+                if not defaults:
+                    statement.discharge_by_substitution()
+                    return _GeneratorNamedStepV1(InertStepV1(statement.kind))
+                if FunctionDef._owns_yield(defaults):
+                    return _GeneratorStepAbsentV1("def whose default suspends")
+                defaults_sugar = _definition_defaults_sugar(statement)
+                if not all(
+                    isinstance(value, ConstructedTermSugar)
+                    for value in defaults_sugar.values
+                ):
+                    return absent_step
                 statement.discharge_by_substitution()
-                return _GeneratorNamedStepV1(InertStepV1(statement.kind))
+                return _GeneratorNamedStepV1(
+                    DefinitionDefaultsStepV1(
+                        defaults_sugar.values,
+                        tuple(key for key, _index in defaults_sugar.evaluations),
+                        statement.fragment.seal().cid,
+                    )
+                )
             if (
                 isinstance(statement, Expr)
                 and not FunctionDef._owns_yield((statement,))
@@ -9624,7 +9647,6 @@ class ClassDef(Statement):
             default_sugars=tuple(
                 None if default is None else default.sugar() for default in defaults
             ),
-            default_nodes=defaults,
             default_fragments=tuple(
                 None if source is None else source.fragment for source in default_sources
             ),
@@ -9723,7 +9745,6 @@ class ClassDef(Statement):
                 formal_projection_paths=(("inherited-exception-args", 0),),
                 parameter_kinds=("vararg",),
                 default_sugars=(None,),
-                default_nodes=(None,),
                 default_fragments=(None,),
                 default_fragment_cids=(None,),
                 body=self._source_visible_body(
@@ -9758,7 +9779,6 @@ class ClassDef(Statement):
                 param.default.sugar() if param.default is not None else None
                 for param in params
             ),
-            default_nodes=tuple(param.default for param in params),
             default_fragments=tuple(
                 param.default.fragment if param.default is not None else None
                 for param in params
@@ -17382,11 +17402,13 @@ class Lambda(Expression):
                 ("formal", index) for index, _ in enumerate(self.params)
             ),
             parameter_kinds=tuple(param.param_kind for param in self.params),
+            # A call reads the value the lambda expression evaluated under
+            # each default's key and its value carries
+            # (``LambdaSugar.defaults``, ``LambdaCallable.defaults``).
             default_sugars=tuple(
-                param.default.sugar() if param.default is not None else None
-                for param in self.params
+                _lambda_default_value_sugar(self, index)
+                for index, _param in enumerate(self.params)
             ),
-            default_nodes=tuple(param.default for param in self.params),
             default_fragments=tuple(
                 param.default.fragment if param.default is not None else None
                 for param in self.params
@@ -17469,6 +17491,14 @@ class Lambda(Expression):
                 frame.captured_coordinates,
             ),
             evaluation_coordinates=self._evaluation_coordinates(),
+            # Python evaluates a lambda's defaults where the lambda expression
+            # is evaluated, left to right: each default's key and sugar
+            # (substituted in the scope the lambda stands in).
+            defaults=tuple(
+                (_default_evaluation_key(self, index), param.default.sugar())
+                for index, param in enumerate(self.params)
+                if param.default is not None
+            ),
         )
 
     def _closure_coordinates(self) -> tuple:
@@ -21687,6 +21717,25 @@ def _default_value_sugar(definition, index: int):
     return DefaultValueSugar(
         evaluation=_default_evaluation_key(definition, index),
         value=default.sugar(),
+        site=default.fragment,
+    )
+
+
+def _lambda_default_value_sugar(lambda_, index: int):
+    """What a call that omits ``lambda_``'s ``index``-th formal binds to it:
+    the value the lambda expression evaluated under the default's key, which
+    the lambda value carries and the call binds (``LambdaCallable.defaults``,
+    ``object_value.bind_call``).  The default expression is never evaluated
+    at the call: a call whose callee carries no such value is refused by
+    name.  None for a formal with no default."""
+    default = lambda_.params[index].default
+    if default is None:
+        return None
+    from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
+
+    return DefaultValueSugar(
+        evaluation=_default_evaluation_key(lambda_, index),
+        value=None,
         site=default.fragment,
     )
 

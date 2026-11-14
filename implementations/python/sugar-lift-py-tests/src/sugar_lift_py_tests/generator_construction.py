@@ -602,6 +602,33 @@ class TermStepV1:
 
 
 @dataclass(frozen=True)
+class DefinitionDefaultsStepV1:
+    """An undecorated nested ``def`` statement with defaults, performed on
+    the live generator machine.
+
+    The statement binds its name (substitution bound every later read of it
+    to the definition) and evaluates each default, once, left to right, where
+    it stands; each completed value is bound under the default's key
+    (``evaluations``, ``nodes._default_evaluation_key``), which every call of
+    the function reads (``DefaultValueSugar``).  A default that halts halts
+    the step: its faces are arms of the machine.  The body runs only at a
+    call.  The same statement in a plain body is ``DefinitionDefaultsSugar``.
+    """
+
+    values: tuple
+    evaluations: tuple[str, ...]
+    fragment_cid: str
+
+    def __post_init__(self) -> None:
+        if len(self.values) != len(self.evaluations):
+            raise TypeError(
+                "DefinitionDefaultsStepV1 requires one evaluation key per default"
+            )
+        for value in self.values:
+            _require_constructed_term(value, owner="DefinitionDefaultsStepV1.values")
+
+
+@dataclass(frozen=True)
 class _ForIteratorStepV1:
     iterator: object = field(compare=False, repr=False)
     target_coordinates: tuple
@@ -744,6 +771,7 @@ _BODY_REMAINDER_STEPS = (
     YieldFromStepV1,
     TermStepV1,
     AssignStepV1,
+    DefinitionDefaultsStepV1,
     AttributeAssignStepV1,
     AssertStepV1,
     ImportStepV1,
@@ -766,6 +794,7 @@ GeneratorStepV1 = (
     | OpaqueStepV1
     | InertStepV1
     | AssignStepV1
+    | DefinitionDefaultsStepV1
     | AttributeAssignStepV1
     | AssertStepV1
     | ImportFromStepV1
@@ -967,6 +996,16 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "name": step.name,
             "fragmentCid": step.fragment_cid,
             "value": _generator_value_testimony(step.value, owner=owner),
+        }
+    if isinstance(step, DefinitionDefaultsStepV1):
+        return {
+            "kind": "definition-defaults",
+            "fragmentCid": step.fragment_cid,
+            "evaluations": list(step.evaluations),
+            "values": [
+                _generator_value_testimony(value, owner=owner)
+                for value in step.values
+            ],
         }
     if isinstance(step, AttributeAssignStepV1):
         return {
@@ -1738,42 +1777,9 @@ class GeneratorConstructionV1:
                 )
                 return machine._transition(requested)
 
-            def continue_assign(resolved_value):
-                from sugar_lift_py_tests.caller_parameter_contract import (
-                    NativeOperationExitCarrierV1,
-                )
-                from sugar_source_tree.panic import SugarNotWritten
-
-                result = transition_assign(resolved_value)
-                if isinstance(result, GeneratorTransitionGapV1):
-                    raise SugarNotWritten(
-                        owner="GeneratorConstructionV1.transition",
-                        blame=step,
-                        observed=result.observed,
-                        requested=result.requested,
-                        fix=(
-                            "implement that next transition before deferred "
-                            "normalization"
-                        ),
-                    )
-                if isinstance(result, (ExitSet, NativeOperationExitCarrierV1)):
-                    return result
-                return ExitSet.completed(result)
-
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            if _halts_with_a_raise(value):
-                # The value raised: the step halts with the machine's state and
-                # still runs any already-written cited exit (as the attribute
-                # store, assert and term steps do for their halts).
-                return self._fold_pending_cited_opaque_exits(
-                    ExitSet(tuple(replace(h, state=self) for h in value.halts()))
-                )
-            if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
-                return value.and_then(continue_assign)
-            return transition_assign(value)
+            return self._on_step_value(step, value, transition_assign)
+        if isinstance(step, DefinitionDefaultsStepV1):
+            return self._transition_definition_defaults(step, 0, requested)
         if isinstance(step, AttributeAssignStepV1):
             from sugar_lift_py_tests.sugar.store_effect_sugar import (
                 AttributeStoreEffectSugar,
@@ -3224,6 +3230,78 @@ class GeneratorConstructionV1:
         return reduce_block_to_exitset(
             step.statements, self._guard_evaluation_context()
         )
+
+    def _on_step_value(self, step, value, then):
+        """``then(resolved)`` on each completed arm of the value a step
+        evaluated (``_reduce_value``), the step's halts left as arms.
+
+        A value that raised halts the step with this machine's state and
+        still runs any already-written cited exit (as the attribute store,
+        assert and term steps do for their halts).  A split or owing value is
+        sequenced arm by arm (``and_then`` carries each arm's ``owed``); a
+        later transition that cannot stand is refused by name there."""
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+
+        def continue_step(resolved_value):
+            from sugar_source_tree.panic import SugarNotWritten
+
+            result = then(resolved_value)
+            if isinstance(result, GeneratorTransitionGapV1):
+                raise SugarNotWritten(
+                    owner="GeneratorConstructionV1.transition",
+                    blame=step,
+                    observed=result.observed,
+                    requested=result.requested,
+                    fix=(
+                        "implement that next transition before deferred "
+                        "normalization"
+                    ),
+                )
+            if isinstance(result, (ExitSet, NativeOperationExitCarrierV1)):
+                return result
+            return ExitSet.completed(result)
+
+        if _halts_with_a_raise(value):
+            return self._fold_pending_cited_opaque_exits(
+                ExitSet(tuple(replace(h, state=self) for h in value.halts()))
+            )
+        if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
+            return value.and_then(continue_step)
+        return then(value)
+
+    def _transition_definition_defaults(
+        self, step: DefinitionDefaultsStepV1, index: int, requested: str
+    ):
+        """The nested ``def`` statement ``step``: its defaults from ``index``
+        on, each evaluated where the statement stands (under the bindings the
+        ones before it recorded) and bound under its key
+        (``GeneratorAssignBindingV1`` with no name, keyed as an assignment's
+        evaluation is), then the machine advances past the statement."""
+        if index == len(step.values):
+            machine = replace(self, cursor=self.cursor + 1)
+            return machine._transition(requested)
+        value = self._reduce_value(step.values[index], requested)
+        if isinstance(value, GeneratorTransitionGapV1):
+            return value
+
+        def bind_default(resolved_value):
+            recorded, presented = self._recording_walrus_binds(resolved_value)
+            binding = GeneratorAssignBindingV1(
+                None,
+                presented,
+                step.fragment_cid,
+                evaluation=step.evaluations[index],
+            )
+            machine = replace(
+                recorded, binding_state=(*recorded.binding_state, binding)
+            )
+            return machine._transition_definition_defaults(
+                step, index + 1, requested
+            )
+
+        return self._on_step_value(step, value, bind_default)
 
     def _recording_walrus_binds(self, value):
         """``(machine, presented)``: this machine with every walrus bind
