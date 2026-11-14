@@ -1743,10 +1743,15 @@ class _WithReader:
             value_receipts_by_site=self.value_receipts_by_site,
         ):
             return
-        binds = (call.unit.module_direct_bindings or {}).get(call.func.id, ())
-        if len(binds) != 1:
+        # The callee by the binding the read reaches at its own coordinate
+        # (``SourceUnit.module_definition_at``): a parameter, local, free or
+        # nonlocal of the function around the call is that binding, never
+        # the module's ``def``/``class`` of the same name.
+        definition = call.unit.module_definition_at(
+            call.func.id, call.func.line_col_span()
+        )
+        if definition is None:
             return
-        definition = binds[0]
         if isinstance(definition, ClassDef):
             self.read_within(definition)
             _read_same_module_class_head(

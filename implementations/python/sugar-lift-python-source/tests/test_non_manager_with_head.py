@@ -168,6 +168,55 @@ def test_a_method_decorator_the_application_does_not_return_unchanged_is_unprove
     assert prove_manager_protocol_absence(_class(source, "M")) is None
 
 
+@pytest.mark.parametrize(
+    "shadow",
+    [
+        # the base is the function's parameter
+        "def f(B):\n",
+        # the base is the function's own class statement
+        "def f():\n    class B:\n        pass\n",
+    ],
+    ids=["parameter", "local-class"],
+)
+def test_a_base_shadowed_locally_is_the_local_binding(shadow):
+    """A base resolves through the binding its read reaches
+    (``SourceUnit.module_definition_at``), never the module's ``class``
+    statement of that spelling (#7757): the local ``B`` is not the module's
+    ``B``, so the module class's ``__enter__`` is never read into ``M``'s MRO
+    and the proof is not given."""
+    from sugar_lift_python_source.manager_protocol_absence import (
+        prove_manager_protocol_absence,
+    )
+
+    module_base = "class B:\n    def __enter__(self):\n        return 1\n"
+    derived = "    class M(B):\n        pass\n    return M\n"
+    unshadowed = prove_manager_protocol_absence(
+        _class(module_base + "def f():\n" + derived, "M")
+    )
+    assert unshadowed is not None and unshadowed.has_enter is True
+    assert (
+        prove_manager_protocol_absence(_class(module_base + shadow + derived, "M"))
+        is None
+    )
+
+
+def test_a_callee_shadowed_by_a_parameter_is_not_the_module_class(tmp_path):
+    """The ``with`` head's callee resolves through the binding its read
+    reaches: ``M`` is ``f``'s parameter, so the module's ``class M`` (which
+    lacks the protocol) is never read as the head's class; ``g``'s ``M`` is
+    the module's, and its head is (#7757)."""
+    source = (
+        "class M:\n    pass\n"
+        "def f(M):\n    with M():\n        return 1\n"
+        "def g():\n    with M():\n        return 1\n"
+    )
+    source_file = _open(_corpus(tmp_path, source))
+    heads = source_file.root.unit.construction_context.source_non_manager_heads
+    assert len(heads) == 1, heads
+    (proof,) = heads.values()
+    assert proof.type_name == "M"
+
+
 def test_a_local_class_without_enter_raises_type_error(tmp_path):
     _type_error_halt(
         tmp_path, "class M:\n    pass\ndef f():\n    with M():\n        return 1\n", "M"

@@ -11,7 +11,7 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import FunctionDef
+from sugar_source_tree.nodes import FunctionDef, LanguageCallee, Name
 from sugar_source_tree.tree import SourceFile
 
 
@@ -74,3 +74,60 @@ def test_only_a_name_nothing_binds_is_unbound() -> None:
     assert not _name_bound_nowhere(
         "globals()['y'] = 1\ndef f():\n    return y\n", "y"
     )
+
+
+def test_a_dynamic_global_writer_is_known_by_its_binding() -> None:
+    """``globals``, ``exec``, ... are writers by the binding the read
+    reaches (``SourceUnit.language_callee_of``), never by the spelling
+    (#7757)."""
+    # A ``globals`` the module binds itself is no builtin: it writes no global.
+    assert _name_bound_nowhere(
+        "def globals():\n    return {}\n"
+        "globals()['y'] = 1\ndef f():\n    return y\n",
+        "y",
+    )
+    # A parameter named ``exec`` is no builtin either.
+    assert _name_bound_nowhere(
+        "def g(exec):\n    exec('y = 1')\ndef f():\n    return y\n", "y"
+    )
+    # The builtin under another name is still the writer.
+    assert not _name_bound_nowhere(
+        "from builtins import exec as run\nrun('y = 1')\n"
+        "def f():\n    return y\n",
+        "y",
+    )
+    # The builtin namespace: imported (a store through it binds no name the
+    # source spells), or the module attribute the interpreter sets.
+    assert not _name_bound_nowhere(
+        "import builtins\nbuiltins.y = 1\ndef f():\n    return y\n", "y"
+    )
+    assert not _name_bound_nowhere(
+        "__builtins__['y'] = 1\ndef f():\n    return y\n", "y"
+    )
+
+
+def test_a_shadowed_globals_is_not_a_dynamic_writer() -> None:
+    source = "def f(globals):\n    return globals()\n"
+    unit = SourceFile(
+        (source, "unbound_name.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    ).unit
+    reads = [
+        node
+        for node in unit.typed_module.walk()
+        if isinstance(node, Name) and node.id == "globals"
+    ]
+    assert reads
+    assert not any(unit.reads_dynamic_global_writer(node) for node in reads)
+    builtin = "def f():\n    return globals()\n"
+    unit = SourceFile(
+        (builtin, "unbound_name.py", blake3_512_of(builtin.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    ).unit
+    (read,) = [
+        node
+        for node in unit.typed_module.walk()
+        if isinstance(node, Name) and node.id == "globals"
+    ]
+    assert unit.language_callee_of(read) is LanguageCallee.BUILTIN_GLOBALS
+    assert unit.reads_dynamic_global_writer(read)
