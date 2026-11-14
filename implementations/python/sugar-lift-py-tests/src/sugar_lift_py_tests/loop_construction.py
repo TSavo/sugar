@@ -442,6 +442,9 @@ class LoopConstructionV1:
     _graph: dict[str, Any]
     iterable_sugar: object | None = field(default=None, compare=False, repr=False)
     loop_runtime: object | None = field(default=None, compare=False, repr=False)
+    # What the recurrence's one symbolic item runs: the body and the guard an
+    # item runs under (``live_loop_construction.LiveSymbolicItemV1``).
+    symbolic_item: object | None = field(default=None, compare=False, repr=False)
 
     def wire_graph(self) -> dict[str, Any]:
         return deepcopy(self._graph)

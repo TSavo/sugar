@@ -45,14 +45,20 @@ class LiveOutwardHaltedFaceV1:
     statement_sugar: object
     guard: object
     state: tuple[BindingEntryV1, ...]
-    # The sugars of the body statements that run before the exit statement
-    # on its path, in order (``_control_guards``): the statements before it
-    # in its suite and, for an exit in an ``if`` arm, the statements before
-    # that ``if`` in the enclosing suites.  An inner loop among them
-    # publishes what it writes before the exit reads it: the recurrence's
-    # symbolic item reduces them, then the exit
-    # (``LoopRecurrenceSugar._face_outcome``).
-    prefix_sugars: tuple[object, ...] = ()
+
+
+@dataclass(frozen=True)
+class LiveSymbolicItemV1:
+    """What the recurrence's one symbolic item runs (#7757 item 7): the
+    loop body's statement sugars (the ones a concrete item runs), reduced
+    once through the block composition
+    (``LoopRecurrenceSugar._leave_symbolic_item``), and ``guard``, the loop's
+    ``BodyFallthrough`` guard -- an item is reached (a ``for``), or the
+    test holds (a ``while``) -- under which the body's arms are the loop's
+    exits.  Under its negation the loop leaves as its recurrence."""
+
+    body_sugars: tuple[object, ...]
+    guard: object
 
 
 from .nodes import TargetPatternV1 as LiveForTargetPatternV1
@@ -526,20 +532,15 @@ def _combine(outer, inner):
     return inner if outer is None else and_([outer, inner])
 
 
-def _control_guards(statements, scope, outer=None, before=()):
-    """Return exact owned control guards, including outward halted faces.
-
-    Each outward halted face is ``(statement, guard, scope, prefix)``:
-    ``prefix`` is the statements that run before ``statement`` on its path
-    (``before``, the statements ahead of the enclosing ``if``s, then those
-    ahead of it in its own suite)."""
+def _control_guards(statements, scope, outer=None):
+    """Return exact owned control guards, including outward halted faces."""
     from .nodes import Break, Continue, For, If, Raise, Return, While
 
     breaks = []
     continues = []
     halted = []
     current = dict(scope)
-    for index, statement in enumerate(statements):
+    for statement in statements:
         if isinstance(statement, Break):
             breaks.append(outer)
             continue
@@ -547,23 +548,18 @@ def _control_guards(statements, scope, outer=None, before=()):
             continues.append(outer)
             continue
         if isinstance(statement, (Return, Raise)):
-            halted.append(
-                (statement, outer, current, (*before, *statements[:index]))
-            )
+            halted.append((statement, outer, current))
             continue
         if isinstance(statement, If):
-            ahead = (*before, *statements[:index])
             guard = branch_result_guard(
                 branch_result_slot(statement.test), statement.test.fragment
             )
-            b, c, h = _control_guards(
-                statement.body, current, _combine(outer, guard), ahead
-            )
+            b, c, h = _control_guards(statement.body, current, _combine(outer, guard))
             breaks.extend(b)
             continues.extend(c)
             halted.extend(h)
             b, c, h = _control_guards(
-                statement.orelse, current, _combine(outer, not_(guard)), ahead
+                statement.orelse, current, _combine(outer, not_(guard))
             )
             breaks.extend(b)
             continues.extend(c)
@@ -803,7 +799,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     outward_faces = []
     outward_face_cids = []
     outward_records = []
-    for statement, guard, halted_scope, prefix in halted_specs:
+    for statement, guard, halted_scope in halted_specs:
         live_guard = guard if guard is not None else true_guard
         projected_entries = tuple(
             replace(
@@ -842,12 +838,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         outward_records.append(face)
         outward_face_cids.append(face["outwardHaltedFaceCid"])
         outward_faces.append(
-            LiveOutwardHaltedFaceV1(
-                statement_sugar,
-                live_guard,
-                runtime_snapshot,
-                tuple(ahead.sugar() for ahead in prefix),
-            )
+            LiveOutwardHaltedFaceV1(statement_sugar, live_guard, runtime_snapshot)
         )
 
     body_face = face_snapshots["BodyFallthrough"][0]
@@ -1135,6 +1126,12 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
     )
     records = _conserve_unique_records(records)
     construction = decode_loop_construction_v1({"root": root, "records": records})
+    # The body every item runs, the symbolic item included: one tuple of
+    # the body's statement sugars, under the guard an item runs at all.
+    body_sugars = tuple(statement.sugar() for statement in loop.body)
+    construction = replace(
+        construction, symbolic_item=LiveSymbolicItemV1(body_sugars, true_guard)
+    )
     from .nodes import _loop_header_evaluation_key, _loop_target_evaluation_key
 
     writes = _carried_writes(items, carried_names)
@@ -1180,7 +1177,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                 pattern,
                 carried_names,
                 initial_value_sugars(),
-                tuple(statement.sugar() for statement in loop.body),
+                body_sugars,
                 tuple(statement.sugar() for statement in loop.orelse),
                 carried_evaluations,
                 tuple(
@@ -1205,7 +1202,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
                 loop.test.sugar(),
                 carried_names,
                 initial_value_sugars(),
-                tuple(statement.sugar() for statement in loop.body),
+                body_sugars,
                 tuple(statement.sugar() for statement in loop.orelse),
                 carried_evaluations,
                 While._FUEL,
@@ -1243,6 +1240,7 @@ __all__ = [
     "LiveForTargetPatternV1",
     "LiveLoopProjectionV1",
     "LiveOutwardHaltedFaceV1",
+    "LiveSymbolicItemV1",
     "LiveWhileRuntimeV1",
     "construct_live_loop_recurrence",
 ]
