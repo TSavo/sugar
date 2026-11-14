@@ -31,12 +31,21 @@ from __future__ import annotations
 
 from typing import Optional
 
-import itertools
-
 _DISPLAY_KIND = {"List": "list", "Dict": "dict", "Set": "set"}
-# Each substitution of a mutating call is its own evaluation: an unrolled
-# loop substitutes its body once per iteration over one shared span.
-_TOKENS = itertools.count()
+
+
+def _evaluation(site_node, tags) -> str:
+    """The coordinate of one evaluation a shadow node stands for.
+
+    The site's source extent plus the occurrence tags of the copy it was
+    built in (the iteration segments, outermost first). A pure function of
+    the source and the copy, so a CID that holds it is the same in every
+    process, whatever that process lifted before (#7838, inventory item 44).
+    It replaces a process-wide draw counter.
+    """
+    span = site_node.span
+    return "/".join((f"[{span.start},{span.end})", *tags))
+
 
 # Builtins whose call never mutates an argument (CPython "Built-in Functions").
 PURE_BUILTINS = frozenset(
@@ -311,7 +320,7 @@ def _call_node(statement, site_node, receiver, method, args, kind, tags, value_f
             ("method", Leaf(method)),
             ("container_kind", Leaf(kind)),
             ("value_first", Leaf(value_first)),
-            ("token", Leaf(next(_TOKENS))),
+            ("occurrence", Leaf(_evaluation(site_node, tags))),
         ),
         tags,
     )
@@ -335,7 +344,7 @@ def _havoc(site_node, label, tags):
     return _materialize(
         site_node,
         "ReceiverAfterCall",
-        (("label", Leaf(label)), ("token", Leaf(next(_TOKENS)))),
+        (("label", Leaf(label)), ("occurrence", Leaf(_evaluation(site_node, tags)))),
         tags,
     )
 
@@ -887,7 +896,7 @@ def _path_after(site_node, call, root, steps, mode, label, tags, unshared, inner
         ("mode", Leaf(mode)),
         ("label", Leaf(label)),
         ("unshared", Leaf(unshared)),
-        ("token", Leaf(next(_TOKENS))),
+        ("occurrence", Leaf(_evaluation(site_node, tags))),
         # The root after the call holds the object after it: a later
         # mutation of that object through another name reaches the root.
         ("inner", MaybeChild(None if inner is None else _handle_of(inner))),
@@ -937,7 +946,7 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
             ("args", Children(tuple(_handle_of(arg) for arg in call.args))),
             ("method", Leaf(call.func.attr)),
             ("fallback", Child(_handle_of(call))),
-            ("token", Leaf(next(_TOKENS))),
+            ("occurrence", Leaf(_evaluation(call, tags))),
         ),
         tags,
     )
@@ -1159,7 +1168,7 @@ def _actual_after(site_node, state, label, tags):
         (
             ("state", Child(_handle_of(state))),
             ("label", Leaf(label)),
-            ("token", Leaf(next(_TOKENS))),
+            ("occurrence", Leaf(_evaluation(site_node, tags))),
         ),
         tags,
     )

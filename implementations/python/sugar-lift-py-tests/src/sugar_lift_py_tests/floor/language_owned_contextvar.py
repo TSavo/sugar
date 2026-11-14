@@ -9,13 +9,9 @@ returns ``None``. This does not invent bodies for other C-extension members.
 
 from __future__ import annotations
 
-import itertools
 from dataclasses import dataclass, field
 
 from .floor_value import FloorValue
-
-
-_TOKEN_IDS = itertools.count(1)
 
 
 @dataclass(frozen=True)
@@ -125,11 +121,26 @@ class LanguageOwnedContextVarValue(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         if operation.name == "set" and not operation.keyword_names and len(operation.arguments) == 1:
+            # The token is the ``set`` at this occurrence: keyed by where it
+            # happens, exactly as a ``get`` read is, never by a process draw.
+            from sugar_lift_py_tests.occurrence import occurrence_key
+
+            site = getattr(operation, "blame", None)
+            if site is None:
+                from sugar_source_tree.panic import SugarNotWritten
+
+                raise SugarNotWritten(
+                    blame=f"python:contextvars.ContextVar({self.name!r}).set",
+                    owner="LanguageOwnedContextVarValue.set",
+                    observed="ContextVar.set() with no call site",
+                    requested="the call site that keys this token's occurrence",
+                    fix="carry the call site onto the method application",
+                )
             return Complete(
                 LanguageOwnedContextVarToken(
                     variable_name=self.name,
-                    token_id=next(_TOKEN_IDS),
-                    site=getattr(operation, "blame", None),
+                    occurrence=occurrence_key(site),
+                    site=site,
                 )
             )
         if (
@@ -210,19 +221,23 @@ class LanguageOwnedContextVarReadValue(FloorValue):
 
 @dataclass(frozen=True)
 class LanguageOwnedContextVarToken(FloorValue):
-    """A token produced by ``ContextVar.set`` and consumed by ``reset``."""
+    """A token produced by ``ContextVar.set`` and consumed by ``reset``.
+
+    ``occurrence`` is the ``set`` call's occurrence key (site plus occurrence
+    path): one token per evaluation of that ``set``, the same in every process.
+    """
 
     variable_name: str
-    token_id: int
+    occurrence: str
     site: object = None
 
     def to_term(self, *, owner: str):
-        from sugar_lift_py_tests.ir import ctor, int_const, str_const
+        from sugar_lift_py_tests.ir import ctor, str_const
 
         del owner
         return ctor(
             "python:contextvars.Token",
-            (str_const(self.variable_name), int_const(self.token_id)),
+            (str_const(self.variable_name), str_const(self.occurrence)),
         )
 
 
