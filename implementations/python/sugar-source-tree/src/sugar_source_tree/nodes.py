@@ -15042,7 +15042,7 @@ class BuiltinContainerCall(Expression):
     method: str
     container_kind: str
     value_first: bool
-    token: int
+    occurrence: str
     _child_fields = ("receiver", "args")
 
     def substitute(self, scope):
@@ -15061,7 +15061,7 @@ class BuiltinContainerCall(Expression):
             kind=self.container_kind,
             site=self.fragment,
             value_first=self.value_first,
-            evaluation_token=self.token,
+            evaluation_token=self.occurrence,
         )
 
 
@@ -15072,7 +15072,7 @@ class PathContainerCall(Expression):
     args: Tuple[Expression, ...]
     method: str
     fallback: Expression
-    token: int
+    occurrence: str
     _child_fields = ("receiver", "args", "fallback")
 
     def substitute(self, scope):
@@ -15090,7 +15090,7 @@ class PathContainerCall(Expression):
             args=tuple(arg.sugar() for arg in self.args),
             fallback=self.fallback.sugar(),
             site=self.fragment,
-            evaluation_token=self.token,
+            evaluation_token=self.occurrence,
         )
 
 
@@ -15103,7 +15103,7 @@ class PathAfterCall(Expression):
     mode: str
     label: str
     unshared: bool
-    token: int
+    occurrence: str
     inner: Optional[Expression]
     _child_fields = ("call", "root", "inner")
 
@@ -15123,7 +15123,7 @@ class PathAfterCall(Expression):
             mode=self.mode,
             unshared=self.unshared,
             site=self.fragment,
-            evaluation_token=self.token,
+            evaluation_token=self.occurrence,
         )
 
 
@@ -15152,7 +15152,7 @@ class ReceiverAfterCall(Expression):
     """A value a call may have changed: unknown after that call."""
 
     label: str
-    token: int
+    occurrence: str
 
     def substitute(self, scope):
         del scope
@@ -15164,7 +15164,7 @@ class ReceiverAfterCall(Expression):
         )
 
         return ReceiverAfterCallSugar(
-            label=self.label, site=self.fragment, evaluation_token=self.token
+            label=self.label, site=self.fragment, evaluation_token=self.occurrence
         )
 
 
@@ -15173,7 +15173,7 @@ class SourceCallActualAfter(Expression):
 
     state: Expression
     label: str
-    token: int
+    occurrence: str
     _child_fields = ("state",)
 
     def substitute(self, scope):
@@ -15189,7 +15189,7 @@ class SourceCallActualAfter(Expression):
             state=self.state.sugar(),
             label=self.label,
             site=self.fragment,
-            evaluation_token=self.token,
+            evaluation_token=self.occurrence,
         )
 
 

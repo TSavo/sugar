@@ -46,7 +46,8 @@ def assigned_key(sugar) -> object | None:
         return None
     # A shadow evaluation minted once per substitution (an unrolled
     # iteration's mutating call) shares its span with every other iteration's;
-    # its own token is what tells their evaluations apart.
+    # its evaluation coordinate (span plus occurrence tags, never a process
+    # draw) is what tells their evaluations apart.
     token = getattr(sugar, "evaluation_token", None)
     if token is not None:
         return (type(sugar), site, token)

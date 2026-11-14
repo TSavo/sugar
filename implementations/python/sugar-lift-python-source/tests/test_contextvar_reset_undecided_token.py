@@ -56,5 +56,5 @@ def test_two_resets_are_two_unknowns():
 
 
 def test_the_token_set_minted_still_resets_to_none():
-    token = LanguageOwnedContextVarToken(variable_name="v", token_id=1)
+    token = LanguageOwnedContextVarToken(variable_name="v", occurrence="set.py:1:0")
     assert _reset(token) == Complete(NoneValue())
