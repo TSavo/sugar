@@ -80,6 +80,20 @@ class BuiltinSemanticCallable(FloorValue):
             from sugar_lift_py_tests.floor.builtin_super_value import BuiltinSuperValue
             from sugar_lift_py_tests.outcome import ExitSet
 
+            if zero_argument_super_has_no_arguments(operation.site):
+                # CPython's ``super_init_without_args``: a frame whose code
+                # takes no positional argument raises before it reads any
+                # ``__class__`` cell.  Decided by the scope, so it is the
+                # call's halt, not a construction gap.
+                from sugar_lift_py_tests.floor.ground_exit import (
+                    ground_exceptional_exit,
+                )
+
+                return ground_exceptional_exit(
+                    exception_name="RuntimeError",
+                    site=operation.site,
+                    owner="BuiltinSemanticCallable.python.super",
+                )
             current_class = ctx.temporal.value_if_bound("__class__")
             receiver = zero_argument_super_receiver(operation.site, ctx.temporal)
             if current_class is None or receiver is None:
@@ -589,33 +603,72 @@ class BuiltinSemanticCallable(FloorValue):
 _POSITIONAL_PARAM_KINDS = frozenset({"positional_only", "positional_or_keyword"})
 
 
+def _super_frame_first_positional(site):
+    """``(read, formal)`` for a zero-argument ``super()`` at ``site``: whether
+    the scope its frame runs is read, and that scope's first positional
+    formal (None when it takes none).
+
+    The frame is the innermost scope whose BODY holds the call
+    (``SourceUnit.scope_holding``): a ``def``, a ``lambda`` -- a function
+    scope of its own, whose code has its own arguments -- a class body, or
+    the module.  Only a function or a lambda takes arguments.  A site with no
+    source unit is not read.
+    """
+    unit = getattr(site, "unit", None)
+    node = getattr(site, "node", None)
+    if unit is None or node is None:
+        return False, None
+    scope = unit.scope_holding(node.line_col_span())
+    params = tuple(getattr(scope, "params", None) or ())
+    if not params or params[0].param_kind not in _POSITIONAL_PARAM_KINDS:
+        return True, None
+    return True, params[0]
+
+
+def zero_argument_super_has_no_arguments(site) -> bool:
+    """Whether a zero-argument ``super()`` at ``site`` is CPython's
+    ``RuntimeError: super(): no arguments``.
+
+    ``super_init_without_args`` (Objects/typeobject.c) raises it first, for
+    any frame whose code has ``co_argcount == 0``: a ``def`` or ``lambda``
+    with no positional formal (``*args`` and keyword-only formals do not
+    count), a class body, the module.  So ``lambda: super().m()`` inside a
+    method raises it, though the method has a ``self``: the frame is the
+    lambda's (``_super_frame_first_positional``).
+    """
+    read, formal = _super_frame_first_positional(site)
+    return read and formal is None
+
+
 def zero_argument_super_receiver(site, temporal):
     """The receiver a zero-argument ``super()`` at ``site`` binds, or None.
 
     CPython's rule (``super_init_without_args``, Objects/typeobject.c): the
-    first positional formal of the function whose body holds the call, read
-    as that frame binds it.  The formal is the one the source declares
-    (``SourceUnit.innermost_function_containing``), whatever it is spelled:
-    ``def m(this): super().m()`` reads ``this``, and a ``self`` some
-    enclosing frame binds is never read in its place.  A function with no
-    positional formal (CPython's ``RuntimeError: super(): no arguments``), a
-    call outside any function, or a site with no source unit answers None;
-    so does a formal the frame has not bound (the builtin floor's own
-    binding of the same spelling is not the frame's formal).
+    first positional formal of the frame that runs the call, read as that
+    frame binds it.  The frame is the innermost ``def`` or ``lambda`` whose
+    body holds the call (``_super_frame_first_positional``): a lambda's code
+    is its own frame, and the compiler gives it the ``__class__`` cell
+    (``symtable`` marks ``__class__`` free in any function block that reads
+    ``super``), so ``lambda x: super().m()`` inside a method binds ``x``, not
+    the method's ``self``.  The formal is the one the source declares,
+    whatever it is spelled: ``def m(this): super().m()`` reads ``this``, and
+    a ``self`` some enclosing frame binds is never read in its place.  A
+    frame with no positional formal is CPython's ``RuntimeError``
+    (``zero_argument_super_has_no_arguments``) and has no receiver; neither
+    does a site with no source unit, nor a formal the frame has not bound
+    (the builtin floor's own binding of the same spelling is not the
+    frame's formal): None.
     """
     from sugar_lift_py_tests.temporal.builtin_name_bindings import (
         is_builtin_floor_binding,
     )
 
-    unit = getattr(site, "unit", None)
-    node = getattr(site, "node", None)
-    if unit is None or node is None or temporal is None:
+    if temporal is None:
         return None
-    function = unit.innermost_function_containing(node.line_col_span())
-    params = tuple(getattr(function, "params", None) or ())
-    if not params or params[0].param_kind not in _POSITIONAL_PARAM_KINDS:
+    _read, formal = _super_frame_first_positional(site)
+    if formal is None:
         return None
-    binding = temporal.latest(params[0].name)
+    binding = temporal.latest(formal.name)
     if binding is None or is_builtin_floor_binding(binding):
         return None
     return binding.value

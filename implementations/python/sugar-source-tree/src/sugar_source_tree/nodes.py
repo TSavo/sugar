@@ -1348,14 +1348,27 @@ class SourceUnit:
         or None.
 
         Python's scopes: the innermost class, function or lambda body around
-        the position owns the read.  A class owns it only when its own body
-        is that innermost body -- a method's or a lambda's body skips the
-        class scope, while a method's decorators and defaults sit in the
-        class body itself.  A unit with no typed root refuses by name
-        (``_require_typed_module``).
+        the position owns the read (``scope_holding``).  A class owns it only
+        when its own body is that innermost body -- a method's or a lambda's
+        body skips the class scope, while a method's decorators and defaults
+        sit in the class body itself.  A unit with no typed root refuses by
+        name (``_require_typed_module``).
+        """
+        scope = self.scope_holding(span)
+        return scope if isinstance(scope, ClassDef) else None
+
+    def scope_holding(self, span) -> "Node | None":
+        """The innermost class, function or lambda whose BODY the position
+        ``span`` sits in, or None at module level.
+
+        Python's scopes: a ``def``'s decorators and defaults and a lambda's
+        defaults are evaluated in the scope around it, so only the body
+        belongs to the function; a lambda is a function scope of its own
+        (``symtable``'s FunctionBlock).  A unit with no typed root refuses by
+        name (``_require_typed_module``).
         """
         module = self._require_typed_module(
-            "SourceUnit.class_body_holding", blame=self.filename
+            "SourceUnit.scope_holding", blame=self.filename
         )
         index = self._scope_body_index
         if index is None or index[0] is not module:
@@ -1374,7 +1387,7 @@ class SourceUnit:
                     (
                         (first.start_line, first.start_col),
                         (last.end_line, last.end_col),
-                        node if isinstance(node, ClassDef) else None,
+                        node,
                     )
                 )
             index = (module, tuple(rows), {})
@@ -9854,7 +9867,9 @@ class ClassDef(Statement):
         (``SourceUnit.module_definition_at``, also under a subscript
         ``Base[T]``) is walked in turn; ``object`` reached through the
         builtin namespace (``LanguageCallee.BUILTIN_OBJECT``) is the entry
-        ``"object"``; a builtin exception class the read reaches
+        ``"object"``, the builtin ``dict`` (``LanguageCallee.BUILTIN_DICT``)
+        the entry ``"dict"``, whose base is ``object``; a builtin exception
+        class the read reaches
         (``SourceUnit.name_reference_at``) is its canonical builtins name,
         whose bases are the language's (``BUILTIN_EXCEPTION_BASES``).  A
         class with no base has ``object``.  The order is the C3
@@ -9869,6 +9884,7 @@ class ClassDef(Statement):
         Every reader of a class's bases reads this walk: the constructor
         frame's admission (``SourceUnit.source_class_has_plain_source_body``),
         the ``__init__`` a call of the class runs (``initializer_entry``),
+        the class a name read on its type resolves to (``namespace_owner``)
         and the constructor defaults a class value binds
         (``ClassDefinitionValue.constructor_defaults``).
         """
@@ -9930,7 +9946,9 @@ class ClassDef(Statement):
         """One base expression of this class statement, read by its binding
         where it stands: the module ``class`` statement the read reaches
         (also under a subscript ``Base[T]``), ``"object"`` for the builtin
-        ``object``, a builtin exception class's canonical name, else None."""
+        ``object``, ``"dict"`` for the builtin ``dict`` (a mapping object's
+        storage base, ``namespace_owner``), a builtin exception class's
+        canonical name, else None."""
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
             BUILTIN_EXCEPTION_NAMES,
             canonical_builtin_exception_name,
@@ -9948,6 +9966,8 @@ class ClassDef(Statement):
         target = self.unit.name_reference_at(read.id, span)
         if LanguageCallee.of(target) is LanguageCallee.BUILTIN_OBJECT:
             return "object"
+        if LanguageCallee.of(target) is LanguageCallee.BUILTIN_DICT:
+            return "dict"
         builtins_prefix = "python:builtins."
         if target is None or not target.startswith(builtins_prefix):
             return None
@@ -10024,8 +10044,11 @@ class ClassDef(Statement):
         """
         order = self.method_resolution_order()
         if order is None:
-            first = self._read_base(self.bases[0]) if self.bases else None
-            head = (self,) if not isinstance(first, ClassDef) else (self, first)
+            head = tuple(
+                entry
+                for entry in self.method_resolution_head()
+                if isinstance(entry, ClassDef)
+            )
             return next(
                 (entry for entry in head if entry._written_initializer() is not None),
                 None,
@@ -10039,6 +10062,63 @@ class ClassDef(Statement):
             ),
             None,
         )
+
+    def method_resolution_head(self) -> tuple:
+        """What every MRO Python builds for this class starts with, read when
+        the whole order (``method_resolution_order``) is not: this class,
+        then its first base when that base is read (``_read_base``).  The C3
+        merge takes the first base's head right after the class; any other
+        order is a TypeError at class creation."""
+        first = self._read_base(self.bases[0]) if self.bases else None
+        return (self,) if first is None else (self, first)
+
+    def body_binds(self, name: str) -> bool:
+        """Whether this class statement's body binds ``name`` in the class
+        namespace -- a ``def``, an assignment, an import -- read off the
+        unit's CPython class ``symtable``, never off a spelling scan."""
+        table = self.unit.class_symtable(self.name, self.line_col_span().start_line)
+        try:
+            symbol = table.lookup(name)
+        except KeyError:
+            return False
+        return symbol.is_assigned() or symbol.is_imported() or symbol.is_namespace()
+
+    def namespace_owner(self, name: str) -> "tuple[bool, object]":
+        """``(decided, owner)``: the first class of this class's MRO whose
+        namespace binds ``name`` -- Python's lookup of a name on the type,
+        which every implicit dunder read (``obj[k]``, ``del obj[k]``,
+        ``len(obj)``, ...) makes.
+
+        The order is the one base walk (``method_resolution_order``).  A
+        ``ClassDef`` binds the name when its body does (``body_binds``); a
+        builtin class entry when the interpreter's own class of that name
+        holds it in its ``__dict__`` (``dict`` holds ``__getitem__``, not
+        ``__bool__``; ``object`` holds neither).  ``owner`` is that
+        ``ClassDef`` or builtin class name, or None when no class of the
+        order binds the name.
+
+        When the order is not read, only its head is
+        (``method_resolution_head``): a name the head binds is decided;
+        otherwise a class after the head may bind it, and the answer is
+        undecided -- ``(False, None)``, never assumed absent.
+        """
+        import builtins as _python_builtins
+
+        order = self.method_resolution_order()
+        decided = order is not None
+        if order is None:
+            order = self.method_resolution_head()
+        for entry in order:
+            if isinstance(entry, ClassDef):
+                if entry.body_binds(name):
+                    return True, entry
+                continue
+            builtin_class = getattr(_python_builtins, entry, None)
+            if not isinstance(builtin_class, type):
+                return False, None
+            if name in vars(builtin_class):
+                return True, entry
+        return (True, None) if decided else (False, None)
 
     def _source_initializer(self) -> "FunctionDef | None":
         """The source ``def __init__`` a call of this class runs: the first
