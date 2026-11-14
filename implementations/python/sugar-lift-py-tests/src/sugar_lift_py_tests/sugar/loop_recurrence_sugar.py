@@ -433,10 +433,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 reduce_block_to_exitset,
             )
 
-            item_ctx = enter(projections)
+            item_ctx, target_bindings = enter(projections)
             with item():
                 body = reduce_block_to_exitset(body_sugars, item_ctx)
-            return self._leave_symbolic_item(body, recurrence, item_guard)
+            return self._leave_symbolic_item(
+                body, recurrence, item_guard, target_bindings=target_bindings
+            )
 
         if len(projected.exits) == 1:
             # One way in (a name target, a ``while``): the item is exactly
@@ -467,7 +469,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             )
         return symbolic_item.body_sugars, symbolic_item.guard
 
-    def _leave_symbolic_item(self, body, recurrence, guard):
+    def _leave_symbolic_item(self, body, recurrence, guard, *, target_bindings):
         """The loop's exits from the one run of the symbolic item's
         ``body`` (``reduce_block_to_exitset``'s arms), under ``guard``
         (an item runs), beside the recurrence under its negation (no item
@@ -481,11 +483,14 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         container mutation and rebind the item made, as a concrete item's
         fall-through hands its entries on to the loop's publication -- and
         this loop's own ``break``/``continue`` leaves as the recurrence with
-        what its halt carries (its state is the item's context, which holds
-        no entries, as a concrete item's break does); any other halt (a
-        ``raise``, an inner loop's or a call's) is an arm as it is.  Every
-        arm keeps the guard, partition faces and ``owed`` of the item's arm
-        it continues (``ExitSet.sequence``).  An arm that falls through after
+        the entries of its halt's record, what the item did before it,
+        once the record's context is authenticated as this item's
+        (``_require_loop_control_state`` against ``target_bindings``, what
+        ``_enter_symbolic_item`` bound), as a concrete item's does; any
+        other halt (a ``raise``, an inner loop's or a call's) is an arm as
+        it is.  Every arm keeps the guard, partition faces and ``owed`` of
+        the item's arm it continues (``ExitSet.sequence``).  An arm that
+        falls through after
         an earlier guarded ``return`` took its exit where that return's guard
         held: it is split as the block composition splits a later halt
         (``_prior_return_face``), the returned arm with its entries, the
@@ -525,7 +530,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 isinstance(effect, LoopControlEffect)
                 and effect.target_cid == self.target_cid
             ):
-                return recurrence()
+                record = LoopRecurrenceSugar._require_loop_control_state(
+                    halt.state, target_bindings=target_bindings
+                )
+                return recurrence(record.entries)
             return None
 
         def compose(body):
@@ -743,7 +751,14 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         self, halt, runtime, target_bindings, resume, *, entries, index
     ):
         """The loop's outcome after a halted iteration face, or None when the
-        halt is not this loop's own break/continue and leaves as it is."""
+        halt is not this loop's own break/continue and leaves as it is.
+
+        The halt's record holds what the item did before its
+        ``break``/``continue`` (every store, container mutation and rebind,
+        spliced on by the block composition that ran it): they join what
+        the earlier items left (``entries``), as a completed item's do
+        (``_after_iteration_state``), and the loop goes on, or leaves, with
+        them, from the record's authenticated context."""
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
 
         effect = halt.effect
@@ -751,14 +766,16 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             isinstance(effect, LoopControlEffect)
             and effect.target_cid == self.target_cid
         ):
-            state = self._require_loop_control_state(
+            record = self._require_loop_control_state(
                 halt.state,
                 target_bindings=target_bindings,
             )
+            state = record.context
+            combined = (*entries, *record.entries)
             if effect.action == "continue":
                 return resume(
                     state,
-                    entries=entries,
+                    entries=combined,
                     carried=self._latched(runtime, state, index),
                     index=index + 1,
                 )
@@ -766,7 +783,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 return self._publish_runtime_bindings(
                     runtime,
                     state,
-                    entries=entries,
+                    entries=combined,
                     carried=self._latched(runtime, state, index),
                     items=index + 1,
                 )
@@ -1078,7 +1095,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         """The recurrence's one symbolic item: ``(projected, enter, item)``.
         ``projected`` is the item's target unpack, an ``ExitSet`` whose
         completed arms hold the leaves' projections; ``enter(projections)``
-        is the context the item's body reduces in on such an arm; ``item``
+        is ``(ctx, target_bindings)``: the context the item's body reduces in
+        on such an arm, and the identity a loop-control halt's record must
+        hold (``_enter_target``, ``_require_loop_control_state``); ``item``
         is the item to enter while it does.
 
         A concrete item binds, inside its own segment, each carried name's
@@ -1109,7 +1128,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.outcome import Halted
 
         if runtime is None or (ctx is not None and not hasattr(ctx, "temporal")):
-            return ExitSet.completed(()), lambda _projections: ctx, nullcontext
+            return ExitSet.completed(()), lambda _projections: (ctx, ()), nullcontext
         if ctx is None:
             from sugar_lift_py_tests.context import ReduceContext
 
@@ -1130,7 +1149,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         if pattern is None:
             with item():
                 header_ctx = self._enter_header(runtime, ctx, starts, decide=False)
-            return ExitSet.completed(()), lambda _projections: header_ctx, item
+            return ExitSet.completed(()), lambda _projections: (header_ctx, ()), item
         element = ctor(
             "python:loop.item",
             [
@@ -1156,9 +1175,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         ).normalize()
 
         def enter(projections):
-            # Each completed arm binds its own leaves, inside the item.
+            # Each completed arm binds its own leaves, inside the item, and
+            # hands on what it bound: a ``break``/``continue`` of the item is
+            # authenticated against it.
             with item():
-                return self._enter_target(runtime, header_ctx, projections)[0]
+                return self._enter_target(runtime, header_ctx, projections)
 
         return projected, enter, item
 
@@ -1328,23 +1349,32 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
     @staticmethod
     def _require_loop_control_state(state, *, target_bindings):
-        """Authenticate the producer's exact current reduction context.
+        """Authenticate a loop-control halt's record and the producer's
+        exact current reduction context in it; return the record.
 
-        A loop-control halt carries the context it received at its source
-        occurrence.  The current target Floor was bound into that context by
-        this recurrence, under the target's per-item key and its binding
-        coordinate (``_enter_target``), so object identity authenticates the
-        context without rebuilding a reduced block or accepting an
-        ambient/foreign scope.
+        A loop-control halt carries a record (``LoopControlSugar``): the
+        entries the item made before it, spliced on by the block
+        composition that ran it, and the context the ``break``/``continue``
+        received at its source occurrence.  The current target Floor was
+        bound into that context by this recurrence, under the target's
+        per-item key and its binding coordinate (``_enter_target``), so
+        object identity authenticates the context without rebuilding a
+        reduced block or accepting an ambient/foreign scope.  A halt with no
+        record, or a record with no such context, is refused: its entries
+        are never taken without it.
         """
         from sugar_lift_py_tests.context.reduce_context import ReduceContext
+        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
-        if not isinstance(state, ReduceContext):
+        if not isinstance(state, _ReducedBlock):
+            raise TypeError("loop control omitted its record")
+        context = state.context
+        if not isinstance(context, ReduceContext):
             raise TypeError("loop control omitted its exact ReduceContext state")
         for target_key, coordinate_cid, target_value in target_bindings:
             if (
-                state.temporal.value_if_bound(target_key) is not target_value
-                or state.temporal.value_if_bound(coordinate_cid) is not target_value
+                context.temporal.value_if_bound(target_key) is not target_value
+                or context.temporal.value_if_bound(coordinate_cid) is not target_value
             ):
                 raise TypeError(
                     "loop control state lacks exact iteration target identity"

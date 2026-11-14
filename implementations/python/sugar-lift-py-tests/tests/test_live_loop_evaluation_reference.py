@@ -1049,7 +1049,7 @@ def test_the_symbolic_item_binds_its_keys_in_its_own_segment() -> None:
         runtime, ReduceContext.root(owner="live-symbolic-item"), None, ()
     )
     # A name target's unpack is the item whole: one plain arm.
-    ctx = enter(projected.completed_value())
+    ctx, _target_bindings = enter(projected.completed_value())
     ref = EvaluationRefSugar(evaluation=target, name="x", site=None)
     with item():
         assert live_iterations() == (loop_symbolic_item_segment(loop.target_cid),)
@@ -1314,6 +1314,21 @@ def _left_by_the_item(body):
         body,
         lambda entries=(): ExitSet.completed(BlockValue((*entries, TermValue(0)))),
         atomic("test.item", []),
+        target_bindings=(),
+    )
+
+
+def _control_record(*entries):
+    """A ``break``/``continue`` halt's record: what the item did before it
+    (``entries``) and the context the statement received
+    (``LoopControlSugar``)."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    return _ReducedBlock(
+        entries,
+        False,
+        (),
+        context=ReduceContext.root(owner="live-loop-control-record"),
     )
 
 
@@ -1352,6 +1367,7 @@ def test_what_the_symbolic_item_owes_rides_onto_the_loops_result() -> None:
             Halted(
                 test,
                 LoopControlEffect("break", LOOP, "blake3-512:test-break"),
+                _control_record(),
                 owed=("owed.before-break",),
             ),
             Completed(
@@ -1385,7 +1401,7 @@ def test_a_break_under_a_condition_keeps_its_partition_face() -> None:
             Halted(
                 test,
                 LoopControlEffect("break", LOOP, "blake3-512:test-break"),
-                None,
+                _control_record(),
                 frozenset({then_face}),
             ),
             Completed(
@@ -1401,6 +1417,217 @@ def test_a_break_under_a_condition_keeps_its_partition_face() -> None:
     assert "test.x" in str(went_on.guard)
     broke = _arm_of(left, BlockValue((TermValue(0),)))
     assert "test.x" in str(broke.guard)
+
+
+# -- a break/continue leaves with what the item did (#7757 item 7, #8064) ------
+
+
+def _holds(records, value) -> bool:
+    """Whether some record (or a block nested in one) holds ``value``."""
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+
+    pending = [entry for record in records for entry in record]
+    while pending:
+        entry = pending.pop()
+        if entry == value:
+            return True
+        if isinstance(entry, BlockValue):
+            pending.extend(entry.statements)
+    return False
+
+
+def _append_then(control: str, items: str) -> str:
+    # ``acc.append(x)`` runs in the item ahead of its ``break``/``continue``.
+    return (
+        "def f():\n"
+        "    acc = []\n"
+        "    for x in g():\n"
+        "        acc.append(x)\n"
+        "        if x:\n"
+        f"            {control}\n"
+        "    return acc\n"
+        "def g():\n"
+        f"    return {items}\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("control", "items"), [("break", "(1, 2)"), ("continue", "(1,)")]
+)
+def test_a_concrete_items_append_before_its_loop_control_leaves_with_it(
+    control: str, items: str
+) -> None:
+    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # Item 0 appends 1 to ``acc`` and then breaks (or continues, and the
+    # loop is exhausted): the receiver's post-state the append left is on
+    # the record the loop leaves with, never dropped with the halt.
+    outcome = function_universe_outcome(_function(_append_then(control, items)))
+    records = _records(outcome)
+    assert records, outcome
+    assert _holds(records, ListValue((TermValue(1),))), records
+
+
+def test_a_symbolic_items_append_before_its_break_leaves_with_it() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``xs`` is symbolic: the symbolic item appends and breaks.  The arm
+    # where an item ran leaves with the append; the arm where none ran
+    # leaves without it: two records, never one with the append dropped
+    # (the breaking arm leaving as bare as the arm where no item ran).
+    function = _function(
+        "def f(xs):\n"
+        "    acc = []\n"
+        "    for x in xs:\n"
+        "        acc.append(x)\n"
+        "        break\n"
+        "    return acc\n"
+    )
+    records = _records(function_universe_outcome(function))
+    assert len(records) >= 2, records
+    shortest = min(len(record) for record in records)
+    assert any(len(record) > shortest for record in records), records
+
+
+_STORE_THEN_BREAK = (
+    "def f(xs):\n"
+    "    for x in {iterable}:\n"
+    "        y = x\n"
+    "        break\n"
+    "    return y\n"
+    "def g():\n"
+    "    return (1, 2)\n"
+)
+
+
+def test_a_concrete_items_store_before_its_break_is_read_after_the_loop() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``for x in (1, 2): y = x; break`` then ``return y``: item 0 stored 1
+    # and broke, so ``y`` is 1.
+    outcome = function_universe_outcome(
+        _function(_STORE_THEN_BREAK.format(iterable="g()"))
+    )
+    assert _returned_value(outcome) == TermValue(1)
+
+
+def test_a_symbolic_items_store_before_its_break_is_read_after_the_loop() -> None:
+    from sugar_lift_py_tests.effect import NameErrorEffect
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``xs`` is symbolic: where the item ran it stored ``y`` and broke, and
+    # the read after the loop is the recurrence's value of ``y``; where no
+    # item ran it is a ``NameError`` naming ``y``.  Nothing else.
+    function = _function(_STORE_THEN_BREAK.format(iterable="xs"))
+    outcome = function_universe_outcome(function)
+    assert _recurrence_value(function, "y") in _flattened(_returned_values(outcome))
+    name_errors = [
+        exit_
+        for exit_ in outcome.exits
+        if isinstance(exit_, Halted) and isinstance(exit_.effect, NameErrorEffect)
+    ]
+    assert {exit_.effect.name for exit_ in name_errors} <= {"y"}
+
+
+@pytest.mark.parametrize("action", ["break", "continue"])
+def test_the_symbolic_items_loop_control_leaves_with_its_records_entries(
+    action: str,
+) -> None:
+    from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    # ``x`` decides the item: it stored ``TermValue(1)`` and left by its
+    # ``break``/``continue``, or stored ``TermValue(2)`` and fell through.
+    # Each arm goes on as the recurrence after what its item did; where no
+    # item ran, without either.
+    test = atomic("test.x", [])
+    body = ExitSet(
+        (
+            Halted(
+                test,
+                LoopControlEffect(action, LOOP, "blake3-512:test-control"),
+                _control_record(TermValue(1)),
+            ),
+            Completed(not_(test), _ReducedBlock((TermValue(2),), True, ())),
+        )
+    )
+    left = _left_by_the_item(body)
+    controlled = _arm_of(left, BlockValue((TermValue(1), TermValue(0))))
+    assert "test.x" in str(controlled.guard)
+    assert "test.item" in str(controlled.guard)
+    assert _arm_of(left, BlockValue((TermValue(2), TermValue(0)))) is not None
+    assert _arm_of(left, BlockValue((TermValue(0),))) is not None
+
+
+def test_a_loop_control_halt_without_its_record_is_refused() -> None:
+    from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+
+    # A ``break`` whose halt carries no record (no context to authenticate,
+    # no entries) is refused by name: the loop never leaves as if the item
+    # did nothing.
+    body = ExitSet.halted(LoopControlEffect("break", LOOP, "blake3-512:test-break"))
+    with pytest.raises(TypeError, match="omitted its record"):
+        _left_by_the_item(body)
+
+
+@pytest.mark.parametrize("action", ["break", "continue"])
+def test_a_concrete_items_loop_control_hands_on_its_records_entries(
+    action: str,
+) -> None:
+    from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+
+    # Item 0 left ``TermValue(1)`` before its ``break``/``continue``; the
+    # items before it left ``TermValue(0)``.  ``continue`` takes both on to
+    # the next item, from the record's context; ``break`` leaves the loop
+    # with both.
+    runtime = SimpleNamespace(carried_names=(), carried_evaluations=())
+    record = _control_record(TermValue(1))
+    (halt,) = ExitSet.halted(
+        LoopControlEffect(action, LOOP, "blake3-512:test-control"), state=record
+    ).exits
+    resumed = []
+
+    def resume(ctx, *, entries, carried, index):
+        resumed.append((ctx, entries, carried, index))
+        return ExitSet.completed(BlockValue(entries))
+
+    outcome = _recurrence()._after_loop_control(
+        halt, runtime, (), resume, entries=(TermValue(0),), index=0
+    )
+    assert outcome.completed_value() == BlockValue((TermValue(0), TermValue(1)))
+    if action == "continue":
+        assert resumed == [(record.context, (TermValue(0), TermValue(1)), (), 1)]
+    else:
+        assert resumed == []
+
+
+def test_two_halts_whose_contexts_hold_an_evaluation_apart_stay_two_arms() -> None:
+    from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+    from sugar_lift_py_tests.temporal import bind_temporal
+
+    # Two ``break`` arms with equal records whose contexts bind one
+    # statement evaluation to different values are two paths: the loop
+    # reads its latch from each one's context, so merged, one would be
+    # read on both.
+    root = ReduceContext.root(owner="live-loop-control-merge")
+
+    def record(value):
+        context = bind_temporal(root, KEY, value, owner="test", blame="test")
+        return _ReducedBlock((), False, (), context=context)
+
+    effect = LoopControlEffect("break", LOOP, "blake3-512:test-break")
+    test = atomic("test.x", [])
+    exits = ExitSet(
+        (
+            Halted(test, effect, record(TermValue(1))),
+            Halted(not_(test), effect, record(TermValue(2))),
+        )
+    ).normalize()
+    assert len(exits.exits) == 2, exits
 
 
 def test_each_read_of_an_evaluation_is_spanned_at_its_use() -> None:

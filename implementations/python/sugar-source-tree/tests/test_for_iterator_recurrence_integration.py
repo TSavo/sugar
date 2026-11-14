@@ -8,6 +8,7 @@ from sugar_lift_py_tests.context.reduce_context import ReduceContext
 from sugar_lift_py_tests.floor.term_value import TermValue
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.outcome import Completed, ExitSet
+from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
 from sugar_lift_py_tests.temporal import bind_temporal
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -113,20 +114,34 @@ def test_loop_control_state_accepts_only_the_exact_iteration_binding_identity() 
         blame="loop-control-foreign",
     )
 
+    def record(context):
+        # A loop-control halt's state: the entries the item made before it,
+        # and the context the statement received (``LoopControlSugar``).
+        return _ReducedBlock((TermValue(1),), False, (), context=context)
+
+    bindings = (("item", "blake3-512:" + "a" * 128, value),)
+    exact_record = record(exact)
     assert (
         LoopRecurrenceSugar._require_loop_control_state(
-            exact,
-            target_bindings=(("item", "blake3-512:" + "a" * 128, value),),
+            exact_record, target_bindings=bindings
         )
-        is exact
+        is exact_record
     )
     with pytest.raises(TypeError, match="exact iteration target identity"):
         LoopRecurrenceSugar._require_loop_control_state(
-            ambient,
-            target_bindings=(("item", "blake3-512:" + "a" * 128, value),),
+            record(ambient), target_bindings=bindings
         )
     with pytest.raises(TypeError, match="exact iteration target identity"):
         LoopRecurrenceSugar._require_loop_control_state(
-            foreign,
-            target_bindings=(("item", "blake3-512:" + "a" * 128, value),),
+            record(foreign), target_bindings=bindings
+        )
+    # A bare context (no record) and a record with no context are refused:
+    # the item's entries are never taken without the authenticated context.
+    with pytest.raises(TypeError, match="omitted its record"):
+        LoopRecurrenceSugar._require_loop_control_state(
+            exact, target_bindings=bindings
+        )
+    with pytest.raises(TypeError, match="exact ReduceContext state"):
+        LoopRecurrenceSugar._require_loop_control_state(
+            record(None), target_bindings=bindings
         )
