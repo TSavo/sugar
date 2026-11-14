@@ -803,28 +803,10 @@ class CallSiteSugar(ConstructedTermSugar):
                     source_frame=source_call_frame,
                 )
             )
-        if (
-            source_call_frame is not None
-            and source_call_frame.pending_native_operation is not None
-        ):
-            pending = source_call_frame.pending_native_operation.discharge(
-                ctx, bound_source_actuals.by_native_formal_coordinate
-            )
-            return callsite.project_producer_outcome(pending, ctx)
-        if self.formal_function_sugar is not None and self.source_call_frame is None:
-            pending = self.formal_function_sugar.desugar(ctx)
-            from sugar_lift_py_tests.caller_parameter_contract import (
-                NativeOperationExitCarrierV1,
-            )
-
-            if (
-                isinstance(pending, NativeOperationExitCarrierV1)
-                and bound_source_actuals is not None
-            ):
-                pending = pending.discharge(
-                    ctx, bound_source_actuals.by_native_formal_coordinate
-                )
-            return callsite.project_producer_outcome(pending, ctx)
+        # The body is applied by ``producer_outcome`` alone (#7757): a frame's
+        # deferred native operation discharges there against the bound
+        # actuals, and a call with no frame applies no body -- the callee's
+        # universe (``formal_function_sugar``) is never reduced at the call.
         if callsite.body is None:
             unprojected = _import_bound_unanswered_call(self)
             if unprojected is None:

@@ -1425,7 +1425,7 @@ class CallSiteValue(FloorValue):
                     "floor; leave the bridge as axiomatic"
                 ),
             )
-        if (body := self.body) is None:
+        if self.body is None:
             return self if preserve_opaque_leaf else None
         if len(self.parameters) != len(self.arg_values):
             return None
@@ -1469,25 +1469,16 @@ class CallSiteValue(FloorValue):
                 )
             token = _ACTIVE_DIG_DEMAND.set(active_demand + 1)
             try:
-                outcome = _reduce_callsite_body(
-                    body, reduce_ctx, blame=self.target_name, frame=self
-                )
+                # The one application (#7757): ``producer_outcome`` applies
+                # the body and discharges a deferred native operation with
+                # the bound actuals under the caller's context.
+                outcome = self._applied_outcome(ctx)
             finally:
                 _ACTIVE_DIG_DEMAND.reset(token)
             from sugar_lift_py_tests.caller_parameter_contract import (
                 NativeOperationExitCarrierV1,
             )
 
-            if isinstance(outcome, NativeOperationExitCarrierV1):
-                # The caller's actuals fill the deferred operation's
-                # placeholders; it discharges under the caller's context.
-                actuals = self.bound_native_actuals_by_coordinate
-                if actuals is None and self.bound_source_actuals is not None:
-                    outcome = self.bound_source_actuals.project_native_carrier(
-                        outcome, ctx
-                    )
-                if actuals is not None:
-                    outcome = outcome.discharge(ctx, actuals)
             if isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits:
                 if incomplete_outcome is not None:
                     incomplete_outcome.append(outcome)
@@ -1562,7 +1553,7 @@ class CallSiteValue(FloorValue):
                     "floor; leave the bridge as axiomatic and record a DigBoundary"
                 ),
             )
-        if (body := self.body) is None:
+        if self.body is None:
             _force_floor_gap(
                 owner=owner,
                 target_name=self.target_name,
@@ -1608,9 +1599,8 @@ class CallSiteValue(FloorValue):
                 )
             value = retained.value
         else:
-            outcome = _reduce_callsite_body(
-                body, reduce_ctx, blame=self.target_name, frame=self
-            )
+            # The one application (#7757), never a reduction of its own.
+            outcome = self._applied_outcome(ctx)
             if isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits:
                 reason = "; ".join(
                     effect_reason(halt.effect) for halt in outcome.halts()
@@ -1667,6 +1657,38 @@ class CallSiteValue(FloorValue):
             )
         return ExitSet.completed(retained.value)
 
+    def _applied_outcome(self, ctx: Any = None):
+        """This call applied by ``producer_outcome``, completed faces read back.
+
+        The demand of a floor (``_dig_floor_or_none``, ``force_floor``) on a
+        call no producer has applied yet applies it here, through the one
+        application (#7757), never by reducing the body itself.  Each
+        completed face ``producer_outcome`` seats on this Call is read back
+        as the body's completion with ``retained_source_completion_outcome``,
+        as a statement-position call reads its block (#7979, #7981).  A face
+        the projection handed on unseated (a native operation the bound
+        actuals discharged) is the body's own already.  Every halt is the
+        Call's, as the producer published it; a still-pending native
+        operation is handed back unchanged.
+        """
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        outcome = self.producer_outcome(ctx)
+        if not isinstance(outcome, ExitSet):
+            return outcome
+
+        def body_completion(value):
+            if (
+                isinstance(value, CallSiteValue)
+                and value._retained_source_completion is not None
+                and value.term is self.term
+                and value.body is self.body
+            ):
+                return value.retained_source_completion_outcome()
+            return ExitSet.completed(value)
+
+        return outcome.and_then(body_completion)
+
     def _reduce_source_outcome(self, ctx: Any = None):
         """Reduce this already-constructed source body without floor projection.
 
@@ -1675,9 +1697,9 @@ class CallSiteValue(FloorValue):
         projects it (native-operation discharge against the bound actuals,
         call-owned raises, the retained completion).  Every call is applied
         through ``producer_outcome`` (#7757 entry 6); a caller that needs the
-        body's block reads it back with ``retained_source_completion_outcome``.
-        This uses the identical explicit call frame/curry path as
-        ``force_floor`` and never reconstructs source.
+        body's block reads it back with ``retained_source_completion_outcome``
+        (a floor demand through ``_applied_outcome``).  It is the only
+        reduction of a callee body and never reconstructs source.
         """
         if self._retained_source_completion is not None:
             _retained_completion_invariant(
