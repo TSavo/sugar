@@ -131,30 +131,11 @@ def derive_manager_summary(
     Exception-type operands likewise authenticate only operand identity: they
     cannot replace an unconstructed enter or exit with Expects-Raise testimony.
     """
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
     from sugar_lift_py_tests.outcome import ExitSet
 
-    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-    from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
-
-    try:
-        enter = protocol.enter_outcome()
-    except ConstructionPanic as panic:
-        owner = getattr(getattr(panic, "info", None), "owner", None) or "enter"
-        observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
-        return DerivedManagerSummaryGapV1(
-            "enter-may-halt",
-            protocol.protocol_construction_cid,
-            f"{owner}:{observed}",
-        )
-    except (OpaqueSourceCallResolutionGap, SugarNotWritten, SourceCallBindingGap) as exc:
-        owner = getattr(exc, "owner", None) or type(exc).__name__
-        observed = getattr(exc, "observed", None) or str(exc)
-        return DerivedManagerSummaryGapV1(
-            "enter-may-halt",
-            protocol.protocol_construction_cid,
-            f"{owner}:{observed}",
-        )
+    # A refusal raised while constructing enter or exit propagates as itself;
+    # it is never turned into an ``*-may-halt`` gap here.
+    enter = protocol.enter_outcome()
     if not isinstance(enter, ExitSet):
         # An undischarged native-operation demand is not an enter face.
         return DerivedManagerSummaryGapV1(
@@ -198,61 +179,43 @@ def derive_manager_summary(
         factored = _derive_factored_effect_boundary(protocol, behavior)
         if factored is not None:
             return factored
-    try:
-        exit_outcome = protocol.exit_outcome()
-        from sugar_lift_py_tests.caller_parameter_contract import (
-            NativeOperationExitCarrierV1,
-        )
-        from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
+    exit_outcome = protocol.exit_outcome()
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
 
-        # A deferred lookup is not a suppression theorem. Admit only the real
-        # source protocol, whose exit will run with each actual With body face.
-        # Other construction refusals still take the typed gap doors below.
-        if (
-            isinstance(protocol, ConstructedManagerProtocolV1)
-            and isinstance(exit_outcome, NativeOperationExitCarrierV1)
-            and any(coordinate is not None for coordinate in exit_outcome.coordinates)
-            and all(
-                coordinate is None
-                or (
-                    isinstance(coordinate, ExitValueCoordinate)
-                    and coordinate.face_id == protocol.exit_face_id
-                )
-                for coordinate in exit_outcome.coordinates
+    # A deferred lookup is not a suppression theorem. Admit only the real
+    # source protocol, whose exit will run with each actual With body face.
+    if (
+        isinstance(protocol, ConstructedManagerProtocolV1)
+        and isinstance(exit_outcome, NativeOperationExitCarrierV1)
+        and any(coordinate is not None for coordinate in exit_outcome.coordinates)
+        and all(
+            coordinate is None
+            or (
+                isinstance(coordinate, ExitValueCoordinate)
+                and coordinate.face_id == protocol.exit_face_id
             )
-        ):
-            if boundary_door:
-                boundary = _derive_effect_boundary_from_deferred_carrier(
-                    exit_outcome, protocol, behavior
-                )
-                if boundary is not None:
-                    boundary = _with_construction_faces(boundary, construction_halts)
-                    signature = _signature_for_behavior(behavior, boundary)
-                    return _sealed_summary(protocol, boundary, signature)
-            semantics = ProtocolResourceSemanticsV1(
-                EnterResultContractV1(PrimitiveSort("Value")),
-                ExitContractV1(ReturnTruthinessDispositionV1()),
-            )
-            return _sealed_summary(
-                protocol, semantics, _signature_for_behavior(behavior, semantics)
-            )
-        exit_ = exit_outcome
-    except ConstructionPanic as panic:
-        owner = getattr(getattr(panic, "info", None), "owner", None) or "exit"
-        observed = getattr(getattr(panic, "info", None), "observed", None) or str(panic)
-        return DerivedManagerSummaryGapV1(
-            "exit-may-halt",
-            protocol.protocol_construction_cid,
-            f"{owner}:{observed}",
+            for coordinate in exit_outcome.coordinates
         )
-    except (OpaqueSourceCallResolutionGap, SugarNotWritten, SourceCallBindingGap) as exc:
-        owner = getattr(exc, "owner", None) or type(exc).__name__
-        observed = getattr(exc, "observed", None) or str(exc)
-        return DerivedManagerSummaryGapV1(
-            "exit-may-halt",
-            protocol.protocol_construction_cid,
-            f"{owner}:{observed}",
+    ):
+        if boundary_door:
+            boundary = _derive_effect_boundary_from_deferred_carrier(
+                exit_outcome, protocol, behavior
+            )
+            if boundary is not None:
+                boundary = _with_construction_faces(boundary, construction_halts)
+                signature = _signature_for_behavior(behavior, boundary)
+                return _sealed_summary(protocol, boundary, signature)
+        semantics = ProtocolResourceSemanticsV1(
+            EnterResultContractV1(PrimitiveSort("Value")),
+            ExitContractV1(ReturnTruthinessDispositionV1()),
         )
+        return _sealed_summary(
+            protocol, semantics, _signature_for_behavior(behavior, semantics)
+        )
+    exit_ = exit_outcome
     if not isinstance(exit_, ExitSet):
         # An undischarged native-operation demand that is not the admitted
         # exit-value lookup above is not an exit face.
@@ -725,15 +688,9 @@ def _derive_boundary_for_receiver(protocol, behavior, receiver):
         NativeOperationExitCarrierV1,
     )
     from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
-    from sugar_source_tree.panic import OpaqueSourceCallResolutionGap, SugarNotWritten
 
     specialized = replace(protocol, receiver_state=receiver)
-    try:
-        exit_outcome = specialized.exit_outcome()
-    except (ConstructionPanic, OpaqueSourceCallResolutionGap, SugarNotWritten, SourceCallBindingGap):
-        return None
+    exit_outcome = specialized.exit_outcome()
     if (
         isinstance(exit_outcome, NativeOperationExitCarrierV1)
         and any(coordinate is not None for coordinate in exit_outcome.coordinates)
@@ -2230,7 +2187,6 @@ def _constructor_application_bindings(call, application, *, owner_cid: str, term
         ConstructedValueTestimonyV1,
     )
     from sugar_source_tree.binding_state import BindingEntryV1, BoundBindingStateV1
-    from sugar_source_tree.panic import SugarNotWritten
 
     nodes = (*call.args, *(keyword.value for keyword in call.keywords))
     values = tuple(application.arguments)
@@ -2241,14 +2197,11 @@ def _constructor_application_bindings(call, application, *, owner_cid: str, term
             # fragment rather than inventing a source node per expanded key.
             bindings = []
             for index, value in enumerate(values):
-                try:
-                    term_cid = _term_content_cid(value.to_term(owner=term_owner))
-                    testimony = ConstructedValueTestimonyV1.mint(call.fragment, term_cid)
-                    coordinate = BindingCoordinateV1.mint(
-                        owner_cid, call.fragment, ("constructor-actual", index)
-                    )
-                except (SugarNotWritten, TypeError, ValueError):
-                    return None
+                term_cid = _term_content_cid(value.to_term(owner=term_owner))
+                testimony = ConstructedValueTestimonyV1.mint(call.fragment, term_cid)
+                coordinate = BindingCoordinateV1.mint(
+                    owner_cid, call.fragment, ("constructor-actual", index)
+                )
                 bindings.append(
                     BindingEntryV1(
                         coordinate=coordinate,
@@ -2260,14 +2213,11 @@ def _constructor_application_bindings(call, application, *, owner_cid: str, term
         return None
     bindings = []
     for index, (node, value) in enumerate(zip(nodes, values, strict=True)):
-        try:
-            term_cid = _term_content_cid(value.to_term(owner=term_owner))
-            testimony = ConstructedValueTestimonyV1.mint(node.fragment, term_cid)
-            coordinate = BindingCoordinateV1.mint(
-                owner_cid, node.fragment, ("constructor-actual", index)
-            )
-        except (SugarNotWritten, TypeError, ValueError):
-            return None
+        term_cid = _term_content_cid(value.to_term(owner=term_owner))
+        testimony = ConstructedValueTestimonyV1.mint(node.fragment, term_cid)
+        coordinate = BindingCoordinateV1.mint(
+            owner_cid, node.fragment, ("constructor-actual", index)
+        )
         bindings.append(
             BindingEntryV1(
                 coordinate=coordinate,
@@ -2690,17 +2640,13 @@ def _read_same_module_generator_head(context, coordinate, call, function_def) ->
       With's require door refuses the head by name.
     """
     from sugar_source_tree.nodes import call_applies_own_frame
-    from sugar_source_tree.panic import SugarNotWritten
 
     from .manager_construction import _install_source_call_frame
 
     if not call_applies_own_frame(function_def):
         return
-    try:
-        frame, _generator_target = _source_visible_frame_for_function(function_def)
-    except (SugarNotWritten, TypeError):
-        # No frame, no generator claim: the require door stays loud.
-        return
+    # A refusal building the frame propagates as itself.
+    frame, _generator_target = _source_visible_frame_for_function(function_def)
     if frame is None or frame.generator_steps is None:
         # Not a generator: the require door owns it.
         return
@@ -2802,22 +2748,19 @@ def _module_returned_by_call(call) -> str | None:
     ``python:module(<name>)`` -- the value ``importlib.import_module`` of a
     present module completes with (#7742) -- and at least one returns it.  Any
     other value (an opaque result, a string, two different modules) is not a
-    module, and a reduction that refuses decides nothing: both answer None.
+    module, and answers None.  A reduction that refuses propagates its refusal
+    by name.
     """
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.floor.none_value import NoneValue
     from sugar_lift_py_tests.outcome import Completed
     from sugar_lift_py_tests.source_call_resolution import module_value_name
     from sugar_lift_py_tests.temporal import builtin_name_temporal
-    from sugar_source_tree.panic import SugarNotWritten
 
     ctx = ReduceContext(temporal=builtin_name_temporal())
-    try:
-        exits = _require_exit_set(
-            call.sugar().desugar(ctx), owner="_module_returned_by_call"
-        ).exits
-    except (SugarNotWritten, TypeError):
-        return None
+    exits = _require_exit_set(
+        call.sugar().desugar(ctx), owner="_module_returned_by_call"
+    ).exits
     values = []
     for face in exits:
         if isinstance(face, Completed):
@@ -3127,24 +3070,20 @@ def _nameable_nested_with_body_steps(body, *, scope=None) -> tuple | None:
     body is the cited-opaque manager this module resolves
     (``_cited_opaque_nested_step_for``, NestedCitedOpaqueManagerStepV1).
 
-    Returns None when any statement is unnameable, or when a statement's
-    sugar is not written (``SugarNotWritten``): either keeps the nested With
-    loud.  Does not invent items, warning testimony, a bound on ``while
-    True``, a loaded module, that an attribute was stored, or that a cleanup
-    raise was suppressed.
+    Returns None when any statement is unnameable, which keeps the nested
+    With loud.  A statement whose sugar is not written refuses by name
+    (``SugarNotWritten`` propagates).  Does not invent items, warning
+    testimony, a bound on ``while True``, a loaded module, that an attribute
+    was stored, or that a cleanup raise was suppressed.
     """
     from sugar_source_tree.nodes import FunctionDef
-    from sugar_source_tree.panic import SugarNotWritten
 
     _name_statement, branch_steps = FunctionDef._generator_step_producer(
         with_step=lambda statement: _cited_opaque_nested_step_for(
             statement, scope=scope
         )
     )
-    try:
-        return branch_steps(tuple(body))
-    except SugarNotWritten:
-        return None
+    return branch_steps(tuple(body))
 
 
 def _generator_substitution_scope(frame) -> dict:
@@ -3268,7 +3207,6 @@ def _cited_opaque_nested_step_for(statement, *, scope=None):
     from sugar_lift_py_tests.generator_construction import NestedCitedOpaqueManagerStepV1
     from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
     from sugar_source_tree.nodes import Name
-    from sugar_source_tree.panic import SugarNotWritten
 
     if len(statement.items) != 1:
         return None
@@ -3285,10 +3223,7 @@ def _cited_opaque_nested_step_for(statement, *, scope=None):
     body_steps = _nameable_nested_with_body_steps(body, scope=scope)
     if body_steps is None:
         return None
-    try:
-        manager_sugar = item.context_expr.sugar()
-    except SugarNotWritten:
-        return None
+    manager_sugar = item.context_expr.sugar()
     if not isinstance(manager_sugar, ConstructedTermSugar):
         return None
     optional = item.optional_vars

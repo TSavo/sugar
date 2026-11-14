@@ -42,11 +42,7 @@ def _exception_formals():
     )
 
 
-@pytest.mark.parametrize("phase", ["enter", "exit"])
-@pytest.mark.parametrize(
-    "refusal", ["construction-panic", "source-gap", "empty-exits", "raised-exit"]
-)
-def test_exception_formals_do_not_seal_an_unconstructed_protocol(phase, refusal):
+def _protocol(phase, refusal):
     def unresolved():
         if refusal == "empty-exits":
             return ExitSet(())
@@ -80,18 +76,38 @@ def test_exception_formals_do_not_seal_an_unconstructed_protocol(phase, refusal)
     def completed():
         return ExitSet.completed(BlockValue(()))
 
-    protocol = SimpleNamespace(
+    return SimpleNamespace(
         protocol_construction_cid="constructed-protocol",
         enter_frame_cid="constructed-enter",
         exit_frame_cid="constructed-exit",
         enter_outcome=unresolved if phase == "enter" else completed,
         exit_outcome=unresolved if phase == "exit" else completed,
     )
-    summary = derive_manager_summary(protocol, behavior=_exception_formals())
+
+
+@pytest.mark.parametrize("phase", ["enter", "exit"])
+@pytest.mark.parametrize("refusal", ["empty-exits", "raised-exit"])
+def test_exception_formals_do_not_seal_an_unconstructed_protocol(phase, refusal):
+    summary = derive_manager_summary(
+        _protocol(phase, refusal), behavior=_exception_formals()
+    )
     assert isinstance(summary, DerivedManagerSummaryGapV1)
     assert summary.kind == f"{phase}-may-halt"
     assert summary.protocol_construction_cid == "constructed-protocol"
     assert summary.detail
+
+
+@pytest.mark.parametrize("phase", ["enter", "exit"])
+@pytest.mark.parametrize(
+    ("refusal", "refused_as"),
+    [("construction-panic", ConstructionPanic), ("source-gap", SugarNotWritten)],
+)
+def test_a_refused_protocol_phase_propagates_its_refusal(phase, refusal, refused_as):
+    """A refusal constructing enter or exit leaves as itself (#7757): it is
+    never turned into an ``*-may-halt`` gap, and the exception formals never
+    seal a contract over it."""
+    with pytest.raises(refused_as):
+        derive_manager_summary(_protocol(phase, refusal), behavior=_exception_formals())
 
 
 @pytest.mark.parametrize("result", [False, True, None])

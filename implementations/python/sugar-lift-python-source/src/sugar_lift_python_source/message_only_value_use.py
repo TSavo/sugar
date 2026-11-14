@@ -215,8 +215,4 @@ def frame_value_use_is_message_only(frame, use_span: Span) -> bool:
     # transitively because the enclosing Call contains the tainted callee.
     tainted_spans = {tuple(use_span)}
     tainted_names: set[str] = set()
-    try:
-        return _tainted_names_and_ok(list(body), tainted_spans, tainted_names)
-    except Exception:
-        # Any structural surprise is a refusal to prove, never a silent defer.
-        return False
+    return _tainted_names_and_ok(list(body), tainted_spans, tainted_names)

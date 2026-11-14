@@ -105,7 +105,6 @@ def installed_module_source(
         ImportError,
         ModuleNotFoundError,
         OSError,
-        TypeError,
         UnicodeError,
         ValueError,
     ):
@@ -593,7 +592,7 @@ def importlib_package_root(file: str) -> str | None:
         from importlib.util import find_spec
 
         spec = find_spec(package)
-    except Exception:
+    except (ImportError, ValueError):
         return None
     if spec is None:
         return None
@@ -620,7 +619,7 @@ def importlib_library_dir(library_tag: str) -> str | None:
         from importlib.util import find_spec
 
         spec = find_spec(library_tag)
-    except Exception:
+    except (ImportError, ValueError):
         return None
     if spec is None:
         return None

@@ -77,7 +77,6 @@ class _Entry:
 def prove_manager_protocol_absence(class_def) -> ManagerProtocolAbsenceV1 | None:
     """The absence proof for ``class_def``'s instances, or None when unproven."""
     from sugar_source_tree.nodes import LanguageCallee
-    from sugar_source_tree.panic import SugarNotWritten
 
     from sugar_lift_py_tests.floor.class_definition_value import c3_tail
 
@@ -104,10 +103,9 @@ def prove_manager_protocol_absence(class_def) -> ManagerProtocolAbsenceV1 | None
         tails[entry] = tail
         return tail
 
-    try:
-        mro = (head, *tail_of(head))
-    except SugarNotWritten:
-        return None
+    # An inconsistent base order refuses by name in ``c3_tail``; the refusal
+    # propagates as itself.
+    mro = (head, *tail_of(head))
     if not any(
         entry.cited is not None and entry.cited.callee is LanguageCallee.BUILTIN_OBJECT
         for entry in mro
