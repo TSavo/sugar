@@ -353,3 +353,286 @@ def test_a_parameter_reads_the_post_state_of_its_append(tmp_path):
         _unknown_after_call(value) and value.term.args[1].value == "xs"
         for value in returns
     )
+
+
+# -- d.setdefault(k, v).<mutator>(...) takes the one door (#7757) ------------
+#
+# The setdefault is the name's own operation; its value -- the object ``d[k]``
+# holds after it -- is the receiver of the mutator, a path from ``d`` through
+# the item ``k``.  It had a door of its own that rebound ``d`` alone: an alias
+# of ``d``, or a name bound to the list at ``d[k]``, kept the pre-call value.
+
+
+def test_a_setdefault_append_inserts_the_default_and_every_alias_sees_it(tmp_path):
+    source = (
+        "def f():\n"
+        "    d = {}\n"
+        "    e = d\n"
+        "    d.setdefault('k', []).append('x')\n"
+        "    return (e, d['k'])\n"
+    )
+    after = ListValue(_strings("x"))
+    assert _only_return(tmp_path, source) == TupleValue(
+        (DictValue(((StringValue("k"), after),)), after)
+    )
+
+
+def test_a_setdefault_append_on_an_existing_key_changes_the_held_list(tmp_path):
+    # Discriminating: ``L`` is the object at ``d['x']``; the old door rebound
+    # ``d`` only, so ``L`` read the pre-call ``[1]``.  The default ``[9]`` is
+    # never stored.
+    source = (
+        "def f():\n"
+        "    L = [1]\n"
+        "    d = {'x': L}\n"
+        "    d.setdefault('x', [9]).append(2)\n"
+        "    return (L, d['x'])\n"
+    )
+    after = ListValue(_ints(1, 2))
+    assert _only_return(tmp_path, source) == TupleValue((after, after))
+
+
+def test_repeated_setdefault_appends_thread_one_dict(tmp_path):
+    source = (
+        "def f():\n"
+        "    d = {}\n"
+        "    e = d\n"
+        "    d.setdefault('k', []).append(1)\n"
+        "    d.setdefault('k', []).append(2)\n"
+        "    return e\n"
+    )
+    assert _only_return(tmp_path, source) == DictValue(
+        ((StringValue("k"), ListValue(_ints(1, 2))),)
+    )
+
+
+def test_a_setdefault_default_held_by_another_name_is_never_stale(tmp_path):
+    # The key is no literal, so the source does not say which member the
+    # setdefault names: ``L`` may become ``d[k]`` and be appended to.  It is
+    # unknown after the statement, never the pre-call ``[]``.
+    source = (
+        "def f():\n"
+        "    k = 'a b'.split()[0]\n"
+        "    L = []\n"
+        "    d = {'j': []}\n"
+        "    d.setdefault(k, L).append(1)\n"
+        "    return L\n"
+    )
+    value = _only_return(tmp_path, source)
+    assert value != ListValue(())
+    assert _unknown_after_call(value)
+
+
+# -- Exposure is one rule for every name a call can reach (#7757) -----------
+#
+# A parameter and an instance of a source class handed to an opaque call were
+# never rebound: their later reads (and an alias's) were the pre-call value.
+# Every name bound to the object is now rebound to its value after the call,
+# which the value decides at reduce (``ReceiverAfterCall``).
+
+
+def _substituted_return_reads(source):
+    """The reads ``f``'s final ``return (...)`` makes, after substitution, as
+    the nodes the objects they denote are."""
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_source_tree.container_mutation import _identity
+    from sugar_source_tree.nodes import FunctionDef, Return
+    from sugar_source_tree.tree import SourceFile
+
+    tree = SourceFile(
+        (source, "exposure_fixture.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    function = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "f"
+    )
+    substituted = function.substitute({})
+    returned = next(
+        statement
+        for statement in reversed(substituted.body)
+        if isinstance(statement, Return)
+    )
+    return [_identity(read) for read in returned.value.elts]
+
+
+def test_a_parameter_handed_to_an_opaque_call_is_rebound_with_its_alias():
+    source = (
+        "def f(xs, g):\n"
+        "    alias = xs\n"
+        "    g(xs)\n"
+        "    return (alias, xs)\n"
+    )
+    reads = _substituted_return_reads(source)
+    assert [read.kind for read in reads] == ["ReceiverAfterCall"] * 2
+
+
+def test_a_source_instance_handed_to_an_opaque_call_is_rebound_with_its_alias():
+    # A class attribute keeps ``C()`` from being an object place: the
+    # instance is the call's value, which the exposure rule used to skip.
+    source = (
+        "class C:\n"
+        "    tag = 'c'\n"
+        "    def __init__(self):\n"
+        "        self.items = [5]\n"
+        "def f(g):\n"
+        "    c = C()\n"
+        "    alias = c\n"
+        "    g(c)\n"
+        "    return (alias, c)\n"
+    )
+    reads = _substituted_return_reads(source)
+    assert [read.kind for read in reads] == ["ReceiverAfterCall"] * 2
+
+
+def test_a_source_object_an_opaque_call_reaches_may_have_changed():
+    from sugar_lift_py_tests.floor.object_field import ObjectField
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+    from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _may_change
+
+    instance = ObjectValue("C", (ObjectField("items", ListValue(_ints(5))),))
+    # Handed to the call, or the receiver of a method of its own.
+    assert _may_change(instance, "", False, False)
+    assert _may_change(instance, "add", False, False)
+    # An immutable value is still kept.
+    assert not _may_change(StringValue("s"), "", False, False)
+
+
+# -- Stores through a path, chained and unpacked, take the door (#7757) -----
+#
+# ``a.b[k] = v`` and ``a[i][j] = v`` were ordinary stores: the root, and a name
+# bound to the object the path reaches, kept the pre-store value.  A chain's
+# and an unpack's store targets are each that same single-target store.
+
+
+def test_an_item_store_through_a_subscript_path_is_seen_by_every_alias(tmp_path):
+    source = (
+        "def f():\n"
+        "    d = {'k': [0, 1]}\n"
+        "    e = d\n"
+        "    a = d['k']\n"
+        "    d['k'][0] = 9\n"
+        "    return (a, e)\n"
+    )
+    after = ListValue(_ints(9, 1))
+    assert _only_return(tmp_path, source) == TupleValue(
+        (after, DictValue(((StringValue("k"), after),)))
+    )
+
+
+def test_an_item_store_through_a_nested_list_is_seen_by_the_inner_alias(tmp_path):
+    source = (
+        "def f():\n"
+        "    r = [[0], [1]]\n"
+        "    s = r[0]\n"
+        "    r[0][0] = 5\n"
+        "    return (s, r)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(
+        (ListValue(_ints(5)), ListValue((ListValue(_ints(5)), ListValue(_ints(1)))))
+    )
+
+
+def test_an_item_store_through_an_attribute_path_is_seen_by_the_alias(tmp_path):
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        self.items = [0]\n"
+        "        self.n = 0\n"
+        "def f():\n"
+        "    c = C()\n"
+        "    a = c.items\n"
+        "    c.items[0] = 7\n"
+        "    return (a, c.items, c.n)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(
+        (ListValue(_ints(7)), ListValue(_ints(7)), TermValue(0))
+    )
+
+
+def test_an_item_delete_through_a_path_is_seen_by_the_alias(tmp_path):
+    source = (
+        "def f():\n"
+        "    d = {'k': [0, 1]}\n"
+        "    a = d['k']\n"
+        "    del d['k'][0]\n"
+        "    return (a, d)\n"
+    )
+    after = ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == TupleValue(
+        (after, DictValue(((StringValue("k"), after),)))
+    )
+
+
+def test_a_chained_store_through_a_path_is_seen_by_the_alias(tmp_path):
+    source = (
+        "def f():\n"
+        "    d = {'k': [0]}\n"
+        "    a = d['k']\n"
+        "    x = d['k'][0] = 5\n"
+        "    return (a, d, x)\n"
+    )
+    after = ListValue(_ints(5))
+    assert _only_return(tmp_path, source) == TupleValue(
+        (after, DictValue(((StringValue("k"), after),)), TermValue(5))
+    )
+
+
+def test_a_chained_name_binding_is_one_object_for_the_door(tmp_path):
+    # ``a = b = []`` binds two names to one list: a mutation through either
+    # is read through both.
+    source = (
+        "def f():\n"
+        "    a = b = []\n"
+        "    a.append(1)\n"
+        "    b[0] = 2\n"
+        "    return (a, b)\n"
+    )
+    after = ListValue(_ints(2))
+    assert _only_return(tmp_path, source) == TupleValue((after, after))
+
+
+def test_unpacked_store_targets_are_seen_by_the_alias(tmp_path):
+    source = (
+        "def f():\n"
+        "    r = [0, 0]\n"
+        "    alias = r\n"
+        "    r[0], r[1] = 1, 2\n"
+        "    return alias\n"
+    )
+    assert _only_return(tmp_path, source) == ListValue(_ints(1, 2))
+
+
+def test_an_unpacked_store_through_a_path_is_seen_by_the_alias(tmp_path):
+    source = (
+        "def f():\n"
+        "    d = {'k': [0]}\n"
+        "    a = d['k']\n"
+        "    d['k'][0], n = 1, 2\n"
+        "    return (a, d, n)\n"
+    )
+    after = ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == TupleValue(
+        (after, DictValue(((StringValue("k"), after),)), TermValue(2))
+    )
+
+
+def test_unpacked_names_bound_to_containers_are_their_objects(tmp_path):
+    # ``a, b = x, y`` binds ``a`` to ``x``'s list: a mutation through ``a``
+    # is read through ``x``.
+    source = (
+        "def f():\n"
+        "    x = [0]\n"
+        "    y = [1]\n"
+        "    a, b = x, y\n"
+        "    a.append(2)\n"
+        "    b[0] = 3\n"
+        "    return (x, y)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(
+        (ListValue(_ints(0, 2)), ListValue(_ints(3)))
+    )

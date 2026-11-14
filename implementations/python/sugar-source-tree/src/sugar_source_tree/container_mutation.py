@@ -33,10 +33,17 @@ parameter, a global):
   decided at reduce).  Never the pre-call contents.
 - **Exposure.** An object passed to a call the floor does not cite as pure,
   or the receiver of a method call outside the door, may be changed by it:
-  each name bound to it is rebound to its value after the call, which the
-  value decides at reduce (``ReceiverAfterCall``): a builtin container the
-  call may change is unknown; an immutable value, or a container the call's
-  cited method or cited pure builtin leaves alone, is unchanged.
+  each name bound to it -- a parameter and an instance of a source class
+  as much as a display -- is rebound to its value after the call, which the
+  value decides at reduce (``ReceiverAfterCall``): a builtin container or a
+  source object the call may change is unknown; an immutable value, or a
+  container the call's cited method or cited pure builtin leaves alone, is
+  unchanged.
+
+The same door serves a mutation through a path (``path_mutation_statement``,
+``path_item_statement``: ``a.b.append(x)``, ``a[i][j] = v``, ``del a.b[k]``)
+and ``d.setdefault(k, v).<mutator>(...)`` (``setdefault_mutation_statement``:
+the setdefault is the name's operation, its value the path's receiver).
 
 Names are only rebound; nothing here decides what a call does.
 """
@@ -460,10 +467,13 @@ def _read_of(value):
 
 
 def _statement(
-    statement, names, states, evaluated, tags, evaluation=None, rebinds=None
+    statement, names, states, evaluated, tags, evaluation=None, rebinds=None, pairs=()
 ):
     """The shadow statement; with ``evaluation`` it binds its call's pair
-    (``evaluated[0]``) under that key, which its projections read.
+    (``evaluated[0]``) under that key, which its projections read.  ``pairs``
+    are ``(key, index)``: a later operation's pair ``evaluated[index]`` the
+    statement binds under ``key`` (``d.setdefault(k, v).append(x)``: the
+    append's, after the setdefault's).
 
     ``rebinds`` is ``(name, index, key)`` for ``r += x``: the statement
     writes ``name`` -- the in-place result ``evaluated[index]`` -- under
@@ -490,6 +500,8 @@ def _statement(
             fields = (*fields, ("pair_evaluation", Leaf(evaluation)))
     elif evaluation is not None:
         fields = (*fields, ("evaluation", Leaf(evaluation)))
+    if pairs:
+        fields = (*fields, ("pair_evaluations", Leaf(tuple(pairs))))
     return _materialize(statement, "ContainerMutationStatement", fields, tags)
 
 
@@ -567,7 +579,6 @@ def havoc_after(statement, pre_scope, scope):
     """
     from .nodes import (
         ContainerMutationStatement,
-        DictSetDefaultAppendStatement,
         For,
         LoopRecurrenceStatement,
         Node,
@@ -575,19 +586,19 @@ def havoc_after(statement, pre_scope, scope):
         While,
     )
 
-    if isinstance(statement, DictSetDefaultAppendStatement):
-        # This shadow statement already binds the receiver's post-state.
-        return scope
     bound_refs = {
         _ref(_state(value))
         for value in pre_scope.values()
         if isinstance(_state(value), Node)
     }
     if isinstance(statement, ContainerMutationStatement):
-        # The call itself is threaded; what its operands' own calls (or the
-        # call, for an operand it keeps) may change is not.
+        # Each of its calls is threaded (``d.setdefault(k, v).append(x)``
+        # makes two); what their operands' own calls (or a call, for an
+        # operand it keeps) may change is not.
         targets = []
-        for call in statement.evaluated[:1]:
+        for call in statement.evaluated:
+            if not isinstance(call, PathContainerCall):
+                continue
             for arg in call.args:
                 targets.extend(
                     (node, _OPERAND_RULES, None) for node in _exposed(arg, bound_refs)
@@ -696,11 +707,13 @@ _READ_KINDS = frozenset(
 )
 
 
-# Bindings whose object may be a builtin container whose type only its value
-# at reduce decides: a display or comprehension, a call result, an item or
-# attribute read, an operator result, a key reference with no right-hand
-# side, a mutation's post-state.  A literal, a definition, an import, a
-# formal, and an instance of a source class are not.
+# Bindings whose object may be one a call changes, which only its value at
+# reduce decides (``_may_change``): a display or comprehension, a call result
+# (an instance of a source class included), an item or attribute read, an
+# operator result, a key reference with no right-hand side, a mutation's
+# post-state, a parameter.  A literal, a definition and an import are not.
+# An object place (``ObjectPlaceStateV1``) is rebound by its own invalidation
+# (``Node.post_binding_scope``).
 _EXPOSED_KINDS = frozenset(
     {
         "List",
@@ -721,23 +734,15 @@ _EXPOSED_KINDS = frozenset(
         "ReceiverAfterCall",
         "OpaqueObjectStateV1",
         "SourceCallActualAfter",
+        *_FORMAL_KINDS,
     }
 )
 
 
 def _may_be_changed(node) -> bool:
-    """Whether the object ``node`` denotes may be one a call changes."""
-    denoted = _identity(node)
-    kind = getattr(denoted, "kind", None)
-    if kind not in _EXPOSED_KINDS:
-        return False
-    if kind == "Call":
-        allocation = getattr(denoted.unit, "source_allocation_definition_for_call", None)
-        if allocation is not None and allocation(denoted) is not None:
-            # An instance of a source class: its fields are the object's
-            # own (``ObjectPlaceStateV1``), never a builtin container's.
-            return False
-    return True
+    """Whether the object ``node`` denotes may be one a call changes: one
+    rule for every name a call can reach, whatever it was given."""
+    return getattr(_identity(node), "kind", None) in _EXPOSED_KINDS
 
 
 def _exposed(root, bound_refs):
@@ -1232,7 +1237,115 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
     root_read, steps = path_steps(call.func.value)
     if root_read is None:
         return None
-    return _mutation_through(statement, scope, call, root_read, steps, target_name)
+    return _mutation_through(
+        statement,
+        scope,
+        site=call,
+        receiver=call.func.value,
+        method=call.func.attr,
+        args=call.args,
+        fallback=call,
+        root_read=root_read,
+        steps=steps,
+        target_name=target_name,
+    )
+
+
+def path_item_statement(statement, scope, *, site, receiver, method, args):
+    """The shadow statement for an item store or delete through a path, or
+    None when ``receiver`` is no path from a name (an ordinary store).
+
+    ``a.b[k] = v`` and ``a[i][j] = v`` (``__setitem__``, ``args`` the key
+    and the value, the value evaluated first) and ``del a.b[k]``
+    (``__delitem__``): the operation on the object the path reaches, through
+    the one door (``_mutation_through``), as ``a.b.append(x)`` is.
+    ``receiver`` (the path, ``site`` the target) and ``args`` are already
+    substituted."""
+    root_read, steps = path_steps(receiver)
+    if root_read is None:
+        return None
+    return _mutation_through(
+        statement,
+        scope,
+        site=site,
+        receiver=receiver,
+        method=method,
+        args=args,
+        fallback=None,
+        root_read=root_read,
+        steps=steps,
+        value_first=method == "__setitem__",
+    )
+
+
+def setdefault_mutation_statement(statement, scope, *, name, call):
+    """The shadow statement for ``d.setdefault(k, v).<mutator>(*args)`` on a
+    name ``d``, or None.
+
+    Two operations of the one door, in one statement, in Python's order:
+    ``d.setdefault(k, v)`` is the name's own operation (its pair bound under
+    the statement's key), and its value -- the object ``d[k]`` holds after
+    it -- is the receiver of ``.<mutator>(*args)``, a path from ``d`` through
+    the item ``k`` (``_mutation_through``).  Every name bound to ``d`` reads
+    ``d`` after both; a name bound to the object at ``d[k]`` reads that
+    object after the mutator; anything else that shares them (the default
+    ``v`` included) is unknown.  The receiver's value at reduce decides each
+    operation (``PathContainerCallSugar``).  ``call`` is the statement's
+    call, already substituted against ``scope``."""
+    from .nodes import Attribute, Call, Starred, ground_subscript_key
+    from .shadow import occurrence_tags_of, rewrite
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+    if not _mutating_named_call(call):
+        return None
+    inner = call.func.value
+    if (
+        not isinstance(inner, Call)
+        or inner.keywords
+        or not isinstance(inner.func, Attribute)
+        or inner.func.attr != "setdefault"
+        or len(inner.args) not in (1, 2)
+        or any(isinstance(arg, Starred) for arg in inner.args)
+    ):
+        return None
+    receiver = inner.func.value
+    tags = occurrence_tags_of(statement)
+    evaluation = statement._evaluation_key(scope)
+    setdefault = _container_call(
+        inner, receiver, "setdefault", inner.args, inner, tags, label=name
+    )
+    # ``d`` after the setdefault, and its value: the path's root and receiver.
+    root_read = _path_after(
+        inner,
+        setdefault,
+        receiver,
+        (),
+        "root",
+        name,
+        tags,
+        True,
+        evaluation=evaluation,
+        prior=receiver,
+    )
+    member = _projection(inner, setdefault, 1, tags, evaluation)
+    key = ground_subscript_key(inner.args[0])
+    method = call.func.attr
+    return _mutation_through(
+        statement,
+        scope,
+        site=call,
+        receiver=member,
+        method=method,
+        args=call.args,
+        # The ordinary call reads its receiver from the setdefault's pair,
+        # never the setdefault evaluated again.
+        fallback=rewrite(call, func=rewrite(call.func, value=member)),
+        root_read=root_read,
+        steps=(("undecided", None),) if key is None else (("item", key),),
+        evaluation=projection_key(evaluation, f"{method}()"),
+        before=((setdefault, evaluation),),
+        shape_root=receiver,
+    )
 
 
 def name_mutation_statement(
@@ -1380,13 +1493,36 @@ def name_mutation_statement(
     )
 
 
-def _mutation_through(statement, scope, call, root_read, steps, target_name):
-    """The path door's statement for ``call`` on the object ``root_read``
-    reaches through ``steps``."""
+def _mutation_through(
+    statement,
+    scope,
+    *,
+    site,
+    receiver,
+    method,
+    args,
+    fallback,
+    root_read,
+    steps,
+    target_name=None,
+    value_first=False,
+    evaluation=None,
+    before=(),
+    shape_root=None,
+):
+    """The path door's statement for ``receiver.<method>(*args)`` on the
+    object ``root_read`` reaches through ``steps`` (``site`` the source
+    operation, ``fallback`` its ordinary call, None for an item store or
+    delete).
+
+    ``before`` are ``(call, key)``: operations the statement evaluates first,
+    each pair bound under its key (``d.setdefault(k, v)``, whose value is
+    ``receiver``); this operation's pair is bound under ``evaluation`` (the
+    statement's key by default).  ``shape_root`` is the object whose display
+    decides which member the path names (the root by default)."""
     from .nodes import Node
     from .shadow import occurrence_tags_of
 
-    receiver = call.func.value
     # ``root`` is the object ``root_read`` denotes (``_identity``: the display
     # or call the name was given), which decides the shape only.
     root = _identity(root_read)
@@ -1403,28 +1539,37 @@ def _mutation_through(statement, scope, call, root_read, steps, target_name):
         return None
     tags = occurrence_tags_of(statement)
     path_call = _container_call(
-        call, receiver, call.func.attr, call.args, call, tags, label="receiver"
+        site,
+        receiver,
+        method,
+        args,
+        fallback,
+        tags,
+        label="receiver",
+        value_first=value_first,
     )
-    member = _static_member(root, steps)
+    shape = root if shape_root is None else _identity(shape_root)
+    member = _static_member(shape, steps)
     # Distinct display nodes are distinct objects: the source alone says the
     # root holds this member once, and nothing else in it can be the object.
-    unshared = member is not None and _path_count(root, member, {}) == 1
+    unshared = member is not None and _path_count(shape, member, {}) == 1
     if (
         member is None
-        and getattr(root, "kind", None) == "PathAfterCall"
-        and root.mode == "root"
-        and root.inner is not None
-        and _same_steps(tuple(root.steps), steps)
+        and getattr(shape, "kind", None) == "PathAfterCall"
+        and shape.mode == "root"
+        and shape.inner is not None
+        and _same_steps(tuple(shape.steps), steps)
     ):
         # The root after an earlier call through this same path holds that
         # call's object there.
-        member = root.inner
+        member = shape.inner
     # The statement evaluates the call once and binds its pair under its own
     # key; the root after it, the object after it and the call's value read
     # that key, never the call (and its operands) evaluated again.
-    evaluation = statement._evaluation_key(scope)
+    if evaluation is None:
+        evaluation = statement._evaluation_key(scope)
     inner = _path_after(
-        call,
+        site,
         path_call,
         root_read,
         steps,
@@ -1435,7 +1580,7 @@ def _mutation_through(statement, scope, call, root_read, steps, target_name):
         evaluation=evaluation,
     )
     root_after = _path_after(
-        call,
+        site,
         path_call,
         root_read,
         steps,
@@ -1447,7 +1592,9 @@ def _mutation_through(statement, scope, call, root_read, steps, target_name):
         evaluation=evaluation,
     )
     exact, _containing = aliases(scope, root)
-    names, states, evaluated = [], [], [path_call, root_after, inner]
+    first = [call for call, _key in before]
+    keys = [*(key for _call, key in before), evaluation]
+    names, states, evaluated = [], [], [*first, path_call, root_after, inner]
     for name in exact:
         names.append(name)
         states.append(root_after)
@@ -1470,14 +1617,22 @@ def _mutation_through(statement, scope, call, root_read, steps, target_name):
             states.append(inner)
             continue
         if _graph(state) & graph:
-            havoc = _havoc(call, name, tags)
+            havoc = _havoc(site, name, tags)
             names.append(name)
             states.append(havoc)
             evaluated.append(havoc)
     if target_name is not None:
         names.append(target_name)
-        states.append(_projection(call, path_call, 1, tags, evaluation))
-    return _statement(statement, names, states, evaluated, tags, evaluation)
+        states.append(_projection(site, path_call, 1, tags, evaluation))
+    return _statement(
+        statement,
+        names,
+        states,
+        evaluated,
+        tags,
+        keys[0],
+        pairs=tuple((key, index) for index, key in enumerate(keys) if index),
+    )
 
 
 # ---------------------------------------------------------------------------
