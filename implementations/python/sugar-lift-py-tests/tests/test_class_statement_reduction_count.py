@@ -1,18 +1,12 @@
-"""Plan row 1 (step 6): reading a class's content address reduces nothing.
+"""A class statement is reduced once; every class call reads that one result.
 
-``a = Box(1)`` builds an object place state during the temporal rewrite. That
-used to reduce ``Box``'s class statement twice per class call: once inside the
-call (``ClassConstructorBodySugar.desugar`` reduces its ``definition``), and a
-second time only to read ``class_definition_cid``, which the statement's sugar
-already holds as a property. The second one is deleted.
-
-The first one is still a reduction of the statement at every call, where the
-standard is one reduction of one statement ("reduce once"). It is carried by
-how the temporal rewrite substitutes a module-level definition into each
-function, so it is #7794 (plan row 7, the temporal row) and is not fixed here.
-The count below is today's measured number, one per class call, not a target:
-when #7794 lands this test goes red because the count dropped, and the number
-is then lowered to one per statement.
+``a = Box(1); b = Box(2)`` used to reduce ``Box``'s class statement at every
+class call: ``ClassConstructorBodySugar.desugar`` reduced its ``definition``
+each time (#7794), and before #7804 a second time per call only to read
+``class_definition_cid``.  Python runs a class statement once and every call
+reads the class it bound, so a module-level statement's outcome is now reduced
+once and kept with its sugar (``ClassDefinitionSugar.desugar``); every call
+answers with it.  The count below is reductions of the statement, not reads.
 
 The solver twin differs in one literal: the field read off the constructed
 receiver is decided by the floor, truthful ``sat``, lying ``unsat``.
@@ -58,6 +52,33 @@ _TWO_CALLS = (
     "    b = Box(2)\n"
     "    assert a.n == 1\n"
 )
+_THREE_CALLS = (
+    "class Box:\n"
+    "    def __init__(self, n):\n"
+    "        self.n = n\n"
+    "\n"
+    "\n"
+    "def test_box():\n"
+    "    a = Box(1)\n"
+    "    b = Box(2)\n"
+    "    c = Box(3)\n"
+    "    assert a.n == 1\n"
+)
+
+
+def _counting_reductions(monkeypatch) -> Counter[str]:
+    """Count reductions of a class statement (not reads of its outcome)."""
+    from sugar_lift_py_tests.sugar.class_definition_sugar import ClassDefinitionSugar
+
+    reductions: Counter[str] = Counter()
+    reduce_statement = ClassDefinitionSugar._reduce_statement
+
+    def counted(self, ctx):
+        reductions[self.class_name] += 1
+        return reduce_statement(self, ctx)
+
+    monkeypatch.setattr(ClassDefinitionSugar, "_reduce_statement", counted)
+    return reductions
 
 
 def _class_statement_reductions(source: str, monkeypatch) -> int:
@@ -66,19 +87,11 @@ def _class_statement_reductions(source: str, monkeypatch) -> int:
         TreeConstructionContextV1,
     )
     from sugar_lift_py_tests.outcome import Complete
-    from sugar_lift_py_tests.sugar.class_definition_sugar import ClassDefinitionSugar
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
     from sugar_source_tree.nodes import FunctionDef
     from sugar_source_tree.tree import SourceFile
 
-    reductions: Counter[str] = Counter()
-    reduce_statement = ClassDefinitionSugar.desugar
-
-    def counted(self, ctx=None):
-        reductions[self.class_name] += 1
-        return reduce_statement(self, ctx)
-
-    monkeypatch.setattr(ClassDefinitionSugar, "desugar", counted)
+    reductions = _counting_reductions(monkeypatch)
     tree = SourceFile(
         (source, "test_witness.py", blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
@@ -93,35 +106,32 @@ def _class_statement_reductions(source: str, monkeypatch) -> int:
 
 
 @pytest.mark.parametrize(
-    ("source", "class_calls"),
-    [(_ONE_CALL, 1), (_TWO_CALLS, 2)],
-    ids=["one-call", "two-calls"],
+    "source",
+    [_ONE_CALL, _TWO_CALLS, _THREE_CALLS],
+    ids=["one-call", "two-calls", "three-calls"],
 )
-def test_reading_the_class_address_does_not_reduce_the_statement(
-    source: str, class_calls: int, monkeypatch
+def test_a_class_statement_is_reduced_once_however_often_it_is_called(
+    source: str, monkeypatch
 ) -> None:
-    """The probe: reductions of ``Box``'s class statement in one function.
+    """Reductions of ``Box``'s class statement per function: one.
 
-    Two per class call before this deletion (2 and 4 for these sources), one
-    per class call after it (1 and 2). The one left is #7794.
+    Two per class call before #7804 (2, 4, 6), one per class call before
+    #7794 (1, 2, 3), one per statement now (1, 1, 1).
     """
 
-    assert _class_statement_reductions(source, monkeypatch) == class_calls
+    assert _class_statement_reductions(source, monkeypatch) == 1
 
 
 # ---------------------------------------------------------------------------
-# The deleted exit. The lines this change removed also returned ``None`` when
-# their own reduction of the class statement was not a single completion. That
-# case never reaches them: a class statement that is not one completion makes
-# the class call on the same line not one completion either, and
-# ``Assign._object_place_state`` already returned ``None`` for that
-# (``_constructed_floor_value``), before the address is read. So no place state
-# is built, the statement is reduced once per class call (inside the call), and
-# the statement's halts are faces of the function that calls the class.
+# A class statement that is not one completion.  No object place state is
+# built for it (``Assign._object_place_state`` returns ``None`` through
+# ``_constructed_floor_value`` before the address is read), and the statement
+# is still reduced once however often the class is called.
 #
-# That last fact is #7794 and is wrong by Python (the class body raises at the
-# class statement, never at the call); it is pinned here as what happens, the
-# same before and after this change.
+# Each class call still carries the statement's halts as faces of the function
+# that calls the class.  That is wrong by Python (the class body raises at the
+# class statement, never at the call) and is plan row 7, the temporal row; it
+# is pinned here as what happens.
 # ---------------------------------------------------------------------------
 
 _NOT_ONE_COMPLETION = {
@@ -146,7 +156,6 @@ def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
         TreeConstructionContextV1,
     )
     from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-    from sugar_lift_py_tests.sugar.class_definition_sugar import ClassDefinitionSugar
     from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
     from sugar_source_tree import nodes
     from sugar_source_tree.tree import SourceFile
@@ -168,15 +177,8 @@ def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
         place_states.append(state)
         return state
 
-    reductions: Counter[str] = Counter()
-    reduce_statement = ClassDefinitionSugar.desugar
-
-    def counted(self, ctx=None):
-        reductions[self.class_name] += 1
-        return reduce_statement(self, ctx)
-
     monkeypatch.setattr(nodes.Assign, "_object_place_state", recorded)
-    monkeypatch.setattr(ClassDefinitionSugar, "desugar", counted)
+    reductions = _counting_reductions(monkeypatch)
     tree = SourceFile(
         (source, "test_witness.py", blake3_512_of(source.encode())),
         construction_context=TreeConstructionContextV1.for_test_without_workspace(),
@@ -189,7 +191,7 @@ def test_a_class_statement_that_is_not_one_completion_builds_no_place_state(
     outcome = function_universe_outcome(function)
 
     assert place_states == [None] * class_calls
-    assert reductions["Box"] == class_calls
+    assert reductions["Box"] == 1
     assert isinstance(outcome, ExitSet), outcome
     assert [type(face) for face in outcome.exits] == [Completed] + [Halted] * (
         _BODY_HALTS[body] * class_calls

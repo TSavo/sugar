@@ -251,4 +251,6 @@ class ClassConstructorBodySugar(Sugar):
                 )
             )
 
+        # The class statement's one outcome: a module-level statement is
+        # reduced once, and this call reads it (#7794).
         return self.definition.desugar(ctx).and_then(construct)
