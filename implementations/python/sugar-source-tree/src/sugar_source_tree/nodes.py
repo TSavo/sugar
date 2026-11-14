@@ -19677,9 +19677,9 @@ class Compare(Expression):
         if not all(supported(op) for op in self.ops):
             return super()._construct_sugar()
 
-        # ``is`` between containers is decided by their values at reduce
-        # (``object_identity.mutable_object_identity``: the construction that
-        # made each object), never by the spelling of the operands.
+        # ``is`` is decided by the operands' values at reduce
+        # (``object_identity.object_identity``: the construction that made
+        # each object), never by the spelling of the operands.
         operands = (self.left, *self.comparators)
 
         def pair(index):

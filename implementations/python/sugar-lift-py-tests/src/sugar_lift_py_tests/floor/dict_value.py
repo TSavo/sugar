@@ -45,12 +45,6 @@ class DictValue(GuardStableValue):
         """This floor value denotes a ``dict``."""
         return True
 
-    def is_identical(self, other, site):
-        """Object identity, never value equality (``object_identity``)."""
-        from .object_identity import mutable_object_identity
-
-        return mutable_object_identity(self, other, site)
-
     def truth(self, site):
         """A constructed dict is truthy exactly when it has an entry -- among
         its contents now (``object_identity.contents_current``); otherwise

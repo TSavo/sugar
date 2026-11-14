@@ -40,12 +40,6 @@ class ListValue(GuardStableValue):
         """This floor value denotes a ``list``."""
         return True
 
-    def is_identical(self, other, site):
-        """Object identity, never value equality (``object_identity``)."""
-        from .object_identity import mutable_object_identity
-
-        return mutable_object_identity(self, other, site)
-
     def python_index_protocol(self) -> bool:
         return False
 

@@ -1092,12 +1092,20 @@ class FloorValue:
         )
 
     def is_identical(self, other, site):
-        # Default: EMIT. Identity is the ONE comparison whose SMT lowering is
-        # honestly `=` -- reflexive, sort-independent, total (nan is nan is True
-        # even when nan == nan is False). Fold only language singletons
-        # (None / True / False) in overrides. Do not fold numbers or strings:
-        # CPython interning is an implementation detail, not language semantics
-        # -- `1 is 1` folding would state something the language does not promise.
+        # A reduced object whose value term is not its object (a container,
+        # an instance, a tuple/str/bytes/number value) answers by the one
+        # object rule, on either side: its value term would state `1 is 1`
+        # and `(x,) is (x,)` by value, which the language does not promise.
+        from sugar_lift_py_tests.floor.object_identity import (
+            answers_identity_by_object,
+            object_identity,
+        )
+
+        if answers_identity_by_object(self) or answers_identity_by_object(other):
+            return object_identity(self, other, site)
+        # Otherwise EMIT. Identity is the ONE comparison whose SMT lowering is
+        # honestly `=` -- reflexive, sort-independent, total. Fold only
+        # language singletons (None / True / False) in overrides.
         # Panic lives inside to_term when a side cannot enter FOL at all.
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
         from sugar_lift_py_tests.ir import identity

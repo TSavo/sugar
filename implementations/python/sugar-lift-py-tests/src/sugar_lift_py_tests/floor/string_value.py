@@ -61,21 +61,6 @@ class StringValue(GuardStableValue):
             else FalseBoolLiteralSugar(site=site)
         )
 
-    def is_identical(self, other, site):
-        # A constructed string can never be the None singleton. This does not
-        # claim anything about string interning (`"a" is "a"` remains emitted);
-        # it only folds the language-level disjointness from None.
-        from sugar_lift_py_tests.floor.none_value import NoneValue
-
-        if type(other) is NoneValue:
-            from sugar_lift_py_tests.outcome import ExitSet
-            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-                FalseBoolLiteralSugar,
-            )
-
-            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
-        return super().is_identical(other, site)
-
     # NO equals override: a string equality is a FACT, not a lift-time fold.
     # Deleting this override is the same ruling that killed TermValue.equals for
     # `1==1` -- folding two ground strings to True/False stole the fact (the

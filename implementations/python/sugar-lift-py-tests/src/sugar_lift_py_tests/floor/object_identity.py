@@ -1,13 +1,19 @@
-"""``is`` on reduced mutable objects: identity, never value equality.
+"""``is`` on reduced objects: identity, never value equality.
 
-A reduced list/dict/set/instance value is its CONTENTS: two equal contents
-can be one object or two (``[] is []`` is False; ``b = a; a is b`` is True),
-so the value term cannot answer ``is``.  A builtin container carries the
+A reduced list/dict/set/instance value is its CONTENTS, and a reduced
+tuple/str/bytes/int/float value is its VALUE: two equal ones can be one
+object or two (``[] is []`` is False; ``b = a; a is b`` is True; ``(x,) is
+(x,)`` builds two tuples; whether ``1000 is 1000`` or ``"a" is "a"`` share
+one object is CPython's interning and constant merging, not the language),
+so the value term cannot answer ``is`` (``object_identity``).  A builtin
+container, and a tuple display CPython builds at runtime, carries the
 construction that made its object in the frame reading it (``allocation``,
 ``made_at``): two values made by different constructions are two objects
-(False).  A value of another runtime type is never the same object (False).
-Anything else is the one comparison's own undecided atom over this
-evaluation's operands.
+(False), and one value of one construction reaching both operands is one
+object (True).  A value of another runtime type, or of another value, is
+never the same object (False).  ``None``, ``True`` and ``False`` are the
+language's singletons (True).  Anything else is the one comparison's own
+undecided atom over this evaluation's operands.
 
 The same ``allocation`` says whether a container's contents are the
 object's contents now (``contents_current``): this frame threads every
@@ -25,7 +31,10 @@ from __future__ import annotations
 # source site that made it (``made_at``, ``made_if_current``); a same-object
 # post-state names the producing value's own; a value that arrived, was
 # derived from contents that are not current, or that a builtin handed back
-# from its operand names None.
+# from its operand names None.  A ``tuple`` names it only where a display
+# CPython builds at runtime made it (``TupleSugar``); every other tuple names
+# None (a tuple's contents never change, so its ``allocation`` answers
+# identity only).
 
 
 def made_at(site) -> str | None:
@@ -249,7 +258,11 @@ def _arrived(value, through):
         )
         unchanged = all(a is b for a, b in zip(elements, value.elements))
         if kind is TupleValue:
-            return value if unchanged else replace(value, elements=elements)
+            # A tuple's contents never change: it carries no arrival, only
+            # the construction (identity) this frame no longer names.
+            if unchanged and value.allocation is None:
+                return value
+            return replace(value, elements=elements, allocation=None)
         stamp = value.arrival if value.arrival is not None else through()
         if unchanged and value.allocation is None and stamp == value.arrival:
             return value
@@ -287,19 +300,81 @@ def arrived_outcome(outcome, site=None):
     return outcome.and_then(lambda value: ExitSet.completed(arrived(value, site)))
 
 
-def mutable_object_identity(left, right, site):
+def answers_identity_by_object(value) -> bool:
+    """``value`` is a reduced object whose value term is not its object: a
+    builtin container, an instance, or a ``tuple``/``str``/``bytes``/number
+    value.  ``is`` with it on either side is ``object_identity``."""
+    from .bytes_value import BytesValue
+    from .dict_value import DictValue
+    from .list_value import ListValue
+    from .object_value import ObjectValue
+    from .set_value import SetValue
+    from .string_value import StringValue
+    from .term_value import TermValue
+    from .tuple_value import TupleValue
+
+    return isinstance(
+        value,
+        (
+            ObjectValue,
+            ListValue,
+            DictValue,
+            SetValue,
+            TupleValue,
+            StringValue,
+            BytesValue,
+            TermValue,
+        ),
+    )
+
+
+# The language's singletons: every ``None`` is the one ``None``, every
+# ``True`` the one ``True``, every ``False`` the one ``False``.  No other
+# value is promised one object (small ints, interned strings, the empty
+# tuple and merged code constants are CPython's choice).
+_SINGLETON_KINDS = ("None", "bool")
+
+
+def object_identity(left, right, site):
+    """``left is right`` asked of the objects, never of their values.
+
+    True for one object: the same value of one construction (``allocation``)
+    reaching both operands -- one evaluation, read twice (``t = (x,); t is
+    t``) or handed back by a builtin as itself (``tuple(t) is t``) -- or the
+    same language singleton.  False for two objects: two runtime types, two
+    constructions (``(x,) is (x,)``, ``[] is []``), or two ground values (an
+    object has one value).  Anything else is undecided: equal ground values
+    (``1000 is 1000``, ``"a" is "a"``, ``(1, 2) is (1, 2)``: interning and
+    constant merging are implementation-defined), one construction evaluated
+    twice, a value that arrived."""
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
     from sugar_lift_py_tests.ir import ctor, identity, str_const
     from sugar_lift_py_tests.occurrence import occurrence_key
     from sugar_lift_py_tests.outcome import ExitSet
 
-    left_type = _known_type(left)
-    right_type = _known_type(right)
     left_made = getattr(left, "allocation", None)
     right_made = getattr(right, "allocation", None)
+    left_key = _ground_key(left)
+    right_key = _ground_key(right)
+    if (left is right and left_made is not None) or (
+        left_key is not None
+        and left_key == right_key
+        and left_key[0] in _SINGLETON_KINDS
+    ):
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+
+        return ExitSet.completed(TrueBoolLiteralSugar(site=site))
+    left_type = _known_type(left)
+    right_type = _known_type(right)
     if (
-        left_type is not None and right_type is not None and left_type != right_type
-    ) or (left_made is not None and right_made is not None and left_made != right_made):
+        (left_type is not None and right_type is not None and left_type != right_type)
+        or (
+            left_made is not None and right_made is not None and left_made != right_made
+        )
+        or (left_key is not None and right_key is not None and left_key != right_key)
+    ):
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
             FalseBoolLiteralSugar,
         )
@@ -319,17 +394,86 @@ def mutable_object_identity(left, right, site):
 
 
 def _known_type(value):
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    from .bytes_value import BytesValue
     from .dict_value import DictValue
     from .list_value import ListValue
     from .none_value import NoneValue
     from .object_value import ObjectValue
     from .set_value import SetValue
     from .string_value import StringValue
+    from .term_value import TermValue
     from .tuple_value import TupleValue
 
     if isinstance(value, ObjectValue):
         return ("object", value.class_name)
-    for kind in (ListValue, DictValue, SetValue, NoneValue, StringValue, TupleValue):
+    if type(value) in (TrueBoolLiteralSugar, FalseBoolLiteralSugar):
+        return ("bool",)
+    if type(value) is TermValue:
+        payload = type(value.value)
+        return (payload.__name__,) if payload in (int, float, bool, complex) else None
+    for kind in (
+        ListValue,
+        DictValue,
+        SetValue,
+        NoneValue,
+        StringValue,
+        BytesValue,
+        TupleValue,
+    ):
         if type(value) is kind:
             return (kind.__name__,)
+    return None
+
+
+def _ground_key(value, depth=0):
+    """``value``'s whole value, when this frame holds all of it, keyed by its
+    runtime type: two different keys are two different values, so two
+    objects.  None when any of it is not ground (a symbolic or container
+    member, a guarded face).  A float keys by ``repr``: ``0.0`` and ``-0.0``
+    are two values, and a NaN is never decided distinct from itself."""
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    from .bytes_value import BytesValue
+    from .none_value import NoneValue
+    from .string_value import StringValue
+    from .term_value import TermValue
+    from .tuple_value import TupleValue
+
+    kind = type(value)
+    if depth > 32:
+        return None
+    if kind is NoneValue:
+        return ("None",)
+    if kind is TrueBoolLiteralSugar:
+        return ("bool", True)
+    if kind is FalseBoolLiteralSugar:
+        return ("bool", False)
+    if kind is StringValue and type(value.value) is str:
+        return ("str", value.value)
+    if kind is BytesValue and type(value.value) is bytes:
+        return ("bytes", value.value)
+    if kind is TermValue:
+        payload = value.value
+        if type(payload) in (int, bool):
+            return (type(payload).__name__, payload)
+        if type(payload) in (float, complex):
+            return (type(payload).__name__, repr(payload))
+        return None
+    if kind is TupleValue:
+        keys = tuple(_ground_key(element, depth + 1) for element in value.elements)
+        if any(element_key is None for element_key in keys):
+            return None
+        return ("tuple", keys)
     return None

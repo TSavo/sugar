@@ -92,18 +92,6 @@ class TermValue(GuardStableValue):
     # vendor's assertion out of the FOL. The value does not get to opt out of
     # an emission the assertion owns.
 
-    def is_identical(self, other, site):
-        from sugar_lift_py_tests.floor.none_value import NoneValue
-
-        if type(other) is NoneValue:
-            from sugar_lift_py_tests.outcome import ExitSet
-            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-                FalseBoolLiteralSugar,
-            )
-
-            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
-        return super().is_identical(other, site)
-
     def _unorderable_ground_peer(self, other) -> bool:
         from sugar_lift_py_tests.floor.list_value import ListValue
         from sugar_lift_py_tests.floor.none_value import NoneValue
