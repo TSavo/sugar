@@ -39,8 +39,6 @@ tree (#5940 builds the tree in isolation).
 
 from __future__ import annotations
 
-from dataclasses import dataclass as _dataclass
-
 
 def _render_blame(blame: object) -> str:
     """Project a native coordinate to actionable prose only at the panic edge."""
@@ -165,81 +163,6 @@ class OpaqueSourceCallResolutionGap(SugarNotWritten):
     """A reached source-call obligation whose target stayed unresolved."""
 
     _LABEL = "OPAQUE SOURCE CALL RESOLUTION GAP"
-
-
-class ImportValueUseResolutionGap(SugarNotWritten):
-    """An authenticated import VALUE-use whose target stayed unresolved.
-
-    The value-use sibling of ``OpaqueSourceCallResolutionGap``. A final-checked
-    import receipt named a target symbol, and resolving that target against the
-    authenticated distribution graph produced a resolution GAP rather than a
-    resolved Python object — the target is not reachable through the binding it
-    claims (``target-outside-binding``), or the module it names carries no
-    authenticated source in this artifact (``artifact-module-absent``).
-
-    A *named* subclass of ``SugarNotWritten`` (like
-    ``RuntimeSelectedContextManager``) so the frontier census counts unresolved
-    value-use targets separately, and — decisively — so this refusal travels as
-    a TERMINAL with a construct, a coordinate and a shape. It used to be a bare
-    ``ValueError`` (``ImportValueUseSeatingGap``) that named none of those: it
-    escaped ``sugar.enumerate`` as an instrument failure, voiding the whole
-    file's measurement instead of standing as one readable row at this use.
-
-    Never seat the receipt to make this go away: an unresolved target is not an
-    open-world export that merely carries no definition coordinate.
-    """
-
-    _LABEL = "IMPORT VALUE USE RESOLUTION GAP"
-
-
-@_dataclass(frozen=True)
-class UnresolvedImportValueUseV1:
-    """A deferred, reachability-scoped ``ImportValueUseResolutionGap``.
-
-    Manager construction seats value-use receipts by walking the ENTIRE frame
-    span, but the manager's exit CONTRACT only reaches the value-uses on its
-    suppress/raise decision path.  A receipt whose target genuinely does not
-    resolve (``target-outside-binding`` / ``artifact-module-absent``) must
-    stay a countable terminal, but voiding the whole manager at seat time
-    voids it even when the unresolved value is only reached on a failure-
-    MESSAGE branch the contract never takes (e.g. pytest's
-    ``_config.get_verbosity`` inside ``RaisesExc._check_match``).
-
-    So the seater DEFERS the refusal instead of raising: it records this marker
-    at the exact use coordinate.  It is not an ``AuthenticatedImportUseV1``
-    receipt — it can NEVER ride as an authenticated value.  When the
-    force-floor actually REACHES the use, the value-use consumer raises the identical ``ImportValueUseResolutionGap`` at
-    that coordinate (the same countable construction-panic row it was before,
-    just minted at consume time).  A use the contract never reaches is never
-    consumed, so the manager constructs.
-    """
-
-    resolution_kind: str
-    target_symbol: str
-    dependency_module: str
-
-    def as_gap(self, *, blame: object) -> "ImportValueUseResolutionGap":
-        """The countable terminal this deferred marker stands for, minted at
-        the coordinate the force-floor reached."""
-        return ImportValueUseResolutionGap(
-            blame=blame,
-            owner="manager_construction._seat_import_value_use_receipts",
-            observed=(
-                "authenticated value-use receipt did not resolve: "
-                f"resolution-{self.resolution_kind} for target "
-                f"{self.target_symbol!r} through module "
-                f"{self.dependency_module!r}"
-            ),
-            requested=(
-                "a resolved Python object for the receipt's authenticated "
-                "target symbol, reached through its own import binding"
-            ),
-            fix=(
-                "resolve the target through the binding it names, or keep "
-                "this value-use coordinate loud; never seat an unresolved "
-                "target as an authenticated value"
-            ),
-        )
 
 
 class RuntimeSelectedContextManager(SugarNotWritten):

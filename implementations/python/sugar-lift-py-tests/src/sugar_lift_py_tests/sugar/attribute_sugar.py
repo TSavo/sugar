@@ -102,32 +102,6 @@ class AttributeSugar(ConstructedTermSugar):
 
         if type(site) is SourceFragment:
             span = site.line_col_span
-            # The force-floor has REACHED this value-use.  If manager receipt
-            # seating deferred an unresolved-target refusal here, mint it now as
-            # the countable terminal it always was (reachability-scoped: an
-            # unreached message-only use never runs this consumer).
-            deferred = site.unit.deferred_unresolved_import_value_use(
-                (span.start_line, span.start_col, span.end_line, span.end_col)
-            )
-            if deferred is not None:
-                # The force-floor reaching a deferred value-use here yields a
-                # message opacity rather than a refusal, letting the manager
-                # construct.
-                from sugar_lift_py_tests.floor.message_opaque_value import (
-                    MessageOpaqueValue,
-                )
-                from sugar_lift_py_tests.ir import ctor, str_const
-                from sugar_lift_py_tests.outcome import ExitSet
-
-                return ExitSet.completed(
-                    MessageOpaqueValue(
-                        term=ctor(
-                            "python:message-opaque-value",
-                            [str_const(deferred.target_symbol)],
-                            symbol_kind="coordinate",
-                        )
-                    )
-                )
             receipt = site.unit.import_value_use_resolution(
                 (span.start_line, span.start_col, span.end_line, span.end_col)
             )

@@ -146,51 +146,6 @@ def test_unresolved_import_value_use_never_names_the_untyped_seating_gap() -> No
     )
 
 
-def test_import_value_use_resolution_gap_is_a_countable_census_row() -> None:
-    """GUARD: the class, not the raise site.
-
-    ``_panic_from_exception`` mints a countable construction-panic row for
-    ``ConstructionPanic`` and ``SugarNotWritten`` ONLY; every other exception
-    becomes an instrument failure. Demoting ``ImportValueUseResolutionGap`` off
-    ``SugarNotWritten`` restores the hole without touching any raise site, so
-    the inheritance gets its own tooth.
-    """
-    from sugar_source_tree.panic import (
-        ImportValueUseResolutionGap,
-        SugarNotWritten,
-    )
-
-    assert issubclass(ImportValueUseResolutionGap, SugarNotWritten)
-    gap = ImportValueUseResolutionGap(
-        blame="pandas/io/json/_json.py:1:0",
-        owner="tooth",
-        observed="authenticated value-use receipt did not resolve",
-        requested="a resolved Python object",
-        fix="resolve the target through the binding it names",
-    )
-    assert "IMPORT VALUE USE RESOLUTION GAP" in str(gap)
-
-
-def test_unresolved_import_value_use_marker_is_a_countable_terminal() -> None:
-    """GUARD: the deferred marker stands for a COUNTABLE terminal: its
-    ``as_gap`` is an ``ImportValueUseResolutionGap`` (a ``SugarNotWritten``),
-    never a bare ``ValueError`` hole."""
-    from sugar_source_tree.panic import (
-        ImportValueUseResolutionGap,
-        SugarNotWritten,
-        UnresolvedImportValueUseV1,
-    )
-
-    gap = UnresolvedImportValueUseV1(
-        resolution_kind="target-outside-binding",
-        target_symbol="python:_pytest.assertion.util._config.get_verbosity",
-        dependency_module="_pytest.assertion.util",
-    ).as_gap(blame="pandas/io/json/_json.py:1:0")
-    assert isinstance(gap, ImportValueUseResolutionGap)
-    assert isinstance(gap, SugarNotWritten)
-    assert "resolution-target-outside-binding" in str(gap)
-
-
 # --------------------------------------------------------------------------
 # Cause 2: the live-loop sealer's constructed value has a typed door.
 # --------------------------------------------------------------------------
