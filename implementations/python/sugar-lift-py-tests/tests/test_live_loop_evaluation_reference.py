@@ -1630,6 +1630,95 @@ def test_a_block_no_path_of_which_falls_through_ends_its_enclosing_block() -> No
     assert BlockValue((GuardedReturn((test,), TermValue(1)),)).follow_rest().continues
 
 
+# -- a suite's guarded return guards what follows its compound statement -----
+
+
+def _one_return_per_arm_after_a_guarded_return(outcome) -> None:
+    """``outcome`` returns ``1`` under its guarded ``return``'s guard and
+    ``0`` only under the negation of it: every completed arm holds exactly
+    one ``return`` -- ``1`` a ``GuardedReturn``, ``0`` a ``ReturnValue`` --
+    never the two beside each other.  (A symbolic loop leaves by its
+    ``else`` on more than one exhausted arm: every such arm is checked.)"""
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+    arms = _returns_by_arm(outcome)
+    assert arms, outcome
+    for _guard, returns in arms:
+        assert len(returns) == 1, arms
+    ones = [(guard, entry) for guard, (entry,) in arms if entry.value == TermValue(1)]
+    zeros = [(guard, entry) for guard, (entry,) in arms if entry.value == TermValue(0)]
+    assert ones, arms
+    assert zeros, arms
+    for one_guard, one in ones:
+        assert isinstance(one, GuardedReturn), one
+        for guard in one.guards:
+            assert guard in _subformulas(one_guard), (guard, one_guard)
+            for zero_guard, zero in zeros:
+                assert isinstance(zero, ReturnValue), zero
+                assert not_(guard) in _subformulas(zero_guard), (guard, zero_guard)
+
+
+_RETURN_FROM_A_LOOPS_ELSE = (
+    "def f({params}):\n"
+    "    for x in {iterable}:\n"
+    "        pass\n"
+    "    else:\n"
+    "        if c:\n"
+    "            return 1\n"
+    "    return 0\n"
+    "def g():\n"
+    "    return (1, 2)\n"
+)
+
+
+def test_a_concrete_loops_else_guarded_return_guards_the_statement_after() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``for x in g(): pass`` then ``else: if c: return 1``, then ``return
+    # 0``: the loop leaves by the ``else``'s return under ``c`` and goes on
+    # to ``return 0`` only under ``not c`` -- one return per arm.
+    _one_return_per_arm_after_a_guarded_return(
+        function_universe_outcome(
+            _function(_RETURN_FROM_A_LOOPS_ELSE.format(params="c", iterable="g()"))
+        )
+    )
+
+
+def test_a_symbolic_loops_else_guarded_return_guards_the_statement_after() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # The same over a symbolic ``xs``: the recurrence's ``else`` leaves by
+    # its return under ``c``, and ``return 0`` runs only under ``not c``.
+    _one_return_per_arm_after_a_guarded_return(
+        function_universe_outcome(
+            _function(
+                _RETURN_FROM_A_LOOPS_ELSE.format(params="c, xs", iterable="xs")
+            )
+        )
+    )
+
+
+def test_an_if_arms_guarded_return_guards_the_statement_after_the_if() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``if a: if b: return 1`` then ``return 0``: the outer ``if``'s arm
+    # falls through after the inner return.  The ``if`` leaves by that
+    # return under its guard, and ``return 0`` runs only where it was not
+    # taken -- never beside it.
+    _one_return_per_arm_after_a_guarded_return(
+        function_universe_outcome(
+            _function(
+                "def f(a, b):\n"
+                "    if a:\n"
+                "        if b:\n"
+                "            return 1\n"
+                "    return 0\n"
+            )
+        )
+    )
+
+
 # -- a break/continue leaves with what the item did (#7757 item 7, #8064) ------
 
 
