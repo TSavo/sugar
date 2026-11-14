@@ -73,15 +73,16 @@ class ScopeRebinds(FloorValue):
 
 
 def bind_unpack_projections(value, evaluation: str | None):
-    """An unpack's completed answer, with each target's member also bound
-    under its projection of the statement's one evaluation.
+    """An unpack's completed answer, each target's member bound under its
+    projection of the statement's one evaluation instead of its name.
 
     Temporal choice 1 (#7661): a later read of ``a`` after ``a, b = f()`` is
     an ``EvaluationRef`` to ``a``'s projection of the statement's evaluation,
-    never the name looked up by spelling. The names are bound first and the
-    projections last, so a read of a projection is the latest of the two
-    until something rebinds the name. Without an evaluation key (a statement
-    that was never substituted) the answer is unchanged.
+    never the name looked up by spelling, so the name is not written: the
+    projection is the one binding a read reaches (a live loop's latch reads
+    it as ``a``'s write: ``live_loop_construction._carried_writes``). Without
+    an evaluation key (a statement that was never substituted) the answer is
+    unchanged: the names alone.
     """
     from sugar_lift_py_tests.outcome import ExitSet
 
@@ -90,12 +91,12 @@ def bind_unpack_projections(value, evaluation: str | None):
     from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
     from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
-    bindings = value.bindings
     # In a live loop each item's evaluation is its own key.
     projected = tuple(
-        (evaluation_here(projection_key(evaluation, n)), m) for n, m in bindings
+        (evaluation_here(projection_key(evaluation, n)), m)
+        for n, m in value.bindings
     )
-    return ExitSet.completed(ScopeRebinds((*bindings, *projected)))
+    return ExitSet.completed(ScopeRebinds(projected))
 
 
 @dataclass(frozen=True)

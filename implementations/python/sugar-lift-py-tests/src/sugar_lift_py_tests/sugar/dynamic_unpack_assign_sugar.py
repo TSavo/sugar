@@ -41,7 +41,7 @@ class DynamicUnpackAssignSugar(Sugar):
     Substitution rewrote every later read of a target to an ``EvaluationRef``
     to that target's projection of the statement's one evaluation
     (``evaluation``, temporal choice 1): the completed arm binds each member
-    under its projection as well as under its name.
+    under its projection, never under its name.
     """
 
     target_names: tuple[str, ...]

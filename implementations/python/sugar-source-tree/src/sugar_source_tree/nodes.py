@@ -4022,6 +4022,58 @@ def _loop_header_evaluation_key(loop, name: str, scope) -> str:
     )
 
 
+def _loop_target_evaluation_key(loop, name: str, scope) -> str:
+    """The coordinate a live ``for`` binds its target ``name`` under for each
+    item: the item's projection of the element it took.
+
+    As the header's key (``_loop_header_evaluation_key``), it is minted once
+    and qualified at reduce by the item it is bound in (``evaluation_here``),
+    so each item's target is its own evaluation, as each unrolled iteration's
+    keyed unpack is (#7929).  ``LoopRecurrenceSugar`` binds it at the start
+    of every item, after the header, and once more after the last item (to
+    what the last item handed on, or its projection) for the ``else`` suite.
+    A target the loop carries uses this key as its header.
+    """
+    from sugar_lift_python_source.canonical import cid_of_json
+    from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+    from .shadow import occurrence_tags_of
+
+    return EVALUATION_PREFIX + cid_of_json(
+        {
+            "kind": "python-loop-target-evaluation-v1",
+            "loopFragmentCid": loop.fragment.seal().cid,
+            "name": name,
+            "occurrence": [
+                *scope.get(_EVALUATION_OCCURRENCE, ()),
+                *occurrence_tags_of(loop),
+            ],
+            "exitPath": list(scope.get(_EVALUATION_EXIT_PATH, ())),
+        }
+    )
+
+
+def _loop_target_bindings(loop, names, scope) -> dict:
+    """The body (and ``else``) scope's binding of each name a live ``for``'s
+    target binds: a reference to the target's per-item evaluation
+    (``_loop_target_evaluation_key``), never the name read by spelling.
+
+    A target bound before the loop keeps the pre-loop binding's coordinate
+    (it is the same variable, and the loop carries it); a target bound
+    nowhere before is the reference alone.
+    """
+    references = {}
+    for name in sorted(names):
+        evaluation = _loop_target_evaluation_key(loop, name, scope)
+        reference = _evaluation_ref(loop, loop.span, evaluation, name)
+        entry = scope.get(name)
+        if isinstance(entry, BindingEntryV1):
+            references[name] = replace(entry, state=reference, sealed_state=None)
+        else:
+            references[name] = reference
+    return references
+
+
 def _loop_header_bindings(loop, names, scope) -> dict:
     """The body scope's binding of each name ``loop`` carries into its body
     (and, for a live ``for``, into its ``else`` suite): a reference to the
@@ -10599,33 +10651,35 @@ class For(Statement):
             # In the body a carried name (bound before the loop, rebound in the
             # body) is not masked to the bare name: it reads the loop header's
             # evaluation of it, the value the item began with, bound per item
-            # by the recurrence (``_loop_header_bindings``).  The loop target is
-            # bound per item by the recurrence itself and stays masked.  The
-            # ``else`` runs once, after every item: it reads every name the
-            # loop carries through the same header, which the recurrence binds
-            # once more, outside every item, to the value the last item handed
-            # on.
+            # by the recurrence (``_loop_header_bindings``).  The loop target
+            # reads its own per-item evaluation, the item's projection of the
+            # element it took, bound by the recurrence under the target's key
+            # (``_loop_target_bindings``), never the name.  The ``else`` runs
+            # once, after every item: it reads every name the loop carries
+            # through the same header, and the target through the same key,
+            # which the recurrence binds once more, outside every item, to the
+            # value the last item handed on.
             with reduction_span(sugar="For.symbolic", role="temporal", site=where):
                 target_names = set(
                     self.unit.require_target_pattern(self, self.target).names
                 )
                 bound = target_names | For._stmts_bound_names(self.body)
+                else_bound = bound | For._stmts_bound_names(self.orelse)
                 bs = (
                     {k: v for k, v in scope.items() if k not in bound}
                     if bound
                     else scope
                 )
+                targets = _loop_target_bindings(self, target_names, scope)
                 body_scope = {
                     **bs,
                     **_loop_header_bindings(self, bound - target_names, scope),
+                    **targets,
                 }
                 else_scope = {
                     **bs,
-                    **_loop_header_bindings(
-                        self,
-                        (bound | For._stmts_bound_names(self.orelse)) - target_names,
-                        scope,
-                    ),
+                    **_loop_header_bindings(self, else_bound - target_names, scope),
+                    **targets,
                 }
                 changed = {}
                 if iter_changed:
@@ -10662,6 +10716,10 @@ class For(Statement):
                     for t in n.targets:
                         bind(t)
                 elif n.kind in ("AugAssign", "AnnAssign", "NamedExpr"):
+                    bind(n.target)
+                elif n.kind in ("For", "AsyncFor"):
+                    # A nested loop's target rebinds its names on every item:
+                    # a loop around it carries them like any other write.
                     bind(n.target)
         return names
 
@@ -18407,9 +18465,10 @@ class EvaluationRef(Expression):
     key was never bound (undecided by name where it is also ``deferred``: a
     generator expression's walrus, which writes when the generator is
     consumed).  In a live loop's body a carried name reads the loop
-    header's evaluation of it (``_loop_header_evaluation_key``), which the
-    recurrence binds per item.  Inside a comprehension a read of a name a
-    walrus in it writes is a member reference to the comprehension's
+    header's evaluation of it (``_loop_header_evaluation_key``), and the
+    loop target its per-item evaluation (``_loop_target_evaluation_key``),
+    which the recurrence binds per item.  Inside a comprehension a read of a
+    name a walrus in it writes is a member reference to the comprehension's
     running value of the name (``ListComp._walrus_recurrence``), marked
     ``recurrence``.  Built by ``_evaluation_ref`` only.
     """

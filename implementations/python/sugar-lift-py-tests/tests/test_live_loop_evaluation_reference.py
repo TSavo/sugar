@@ -30,6 +30,7 @@ from types import SimpleNamespace
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 from sugar_lift_py_tests.occurrence import (
     entered,
     live_iterations,
@@ -153,7 +154,7 @@ def test_each_item_binds_its_own_header() -> None:
         assert ref.desugar(ctx) == ExitSet.completed(TermValue(2))
 
 
-def test_a_loop_target_has_no_header() -> None:
+def test_a_runtime_naming_no_header_binds_none() -> None:
     recurrence = _recurrence()
     runtime = SimpleNamespace(
         carried_names=("v",), carried_evaluations=((None, (), ()),)
@@ -162,6 +163,139 @@ def test_a_loop_target_has_no_header() -> None:
     with entered(_item(0)):
         entered_ctx = recurrence._enter_header(runtime, ctx, (TermValue(1),))
     assert entered_ctx.temporal.evaluations() == ()
+
+
+# -- the target: each item's projection, under its key -----------------------
+
+TARGET = EVALUATION_PREFIX + "blake3-512:test-target"
+TARGET_COORDINATE = "blake3-512:test-target-coordinate"
+
+
+def _target_runtime(carried: bool):
+    pattern = SimpleNamespace(names=("v",))
+    if carried:
+        return SimpleNamespace(
+            target_pattern=pattern,
+            target_evaluations=(TARGET,),
+            carried_names=("v",),
+            carried_evaluations=((TARGET, (), ()),),
+        )
+    return SimpleNamespace(
+        target_pattern=pattern,
+        target_evaluations=(TARGET,),
+        carried_names=(),
+        carried_evaluations=(),
+    )
+
+
+def test_each_item_reads_its_own_target_never_the_name() -> None:
+    recurrence = _recurrence()
+    runtime = _target_runtime(carried=False)
+    ctx = ReduceContext.root(owner="live-target")
+    with entered(_item(0)):
+        ctx, bound = recurrence._enter_target(
+            runtime, ctx, (("v", TARGET_COORDINATE, TermValue(5)),)
+        )
+        assert bound == ((evaluation_here(TARGET), TARGET_COORDINATE, TermValue(5)),)
+    with entered(_item(1)):
+        ctx, _bound = recurrence._enter_target(
+            runtime, ctx, (("v", TARGET_COORDINATE, TermValue(6)),)
+        )
+    assert ctx.temporal.value_if_bound("v") is None
+    ref = EvaluationRefSugar(evaluation=TARGET, name="v", site=None)
+    with entered(_item(0)):
+        assert ref.desugar(ctx) == ExitSet.completed(TermValue(5))
+    with entered(_item(1)):
+        assert ref.desugar(ctx) == ExitSet.completed(TermValue(6))
+
+
+def test_a_carried_target_hands_on_its_projection_not_the_name() -> None:
+    # The header (what the previous item handed on) is bound first, the
+    # item's projection after it under the same key; the name is not read.
+    recurrence = _recurrence()
+    runtime = _target_runtime(carried=True)
+    ctx = ReduceContext.root(owner="live-target-latch")
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("v", TermValue(99)))
+    with entered(_item(0)):
+        ctx = recurrence._enter_header(runtime, ctx, (TermValue(1),))
+        ctx, _bound = recurrence._enter_target(
+            runtime, ctx, (("v", TARGET_COORDINATE, TermValue(5)),)
+        )
+    assert recurrence._latched(runtime, ctx, 0) == (TermValue(5),)
+
+
+def test_the_else_reads_the_last_items_target() -> None:
+    recurrence = _recurrence()
+    runtime = _target_runtime(carried=False)
+    ctx = ReduceContext.root(owner="live-target-else")
+    for index, value in enumerate((TermValue(5), TermValue(6))):
+        with entered(_item(index)):
+            ctx, _bound = recurrence._enter_target(
+                runtime, ctx, (("v", TARGET_COORDINATE, value),)
+            )
+    after = recurrence._leave_target(runtime, ctx, 2)
+    ref = EvaluationRefSugar(evaluation=TARGET, name="v", site=None)
+    assert ref.desugar(after) == ExitSet.completed(TermValue(6))
+    # No item: the target was never assigned, and nothing is bound.
+    assert recurrence._leave_target(runtime, ctx, 0) is ctx
+
+
+def test_the_publication_writes_the_coordinate_never_the_name() -> None:
+    recurrence = LoopRecurrenceSugar(
+        target_cid=LOOP,
+        loop_construction_cid="blake3-512:test-construction",
+        binding_coordinate_cids=("blake3-512:test-binding",),
+        outward_faces=(),
+        construction=None,
+        site="live-loop-evaluation",
+    )
+    published = recurrence._publish_runtime_bindings(
+        _RUNTIME,
+        ReduceContext.root(owner="live-publication"),
+        entries=(),
+        carried=(TermValue(4),),
+    )
+    block = published.completed_value()
+    assert block.statements == (ScopeRebind("blake3-512:test-binding", TermValue(4)),)
+
+
+# -- a read inside a nested live loop's item ----------------------------------
+
+
+def test_a_read_in_a_nested_item_reads_the_enclosing_items_write() -> None:
+    # ``for row in rows: for c in cols: f(row)``: ``row`` is bound inside the
+    # outer item and read inside an inner item.
+    inner = loop_iteration_segment("blake3-512:inner-loop", 0)
+    ctx = ReduceContext.root(owner="live-nested-read")
+    with entered(_item(0)):
+        ctx = ctx.with_temporal(
+            ctx.temporal.bind_value(evaluation_here(KEY), TermValue(1))
+        )
+    with entered(_item(1)):
+        ctx = ctx.with_temporal(
+            ctx.temporal.bind_value(evaluation_here(KEY), TermValue(2))
+        )
+    ref = EvaluationRefSugar(evaluation=KEY, name="row", site=None)
+    with entered(_item(1)):
+        with entered(inner):
+            assert ref.desugar(ctx) == ExitSet.completed(TermValue(2))
+    # A write inside the inner item is that item's own.
+    with entered(_item(1)):
+        with entered(inner):
+            ctx = ctx.with_temporal(
+                ctx.temporal.bind_value(evaluation_here(KEY), TermValue(3))
+            )
+            assert ref.desugar(ctx) == ExitSet.completed(TermValue(3))
+    with entered(_item(1)):
+        assert ref.desugar(ctx) == ExitSet.completed(TermValue(2))
+
+
+def test_a_read_in_an_item_reads_a_write_made_before_the_loop() -> None:
+    ctx = ReduceContext.root(owner="live-outer-read")
+    ctx = ctx.with_temporal(ctx.temporal.bind_value(KEY, TermValue(7)))
+    ref = EvaluationRefSugar(evaluation=KEY, name="x", site=None)
+    with entered(_item(0)):
+        assert ref.desugar(ctx) == ExitSet.completed(TermValue(7))
 
 
 # -- the latch: what an item hands on ----------------------------------------
@@ -376,6 +510,49 @@ def test_the_else_reads_a_carried_name_through_the_header() -> None:
 
 def test_the_same_source_gives_the_same_header() -> None:
     assert _live_runtime().carried_evaluations == _live_runtime().carried_evaluations
+
+
+def test_a_live_body_reads_the_target_through_its_key() -> None:
+    runtime = _live_runtime()
+    [target] = runtime.target_evaluations
+    assert target.startswith(EVALUATION_PREFIX)
+    [aug] = runtime.body_sugars
+    # ``t += v`` reads ``v`` through the item's projection, not by spelling.
+    assert isinstance(aug.right, EvaluationRefSugar)
+    assert aug.right.evaluation == target
+    assert aug.right.name == "v"
+
+
+def test_a_target_bound_before_the_loop_is_carried_through_its_key() -> None:
+    runtime = _live_runtime(
+        "def f(xs):\n"
+        "    v = 0\n"
+        "    for v in xs:\n"
+        "        pass\n"
+        "    return v\n"
+    )
+    assert runtime.carried_names == ("v",)
+    [target] = runtime.target_evaluations
+    assert runtime.carried_evaluations == ((target, (), ()),)
+
+
+def test_a_nested_loop_rebinding_a_carried_target_is_a_write() -> None:
+    # ``for x in xs: for x in ys``: the inner loop carries ``x`` and
+    # publishes it; the outer latch reads that publication.
+    runtime = _live_runtime(
+        "def f(xs, ys):\n"
+        "    x = 0\n"
+        "    for x in xs:\n"
+        "        for x in ys:\n"
+        "            pass\n"
+        "    return x\n"
+    )
+    assert runtime.carried_names == ("x",)
+    [inner] = runtime.body_sugars
+    assert isinstance(inner, LoopRecurrenceSugar)
+    assert inner.construction.loop_runtime.carried_names == ("x",)
+    [(_header, writes, _else_writes)] = runtime.carried_evaluations
+    assert writes == inner.binding_coordinate_cids
 
 
 def test_each_read_of_an_evaluation_is_spanned_at_its_use() -> None:

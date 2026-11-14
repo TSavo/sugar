@@ -38,9 +38,10 @@ class UnpackProjectionTarget(ABC):
 
 
 def _rebind_name(name: str, member, evaluation: str | None) -> ExitSet:
-    """Rebind a lexical leaf to its member, and under its projection of the
-    statement's one evaluation when the statement was substituted (temporal
-    choice 1: every later read is an ``EvaluationRef`` to that projection)."""
+    """Bind a lexical leaf's member under its projection of the statement's
+    one evaluation when the statement was substituted (temporal choice 1:
+    every later read is an ``EvaluationRef`` to that projection, and the name
+    is not written); a statement never substituted rebinds the name."""
     from sugar_lift_py_tests.floor.scope_rebind import (
         ScopeRebind,
         ScopeRebinds,

@@ -58,7 +58,10 @@ item. At reduce the key is that coordinate qualified by the live iterations
 the reduction is inside (``evaluation_here``): each item's evaluation is its
 own, as each unrolled iteration's is (#7886). A live loop also reads a name
 it carries through its header: the value the item began with, bound per item
-by ``LoopRecurrenceSugar`` under the header's key.
+by ``LoopRecurrenceSugar`` under the header's key, and its target through the
+target's key, bound per item to the item's projection. A read inside the
+items of a live loop nested in the item of the write reads the write's own
+item (``evaluation_read_here``).
 
 For a statement's reference, a write of the name that substitution does not
 see (an unsubstituted unpack) still binds the name. The read is then
@@ -109,6 +112,34 @@ def evaluation_here(evaluation: str) -> str:
     return f"{evaluation}@{'/'.join(segments)}"
 
 
+def evaluation_read_here(temporal, evaluation: str) -> str:
+    """The key a read of ``evaluation`` reads in the reduction running now.
+
+    An evaluation is bound qualified by the live items around its write
+    (``evaluation_here``).  A read sits inside those items, and possibly
+    inside the items of live loops nested in them: ``for row in rows: for c
+    in cols: f(row)`` reads ``row``'s per-item key inside an item of the
+    inner loop, where it was bound inside an item of the outer one only.
+    So the read takes the innermost qualification of its own live items
+    under which the evaluation is bound: the item of the write it reaches.
+    A statement is written at one depth of live items only, so no other
+    write can answer.  With none bound, the key qualified fully, as before.
+    """
+    from sugar_lift_py_tests.occurrence import live_iterations
+    from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
+
+    if temporal is None or not evaluation.startswith(EVALUATION_PREFIX):
+        return evaluation
+    segments = live_iterations()
+    for depth in range(len(segments), 0, -1):
+        key = f"{evaluation}@{'/'.join(segments[:depth])}"
+        if temporal.value_if_bound(key) is not None:
+            return key
+    if not segments or temporal.value_if_bound(evaluation) is not None:
+        return evaluation
+    return f"{evaluation}@{'/'.join(segments)}"
+
+
 @dataclass(frozen=True)
 class EvaluationRefSugar(ConstructedTermSugar):
     evaluation: str
@@ -141,7 +172,7 @@ class EvaluationRefSugar(ConstructedTermSugar):
         if self.member:
             return self._member(temporal)
         if temporal is not None:
-            key = evaluation_here(self.evaluation)
+            key = evaluation_read_here(temporal, self.evaluation)
             latest = temporal.latest(key, self.name)
             if latest is not None and latest.name == key:
                 from sugar_lift_py_tests.outcome import ExitSet
