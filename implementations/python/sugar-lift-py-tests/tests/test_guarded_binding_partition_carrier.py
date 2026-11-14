@@ -5,8 +5,8 @@ from dataclasses import dataclass
 import pytest
 
 from sugar_lift_py_tests.floor import StringValue
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.outcome.exit_set import (
+    ExitSet,
     ExitSetFactoringGap,
     _faces_exclusive,
 )
@@ -30,7 +30,7 @@ class _Value(Sugar):
         return ()
 
     def desugar(self, ctx=None):
-        return Complete(StringValue(self.text))
+        return ExitSet.completed(StringValue(self.text))
 
 
 def _slot(name: str) -> BranchResultSlot:

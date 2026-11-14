@@ -32,7 +32,6 @@ from sugar_lift_py_tests.floor.set_value import SetValue
 from sugar_lift_py_tests.floor.tuple_value import TupleValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import atomic, implies
-from sugar_lift_py_tests.outcome import Complete
 
 # --------------------------------------------------------------------------
 # attribute x the constructed containers
@@ -49,26 +48,32 @@ def _container(kind):
 @pytest.mark.parametrize("kind", [DictValue, ListValue, TupleValue, SetValue])
 def test_container_attribute_is_the_py_getattr_coordinate(kind) -> None:
     outcome = _container(kind).attribute("renamed_member", "site")
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, SymbolicValue)
-    assert outcome.value.term.name == "py.getattr"
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), SymbolicValue)
+    assert outcome.completed_value().term.name == "py.getattr"
 
 
 @pytest.mark.parametrize("kind", [DictValue, ListValue, TupleValue, SetValue])
 def test_the_coordinate_names_the_attribute_that_was_asked_for(kind) -> None:
     """Not one shape for every name -- the name is an argument of the symbol."""
-    first = _container(kind).attribute("renamed_alpha", "site").value.term
-    second = _container(kind).attribute("renamed_beta", "site").value.term
+    first = _container(kind).attribute("renamed_alpha", "site").completed_value().term
+    second = _container(kind).attribute("renamed_beta", "site").completed_value().term
     assert first != second
 
 
 def test_the_coordinate_carries_the_receivers_own_term() -> None:
     """Two receivers of one attribute do not collapse into one coordinate."""
-    short = ListValue((TermValue(1),)).attribute("renamed_member", "site").value.term
+    short = (
+        ListValue((TermValue(1),))
+        .attribute("renamed_member", "site")
+        .completed_value()
+        .term
+    )
     long = (
         ListValue((TermValue(1), TermValue(2)))
         .attribute("renamed_member", "site")
-        .value.term
+        .completed_value()
+        .term
     )
     assert short != long
 
@@ -147,21 +152,21 @@ def test_a_guarded_string_needle_distributes_and_rejoins() -> None:
     )
     # One rejoined answer under the needle's own guard -- not a panic, and not
     # one arm silently chosen.
-    assert isinstance(outcome, Complete)
-    assert outcome.value is not None
+    assert outcome.completed_value() is not None
 
 
 @pytest.mark.parametrize("kind", [ListValue, TupleValue, SetValue])
 def test_a_guarded_sequence_needle_distributes(kind) -> None:
     members = (TermValue(1), TermValue(2))
     outcome = kind(members).contains(_guarded(TermValue(1), TermValue(9)), "site")
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
 
 
 def test_a_guarded_dict_key_distributes() -> None:
     d = DictValue(((TermValue(1), TermValue(10)),))
-    assert isinstance(
-        d.contains(_guarded(TermValue(1), TermValue(9)), "site"), Complete
+    assert (
+        d.contains(_guarded(TermValue(1), TermValue(9)), "site").completed_value()
+        is not None
     )
 
 

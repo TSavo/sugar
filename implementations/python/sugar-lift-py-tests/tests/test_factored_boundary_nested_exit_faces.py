@@ -40,7 +40,7 @@ from sugar_lift_py_tests.floor import ReturnValue, StringValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.ir import PrimitiveSort, _Atomic, ctor, make_var
-from sugar_lift_py_tests.outcome import Complete, Completed, Halted
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.outcome.exit_set import ExitSet, true_guard
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -253,7 +253,7 @@ def _factored_boundary(
         body=None,
         keyword_names=(),
     )
-    manager = manager_sugar or _CountingManager(Complete(manager_value))
+    manager = manager_sugar or _CountingManager(ExitSet.completed(manager_value))
     if manager_sugar is None:
         # Keep default counting manager
         pass

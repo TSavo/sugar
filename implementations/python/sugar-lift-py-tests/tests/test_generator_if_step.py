@@ -226,9 +226,9 @@ def test_a_partitioned_guard_preserves_halts_and_transitions_completed_faces(
         del self
         if value is guard:
             return guard_outcome
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        return Complete(value)
+        return ExitSet.completed(value)
 
     monkeypatch.setattr(GeneratorConstructionV1, "_guard_truth", guard_truth)
     step = IfStepV1(

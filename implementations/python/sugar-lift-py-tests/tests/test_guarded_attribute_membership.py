@@ -8,7 +8,6 @@ cannot reappear on a guarded receiver.
 
 from sugar_lift_py_tests.floor import GuardedValue, ListValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import atomic, make_var
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
@@ -37,12 +36,12 @@ def test_guarded_list_membership_opposite_faces_emit_predicate():
     false_face = ListValue((TermValue(3),))
     guarded = GuardedValue(_guard(), true_face, false_face)
     outcome = guarded.contains(TermValue(2), "site")
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 
     # 2 ∈ true, 2 ∉ false → joined formula is the guard itself.
-    assert isinstance(outcome.value, PredicateValue)
-    assert outcome.value.formula == _guard()
+    assert isinstance(outcome.completed_value(), PredicateValue)
+    assert outcome.completed_value().formula == _guard()
 
 
 def test_guarded_list_membership_both_true_is_decidable():
@@ -50,10 +49,10 @@ def test_guarded_list_membership_both_true_is_decidable():
     false_face = ListValue((TermValue(2), TermValue(3)))
     guarded = GuardedValue(_guard(), true_face, false_face)
     outcome = guarded.contains(TermValue(2), "site")
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 
-    assert isinstance(outcome.value, (TrueBoolLiteralSugar, PredicateValue))
+    assert isinstance(outcome.completed_value(), (TrueBoolLiteralSugar, PredicateValue))
 
 
 def test_guarded_list_membership_both_false_is_decidable():
@@ -61,7 +60,7 @@ def test_guarded_list_membership_both_false_is_decidable():
     false_face = ListValue((TermValue(3),))
     guarded = GuardedValue(_guard(), true_face, false_face)
     outcome = guarded.contains(TermValue(9), "site")
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 
-    assert isinstance(outcome.value, (FalseBoolLiteralSugar, PredicateValue))
+    assert isinstance(outcome.completed_value(), (FalseBoolLiteralSugar, PredicateValue))

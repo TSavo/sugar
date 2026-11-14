@@ -135,7 +135,7 @@ def test_a_different_exception_spelling_would_flip_the_twin() -> None:
 
 def test_lying_consumer_would_still_refuse_rather_than_emit_the_raise() -> None:
     """Discrimination: if GeneratorWithSugar still loud-refused termination at
-    enter, the With would panic instead of presenting Incomplete(RaiseEffect).
+    enter, the With would panic instead of presenting the RaiseEffect halt.
 
     The productive twin lives in sugar-source-tree construction tests; this
     pins the observation contract the consumer must use (same type, same text).

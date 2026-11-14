@@ -2,7 +2,7 @@
 
 The defect: `_finite_map` answered a bare `None` for at least four distinct
 facts, `_after_iterable` erased all four into one symbolic fallback, and the
-comprehension issued `Complete(ComprehensionValue, finite_elements=None)`. A
+comprehension completed with `ComprehensionValue(finite_elements=None)`. A
 comprehension whose finite projection was lost to a STRANDED AUTHENTICATED
 LOOKUP was therefore indistinguishable, at the verdict, from a genuinely
 unbounded one.
@@ -19,7 +19,7 @@ import pytest
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.comprehension_sugar import (
     ComprehensionGeneratorSugar,
     ComprehensionSugar,
@@ -51,7 +51,7 @@ class _InertSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(None)
+        return ExitSet.completed(None)
 
     def to_term(self, *, owner: str):
         del owner
@@ -158,7 +158,7 @@ def test_the_decision_boundary_rejects_none():
 
 def test_the_decision_boundary_rejects_a_foreign_value():
     with pytest.raises(TypeError):
-        require_finite_projection_decision(Complete(None), owner="tooth")
+        require_finite_projection_decision(ExitSet.completed(None), owner="tooth")
 
 
 def test_not_projected_rejects_an_undeclared_reason():
@@ -339,9 +339,9 @@ def test_a_genuinely_unbounded_comprehension_still_completes_symbolically():
 
     outcome = node.sugar().desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, ComprehensionValue)
-    assert outcome.value.finite_elements is None
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), ComprehensionValue)
+    assert outcome.completed_value().finite_elements is None
 
 
 def test_the_listcomp_retention_control_still_projects_finite_elements():
@@ -358,7 +358,7 @@ def test_the_listcomp_retention_control_still_projects_finite_elements():
 
     outcome = call.sugar().desugar(None)
 
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
 
 
 def test_a_lawful_reason_is_not_spent_as_a_refusal():

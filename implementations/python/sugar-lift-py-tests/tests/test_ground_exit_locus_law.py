@@ -127,19 +127,18 @@ def test_a_workspace_relative_fragment_mints_the_cited_exit(tmp_path) -> None:
 
     from sugar_lift_py_tests.effect import RaiseEffect
 
-    from sugar_lift_py_tests.outcome import Incomplete
-
     site = _fragment(tmp_path, root=tmp_path)
 
     outcome = _exit(site)
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "IndexError"
+    assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "IndexError"
     # The citation is the hash of the text the locus indexes into -- not a
     # placeholder, and not the absolute path's text.
     expected = hashlib.sha256(site.unit.source.encode()).hexdigest()
-    assert outcome.effect.source_sha256 == expected
+    assert halt.effect.source_sha256 == expected
 
 
 def test_the_cited_locus_is_relative_so_another_checkout_can_resolve_it(

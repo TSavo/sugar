@@ -35,7 +35,6 @@ import pytest
 
 from sugar_lift_py_tests.floor.inv_value import InvValue
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-from sugar_lift_py_tests.outcome import Complete
 
 CORPUS = """\
 def bare_string(flag):
@@ -149,7 +148,9 @@ def guarded_dispatch(monkeypatch):
 def test_guarded_category_constructs_from_source(corpus: Path, name: str) -> None:
     """TRUTHFUL: the ledger's guarded categories complete instead of panicking."""
     outcome = _functions(corpus)[name].sugar().desugar(None)
-    assert isinstance(outcome, Complete), f"{name} did not construct: {outcome!r}"
+    assert (
+        outcome.completed_value() is not None
+    ), f"{name} did not construct: {outcome!r}"
 
 
 def test_every_category_actually_rides_under_the_guard(
@@ -181,10 +182,10 @@ def test_the_guard_is_not_dropped_by_the_stable_category(corpus: Path) -> None:
     from sugar_lift_py_tests.ir import implies
 
     outcome = _functions(corpus)["guarded_obligation"].sugar().desugar(None)
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
     obligations = [
         statement
-        for statement in outcome.value.record.statements
+        for statement in outcome.completed_value().record.statements
         if isinstance(statement, InvValue)
     ]
     assert (

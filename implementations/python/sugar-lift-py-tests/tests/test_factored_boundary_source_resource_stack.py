@@ -35,7 +35,7 @@ from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import StringValue, TermValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.ir import PrimitiveSort, _Atomic, ctor
-from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.outcome.exit_set import ExitSet
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -104,7 +104,7 @@ class _RecordingProtocol:
         del ctx
         self.enter_calls += 1
         self.order.append(f"enter:{self.name}")
-        return Complete(SimpleNamespace(enter_value=self.enter_value))
+        return ExitSet.completed(SimpleNamespace(enter_value=self.enter_value))
 
     def exit_outcome_for(self, entered, ctx=None):
         del ctx
@@ -112,7 +112,7 @@ class _RecordingProtocol:
         self.order.append(f"exit:{self.name}")
         if self._exit_outcome is not None:
             return self._exit_outcome
-        return Complete(self.exit_value)
+        return ExitSet.completed(self.exit_value)
 
 
 def _protocol_calls(slot: str, face_id: str):
@@ -144,7 +144,7 @@ def _source_resource(
 ):
     enter, exit_, enter_def, exit_def = _protocol_calls(slot, face_id)
     return WithSourceResourceSugar(
-        manager=Fixed(Complete(TermValue(1))),
+        manager=Fixed(ExitSet.completed(TermValue(1))),
         enter=enter,
         exit=exit_,
         enter_definition=enter_def,
@@ -227,7 +227,7 @@ def _factored_boundary(body: ExitSet, *, pattern=None, observation_slot_id="exci
         keyword_names=(),
     )
     return WithEffectBoundarySugar(
-        manager=Fixed(Complete(manager_value)),
+        manager=Fixed(ExitSet.completed(manager_value)),
         body=(Fixed(body),),
         semantics=None,
         contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),
@@ -391,7 +391,7 @@ def test_assertion_outer_resource_inner_enter_exit_source_order():
         keyword_names=(),
     )
     outer = WithEffectBoundarySugar(
-        manager=Fixed(Complete(manager_value)),
+        manager=Fixed(ExitSet.completed(manager_value)),
         body=(resource,),
         semantics=None,
         contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),
@@ -543,7 +543,7 @@ def test_twin_source_order_swaps_outer_type():
         keyword_names=(),
     )
     assertion_outer = WithEffectBoundarySugar(
-        manager=Fixed(Complete(manager_value)),
+        manager=Fixed(ExitSet.completed(manager_value)),
         body=(resource_inner,),
         semantics=None,
         contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),

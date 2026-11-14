@@ -27,7 +27,7 @@ from sugar_lift_py_tests.generator_construction import (
     YieldStepV1,
 )
 from sugar_lift_py_tests.ir import and_, atomic, implies, not_
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -141,11 +141,17 @@ def test_four_face_guard_projects_completed_operands_once_then_transitions(
     direct_calls: list[object] = []
     inner_true_calls: list[object] = []
     inner_false_calls: list[object] = []
-    direct = _TruthOperand(Complete(PredicateValue(direct_formula)), direct_calls)
+    direct = _TruthOperand(
+        ExitSet.completed(PredicateValue(direct_formula)), direct_calls
+    )
     guarded = GuardedValue(
         outer_formula,
-        _TruthOperand(Complete(PredicateValue(inner_true_formula)), inner_true_calls),
-        _TruthOperand(Complete(PredicateValue(inner_false_formula)), inner_false_calls),
+        _TruthOperand(
+            ExitSet.completed(PredicateValue(inner_true_formula)), inner_true_calls
+        ),
+        _TruthOperand(
+            ExitSet.completed(PredicateValue(inner_false_formula)), inner_false_calls
+        ),
     )
     direct_face, guarded_face = partition("if-guard-completed")
     direct_prefix_guard = atomic("guard:direct-prefix", [])
@@ -210,15 +216,16 @@ def test_four_face_guard_projects_completed_operands_once_then_transitions(
 
 def test_guarded_incomplete_arm_becomes_halted_without_running_branch() -> None:
     calls: list[object] = []
-    incomplete = Incomplete(
-        RaiseEffect.for_builtin("InnerError", occurrence="guard:inner")
-    )
+    inner_effect = RaiseEffect.for_builtin("InnerError", occurrence="guard:inner")
+    incomplete = ExitSet.halted(inner_effect)
     operand = _TruthOperand(incomplete, calls)
     outer = atomic("guard:outer-incomplete", [])
     guarded = GuardedValue(
         outer,
         operand,
-        _TruthOperand(Complete(PredicateValue(atomic("guard:unused", []))), []),
+        _TruthOperand(
+            ExitSet.completed(PredicateValue(atomic("guard:unused", []))), []
+        ),
     )
     guard_outcome = ExitSet(
         (Completed(atomic("guard:prefix-incomplete", []), guarded),)
@@ -234,7 +241,7 @@ def test_guarded_incomplete_arm_becomes_halted_without_running_branch() -> None:
     assert len(outcome.exits) == 1
     halted = outcome.exits[0]
     assert isinstance(halted, Halted)
-    assert halted.effect is incomplete.effect
+    assert halted.effect is inner_effect
 
 
 def _assert_transition_refusal(raised, step, *, observed: str, requested: str):
@@ -268,7 +275,9 @@ def test_nonlinear_guard_none_transition_is_exact_typed_refusal() -> None:
 
 
 def test_nonlinear_guard_gap_transition_is_exact_typed_refusal() -> None:
-    operand = _TruthOperand(Complete(TrueBoolLiteralSugar(site="guard:true")), [])
+    operand = _TruthOperand(
+        ExitSet.completed(TrueBoolLiteralSugar(site="guard:true")), []
+    )
     guard_outcome = ExitSet((Completed(atomic("guard:gap", []), operand),))
     step = IfStepV1(
         _OutcomeGuard(guard_outcome),
@@ -298,7 +307,8 @@ def test_guard_carrier_composes_prefix_and_runs_projection_and_transition_once(
     halted = _halt("carrier")
     truth_calls: list[object] = []
     truth = _TruthOperand(
-        Complete(PredicateValue(atomic("guard:carrier-truth", []))), truth_calls
+        ExitSet.completed(PredicateValue(atomic("guard:carrier-truth", []))),
+        truth_calls,
     )
     projected = ExitSet(
         (
