@@ -17,6 +17,8 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 
+from frame_fresh import FRAME_FRESH
+
 _METACLASS = (
     "class Meta(type):\n"
     "    def __new__(mcs, name, bases, namespace, **kwds):\n"
@@ -44,6 +46,7 @@ def test_type_new_result_carries_the_exact_namespace_as_class_dict() -> None:
         (),
         identity="namespace-coordinate",
         entries=((StringValue("member"), TermValue(7)),),
+        allocation=FRAME_FRESH,
     )
 
     outcome = _super_value().call_method_value(
@@ -56,7 +59,9 @@ def test_type_new_result_carries_the_exact_namespace_as_class_dict() -> None:
         ),
         owner="test",
         blame="new-site",
-        keywords=(("**", MappingObjectValue("Kwds", (), entries=())),),
+        keywords=(
+            ("**", MappingObjectValue("Kwds", (), entries=(), allocation=FRAME_FRESH)),
+        ),
     )
 
     made = outcome.completed_value()

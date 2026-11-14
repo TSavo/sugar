@@ -8,9 +8,11 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import and_, eq, make_var, num
 
+from frame_fresh import FRAME_FRESH
+
 
 def test_guarding_a_snapshot_retains_and_conjoins_its_branch_not_an_unconditional_state():
-    receiver = ObjectValue("Renamed", (), identity="owned")
+    receiver = ObjectValue("Renamed", (), identity="owned", allocation=FRAME_FRESH)
     first = eq(make_var("first"), num(1))
     second = eq(make_var("second"), num(2))
     guarded = receiver.guarded(first).guarded(second)

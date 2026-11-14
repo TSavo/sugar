@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import pytest
 
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
@@ -77,7 +77,9 @@ def _source_class_and_helper(class_body: str, helper_source: str, field: str = "
     class_outcome = class_def.sugar().desugar(None)
     class_value = class_outcome.completed_value()
     assert isinstance(class_value, ClassDefinitionValue)
-    receiver = class_value.fresh_receiver(class_value.class_definition_cid)
+    receiver = class_value.fresh_receiver(
+        class_value.class_definition_cid, allocation=FRAME_FRESH
+    )
     assert isinstance(receiver, ObjectValue)
     pending = helper.sugar().desugar(None)
     assert isinstance(pending, NativeOperationExitCarrierV1)

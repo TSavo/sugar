@@ -32,6 +32,7 @@ class ReceiverFieldStoreValue(FloorValue):
         """Advance every binding that names this exact constructed receiver."""
         from sugar_lift_py_tests.sugar.call_site_sugar import bound_value_read
 
+        from .object_identity import as_the_alias_holds
         from .object_value import ObjectValue
 
         if not isinstance(self.receiver, ObjectValue):
@@ -55,7 +56,9 @@ class ReceiverFieldStoreValue(FloorValue):
                 and candidate.identity == identity
             ):
                 temporal = temporal.bind_value(
-                    binding.name, updated, blame=binding.blame
+                    binding.name,
+                    as_the_alias_holds(updated, candidate),
+                    blame=binding.blame,
                 )
                 matched = True
         return ctx.with_temporal(temporal) if matched else ctx

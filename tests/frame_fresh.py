@@ -1,19 +1,22 @@
 # SPDX-License-Identifier: MIT OR Apache-2.0
 """The one test helper that builds a frame-fresh ``list``/``dict``/``set``.
 
-A ``ListValue``/``DictValue``/``SetValue`` has no default ``allocation``
+A ``ListValue``/``DictValue``/``SetValue`` and an ``ObjectValue`` (an
+instance of a source class) have no default ``allocation``
 (``sugar_lift_py_tests.floor.object_identity``): every construction names
 it.  A test that stands a container up directly, as if a display in the
 frame reading it had made it, names that here, explicitly, through
-``fresh``.  A test that means a container that arrived (not current) builds
-it with ``allocation=None`` itself.
+``fresh``; a test that stands an instance up as if a class call in the
+frame reading it had made it passes ``allocation=FRAME_FRESH``.  A test
+that means an object that arrived (not current) builds it with
+``allocation=None`` itself.
 """
 
 from __future__ import annotations
 
-# The ``allocation`` of a container a test made as if in the frame reading
-# it.  Every such container shares it, so two are never decided distinct by
-# ``is``.
+# The ``allocation`` of a container or an instance a test made as if in the
+# frame reading it.  Every such object shares it, so two are never decided
+# distinct by ``is``.
 FRAME_FRESH = "test:allocation:frame-fresh"
 
 

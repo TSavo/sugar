@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
@@ -198,7 +198,7 @@ def test_name_store_name_interleaved_constructs() -> None:
 
 def test_ground_star_store_rest_and_field() -> None:
     site = _site()
-    receiver = ObjectValue("W", (), (), (), "w0")
+    receiver = ObjectValue("W", (), (), (), allocation=FRAME_FRESH, identity="w0")
     sugar = DynamicUnpackStoreAssignSugar(
         value=_FloorSugar(fresh(ListValue, (TermValue(1), TermValue(2), TermValue(3)))),
         targets=(
@@ -234,7 +234,7 @@ def test_interleaved_name_store_name_order() -> None:
             order.append(f"attr:{self.store.attr}")
             return super().apply_member(member, ctx)
 
-    receiver = ObjectValue("W", (), (), (), "w1")
+    receiver = ObjectValue("W", (), (), (), allocation=FRAME_FRESH, identity="w1")
     sugar = DynamicUnpackStoreAssignSugar(
         value=_FloorSugar(fresh(ListValue, (TermValue(1), TermValue(2), TermValue(3)))),
         targets=(
@@ -266,7 +266,7 @@ def test_first_store_halt_blocks_later_name() -> None:
                 owner="_RefuseSet.setattr",
             )
 
-    receiver = _RefuseSet("W", (), (), (), "refuse")
+    receiver = _RefuseSet("W", (), (), (), allocation=FRAME_FRESH, identity="refuse")
     sugar = DynamicUnpackStoreAssignSugar(
         value=_FloorSugar(fresh(ListValue, (TermValue(1), TermValue(2)))),
         targets=(
@@ -308,7 +308,7 @@ def test_earlier_name_survives_later_store_halt() -> None:
         value=_FloorSugar(fresh(ListValue, (TermValue(7), TermValue(8)))),
         targets=(
             NameUnpackTarget("name"),
-            _attr_leaf(_RefuseSet("W", (), (), (), "r2"), "x", site),
+            _attr_leaf(_RefuseSet("W", (), (), (), allocation=FRAME_FRESH, identity="r2"), "x", site),
         ),
         site=site,
     )
@@ -383,8 +383,8 @@ def test_exact_arity_valueerror_identity() -> None:
     sugar = DynamicUnpackStoreAssignSugar(
         value=_FloorSugar(fresh(ListValue, (TermValue(1),))),  # need 2
         targets=(
-            _attr_leaf(ObjectValue("W", (), (), (), "w3"), "x", site, 0),
-            _attr_leaf(ObjectValue("W", (), (), (), "w4"), "y", site, 1),
+            _attr_leaf(ObjectValue("W", (), (), (), allocation=FRAME_FRESH, identity="w3"), "x", site, 0),
+            _attr_leaf(ObjectValue("W", (), (), (), allocation=FRAME_FRESH, identity="w4"), "y", site, 1),
         ),
         site=site,
     )
@@ -407,8 +407,8 @@ def test_arity_valueerror_wrong_occurrence_is_not_truthful() -> None:
     sugar = DynamicUnpackStoreAssignSugar(
         value=_FloorSugar(fresh(ListValue, (TermValue(1),))),
         targets=(
-            _attr_leaf(ObjectValue("W", (), (), (), "w5"), "x", site, 0),
-            _attr_leaf(ObjectValue("W", (), (), (), "w6"), "y", site, 1),
+            _attr_leaf(ObjectValue("W", (), (), (), allocation=FRAME_FRESH, identity="w5"), "x", site, 0),
+            _attr_leaf(ObjectValue("W", (), (), (), allocation=FRAME_FRESH, identity="w6"), "y", site, 1),
         ),
         site=site,
     )

@@ -1772,7 +1772,9 @@ def _alias_scans():
         ReceiverOwnedMutationResult,
     )
 
-    receiver = ObjectValue("Box", (), identity="module-box")
+    from frame_fresh import FRAME_FRESH
+
+    receiver = ObjectValue("Box", (), identity="module-box", allocation=FRAME_FRESH)
     stored = receiver.with_field_store("attr", TermValue(7))
     return receiver, (
         (ReceiverFieldStoreValue(receiver, "attr", TermValue(7)), stored),

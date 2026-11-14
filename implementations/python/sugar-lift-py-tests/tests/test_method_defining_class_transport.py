@@ -7,6 +7,8 @@ from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
+from frame_fresh import FRAME_FRESH
+
 
 def _definitions():
     source = (
@@ -36,7 +38,7 @@ def _constructed_pair():
 def test_receiver_and_inherited_method_retain_distinct_class_owners() -> None:
     _context, base, derived = _constructed_pair()
 
-    receiver = derived.fresh_receiver("receiver")
+    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
     (owner_method,) = tuple(
         method for method in receiver.methods if method.name == "owner"
     )
@@ -47,7 +49,7 @@ def test_receiver_and_inherited_method_retain_distinct_class_owners() -> None:
 
 def test_inherited_method_binds_lexical_class_not_runtime_receiver_class() -> None:
     context, base, derived = _constructed_pair()
-    receiver = derived.fresh_receiver("receiver")
+    receiver = derived.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     projected = receiver.call_method_value(
         "owner", (), owner="test", blame="call-owner", ctx=context
@@ -71,7 +73,7 @@ def test_overriding_method_uses_derived_defining_class() -> None:
     (derived,) = tuple(node for node in tree.root.body if isinstance(node, ClassDef))
     context = ReduceContext.root(owner="test")
     derived_value = derived.sugar().desugar(context).completed_value()
-    receiver = derived_value.fresh_receiver("receiver")
+    receiver = derived_value.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     projected = receiver.call_method_value(
         "owner", (), owner="test", blame="call-owner", ctx=context

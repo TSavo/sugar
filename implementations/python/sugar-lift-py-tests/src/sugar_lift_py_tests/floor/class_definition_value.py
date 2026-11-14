@@ -434,11 +434,18 @@ class ClassDefinitionValue(GuardStableValue):
             owner="ClassDefinitionValue.delitem",
         )
 
-    def fresh_receiver(self, receiver_coordinate_cid):
+    def fresh_receiver(self, receiver_coordinate_cid, *, allocation, arrival=None):
         """The object a class call makes for its initializer to run on: no
         instance fields yet, identified by the call's receiver coordinate.
         What the call returns is that object as the initializer left it
-        (``ClassConstructorBodySugar._receiver_where_it_ends``)."""
+        (``ClassConstructorBodySugar._receiver_where_it_ends``).
+
+        ``allocation`` is the construction that made it in the frame
+        reading it (``object_identity.made_at`` of the class call's site):
+        its fields are its fields now (``object_identity.contents_current``).
+        Required: None, with the ``arrival`` that names it, when no class
+        call of the reading frame made it (an initializer's own universe,
+        where the receiver reached ``__init__`` by binding)."""
         from sugar_lift_py_tests.floor import MappingObjectValue, ObjectValue
 
         receiver_type = (
@@ -451,6 +458,8 @@ class ClassDefinitionValue(GuardStableValue):
             class_fields=self.class_fields,
             identity=receiver_coordinate_cid or self.class_definition_cid,
             defining_class=self,
+            allocation=allocation,
+            arrival=arrival,
         )
 
     def _object_methods(self):

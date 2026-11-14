@@ -36,6 +36,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from frame_fresh import FRAME_FRESH
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -130,7 +131,9 @@ def _source_class_and_helper(class_body: str, field: str = "field"):
     class_outcome = class_def.sugar().desugar(None)
     class_value = class_outcome.completed_value()
     assert isinstance(class_value, ClassDefinitionValue)
-    receiver = class_value.fresh_receiver(class_value.class_definition_cid)
+    receiver = class_value.fresh_receiver(
+        class_value.class_definition_cid, allocation=FRAME_FRESH
+    )
     assert isinstance(receiver, ObjectValue)
     pending = helper.sugar().desugar(None)
     assert isinstance(pending, NativeOperationExitCarrierV1)
@@ -355,7 +358,9 @@ def test_positional_caller_completes_field_store_via_setattr() -> None:
     function, pending = _helper_definition()
     assert isinstance(pending, NativeOperationExitCarrierV1)
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids
-    receiver = ObjectValue("R", (ObjectField("field", TermValue(0)),))
+    receiver = ObjectValue(
+        "R", (ObjectField("field", TermValue(0)),), allocation=FRAME_FRESH
+    )
     exits = pending.discharge(None, {obj_cid: receiver, value_cid: TermValue(7)})
     assert isinstance(exits, ExitSet)
     assert len(exits.exits) == 1
@@ -462,6 +467,7 @@ def test_property_without_setter_reads_fine_and_halts_on_store_after_discharge()
                 descriptor_kind="property",
             ),
         ),
+        allocation=FRAME_FRESH,
     )
     # Readable property is present as a data descriptor (getter enrolled).
     assert any(
@@ -512,6 +518,7 @@ def test_lying_read_path_does_not_authorize_completed_store() -> None:
                 descriptor_kind="property",
             ),
         ),
+        allocation=FRAME_FRESH,
     )
     _, pending = _helper_definition()
     obj_cid, _, value_cid = pending.demand.operand_coordinate_cids

@@ -29,6 +29,8 @@ from sugar_lift_py_tests.outcome.exit_set import (
     partition,
 )
 
+from frame_fresh import FRAME_FRESH
+
 
 def _raise(name: str) -> RaiseEffect:
     return RaiseEffect.for_builtin("ValueError", occurrence=f"test:{name}:7825")
@@ -68,6 +70,7 @@ def test_a_floored_receiver_face_keeps_its_faces_and_owed() -> None:
         "Manager",
         (ObjectField("expected", wrap),),
         methods=(_Method("check"),),
+        allocation=FRAME_FRESH,
     )
     halt = Halted(complement_guard(guard), _raise("floor-halt"))
     state = ReceiverStatePartitionValue(
@@ -105,7 +108,7 @@ def test_a_nested_receiver_leaf_keeps_its_whole_path() -> None:
     inner_side, _inner_other = partition(("test:inner-receiver", 7825))
     outer = atomic("test:outer:7825", [])
     inner = atomic("test:inner:7825", [])
-    leaf = ObjectValue("Manager", ())
+    leaf = ObjectValue("Manager", (), allocation=FRAME_FRESH)
     nested = ReceiverStatePartitionValue(
         ExitSet(
             (
@@ -147,8 +150,12 @@ def test_a_factored_boundary_face_keeps_its_partition_testimony(
 
     none_side, pattern_side = partition(("test:match-face", 7825))
     guard = atomic("test:match-none:7825", [])
-    no_pattern = ObjectValue("Manager", (ObjectField("match", NoneValue()),))
-    pattern = ObjectValue("Manager", (ObjectField("match", TermValue(1)),))
+    no_pattern = ObjectValue(
+        "Manager", (ObjectField("match", NoneValue()),), allocation=FRAME_FRESH
+    )
+    pattern = ObjectValue(
+        "Manager", (ObjectField("match", TermValue(1)),), allocation=FRAME_FRESH
+    )
     behavior = SimpleNamespace(
         receiver_state=ReceiverStatePartitionValue(
             ExitSet(

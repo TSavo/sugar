@@ -128,9 +128,10 @@ def test_omitted_lifecycle_state_is_not_the_live_term():
 
 def test_ordinary_object_manager_to_term_unchanged():
     """Ordinary Floor managers still project through their own to_term."""
+    from frame_fresh import FRAME_FRESH
     from sugar_lift_py_tests.floor.object_value import ObjectValue
 
-    obj = ObjectValue("Guard", (), (), (), "identity:guard")
+    obj = ObjectValue("Guard", (), (), (), "identity:guard", allocation=FRAME_FRESH)
     term = obj.to_term(owner="ManagerBinding")
     assert term == ctor(
         "py.object.identity",

@@ -28,7 +28,7 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 from test_assignment_evaluates_rhs import _rows
 from test_builtin_container_mutation import _only_return, _returns
 
@@ -504,7 +504,11 @@ def test_a_source_object_an_opaque_call_reaches_may_have_changed():
     from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _may_change
 
-    instance = ObjectValue("C", (ObjectField("items", fresh(ListValue, _ints(5))),))
+    instance = ObjectValue(
+        "C",
+        (ObjectField("items", fresh(ListValue, _ints(5))),),
+        allocation=FRAME_FRESH,
+    )
     # Handed to the call, or the receiver of a method of its own.
     assert _may_change(instance, "", False, False)
     assert _may_change(instance, "add", False, False)

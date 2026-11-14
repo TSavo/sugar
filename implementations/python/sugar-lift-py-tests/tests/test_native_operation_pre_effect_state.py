@@ -26,6 +26,8 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
+from frame_fresh import FRAME_FRESH
+
 SOURCE = (
     "class Widget:\n"
     "    @property\n"
@@ -51,7 +53,9 @@ def _pending_and_receiver():
     class_outcome = class_def.sugar().desugar(None)
     class_value = class_outcome.completed_value()
     assert isinstance(class_value, ClassDefinitionValue)
-    receiver = class_value.fresh_receiver(class_value.class_definition_cid)
+    receiver = class_value.fresh_receiver(
+        class_value.class_definition_cid, allocation=FRAME_FRESH
+    )
     pending = helper.sugar().desugar(None)
     assert isinstance(receiver, ObjectValue)
     assert isinstance(pending, NativeOperationExitCarrierV1)

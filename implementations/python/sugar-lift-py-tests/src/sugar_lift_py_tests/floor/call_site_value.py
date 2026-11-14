@@ -422,7 +422,11 @@ class CallSiteValue(FloorValue):
                 if retained is None
                 else _project_authenticated_source_return(retained.value)
             )
-            if isinstance(instance, ObjectValue):
+            from sugar_lift_py_tests.floor.object_identity import contents_current
+
+            # Its fields are read only while they are the instance's fields
+            # now (``object_identity.contents_current``).
+            if isinstance(instance, ObjectValue) and contents_current(instance):
                 for field in reversed(instance.fields):
                     if field.name == "args":
                         return ExitSet.completed(field.value)

@@ -40,7 +40,7 @@ from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralS
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_python_source import manager_summary_derivation as derivation
 
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 
 
 @dataclass(frozen=True)
@@ -68,6 +68,7 @@ def _behavior(*, match=None, extra_actuals=()):
             ),
             methods=(_Method("matches"),),
             identity="receiver",
+            allocation=FRAME_FRESH,
         ),
     )
 
@@ -279,7 +280,9 @@ def test_method_callsite_on_a_completed_face_is_not_a_free_fail():
         (),
         ctor("call:fill_unfilled", []),
         None,
-        runtime_dispatch_receiver=ObjectValue("ExceptionInfo", (), identity="excinfo"),
+        runtime_dispatch_receiver=ObjectValue(
+            "ExceptionInfo", (), identity="excinfo", allocation=FRAME_FRESH
+        ),
     )
     completed = Completed(
         complement_guard(atomic("py.truthy", [make_var("matches-result")])),

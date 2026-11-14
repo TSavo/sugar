@@ -21,7 +21,7 @@ from __future__ import annotations
 import ast
 from pathlib import Path
 
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
 )
@@ -369,7 +369,10 @@ def test_a_mapping_object_getitem_with_a_parameter_key_defers_to_the_caller() ->
     site = _site()
     key, coordinate = _formal(site)
     mapping = MappingObjectValue(
-        "Registry", (), entries=((StringValue("a"), TermValue(1)),)
+        "Registry",
+        (),
+        entries=((StringValue("a"), TermValue(1)),),
+        allocation=FRAME_FRESH,
     )
 
     for pending in (

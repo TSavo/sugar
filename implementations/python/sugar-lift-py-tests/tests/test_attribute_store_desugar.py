@@ -35,7 +35,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 
 import pytest
 
@@ -163,7 +163,9 @@ def test_producer_and_consumer_methods_are_the_named_seams() -> None:
 
 def test_attribute_store_evaluates_rhs_and_receiver_once_in_python_order(tmp_path):
     log: list[str] = []
-    receiver = ObjectValue("R", (ObjectField("attr", TermValue(1)),))
+    receiver = ObjectValue(
+        "R", (ObjectField("attr", TermValue(1)),), allocation=FRAME_FRESH
+    )
     outcome = _store(receiver, TermValue(7), log, _site(tmp_path)).desugar()
 
     assert log == ["value", "receiver"]
@@ -193,7 +195,9 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
             raise AssertionError
 
     store = AttributeStoreEffectSugar(
-        receiver=_ObservedSugar("receiver", ObjectValue("R", ()), log),
+        receiver=_ObservedSugar(
+            "receiver", ObjectValue("R", (), allocation=FRAME_FRESH), log
+        ),
         value=_RaisingValue(),
         attr="attr",
         site=_site(tmp_path),
@@ -212,7 +216,9 @@ def test_rhs_halt_wins_before_receiver_evaluation(tmp_path):
 
 
 def test_ground_object_field_store_completes(tmp_path):
-    receiver = ObjectValue("R", (ObjectField("attr", TermValue(0)),))
+    receiver = ObjectValue(
+        "R", (ObjectField("attr", TermValue(0)),), allocation=FRAME_FRESH
+    )
     outcome = _store(receiver, TermValue(9), [], _site(tmp_path)).desugar()
     assert outcome.completed_value() is not None
     assert outcome.completed_value().fields[-1].value == TermValue(9)
@@ -300,6 +306,7 @@ def test_property_without_setter_raises_attribute_error_not_completed(tmp_path):
                 descriptor_kind="property",
             ),
         ),
+        allocation=FRAME_FRESH,
     )
     outcome = _store(receiver, TermValue(7), [], _site(tmp_path)).desugar()
     assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
@@ -413,6 +420,7 @@ def test_property_read_does_not_license_completed_store(tmp_path):
                 descriptor_kind="property",
             ),
         ),
+        allocation=FRAME_FRESH,
     )
     outcome = _store(receiver, TermValue(7), [], _site(tmp_path)).desugar()
     assert not (
@@ -521,7 +529,9 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
     receiver_cid = pending.demand.operand_coordinate_cids[0]
     assert receiver_cid is not None
 
-    writable = ObjectValue("WritableIndex", (ObjectField("name", NoneValue()),))
+    writable = ObjectValue(
+        "WritableIndex", (ObjectField("name", NoneValue()),), allocation=FRAME_FRESH
+    )
     completed = pending.discharge(None, {receiver_cid: writable})
     assert len(completed.exits) == 1
     assert isinstance(completed.exits[0], Completed)
@@ -551,6 +561,7 @@ def test_real_pandas_name_store_caller_faces_and_discrimination() -> None:
                 descriptor_kind="property",
             ),
         ),
+        allocation=FRAME_FRESH,
     )
     getter_halt = pending.discharge(None, {receiver_cid: getter_only}).exits[0]
     immutable_halt = pending.discharge(
@@ -638,7 +649,9 @@ def test_same_spelled_foreign_provider_cannot_discharge_real_store() -> None:
         None,
         {
             foreign_formal.coordinate_cid: ObjectValue(
-                "ForeignIndex", (ObjectField("name", NoneValue()),)
+                "ForeignIndex",
+                (ObjectField("name", NoneValue()),),
+                allocation=FRAME_FRESH,
             )
         },
     )

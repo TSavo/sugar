@@ -49,11 +49,11 @@ class MappingObjectValue(ObjectValue):
     def _builtin_dict(self):
         """The authenticated ``dict`` base state as the builtin dict it is.
 
-        Not current (``allocation=None``): an instance's currency is not
-        tracked (``arrived`` does not take it off an instance), so whether
-        this state is the object's state now -- the instance made in this
-        frame, or one that arrived by binding and changed out of sight -- is
-        not decided here.  Every read of it takes its undecided form
+        Not current (``allocation=None``), whatever the instance's own
+        currency (``ObjectValue.allocation``): the base storage's currency is
+        not threaded through a source ``__setitem__``/``__delitem__``
+        override's post-state, so whether this state is the object's state
+        now is not decided here.  Every read of it takes its undecided form
         (``object_identity.contents_current``).  Nor is which instance it
         is (``identity`` may be its class's): it names no ``arrival``, so an
         undecided read of it refuses by name (``identity_term``) rather than

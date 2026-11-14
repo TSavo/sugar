@@ -550,6 +550,9 @@ def _receiver_state_after_enter(
         class_fields=receiver.class_fields,
         identity=receiver.identity,
         deferred_helper_fields=receiver.deferred_helper_fields,
+        # The same object: it keeps its ``allocation`` and ``arrival``.
+        allocation=receiver.allocation,
+        arrival=receiver.arrival,
     )
 
 
@@ -637,6 +640,9 @@ def _apply_receiver_store(
         methods=receiver.methods,
         class_fields=receiver.class_fields,
         identity=receiver.identity,
+        # The same object: it keeps its ``allocation`` and ``arrival``.
+        allocation=receiver.allocation,
+        arrival=receiver.arrival,
     )
 
 

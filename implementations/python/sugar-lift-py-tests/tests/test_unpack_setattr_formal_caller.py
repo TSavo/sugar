@@ -65,7 +65,9 @@ from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 
-PROGRAM = "def f(obj, p, q):\n    x, obj.field = p, q\n    return x\n"
+from frame_fresh import FRAME_FRESH
+
+PROGRAM ="def f(obj, p, q):\n    x, obj.field = p, q\n    return x\n"
 
 
 def _tree(source: str, name: str = "unpack_setattr_caller.py") -> SourceFile:
@@ -103,7 +105,9 @@ def _source_class_receiver(class_body: str):
     class_outcome = class_def.sugar().desugar(None)
     class_value = class_outcome.completed_value()
     assert isinstance(class_value, ClassDefinitionValue)
-    receiver = class_value.fresh_receiver(class_value.class_definition_cid)
+    receiver = class_value.fresh_receiver(
+        class_value.class_definition_cid, allocation=FRAME_FRESH
+    )
     assert isinstance(receiver, ObjectValue)
     pending = helper.sugar().desugar(None)
     assert isinstance(pending, NativeOperationExitCarrierV1)
@@ -289,7 +293,9 @@ def test_swapped_receiver_value_coordinates_twin_fails() -> None:
         ),
         coordinates=(value_c, name_c, obj_c),
     )
-    writable = ObjectValue("R", (ObjectField("field", TermValue(0)),))
+    writable = ObjectValue(
+        "R", (ObjectField("field", TermValue(0)),), allocation=FRAME_FRESH
+    )
     # Truthful: obj gets ObjectValue, q gets TermValue(9)
     actuals = {
         obj_c.coordinate_cid: writable,

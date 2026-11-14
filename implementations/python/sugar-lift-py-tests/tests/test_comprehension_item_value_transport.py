@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context import ReduceContext
@@ -40,8 +40,12 @@ def _context_with_items(items) -> ReduceContext:
 
 def _objects() -> tuple[ObjectValue, ObjectValue]:
     return (
-        ObjectValue("_NamedIntConstant", (), identity="member:first"),
-        ObjectValue("_NamedIntConstant", (), identity="member:second"),
+        ObjectValue(
+            "_NamedIntConstant", (), identity="member:first", allocation=FRAME_FRESH
+        ),
+        ObjectValue(
+            "_NamedIntConstant", (), identity="member:second", allocation=FRAME_FRESH
+        ),
     )
 
 
@@ -71,11 +75,13 @@ def test_filtered_out_member_never_reaches_element_binding() -> None:
         "_NamedIntConstant",
         (ObjectField("keep", FalseBoolLiteralSugar(site="first.keep")),),
         identity="member:first",
+        allocation=FRAME_FRESH,
     )
     second = ObjectValue(
         "_NamedIntConstant",
         (ObjectField("keep", TrueBoolLiteralSugar(site="second.keep")),),
         identity="member:second",
+        allocation=FRAME_FRESH,
     )
     comprehension = _source_list_comprehension(
         "def build(items):\n    return [item for item in items if item.keep]\n"
@@ -132,4 +138,8 @@ def test_nonfinite_iterable_with_undecided_filter_stays_loud() -> None:
     )
 
     with pytest.raises(SugarNotWritten, match="finite|filter|undecided"):
-        comprehension.desugar(_context_with_items(ObjectValue("UnknownIterable", ())))
+        comprehension.desugar(
+            _context_with_items(
+                ObjectValue("UnknownIterable", (), allocation=FRAME_FRESH)
+            )
+        )

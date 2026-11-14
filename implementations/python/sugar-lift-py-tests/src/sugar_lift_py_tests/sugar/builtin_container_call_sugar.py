@@ -750,18 +750,21 @@ def _replace_path(value, steps, post, check_shared):
     container of that kind (it could be the very object the call changed, and
     would show its old contents).
 
-    A ``list``/``dict`` along the path whose contents are not current
-    (``object_identity.contents_current``) has no position to find: its
-    key's place and its index's bound are not read from contents it may no
-    longer hold.  None, so the path's root after the call is the opaque
-    post-state the call leaves (``_unknown_after``)."""
+    A ``list``/``dict`` or an instance along the path whose contents are not
+    current (``object_identity.contents_current``) has no position to find:
+    its key's place, its index's bound and its field are not read from
+    contents it may no longer hold.  None, so the path's root after the call
+    is the opaque post-state the call leaves (``_unknown_after``)."""
     from dataclasses import replace
 
     from sugar_lift_py_tests.floor import builtin_container_method as law
     from sugar_lift_py_tests.floor.dict_value import DictValue
     from sugar_lift_py_tests.floor.list_value import ListValue
     from sugar_lift_py_tests.floor.object_field import ObjectField
-    from sugar_lift_py_tests.floor.object_identity import contents_stale
+    from sugar_lift_py_tests.floor.object_identity import (
+        contents_stale,
+        instance_stale,
+    )
     from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
 
@@ -778,7 +781,13 @@ def _replace_path(value, steps, post, check_shared):
         return post
 
     if kind == "attr":
-        if type(value) is not ObjectValue or value.deferred_helper_fields:
+        if (
+            type(value) is not ObjectValue
+            or instance_stale(value)
+            or value.deferred_helper_fields
+        ):
+            # An instance whose fields are not current (``instance_stale``)
+            # has no field to find: the root after the call is opaque.
             return None
         if not value.authenticates_plain_attribute_store(key):
             return None

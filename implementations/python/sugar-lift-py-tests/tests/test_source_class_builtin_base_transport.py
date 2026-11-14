@@ -13,6 +13,8 @@ from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
+from frame_fresh import FRAME_FRESH
+
 
 def _classes(source: str):
     tree = SourceFile(
@@ -32,7 +34,7 @@ def test_builtin_dict_base_is_evaluated_through_the_temporal_floor() -> None:
     assert class_value is not None
     assert len(class_value.base_classes) == 1
     assert type(class_value.base_classes[0]) is BuiltinDictClassValue
-    receiver = class_value.fresh_receiver("receiver")
+    receiver = class_value.fresh_receiver("receiver", allocation=FRAME_FRESH)
     assert type(receiver) is MappingObjectValue
 
 
@@ -47,7 +49,7 @@ def test_source_subclass_transports_its_authenticated_builtin_base() -> None:
     derived_value = derived.sugar().desugar(context).completed_value()
 
     assert derived_value.base_classes == (base_value,)
-    receiver = derived_value.fresh_receiver("receiver")
+    receiver = derived_value.fresh_receiver("receiver", allocation=FRAME_FRESH)
     assert type(receiver) is MappingObjectValue
 
 
@@ -59,7 +61,7 @@ def test_class_named_dict_cannot_fabricate_builtin_mapping_semantics() -> None:
     )
 
     value = definition.sugar().desugar(context).completed_value()
-    receiver = value.fresh_receiver("receiver")
+    receiver = value.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     assert type(receiver) is ObjectValue
 
@@ -69,7 +71,7 @@ def test_unenrolled_non_dict_base_gains_no_new_capability() -> None:
     context = ReduceContext.root(owner="test")
 
     value = definition.sugar().desugar(context).completed_value()
-    receiver = value.fresh_receiver("receiver")
+    receiver = value.fresh_receiver("receiver", allocation=FRAME_FRESH)
 
     assert type(receiver) is ObjectValue
 

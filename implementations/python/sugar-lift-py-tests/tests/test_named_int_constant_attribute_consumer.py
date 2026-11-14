@@ -8,6 +8,8 @@ from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 import pytest
 
+from frame_fresh import FRAME_FRESH
+
 
 class _ReceiverSugar(ConstructedTermSugar):
     def __init__(self, receiver):
@@ -46,6 +48,7 @@ def test_named_int_constant_name_uses_object_field_owner() -> None:
     receiver = ObjectValue(
         "re._constants._NamedIntConstant",
         (ObjectField("name", StringValue("SRE_FLAG_ASCII")),),
+        allocation=FRAME_FRESH,
     )
     first = AttributeSugar(_ReceiverSugar(receiver), "name", _Site("first"))
     outcome = first.desugar()
@@ -59,6 +62,7 @@ def test_named_int_constant_foreign_member_stays_typed_loud() -> None:
     receiver = ObjectValue(
         "re._constants._NamedIntConstant",
         (ObjectField("name", StringValue("SRE_FLAG_ASCII")),),
+        allocation=FRAME_FRESH,
     )
     with pytest.raises(ConstructionPanic, match="ObjectValue.attribute"):
         AttributeSugar(_ReceiverSugar(receiver), "foreign", _Site("foreign")).desugar()

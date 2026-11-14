@@ -27,7 +27,7 @@ setitem, or parameter-name maps — consumer/test only.
 
 from __future__ import annotations
 
-from frame_fresh import fresh
+from frame_fresh import FRAME_FRESH, fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
@@ -82,7 +82,9 @@ def _source_holder_receiver():
     class_outcome = class_def.sugar().desugar(None)
     class_value = class_outcome.completed_value()
     assert isinstance(class_value, ClassDefinitionValue)
-    receiver = class_value.fresh_receiver(class_value.class_definition_cid)
+    receiver = class_value.fresh_receiver(
+        class_value.class_definition_cid, allocation=FRAME_FRESH
+    )
     assert isinstance(receiver, ObjectValue)
     return receiver, pending
 

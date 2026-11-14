@@ -22,6 +22,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from frame_fresh import FRAME_FRESH
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, MappingObjectValue
@@ -171,7 +172,7 @@ def _receivers():
         value = node.sugar().desugar(context).completed_value()
         context.temporal = context.temporal.bind_value(value.class_name, value)
         receivers[value.class_name] = value.fresh_receiver(
-            f"receiver-{value.class_name}"
+            f"receiver-{value.class_name}", allocation=FRAME_FRESH
         )
     return context, receivers
 

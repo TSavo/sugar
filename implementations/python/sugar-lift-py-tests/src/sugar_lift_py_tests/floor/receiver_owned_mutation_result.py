@@ -42,6 +42,8 @@ class ReceiverOwnedMutationResult(FloorValue):
             return ctx
         from sugar_lift_py_tests.sugar.call_site_sugar import bound_value_read
 
+        from .object_identity import as_the_alias_holds
+
         temporal = ctx.temporal
         matched = False
         for binding in ctx.temporal.bindings:
@@ -53,7 +55,9 @@ class ReceiverOwnedMutationResult(FloorValue):
                 and getattr(candidate, "identity", None) == identity
             ):
                 temporal = temporal.bind_value(
-                    binding.name, self.receiver_after, blame=binding.blame
+                    binding.name,
+                    as_the_alias_holds(self.receiver_after, candidate),
+                    blame=binding.blame,
                 )
                 matched = True
         return ctx.with_temporal(temporal) if matched else ctx

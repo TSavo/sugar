@@ -53,6 +53,8 @@ from sugar_source_tree.nodes import Attribute, Call, ClassDef, FunctionDef
 from sugar_source_tree.tree import SourceFile
 from test_method_call_application_twins import bound_method_call_at
 
+from frame_fresh import FRAME_FRESH
+
 METHOD_BODY = (
     "class Writer:\n" "    def store(self, obj, value):\n" "        obj.field = value\n"
 )
@@ -100,7 +102,9 @@ def _construct_class(source: str, class_name: str) -> ObjectValue:
     class_outcome = class_def.sugar().desugar(None)
     class_value = class_outcome.completed_value()
     assert isinstance(class_value, ClassDefinitionValue)
-    receiver = class_value.fresh_receiver(class_value.class_definition_cid)
+    receiver = class_value.fresh_receiver(
+        class_value.class_definition_cid, allocation=FRAME_FRESH
+    )
     assert isinstance(receiver, ObjectValue)
     return receiver
 

@@ -42,6 +42,8 @@ from sugar_lift_py_tests.sugar.resource_coord_sugar import (
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_resource_sugar import WithResourceSugar
 
+from frame_fresh import FRAME_FRESH
+
 
 def test_authenticated_pandas_303_builtin_open_resource_coordinate():
     """Real corpus half; native-definition lifecycle twins below are synthetic."""
@@ -187,7 +189,7 @@ def _resource(
 
     return WithResourceSugar(
         manager=manager
-        or _FixedSugar(ExitSet.completed(ObjectValue("native-resource", (), identity="mgr"))),
+        or _FixedSugar(ExitSet.completed(ObjectValue("native-resource", (), allocation=FRAME_FRESH, identity="mgr"))),
         manager_slot_id=manager_slot_id,
         enter=enter or _FixedSugar(ExitSet.completed(_FloorValue("entered"))),
         exit=exit_sugar,
@@ -279,7 +281,7 @@ def test_manager_expression_evaluated_exactly_once():
     seen = []
     sugar = _resource(
         manager=_FixedSugar(
-            ExitSet.completed(ObjectValue("native-resource", (), identity="mgr")), probe=seen
+            ExitSet.completed(ObjectValue("native-resource", (), allocation=FRAME_FRESH, identity="mgr")), probe=seen
         ),
         body=(_Pass(),),
     )
@@ -389,7 +391,7 @@ def test_falsy_source_exit_preserves_the_exact_original_halt():
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     effect = RaiseEffect.for_builtin("ValueError", occurrence="body.py:4:2")
-    state = ObjectValue("native-resource", (), identity="before-raise")
+    state = ObjectValue("native-resource", (), allocation=FRAME_FRESH, identity="before-raise")
     incoming = Halted(true_guard(), effect, state)
     routed = ExitSet((incoming,)).and_exit_truthiness(
         ExitSet.completed(TermValue(False)), site="exit-site"
@@ -766,10 +768,10 @@ def test_enter_result_and_manager_binding_facts():
         body=(_Pass(),),
         enter_slot_id="E",
         enter=_FixedSugar(
-            ExitSet.completed(ObjectValue("native-resource", (), identity="entered-val"))
+            ExitSet.completed(ObjectValue("native-resource", (), allocation=FRAME_FRESH, identity="entered-val"))
         ),
         manager=_FixedSugar(
-            ExitSet.completed(ObjectValue("native-resource", (), identity="mgr-val"))
+            ExitSet.completed(ObjectValue("native-resource", (), allocation=FRAME_FRESH, identity="mgr-val"))
         ),
     )
     out = sugar.desugar()
