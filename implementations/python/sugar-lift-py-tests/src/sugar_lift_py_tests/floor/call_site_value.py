@@ -1814,26 +1814,119 @@ class CallSiteValue(FloorValue):
         # halt continues as the Call's own halt, in the caller's record at the
         # call (``at_the_call``), never the callee's. Both are continuations
         # beneath the arm, so its guard, faces and ``owed`` ride on.
+        #
+        # What the callee did to objects the caller can see is the caller's on
+        # both arms, through the one projection (``caller_visible_stores``):
+        # a completed arm's body is spliced by the statement that made the
+        # call (``ExprStatementSugar``); a halt carries the stores its record
+        # holds into the caller's record here. The callee's locals stay
+        # behind on both.
+        carries = carries_its_stores_to_the_caller(self)
+
+        def left_the_call(halt):
+            # The frame the callee reduced under (``_reduce_callsite_body``).
+            from sugar_lift_py_tests.occurrence import call_frame_path
+
+            frame = (
+                None
+                if self.site is None
+                else call_frame_path(self.site, self.occurrence_path)
+            )
+            stores = (
+                caller_visible_stores(_record_entries(halt.state)) if carries else ()
+            )
+            return ExitSet.halted(
+                call_owned(halt.effect, frame), state=at_the_call(ctx, stores)
+            )
+
         return outcome.sequence(
             lambda value: ExitSet.completed(retaining(value)),
-            consume=lambda halt: ExitSet.halted(
-                call_owned(halt.effect), state=at_the_call(ctx)
-            ),
+            consume=left_the_call,
         )
 
 
-def at_the_call(ctx):
+def carries_its_stores_to_the_caller(call) -> bool:
+    """Whether the receiver field stores ``call``'s body made are its
+    caller's: a constructor (``__init__``) or a free function (no runtime
+    dispatch receiver).  A method other than ``__init__`` keeps its receiver,
+    and its stores stay nested.  The one condition for both arms: a completed
+    body spliced by the statement that called it (``ExprStatementSugar``) and
+    a halt leaving it (``CallSiteValue.project_producer_outcome``)."""
+    return call.body is not None and (
+        call.target_name == "__init__"
+        or call.target_name.endswith(".__init__")
+        or call.runtime_dispatch_receiver is None
+    )
+
+
+def caller_visible_stores(entries) -> tuple:
+    """The receiver field stores among a callee record's ``entries`` that
+    reach its caller: every unconditional one, as a ``ReceiverFieldStoreValue``.
+
+    A store whose guard is truth -- a nested empty ``and`` included -- is
+    unconditional: a folded ``isinstance(match, str)`` still stamps the tail
+    with ``true_guard``, and that is not a branch.  A store under a real
+    branch guard stays in the callee's nested record; it is never flattened
+    onto the receiver.  The one projection of what a callee did to objects
+    its caller sees, for a completed body (``ExprStatementSugar``) and for a
+    halt (``CallSiteValue.project_producer_outcome``)."""
+    from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
+        GuardedReceiverFieldStoreValue,
+    )
+    from sugar_lift_py_tests.floor.receiver_field_store_value import (
+        ReceiverFieldStoreValue,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import _is_true
+
+    def unconditional(guard) -> bool:
+        if _is_true(guard):
+            return True
+        if getattr(guard, "kind", None) == "and":
+            return all(
+                unconditional(operand) for operand in getattr(guard, "operands", ())
+            )
+        return False
+
+    stores = []
+    for entry in entries:
+        if isinstance(entry, GuardedReceiverFieldStoreValue):
+            if unconditional(entry.guard):
+                stores.append(
+                    ReceiverFieldStoreValue(entry.receiver, entry.attr, entry.value)
+                )
+        elif isinstance(entry, ReceiverFieldStoreValue):
+            stores.append(entry)
+    return tuple(stores)
+
+
+def _record_entries(state) -> tuple:
+    """The entries of a halt's record (``_ReducedBlock``); a halt with no
+    record of its own holds none."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    if isinstance(state, _ReducedBlock):
+        return state.entries
+    return ()
+
+
+def at_the_call(ctx, stores=()):
     """The state a call's halt carries once it leaves the callee (#7757).
 
     A halt raised inside a called function reaches its caller at the call:
     what the callee bound is the callee's frame, gone with it, and a name the
     callee binds never shadows the caller's. So the halt leaves the callee in
     the caller's record at the call site: the caller's context there
-    (``ctx``, the context the call was reduced in), with no entries of its
-    own -- the caller's reducer splices every entry the caller made before
-    the call in front (``function_universe_sugar._halt_state``), as it does
-    for any statement's halt. The halt keeps the callee's effect, and its
-    arm keeps what the callee owes (``ExitSet.sequence``).
+    (``ctx``, the context the call was reduced in) -- the caller's reducer
+    splices every entry the caller made before the call in front
+    (``function_universe_sugar._halt_state``), as it does for any statement's
+    halt. The halt keeps the callee's effect, and its arm keeps what the
+    callee owes (``ExitSet.sequence``).
+
+    What the callee did before its halt to an object the caller can see is
+    not rolled back: ``stores`` (``caller_visible_stores``) are the record's
+    entries, and each advances the caller's context
+    (``ReceiverFieldStoreValue.extend_scope``), as a completed call's
+    statement threads them (``ExprStatementSugar``).
 
     Every halt a call publishes takes it, once, where it crosses the call
     boundary: the body's (``CallSiteValue.project_producer_outcome``) and,
@@ -1841,21 +1934,39 @@ def at_the_call(ctx):
     (``ClassConstructorBodySugar.enter``)."""
     from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
-    return _ReducedBlock((), True, (), context=ctx)
+    context = ctx
+    for store in stores:
+        context = store.extend_scope(context)
+    return _ReducedBlock(tuple(stores), True, (), context=context)
 
 
-def call_owned(effect):
+def call_owned(effect, frame=None):
     """A halt of a call as the Call's own face: a raise is owned by the Call
     node (``producer_node_owner``).  Every halt a call publishes takes it:
     the body's (``CallSiteValue.project_producer_outcome``) and, for a class
     call, the class statement's it reads first
-    (``ClassConstructorBodySugar.bind_class_call``)."""
+    (``ClassConstructorBodySugar.bind_class_call``).
+
+    ``frame`` is the path the callee reduced under
+    (``occurrence.call_frame_path``: the call's path and the call).  A raise
+    whose occurrence carries no path of its own (a typed ``raise`` keyed by
+    its ``file:line:col`` locus) is stamped with it here, at the crossing, so
+    the caller reads which call raised it (``try_sugar._edge_hits``); an
+    occurrence that already carries a path names its frames already."""
     from dataclasses import replace
 
     from sugar_lift_py_tests.effect import RaiseEffect
+    from sugar_lift_py_tests.effect.authenticated_raise_locus import (
+        AuthenticatedRaiseLocus,
+    )
 
     if isinstance(effect, RaiseEffect):
-        return replace(effect, producer_node_owner="Call")
+        occurrence = effect.occurrence
+        if frame and "@" not in occurrence.value:
+            occurrence = AuthenticatedRaiseLocus.of(
+                f"{occurrence.value}@{'/'.join(frame)}"
+            )
+        return replace(effect, producer_node_owner="Call", occurrence=occurrence)
     return effect
 
 

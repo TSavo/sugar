@@ -214,6 +214,7 @@ class ClassConstructorBodySugar(Sugar):
             return step(self.class_value, self)
         from dataclasses import replace
 
+        frame = None
         if at_call and call_site is not None:
             from sugar_lift_py_tests.occurrence import (
                 call_frame_path,
@@ -221,7 +222,8 @@ class ClassConstructorBodySugar(Sugar):
                 occurrence_path,
             )
 
-            with occurrence_path(call_frame_path(call_site, current_path())):
+            frame = call_frame_path(call_site, current_path())
+            with occurrence_path(frame):
                 statement = self.definition.desugar(ctx)
         else:
             # A module-level statement is reduced once, and this reads it.
@@ -234,12 +236,13 @@ class ClassConstructorBodySugar(Sugar):
             from sugar_lift_py_tests.outcome import Halted
 
             # The class statement's halt leaves it at the call, in the
-            # caller's record there (``at_the_call``).
+            # caller's record there (``at_the_call``), stamped with the
+            # frame it was raised in (``call_owned``).
             statement = ExitSet(
                 tuple(
                     Halted(
                         exit_.guard,
-                        call_owned(exit_.effect),
+                        call_owned(exit_.effect, frame),
                         at_the_call(ctx),
                         exit_.faces,
                         exit_.owed,

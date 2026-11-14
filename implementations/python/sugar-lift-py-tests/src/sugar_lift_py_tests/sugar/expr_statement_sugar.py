@@ -82,75 +82,32 @@ class ExprStatementSugar(Sugar):
         # (``self._fail_reason: str | None = None``). Reducing the body
         # alone is not enough: those stores update a nested temporal and
         # ``__init__`` returns None, so the constructing receiver never
-        # sees them. Splice unguarded receiver-field stores from the
-        # completed body into this statement's record so the outer
-        # constructor block can apply them. A store whose guard is
-        # truth — including a nested empty-and — is unconditional: a
-        # folded ``isinstance(match, str)`` still stamps the tail with
-        # true_guard, and that is not a branch. Real branch stores stay
-        # in the nested ExitSet rather than being flattened onto one
-        # receiver. Keep the call coordinate so effect routing still
-        # sees the call.
+        # sees them. Splice the receiver-field stores that reach the caller
+        # from the completed body into this statement's record so the outer
+        # constructor block can apply them (``caller_visible_stores``, the
+        # projection a halt leaving the call takes too). Keep the call
+        # coordinate so effect routing still sees the call.
         #
         # A bodyful free-function call (``runtime_dispatch_receiver``
         # absent) is the same kind of statement: it exists for its
         # effect. Leaving ``fail("DID NOT RAISE")`` as an unreduced
         # CallSiteValue leaked those calls into a completed ``__exit__``
         # face even after ``_Fail.__call__`` was seated. Method calls
-        # other than ``__init__`` keep their receiver and stay nested.
-        if (
-            isinstance(value, CallSiteValue)
-            and value.body is not None
-            and (
-                value.target_name == "__init__"
-                or value.target_name.endswith(".__init__")
-                or value.runtime_dispatch_receiver is None
-            )
+        # other than ``__init__`` keep their receiver and stay nested
+        # (``carries_its_stores_to_the_caller``).
+        from sugar_lift_py_tests.floor.call_site_value import (
+            caller_visible_stores,
+            carries_its_stores_to_the_caller,
+        )
+
+        if isinstance(value, CallSiteValue) and carries_its_stores_to_the_caller(
+            value
         ):
-            from sugar_lift_py_tests.floor.guarded_receiver_field_store_value import (
-                GuardedReceiverFieldStoreValue,
-            )
-            from sugar_lift_py_tests.floor.receiver_field_store_value import (
-                ReceiverFieldStoreValue,
-            )
-
-            def _store_guard_is_unconditional(guard):
-                from sugar_lift_py_tests.outcome.exit_set import _is_true
-
-                if _is_true(guard):
-                    return True
-                if getattr(guard, "kind", None) == "and":
-                    operands = getattr(guard, "operands", ())
-                    return all(
-                        _store_guard_is_unconditional(operand)
-                        for operand in operands
-                    )
-                return False
-
-            def _unconditional_field_store(statement):
-                if isinstance(statement, GuardedReceiverFieldStoreValue):
-                    if _store_guard_is_unconditional(statement.guard):
-                        return ReceiverFieldStoreValue(
-                            statement.receiver,
-                            statement.attr,
-                            statement.value,
-                        )
-                    return None
-                if isinstance(statement, ReceiverFieldStoreValue):
-                    return statement
-                return None
 
             def pack(result):
                 extras = ()
                 if isinstance(result, BlockValue):
-                    extras = tuple(
-                        store
-                        for store in (
-                            _unconditional_field_store(statement)
-                            for statement in result.statements
-                        )
-                        if store is not None
-                    )
+                    extras = caller_visible_stores(result.statements)
                 return ExitSet.completed(
                     BlockValue((recorded, *extras), can_fall_through=True)
                 )

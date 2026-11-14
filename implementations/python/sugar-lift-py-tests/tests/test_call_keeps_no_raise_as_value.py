@@ -187,3 +187,29 @@ def test_the_projection_makes_a_callee_raise_the_calls_halt(callsite) -> None:
     assert isinstance(face, Halted)
     assert face.effect.exception_name == "ZeroDivisionError"
     assert face.effect.producer_node_owner == "Call"
+
+
+def test_the_projection_stamps_the_call_on_a_raise_with_no_path(callsite) -> None:
+    """A typed raise keyed by its ``file:line:col`` locus leaves the callee
+    stamped with the frame it was raised in (``occurrence.call_frame_path``),
+    so a caller's ``try`` reads which call raised it (#8105).  An occurrence
+    that already carries a path keeps it."""
+    from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
+    from sugar_lift_py_tests.occurrence import call_frame_path
+    from sugar_lift_py_tests.outcome import ExitSet, Halted
+
+    frame = "/".join(call_frame_path(callsite.site, callsite.occurrence_path))
+
+    raised = ExitSet.halted(
+        RaiseEffect.for_builtin("ValueError", blame="callee.py:2:4")
+    )
+    (face,) = callsite.project_producer_outcome(raised, None).exits
+    assert isinstance(face, Halted)
+    assert face.effect.occurrence_id == f"callee.py:2:4@{frame}"
+    assert face.effect.producer_node_owner == "Call"
+
+    keyed = ExitSet.halted(
+        RaiseEffect.for_builtin("ValueError", occurrence="callee.py:2:4@call:inner")
+    )
+    (face,) = callsite.project_producer_outcome(keyed, None).exits
+    assert face.effect.occurrence_id == "callee.py:2:4@call:inner"

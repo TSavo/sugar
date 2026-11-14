@@ -16074,12 +16074,19 @@ class Try(Statement):
             elif kind in self._MID_STATEMENT_MUTATION_KINDS:
                 # A value the call met decides it (``ReceiverAfterCall`` with
                 # rules): whatever it decides after the call, it decides at
-                # a halt inside it too.  Otherwise unknown.
-                binding[name] = (
-                    state
-                    if kind == "ReceiverAfterCall" and getattr(state, "rules", None)
-                    else _havoc(statement, name, tags)
+                # a halt inside it too.  A source helper's actual whose state
+                # holds at every halt inside the call
+                # (``container_mutation.source_helper_actual_states``) is
+                # that state at the halt, as on the completed path: what the
+                # callee did to the caller's object before it raised is not
+                # rolled back.  Otherwise unknown.
+                kept = (
+                    kind == "ReceiverAfterCall" and getattr(state, "rules", None)
+                ) or (
+                    kind == "SourceCallActualAfter"
+                    and getattr(state, "holds_at_halt", False) is True
                 )
+                binding[name] = state if kept else _havoc(statement, name, tags)
             elif (
                 kind == "PathAfterCall"
                 and getattr(state, "mode", None) == "root"

@@ -607,7 +607,14 @@ def havoc_after(statement, pre_scope, scope):
         if helper is not None:
             havoc_targets, states = helper
             targets.extend(havoc_targets)
-            applied.extend(states)
+            # A halt inside the helper leaves its actual in the state the
+            # helper holds at every halt only where nothing else the
+            # statement evaluates can halt first (``_the_call_alone``).
+            alone = _the_call_alone(statement, call)
+            applied.extend(
+                (actual, state, index, holds and alone)
+                for actual, state, index, holds in states
+            )
             continue
         if isinstance(call, PathContainerCall):
             root, _steps = path_steps(call.receiver)
@@ -1505,8 +1512,13 @@ def _mutation_through(statement, scope, call, root_read, steps, target_name):
 #   havoc: unknown after the call, never the pre-call contents.
 #
 # The call's own halts are its faces at the call (the Call producer); a halt
-# path never reaches the statement's continuation, so the state is the
-# completed path's.
+# path never reaches the statement's continuation. A handler that catches one
+# reads the actual in the state the helper holds at every halt inside it
+# (``holds_at_halt``, ``Try._mid_statement_state``): the same state the
+# completed path reads, when every statement of the body that may halt begins
+# with the actual already in it, or is the actual's own one-door mutation
+# (whose halt the state's re-read sees: it is then unknown). Otherwise a halt
+# carries the actual unknown, never the pre-call contents.
 # ---------------------------------------------------------------------------
 
 _HELPER_STATEMENT_KINDS = frozenset(
@@ -1593,13 +1605,13 @@ def _mutated(state) -> bool:
     )
 
 
-def _closed_operand(node) -> bool:
+def _closed_operand(node, *, kinds=_CLOSED_OPERAND_KINDS) -> bool:
     from .nodes import Node
 
     stack = [node]
     while stack:
         current = stack.pop()
-        if getattr(current, "kind", None) not in _CLOSED_OPERAND_KINDS:
+        if getattr(current, "kind", None) not in kinds:
             return False
         for _name, _index, child in current._child_edges():
             if isinstance(child, Node):
@@ -1608,15 +1620,20 @@ def _closed_operand(node) -> bool:
 
 
 def source_helper_actual_states(call, bound_refs):
-    """``(havoc_targets, [(actual, state, index)])`` for a call to a followable
-    source helper, or None when the call is not one (it keeps its havoc).
-    ``havoc_targets`` are ``_rebind``'s ``(object, rules, subject)``.
+    """``(havoc_targets, [(actual, state, index, holds_at_halt)])`` for a call
+    to a followable source helper, or None when the call is not one (it keeps
+    its havoc).  ``havoc_targets`` are ``_rebind``'s ``(object, rules,
+    subject)``.
 
     The body is followed for every actual that is a bound object a call may
     change (``_may_be_changed``, the exposure candidates), whatever it was
     given: what the helper's mutation of it does is the one door's, decided
     by the actual's value at reduce (``PathContainerCallSugar``), never by
-    the spelling of the actual's binding."""
+    the spelling of the actual's binding.
+
+    ``holds_at_halt``: ``state`` is the actual's state at every halt inside
+    the call too (``_holds_at_every_halt``), so the one state stands on both
+    the completed and the halted arm."""
     from .nodes import Call, Name, Starred
 
     if (
@@ -1643,13 +1660,19 @@ def source_helper_actual_states(call, bound_refs):
     if key in _HELPERS_IN_PROGRESS:
         return None
     node_scope = {param.name: arg for param, arg in zip(params, call.args)}
+    edges: list = []
     _HELPERS_IN_PROGRESS.add(key)
     try:
         _body, _changed, net = definition._substitute_body_tracked(
-            definition.body, node_scope
+            definition.body, node_scope, edge_states=edges
         )
     finally:
         _HELPERS_IN_PROGRESS.discard(key)
+    # Before the body runs the call evaluates its operands: one that may
+    # halt halts with every actual as it was given.
+    operands_halt_free = all(
+        _closed_operand(arg, kinds=_HALT_FREE_OPERAND_KINDS) for arg in call.args
+    )
     havoc_targets = []
     states = []
     claimed = {id(arg) for _index, arg in actuals}
@@ -1668,24 +1691,115 @@ def source_helper_actual_states(call, bound_refs):
         if not _mutated(state):
             # The helper left the object as it was.
             continue
-        states.append((actual, state, index))
+        holds = operands_halt_free and _holds_at_every_halt(edges, name, state)
+        states.append((actual, state, index, holds))
     return havoc_targets, states
 
 
-def _actual_after(site_node, state, label, tags):
+# Source statement nodes whose evaluation cannot raise (``Try._HALT_FREE_NODES``,
+# and a docstring): a halt never leaves a helper at one.
+_HALT_FREE_SOURCE_KINDS = frozenset(
+    {"Assign", "Expr", "Name", "Constant", "Tuple", "List", "Pass"}
+)
+# A substituted operand whose evaluation cannot raise: a closed operand
+# (``_CLOSED_OPERAND_KINDS``) but a set or dict display, which hashes its
+# members.
+_HALT_FREE_OPERAND_KINDS = _CLOSED_OPERAND_KINDS - {"Set", "Dict"}
+
+
+def _holds_at_every_halt(edges, name, final) -> bool:
+    """Whether ``final`` (the formal ``name``'s state after the helper body)
+    is its state at every halt inside the body too.
+
+    ``edges`` is the body's threading reported per statement
+    (``_substitute_body_tracked``'s ``edge_states``): each statement with the
+    state in effect when it begins.  A halt leaves the body at a statement
+    that may halt, with the state it began with.  So ``final`` holds at every
+    halt when every such statement begins with the formal already in it, or
+    is the formal's own one-door mutation and nothing else
+    (``_halts_only_in_its_store``): a halt there is the mutation's, and the
+    re-read of ``final`` sees that mutation halt and is an unknown
+    (``SourceCallActualAfterSugar``), never the earlier state."""
+    for index, (statement, pre) in enumerate(edges):
+        before = _state(pre[name]) if name in pre else None
+        if before is final or _handle(before) is _handle(final):
+            continue
+        if all(
+            getattr(node, "kind", None) in _HALT_FREE_SOURCE_KINDS
+            for node in statement.walk()
+        ):
+            continue
+        after = (
+            _state(edges[index + 1][1][name])
+            if index + 1 < len(edges) and name in edges[index + 1][1]
+            else final
+        )
+        if _halts_only_in_its_store(statement, name, before, after):
+            continue
+        return False
+    return True
+
+
+def _handle(node):
+    return getattr(node, "ref", node)
+
+
+def _halts_only_in_its_store(statement, name, before, after) -> bool:
+    """``statement`` is ``name.method(operands)`` alone, over operands that
+    cannot halt, and is the one-door mutation that takes ``name`` from
+    ``before`` to ``after``: its only halt is that mutation's."""
+    from .nodes import Attribute, Call, Expr, Name
+
+    if not isinstance(statement, Expr):
+        return False
+    value = statement.value
+    if not isinstance(value, Call) or value.keywords:
+        return False
+    func = value.func
+    if not (
+        isinstance(func, Attribute)
+        and isinstance(func.value, Name)
+        and func.value.id == name
+    ):
+        return False
+    if not all(
+        getattr(node, "kind", None) in _HALT_FREE_SOURCE_KINDS
+        for arg in value.args
+        for node in arg.walk()
+    ):
+        return False
+    if before is None or not _mutated(after):
+        return False
+    receiver = getattr(after.call, "receiver", None)
+    return receiver is not None and same_object(_identity(receiver), before)
+
+
+def _the_call_alone(statement, call) -> bool:
+    """``statement`` is ``call`` in statement position: nothing else it
+    evaluates can halt before or after the call."""
+    if getattr(statement, "kind", None) != "Expr":
+        return False
+    value = getattr(statement, "value", None)
+    return value is call or (
+        value is not None and _handle(value) is _handle(call)
+    )
+
+
+def _actual_after(site_node, state, label, tags, *, holds_at_halt=False):
+    """The actual after the helper: ``state``.  ``holds_at_halt``: it is the
+    actual's state at a halt inside the call too (the halted arm reads the
+    same node, ``Try._mid_statement_state``)."""
     from .backend import Child, Leaf
     from .shadow import _handle_of
 
-    return _materialize(
-        site_node,
-        "SourceCallActualAfter",
-        (
-            ("state", Child(_handle_of(state))),
-            ("label", Leaf(label)),
-            ("occurrence", Leaf(_evaluation(site_node, tags))),
-        ),
-        tags,
+    fields = (
+        ("state", Child(_handle_of(state))),
+        ("label", Leaf(label)),
+        ("occurrence", Leaf(_evaluation(site_node, tags))),
     )
+    if holds_at_halt:
+        fields = (*fields, ("holds_at_halt", Leaf(True)))
+    return _materialize(site_node, "SourceCallActualAfter", fields, tags)
 
 
 def _apply_actual_states(statement, pre_scope, scope, havocked, applied):
@@ -1697,14 +1811,20 @@ def _apply_actual_states(statement, pre_scope, scope, havocked, applied):
     tags = occurrence_tags_of(statement)
     binding = {}
     havoc_names = []
-    for actual, state, index in applied:
+    for actual, state, index, holds_at_halt in applied:
         exact, containing = aliases(scope, actual)
         after = None
         for name in exact:
             if name in binding or not _untouched(name, pre_scope, scope, havocked):
                 continue
             if after is None:
-                after = _actual_after(statement, state, f"actual:{index}", tags)
+                after = _actual_after(
+                    statement,
+                    state,
+                    f"actual:{index}",
+                    tags,
+                    holds_at_halt=holds_at_halt,
+                )
             binding[name] = after
         for name in containing:
             if name in binding or name in havoc_names:
