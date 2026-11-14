@@ -6622,14 +6622,24 @@ class FunctionDef(Statement):
 
             The targets an ordinary assignment binds by value: one Name
             (``y = ...``, ``y: T = ...``), a chain of Names (``a = b =
-            ...``), or a flat unpack of Names with at most one ``*Name``
-            (``a, b = ...``, ``a, *b = ...``).  Each Name carries the key
-            substitution bound its later reads to: ``target_evaluations``
-            for a Name or a chain, the Name's projection of the statement's
-            evaluation for an unpack (``Assign._unpack_projection_binding``).
-            Store targets and nested unpacks are not named here.
+            ...``), or an unpack of Names, flat with at most one ``*Name``
+            (``a, b = ...``, ``a, *b = ...``) or a nested Name-only tree
+            (``(a, (b, c)) = ...``).  Each Name carries the key substitution
+            bound its later reads to: ``target_evaluations`` for a Name or a
+            chain, the Name's projection of the statement's evaluation for
+            an unpack (``Assign._unpack_projection_binding``).
+
+            One store target (``o.x = ...``, ``o.x: T = ...``, ``d[k] =
+            ...``) is the store the statement's own sugar is, built by the
+            one store ladder (``_valued_store_target_sugar``; a local
+            receiver's ``ReceiverFieldStoreStatement.keyed_store``) with its
+            value read through the statement's evaluation key: the resume
+            binds the resumed value there and runs the store
+            (``KeyedStoreSugar`` for a keyed place).
             """
-            if isinstance(statement, Assign):
+            if isinstance(statement, ReceiverFieldStoreStatement):
+                targets = ()
+            elif isinstance(statement, Assign):
                 targets = statement.targets
             elif isinstance(statement, AnnAssign) and statement.value is not None:
                 targets = (statement.target,)
@@ -6642,6 +6652,32 @@ class FunctionDef(Statement):
             suspension = suspension_step(statement.value)
             if suspension is None:
                 return None
+            if isinstance(statement, ReceiverFieldStoreStatement) or (
+                len(targets) == 1 and isinstance(targets[0], (Attribute, Subscript))
+            ):
+                store_evaluation = statement._evaluation_key({})
+                resumed = _place_read_sugar(
+                    store_evaluation, "yield", statement.fragment
+                )
+                if isinstance(statement, ReceiverFieldStoreStatement):
+                    store = statement.keyed_store(resumed)
+                else:
+                    store = _valued_store_target_sugar(
+                        targets[0],
+                        resumed,
+                        statement.fragment,
+                        evaluation=_store_evaluation(statement, targets[0]),
+                    )
+                if store is None:
+                    return None
+                return YieldAssignStepV1(
+                    suspension,
+                    (),
+                    statement.fragment.seal().cid,
+                    occurrence=statement.fragment,
+                    store=store,
+                    store_evaluation=store_evaluation,
+                )
             unpack = None
             if all(isinstance(target, Name) for target in targets):
                 keys = dict(statement.target_evaluations())
@@ -6656,12 +6692,22 @@ class FunctionDef(Statement):
                     unpack = YieldAssignUnpackV1(
                         tuple(item.id for item in target.elts)
                     )
-                else:
-                    parts = statement._flat_starred_name_parts(target)
-                    if parts is None:
-                        return None
-                    prefix, star_name, suffix = parts
+                elif statement._flat_starred_name_parts(target) is not None:
+                    prefix, star_name, suffix = statement._flat_starred_name_parts(
+                        target
+                    )
                     unpack = YieldAssignUnpackV1(prefix, star_name, suffix)
+                else:
+                    pattern = statement._name_only_nested_unpack_pattern(target)
+                    if pattern is None:
+                        return None
+                    from sugar_lift_py_tests.sugar.nested_dynamic_unpack_assign_sugar import (
+                        flatten_pattern_names,
+                    )
+
+                    unpack = YieldAssignUnpackV1(
+                        flatten_pattern_names(pattern), pattern=pattern
+                    )
                 names = (
                     *unpack.prefix_names,
                     *(() if unpack.star_name is None else (unpack.star_name,)),
@@ -6706,12 +6752,12 @@ class FunctionDef(Statement):
                 if step is None:
                     return absent_step
                 return _GeneratorNamedStepV1(step)
-            if isinstance(statement, (Assign, AnnAssign)) and isinstance(
-                statement.value, (Yield, YieldFrom)
-            ):
+            if isinstance(
+                statement, (Assign, AnnAssign, ReceiverFieldStoreStatement)
+            ) and isinstance(statement.value, (Yield, YieldFrom)):
                 # The suspension, then the assignment of the value its resume
-                # brings, bound to each target as an ordinary assignment binds
-                # it (``YieldAssignStepV1``).
+                # brings, bound to (or stored through) each target as an
+                # ordinary assignment binds it (``YieldAssignStepV1``).
                 step = yield_assign_step(statement)
                 if step is None:
                     return absent_step
@@ -14811,11 +14857,17 @@ class ReceiverFieldStoreStatement(Statement):
         return {self.receiver_name: self.post_state}
 
     def _construct_sugar(self):
+        return self.keyed_store(self.value.sugar())
+
+    def keyed_store(self, value_sugar):
+        """The statement's keyed store evaluating ``value_sugar``: its own
+        right-hand side, or, for ``o.x = yield v``, the read of the value the
+        resume binds under the statement's key (``YieldAssignStepV1``)."""
         from sugar_lift_py_tests.sugar.assign_sugar import KeyedStoreSugar
         from sugar_lift_py_tests.sugar.expr_statement_sugar import ExprStatementSugar
 
         return KeyedStoreSugar(
-            value=self.value.sugar(),
+            value=value_sugar,
             store=ExprStatementSugar(self.post_state.sugar(), self.fragment),
             evaluation=self.evaluation,
             site=self.fragment,

@@ -89,32 +89,46 @@ class YieldStepV1:
 @dataclass(frozen=True)
 class YieldAssignUnpackV1:
     """The unpacking a yield assignment's targets spell (``a, b = yield v``,
-    ``a, *b = yield v``): flat Name leaves with at most one ``*Name``.
+    ``a, *b = yield v``, ``(a, (b, c)) = yield v``): Name leaves, flat with at
+    most one ``*Name``, or a nested Name-only tree (``pattern``).
 
-    It is the demand an ordinary ``a, b = e`` makes of its one evaluation
-    (``DynamicUnpackAssignSugar``): ``SequenceProjectionOperation`` asks the
-    value what it unpacks to.
+    It is the demand an ordinary unpack makes of its one evaluation
+    (``DynamicUnpackAssignSugar``; ``NestedDynamicUnpackAssignSugar`` for a
+    nested tree): ``SequenceProjectionOperation`` asks the value what it
+    unpacks to, level by level.  For a nested tree ``prefix_names`` holds
+    every leaf, in source order.
     """
 
     prefix_names: tuple[str, ...]
     star_name: str | None = None
     suffix_names: tuple[str, ...] = ()
+    pattern: tuple | None = None
 
-    def operation(self, *, owner: str, blame: object):
+    def project(self, value: object, ctx: object, *, owner: str, blame: object):
+        """The unpack of ``value``: an ExitSet whose completed face is the
+        ``ScopeRebinds`` of every leaf, or the unpack's halt."""
+        if self.pattern is not None:
+            from sugar_lift_py_tests.sugar.nested_dynamic_unpack_assign_sugar import (
+                project_nested_pattern,
+            )
+
+            return project_nested_pattern(value, self.pattern, ctx, site=blame)
         from sugar_lift_py_tests.operations import SequenceProjectionOperation
 
         if self.star_name is None:
-            return SequenceProjectionOperation(
+            operation = SequenceProjectionOperation(
                 target_names=self.prefix_names, owner=owner, blame=blame
             )
-        return SequenceProjectionOperation(
-            target_names=(*self.prefix_names, *self.suffix_names),
-            owner=owner,
-            blame=blame,
-            star_name=self.star_name,
-            prefix_names=self.prefix_names,
-            suffix_names=self.suffix_names,
-        )
+        else:
+            operation = SequenceProjectionOperation(
+                target_names=(*self.prefix_names, *self.suffix_names),
+                owner=owner,
+                blame=blame,
+                star_name=self.star_name,
+                prefix_names=self.prefix_names,
+                suffix_names=self.suffix_names,
+            )
+        return operation.submit(value, ctx)
 
 
 @dataclass(frozen=True)
@@ -131,8 +145,14 @@ class YieldAssignStepV1:
 
     * ``y = ...``, ``y: T = ...`` and ``a = b = ...`` bind the value to each
       Name, in source order;
-    * ``a, b = ...`` / ``a, *b = ...`` (``unpack``) unpack the value through
-      ``SequenceProjectionOperation`` and bind each member to its Name.
+    * ``a, b = ...`` / ``a, *b = ...`` / ``(a, (b, c)) = ...`` (``unpack``)
+      unpack the value through ``SequenceProjectionOperation`` and bind each
+      member to its Name;
+    * ``o.x = ...`` / ``d[k] = ...`` (``store``) store the value through the
+      store the statement's own sugar is: ``store`` is that store with its
+      value read through ``store_evaluation``, the statement's evaluation key
+      (``KeyedStoreSugar`` for a keyed place), which the resume binds the
+      value under first.
 
     ``targets`` is ``(name, evaluation)`` per bound Name: ``evaluation`` is the
     key the assignment's evaluation binds that Name under (``Assign
@@ -141,9 +161,10 @@ class YieldAssignStepV1:
     name reads.  ``occurrence`` is the statement's fragment (the unpack's
     blame).
 
-    After a delegation the value to bind is the sub-iterator's return value
-    (``StopIteration.value``), which the yield-from step does not carry: the
-    resume refuses by name rather than bind a value it does not have.
+    After a delegation the value is the delegate's return value
+    (``StopIteration.value``): the yield-from step completes with it as the
+    value the frame resumes with (``ResumeBindingV1``), as a yield completes
+    with the value a ``send`` brings.
     """
 
     yield_step: YieldStepV1 | YieldFromStepV1
@@ -151,6 +172,8 @@ class YieldAssignStepV1:
     fragment_cid: str
     unpack: YieldAssignUnpackV1 | None = None
     occurrence: object = field(default=None, compare=False, repr=False)
+    store: object = field(default=None, compare=False, repr=False)
+    store_evaluation: str | None = None
 
     def resume_step(self) -> "_ResumeAssignStepV1":
         return _ResumeAssignStepV1(
@@ -158,7 +181,8 @@ class YieldAssignStepV1:
             self.fragment_cid,
             self.unpack,
             self.occurrence,
-            delegated=isinstance(self.yield_step, YieldFromStepV1),
+            store=self.store,
+            store_evaluation=self.store_evaluation,
         )
 
 
@@ -172,7 +196,8 @@ class _ResumeAssignStepV1:
     fragment_cid: str
     unpack: YieldAssignUnpackV1 | None = None
     occurrence: object = field(default=None, compare=False, repr=False)
-    delegated: bool = False
+    store: object = field(default=None, compare=False, repr=False)
+    store_evaluation: str | None = None
 
 
 @dataclass(frozen=True)
@@ -573,9 +598,15 @@ class _ForIteratorStepV1:
 
 @dataclass(frozen=True)
 class _YieldFromIteratorStepV1:
+    """A delegation in progress: the sub-iterator, or the delegate source
+    generator's machine (``GeneratorConstructionV1``) the frame drives.
+    ``started`` says the delegate has already suspended once here, so a
+    resume of the frame resumes it (forwarding a ``send``)."""
+
     iterator: object = field(compare=False, repr=False)
     occurrence: object = field(compare=False, repr=False)
     occurrence_cid: str
+    started: bool = False
 
 
 @dataclass(frozen=True)
@@ -625,7 +656,7 @@ class IfStepV1:
     vocabulary can already execute — including pre-yield guarded setup
     (``if cond: x = …`` before yield) and suspension-owning branches
     (``if c: yield 1``, ``if c: x = yield 1``). A branch holding a shape we
-    cannot resume or perform -- ``x = yield from xs``, etc. -- keeps the
+    cannot resume or perform -- ``x = (yield 1) + 1``, etc. -- keeps the
     whole `If` an `OpaqueStepV1` and loud. Naming a step we cannot perform is worse than an
     honest opaque one.
     """
@@ -887,11 +918,18 @@ def _yield_assign_unpack_testimony(unpack) -> dict | None:
     """The unpacking a yield assignment's targets spell, or None."""
     if unpack is None:
         return None
-    return {
+    row = {
         "prefixNames": list(unpack.prefix_names),
         "starName": unpack.star_name,
         "suffixNames": list(unpack.suffix_names),
     }
+    if unpack.pattern is not None:
+        from sugar_lift_py_tests.sugar.nested_dynamic_unpack_assign_sugar import (
+            pattern_desc,
+        )
+
+        row["pattern"] = pattern_desc(unpack.pattern)
+    return row
 
 
 def _generator_step_testimony(step: object, *, owner: str) -> dict:
@@ -902,21 +940,26 @@ def _generator_step_testimony(step: object, *, owner: str) -> dict:
             "value": _generator_value_testimony(step.value, owner=owner),
         }
     if isinstance(step, YieldAssignStepV1):
-        return {
+        row = {
             "kind": "yield-assign",
             "fragmentCid": step.fragment_cid,
             "targets": _yield_assign_targets_testimony(step.targets),
             "unpack": _yield_assign_unpack_testimony(step.unpack),
             "yield": _generator_step_testimony(step.yield_step, owner=owner),
         }
+        if step.store_evaluation is not None:
+            row["storeEvaluation"] = step.store_evaluation
+        return row
     if isinstance(step, _ResumeAssignStepV1):
-        return {
+        row = {
             "kind": "resume-assign",
             "fragmentCid": step.fragment_cid,
             "targets": _yield_assign_targets_testimony(step.targets),
             "unpack": _yield_assign_unpack_testimony(step.unpack),
-            "delegated": step.delegated,
         }
+        if step.store_evaluation is not None:
+            row["storeEvaluation"] = step.store_evaluation
+        return row
     if isinstance(step, YieldFromStepV1):
         return {
             "kind": "yield-from",
@@ -1109,9 +1152,14 @@ class ResumeBindingV1:
 
 @dataclass(frozen=True)
 class GeneratorAssignBindingV1:
-    """One name bound by an executed AssignStepV1 on the live machine."""
+    """One name bound by an executed AssignStepV1 on the live machine.
 
-    name: str
+    ``name`` is None for the value a yield assignment's store target stored
+    (``o.x = yield v``): it binds no name, only the statement's evaluation
+    key, which a later read of the keyed place reads (``KeyedStoreSugar``).
+    """
+
+    name: str | None
     value: object
     fragment_cid: str
     # The RHS occurrence (``assigned_value.assigned_key``) this binding is the
@@ -2018,41 +2066,69 @@ class GeneratorConstructionV1:
         After a yield the value is the one the resume sent
         (``_sent_value``).  Each Name of a plain or chained target binds it;
         an unpacking target asks the value what it unpacks to, as an ordinary
-        ``a, b = e`` asks its one evaluation (``YieldAssignUnpackV1``): a
-        halted unpack (too few members, runtime cardinality) halts here and
-        binds nothing.  Each bound Name is keyed like any assignment of it
-        (``GeneratorAssignBindingV1.evaluation``).
+        ``a, b = e`` asks its one evaluation (``YieldAssignUnpackV1``; level by
+        level for a nested tree): a halted unpack (too few members, runtime
+        cardinality) halts here and binds nothing.  Each bound Name is keyed
+        like any assignment of it (``GeneratorAssignBindingV1.evaluation``).
 
-        After a ``yield from`` the value is the sub-iterator's return value,
-        which the yield-from step does not carry: refused by name.
+        A store target (``o.x = yield v``, ``d[k] = yield v``) binds the value
+        under the statement's evaluation key and runs the statement's store,
+        which reads it there (``YieldAssignStepV1.store``): a keyed place's
+        later read reads that key; the store's halt halts here.
+
+        After a ``yield from`` the value is the delegate's return value, which
+        the yield-from step completed with as the frame's resume value
+        (``_delegation_returned``); ``_sent_value`` reads both the same way.
         """
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+        from sugar_source_tree.panic import SugarNotWritten
 
         names = ", ".join(name for name, _evaluation in step.targets)
-        if step.delegated:
-            return self._gap(
-                requested,
-                f"{names} = yield from: the delegation's return value "
-                "(StopIteration.value) is not carried by the yield-from step",
-            )
         sent = self._sent_value(requested)
         if isinstance(sent, GeneratorTransitionGapV1):
             return sent
+        if step.store is not None:
+            stored = GeneratorAssignBindingV1(
+                None, sent, step.fragment_cid, evaluation=step.store_evaluation
+            )
+            bound = replace(self, binding_state=(*self.binding_state, stored))
+            try:
+                outcome = step.store.desugar(bound._guard_evaluation_context())
+            except SugarNotWritten as exc:
+                return self._gap(requested, str(exc.observed))
+            if not isinstance(outcome, ExitSet):
+                return self._gap(
+                    requested,
+                    f"store = yield: store returned {type(outcome).__name__}",
+                )
+            if outcome.completed_value() is None or outcome.owed_items():
+                # A halt, or an undecided receiver's two store faces: the
+                # halted face leaves the machine here, the completed face
+                # resumes past the statement.
+                return bound._transition_term_exitset(step, outcome, requested)
+            return replace(bound, cursor=self.cursor + 1)._transition(requested)
         if step.unpack is None:
             members = tuple((name, sent) for name, _evaluation in step.targets)
         else:
-            unpacked = _step_exits(
-                step.unpack.operation(
-                    owner="GeneratorConstructionV1.YieldAssignStepV1.unpack",
-                    blame=step.occurrence,
-                ).submit(sent, self._guard_evaluation_context())
+            unpacked = step.unpack.project(
+                sent,
+                self._guard_evaluation_context(),
+                owner="GeneratorConstructionV1.YieldAssignStepV1.unpack",
+                blame=step.occurrence,
             )
-            if _every_arm_halts(unpacked):
-                return self._fold_pending_cited_opaque_exits(
-                    self._halts_here(unpacked)
+            if not isinstance(unpacked, ExitSet):
+                return self._gap(
+                    requested,
+                    f"{names} = yield: unpack returned {type(unpacked).__name__}",
                 )
-            if not _plain_completion(unpacked) or not isinstance(
-                unpacked.completed_value(), ScopeRebinds
+            if unpacked.exits and unpacked.halts() == unpacked.exits:
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet(tuple(replace(h, state=self) for h in unpacked.halts()))
+                )
+            if (
+                unpacked.completed_value() is None
+                or unpacked.owed_items()
+                or not isinstance(unpacked.completed_value(), ScopeRebinds)
             ):
                 return self._gap(
                     requested,
@@ -2085,6 +2161,14 @@ class GeneratorConstructionV1:
             )
         if iterable.completed_value() is None or iterable.owed_items():
             return self._gap(requested, type(iterable).__name__)
+        if isinstance(iterable.completed_value(), GeneratorConstructionV1):
+            # ``yield from g()`` over a source generator: ``iter(g)`` is ``g``
+            # itself, and the frame drives the delegate's machine, so its
+            # ``return r`` is the value the delegation completes with.
+            runtime = _YieldFromIteratorStepV1(
+                iterable.completed_value(), step.occurrence, step.occurrence_cid
+            )
+            return self._spliced((runtime,))._transition(requested)
         iterator = IteratorOperation(
             owner="GeneratorConstructionV1.YieldFromStepV1.iter",
             blame=step.occurrence,
@@ -2115,9 +2199,15 @@ class GeneratorConstructionV1:
     ):
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.floor.ground_exit import ground_raise_effect
-        from sugar_lift_py_tests.floor.iterator_value import NextResult
+        from sugar_lift_py_tests.floor.iterator_value import (
+            ListIteratorValue,
+            NextResult,
+            TupleIteratorValue,
+        )
         from sugar_lift_py_tests.operations import NextOperation
 
+        if isinstance(step.iterator, GeneratorConstructionV1):
+            return self._transition_yield_from_generator(step, requested)
         outcome = NextOperation(
             owner="GeneratorConstructionV1.YieldFromStepV1.next",
             blame=step.occurrence,
@@ -2138,8 +2228,24 @@ class GeneratorConstructionV1:
                 and effect.exception_type_coordinate == stop_identity
                 and effect.occurrence_id == str(step.occurrence)
             ):
-                machine = replace(self, cursor=self.cursor + 1)
-                return machine._transition(requested)
+                # The sub-iterator is exhausted: the delegation completes with
+                # its ``StopIteration.value``.  A list's or tuple's iterator
+                # returns None; any other iterator's return is not known
+                # here, so the value is named, undecided: the delegate's
+                # ``StopIteration.value`` coordinate.
+                if isinstance(step.iterator, (ListIteratorValue, TupleIteratorValue)):
+                    from sugar_lift_py_tests.floor.none_value import NoneValue
+
+                    returned = NoneValue()
+                else:
+                    from sugar_lift_py_tests.floor.opaque_op_callsite import (
+                        OpaqueOpCallsite,
+                    )
+
+                    returned = OpaqueOpCallsite(
+                        callee="StopIteration.value", arg=step.iterator
+                    )
+                return self._delegation_returned(returned, requested)
             return ExitSet(tuple(replace(h, state=self) for h in halts))
         if outcome.owed_items() or not isinstance(
             outcome.completed_value(), NextResult
@@ -2159,6 +2265,86 @@ class GeneratorConstructionV1:
         resume_coordinate = f"{self.instance_coordinate}:resume:{self.cursor + 1}"
         machine = replace(machine, suspended_resume_coordinate=resume_coordinate)
         return YieldEffect(next_result.value, resume_coordinate, machine)
+
+    def _transition_yield_from_generator(
+        self, step: _YieldFromIteratorStepV1, requested: str
+    ):
+        """``yield from g()`` over a source generator: drive its machine.
+
+        The first entry resumes the delegate (``next``).  After the delegate
+        suspended here, a plain resume of this frame resumes it, and a
+        ``send(v)`` of this frame (``ResumeBindingV1`` at this delegation's
+        resume coordinate) is sent into it, as Python forwards it.  Each yield
+        of the delegate is this frame's yield; its halt is this frame's halt;
+        its ``return r`` is the value the delegation completes with
+        (``_delegation_returned``), None when it returns nothing.
+        """
+        from sugar_lift_py_tests.floor.none_value import NoneValue
+
+        delegate = step.iterator
+        resume_coordinate = f"{self.instance_coordinate}:resume:{self.cursor + 1}"
+        last = self.binding_state[-1] if self.binding_state else None
+        if (
+            step.started
+            and self.suspended_resume_coordinate is None
+            and isinstance(last, ResumeBindingV1)
+            and last.resume_coordinate == resume_coordinate
+            and last.resume_value is not None
+        ):
+            outcome = delegate.send(last.resume_value)
+        else:
+            outcome = delegate.resume()
+        if isinstance(outcome, ExitSet):
+            if outcome.exits and outcome.halts() == outcome.exits:
+                return self._fold_pending_cited_opaque_exits(
+                    ExitSet(tuple(replace(h, state=self) for h in outcome.halts()))
+                )
+            if outcome.completed_value() is None or outcome.owed_items():
+                return self._gap(
+                    requested,
+                    "yield from: the delegate generator's transition is two-faced",
+                )
+            outcome = outcome.completed_value()
+        if isinstance(outcome, GeneratorTransitionGapV1):
+            return outcome
+        if isinstance(outcome, YieldEffect):
+            runtime = replace(step, iterator=outcome.machine, started=True)
+            machine = replace(
+                self._spliced((runtime,)),
+                suspended_resume_coordinate=resume_coordinate,
+            )
+            return YieldEffect(outcome.value, resume_coordinate, machine)
+        if isinstance(outcome, GeneratorTerminationV1):
+            returned = outcome.return_value
+            return self._delegation_returned(
+                NoneValue() if returned is None else returned, requested
+            )
+        return self._gap(
+            requested,
+            "yield from: the delegate generator transitioned to "
+            f"{type(outcome).__name__}",
+        )
+
+    def _delegation_returned(self, returned: object, requested: str):
+        """A ``yield from`` whose delegate is exhausted completes with
+        ``returned`` (``StopIteration.value``): the value of the ``yield
+        from`` expression.  It is the value this frame resumes with past the
+        delegation, recorded as a resume records a sent value
+        (``ResumeBindingV1`` at the delegation's resume coordinate, the frame
+        no longer suspended), so ``x = yield from xs`` binds it through the
+        one resume read (``_sent_value``); a bare ``yield from`` discards
+        it."""
+        coordinate = f"{self.instance_coordinate}:resume:{self.cursor + 1}"
+        machine = replace(
+            self,
+            cursor=self.cursor + 1,
+            suspended_resume_coordinate=None,
+            binding_state=(
+                *self.binding_state,
+                ResumeBindingV1(coordinate, returned),
+            ),
+        )
+        return machine._transition(requested)
 
     def _transition_for_iterator(self, step: _ForIteratorStepV1, requested: str):
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
@@ -2848,7 +3034,10 @@ class GeneratorConstructionV1:
 
         for item in self.binding_state:
             if isinstance(item, GeneratorAssignBindingV1) and item.value is not None:
-                ctx = ctx.with_temporal(ctx.temporal.bind_value(item.name, item.value))
+                if item.name is not None:
+                    ctx = ctx.with_temporal(
+                        ctx.temporal.bind_value(item.name, item.value)
+                    )
                 if item.evaluation is not None:
                     # Keyed as any assignment's sugar keys it.
                     ctx = _bind_evaluations(

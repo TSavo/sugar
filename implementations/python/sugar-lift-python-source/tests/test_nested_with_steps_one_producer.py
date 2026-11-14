@@ -95,6 +95,6 @@ def test_a_nested_term_only_finally_runs_through_the_cleanup_sub_machine(
 def test_an_unnameable_nested_statement_keeps_the_with_loud(tmp_path) -> None:
     body = _with_body(
         tmp_path,
-        "def g(m, o):\n    with m():\n        o.x = yield 1\n",
+        "def g(m):\n    with m():\n        x = (yield 1) + 1\n",
     )
     assert _nameable_nested_with_body_steps(body) is None
