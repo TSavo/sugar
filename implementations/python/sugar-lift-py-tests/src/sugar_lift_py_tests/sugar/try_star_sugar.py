@@ -76,6 +76,7 @@ class TryStarSugar(Sugar):
             Completed,
             ExitSet,
             Halted,
+            _require_exit_set,
             true_guard,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -173,8 +174,12 @@ class TryStarSugar(Sugar):
                     path = ExitSet(
                         (Completed(face.guard, face.state, face.faces, face.owed),)
                     )
-                    composed = path.sequence(
-                        lambda _state, exits=handler_exits: exits
+                    # The frontier is built from the handler's arms now: a
+                    # handler still waiting on its caller's actuals, whose
+                    # carrier ``sequence`` composed, is refused by name here.
+                    composed = _require_exit_set(
+                        path.sequence(lambda _state, exits=handler_exits: exits),
+                        owner="TryStarSugar.handler",
                     )
                     for arm in composed.exits:
                         if isinstance(arm, Halted):
@@ -294,7 +299,15 @@ def _seed_temporal(state, ctx):
 def _reduce_block_from_state(statements, state, ctx):
     """Reduce ``statements`` continuing from an existing temporal ``state``;
     a state that is no reduced block reduces the handler under ``ctx``, the
-    handler's context."""
+    handler's context.
+
+    A statement still waiting on its caller's actuals (a deferred carrier)
+    keeps waiting: every later statement runs beneath its completed arms once
+    it discharges (the carrier's own ``and_then``), as the block reducer
+    hands one on."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         _ReducedBlock,
@@ -306,15 +319,27 @@ def _reduce_block_from_state(statements, state, ctx):
 
     exits = ExitSet.completed(state)
     for statement in statements:
-        exits = exits.sequence(lambda s, stmt=statement: _reduce_one_from(s, stmt))
+
+        def step(prefix, stmt=statement):
+            return _reduce_one_from(prefix, stmt)
+
+        if isinstance(exits, NativeOperationExitCarrierV1):
+            exits = exits.and_then(step)
+        else:
+            exits = exits.sequence(step)
     return exits
 
 
 def _reduce_one_from(state, statement):
-    """Reduce one statement after ``state``; prefix entries; keep new context."""
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    """Reduce one statement after ``state``; prefix entries; keep new context.
+
+    A statement still waiting on its caller's actuals answers its carrier:
+    its faces take this prefix once it discharges (``after_discharge``)."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, _require_exit_set
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        _ReducedBlock,
         reduce_block_to_exitset,
     )
 
@@ -322,6 +347,22 @@ def _reduce_one_from(state, statement):
         return ExitSet.completed(state)
 
     following = reduce_block_to_exitset((statement,), state.context)
+    if isinstance(following, NativeOperationExitCarrierV1):
+        return following.after_discharge(
+            lambda projected: _beneath_prefix(
+                state,
+                _require_exit_set(projected, owner="TryStarSugar.statement"),
+            )
+        )
+    return _beneath_prefix(state, following)
+
+
+def _beneath_prefix(state, following):
+    """``following``'s faces with ``state``'s entries and transforms before
+    their own; a halt that carries no state halts at ``state``."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
     out = []
     for face in following.exits:
         if isinstance(face, Completed) and isinstance(face.value, _ReducedBlock):

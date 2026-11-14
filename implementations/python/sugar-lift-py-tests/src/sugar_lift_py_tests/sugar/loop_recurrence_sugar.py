@@ -385,33 +385,22 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # state into the next iteration, this loop's own break/continue is
         # consumed and continues, any other halt leaves the loop as it is. The
         # first iteration's faces are never the loop's outcome.
-        # Beneath one of several faces the continuation is sequenced, which
-        # reads its arms: a later item that answered a deferred carrier is
-        # refused by name there.
-        def after_halt(halt):
-            following = self._after_loop_control(
-                halt,
-                next_result,
-                runtime,
-                target_bindings,
-                entries=entries,
-                index=index,
-            )
-            if following is None:
-                return None
-            return _require_exit_set(
-                following, owner="LoopRecurrenceSugar.loop-control"
-            )
-
+        # A later item still waiting on its caller's actuals answers its
+        # deferred carrier: ``sequence`` composes it beneath its face, and the
+        # loop hands the composed carrier on to its caller.
         if len(body.exits) != 1:
             return body.sequence(
-                lambda state: _require_exit_set(
-                    self._after_iteration_state(
-                        state, next_result, runtime, entries=entries, index=index
-                    ),
-                    owner="LoopRecurrenceSugar.iteration",
+                lambda state: self._after_iteration_state(
+                    state, next_result, runtime, entries=entries, index=index
                 ),
-                consume=after_halt,
+                consume=lambda halt: self._after_loop_control(
+                    halt,
+                    next_result,
+                    runtime,
+                    target_bindings,
+                    entries=entries,
+                    index=index,
+                ),
             )
         face = body.exits[0]
         following = self._after_iteration_face(
@@ -419,12 +408,8 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         )
         if following is None:
             return body
-        if isinstance(following, ExitSet):
-            # The one face, whichever kind, continues into ``following``.
-            return body.sequence(
-                lambda _state: following, consume=lambda _halt: following
-            )
-        return following
+        # The one face, whichever kind, continues into ``following``.
+        return body.sequence(lambda _state: following, consume=lambda _halt: following)
 
     def _after_iteration_face(
         self, face, next_result, runtime, target_bindings, *, entries, index

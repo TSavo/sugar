@@ -377,11 +377,10 @@ def reduce_block_to_exitset(
                     for exit_ in outcome.exits
                 )
             )
+            composed = outcome.sequence(project)
             if returned:
-                return ExitSet(
-                    (*outcome.sequence(project).exits, *returned)
-                ).normalize()
-            return outcome.sequence(project)
+                return _beside_prior_returns(composed, returned)
+            return composed
 
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
@@ -423,6 +422,30 @@ def reduce_block_to_exitset(
     # No completed record holds a halt (#7826): every halt is already a halted
     # arm, so there is nothing to promote out of a record here.
     return exits
+
+
+def _beside_prior_returns(composed, returned: tuple):
+    """``composed`` with the faces of every earlier ``return`` beside it.
+
+    ``composed`` is what ``ExitSet.sequence`` answered for a statement. A
+    continuation still waiting on its caller's actuals keeps waiting: the
+    returned faces join its exits once it discharges (``after_discharge``);
+    no arm is read off an undischarged carrier.
+    """
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+    def beside(continued):
+        exits = _require_exit_set(
+            continued, owner="reduce_block_to_exitset.prior-returns"
+        )
+        return ExitSet((*exits.exits, *returned)).normalize()
+
+    if isinstance(composed, NativeOperationExitCarrierV1):
+        return composed.after_discharge(beside)
+    return beside(composed)
 
 
 def reduce_body(statements: tuple, ctx: object = None):

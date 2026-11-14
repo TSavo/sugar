@@ -468,35 +468,75 @@ def _iterate_over(monkeypatch, body, carrier):
         _enter_target=lambda runtime, ctx, projections: (ctx, ()),
         _after_iteration_state=lambda *_args, **_kwargs: carrier,
         _after_loop_control=lambda *_args, **_kwargs: carrier,
+        _after_iteration_face=lambda *_args, **_kwargs: carrier,
     )
     runtime = SimpleNamespace(target_pattern=None, body_sugars=())
     return LoopRecurrenceSugar._advance_iterator(loop, None, runtime, None, entries=())
 
 
-def test_loop_iteration_continuation_carrier_is_refused_by_name(monkeypatch):
-    carrier, _, _ = _carrier()
+def test_loop_iteration_continuation_carrier_composes_beneath_its_face(monkeypatch):
+    carrier, left, right = _carrier()
     body = ExitSet(
         (
             Completed(atomic("test.first", []), TermValue(1)),
-            Completed(atomic("test.second", []), TermValue(2)),
+            Completed(atomic("test.second", []), TermValue(2), owed=("owed.second",)),
         )
     )
-    with pytest.raises(ConstructionPanic) as excinfo:
-        _iterate_over(monkeypatch, body, carrier)
-    _refused(excinfo, "LoopRecurrenceSugar.iteration")
+    composed = _iterate_over(monkeypatch, body, carrier)
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    actuals = _actuals(left, right)
+    exits = composed.discharge(None, actuals)
+    discharged = carrier.discharge(None, actuals)
+    eager = body.sequence(lambda _state: discharged)
+    assert isinstance(exits, ExitSet)
+    assert exits == eager
+    assert _testimony(exits) == _testimony(eager)
 
 
-def test_loop_control_continuation_carrier_is_refused_by_name(monkeypatch):
-    carrier, _, _ = _carrier()
+def test_loop_control_continuation_carrier_composes_beneath_its_halt(monkeypatch):
+    carrier, left, right = _carrier()
     body = ExitSet(
         (
-            Halted(atomic("test.first", []), _raise_effect("loop-control")),
+            Halted(
+                atomic("test.first", []),
+                _raise_effect("loop-control"),
+                None,
+                owed=("owed.halt",),
+            ),
             Completed(atomic("test.second", []), TermValue(2)),
         )
     )
-    with pytest.raises(ConstructionPanic) as excinfo:
-        _iterate_over(monkeypatch, body, carrier)
-    _refused(excinfo, "LoopRecurrenceSugar.loop-control")
+    composed = _iterate_over(monkeypatch, body, carrier)
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    actuals = _actuals(left, right)
+    exits = composed.discharge(None, actuals)
+    discharged = carrier.discharge(None, actuals)
+    eager = body.sequence(lambda _state: discharged, consume=lambda _halt: discharged)
+    assert isinstance(exits, ExitSet)
+    assert exits == eager
+    assert _testimony(exits) == _testimony(eager)
+    assert any("owed.halt" in exit_.owed for exit_ in exits.exits)
+
+
+def test_loop_single_face_continuation_carrier_keeps_its_face(monkeypatch):
+    carrier, left, right = _carrier()
+    body = ExitSet(
+        (Completed(atomic("test.only", []), TermValue(1), owed=("owed.only",)),)
+    )
+    composed = _iterate_over(monkeypatch, body, carrier)
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    actuals = _actuals(left, right)
+    exits = composed.discharge(None, actuals)
+    discharged = carrier.discharge(None, actuals)
+    eager = body.sequence(lambda _state: discharged)
+    assert isinstance(exits, ExitSet)
+    assert exits == eager
+    # The face's debt rides onto what follows it; it is never dropped.
+    assert exits.exits
+    assert all("owed.only" in exit_.owed for exit_ in exits.exits)
 
 
 def test_loop_outward_face_carrier_is_refused_by_name():
@@ -546,6 +586,74 @@ def test_try_star_handler_matcher_carrier_is_refused_by_name():
     with pytest.raises(ConstructionPanic) as excinfo:
         _matcher_value(_Answer(carrier), None)
     _refused(excinfo, "TryStarSugar.handler-matcher")
+
+
+def test_try_star_statement_carrier_composes_beneath_its_prefix(monkeypatch):
+    from sugar_lift_py_tests.sugar import function_universe_sugar
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+    from sugar_lift_py_tests.sugar.try_star_sugar import _reduce_block_from_state
+
+    carrier, left, right = _carrier()
+
+    def reduce(sugars, ctx):
+        (statement,) = sugars
+        if statement == "deferred":
+            return carrier.and_then(
+                lambda value: ExitSet.completed(_ReducedBlock((value,), True, ()))
+            )
+        return ExitSet.completed(_ReducedBlock((statement,), True, ()))
+
+    monkeypatch.setattr(function_universe_sugar, "reduce_block_to_exitset", reduce)
+    prefix = _ReducedBlock(("before",), True, ())
+
+    deferred = _reduce_block_from_state(("deferred", "after"), prefix, None)
+
+    assert isinstance(deferred, NativeOperationExitCarrierV1)
+    exits = deferred.discharge(None, _actuals(left, right))
+    assert isinstance(exits, ExitSet)
+    (arm,) = exits.exits
+    assert isinstance(arm, Completed)
+    # The prefix before the deferred statement, then what it and the later
+    # statement reduced to, in order.
+    assert arm.value.entries == ("before", TermValue(3), "after")
+
+
+def test_try_star_handler_carrier_is_refused_by_name():
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from test_try_compositions_carry_owed_7825 import _Fixed, _one_leaf_try_star
+
+    carrier, _, _ = _carrier()
+    sugar, _leaf = _one_leaf_try_star(
+        "handler_carrier", lambda _leaf: (_Fixed(lambda _c: carrier),)
+    )
+    with pytest.raises(ConstructionPanic) as excinfo:
+        sugar.desugar(ReduceContext.root(owner="handler_carrier"))
+    _refused(excinfo, "TryStarSugar.handler")
+
+
+# --- function_universe_sugar ------------------------------------------------
+
+
+def test_prior_returns_join_a_composed_carrier_once_it_discharges():
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _beside_prior_returns,
+    )
+
+    carrier, left, right = _carrier()
+    returned = Completed(atomic("test.returned", []), TermValue(9))
+
+    composed = _beside_prior_returns(carrier, (returned,))
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    exits = composed.discharge(None, _actuals(left, right))
+    assert isinstance(exits, ExitSet)
+    eager = _beside_prior_returns(
+        carrier.discharge(None, _actuals(left, right)), (returned,)
+    )
+    assert exits == eager
+    values = [exit_.value for exit_ in exits.exits]
+    assert TermValue(3) in values
+    assert TermValue(9) in values
 
 
 # --- with_source_resource_sugar / with_formal_manager_sugar -----------------
@@ -689,6 +797,16 @@ def test_formal_manager_enter_carrier_is_refused_by_name():
     with pytest.raises(ConstructionPanic) as excinfo:
         sugar.desugar(None)
     _refused(excinfo, "WithFormalManagerSugar.enter")
+
+
+def test_formal_manager_construct_carrier_is_refused_by_name():
+    carrier, _, _ = _carrier()
+    protocol = _protocol()
+    protocol.construct_manager = lambda value, ctx: carrier
+    sugar = _formal_manager(_Answer(ExitSet.completed(_Receiver())), protocol)
+    with pytest.raises(ConstructionPanic) as excinfo:
+        sugar.desugar(None)
+    _refused(excinfo, "WithFormalManagerSugar.construct")
 
 
 def test_formal_manager_exit_carrier_is_refused_by_name(_empty_body):

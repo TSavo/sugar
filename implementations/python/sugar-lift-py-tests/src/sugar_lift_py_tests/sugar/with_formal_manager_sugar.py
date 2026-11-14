@@ -45,9 +45,9 @@ class WithFormalManagerSugar(Sugar):
             _returned_value,
         )
 
-        # The manager, its enter and its exit are each routed face by face
-        # here: a deferred native-operation carrier at any of them is refused
-        # by name.
+        # The manager, its construction, its enter and its exit are each
+        # routed face by face here: a deferred native-operation carrier at any
+        # of them is refused by name.
         manager_out = _require_exit_set(
             self.manager.desugar(ctx), owner="WithFormalManagerSugar.manager"
         )
@@ -56,7 +56,10 @@ class WithFormalManagerSugar(Sugar):
         )
         construct = getattr(self.protocol, "construct_manager", None)
         if construct is not None:
-            manager_es = manager_es.sequence(lambda value: construct(value, ctx))
+            manager_es = _require_exit_set(
+                manager_es.sequence(lambda value: construct(value, ctx)),
+                owner="WithFormalManagerSugar.construct",
+            )
         parts = []
         for manager_face in manager_es.exits:
             if isinstance(manager_face, Halted):
