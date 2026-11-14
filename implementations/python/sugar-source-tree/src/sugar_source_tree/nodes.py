@@ -367,9 +367,6 @@ class LanguageCallee(_enum.Enum):
     TYPING_CLASSVAR = "python:typing.ClassVar"
     DATACLASSES_INITVAR = "python:dataclasses.InitVar"
     DATACLASSES_KW_ONLY = "python:dataclasses.KW_ONLY"
-    # ``typing.Final``: the annotation qualifier a module binding confesses
-    # its value final with (a value pin's confession, ``value_pins``).
-    TYPING_FINAL_QUALIFIER = "python:typing.Final"
     # ``typing.Generic``: the parameterisable base that contributes no
     # fields.
     TYPING_GENERIC = "python:typing.Generic"
@@ -417,6 +414,18 @@ _DATACLASS_FIELD_MARKERS = frozenset(
         LanguageCallee.DATACLASSES_INITVAR,
         LanguageCallee.DATACLASSES_KW_ONLY,
     }
+)
+
+# The modules whose members an annotation's binding is read through: the
+# markers' own modules (``typing``, ``dataclasses``) and the builtin
+# namespace.  Each binds a marker under that marker's own symbol only, so a
+# member of one that is no marker's symbol is no marker.  A member of any
+# other module is a binding the lifter does not read: ``from
+# typing_extensions import ClassVar`` may be ``typing.ClassVar``, and only
+# that module's proof could say so (step 3), never this unit's source.
+_ANNOTATION_READ_MODULES = frozenset(
+    {member.value.rpartition(".")[0] for member in _DATACLASS_FIELD_MARKERS}
+    | {"python:builtins"}
 )
 
 # The bindings through which a read can write a global (or a builtin) the
@@ -10140,7 +10149,9 @@ class ClassDef(Statement):
         ``kw_only``, ``frozen`` or slots), a source ``__init__`` or
         ``__post_init__``, a base other than ``typing.Generic[...]`` (base
         dataclasses contribute fields), ``ClassVar``/``InitVar``/``KW_ONLY``
-        annotations, ``field(...)`` with anything but ``default_factory`` /
+        annotations, an annotation naming anything whose binding is not read
+        (``unread_or_marker``: it may be a marker), ``field(...)`` with
+        anything but ``default_factory`` /
         ``default``, or a non-default field after a default one (which
         dataclasses itself rejects with ``TypeError``).
         """
@@ -10160,16 +10171,60 @@ class ClassDef(Statement):
         if getattr(self, "keywords", ()):
             return None
 
-        def mentions_special(annotation) -> bool:
-            # A marker ``dataclasses`` reads by identity is known by its
-            # binding (``SourceUnit.language_callee_of``): ``from typing
-            # import ClassVar as CV`` reaches it, a source class named
-            # ``ClassVar`` does not.
+        # The names this class body binds: a read of one in an annotation
+        # reaches the class namespace, not the module's definition.
+        class_bound = frozenset().union(
+            *(item.names_bound_within() for item in self.body)
+        )
+
+        def reference_read(node) -> bool:
+            """Whether the reference ``node`` (a Name, or a whole dotted
+            chain) is bound to something read here that is no marker.
+
+            A marker ``dataclasses`` reads by identity is known by its
+            binding (``SourceUnit.language_callee_of``): ``from typing import
+            ClassVar as CV`` reaches it, a source class named ``ClassVar``
+            does not.  Read: a member of ``_ANNOTATION_READ_MODULES`` that is
+            no marker (``typing.Optional``, the builtin ``int``), or the one
+            module ``class`` a bare name reaches.  Not read: an import of any
+            other module (``typing_extensions.ClassVar``), an import the
+            table names nothing for (an unresolvable relative import, a
+            provider-gated one), and every other binding (an assignment, a
+            class-body name, a type parameter): any of them may be a marker.
+            """
+            if isinstance(node, Name):
+                span = node.line_col_span()
+                target = unit.name_reference_at(node.id, span)
+                if target is None:
+                    return node.id not in class_bound and isinstance(
+                        unit.module_definition_at(node.id, span), ClassDef
+                    )
+            else:
+                target = unit.import_reference_of(node)
+                if target is None:
+                    return False
+            return (
+                LanguageCallee.of(target) not in _DATACLASS_FIELD_MARKERS
+                and target.rpartition(".")[0] in _ANNOTATION_READ_MODULES
+            )
+
+        def unread_or_marker(annotation) -> bool:
+            # Each reference is read whole: a dotted chain's links are not
+            # references of their own.
+            links: set = set()
             for node in annotation.walk():
-                if unit.language_callee_of(node) in _DATACLASS_FIELD_MARKERS:
-                    return True
                 if isinstance(node, Constant) and isinstance(node.value, str):
                     return True  # a string annotation is not read here
+                if id(node) in links:
+                    if isinstance(node, Attribute):
+                        links.add(id(node.value))
+                    continue
+                if isinstance(node, Attribute):
+                    links.add(id(node.value))
+                elif not isinstance(node, Name):
+                    continue
+                if not reference_read(node):
+                    return True
             return False
 
         fields = []
@@ -10184,7 +10239,7 @@ class ClassDef(Statement):
                 continue
             if not isinstance(item.target, Name) or not item.simple:
                 return None
-            if mentions_special(item.annotation):
+            if unread_or_marker(item.annotation):
                 return None
             default = None
             factory = None

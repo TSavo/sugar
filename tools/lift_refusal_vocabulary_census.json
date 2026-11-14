@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 2190,
+  "lift_output_backlog": 2186,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -4033,46 +4033,6 @@
       "speaker": "provenance-oracle-guard",
       "text": "decidable: it must EQUAL that seat, or the door refuses by name.",
       "wire_marker": "not-lift-output"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py:0ea9d3db9fed818c:1",
-      "line": 248,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "strongest pins in the language; the scan still refuses on any",
-      "wire_marker": "wire-protocol:lift-report-payload"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py:a73ac5bc57ddf363:1",
-      "line": 245,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "literal would be a wrong term -- plain-Enum members REFUSE by name.",
-      "wire_marker": "wire-protocol:lift-report-payload"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py:c4829d099c3b9db1:1",
-      "line": 458,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# must refuse rather than guess.",
-      "wire_marker": "wire-protocol:lift-report-payload"
-    },
-    {
-      "key": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py:eae51ec3ab0e5a96:1",
-      "line": 502,
-      "path": "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/value_pins.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# and the rebinding refuses it.",
-      "wire_marker": "wire-protocol:lift-report-payload"
     },
     {
       "key": "implementations/python/sugar-source-tree/src/sugar_source_tree/binding_provenance.py:292764d14dfd45d5:1",
@@ -22879,10 +22839,10 @@
   "speaker_counts": {
     "emitter-provenance-guard": 3,
     "instrument-prose": 8,
-    "lift-output-backlog": 2190,
+    "lift-output-backlog": 2186,
     "provenance-oracle-guard": 57,
     "vendor-language-identifier": 2,
     "verifier-verdict-quote": 32
   },
-  "total_occurrences": 2292
+  "total_occurrences": 2288
 }

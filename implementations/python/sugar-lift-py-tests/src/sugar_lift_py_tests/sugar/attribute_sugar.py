@@ -110,10 +110,9 @@ class AttributeSugar(ConstructedTermSugar):
                 (span.start_line, span.start_col, span.end_line, span.end_col)
             )
             if deferred is not None:
-                # PROVEN message-only (frame_value_use_is_message_only gated the
-                # deferral): the contract does not depend on this value, so the
-                # force-floor reaching it here yields a message opacity rather
-                # than a refusal, letting the manager construct.
+                # The force-floor reaching a deferred value-use here yields a
+                # message opacity rather than a refusal, letting the manager
+                # construct.
                 from sugar_lift_py_tests.floor.message_opaque_value import (
                     MessageOpaqueValue,
                 )
