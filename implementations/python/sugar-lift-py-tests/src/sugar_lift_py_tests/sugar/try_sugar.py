@@ -214,14 +214,20 @@ def _and_finally_with_raise_context(
     Python's implicit ``__context__`` for a raise in finally after a body
     exception.
 
-    For halted incoming faces, finally is reduced under
-    ``bind_in_flight_effect`` so bare re-raise / context-sensitive raises in
-    finally can resolve the authentic body effect when they carry a slot.
+    For halted incoming raises, finally runs from the state the raise
+    carries (``resumed``): after every entry the body (or an arm) reached
+    before it raised, in the context it raised in, as a block continues after
+    a statement. It is reduced under ``bind_in_flight_effect`` there so bare
+    re-raise / context-sensitive raises in finally can resolve the authentic
+    body effect when they carry a slot. A raise the ``finally`` lets through
+    leaves with the record the ``finally`` left: Python rolls back neither the
+    body's stores nor the cleanup's.
     """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.in_flight_effect import bind_in_flight_effect
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
+        resumed,
     )
 
     # Shared fall-through cleanup (no body exception active): no body halt
@@ -235,44 +241,54 @@ def _and_finally_with_raise_context(
     finally_slot = f"try-finally-in-flight:{site_coordinate_cid(site)}"
 
     def after_completion(value):
-        return _finally_beneath(neutral_cleanup, None, ExitSet.completed(value))
+        return _finally_beneath(
+            neutral_cleanup, None, lambda _cleaned: ExitSet.completed(value)
+        )
 
     def after_halt(halt):
-        if isinstance(halt.effect, RaiseEffect):
-            # Only a body halt that left untouched by every arm says which
-            # body statement raised; a halt an arm raised (or re-raised) after
-            # its own stores leaves the edges undecided.
-            edge_ctx = (
-                _ground_edges(ctx, edge_keys, halt.effect)
-                if any(halt.effect is effect for effect in body_effects)
-                and not any(halt.effect is effect for effect in arm_effects)
-                else ctx
+        if not isinstance(halt.effect, RaiseEffect):
+            return _finally_beneath(
+                neutral_cleanup,
+                halt.effect,
+                lambda _cleaned: ExitSet.halted(halt.effect, state=halt.state),
             )
-            finally_ctx = bind_in_flight_effect(
-                edge_ctx, finally_slot, halt.effect, blame=site
-            )
-            cleanup_es = reduce_block_to_exitset(
-                finalbody if finalbody_halted is None else finalbody_halted,
-                finally_ctx,
-            )
-        else:
-            cleanup_es = neutral_cleanup
+        record = resumed(halt.state, ctx, owner="TrySugar.finally", blame=site)
+        # Only a body halt that left untouched by every arm says which body
+        # statement raised; a halt an arm raised (or re-raised) after its own
+        # stores leaves the edges undecided.
+        edge_ctx = (
+            _ground_edges(record.context, edge_keys, halt.effect)
+            if any(halt.effect is effect for effect in body_effects)
+            and not any(halt.effect is effect for effect in arm_effects)
+            else record.context
+        )
+        finally_ctx = bind_in_flight_effect(
+            edge_ctx, finally_slot, halt.effect, blame=site
+        )
+        cleanup_es = reduce_block_to_exitset(
+            finalbody if finalbody_halted is None else finalbody_halted,
+            finally_ctx,
+            after=replace(record, context=finally_ctx),
+        )
         return _finally_beneath(
-            cleanup_es, halt.effect, ExitSet.halted(halt.effect, state=halt.state)
+            cleanup_es,
+            halt.effect,
+            lambda cleaned: ExitSet.halted(halt.effect, state=cleaned),
         )
 
     return pre_finally.sequence(after_completion, consume=after_halt)
 
 
-def _finally_beneath(cleanup_es, in_flight, restored):
+def _finally_beneath(cleanup_es, in_flight, restore):
     """The ``finally``'s arms as the continuation beneath one incoming arm.
 
     Composed through ``ExitSet.sequence``: what follows each cleanup arm runs
     beneath it, so it keeps that arm's guard, faces and ``owed``, and the
     outer ``sequence`` conjoins the incoming arm's onto them. A restoring
-    completion is followed by the incoming destination (``restored``, the
-    incoming arm's own value or halt), a terminal completion (return in
-    finally) supersedes with its own value, and a cleanup halt supersedes
+    completion is followed by the incoming destination (``restore`` of the
+    record the cleanup left: the incoming arm's own value, or its halt
+    leaving from that record), a terminal completion (return in finally)
+    supersedes with its own value, and a cleanup halt supersedes
     (``consume=``, with the in-flight body raise as its implicit context).
     """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
@@ -280,7 +296,7 @@ def _finally_beneath(cleanup_es, in_flight, restored):
 
     def after_cleanup(value):
         if _finally_restores(value):
-            return restored
+            return restore(value)
         return ExitSet.completed(value)
 
     def supersede(clean):
@@ -567,24 +583,15 @@ def _route_handlers_over_exits(
             ).exits[0]
 
         if orelse:
-            else_es = reduce_block_to_exitset(orelse, ctx)
-
-            def _then_else(state):
-                return else_es.sequence(
-                    lambda else_state: ExitSet.completed(
-                        _ReducedBlock(
-                            entries=(*state.entries, *else_state.entries),
-                            can_fall_through=else_state.can_fall_through,
-                            fall_through=else_state.fall_through,
-                            transforms=else_state.transforms,
-                        )
-                    )
+            # The ``else`` continues after the body's completed record, as a
+            # block continues after a statement: it reads what the body
+            # bound, its entries follow the body's, and a body that returned
+            # (or returned under a guard) never runs it there.
+            parts.append(
+                ExitSet((exit_,)).sequence(
+                    lambda state: reduce_block_to_exitset(orelse, ctx, after=state)
                 )
-
-            if isinstance(exit_.value, _ReducedBlock):
-                parts.append(ExitSet((exit_,)).sequence(_then_else))
-            else:
-                parts.append(ExitSet((exit_,)).sequence(lambda _s: else_es))
+            )
         else:
             parts.append(ExitSet((exit_,)))
         routed.append((None, parts[-1]))
@@ -627,15 +634,20 @@ def _route_one_halt(
         from sugar_lift_py_tests.in_flight_effect import bind_in_flight_effect
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
+            resumed,
         )
 
+        # The handler runs from the state the halt carries: everything the
+        # body did before it raised (its record's entries) and the context it
+        # raised in, never the context the try began in.
+        record = resumed(exit_.state, ctx, owner="TrySugar.handler", blame=site)
         # In-flight: bare re-raise. Observed: ``except ... as e`` / EffectRef
         # projects the same RaiseEffect this arm just matched — identity, not
         # a reconstructed E(). Observed must be installed BEFORE the body
         # reduces; prepending facts after the fact cannot authenticate a read
         # that already desugared to a pure coordinate.
         handler_ctx = bind_in_flight_effect(
-            _ground_edges(ctx, edge_keys, exit_.effect),
+            _ground_edges(record.context, edge_keys, exit_.effect),
             slot_id,
             exit_.effect,
             blame=site,
@@ -644,7 +656,9 @@ def _route_one_halt(
             observer = getattr(handler_ctx, "with_observed_effect", None)
             if observer is not None:
                 handler_ctx = observer(slot_id, exit_.effect)
-        handler_es = reduce_block_to_exitset(handler_body, handler_ctx)
+        handler_es = reduce_block_to_exitset(
+            handler_body, handler_ctx, after=replace(record, context=handler_ctx)
+        )
         facts = _binding_facts_for(slot_id, exit_.effect, site)
         return _prepend_facts(handler_es, facts) if facts else handler_es
 

@@ -874,34 +874,31 @@ def test_try_star_handler_matcher_carrier_is_refused_by_name():
     _refused(excinfo, "TryStarSugar.handler-matcher")
 
 
-def test_try_star_statement_carrier_composes_beneath_its_prefix(monkeypatch):
-    from sugar_lift_py_tests.sugar import function_universe_sugar
-    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
-    from sugar_lift_py_tests.sugar.try_star_sugar import _reduce_block_from_state
+def test_a_suite_after_a_record_composes_a_statement_carrier_beneath_it():
+    # A handler resumes after the record its halt carries through the one
+    # block reducer (``after=``); a statement still waiting on its caller's
+    # actuals keeps waiting, and once it discharges the record's entries come
+    # first, then what it and the later statement reduced to, in order.
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _ReducedBlock,
+        reduce_block_to_exitset,
+    )
 
     carrier, left, right = _carrier()
-
-    def reduce(sugars, ctx):
-        (statement,) = sugars
-        if statement == "deferred":
-            return carrier.and_then(
-                lambda value: ExitSet.completed(_ReducedBlock((value,), True, ()))
-            )
-        return ExitSet.completed(_ReducedBlock((statement,), True, ()))
-
-    monkeypatch.setattr(function_universe_sugar, "reduce_block_to_exitset", reduce)
     prefix = _ReducedBlock(("before",), True, ())
 
-    deferred = _reduce_block_from_state(("deferred", "after"), prefix, None)
+    deferred = reduce_block_to_exitset(
+        (_Answer(carrier), _Answer(ExitSet.completed(TermValue(9)))),
+        None,
+        after=prefix,
+    )
 
     assert isinstance(deferred, NativeOperationExitCarrierV1)
     exits = deferred.discharge(None, _actuals(left, right))
     assert isinstance(exits, ExitSet)
     (arm,) = exits.exits
     assert isinstance(arm, Completed)
-    # The prefix before the deferred statement, then what it and the later
-    # statement reduced to, in order.
-    assert arm.value.entries == ("before", TermValue(3), "after")
+    assert arm.value.entries == ("before", TermValue(3), TermValue(9))
 
 
 def test_try_star_handler_carrier_is_refused_by_name():
@@ -941,8 +938,8 @@ def test_try_star_body_carrier_routes_its_halt_once_it_discharges(monkeypatch):
 
     real = function_universe_sugar.reduce_block_to_exitset
 
-    def reduce(sugars, ctx):
-        return deferred if sugars is sugar.body else real(sugars, ctx)
+    def reduce(sugars, ctx, after=None):
+        return deferred if sugars is sugar.body else real(sugars, ctx, after=after)
 
     monkeypatch.setattr(function_universe_sugar, "reduce_block_to_exitset", reduce)
 
@@ -972,13 +969,15 @@ def test_try_star_body_carrier_completion_runs_the_else(monkeypatch):
     )
 
     real = function_universe_sugar.reduce_block_to_exitset
+    continued_after = []
 
-    def reduce(sugars, ctx):
+    def reduce(sugars, ctx, after=None):
         if sugars is sugar.body:
             return deferred
         if sugars is sugar.orelse:
+            continued_after.append(after)
             return ExitSet.completed(TermValue(42))
-        return real(sugars, ctx)
+        return real(sugars, ctx, after=after)
 
     monkeypatch.setattr(function_universe_sugar, "reduce_block_to_exitset", reduce)
 
@@ -989,7 +988,9 @@ def test_try_star_body_carrier_completion_runs_the_else(monkeypatch):
     assert isinstance(exits, ExitSet)
     (arm,) = exits.exits
     assert isinstance(arm, Completed)
-    # The try* continued past the body into its ``else``.
+    # The try* continued past the body into its ``else``, which continues
+    # after what the body completed with.
+    assert continued_after == [TermValue(3)]
     assert arm.value == TermValue(42)
     assert "test.body" in str(arm.guard)
     assert "owed.body" in arm.owed
@@ -1064,11 +1065,13 @@ def _source_resource(protocol):
 @pytest.fixture
 def _empty_body(monkeypatch):
     from sugar_lift_py_tests.sugar import function_universe_sugar
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
+    # A body reduces to a block's record: the exit runs where it left off.
     monkeypatch.setattr(
         function_universe_sugar,
         "reduce_block_to_exitset",
-        lambda sugars, ctx: ExitSet.completed(TermValue(0)),
+        lambda sugars, ctx: ExitSet.completed(_ReducedBlock((), True, ())),
     )
 
 

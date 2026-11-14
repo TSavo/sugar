@@ -1670,11 +1670,19 @@ class GeneratorConstructionV1:
         after_try = replace(
             self, cursor=self.cursor + 1, suspended_resume_coordinate=None
         )
+        # The thrown exception is raised at the suspended ``yield``: the halt
+        # carries the frame's state there as a record (no entries of its own,
+        # the frame's context), which the arms resume from (``resumed``).
+        frame_ctx = self._guard_evaluation_context()
         parts = _route_one_halt(
-            Halted(true_guard(), effect, self),
+            Halted(
+                true_guard(),
+                effect,
+                _ReducedBlock((), True, (), context=frame_ctx),
+            ),
             step.handlers,
             site=step.site,
-            ctx=self._guard_evaluation_context(),
+            ctx=frame_ctx,
         )
         routed = []
         for part in parts:
