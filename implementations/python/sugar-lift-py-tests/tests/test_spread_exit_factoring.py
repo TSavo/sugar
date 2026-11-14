@@ -118,13 +118,23 @@ def _dict_sugar(elements):
     )
 
 
+class _CallSite:
+    """A fragment's two coordinates: the unanswered call is owed at one."""
+
+    class _Span:
+        start_line, start_col, end_line, end_col = 1, 0, 1, 9
+
+    source_cid = "blake3-512:" + "b" * 128
+    line_col_span = _Span()
+
+
 def _call_sugar(elements):
     """``f(*a, *b, ...)`` — every argument is a starred operand."""
     return SpreadCallSugar(
         callee_name="f",
         callee=None,
         arguments=tuple(("star", None, element) for element in elements),
-        site="spread-site",
+        site=_CallSite(),
     )
 
 
@@ -423,16 +433,15 @@ def test_single_arm_elements_keep_the_unfactored_shape(kind: str) -> None:
     """No conditional is invented where the element had one completed face."""
     exits = _spread([_SingleFacedElement(i) for i in range(3)], kind)
     if kind == "call":
-        # The elements add no conditional; the unprojected call itself is
-        # two-faced (#7585): it completes only under its own atom.
+        # The elements add no conditional; the unprojected call itself is the
+        # one unanswered call (#7585, #7757): it completes only under its own
+        # atom.
         completed = [e for e in exits.exits if isinstance(e, Completed)]
         halted = [e for e in exits.exits if isinstance(e, Halted)]
         assert len(completed) == 1 and len(halted) == 1
         exit_ = completed[0]
-        assert "python:spread_call.completes" in str(exit_.guard)
-        assert halted[0].effect.producer_node_owner.startswith(
-            "UnprojectedSpreadCall:"
-        )
+        assert "python:unknown_callee_call.completes" in str(exit_.guard)
+        assert halted[0].effect.producer_node_owner == "UnknownCallee:f"
         term = exit_.value.to_term(owner="single")
         assert "py.conditional" not in repr(term)
         return

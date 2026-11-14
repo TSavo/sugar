@@ -83,6 +83,20 @@ def test_a_str_method_may_refuse_by_value(tmp_path):
     assert "UnknownCallee:index" in _owners(halts)
 
 
+def test_an_unanswered_method_call_is_two_faced_and_owes_one_call(tmp_path):
+    # #7757: no floor of the str answers ``index``; the call is the one
+    # unanswered form, one completed face and one raise, and owes one call.
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    exits = _exits(tmp_path, "def f():\n    return 'a'.index('b')\n")
+    rows = _rows(exits)
+    returns = [payload for kind, payload, _guard in rows if kind == "return"]
+    halts = [payload for kind, payload, _guard in rows if kind == "halt"]
+    assert len(returns) == 1
+    assert _owners(halts) == ["UnknownCallee:index"]
+    assert len(owed_calls(exits)) == 1
+
+
 def test_a_formal_receiver_waits_for_the_caller(tmp_path):
     # The caller's actual selects the method; this frame mints no face, and
     # the undischarged ``method_call`` carrier is never a completion.

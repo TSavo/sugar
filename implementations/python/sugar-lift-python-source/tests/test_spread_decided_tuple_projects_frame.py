@@ -23,7 +23,7 @@ def _spread_halts(exits):
         for face in exits.exits
         if isinstance(face, Halted)
         and isinstance(face.effect, UndeterminedRaiseEffect)
-        and face.effect.producer_node_owner.startswith("UnprojectedSpreadCall:")
+        and face.effect.producer_node_owner.startswith("UnknownCallee:")
     ]
 
 
@@ -74,5 +74,5 @@ def test_an_undecided_star_operand_stays_two_faced(tmp_path):
         tmp_path, "def g(*x):\n    return 1\ndef f(*a):\n    return g(*a)\n"
     )
     assert [face.effect.producer_node_owner for face in _spread_halts(exits)] == [
-        "UnprojectedSpreadCall:g"
+        "UnknownCallee:g"
     ]
