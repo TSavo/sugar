@@ -8,12 +8,13 @@ which carries the right-hand side it was given as the object the name denotes
 names given the same node (``a = r``, ``x = y = []``) are the same object,
 and a node built by another evaluation is another object.
 
-THE LAW, at a statement that mutates the object a name denotes -- a
-mutating-named method call (``r.append(x)``, ``x = r.pop()``), an item store
-(``r[k] = v``), an item delete (``del r[k]``), an augmented assignment
-(``r += x``) or an augmented item store (``r[k] += x``, a read-modify-store)
--- whatever the name was given (a display, ``'a b'.split()``, a parameter, a
-global):
+THE LAW, at a statement that may mutate the object a name denotes -- a
+method call on it, whatever the method is spelled (``r.append(x)``, ``x =
+r.pop()``, ``o.reset()``), an item store (``r[k] = v``), an item delete
+(``del r[k]``), an augmented assignment (``r += x``) or an augmented item
+store (``r[k] += x``, a read-modify-store) -- whatever the name was given (a
+display, ``'a b'.split()``, a parameter, a global, an object place, the
+receiver an active ``__init__`` constructs):
 
 - **One door** (``name_mutation_statement``).  The operation becomes one
   ``PathContainerCall`` with no path steps, evaluated at the statement: its
@@ -22,8 +23,10 @@ global):
   takes the cited CPython mutation (``floor/builtin_container_method``); any
   other value takes the ordinary operation -- the call, ``__setitem__``,
   ``__delitem__``, the in-place operator -- and its contents afterwards are
-  unknown (an immutable value is unchanged).  The source's spelling of the
-  right-hand side never chooses the door.
+  unknown (an immutable value, or a container under a method its law does
+  not cite as a mutation, is unchanged).  The source's spelling of the
+  method or of the right-hand side never chooses the door: every name a
+  call can reach takes it (``reaches``).
 - **The object's names.** Every name bound to the receiver's object is
   rebound to the object after the call (``PathAfterCall``): the post-state.
   A target (``x = r.pop()``) is bound to the call's value; ``r += x`` binds
@@ -32,14 +35,15 @@ global):
   (``outer = [r]``) is not rebuilt: it reads an unknown value minted at the
   call when the value the call changed is mutable (``ReceiverAfterCall``,
   decided at reduce).  Never the pre-call contents.
-- **Exposure.** An object passed to a call the floor does not cite as pure,
-  or the receiver of a method call outside the door, may be changed by it:
-  each name bound to it -- a parameter and an instance of a source class
-  as much as a display -- is rebound to its value after the call, which the
-  value decides at reduce (``ReceiverAfterCall``): a builtin container or a
-  source object the call may change is unknown; an immutable value, or a
-  container the call's cited method or cited pure builtin leaves alone, is
-  unchanged.
+- **Exposure.** An object passed to a call the floor does not cite as pure
+  (or formatted by an f-string, which runs ``format``), or the receiver of a
+  method call outside the door, may be changed by it: each name bound to it
+  -- a parameter, an instance of a source class, an object place and the
+  receiver an active ``__init__`` constructs as much as a display -- is
+  rebound to its value after the call, which the value decides at reduce
+  (``ReceiverAfterCall``): a builtin container or a source object the call
+  may change is unknown; an immutable value, or a container the call's cited
+  method or cited pure builtin leaves alone, is unchanged.
 
 The same door serves a mutation through a path (``path_mutation_statement``,
 ``path_item_statement``: ``a.b.append(x)``, ``a[i][j] = v``, ``d['k'][0] +=
@@ -244,6 +248,9 @@ def _object(node):
             # A name's value after a call that may have changed it: the same
             # object it was bound to before.
             node = _identity(node.prior)
+        elif kind == "ReceiverFieldStoreState":
+            # ``o.x = v``: the object ``o`` was, with a field stored.
+            node = _identity(node.receiver)
         else:
             break
         seen += 1
@@ -251,15 +258,24 @@ def _object(node):
 
 
 def _ref(node):
-    """The object a node denotes: its backend handle, or a formal's coordinate.
+    """The object a node denotes: its backend handle, or the coordinate its
+    construction authenticated.
 
     A read of a formal is re-spanned to its use site (``Name.substitute``), so
-    every read is a fresh node over the same ``coordinate``.  A read of an
+    every read is a fresh node over the same ``coordinate``.  Every version
+    of an object place (each field store mints one) is the one object its
+    construction made (``object_identity_cid``); the receiver an active
+    ``__init__`` constructs is its binding coordinate.  A read of an
     assigned name is the object its assignment was given (``_identity``);
     a name's object after a mutation is the object before it (``_object``)."""
     node = _object(node)
-    if getattr(node, "kind", None) in _FORMAL_KINDS and hasattr(node, "coordinate"):
+    kind = getattr(node, "kind", None)
+    if kind in _FORMAL_KINDS and hasattr(node, "coordinate"):
         return ("formal", node.kind, _coordinate_key(node.coordinate))
+    if kind == "ObjectPlaceStateV1":
+        return ("object-place", node.object_identity_cid)
+    if kind == "ConstructedReceiverRef":
+        return ("constructed-receiver", node.binding_coordinate_cid)
     return getattr(node, "ref", node)
 
 
@@ -277,11 +293,11 @@ def _coordinate_key(coordinate):
 def same_object(left, right) -> bool:
     if left is right:
         return True
-    return _ref(left) == _ref(right) if _is_formal(left) else _ref(left) is _ref(right)
-
-
-def _is_formal(node) -> bool:
-    return getattr(_object(node), "kind", None) in _FORMAL_KINDS
+    left_ref, right_ref = _ref(left), _ref(right)
+    if isinstance(left_ref, tuple):
+        # A coordinate key (``_ref``): every read of the object carries it.
+        return left_ref == right_ref
+    return left_ref is right_ref
 
 
 def _holds_no_reference(node) -> bool:
@@ -516,6 +532,12 @@ def _statement(
         fields = (*fields, ("evaluation", Leaf(evaluation)))
     if pairs:
         fields = (*fields, ("pair_evaluations", Leaf(tuple(pairs))))
+    if statement.kind == "Expr" and not pairs:
+        # One call in statement position (``evaluated[0]``): when the
+        # receiver's value takes the ordinary call, its value is recorded as a
+        # bare call's is (``ContainerMutationStatementSugar``,
+        # ``record_statement_value``).
+        fields = (*fields, ("records_value", Leaf(True)))
     return _materialize(statement, "ContainerMutationStatement", fields, tags)
 
 
@@ -523,7 +545,7 @@ def _is_pure_call(call, scope) -> bool:
     """A cited pure builtin (by its binding) over builtin operands, or a
     method of a literal.  A method call on anything else is not pure here:
     whether it changes its receiver is the receiver's value's question, asked
-    at reduce (``_call_targets``, ``ReceiverAfterCall``)."""
+    at reduce (``_call_targets``, ``ReceiverAfterCall``, the one door)."""
     from .nodes import Attribute, Constant
 
     func = call.func
@@ -547,7 +569,9 @@ def _is_pure_call(call, scope) -> bool:
 
 def _calls(statement, bound_refs, *, include_container_calls):
     """Calls ``statement`` makes now: not inside a nested def, and not inside a
-    value a name was already bound to (that value's calls ran earlier)."""
+    value a name was already bound to (that value's calls ran earlier).  An
+    f-string's replacement field is one: it runs ``format`` on its value
+    (``_call_targets``)."""
     from .nodes import (
         AsyncFunctionDef,
         Call,
@@ -571,7 +595,7 @@ def _calls(statement, bound_refs, *, include_container_calls):
             if current is not statement:
                 continue
             return
-        if isinstance(current, Call):
+        if isinstance(current, Call) or current.kind == "FormattedValue":
             yield current
         if isinstance(current, PathContainerCall):
             # Its ``fallback`` is this same call, not a second one.
@@ -673,21 +697,33 @@ _OPERAND_RULES = (("", False, False),)
 
 def _call_targets(call, scope, bound_refs):
     """``(object, rules, subject)`` for every object ``call`` may change
-    (``_rebind``): its receiver when the method name is a builtin container's
-    mutator, and, unless the call is pure, every bound object its operands
-    reach.  ``rules`` say how the value decides at reduce (``_may_change``);
-    never the spelling of the receiver's binding."""
-    from .nodes import Attribute, Name
-    from sugar_lift_py_tests.floor.builtin_container_method import (
-        ANY_MUTATING_METHOD,
-    )
+    (``_rebind``): the receiver of a method call, whatever the method is
+    spelled, and, unless the call is pure, every bound object its operands
+    reach -- every name the call can reach is a candidate.  ``rules`` say how
+    the value decides at reduce (``_may_change``); never the spelling of the
+    method or of the receiver's binding.
 
+    An f-string's replacement field (``f'{v}'``) runs ``format(v, spec)``:
+    the cited pure builtin's rule over what ``v`` reaches."""
+    from .nodes import Attribute, Name
+
+    if call.kind == "FormattedValue":
+        if builtin_typed(call.value, scope):
+            # A builtin's ``__format__`` over builtin values runs no user code.
+            return []
+        pure = (("", True, False),)
+        return [(node, pure, None) for node in _exposed(call.value, bound_refs)]
     targets = []
     func = call.func
-    if isinstance(func, Attribute) and func.attr in ANY_MUTATING_METHOD:
-        receiver = func.value
-        if isinstance(receiver, Name) or _ref(receiver) in bound_refs:
-            targets.append((receiver, ((func.attr, False, False),), None))
+    if (
+        isinstance(func, Attribute)
+        and isinstance(func.value, Name)
+        and reaches(func.value, scope)
+    ):
+        # An unbound read (a formal, a global): no bound node names its
+        # object, so the read itself is the candidate; its value decides.  A
+        # bound receiver is a candidate below, as every operand is.
+        targets.append((func.value, ((func.attr, False, False),), None))
     if _is_pure_call(call, scope):
         return targets
     # A cited pure builtin whose operands the source does not type: an
@@ -732,9 +768,9 @@ _READ_KINDS = frozenset(
 # reduce decides (``_may_change``): a display or comprehension, a call result
 # (an instance of a source class included), an item or attribute read, an
 # operator result, a key reference with no right-hand side, a mutation's
-# post-state, a parameter.  A literal, a definition and an import are not.
-# An object place (``ObjectPlaceStateV1``) is rebound by its own invalidation
-# (``Node.post_binding_scope``).
+# post-state (a field store's included), a parameter, an object place, the
+# receiver an active ``__init__`` constructs.  A literal, a definition and an
+# import are not.
 _EXPOSED_KINDS = frozenset(
     {
         "List",
@@ -755,6 +791,9 @@ _EXPOSED_KINDS = frozenset(
         "ReceiverAfterCall",
         "OpaqueObjectStateV1",
         "SourceCallActualAfter",
+        "ReceiverFieldStoreState",
+        "ObjectPlaceStateV1",
+        "ConstructedReceiverRef",
         *_FORMAL_KINDS,
     }
 )
@@ -764,6 +803,24 @@ def _may_be_changed(node) -> bool:
     """Whether the object ``node`` denotes may be one a call changes: one
     rule for every name a call can reach, whatever it was given."""
     return getattr(_identity(node), "kind", None) in _EXPOSED_KINDS
+
+
+def reaches(receiver, scope) -> bool:
+    """Whether a method call on ``receiver`` (its read at the call, already
+    substituted against ``scope``) reaches an object a call may change: an
+    unbound read (a formal, a global), whose value decides at reduce, or a
+    name bound to an object the one exposure rule admits
+    (``_may_be_changed``).  The method's spelling is never asked: the one
+    door takes every such call and the receiver's value decides what it did
+    (``PathContainerCallSugar``)."""
+    from .nodes import Name
+
+    if isinstance(receiver, Name):
+        if receiver.id not in scope:
+            return True
+        # An unsubstituted read (a loop body kept whole): its binding's object.
+        receiver = _state(scope[receiver.id])
+    return _may_be_changed(receiver)
 
 
 def _exposed(root, bound_refs):
@@ -1184,19 +1241,17 @@ def _path_after(
     return _materialize(site_node, "PathAfterCall", tuple(fields), tags)
 
 
-def _mutating_named_call(call) -> bool:
-    """``<receiver>.<m>(*args)`` with ``m`` a mutating method of some builtin
-    container, no keywords and no ``*`` argument."""
+def method_call(call) -> bool:
+    """``<receiver>.<m>(*args)`` with no keywords and no ``*`` argument,
+    whatever ``m`` is spelled: the shape the one door's operation carries.
+    What the call does to its receiver is the receiver's value's question
+    at reduce (``PathContainerCallSugar``)."""
     from .nodes import Attribute, Call, Starred
-    from sugar_lift_py_tests.floor.builtin_container_method import (
-        ANY_MUTATING_METHOD,
-    )
 
     return (
         isinstance(call, Call)
         and not call.keywords
         and isinstance(call.func, Attribute)
-        and call.func.attr in ANY_MUTATING_METHOD
         and not any(isinstance(arg, Starred) for arg in call.args)
     )
 
@@ -1245,11 +1300,13 @@ def _container_call(
 
 
 def path_mutation_statement(statement, scope, *, call, target_name=None):
-    """The shadow statement for ``<path>.<mutator>(*args)``, or None.
+    """The shadow statement for ``<path>.<method>(*args)``, or None.
 
     ``call`` is the statement's call, already substituted against ``scope``.
+    Every method takes it, whatever it is spelled: the receiver's value at
+    reduce decides what the call did (``method_call``).
     """
-    if not _mutating_named_call(call):
+    if not method_call(call):
         return None
     # ``root_read`` is the read of the root at the statement: for a name an
     # assignment bound, a reference to its key.  The root after the call
@@ -1335,7 +1392,7 @@ def setdefault_mutation_statement(statement, scope, *, name, call, target_name=N
     from .shadow import occurrence_tags_of, rewrite
     from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
-    if not _mutating_named_call(call):
+    if not method_call(call):
         return None
     inner = call.func.value
     if (
