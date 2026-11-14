@@ -97,20 +97,11 @@ class ComputedCallSugar(ConstructedTermSugar):
         )
 
     def _collect(self, callee, remaining: tuple, accumulated: tuple, ctx) -> Outcome:
-        from sugar_lift_py_tests.floor.named_expression_value import (
-            carrying_walrus_binds,
-        )
-
         if remaining:
             head, *rest = remaining
-            # A walrus in the actual binds once: the call consumes the value
-            # it presents and its result carries the bind.
             return head.desugar(ctx).and_then(
-                lambda value: carrying_walrus_binds(
-                    value,
-                    lambda presented: self._collect(
-                        callee, tuple(rest), accumulated + (presented,), ctx
-                    ),
+                lambda value: self._collect(
+                    callee, tuple(rest), accumulated + (value,), ctx
                 )
             )
         return self._collect_kwargs(callee, self.keywords, (), accumulated, ctx)
@@ -119,23 +110,37 @@ class ComputedCallSugar(ConstructedTermSugar):
         self, callee, remaining: tuple, kw_values: tuple, positional: tuple, ctx
     ) -> Outcome:
         if remaining:
-            from sugar_lift_py_tests.floor.named_expression_value import (
-                carrying_walrus_binds,
-            )
-
             (name, sugar), *rest = remaining
             return sugar.desugar(ctx).and_then(
-                lambda value: carrying_walrus_binds(
-                    value,
-                    lambda presented: self._collect_kwargs(
-                        callee,
-                        tuple(rest),
-                        kw_values + ((name, presented),),
-                        positional,
-                        ctx,
-                    ),
+                lambda value: self._collect_kwargs(
+                    callee,
+                    tuple(rest),
+                    kw_values + ((name, value),),
+                    positional,
+                    ctx,
                 )
             )
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
+
+        # The callee and the actuals are the call's operands: a walrus in any
+        # of them binds once, through the one operand door.
+        names = tuple(name for name, _value in kw_values)
+        count = len(positional)
+        return consume_operands(
+            lambda presented_callee, *values: self._call(
+                presented_callee,
+                tuple(values[:count]),
+                tuple(zip(names, values[count:])),
+                ctx,
+            ),
+            callee,
+            *positional,
+            *(value for _name, value in kw_values),
+        )
+
+    def _call(self, callee, positional: tuple, kw_values: tuple, ctx) -> Outcome:
         from sugar_lift_py_tests.floor import CallSiteValue
         from sugar_lift_py_tests.ir import ctor, str_const
 

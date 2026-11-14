@@ -10,8 +10,9 @@ Two hazards are pinned here:
    start from.  The join measures what the arms bound against the context
    before the condition, so the key is carried out of the ``if``.
 2. A walrus nested in a larger expression (an assignment's right-hand side, a
-   call's actual) carries its bind out to the enclosing statement on the
-   value, and a comprehension's element writes its key per member.  A read
+   call's actual, any operand) carries its bind out to the enclosing statement
+   on the value, through the one operand door (``consume_operands``), and a
+   comprehension's element writes its key per member.  A read
    resolves through the key only: where the key was never bound it is
    refused, never read as the name or as the walrus's value evaluated again.
 """
@@ -30,13 +31,15 @@ from sugar_lift_py_tests.floor.branch_result_coordinate import BranchResultSlot
 from sugar_lift_py_tests.floor.named_expression_value import (
     NamedExpressionValue,
     bind_walrus_binds,
-    carrying_walrus_binds,
+    consume_operands,
     peel_walrus_binds,
 )
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Completed, ExitSet, outcome_to_exitset
 from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+from sugar_lift_py_tests.sugar.binop_sugar import BinOpSugar
+from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.comprehension_sugar import ComprehensionSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.if_sugar import IfSugar
@@ -299,7 +302,7 @@ def test_a_call_carries_its_actual_walrus_to_the_result() -> None:
         seen.append(actual)
         return ExitSet.completed(TermValue(9))
 
-    result = _value(carrying_walrus_binds(walrus, call))
+    result = _value(consume_operands(call, walrus))
     # The call consumes the value the walrus presents, once.
     assert seen == [TermValue(5)]
     binds, presented = peel_walrus_binds(result)
@@ -307,6 +310,153 @@ def test_a_call_carries_its_actual_walrus_to_the_result() -> None:
     assert [(bind.name, bind.evaluation) for bind in binds] == [("x", KEY)]
     ctx = bind_walrus_binds(binds, _root("walrus-call"))
     assert ctx.temporal.value_if_bound(KEY) == TermValue(5)
+
+
+def test_the_operand_door_carries_every_operand_bind_in_order() -> None:
+    first = NamedExpressionValue("a", TermValue(1), evaluation=KEY + ":a")
+    second = NamedExpressionValue("b", TermValue(2), evaluation=KEY + ":b")
+    seen = []
+
+    def consume(*operands):
+        seen.append(operands)
+        return ExitSet.completed(TermValue(3))
+
+    result = _value(consume_operands(consume, first, TermValue(7), second))
+    # The consumer runs once, on the values the operands present.
+    assert seen == [(TermValue(1), TermValue(7), TermValue(2))]
+    binds, presented = peel_walrus_binds(result)
+    assert presented == TermValue(3)
+    assert [bind.name for bind in binds] == ["a", "b"]
+
+
+def test_the_operand_door_without_a_walrus_is_the_step_itself() -> None:
+    outcome = ExitSet.completed(TermValue(3))
+    assert consume_operands(lambda *_operands: outcome, TermValue(1)) is outcome
+
+
+def _walrus_sugar(name: str, assigned: int, key: str = KEY) -> NamedExprSugar:
+    return NamedExprSugar(
+        name=name,
+        value=IntLiteralSugar(assigned, site=SITE),
+        site=SITE,
+        evaluation=key,
+    )
+
+
+def test_an_arithmetic_operand_carries_its_walrus() -> None:
+    outcome = BinOpSugar(
+        op_kind="Add",
+        left=_walrus_sugar("x", 5),
+        right=IntLiteralSugar(1, site=SITE),
+        site=SITE,
+    ).desugar(_root("walrus-binop"))
+    binds, presented = peel_walrus_binds(_value(outcome))
+    assert presented == TermValue(6)
+    assert [(bind.name, bind.assigned_value) for bind in binds] == [
+        ("x", TermValue(5))
+    ]
+
+
+@pytest.mark.parametrize(
+    ("op_kind", "first", "expected", "bound"),
+    [
+        # The second operand runs: its walrus binds on that face.
+        ("Or", 0, TermValue(5), ["x"]),
+        ("And", 1, TermValue(5), ["x"]),
+        # The first operand stops: the second never ran and binds nothing.
+        ("Or", 1, TermValue(1), []),
+        ("And", 0, TermValue(0), []),
+    ],
+)
+def test_a_short_circuit_binds_only_where_its_operand_ran(
+    op_kind: str, first: int, expected, bound: list
+) -> None:
+    outcome = BoolOpSugar(
+        op_kind=op_kind,
+        values=(IntLiteralSugar(first, site=SITE), _walrus_sugar("x", 5)),
+        site=SITE,
+    ).desugar(_root("walrus-boolop"))
+    binds, presented = peel_walrus_binds(_value(outcome))
+    assert presented == expected
+    assert [bind.name for bind in binds] == bound
+
+
+@pytest.mark.parametrize(
+    ("assigned", "expected"),
+    [
+        # The first operand stops: its walrus rides the stopping face.
+        (3, TermValue(3)),
+        # The first operand continues: its walrus rides the later face too.
+        (0, TermValue(7)),
+    ],
+)
+def test_a_short_circuit_first_operand_binds_on_every_face(
+    assigned: int, expected
+) -> None:
+    outcome = BoolOpSugar(
+        op_kind="Or",
+        values=(_walrus_sugar("x", assigned), IntLiteralSugar(7, site=SITE)),
+        site=SITE,
+    ).desugar(_root("walrus-boolop-first"))
+    binds, presented = peel_walrus_binds(_value(outcome))
+    assert presented == expected
+    assert [(bind.name, bind.assigned_value) for bind in binds] == [
+        ("x", TermValue(assigned))
+    ]
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        # arithmetic operands
+        "y = (x := 5) + 1",
+        "y = 1 + (x := 5)",
+        "y = -(x := 5)",
+        # comparison operands
+        "y = 0 < (x := 5) < 9",
+        "y = (x := 5) < 9 < 10",
+        # display elements
+        "y = [(x := 5)]",
+        "y = ((x := 5), 1)",
+        "y = {(x := 5)}",
+        "y = {'k': (x := 5)}",
+        "y = {(x := 5): 'v'}",
+        # a subscript's index
+        "y = [0, 1, 2, 3, 4, 5][(x := 5)]",
+        # an f-string part
+        "y = f'{(x := 5)}'",
+        # a conditional expression's test
+        "y = 'a' if (x := 5) else 'b'",
+        # short-circuit operands
+        "y = 0 or (x := 5)",
+        "y = 1 and (x := 5)",
+        # a walrus inside a walrus
+        "y = (z := (x := 5))",
+        # a container mutation's argument
+        "xs = []\n    xs.append((x := 5))",
+    ],
+)
+def test_a_walrus_in_an_operand_binds_the_statement(statement: str) -> None:
+    returned = _returned_value(
+        _call_outcome(
+            "def f():\n"
+            "    " + statement + "\n"
+            "    return x\n"
+            "\n"
+            "f()\n"
+        )
+    )
+    assert returned == TermValue(5)
+
+
+def test_a_returned_operand_walrus_returns_the_value_it_presents() -> None:
+    # The return holds the value, never the walrus wrapper: the callee's
+    # write of `x` does not reach its caller.
+    returned = _returned_value(
+        _call_outcome("def f():\n    return (x := 5) + 1\n\nf()\n")
+    )
+    assert returned == TermValue(6)
+    assert not isinstance(returned, NamedExpressionValue)
 
 
 def test_an_assignment_binds_its_rhs_walrus() -> None:

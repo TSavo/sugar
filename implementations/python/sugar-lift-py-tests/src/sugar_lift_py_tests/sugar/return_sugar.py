@@ -40,6 +40,15 @@ class ReturnSugar(Sugar):
             from sugar_lift_py_tests.floor import NoneValue
 
             return ExitSet.completed(ReturnValue(NoneValue()))
+        # The returned value is what the frame answers.  A walrus inside it
+        # (``return (x := 5) + 1``) wrote this frame's name, which no reader
+        # after the return sees: the return holds the value it presents, so
+        # the bind never reaches the caller's temporal as a write of the
+        # caller's own name.
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            peel_walrus_binds,
+        )
+
         return self.value.desugar(ctx).and_then(
-            lambda value: ExitSet.completed(ReturnValue(value))
+            lambda value: ExitSet.completed(ReturnValue(peel_walrus_binds(value)[1]))
         )

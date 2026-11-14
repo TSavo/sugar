@@ -167,9 +167,8 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=(), evaluations=()):
                 # and no later RHS or target runs. It is handed back as-is so
                 # the enclosing block routes it.
                 return outcome
-            evaluated = _bind_evaluations(
-                _walrus_bound(active, plain), evaluations, index, plain
-            )
+            evaluated, plain = _walrus_bound(active, plain)
+            evaluated = _bind_evaluations(evaluated, evaluations, index, plain)
             if key is not None and _binds_live_name(active, bind, index):
                 # A live loop body rebinds names this RHS may read: a later
                 # read of this RHS must see this evaluation, not re-reduce
@@ -180,43 +179,36 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=(), evaluations=()):
                     (*completed, plain),
                 )
             return step(index + 1, evaluated, (*completed, plain))
-        if key is None:
-            # No occurrence to record: the statement still halts here, and a
-            # read keeps substitution (it was never answered from a record).
-            return outcome.and_then(
-                lambda value: step(
-                    index + 1,
-                    _bind_evaluations(
-                        _walrus_bound(active, value), evaluations, index, value
-                    ),
-                    (*completed, value),
-                )
-            )
-        return outcome.and_then(
-            lambda value: step(
-                index + 1,
-                _bind_evaluations(
-                    _walrus_bound(active, value), evaluations, index, value
-                ).with_assigned_value(key, value),
-                (*completed, value),
-            )
-        )
+        def completed_face(value):
+            evaluated, value = _walrus_bound(active, value)
+            evaluated = _bind_evaluations(evaluated, evaluations, index, value)
+            if key is not None:
+                evaluated = evaluated.with_assigned_value(key, value)
+            return step(index + 1, evaluated, (*completed, value))
+
+        # With no occurrence to record (``key is None``) the statement still
+        # halts here, and a read keeps substitution (it was never answered
+        # from a record).
+        return outcome.and_then(completed_face)
 
     return step(0, ctx)
 
 
 def _walrus_bound(active, value):
-    """``active`` with the binds of every walrus the completed RHS ``value``
-    carries (``y = (x := 5)``, ``y = f((x := 5))``): the walrus completed
-    inside the RHS, at this statement, so the rest of the block reads ``x``
-    through its key.  ``active`` itself when the RHS carries none."""
+    """``(active, value)`` with the binds of every walrus the completed RHS
+    ``value`` carries applied to ``active`` (``y = (x := 5)``,
+    ``y = f((x := 5))``, ``xs.append((x := 5))``), and the value the RHS
+    presents beneath them: the walrus completed inside the RHS, at this
+    statement, so the rest of the block reads ``x`` through its key, and the
+    targets, the record and ``tail`` hold the value itself.  ``active`` and
+    ``value`` themselves when the RHS carries none."""
     from sugar_lift_py_tests.floor.named_expression_value import (
         bind_walrus_binds,
         peel_walrus_binds,
     )
 
-    binds, _presented = peel_walrus_binds(value)
-    return bind_walrus_binds(binds, active)
+    binds, presented = peel_walrus_binds(value)
+    return bind_walrus_binds(binds, active), presented
 
 
 def _binds_live_name(ctx, bind, index) -> bool:

@@ -565,17 +565,16 @@ class CallSiteSugar(ConstructedTermSugar):
 
     def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> Outcome:
         from sugar_lift_py_tests.floor.named_expression_value import (
-            carrying_walrus_binds,
+            consume_operands,
         )
 
         if remaining:
             head, *rest = remaining
             actual_ctx = _actual_reduce_context(ctx)
-            # A walrus in the actual (``f((x := 5))``) binds once: the call
-            # consumes the value it presents and its result carries the bind.
+            # The actual is an operand: a walrus in it (``f((x := 5))``) binds
+            # once, through the one operand door.
             return head.desugar(actual_ctx).and_then(
-                lambda value: carrying_walrus_binds(
-                    value,
+                lambda value: consume_operands(
                     lambda presented: presented.project_operation_receiver_outcome(
                         actual_ctx, owner="CallSiteSugar positional actual"
                     ).and_then(
@@ -583,6 +582,7 @@ class CallSiteSugar(ConstructedTermSugar):
                             tuple(rest), accumulated + (actual,), ctx
                         )
                     ),
+                    value,
                 )
             )
         return self._collect_kwargs(self.keywords, (), accumulated, ctx)
@@ -592,14 +592,13 @@ class CallSiteSugar(ConstructedTermSugar):
     ) -> Outcome:
         if remaining:
             from sugar_lift_py_tests.floor.named_expression_value import (
-                carrying_walrus_binds,
+                consume_operands,
             )
 
             (name, sugar), *rest = remaining
             actual_ctx = _actual_reduce_context(ctx)
             return sugar.desugar(actual_ctx).and_then(
-                lambda value: carrying_walrus_binds(
-                    value,
+                lambda value: consume_operands(
                     lambda presented: presented.project_operation_receiver_outcome(
                         actual_ctx, owner="CallSiteSugar keyword actual"
                     ).and_then(
@@ -610,6 +609,7 @@ class CallSiteSugar(ConstructedTermSugar):
                             ctx,
                         )
                     ),
+                    value,
                 )
             )
         if ctx is not None:

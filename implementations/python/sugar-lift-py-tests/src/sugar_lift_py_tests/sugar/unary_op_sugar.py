@@ -143,6 +143,10 @@ class UnaryOpSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
+
         operand = self.operand.desugar(ctx)
         if self.op_kind == "Not":
             # `not x` = not bool(x): only a completed truthiness may be negated.
@@ -194,9 +198,15 @@ class UnaryOpSugar(ConstructedTermSugar):
                 return value.truth(self.site)
 
             # Negate only completed truth faces.  A raise (a Halted exit)
-            # bypasses this step (no bool to flip).
-            return operand.and_then(project_not).and_then(
-                lambda predicate: predicate.negate()
-            )
+            # bypasses this step (no bool to flip).  The operand goes through
+            # the one operand door: a walrus in it binds once, and its bind
+            # rides the truth (``NamedExpressionValue.negate`` keeps it).
+            return operand.and_then(
+                lambda value: consume_operands(project_not, value)
+            ).and_then(lambda predicate: predicate.negate())
         method = UNARYOP_METHODS[self.op_kind]
-        return operand.and_then(lambda v: getattr(v, method)(self.site))
+        return operand.and_then(
+            lambda value: consume_operands(
+                lambda v: getattr(v, method)(self.site), value
+            )
+        )

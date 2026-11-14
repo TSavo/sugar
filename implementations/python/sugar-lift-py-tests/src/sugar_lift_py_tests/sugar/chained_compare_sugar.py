@@ -78,12 +78,19 @@ class ChainedCompareSugar(ConstructedTermSugar):
         )
 
     def _reduce_from(self, index: int, left, ctx: object) -> Outcome:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+        )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
         from sugar_lift_py_tests.sugar.bool_op_sugar import select_boolop_operand
 
         leg = self.values[index]
 
-        def apply(right):
+        # The leg's sides are operands: a walrus in either binds once, through
+        # the one operand door, on every face this leg reaches (its stopping
+        # face and the later legs' faces).  The middle is handed on presented,
+        # so a later leg does not carry its bind a second time.
+        def apply(left, right):
             compared = factored_operand(leg.apply_reduced(left, right, ctx))
             if index == len(self.values) - 1:
                 return compared
@@ -97,4 +104,6 @@ class ChainedCompareSugar(ConstructedTermSugar):
                 )
             )
 
-        return factored_operand(leg.right.desugar(ctx)).and_then(apply)
+        return factored_operand(leg.right.desugar(ctx)).and_then(
+            lambda right: consume_operands(apply, left, right)
+        )

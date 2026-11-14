@@ -172,14 +172,15 @@ class NamedExpressionValue(FloorValue):
 
 
 # A walrus nested in a larger expression (``y = (x := 5)``, ``f((x := 5))``,
-# a comprehension's element) completes inside an operand.  Its bind reaches the
-# enclosing statement's temporal by riding the value: an operand consumer peels
-# the binds off the operand (``peel_walrus_binds``), consumes the value it
-# presents, and carries the binds onto its own result (``carry_walrus_binds``);
-# the statement applies them to its temporal (``bind_walrus_binds``).  A read
-# after the statement is an ``EvaluationRef`` to the walrus's key and resolves
-# through it, never by evaluating the walrus's value again (temporal choice 1,
-# #7661).
+# ``[(x := 5)]``, ``(x := 5) + 1``, a comprehension's element) completes inside
+# an operand.  Its bind reaches the enclosing statement's temporal by riding the
+# value: every operand consumer hands its operands to ``consume_operands``,
+# which peels the binds off them (``peel_walrus_binds``), runs the consumer on
+# the values they present, and carries the binds onto each completed result
+# (``carry_walrus_binds``); the statement applies them to its temporal
+# (``bind_walrus_binds``).  A read after the statement is an ``EvaluationRef``
+# to the walrus's key and resolves through it, never by evaluating the walrus's
+# value again (temporal choice 1, #7661).
 
 
 def peel_walrus_binds(value) -> tuple[tuple["NamedExpressionValue", ...], object]:
@@ -210,13 +211,27 @@ def bind_walrus_binds(binds, ctx):
     return ctx
 
 
-def carrying_walrus_binds(value, step):
-    """``step`` applied to the value ``value`` presents, its completed result
-    carrying ``value``'s walrus binds.  An operand consumer (a call's actual)
-    hands its continuation here so a walrus in the operand is evaluated once
-    and its bind still reaches the enclosing statement."""
-    binds, presented = peel_walrus_binds(value)
-    outcome = step(presented)
+def consume_operands(step, *operands):
+    """``step`` applied to the values ``operands`` present, each completed
+    result carrying every walrus bind the operands carry, in evaluation order.
+
+    The one operand door.  An expression that consumes evaluated operands (a
+    call's actuals, an arithmetic or comparison operand, a display's elements,
+    a subscript, a short-circuit operand, an f-string part, a conditional
+    expression's test, a container mutation's arguments) runs its step here,
+    so a walrus in an operand is evaluated once and its bind still reaches the
+    enclosing statement.  The bind rides only the arms the step completed
+    under after the operand ran: a short-circuit's later operand is consumed
+    inside its continuing face, so its bind never reaches the stopping face.
+    A halted arm leaves the statement and carries nothing.  With no bind
+    among the operands this is ``step(*operands)`` exactly."""
+    binds: tuple = ()
+    presented = []
+    for operand in operands:
+        carried, value = peel_walrus_binds(operand)
+        binds += carried
+        presented.append(value)
+    outcome = step(*presented)
     if not binds:
         return outcome
     from sugar_lift_py_tests.outcome import ExitSet

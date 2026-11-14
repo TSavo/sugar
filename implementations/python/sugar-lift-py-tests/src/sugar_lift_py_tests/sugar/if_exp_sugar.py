@@ -94,9 +94,16 @@ class IfExpSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> Outcome:
         # The test itself can halt or partition (`(a if f() else b)` where the
         # call is unresolvable, `(a if (d[k] := c) else b)`): thread it through
-        # `and_then` rather than reading `cond.value`.
+        # `and_then` rather than reading `cond.value`.  The test is an operand:
+        # a walrus in it (`a if (n := c) else b`) runs before either arm, so
+        # through the one operand door its bind rides both arms' values.  An
+        # arm's own walrus rides that arm's value only.
+        from sugar_lift_py_tests.floor.named_expression_value import consume_operands
+
         return self.test.desugar(ctx).and_then(
-            lambda cond_value: self._join(cond_value, ctx)
+            lambda cond_value: consume_operands(
+                lambda presented: self._join(presented, ctx), cond_value
+            )
         )
 
     def _join(self, cond_value, ctx) -> Outcome:
