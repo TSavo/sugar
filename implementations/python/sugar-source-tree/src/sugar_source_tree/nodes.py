@@ -6168,6 +6168,33 @@ class FunctionDef(Statement):
                         occurrence.seal().cid,
                     )
                 )
+            if (
+                isinstance(statement, Assign)
+                and len(statement.targets) == 1
+                and isinstance(statement.targets[0], Name)
+                and isinstance(statement.value, Yield)
+                and (
+                    statement.value.value is None
+                    or not self._owns_yield((statement.value.value,))
+                )
+            ):
+                # ``y = yield v``: the yield, then the assignment of the value
+                # its resume sends, keyed as the assignment's evaluation
+                # (``target_evaluations``) that substitution bound ``y`` to.
+                from sugar_lift_py_tests.generator_construction import (
+                    YieldAssignStepV1,
+                )
+
+                value = statement.value.value
+                name = statement.targets[0].id
+                return _GeneratorNamedStepV1(
+                    YieldAssignStepV1(
+                        YieldStepV1(None if value is None else value.sugar()),
+                        name,
+                        statement.fragment.seal().cid,
+                        dict(statement.target_evaluations()).get(name),
+                    )
+                )
             if isinstance(statement, Return):
                 return _GeneratorNamedStepV1(
                     ReturnStepV1(

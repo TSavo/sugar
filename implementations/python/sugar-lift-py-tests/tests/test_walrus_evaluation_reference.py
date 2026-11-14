@@ -37,11 +37,18 @@ from sugar_lift_py_tests.floor.named_expression_value import (
 )
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_lift_py_tests.floor.none_value import NoneValue
+from sugar_lift_py_tests.floor.tuple_value import TupleValue
 from sugar_lift_py_tests.generator_construction import (
+    AssignStepV1,
+    GeneratorAssignBindingV1,
     GeneratorConstructionV1,
     GeneratorTerminationV1,
     GeneratorWalrusBindingV1,
+    OpaqueStepV1,
     ReturnStepV1,
+    TermStepV1,
+    YieldAssignStepV1,
     YieldEffect,
     YieldStepV1,
 )
@@ -556,6 +563,158 @@ def test_a_yield_without_a_walrus_records_nothing() -> None:
     assert isinstance(yielded, YieldEffect)
     assert yielded.value == TermValue(5)
     assert yielded.machine.binding_state == ()
+
+
+# ---------------------------------------------------------------------------
+# ``y = yield v``: the sent value binds ``y``; a walrus in an assignment or a
+# bare walrus statement binds the generator frame
+# ---------------------------------------------------------------------------
+
+Y_KEY = EVALUATION_PREFIX + "blake3-512:test-yield-assign-evaluation/y"
+
+
+def _generator(name: str, *steps) -> GeneratorConstructionV1:
+    return GeneratorConstructionV1.allocate(
+        allocation_coordinate=f"call:{name}:1",
+        frame_coordinate=f"frame:{name}",
+        binding_state=(),
+        steps=steps,
+    )
+
+
+def _generator_steps(source: str):
+    return _function(source)._source_visible_generator_steps({})
+
+
+def _walrus_records(machine) -> list:
+    return [
+        (item.name, item.evaluation)
+        for item in machine.binding_state
+        if isinstance(item, GeneratorWalrusBindingV1)
+    ]
+
+
+def test_a_yield_assignment_binds_the_sent_value_under_its_key() -> None:
+    machine = _generator(
+        "yield_assign",
+        YieldAssignStepV1(
+            YieldStepV1(_walrus_sugar("x", 5)), "y", "fragment:yield-assign", Y_KEY
+        ),
+        ReturnStepV1(EvaluationRefSugar(evaluation=Y_KEY, name="y", site=None)),
+    )
+    yielded = machine.resume()
+    assert isinstance(yielded, YieldEffect)
+    assert yielded.value == TermValue(5)
+    assert _walrus_records(yielded.machine) == [("x", KEY)]
+    terminated = yielded.machine.send(TermValue(7))
+    assert isinstance(terminated, GeneratorTerminationV1)
+    assert terminated.return_value == TermValue(7)
+    (assigned,) = [
+        item
+        for item in terminated.binding_state
+        if isinstance(item, GeneratorAssignBindingV1)
+    ]
+    assert (assigned.name, assigned.value, assigned.evaluation) == (
+        "y",
+        TermValue(7),
+        Y_KEY,
+    )
+
+
+def test_a_plain_resume_sends_none_into_a_yield_assignment() -> None:
+    machine = _generator(
+        "yield_assign_next",
+        YieldAssignStepV1(
+            YieldStepV1(IntLiteralSugar(5, site=SITE)), "y", "fragment:next", Y_KEY
+        ),
+        ReturnStepV1(EvaluationRefSugar(evaluation=Y_KEY, name="y", site=None)),
+    )
+    yielded = machine.resume()
+    assert isinstance(yielded, YieldEffect)
+    terminated = yielded.machine.resume()
+    assert isinstance(terminated, GeneratorTerminationV1)
+    assert terminated.return_value == NoneValue()
+
+
+def test_a_yield_assignment_is_a_named_step_reading_both_writes() -> None:
+    # `y = yield (x := 5); return (x, y)` with `send(7)` returns (5, 7): the
+    # walrus wrote before the suspension, the send wrote `y` on the resume.
+    steps = _generator_steps("def g():\n    y = yield (x := 5)\n    return (x, y)\n")
+    assert isinstance(steps[0], YieldAssignStepV1)
+    assert not any(isinstance(step, OpaqueStepV1) for step in steps)
+    assert steps[0].name == "y"
+    assert isinstance(steps[0].evaluation, str)
+    assert steps[0].evaluation.startswith(EVALUATION_PREFIX)
+    yielded = _generator("g", *steps).resume()
+    assert isinstance(yielded, YieldEffect)
+    assert yielded.value == TermValue(5)
+    terminated = yielded.machine.send(TermValue(7))
+    assert isinstance(terminated, GeneratorTerminationV1)
+    assert terminated.return_value == TupleValue((TermValue(5), TermValue(7)))
+
+
+def test_an_assignment_records_its_rhs_walrus_in_the_generator_frame() -> None:
+    # `y = (x := 5)`: the walrus is recorded before `y`, and `y` holds the
+    # value the walrus presents, never the walrus wrapper.
+    machine = _generator(
+        "assign_walrus",
+        AssignStepV1("y", _walrus_sugar("x", 5), "fragment:assign-walrus"),
+        YieldStepV1(IntLiteralSugar(1, site=SITE)),
+        ReturnStepV1(
+            EvaluationRefSugar(evaluation=KEY, name="x", site=None, walrus=True)
+        ),
+    )
+    yielded = machine.resume()
+    assert isinstance(yielded, YieldEffect)
+    assert _walrus_records(yielded.machine) == [("x", KEY)]
+    (assigned,) = [
+        item
+        for item in yielded.machine.binding_state
+        if isinstance(item, GeneratorAssignBindingV1)
+    ]
+    assert assigned.value == TermValue(5)
+    assert not isinstance(assigned.value, NamedExpressionValue)
+    terminated = yielded.machine.resume()
+    assert isinstance(terminated, GeneratorTerminationV1)
+    assert terminated.return_value == TermValue(5)
+
+
+def test_a_bare_walrus_between_yields_is_read_after_the_next_resume() -> None:
+    machine = _generator(
+        "bare_walrus",
+        YieldStepV1(IntLiteralSugar(1, site=SITE)),
+        TermStepV1(_walrus_sugar("x", 5), "fragment:bare-walrus"),
+        YieldStepV1(IntLiteralSugar(2, site=SITE)),
+        ReturnStepV1(
+            EvaluationRefSugar(evaluation=KEY, name="x", site=None, walrus=True)
+        ),
+    )
+    first = machine.resume()
+    assert isinstance(first, YieldEffect)
+    assert first.value == TermValue(1)
+    assert _walrus_records(first.machine) == []
+    second = first.machine.resume()
+    assert isinstance(second, YieldEffect)
+    assert second.value == TermValue(2)
+    assert _walrus_records(second.machine) == [("x", KEY)]
+    terminated = second.machine.resume()
+    assert isinstance(terminated, GeneratorTerminationV1)
+    assert terminated.return_value == TermValue(5)
+
+
+def test_a_bare_walrus_statement_through_the_producer_is_read_after_resume() -> None:
+    steps = _generator_steps(
+        "def g():\n    yield 1\n    (x := 5)\n    yield 2\n    return x\n"
+    )
+    assert not any(isinstance(step, OpaqueStepV1) for step in steps)
+    first = _generator("g_bare", *steps).resume()
+    assert isinstance(first, YieldEffect)
+    second = first.machine.resume()
+    assert isinstance(second, YieldEffect)
+    assert second.value == TermValue(2)
+    terminated = second.machine.resume()
+    assert isinstance(terminated, GeneratorTerminationV1)
+    assert terminated.return_value == TermValue(5)
 
 
 # ---------------------------------------------------------------------------
