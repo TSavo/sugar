@@ -61,7 +61,8 @@ def test_an_instance_of_a_source_class_is_no_class() -> None:
     )
 
     # ``object.__new__`` runs: ``o`` and ``p`` hold instances, never a class.
-    assert classes["Box"].call_yields_an_instance()
+    box = classes["Box"]
+    assert box.call_yields_an_instance(box.unit.class_namespace_stores)
     assert classes["Box"].namespace_binds("x") is False
     assert classes["Box"].namespace_binds("y") is False
 
@@ -139,10 +140,39 @@ def test_a_call_that_may_return_a_class_stays_undecided() -> None:
     # ``make`` returns its parameter: any class the module hands on.
     assert classes["Box"].namespace_binds("x") is None
     # A metaclass's ``__call__`` and an own ``__new__`` may return a class.
-    assert not classes["Made"].call_yields_an_instance()
+    stores = classes["Box"].unit.class_namespace_stores
+    assert not classes["Made"].call_yields_an_instance(stores)
     assert classes["Box"].namespace_binds("y") is None
-    assert not classes["Odd"].call_yields_an_instance()
+    assert not classes["Odd"].call_yields_an_instance(stores)
     assert classes["Box"].namespace_binds("z") is None
+
+
+def test_a_builtin_is_known_by_its_binding_never_its_spelling() -> None:
+    classes = _statements(
+        _HANDED
+        + "def list():\n"
+        "    return Box\n"
+        "\n"
+        "o = list()\n"
+        "o.x = 1\n"
+    )
+
+    # The module's ``list`` shadows the builtin: its call returns ``Box``.
+    assert classes["Box"].namespace_binds("x") is None
+
+
+def test_a_store_through_an_instance_does_not_decide_its_own_class_new() -> None:
+    classes = _statements(
+        _HANDED
+        + "o = Box()\n"
+        "o.__new__ = 1\n"
+        "o.x = 1\n"
+    )
+
+    # Read with every call a class, ``o.__new__ = 1`` may write ``Box``'s
+    # ``__new__``: the call is not decided an instance, ``o`` stays any
+    # class handed on.
+    assert classes["Box"].namespace_binds("x") is None
 
 
 # --- 2. a class-body name is the class body's -----------------------------------
@@ -211,3 +241,29 @@ def test_a_rebuilt_dataclass_frame_keeps_its_fields() -> None:
     assert rebuilt.dataclass_fields is frame.dataclass_fields
     assert rebuilt.body.initializer_body is not None
     assert len(rebuilt.body.initializer_body.statements) == 2
+
+
+def test_a_rebuilt_inherited_exception_frame_keeps_its_args_coordinate() -> None:
+    tree = _tree(
+        "class Oops(Exception):\n"
+        "    pass\n"
+        "\n"
+        "e = Oops('a', 'b')\n",
+        "exception_rebuild.py",
+    )
+    statement = next(node for node in tree.root.body if isinstance(node, ClassDef))
+    call = next(node for node in tree.root.body if isinstance(node, Assign)).value
+
+    frame = statement.source_visible_constructor_frame()
+    assert frame.exception_args_coordinate_cid == frame.formal_coordinates[0].cid
+    assert frame.body.exception_args_coordinate_cid == (
+        frame.exception_args_coordinate_cid
+    )
+
+    rebuilt = frame.bind_node_actuals(tuple(call.args), ())
+
+    # The ``(*args)`` coordinate the body stores as ``args`` survives.
+    assert rebuilt.exception_args_coordinate_cid == frame.exception_args_coordinate_cid
+    assert rebuilt.body.exception_args_coordinate_cid == (
+        frame.exception_args_coordinate_cid
+    )

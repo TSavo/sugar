@@ -468,6 +468,14 @@ class SourceVisibleCallFrameV1:
     #: (``bind_actuals``).  The class statement (``definition_fragment_cid``)
     #: fixes them, so they are no part of the frame's identity.
     dataclass_fields: tuple | None = field(default=None, compare=False, repr=False)
+    #: The coordinate of the ``args`` tuple, when this frame is the
+    #: inherited ``BaseException`` ``(*args)`` constructor
+    #: (``ClassDef._inherits_default_exception_constructor``): the body is
+    #: rebuilt with it at each call (``bind_node_actuals``).  It is the
+    #: frame's one formal coordinate, already part of the frame's identity.
+    exception_args_coordinate_cid: str | None = field(
+        default=None, compare=False, repr=False
+    )
     declaration_frame_cid: str | None = field(default=None, compare=False)
     #: Where the call this frame was constructed for runs while its module
     #: body runs (``sugar_source_tree.nodes.ModuleExecutionSiteV1``), or None:
@@ -956,14 +964,21 @@ class SourceVisibleCallFrameV1:
         rebuild = getattr(self.owner, "_source_visible_body", None)
         if rebuild is None:
             body = self.body
-        elif self.constructed_new_method is not None:
+        elif (
+            self.constructed_new_method is not None
+            or self.dataclass_fields is not None
+            or self.exception_args_coordinate_cid is not None
+        ):
+            # A class call's frame: the body is rebuilt with everything the
+            # class statement seated on it -- its own ``__new__``, the
+            # dataclass-written ``__init__``'s fields, the inherited
+            # ``(*args)`` constructor's ``args`` coordinate.
             body = rebuild(
                 node_scope,
                 constructed_new_method=self.constructed_new_method,
+                dataclass_fields=self.dataclass_fields,
+                exception_args_coordinate_cid=self.exception_args_coordinate_cid,
             )
-        elif self.dataclass_fields is not None:
-            # The dataclass-written ``__init__``: its stores are the fields'.
-            body = rebuild(node_scope, dataclass_fields=self.dataclass_fields)
         else:
             body = rebuild(node_scope)
         return replace(
