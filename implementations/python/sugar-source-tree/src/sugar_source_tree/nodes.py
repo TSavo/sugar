@@ -24793,23 +24793,31 @@ def _decorated_statement_sugar(statement):
     and call of the name substitution bound to the reference reads that key
     (``DecoratorApplicationSugar``): the decorators are never applied again
     where the name is used.  The statement's own application never reads the
-    key.  A statement substitution bound no reference for reduces as the
-    application alone."""
+    key, and it runs the statement (``runs_statement``): a decorated
+    ``class`` statement's body runs there, once, and what its callees stored
+    is laid in the statement's record before what the decorators' calls
+    stored, exactly as an undecorated ``class`` statement lays it
+    (``ClassDefinitionSugar.as_statement``).  A statement substitution bound
+    no reference for reduces as that application alone, in statement
+    position (``DecoratorApplicationSugar.as_statement``)."""
+    import copy
+
     value = getattr(statement, "decorated_value", None)
     if not isinstance(value, DecoratedDefinitionRef):
         value = _decorated_definition_ref(statement, statement.span)
     application = value.sugar()
+    # The statement's own application: a shallow copy (stamps kept, as
+    # ``_as_evaluation_of`` keeps them) that never reads the key it binds
+    # and runs the statement.
+    own = copy.copy(application)
+    object.__setattr__(own, "evaluation", None)
+    object.__setattr__(own, "runs_statement", True)
     evaluation = getattr(value, "evaluation", None)
     if not isinstance(evaluation, str):
-        return application
-    import copy
+        return own
 
     from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 
-    # The statement's own application: a shallow copy (stamps kept, as
-    # ``_as_evaluation_of`` keeps them) that never reads the key it binds.
-    own = copy.copy(application)
-    object.__setattr__(own, "evaluation", None)
     return AssignSugar(
         name=statement.name,
         value=own,

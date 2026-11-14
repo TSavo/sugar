@@ -55,6 +55,26 @@ class _ClassBodyV1:
     entries: tuple = ()
 
 
+def statement_run_token(site):
+    """The token a statement's own run is keyed on where an evaluated
+    right-hand side is answered from its record
+    (``assigned_value.assigned_key``): the statement's site qualified by the
+    occurrence path of this evaluation (``occurrence.occurrence_key``: the
+    unrolled iteration whose copy it is, the live items and frame around it).
+
+    A ``class`` statement runs its body at each run of the statement -- each
+    item of a loop, each call of the function it stands in -- and each run
+    lays what its body's callees stored.  A read of the value it binds (``C``
+    alone, a call of it, a decorator's argument) is the same sugar type at
+    the same site but carries no token, so a run is never answered from a
+    recorded read, of an earlier item or call or of this one, and two runs
+    of the statement never share one record: each is its own evaluation
+    (#8013, #8030)."""
+    from sugar_lift_py_tests.occurrence import occurrence_key
+
+    return ("statement-run", occurrence_key(site))
+
+
 def _written_initializer(value):
     """The ``__init__`` method a class statement's own body wrote (``value``:
     its sugar or its class value): the last one, Python's live class
@@ -166,6 +186,16 @@ class ClassDefinitionSugar(Sugar):
     def class_definition_cid(self) -> str:
         return cid_of_json(self.preimage)
 
+    @property
+    def evaluation_token(self):
+        """The run's occurrence (``statement_run_token``) on the class
+        statement's run, so no recorded read of the class answers it; None on
+        a read of the class value, keyed by its type and site as every
+        right-hand side is."""
+        if not self.carries_body_stores:
+            return None
+        return statement_run_token(self.site)
+
     def desugar(self, ctx: object = None) -> ExitSet:
         # A class statement runs once: Python binds the class it builds, and
         # every ``Cls(...)`` reads that one class.  So a module-level statement
@@ -204,9 +234,13 @@ class ClassDefinitionSugar(Sugar):
         )
 
     def _ran(self, ctx) -> ExitSet:
-        """The statement's one run: on each completed face, the class
-        carrying its body's callee stores.  A module statement's run is kept
-        with the sugar it was read from (``statement_run`` shares it)."""
+        """The statement's run: on each completed face, the class carrying
+        its body's callee stores.  Only a module statement's run is kept: its
+        one occurrence runs once, and the sugar it was read from keeps it
+        (``statement_run`` shares it).  Every other class statement runs at
+        each of its runs -- each item of a loop around it, each call of the
+        function it stands in -- and no run is answered from another's
+        (``statement_run_token``)."""
         if not self._is_module_statement():
             return self._reduce_statement(ctx)
         origin = self.__dict__.get("_run_of", self)
@@ -223,7 +257,9 @@ class ClassDefinitionSugar(Sugar):
         carries what its callee stored.  What runs the statement lays them
         where it lays a value's callee stores: a block (``as_statement``,
         ``record_statement_value``), an enclosing class body's field
-        (``evaluate_assignment_values``).  A shallow copy (stamps kept, as
+        (``evaluate_assignment_values``), a decorated statement's assignment
+        of its decorators' result (``DecoratorApplicationSugar.runs_statement``:
+        the body's stores, then the decorators').  A shallow copy (stamps kept, as
         ``nodes._as_evaluation_of`` keeps them) that shares this sugar's one
         run."""
         if self.carries_body_stores:

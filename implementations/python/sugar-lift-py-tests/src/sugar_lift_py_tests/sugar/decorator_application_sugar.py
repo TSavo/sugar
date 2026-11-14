@@ -147,6 +147,27 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
     # decorators receive carries them (``LambdaCallable.defaults``) and
     # every call of it binds them (``object_value.bind_call``).
     defaults: tuple = field(default=(), compare=False)
+    # True on the statement's own application
+    # (``nodes._decorated_statement_sugar``): a decorated ``class`` statement
+    # runs its body there, once, as an undecorated one does
+    # (``ClassDefinitionSugar.statement_run``), and the application carries
+    # what the body's callees stored ahead of what the decorators' calls
+    # stored, for the statement to lay in its record.  False on every read of
+    # the name, which runs no class body's stores.
+    runs_statement: bool = field(default=False, compare=False)
+
+    @property
+    def evaluation_token(self):
+        """The statement's own application is keyed on its run's occurrence
+        (``class_definition_sugar.statement_run_token``): a recorded read of
+        the name never answers it, nor one of an earlier item or call."""
+        if not self.runs_statement:
+            return None
+        from sugar_lift_py_tests.sugar.class_definition_sugar import (
+            statement_run_token,
+        )
+
+        return statement_run_token(self.site)
 
     @classmethod
     def witnesses(cls):
@@ -183,6 +204,22 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
             return ExitSet.completed(bound)
         return self._evaluate(self.decorators, (), ctx)
 
+    def as_statement(self):
+        """The statement's own application where a block runs it with no key
+        to bind (``nodes._decorated_statement_sugar``): a decorated ``class``
+        statement's in statement position (``ExprStatementSugar``,
+        ``record_statement_value``), which lays what the body's callees and
+        the decorators' calls stored in the statement's record, as the
+        undecorated statement's (``ClassDefinitionSugar.as_statement``).
+        Itself otherwise."""
+        if not self.runs_statement or self.definition_class is None:
+            return self
+        from sugar_lift_py_tests.sugar.expr_statement_sugar import (
+            ExprStatementSugar,
+        )
+
+        return ExprStatementSugar(value=self, site=self.site)
+
     def _bound_by_statement(self, ctx):
         """The value the statement bound the name to under its evaluation
         key (``AssignSugar`` over the statement's own application), or None
@@ -216,7 +253,7 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
             if self.uncarried:
                 return self._uncarried(ctx)
             return self._definition_value(defaults, ctx).and_then(
-                lambda value: self._apply(evaluated, value, ctx)
+                lambda value: self._decorated(evaluated, value, ctx)
             )
 
         return self._evaluated_defaults(ctx, define)
@@ -260,9 +297,34 @@ class DecoratorApplicationSugar(ConstructedTermSugar):
 
     def _definition_value(self, defaults, ctx) -> ExitSet:
         if self.definition_class is not None:
+            if self.runs_statement:
+                # The class statement runs here: its body runs once, after
+                # the decorator expressions, and each completed face is the
+                # class carrying what the body's callees stored, as the
+                # undecorated statement's run is
+                # (``ClassDefinitionSugar.as_statement``).
+                return self.definition_class.statement_run().desugar(ctx)
             return self.definition_class.desugar(ctx)
         return ExitSet.completed(
             _function_value(self.definition_frame, self.site, defaults=defaults)
+        )
+
+    def _decorated(self, evaluated: tuple, value, ctx) -> ExitSet:
+        """The decorators applied to ``value``, the definition's value: an
+        operand of the application (``consume_operands``).  The decorators
+        receive the class beneath what its body's callees stored, and are
+        called in the context those stores wrote (``written_by``): the body
+        ran before them.  Each completed result carries the body's stores
+        ahead of the decorators' own, Python's order; a halt of a decorator
+        carries them first in its record."""
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            written_by,
+        )
+
+        after = written_by(value, ctx)
+        return consume_operands(
+            lambda definition: self._apply(evaluated, definition, after), value
         )
 
     def _apply(self, evaluated: tuple, value, ctx) -> ExitSet:
