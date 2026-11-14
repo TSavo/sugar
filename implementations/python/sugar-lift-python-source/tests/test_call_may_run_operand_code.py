@@ -92,7 +92,8 @@ def test_an_object_a_call_may_change_is_unknown_after_it(tmp_path, call):
 )
 def test_a_builtin_running_a_user_dunder_may_raise(tmp_path, call, name):
     # ``C.__str__``/``__len__``/... raise ValueError: the builtin is not
-    # total, so the handler is reachable.
+    # total, so the handler is reachable.  The dunder is not CPython's own,
+    # so the call is the one unanswered call (#7757).
     source = (
         "class C:\n"
         "    def __str__(self):\n"
@@ -104,7 +105,7 @@ def test_a_builtin_running_a_user_dunder_may_raise(tmp_path, call, name):
     assert sorted(value.value for value in returns) == ["caught", "no"]
     (halt,) = halts
     assert type(halt) is UndeterminedRaiseEffect
-    assert halt.producer_node_owner == f"BuiltinDunderCall:{name}"
+    assert halt.producer_node_owner == f"UnknownCallee:{name}"
 
 
 @pytest.mark.parametrize(

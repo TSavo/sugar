@@ -106,17 +106,18 @@ def test_joined_str_names_unground_interpolation_as_an_fstring_coordinate(
     outcome = joined.sugar().desugar(ctx)
 
     # ``unknown.__name__`` is not a decided builtin, so formatting it runs a
-    # ``__format__`` that may be user code: the f-string completes only under
-    # the opaque dunder-call atom and halts undetermined under its complement.
+    # ``__format__`` that may be user code: the f-string is the one unanswered
+    # call, completing only under its atom and halting undetermined under its
+    # complement.
     from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 
     assert isinstance(outcome, ExitSet), outcome
     (completed,) = [e for e in outcome.exits if isinstance(e, Completed)]
     (halted,) = [e for e in outcome.exits if isinstance(e, Halted)]
-    assert completed.guard.name == "python:builtin_dunder_call.completes"
+    assert completed.guard.name == "python:unknown_callee_call.completes"
     assert isinstance(halted.effect, UndeterminedRaiseEffect)
-    assert halted.effect.producer_node_owner == "BuiltinDunderCall:format"
+    assert halted.effect.producer_node_owner == "UnknownCallee:format"
     assert isinstance(completed.value, CallSiteValue)
     assert getattr(completed.value.term, "name", None) == "python:fstring"
 

@@ -25,6 +25,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.source_call_resolution import (
     BuiltinValueCallV1,
+    UnknownCalleeCallV1,
     builtin_call_total,
     builtin_dunder_call,
     builtin_list_construct,
@@ -76,6 +77,16 @@ def test_len_bound_to_the_builtin_is_the_dunder_builtin():
     assert call.language_callee() is LanguageCallee.BUILTIN_LEN
     assert builtin_dunder_call(call.language_callee(), (TermValue(1),)) == (
         BuiltinValueCallV1("len")
+    )
+
+
+def test_len_over_an_undecided_operand_is_the_one_unanswered_call():
+    # #7757: ``len(o)`` with ``o`` not a decided builtin runs a ``__len__``
+    # that is not CPython's own: not decided here, so the one unanswered form.
+    call = _call("def f(o):\n    return len(o)\n", "len")
+    operand = SymbolicValue(make_var("o"))
+    assert builtin_dunder_call(call.language_callee(), (operand,)) == (
+        UnknownCalleeCallV1("len")
     )
 
 

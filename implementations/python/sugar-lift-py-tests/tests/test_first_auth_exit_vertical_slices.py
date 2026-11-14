@@ -129,7 +129,7 @@ def _without_pytest_raises_construction_halts(exits):
     )
     assert kinds == [
         ("RaiseEffect", "Failed"),
-        ("UndeterminedRaiseEffect", "BuiltinDunderCall:format"),
+        ("UndeterminedRaiseEffect", "UnknownCallee:format"),
         ("UndeterminedRaiseEffect", "UnknownCallee:re.compile"),
     ], kinds
     (failed,) = [face for face in construction if face.effect.exception_name == "Failed"]
