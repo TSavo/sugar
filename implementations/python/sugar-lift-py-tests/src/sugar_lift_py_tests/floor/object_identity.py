@@ -69,8 +69,10 @@ def contents_current(value) -> bool:
     (``builtin_container_method.apply``), and each floor read (``len``,
     subscript and slicing, iteration and unpacking, ``in``, ``==``) -- and
     so does every read of an instance's fields (``ObjectValue.attribute``,
-    which ``getattr``/``hasattr`` and a method's own ``self.<field>`` reads
-    go through; a path store's field step).  A container that is not current
+    which a method's own ``self.<field>`` reads go through, and which on an
+    instance that is not current answers only a class data descriptor;
+    ``ObjectValue.delattr``'s missing-field test; a path store's field
+    step).  A container that is not current
     (``contents_stale``) or an instance that is not (``instance_stale``) is
     read in the read's own undecided form, never from the contents it
     holds."""

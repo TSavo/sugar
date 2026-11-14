@@ -278,20 +278,28 @@ class ObjectValue(FloorValue):
         The one currency rule (``object_identity.contents_current``): the
         recorded instance fields are read only when they are the object's
         fields now (a construction in this frame made it).  An instance that
-        arrived by binding may have been changed since by another alias: a
-        read that would answer from its instance fields -- a recorded field,
-        a deleted one -- is the undecided attribute read
-        (``undecided_attribute``) over the object's identity
-        (``identity_term``), never the recorded value."""
+        arrived by binding may have been changed since by another alias,
+        which may have stored, deleted or added any name in its ``__dict__``.
+
+        CPython reads ``o.name`` (``object.__getattribute__``,
+        ``_PyObject_GenericGetAttrWithDict``) as: a data descriptor the
+        class's MRO binds for ``name`` wins; else the instance ``__dict__``
+        entry; else the class's attribute (a method, a class field); else
+        ``AttributeError``.  So on an instance that is not current, every
+        answer but a data descriptor's waits on the ``__dict__`` this frame
+        does not hold -- a recorded field, a deleted one, a method or class
+        field it may shadow, a name nothing here records: each is the
+        undecided attribute read (``undecided_attribute``) over the object's
+        identity (``identity_term``).  Only a name the class binds to a data
+        descriptor (``_class_data_descriptor``) is answered from the class,
+        and never from the instance's fields."""
         from .object_identity import contents_current
 
         current = contents_current(self)
-        for field in reversed(self.fields):
+        if not current and not self._class_data_descriptor(name):
+            return self.undecided_attribute(name, site, owner="ObjectValue.attribute")
+        for field in reversed(self.fields if current else ()):
             if field.name == name:
-                if not current:
-                    return self.undecided_attribute(
-                        name, site, owner="ObjectValue.attribute"
-                    )
                 from sugar_lift_py_tests.outcome import ExitSet
 
                 return ExitSet.completed(field.value)
@@ -355,12 +363,7 @@ class ObjectValue(FloorValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             return ExitSet.completed(BoundMethodValue(self, name))
-        if name in self.deleted_instance_fields:
-            if not current:
-                # Another alias may have stored it again since the delete.
-                return self.undecided_attribute(
-                    name, site, owner="ObjectValue.attribute"
-                )
+        if current and name in self.deleted_instance_fields:
             # Authenticated delattr removed this instance field — read is
             # AttributeError with delete→read lineage, not an undecided gap.
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
@@ -474,8 +477,17 @@ class ObjectValue(FloorValue):
         deleter raises ``AttributeError`` on the **delete** path — never by
         consulting :meth:`attribute` / the read path.  Missing ordinary
         fields also raise ``AttributeError``.
+
+        Whether a field is missing is read off the recorded fields only when
+        they are the object's fields now (``object_identity.contents_current``).
+        On an instance that arrived by binding, another alias may have
+        stored or deleted the name since: the delete is undecided
+        (``_undecided_delattr``), never ``AttributeError`` decided from the
+        fields it arrived with.
         """
         from sugar_lift_py_tests.outcome import ExitSet
+
+        from .object_identity import contents_current
 
         if any(
             method.name == name and method.descriptor_kind == "property"
@@ -488,8 +500,9 @@ class ObjectValue(FloorValue):
                 site=site,
                 owner="ObjectValue.delattr",
             )
+        current = contents_current(self)
         remaining = tuple(field for field in self.fields if field.name != name)
-        if len(remaining) == len(self.fields):
+        if current and len(remaining) == len(self.fields):
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(
@@ -502,19 +515,62 @@ class ObjectValue(FloorValue):
             if name in self.deleted_instance_fields
             else (*self.deleted_instance_fields, name)
         )
-        return ExitSet.completed(
-            ObjectValue(
-                self.class_name,
-                remaining,
-                self.methods,
-                self.class_fields,
-                self.identity,
-                self.deferred_helper_fields,
-                deleted,
-                # The same object: it keeps its ``allocation`` and ``arrival``.
-                allocation=self.allocation,
-                arrival=self.arrival,
-            )
+        after = ObjectValue(
+            self.class_name,
+            remaining,
+            self.methods,
+            self.class_fields,
+            self.identity,
+            self.deferred_helper_fields,
+            deleted,
+            # The same object: it keeps its ``allocation`` and ``arrival``.
+            allocation=self.allocation,
+            arrival=self.arrival,
+        )
+        if not current:
+            return self._undecided_delattr(name, after, site)
+        return ExitSet.completed(after)
+
+    def _undecided_delattr(self, name, after, site):
+        """``del self.name`` on an instance whose fields are not current: two
+        faces (``ExitSet.two_faced``), both owing the ``undecided`` member.
+
+        Whether ``name`` is in the instance's ``__dict__`` now is not
+        decided here, so the delete may complete or raise.  It completes,
+        leaving ``after`` -- the same object with ``name`` gone, still not
+        current, keeping its ``arrival`` -- only under
+        ``python:delattr.completes(python:delattr(<receiver>, <name>,
+        <site>))``, the receiver named by its identity (``identity_term``)
+        and the atom keyed on the exact source site; the complement halts
+        with an ``UndeterminedRaiseEffect``.  No ``AttributeError`` is
+        named."""
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        from .object_identity import identity_term
+
+        receiver_term = identity_term(self, site, "receiver", owner=str(site))
+        key = occurrence_key(site)
+        completes = atomic(
+            "python:delattr.completes",
+            [
+                ctor(
+                    "python:delattr",
+                    (receiver_term, str_const(name), str_const(key)),
+                )
+            ],
+        )
+        return ExitSet.two_faced(
+            after,
+            UndeterminedRaiseEffect(
+                blame=str(site),
+                occurrence=key,
+                producer_node_owner="ObjectValue.delattr",
+            ),
+            guard=completes,
+            site=site,
         )
 
     def with_deferred_helper_fields(self) -> "ObjectValue":
@@ -692,6 +748,44 @@ class ObjectValue(FloorValue):
                 if field.name == name:
                     return field.value
         return None
+
+    def _class_data_descriptor(self, name: str) -> bool:
+        """Whether the class's binding of ``name`` is a data descriptor,
+        which wins over the instance ``__dict__`` (``attribute``).
+
+        The owner is the one class-namespace lookup on the type
+        (``ClassDef.namespace_owner``, the MRO read by binding).  A builtin
+        owner's binding is a data descriptor when its type defines
+        ``__set__`` or ``__delete__`` (``object.__class__``); a source
+        owner's when the value its namespace holds is the one its body bound
+        (``namespace_value_is_body``) and that is a ``property`` defined by
+        that class (``descriptor_kind``) -- a property is a data descriptor
+        with or without a setter.  Anything not decided -- no class
+        statement, a lookup the walk does not decide, no class binding the
+        name, a class field (its value's own descriptor protocol is not read
+        here) -- is not one."""
+        definition = getattr(self.defining_class, "class_definition", None)
+        if definition is None:
+            return False
+        decided, owner = definition.namespace_owner(name)
+        if not decided or owner is None:
+            return False
+        if isinstance(owner, str):
+            import builtins
+
+            held = type(vars(getattr(builtins, owner)).get(name))
+            return hasattr(held, "__set__") or hasattr(held, "__delete__")
+        if not owner.namespace_value_is_body(name):
+            return False
+        owner_value = self.defining_class.class_value_of_statement(owner)
+        if owner_value is None:
+            return False
+        return any(
+            method.name == name
+            and method.descriptor_kind == "property"
+            and method.defining_class is owner_value
+            for method in self.methods
+        )
 
     def _floor_gap(
         self,
