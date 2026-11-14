@@ -777,7 +777,7 @@ class SourceUnit:
     # asserters and dominated Raise exclusive heat under Body.If.
     _exception_type_identity_cache: dict = field(init=False, default_factory=dict)
     # Memo for the module's per-occurrence import-binding map (one lexical pass).
-    _import_bound_name_targets: object = field(init=False, default=None)
+    _lexical_value_use_receipts: object = field(init=False, default=None)
     # Final-checked import value-use resolutions at exact use sites of this
     # unit only (source_cid match). Never foreign LineTable spans.
     _import_value_use_resolutions: object = field(init=False, default=None)
@@ -829,7 +829,7 @@ class SourceUnit:
         object.__setattr__(self, "module_direct_bindings", None)
         object.__setattr__(self, "function_nodes", ())
         object.__setattr__(self, "_exception_type_identity_cache", {})
-        object.__setattr__(self, "_import_bound_name_targets", None)
+        object.__setattr__(self, "_lexical_value_use_receipts", None)
         object.__setattr__(self, "_import_value_use_resolutions", {})
         object.__setattr__(self, "_deferred_unresolved_value_uses", {})
         object.__setattr__(self, "_constructed_module", None)
@@ -1047,25 +1047,133 @@ class SourceUnit:
             )
         return self._constructed_module
 
-    def import_bound_name_target(
+    def _lexical_import_seat(self):
+        """``(root, path)`` this unit's lexical import pass runs under: the
+        construction context's workspace root and the unit's file in it, the
+        same seat the kit's demand pass uses, so the module name (and so every
+        relative import's target) is the one the demands carry."""
+        from pathlib import Path
+
+        context = self.construction_context
+        root = getattr(context, "workspace_root", None)
+        path = Path(self.filename)
+        if root is None:
+            root = path.parent if path.is_absolute() else Path(".")
+        root = Path(root)
+        if not path.is_absolute() and root.is_absolute():
+            path = root / path
+        return root, path
+
+    def _lexical_import_pass(self):
+        """The ONE lexical import pass over this unit (#7837), or None before a
+        typed root exists. Process-resident: the kit's own demand walk over the
+        same content is this walk."""
+        module = self.typed_module
+        if module is None:
+            return None
+        from sugar_source_tree.process_resident_file import (
+            get_or_prepare_lexical_import_pass,
+        )
+
+        root, path = self._lexical_import_seat()
+        return get_or_prepare_lexical_import_pass(
+            module,
+            root=root,
+            path=path,
+            source=self.source,
+            source_cid=self.source_cid,
+            module_identities={},
+        )
+
+    def import_reference_target(
         self, span: Tuple[int, int, int, int]
     ) -> Optional[str]:
-        """The import target coordinate bound to the name USE at ``span``.
+        """The target symbol of the import-bound reference at ``span`` (#7837).
 
-        ``None`` when this module has no typed root yet or the name at that
-        occurrence is not uniquely import-bound -- a non-import name keeps its
-        ordinary construction, and stays as loud as it was.
+        ``span`` is the reference's own coordinate: a Name, or a whole
+        ``Name.attr...`` chain whose head is import-bound. ``None`` when this
+        module has no typed root yet or nothing at that coordinate is uniquely
+        import-bound -- the node keeps its ordinary construction.
         """
-        targets = self._import_bound_name_targets
-        if targets is None:
+        runner = self._lexical_import_pass()
+        if runner is None:
+            return None
+        return runner.reference_targets.get(span)
+
+    def import_reference_of(self, node) -> Optional[str]:
+        """The target symbol of the import-bound reference ``node`` (#7837).
+
+        A reference written in the source has its own row in the table. A
+        static ``Name.attr...`` chain the rewrite produced (``m = np`` then
+        ``m.add``: the bound ``np`` Name substituted for ``m``) has no source
+        coordinate of its own; its head Name still has its row, and the
+        table's one speller follows that row with the chain's static links.
+        """
+        span = node.line_col_span()
+        target = self.import_reference_target(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        if target is not None or type(node).__name__ != "Attribute":
+            return target
+        attributes: list[str] = []
+        link = node
+        while type(link).__name__ == "Attribute":
+            attributes.append(link.attr)
+            link = link.value
+        if type(link).__name__ != "Name":
+            return None
+        head = link.line_col_span()
+        head_target = self.import_reference_target(
+            (head.start_line, head.start_col, head.end_line, head.end_col)
+        )
+        if head_target is None:
+            return None
+        from sugar_lift_py_tests.import_binding import member_target_symbol
+
+        return member_target_symbol(head_target, tuple(reversed(attributes)))
+
+    def import_value_use_receipt(
+        self, span: Tuple[int, int, int, int]
+    ) -> object | None:
+        """The value-use receipt at ``span``: a seated resolution first, else
+        the lexical pass's own receipt for that value read (#7837).
+
+        Every import-bound value read gets its receipt from the one lexical
+        pass, not only the reads a manager path seats.
+        """
+        seated = self.import_value_use_resolution(span)
+        if seated is not None:
+            return seated
+        if self.deferred_unresolved_import_value_use(span) is not None:
+            # A manager seat already decided this read is unresolved; its
+            # dormant marker owns the coordinate.
+            return None
+        receipts = self._lexical_value_use_receipts
+        if receipts is None:
             module = self.typed_module
             if module is None:
                 return None
-            from sugar_lift_py_tests.import_binding import import_bound_name_targets
+            from sugar_lift_py_tests.import_binding import (
+                authenticated_import_value_use_receipts,
+            )
 
-            targets = import_bound_name_targets(module, self.source_cid)
-            object.__setattr__(self, "_import_bound_name_targets", targets)
-        return targets.get(span)
+            root, path = self._lexical_import_seat()
+            minted, _ = authenticated_import_value_use_receipts(
+                root,
+                path,
+                self.source,
+                self.source_cid,
+                module_identities={},
+                module=module,
+            )
+            receipts = {}
+            for receipt in minted:
+                site = receipt.use["useSite"]
+                receipts[
+                    (site["startLine"], site["startCol"], site["endLine"], site["endCol"])
+                ] = receipt
+            object.__setattr__(self, "_lexical_value_use_receipts", receipts)
+        return receipts.get(span)
 
     def seat_import_value_use_resolution(
         self,
@@ -2236,16 +2344,17 @@ class SourceUnit:
             link = link.value
         if not isinstance(link, Name):
             return None
-        span = link.line_col_span()
-        target = self.import_bound_name_target(
-            (span.start_line, span.start_col, span.end_line, span.end_col)
-        )
+        # The whole reference, head and static links, reads the one import
+        # reference table (#7837): its target symbol is never rebuilt here.
+        target = self.import_reference_of(node)
         if target is None:
-            target = self.provider_gated_import_target(link)
-        if target is None:
-            return None
-        module = target[len("python:") :] if target.startswith("python:") else target
-        qualified = ".".join([module, *reversed(attributes)])
+            # An optional-provider gate is not an import definition, so it has
+            # no row in the table; its module heads the static links.
+            gate = self.provider_gated_import_target(link)
+            if gate is None:
+                return None
+            target = ".".join([gate, *reversed(attributes)])
+        qualified = target[len("python:") :] if target.startswith("python:") else target
         components = qualified.split(".")
         if components[0] == "builtins":
             from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
@@ -2356,7 +2465,7 @@ class SourceUnit:
         if not isinstance(head, Name):
             return None
         head_span = head.line_col_span()
-        bound = self.import_bound_name_target(
+        bound = self.import_reference_target(
             (
                 head_span.start_line,
                 head_span.start_col,
@@ -13506,7 +13615,7 @@ class Call(Expression):
                     # Keyed by the authenticated import target, not the
                     # spelling ``cast``: a missing ``from foo import cast``
                     # stays source-absent.
-                    if self.unit.import_bound_name_target(
+                    if self.unit.import_reference_target(
                         (
                             span.start_line,
                             span.start_col,
@@ -13562,7 +13671,14 @@ class Call(Expression):
                 # Absorbed as a spelling, never constructed -- see the
                 # call-site branch below.
                 self.func.discharge_by_substitution()
-            callee_name = self._spread_callee_name(self.func)
+            # An import-bound callee is spelled by its target symbol, the one
+            # spelling of every call (#7837); any other callee by its source.
+            reference = self.unit.import_reference_of(self.func)
+            callee_name = (
+                reference[len("python:") :]
+                if reference is not None and reference.startswith("python:")
+                else self._spread_callee_name(self.func)
+            )
             # Enroll an authenticated source-visible frame when the call is a
             # local constructor/function use-site. Typed ``**`` actuals then
             # project onto formals at desugar (SpreadCallSugar) so the manager
@@ -13771,70 +13887,9 @@ class Call(Expression):
             # discharge; without it the Name registers and never answers.
             self.func.discharge_by_substitution()
 
-            contract_resolution_gap = None
-            resolution = None
-            from sugar_lift_py_tests.call_contract_resolution import (
-                CallContractResolutionGapV1,
+            import_target_symbol, contract_resolution_gap = self._import_call_edge(
+                context, coordinate
             )
-
-            call_refs = getattr(context, "call_contract_refs", None)
-            if call_refs is not None:
-                from sugar_lift_py_tests.call_contract_resolution import (
-                    CallContractRefProtocolError,
-                    CallContractResolutionGapV1,
-                )
-                # The occurrence is already minted above, from the same pure
-                # function of the same source. Re-deriving it here was a second
-                # answer to a question already resolved.
-                resolution = None
-                if coordinate in call_refs.enrolled_use_sites:
-                    try:
-                        resolution = call_refs.require(coordinate)
-                    except CallContractRefProtocolError as exc:
-                        from sugar_source_tree.panic import BackendDefect
-
-                        raise BackendDefect(
-                            owner="Call._construct_sugar",
-                            blame=self.fragment,
-                            observed="enrolled call demand missing from resolution table",
-                            requested="one typed resolution row for every enrolled imported call",
-                            fix="repair call-contract preconstruction; never fall through to an ordinary call",
-                        ) from exc
-            import_target_symbol = None
-            if isinstance(resolution, CallContractResolutionGapV1):
-                # Step 6: a call stands as coordinate plus edge, bound or not.
-                # A gap that names ONE definite target which nothing answers
-                # is that state exactly: not bridged. The receipt's symbol
-                # rides to the edge. Every other gap (no definite import
-                # target, or something answered wrongly) stays a refusal.
-                if resolution.names_an_unanswered_target():
-                    # The gap row echoes the demand's symbol; the demand
-                    # itself is the source when the kit served one.
-                    import_target_symbol = (
-                        call_refs.demand_target_symbol(coordinate)
-                        or resolution.target_symbol
-                    )
-                else:
-                    contract_resolution_gap = resolution.kind.value
-            elif resolution is not None:
-                # A contract answers the symbol. The call has the SAME form:
-                # its coordinate, and an edge carrying the DEMAND's symbol,
-                # the one this source imported as written. Never the
-                # answering contract's: the consumer cannot know what answers
-                # its symbol, and its rows must not change when something
-                # does. The kit applies no contract; step 9 joins the edge to
-                # the contract whose `bridgeSourceSymbol` is the same string.
-                import_target_symbol = call_refs.demand_target_symbol(coordinate)
-                if import_target_symbol is None:
-                    from sugar_source_tree.panic import BackendDefect
-
-                    raise BackendDefect(
-                        owner="Call._construct_sugar",
-                        blame=self.fragment,
-                        observed="a resolved call contract with no demand of this kit behind it",
-                        requested="the target symbol of the demand the kit made at this call",
-                        fix="bind the table through the round that served the demands",
-                    )
 
             source_call_frame = None
             formal_function_sugar = None
@@ -13981,6 +14036,7 @@ class Call(Expression):
                 keywords=keyword_sugars,
                 contract_resolution_gap=contract_resolution_gap,
                 import_target_symbol=import_target_symbol,
+                reference_symbol=self._import_reference_callee(),
                 source_call_frame=source_call_frame,
                 formal_function_sugar=formal_function_sugar,
                 formal_coordinate_cids=formal_coordinate_cids,
@@ -13996,7 +14052,7 @@ class Call(Expression):
             # With census carries (keyed on `pytest.raises` as a string, 6353
             # rows of spelling), and it would let a local named `warnings` mint
             # authenticated warning testimony it has no authority for.
-            closed_symbol = self._import_bound_callee_symbol()
+            closed_symbol = self._import_reference_callee()
             if closed_symbol is not None:
                 from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 
@@ -14014,11 +14070,20 @@ class Call(Expression):
                     args_sugar, keyword_sugars = self._authenticate_warning_category(
                         args_sugar, keyword_sugars
                     )
+                # The same call form as a Name callee: its coordinate, and the
+                # edge and gap kind the call-contract table holds there.
+                import_target_symbol, contract_resolution_gap = (
+                    self._import_call_edge(context, coordinate)
+                )
                 return CallSiteSugar(
                     target_name=closed_symbol,
                     args=args_sugar,
                     site=self.fragment,
+                    call_occurrence=coordinate,
                     keywords=keyword_sugars,
+                    contract_resolution_gap=contract_resolution_gap,
+                    import_target_symbol=import_target_symbol,
+                    reference_symbol=closed_symbol,
                 )
             from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
 
@@ -14056,38 +14121,96 @@ class Call(Expression):
             source_call_frame=source_call_frame,
         )
 
-    def _import_bound_callee_symbol(self) -> Optional[str]:
-        """The closed target coordinate of a dotted callee whose head is imported.
+    def _import_call_edge(self, context, coordinate):
+        """The edge symbol and gap kind of this call, one form for every
+        callee shape (#7837): ``(import_target_symbol, contract_resolution_gap)``.
 
-        ``np.rot90`` under ``import numpy as np`` is not a method on a value:
-        the head is a lexical import binding, so the callee names the closed
-        coordinate ``numpy.rot90``. The binding comes from the one lexical
-        import pass (reaching definitions), never from the spelling: a head
-        that is not uniquely import-bound -- a parameter, a local, a shadowed
-        or ambiguous name -- returns ``None`` and constructs as before.
+        Read from the call-contract table at the call's own coordinate. A call
+        the import door did not enroll has neither.
         """
-        link = self.func
-        attributes: list[str] = []
-        while isinstance(link, Attribute):
-            attributes.append(link.attr)
-            link = link.value
-        if not isinstance(link, Name):
-            return None
-        span = link.line_col_span()
-        target = self.unit.import_bound_name_target(
-            (span.start_line, span.start_col, span.end_line, span.end_col)
+        from sugar_lift_py_tests.call_contract_resolution import (
+            CallContractRefProtocolError,
+            CallContractResolutionGapV1,
         )
+
+        contract_resolution_gap = None
+        resolution = None
+        call_refs = getattr(context, "call_contract_refs", None)
+        if call_refs is not None:
+            if coordinate in call_refs.enrolled_use_sites:
+                try:
+                    resolution = call_refs.require(coordinate)
+                except CallContractRefProtocolError as exc:
+                    from sugar_source_tree.panic import BackendDefect
+
+                    raise BackendDefect(
+                        owner="Call._construct_sugar",
+                        blame=self.fragment,
+                        observed="enrolled call demand missing from resolution table",
+                        requested="one typed resolution row for every enrolled imported call",
+                        fix="repair call-contract preconstruction; never fall through to an ordinary call",
+                    ) from exc
+        import_target_symbol = None
+        if isinstance(resolution, CallContractResolutionGapV1):
+            # Step 6: a call stands as coordinate plus edge, bound or not.
+            # A gap that names ONE definite target which nothing answers
+            # is that state exactly: not bridged. The receipt's symbol
+            # rides to the edge. Every other gap (no definite import
+            # target, or something answered wrongly) stays a refusal.
+            if resolution.names_an_unanswered_target():
+                # The gap row echoes the demand's symbol; the demand
+                # itself is the source when the kit served one.
+                import_target_symbol = (
+                    call_refs.demand_target_symbol(coordinate)
+                    or resolution.target_symbol
+                )
+            else:
+                contract_resolution_gap = resolution.kind.value
+        elif resolution is not None:
+            # A contract answers the symbol. The call has the SAME form:
+            # its coordinate, and an edge carrying the DEMAND's symbol,
+            # the one this source imported as written. Never the
+            # answering contract's: the consumer cannot know what answers
+            # its symbol, and its rows must not change when something
+            # does. The kit applies no contract; step 9 joins the edge to
+            # the contract whose `bridgeSourceSymbol` is the same string.
+            import_target_symbol = call_refs.demand_target_symbol(coordinate)
+            if import_target_symbol is None:
+                from sugar_source_tree.panic import BackendDefect
+
+                raise BackendDefect(
+                    owner="Call._construct_sugar",
+                    blame=self.fragment,
+                    observed="a resolved call contract with no demand of this kit behind it",
+                    requested="the target symbol of the demand the kit made at this call",
+                    fix="bind the table through the round that served the demands",
+                )
+        return import_target_symbol, contract_resolution_gap
+
+    def _import_reference_callee(self) -> Optional[str]:
+        """The target symbol of an import-bound callee, read from the one
+        import reference table (#7837), or ``None``.
+
+        ``ident`` under ``from idn import ident`` and ``np.rot90`` under
+        ``import numpy as np`` are both references the lexical pass already
+        resolved at the callee's own coordinate: ``idn.ident`` and
+        ``numpy.rot90``. A callee that is not uniquely import-bound -- a
+        parameter, a local, a shadowed or ambiguous name -- has no row and
+        constructs as before. The symbol is read, never built here.
+        """
+        target = self.unit.import_reference_of(self.func)
         if target is None:
             return None
         # The spelling is absorbed into the call-site coordinate, so every node
-        # of the callee chain answers the roll call as present-inert.
-        link.discharge_by_substitution()
-        chain = self.func
-        while isinstance(chain, Attribute):
+        # of a dotted callee chain answers the roll call as present-inert (a
+        # Name callee has already answered in its own branch).
+        if isinstance(self.func, Attribute):
+            chain = self.func
+            while isinstance(chain, Attribute):
+                chain.discharge_by_substitution()
+                chain = chain.value
             chain.discharge_by_substitution()
-            chain = chain.value
-        module = target[len("python:") :] if target.startswith("python:") else target
-        return ".".join([module, *reversed(attributes)])
+        return target[len("python:") :] if target.startswith("python:") else target
 
     def _authenticate_warning_category(self, args_sugar, keyword_sugars):
         """Attach the floor-owned class identity to a ``warnings.warn`` category.
@@ -14784,7 +14907,7 @@ class Attribute(Expression):
         # A deferred (proven message-only) value-use constructs its ordinary
         # AttributeSugar here; the opacity is a force-floor concern resolved at
         # reduce (AttributeSugar.project_attribute yields a MessageOpaqueValue).
-        receipt = self.unit.import_value_use_resolution(
+        receipt = self.unit.import_value_use_receipt(
             (span.start_line, span.start_col, span.end_line, span.end_col)
         )
         from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
@@ -15286,7 +15409,7 @@ class Name(Expression):
             return bound
         span = self.line_col_span()
         if (
-            self.unit.import_bound_name_target(
+            self.unit.import_reference_target(
                 (span.start_line, span.start_col, span.end_line, span.end_col)
             )
             is not None
@@ -15323,7 +15446,7 @@ class Name(Expression):
         NameSugar so we do not invent an empty-path import member.
         """
         span = self.line_col_span()
-        receipt = self.unit.import_value_use_resolution(
+        receipt = self.unit.import_value_use_receipt(
             (span.start_line, span.start_col, span.end_line, span.end_col)
         )
         from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1

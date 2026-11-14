@@ -221,11 +221,14 @@ def test_corpus_not_sites_remain_named_refusals_without_operand_type() -> None:
     is undischarged (named refusal), which is the honest third value.
     """
     corpus = authenticated_pandas_corpus()
+    # ``NA`` is ``from pandas import NA``: an import member, so its operand is
+    # the closed reference ``ref:pandas.NA`` (#7837), not a free symbol.
+    # ``obj1`` is a local. Either way no Floor answers ``__bool__``.
     cases = (
-        ("tests/scalar/test_na_scalar.py", 48, "not"),
-        ("tests/generic/test_generic.py", 156, "not"),
+        ("tests/scalar/test_na_scalar.py", 48, "not", "ImportMemberValue"),
+        ("tests/generic/test_generic.py", 156, "not", "SymbolicValue"),
     )
-    for rel, line, operator in cases:
+    for rel, line, operator, operand in cases:
         path = corpus.root / rel
         source = path.read_text(encoding="utf-8")
         source_cid = blake3_512_of(source.encode("utf-8"))
@@ -243,7 +246,7 @@ def test_corpus_not_sites_remain_named_refusals_without_operand_type() -> None:
             matches[0].sugar().desugar(None)
         refusal = raised.value
         assert refusal.owner == "unary_operation_exception_floor"
-        assert refusal.observed == f"SymbolicValue {operator}"
+        assert refusal.observed == f"{operand} {operator}"
         assert "TypeError" not in str(refusal)
         assert "ValueError" not in str(refusal)
 

@@ -413,6 +413,17 @@ def _member_path_after_submodule(
     return exported_path[len(tail) :]
 
 
+def member_target_symbol(target_symbol: str, member: tuple[str, ...]) -> str:
+    """The one speller of an import-bound reference's target (#7837): the
+    binding's target followed by the static member path read off the
+    reference."""
+    return target_symbol + "".join(f".{part}" for part in member)
+
+
+def _target_symbol(binding: _ImportDef, member: tuple[str, ...]) -> str:
+    return member_target_symbol(binding.target_symbol, member)
+
+
 _NON_IMPORT = "non-import"
 _UNBOUND = "unbound"
 Definition = _ImportDef | _ModuleFunctionDef | str
@@ -540,8 +551,13 @@ class _Pass:
         # Value-occurrence rows (Name / Attribute loads), separate from Call.
         self.value_rows: list[dict[str, Any]] = []
         self.value_outcomes: dict[tuple[int, int, int, int], str] = {}
-        # Per-occurrence import targets for NAME uses, from this same pass.
-        self.name_targets: dict[tuple[int, int, int, int], str] = {}
+        # THE import reference table (#7837): the target symbol of every
+        # import-bound reference -- a Name, or a ``Name.attr...`` chain whose
+        # head is import-bound -- keyed by that reference's own coordinate.
+        # One law (the strict one calls and value uses follow). Every reader
+        # (calls of any callee shape, value reads, the exception
+        # authenticator, ``typing.cast``, ``importorskip``) looks here.
+        self.reference_targets: dict[tuple[int, int, int, int], str] = {}
         self.module_state = module_state or {}
         self.analyze_nested = analyze_nested
         self.class_outer_states: dict[int, State] = {}
@@ -585,21 +601,13 @@ class _Pass:
         if node is None:
             return
         if node.kind == "Name":
-            # A name USE whose sole concrete reaching definition is an import
-            # statement is lexically bound to that import's target coordinate.
-            # Optional try/import joins ImportDef with unbound on the except
-            # path; the ImportDef is still the only source-visible binding for
-            # name_targets (closed-coordinate projection).  Value-use receipts
-            # are stricter: unique ImportDef only — shadowing, reassignment,
-            # unbound join, and wildcard ambiguity do not authorize a value.
-            name_binding = self._unique_import_def(node.id, state, allow_unbound=True)
-            if name_binding is not None and not name_binding.submodule_tail:
-                span = node.line_col_span()
-                self.name_targets[
-                    (span.start_line, span.start_col, span.end_line, span.end_col)
-                ] = name_binding.target_symbol
+            # A name USE whose sole reaching definition is an import statement
+            # is lexically bound to that import's target coordinate. One law:
+            # unique ImportDef only -- shadowing, reassignment, an unbound join
+            # (an optional ``try: import``) and wildcard ambiguity bind nothing.
             value_binding = self._unique_import_def(node.id, state, allow_unbound=False)
             if value_binding is not None and not value_binding.submodule_tail:
+                self._record_reference(node, value_binding, ())
                 self._enroll_value_use(node, value_binding, ())
             return
         if node.kind == "Attribute":
@@ -620,6 +628,7 @@ class _Pass:
                     else None
                 )
                 if member is not None:
+                    self._record_reference(node, binding, member)
                     self._enroll_value_use(node, binding, member)
             return
         if node.kind == "Call":
@@ -688,6 +697,14 @@ class _Pass:
             return None
         return link.id, tuple(reversed(attrs))
 
+    def _record_reference(
+        self, node: Node, binding: _ImportDef, member: tuple[str, ...]
+    ) -> None:
+        span = node.line_col_span()
+        self.reference_targets[
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        ] = _target_symbol(binding, member)
+
     def _enroll_value_use(
         self,
         node: Node,
@@ -722,8 +739,7 @@ class _Pass:
                 "sourceCid": self.source_cid,
                 "authenticatedImportUse": {**use, "cid": _hash(use)},
                 "importBinding": json.loads(binding.payload_jcs),
-                "targetSymbol": binding.target_symbol
-                + "".join(f".{part}" for part in exported_path),
+                "targetSymbol": _target_symbol(binding, exported_path),
                 "exportedMemberPath": member_path,
                 "importBindingCid": binding.cid,
                 "useSite": use_site,
@@ -766,8 +782,7 @@ class _Pass:
                     "kind": "call-contract-demand",
                     "authenticatedImportUse": {**use, "cid": _hash(use)},
                     "importBinding": json.loads(binding.payload_jcs),
-                    "targetSymbol": binding.target_symbol
-                    + "".join(f".{part}" for part in exported_path),
+                    "targetSymbol": _target_symbol(binding, exported_path),
                     "importBindingCid": binding.cid,
                     "importSignature": {
                         "formals": [],
@@ -1261,7 +1276,7 @@ def _run_lexical_import_pass_on_module(
 ) -> _Pass:
     """One reaching-definition walk over an already-materialized Module root.
 
-    Call rows, value rows, and name targets come from this single walk. Callers
+    Call rows, value rows, and the reference table come from this single walk. Callers
     that already hold a SourceFile for ``source_cid`` (prefix door, frame door)
     MUST use this entry so the walk does not rebuild the typed tree.
 
@@ -1343,38 +1358,6 @@ def authenticated_import_value_uses(
     """
     runner = _run_lexical_import_pass(root, path, source, source_cid, module_identities)
     return runner.value_rows, runner.value_outcomes
-
-
-def import_bound_name_targets(
-    module: Module,
-    source_cid: str,
-    module_name: str = "",
-    module_identities: dict[str, dict[str, Any]] | None = None,
-) -> dict[tuple[int, int, int, int], str]:
-    """Import targets per NAME occurrence, from the one lexical pass.
-
-    Same reaching-definition transfer that authenticates imported call uses --
-    read here at every name use so construction can close an import-bound head
-    into its target coordinate instead of minting an undeclared universe Var.
-    Takes the already-materialized typed Module: never a second parse.
-    """
-    identities = module_identities or {}
-    module_state = _final_module_state(
-        module=module,
-        source_cid=source_cid,
-        module_name=module_name,
-        module_is_package=Path(module.unit.filename).name == "__init__.py",
-        module_identities=identities,
-    )
-    runner = _Pass(
-        source_cid=source_cid,
-        module_name=module_name,
-        module_is_package=Path(module.unit.filename).name == "__init__.py",
-        module_identities=identities,
-        module_state=module_state,
-    )
-    runner.statements(module.body, {}, module)
-    return dict(runner.name_targets)
 
 
 def _mint_import_use_receipts(

@@ -206,7 +206,7 @@ def _unknown_callee_call(sugar, ctx):
         return None
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
-    return UnknownCalleeCallV1(sugar.target_name)
+    return UnknownCalleeCallV1(sugar.spelled_target)
 
 
 @dataclass(frozen=True)
@@ -242,6 +242,11 @@ class CallSiteSugar(ConstructedTermSugar):
     # The call is not bridged: it stands as its coordinate, and its edge
     # carries this symbol, unbound. The symbol has one source, the receipt.
     import_target_symbol: str | None = dataclass_field(default=None, compare=False)
+    # The import reference table's target symbol for an import-bound callee
+    # (#7837): ``idn.ident`` for ``from idn import ident``, ``numpy.add`` for
+    # ``np.add``. It is the call's one spelling, never the local alias; a
+    # callee with no row keeps its own name.
+    reference_symbol: str | None = None
     exception_type_coordinate: Any = dataclass_field(default=None, compare=False)
     exception_type_mro: tuple | None = dataclass_field(default=None, compare=False)
     source_call_frame: Any = dataclass_field(default=None, compare=False)
@@ -352,6 +357,12 @@ class CallSiteSugar(ConstructedTermSugar):
             truthful=prefix + "def test_a():\n    assert A(5) == 5\n",
             lying=prefix + "def test_a():\n    assert A(5) == 6\n",
         )
+
+    @property
+    def spelled_target(self) -> str:
+        """The call's one spelling: its import target symbol when the callee
+        is import-bound, else the callee's own name (#7837)."""
+        return self.reference_symbol or self.target_name
 
     def to_term(self, *, owner: str) -> Term:
         """Project authenticated callee, arguments, authority, and occurrence."""
@@ -655,12 +666,11 @@ class CallSiteSugar(ConstructedTermSugar):
             ctor("py.kwarg", [str_const(name), value.to_term(owner=owner)])
             for name, value in kw_values
         ]
+        spelled = self.spelled_target
         term = ctor(
-            f"call:{self.target_name}",
+            f"call:{spelled}",
             [value.to_term(owner=owner) for value in positional] + kwarg_terms,
-            symbol_kind=(
-                "builtin" if hasattr(builtins, self.target_name) else "coordinate"
-            ),
+            symbol_kind=("builtin" if hasattr(builtins, spelled) else "coordinate"),
         )
         source_body = None
         source_frame_cid = None
