@@ -150,11 +150,12 @@ _INTERPRETER_BOUND_NAMES = frozenset(
     )
 )
 
-# A read of one of these can write a global (or a builtin) the source never
-# spells as a binding, so no read in that module is called unbound.
-_DYNAMIC_GLOBAL_WRITERS = frozenset(
-    ("globals", "vars", "locals", "exec", "eval", "builtins", "__builtins__")
-)
+# The module attributes the interpreter binds to a fixed value, by the target
+# symbol of that value: ``__builtins__`` is the builtin namespace (the
+# ``builtins`` module in ``__main__``, its ``__dict__`` elsewhere).  A read
+# reaches it only where nothing in the source binds the name
+# (``SourceUnit.interpreter_reference_at``).
+_INTERPRETER_BOUND_TARGETS = {"__builtins__": "python:builtins"}
 
 
 class LanguageCallee(_enum.Enum):
@@ -200,6 +201,16 @@ class LanguageCallee(_enum.Enum):
     BUILTIN_RANGE = "python:builtins.range"
     # ``locals()``: the builtin snapshot of the calling frame's locals.
     BUILTIN_LOCALS = "python:builtins.locals"
+    # ``globals()`` / ``vars()`` / ``exec(...)`` / ``eval(...)``: the builtins
+    # that read or write a namespace the source never spells as a binding.
+    BUILTIN_GLOBALS = "python:builtins.globals"
+    BUILTIN_VARS = "python:builtins.vars"
+    BUILTIN_EXEC = "python:builtins.exec"
+    BUILTIN_EVAL = "python:builtins.eval"
+    # The builtin namespace itself: the module ``import builtins`` binds, and
+    # the module attribute ``__builtins__`` the interpreter sets to it (or to
+    # its ``__dict__``).
+    BUILTIN_NAMESPACE = "python:builtins"
     # ``typing.final(f)``: sets ``f.__final__`` if it can and returns ``f``.
     TYPING_FINAL = "python:typing.final"
     # ``re.search`` / ``re.match`` / ``re.fullmatch``: the C-floor matchers.
@@ -275,6 +286,21 @@ METHOD_DESCRIPTOR_KINDS = {
 # sets ``__isabstractmethod__`` and returns ``f`` (Lib/typing.py, Lib/abc.py).
 _IDENTITY_DECORATORS = frozenset(
     {LanguageCallee.TYPING_FINAL, LanguageCallee.ABC_ABSTRACTMETHOD}
+)
+
+# The bindings through which a read can write a global (or a builtin) the
+# source never spells as a binding: known by the binding at the read
+# (``SourceUnit.reads_dynamic_global_writer``), never by the spelling, so a
+# module's own ``exec`` or a parameter named ``globals`` is none of these.
+_DYNAMIC_GLOBAL_WRITERS = frozenset(
+    {
+        LanguageCallee.BUILTIN_GLOBALS,
+        LanguageCallee.BUILTIN_VARS,
+        LanguageCallee.BUILTIN_LOCALS,
+        LanguageCallee.BUILTIN_EXEC,
+        LanguageCallee.BUILTIN_EVAL,
+        LanguageCallee.BUILTIN_NAMESPACE,
+    }
 )
 
 
@@ -1066,6 +1092,11 @@ class SourceUnit:
     _module_name_rows_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
+    # ``(typed module, whether some read or import binding reaches a dynamic
+    # global writer)`` (``_module_reaches_dynamic_global_writer``).
+    _dynamic_global_writer_memo: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
     # ``(typed module, threaded names, unthreaded names)``
     # (``module_threaded_names``) and ``(typed module, refusal,
     # ModuleBindingStatesV1)``: the module body threaded once for its readers
@@ -1113,6 +1144,7 @@ class SourceUnit:
         object.__setattr__(self, "_function_symtable_index", None)
         object.__setattr__(self, "_function_span_index", None)
         object.__setattr__(self, "_module_name_rows_memo", None)
+        object.__setattr__(self, "_dynamic_global_writer_memo", None)
         object.__setattr__(self, "_module_global_rows_memo", None)
         object.__setattr__(self, "_module_binding_states_memo", None)
         object.__setattr__(self, "_module_statement_starts_memo", None)
@@ -1497,11 +1529,40 @@ class SourceUnit:
 
         if builtin_name_temporal().value_if_bound(name) is None:
             return None
-        if name in self.module_bound_names:
-            return None
         if "*" in self._module_name_rows()[0]:
             # A star import may bind any name in the module namespace.
             return None
+        if not self._read_falls_through_the_source(name, span):
+            return None
+        return f"python:builtins.{name}"
+
+    def interpreter_reference_at(self, name: str, span) -> Optional[str]:
+        """The target symbol of the module attribute the interpreter binds
+        that the name read at ``span`` reaches (``__builtins__``: the builtin
+        namespace), else ``None``.
+
+        The same resolution as ``builtin_reference_at``: the read reaches the
+        interpreter's binding only where the innermost function around it
+        neither takes nor binds the name, the module binds no ``name`` of its
+        own, and no star import may.
+        """
+        target = _INTERPRETER_BOUND_TARGETS.get(name)
+        if target is None or self.typed_module is None:
+            return None
+        if "*" in self._module_name_rows()[0]:
+            return None
+        if not self._read_falls_through_the_source(name, span):
+            return None
+        return target
+
+    def _read_falls_through_the_source(self, name: str, span) -> bool:
+        """Whether a read of ``name`` at ``span`` is bound by nothing the
+        source spells: the module binds no ``name`` of its own, and the
+        innermost function around the read neither takes it as a parameter
+        nor binds it (locally, ``nonlocal`` or from an enclosing function),
+        read off this unit's CPython ``symtable``."""
+        if name in self.module_bound_names:
+            return False
         owner = self.innermost_function_containing(span)
         if owner is not None:
             table = self.function_symtable(owner.name, owner.line_col_span().start_line)
@@ -1515,8 +1576,63 @@ class SourceUnit:
                 or symbol.is_free()
                 or symbol.is_nonlocal()
             ):
-                return None
-        return f"python:builtins.{name}"
+                return False
+        return True
+
+    def reads_dynamic_global_writer(self, node) -> bool:
+        """Whether the read ``node`` may reach a binding through which a
+        global (or a builtin) is written that the source never spells as a
+        binding (``_DYNAMIC_GLOBAL_WRITERS``: ``globals``, ``vars``,
+        ``locals``, ``exec``, ``eval``, the builtin namespace).
+
+        Known by the binding at the read (``language_callee_of``), never by
+        the spelling: a module's own ``exec``, or a parameter named
+        ``globals``, is no writer, and ``from builtins import exec as run``
+        makes ``run`` one.  A read a star import may bind (nothing the source
+        spells binds it) may be bound to any of them, so it answers True.
+        """
+        if self.language_callee_of(node) in _DYNAMIC_GLOBAL_WRITERS:
+            return True
+        return (
+            isinstance(node, Name)
+            and "*" in self._module_name_rows()[0]
+            and self._read_falls_through_the_source(node.id, node.line_col_span())
+        )
+
+    def _module_reaches_dynamic_global_writer(self) -> bool:
+        """Whether some read in this module reaches a dynamic global writer
+        (``reads_dynamic_global_writer``), or some ``import`` binds a name
+        to one (its row in the one import table,
+        ``import_binding_reference``: ``import builtins`` makes even a store
+        through ``builtins.x = ...`` a write the source never spells as a
+        binding of ``x``).  One walk per typed root."""
+        module = self._require_typed_module(
+            "SourceUnit._module_reaches_dynamic_global_writer", blame=self.filename
+        )
+        memo = self._dynamic_global_writer_memo
+        if memo is not None and memo[0] is module:
+            return memo[1]
+        found = False
+        for node in module.walk():
+            if isinstance(node, Name):
+                found = self.reads_dynamic_global_writer(node)
+            elif isinstance(node, (Import, ImportFrom)):
+                found = any(
+                    self._import_binds_dynamic_global_writer(node, alias)
+                    for alias in node.names
+                )
+            if found:
+                break
+        object.__setattr__(self, "_dynamic_global_writer_memo", (module, found))
+        return found
+
+    def _import_binds_dynamic_global_writer(self, statement, alias) -> bool:
+        local = alias.asname or alias.name.split(".")[0]
+        row = self.import_binding_reference(statement, local)
+        return (
+            row is not None
+            and LanguageCallee.of(row.target_symbol) in _DYNAMIC_GLOBAL_WRITERS
+        )
 
     def _module_name_rows(self) -> Tuple[frozenset, frozenset]:
         """``(names some scope binds, names read)`` over the typed tree.
@@ -1544,18 +1660,19 @@ class SourceUnit:
 
         True only when nothing binds the name: no scope of the module binds
         it and no star import may (read off the typed tree), it is not a
-        builtin, not a name the interpreter binds itself, and the module reads
-        no dynamic global writer (``globals``, ``exec``, ...).  Any doubt, and
-        a unit with no typed root, answers False.
+        builtin, not a name the interpreter binds itself, and no read or
+        import in the module reaches a dynamic global writer (``globals``,
+        ``exec``, ... by their binding, ``_module_reaches_dynamic_global_writer``).
+        Any doubt, and a unit with no typed root, answers False.
         """
         if self.typed_module is None:
             return False
         if hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
             return False
-        bound, read = self._module_name_rows()
+        bound, _read = self._module_name_rows()
         if name in bound or "*" in bound:
             return False
-        return not (read & _DYNAMIC_GLOBAL_WRITERS)
+        return not self._module_reaches_dynamic_global_writer()
 
     def module_threaded_names(self) -> frozenset:
         """The module names a reader outside the module block takes from the
@@ -1584,8 +1701,8 @@ class SourceUnit:
     def module_unthreaded_names(self) -> frozenset:
         """The ``module_threaded_names`` no point of the module body decides
         for a reader: every one, when a star import may bind any name or the
-        module reads a dynamic global writer (``globals``, ``exec``, ...,
-        ``_DYNAMIC_GLOBAL_WRITERS``); and one a function or class body
+        module reaches a dynamic global writer by its binding (``globals``,
+        ``exec``, ..., ``_module_reaches_dynamic_global_writer``); and one a function or class body
         writes through a ``global`` declaration (it changes whenever that
         body runs).  Every reader cites these ``undecided`` by name.  A
         binding the threading does not carry past one statement (a binding
@@ -1618,10 +1735,10 @@ class SourceUnit:
             if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
                 continue
             stack.extend(child for _name, _index, child in node._child_edges())
-        bound, read = self._module_name_rows()
+        bound, _read = self._module_name_rows()
         reads, writes = self._nested_scope_global_rows()
         threaded = frozenset((keyed | loop_bound) & reads)
-        if "*" in bound or read & _DYNAMIC_GLOBAL_WRITERS:
+        if "*" in bound or self._module_reaches_dynamic_global_writer():
             unthreaded = threaded
         else:
             unthreaded = threaded & writes
@@ -1901,14 +2018,17 @@ class SourceUnit:
         """The language-fixed callee a bare name read at ``span`` is bound to.
 
         The import reference table first (``from typing import cast``), then
-        the builtin namespace (``getattr`` nothing rebinds).  ``None`` for any
-        other binding, whatever the name is spelled.
+        the builtin namespace (``getattr`` nothing rebinds), then the module
+        attributes the interpreter binds (``__builtins__`` nothing rebinds).
+        ``None`` for any other binding, whatever the name is spelled.
         """
         target = self.import_reference_target(
             (span.start_line, span.start_col, span.end_line, span.end_col)
         )
         if target is None:
             target = self.builtin_reference_at(name, span)
+        if target is None:
+            target = self.interpreter_reference_at(name, span)
         return LanguageCallee.of(target)
 
     def language_callee_of(self, node) -> Optional["LanguageCallee"]:
@@ -17214,7 +17334,7 @@ def _formal_only_called(definition, formal: str) -> bool:
             ):
                 called.add((node.func.span.start, node.func.span.end))
             elif isinstance(node, Name):
-                if node.id in _DYNAMIC_GLOBAL_WRITERS:
+                if definition.unit.reads_dynamic_global_writer(node):
                     return False
                 if node.id == formal:
                     reads.append(node.span)

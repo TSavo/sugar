@@ -237,15 +237,14 @@ def _resolve_base(base, unit, entries, derived):
         return _cited_entry(callee, entries)
     if not isinstance(base, Name):
         return None
-    binds = (unit.module_direct_bindings or {}).get(base.id, ())
-    if len(binds) != 1:
+    # A source base by the binding the read reaches at its own coordinate
+    # (``SourceUnit.module_definition_at``): a parameter, local, free or
+    # nonlocal of the function around the class statement is that binding,
+    # never the module's ``class`` statement of the same name.
+    bound = unit.module_definition_at(base.id, base.line_col_span())
+    if not isinstance(bound, ClassDef) or not _precedes(bound, derived):
         return None
-    (bound,) = binds
-    if isinstance(bound, ClassDef) and bound.name == base.id:
-        if bound.unit is not unit or not _precedes(bound, derived):
-            return None
-        return _resolve_source_class(bound, entries)
-    return None
+    return _resolve_source_class(bound, entries)
 
 
 def _class_statement_admits_absence_proof(class_def) -> bool:
