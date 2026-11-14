@@ -18,15 +18,24 @@ class NamedExpressionValue(FloorValue):
     name: str
     assigned_value: FloorValue
     presented_value: FloorValue = field(init=False)
+    # The coordinate of the walrus's one evaluation (``NamedExpr.substitute``).
+    # ``extend_scope`` binds the assigned value under it as well as under the
+    # name: every later read substitution rewrote is an ``EvaluationRef`` to it
+    # (temporal choice 1, #7661).
+    evaluation: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "presented_value", self.assigned_value)
 
     @classmethod
     def carrying(
-        cls, name: str, assigned_value: FloorValue, presented_value: FloorValue
+        cls,
+        name: str,
+        assigned_value: FloorValue,
+        presented_value: FloorValue,
+        evaluation: str | None = None,
     ) -> "NamedExpressionValue":
-        carried = cls(name, assigned_value)
+        carried = cls(name, assigned_value, evaluation=evaluation)
         object.__setattr__(carried, "presented_value", presented_value)
         return carried
 
@@ -37,10 +46,12 @@ class NamedExpressionValue(FloorValue):
             from sugar_lift_py_tests.context import ReduceContext
 
             ctx = ReduceContext.root(owner="NamedExpressionValue")
-        scoped = replace(
-            ctx, temporal=ctx.temporal.bind_value(self.name, self.assigned_value)
-        )
-        return self.presented_value.extend_scope(scoped)
+        # The name first, the evaluation last: a read of the evaluation is the
+        # latest of the two until something rebinds the name.
+        temporal = ctx.temporal.bind_value(self.name, self.assigned_value)
+        if self.evaluation is not None:
+            temporal = temporal.bind_value(self.evaluation, self.assigned_value)
+        return self.presented_value.extend_scope(replace(ctx, temporal=temporal))
 
     def as_expression_statement(self):
         """A bare ``(name := value)`` statement still binds ``name`` afterward."""
@@ -134,5 +145,7 @@ class NamedExpressionValue(FloorValue):
         from sugar_lift_py_tests.outcome import Complete
 
         return Complete(
-            NamedExpressionValue.carrying(self.name, self.assigned_value, presented)
+            NamedExpressionValue.carrying(
+                self.name, self.assigned_value, presented, self.evaluation
+            )
         )

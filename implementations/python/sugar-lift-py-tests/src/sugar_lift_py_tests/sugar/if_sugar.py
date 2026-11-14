@@ -133,9 +133,13 @@ def _arm_evaluations(arms, incoming) -> tuple:
     Each key names one statement's evaluation (``AugAssign._evaluation_key``)
     and a statement sits in one suite, so after the ``if`` a key is read only
     by the phi's arm for that suite (``If.substitute``), under that suite's
-    guard.  The ``if`` carries those values out; it carries no name.  A key
-    that two completed faces bound to different values has no one value: it
-    is left out, and its read is the name read it was before.
+    guard.  A walrus in the condition (``if (n := e):``) is evaluated before
+    either suite: its key is in every arm with the one value, and a read
+    after the ``if`` is no phi's arm.  ``incoming`` is the context before
+    the condition, so that key is carried too.  The ``if`` carries those
+    values out; it carries no name.  A key that two completed faces bound to
+    different values has no one value: it is left out, and its read is the
+    read it was before.
     """
     from sugar_lift_py_tests.outcome import Completed
 
@@ -346,7 +350,10 @@ class IfSugar(Sugar):
             else_face=else_face,
             observed_formula=observed_formula,
             authentication=authentication,
-            incoming=branch_ctx,
+            # The context before the condition, not ``branch_ctx``: a walrus
+            # in the test bound its evaluation into ``branch_ctx``, so every
+            # arm holds it and it is carried out of the if like an arm's own.
+            incoming=ctx,
         )
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,

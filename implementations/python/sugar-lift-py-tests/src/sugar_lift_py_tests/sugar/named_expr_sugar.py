@@ -21,11 +21,18 @@ class NamedExprSugar(ConstructedTermSugar):
 
     Enrolled as ``ConstructedTermSugar`` so Compare/Eq parents may carry the
     walrus as an operand through the typed term surface (no spelling side-door).
+
+    ``evaluation`` is the coordinate of this walrus's one evaluation
+    (``NamedExpr.substitute``); the value binds under it as well as under the
+    name, and every later read substitution rewrote (``EvaluationRef``)
+    answers it (temporal choice 1, #7661).  A walrus that was never
+    substituted has none and binds the name alone.
     """
 
     name: str
     value: ConstructedTermSugar
     site: object = dataclass_field(compare=False)
+    evaluation: str | None = None
 
     def __post_init__(self) -> None:
         require_constructed_term_sugar(self.value, owner="NamedExprSugar.value")
@@ -61,5 +68,7 @@ class NamedExprSugar(ConstructedTermSugar):
         )
 
         return self.value.desugar(ctx).and_then(
-            lambda assigned: Complete(NamedExpressionValue(self.name, assigned))
+            lambda assigned: Complete(
+                NamedExpressionValue(self.name, assigned, evaluation=self.evaluation)
+            )
         )

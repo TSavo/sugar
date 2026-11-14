@@ -3138,33 +3138,37 @@ def _exit_path_scope(clause_owner, path: str, bindings):
 
 
 def _holds_evaluation(statements) -> bool:
-    """Whether a substituted suite holds a statement keyed as its own
-    evaluation (``AugAssign._evaluation_key``)."""
+    """Whether a substituted suite holds a statement (or walrus) keyed as its
+    own evaluation (``AugAssign._evaluation_key``)."""
     return any(
-        isinstance(node, AugAssign)
+        isinstance(node, (AugAssign, NamedExpr))
         and isinstance(getattr(node, "evaluation", None), str)
         for statement in statements
         for node in statement.walk()
     )
 
 
-def _evaluation_ref(owner, span, evaluation: str, name: str) -> "Node":
+def _evaluation_ref(
+    owner, span, evaluation: str, name: str, *, unevaluated=None
+) -> "Node":
     """``EvaluationRef(evaluation, name)`` at ``span``: a read of ``name``
     rewritten to a reference to the evaluation bound under ``evaluation``
     (temporal choice 1, #7661).  The one constructor of that node: an
-    ``x += e`` statement's evaluation, a comprehension generator's binding
-    of one member, and the re-span of either to the read's own site
-    (``Name.substitute``)."""
-    from .backend import Leaf, materialize
-    from .shadow import ShadowNode
+    ``x += e`` statement's evaluation, an ``(x := e)`` walrus's, a
+    comprehension generator's binding of one member, and the re-span of any
+    of them to the read's own site (``Name.substitute``).
 
+    ``unevaluated`` (a walrus's substituted value) is a slot, not a child:
+    the read for a temporal the walrus's evaluation never reached."""
+    from .backend import Child, Leaf, materialize
+    from .shadow import ShadowNode, _handle_of
+
+    slots = (("evaluation", Leaf(evaluation)), ("name", Leaf(name)))
+    if unevaluated is not None:
+        slots = (*slots, ("unevaluated", Child(_handle_of(unevaluated))))
     return materialize(
         owner.unit,
-        ShadowNode(
-            "EvaluationRef",
-            span,
-            (("evaluation", Leaf(evaluation)), ("name", Leaf(name))),
-        ),
+        ShadowNode("EvaluationRef", span, slots),
         owner.reporter,
     )
 
@@ -12608,24 +12612,79 @@ class NamedExpr(Expression):
     value: Expression
     _child_fields = ("target", "value")
 
+    # A walrus's evaluation is keyed exactly as a statement's is.
+    _evaluation_exit_path = AugAssign._evaluation_exit_path
+    _evaluation_key = AugAssign._evaluation_key
+
     def substitute(self, scope):
         """`(<target> := <value>)` -- substitute the value; the target is a
         binding site, not substituted. The walrus's binding leaks to the
-        enclosing block (collected by `_substitute_body`), and the expression
-        itself evaluates to the (substituted) value, so a use in the same
-        expression sees it. Here we rewrite to the value: `(x := e)` as a
-        sub-expression IS `e` once bound, and the binding is threaded out."""
-        from .shadow import rewrite
+        enclosing block (collected by `_substitute_body`).
+
+        A plain Name target carries the coordinate of this walrus's one
+        evaluation (``evaluation``, minted as ``AugAssign._evaluation_key``
+        mints a statement's, with the exit path it is keyed under):
+        ``NamedExpressionValue`` binds the assigned value under it, and every
+        later read substitution rewrites is an ``EvaluationRef`` to it
+        (temporal choice 1, #7661)."""
+        from .backend import Leaf, materialize
+        from .shadow import (
+            OccurrenceShadowNode,
+            ShadowNode,
+            occurrence_tags_of,
+            rewrite,
+        )
 
         new_value, d = self._substitute_field(self.value, scope)
-        return self if not d else rewrite(self, value=new_value)
+        rewritten = self if not d else rewrite(self, value=new_value)
+        if not isinstance(rewritten.target, Name):
+            return rewritten
+        desc = rewritten.ref.describe()
+        span = desc.raw_span or self.span
+        # A re-substitution replaces the key slots it was given: a node
+        # answers its FIRST slot of a name.
+        slots = (
+            *(
+                slot
+                for slot in desc.slots
+                if slot[0] not in ("evaluation", "evaluation_exit_path")
+            ),
+            ("evaluation", Leaf(self._evaluation_key(scope))),
+            ("evaluation_exit_path", Leaf(self._evaluation_exit_path(scope))),
+        )
+        tags = occurrence_tags_of(rewritten)
+        # As ``rewrite`` does: one evaluation's rewrite is still that
+        # evaluation, and keeps its enclosing control context.
+        shadow = (
+            OccurrenceShadowNode(desc.kind, span, slots, tags)
+            if tags
+            else ShadowNode(desc.kind, span, slots)
+        )
+        return materialize(self.unit, shadow, self.reporter, self.control_context)
 
     def substitution_binding(self, scope):
-        # `x := e` binds x to e for the rest of the enclosing block. Only a
-        # plain Name target binds.
-        if isinstance(self.target, Name):
+        # `x := e` binds x to a reference to this walrus's one evaluation
+        # (temporal choice 1, #7661).  Only a plain Name target binds.  The
+        # value is carried on the reference as the read for a temporal the
+        # evaluation never reached: a walrus nested in an operand that does
+        # not carry its bind out to the statement (an assignment's right-hand
+        # side, a call argument) or in a comprehension, which is refused at
+        # construction, so no element ever evaluates it.  A walrus that was
+        # never substituted carries no key: it binds x to its value.
+        if not isinstance(self.target, Name):
+            return None
+        evaluation = getattr(self, "evaluation", None)
+        if not isinstance(evaluation, str):
             return {self.target.id: self.value}
-        return None
+        return {
+            self.target.id: _evaluation_ref(
+                self,
+                self.target.span,
+                evaluation,
+                self.target.id,
+                unevaluated=self.value,
+            )
+        }
 
     def _construct_sugar(self):
         """`(name := value)` constructs NamedExprSugar for a plain Name target.
@@ -12636,10 +12695,12 @@ class NamedExpr(Expression):
             return super()._construct_sugar()
         from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
 
+        evaluation = getattr(self, "evaluation", None)
         return NamedExprSugar(
             name=self.target.id,
             value=self.value.sugar(),
             site=self.fragment,
+            evaluation=evaluation if isinstance(evaluation, str) else None,
         )
 
 
@@ -15585,10 +15646,17 @@ class Name(Expression):
                 )
             if bound.kind == "EvaluationRef" and bound.span != self.span:
                 # The same reason: an evaluation reference was minted at its
-                # binding site (the `x += e` target, a comprehension target),
-                # which is not where this read sits.  Re-span to the read;
-                # the evaluation key is unchanged.
-                return _evaluation_ref(self, self.span, bound.evaluation, bound.name)
+                # binding site (the `x += e` target, a walrus target, a
+                # comprehension target), which is not where this read sits.
+                # Re-span to the read; the evaluation key (and a walrus's
+                # unevaluated value) is unchanged.
+                return _evaluation_ref(
+                    self,
+                    self.span,
+                    bound.evaluation,
+                    bound.name,
+                    unevaluated=getattr(bound, "unevaluated", None),
+                )
             return bound
         span = self.line_col_span()
         if (
@@ -15724,14 +15792,16 @@ class BindingCoordinateRef(Expression):
 class EvaluationRef(Expression):
     """A read rewritten to a reference to one statement's evaluation.
 
-    Temporal choice 1 (#7661): after ``x += e`` substitution rewrites a read
-    of ``x`` to ``EvaluationRef(<the statement's evaluation key>)``; the
-    statement binds its completed value under that key at reduce
+    Temporal choice 1 (#7661): after ``x += e`` or ``(x := e)`` substitution
+    rewrites a read of ``x`` to ``EvaluationRef(<the evaluation key>)``; the
+    statement (or walrus) binds its completed value under that key at reduce
     (``AugAssign._evaluation_key``, ``EvaluationRefSugar``).  In a
     comprehension's element and conditions a read of a target name is an
     ``EvaluationRef`` to the coordinate the comprehension binds each member
     under (``ListComp._target_references``, ``ComprehensionSugar._member_ctx``).
-    Built by ``_evaluation_ref`` only.
+    A walrus's reference also carries its substituted value (``unevaluated``,
+    a slot, not a child), read only where the temporal never received the
+    evaluation.  Built by ``_evaluation_ref`` only.
     """
 
     evaluation: str
@@ -15746,8 +15816,13 @@ class EvaluationRef(Expression):
             EvaluationRefSugar,
         )
 
+        unevaluated = getattr(self, "unevaluated", None)
+        unevaluated = unevaluated.sugar() if isinstance(unevaluated, Node) else None
         return EvaluationRefSugar(
-            evaluation=self.evaluation, name=self.name, site=self.fragment
+            evaluation=self.evaluation,
+            name=self.name,
+            site=self.fragment,
+            unevaluated=unevaluated,
         )
 
 
