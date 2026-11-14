@@ -39,6 +39,14 @@ The residue of #7990:
 9. The constructor call and every stored value were reduced at
    substitution as identity testimony.  The testimony names the expression
    (the key reference's ``of``); nothing is reduced at substitution.
+
+The residue of #7998:
+
+10. A subscript key was reduced at substitution to decide which field a
+    store or read names, and the store's key replaced by that value.  The
+    field is the key expression's ground value (a literal, or a key
+    reference whose ``of`` is one); a key that is not ground names no known
+    field, and a store under it leaves every field unknown.
 """
 
 from __future__ import annotations
@@ -83,6 +91,7 @@ from sugar_source_tree.nodes import (
     ReceiverFieldStoreState,
     ReceiverFieldStoreStatement,
     Return,
+    Subscript,
     With,
     _occurrence_testimony,
 )
@@ -162,6 +171,41 @@ PATH_ROOT_TWICE = (
     "    d = {'a': []}\n"
     "    d['a'].append(1)\n"
     "    return (d, d)\n"
+)
+# 10. A subscript store and read on an object place, by a literal key.
+PLACE_ITEM = (
+    "class Box:\n"
+    "    pass\n"
+    "\n"
+    "def f():\n"
+    "    box = Box()\n"
+    "    box['a'] = 1\n"
+    "    return box['a']\n"
+)
+# 10. The store's key is a name holding a literal.
+PLACE_ITEM_BY_NAME = (
+    "class Box:\n"
+    "    pass\n"
+    "\n"
+    "def f():\n"
+    "    box = Box()\n"
+    "    k = 'a'\n"
+    "    box[k] = 1\n"
+    "    return box['a']\n"
+)
+# 10. The store's key is a call: not ground.
+PLACE_ITEM_BY_CALL = (
+    "class Box:\n"
+    "    pass\n"
+    "\n"
+    "def g():\n"
+    "    return 'a'\n"
+    "\n"
+    "def f():\n"
+    "    box = Box()\n"
+    "    box['a'] = 0\n"
+    "    box[g()] = 1\n"
+    "    return box['a']\n"
 )
 
 
@@ -583,11 +627,7 @@ def test_a_path_root_read_twice_evaluates_its_root_once(
 # ---------------------------------------------------------------------------
 
 
-def test_no_constructor_call_is_reduced_at_substitution(monkeypatch) -> None:
-    def refused(value):
-        raise AssertionError(f"reduced at substitution: {value.kind}")
-
-    monkeypatch.setattr(Assign, "_constructed_floor_value", staticmethod(refused))
+def test_no_constructor_call_is_reduced_at_substitution() -> None:
     body = _place_body()
     assign = next(
         node
@@ -620,3 +660,79 @@ def test_no_constructor_call_is_reduced_at_substitution(monkeypatch) -> None:
             assert value.span == store.value.span
             assert testimony.cid == _occurrence_testimony(value).cid
     assert any(state.selectors for state in states)
+
+
+# ---------------------------------------------------------------------------
+# 10. ``box[k] = 1``: which field a subscript store or read names is the key
+#     expression's ground value (``ground_subscript_key``), never the key
+#     reduced at substitution.
+# ---------------------------------------------------------------------------
+
+
+def _item_stores(body) -> list:
+    return [
+        node
+        for node in body
+        if isinstance(node, Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], Subscript)
+    ]
+
+
+def test_a_literal_key_read_reads_the_stores_key() -> None:
+    body = _function(PLACE_ITEM).substitute({}).body
+    (store,) = _item_stores(body)
+    assert isinstance(store.evaluation, str)
+    # The statement keeps its key expression: it evaluates it itself.
+    assert store.targets[0].slice_.kind == "Constant"
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    # ``box['a']`` reads what ``box['a'] = 1`` put there, through its key.
+    assert ret.value.kind == "EvaluationRef"
+    assert ret.value.place is True
+    assert ret.value.evaluation == store.evaluation
+
+
+def test_a_ground_name_key_read_reads_the_stores_key() -> None:
+    body = _function(PLACE_ITEM_BY_NAME).substitute({}).body
+    (store,) = _item_stores(body)
+    assert isinstance(store.evaluation, str)
+    # The store's key is ``k``'s key reference, never a value built for it.
+    key = store.targets[0].slice_
+    assert key.kind == "EvaluationRef"
+    assert not getattr(key, "place", False)
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    # ``k`` holds ``'a'`` (its reference's ``of``): ``box['a']`` reads it.
+    assert ret.value.kind == "EvaluationRef"
+    assert ret.value.place is True
+    assert ret.value.evaluation == store.evaluation
+
+
+def test_a_call_key_leaves_the_field_unknown_and_is_not_called_again() -> None:
+    body = _function(PLACE_ITEM_BY_CALL).substitute({}).body
+    first, by_call = _item_stores(body)
+    # The store keeps its call as the key: the statement evaluates it, once,
+    # at reduce; nothing was built for it at substitution.
+    assert by_call.targets[0].slice_.kind == "Call"
+    key_span = by_call.targets[0].slice_.span
+    calls = [
+        node
+        for statement in body
+        for node in statement.walk()
+        if node.kind == "Call" and node.span == key_span
+    ]
+    # No second term for ``g()``: only the store's own key expression.
+    assert len(calls) == 1, calls
+    ret = body[-1]
+    assert isinstance(ret, Return)
+    # ``g()`` may name ``'a'``: the read is not the first store's key, and
+    # the object after the store is unknown, never its fields before it.
+    assert not (
+        ret.value.kind == "EvaluationRef"
+        and getattr(ret.value, "place", False)
+        and ret.value.evaluation == first.evaluation
+    )
+    assert ret.value.kind == "Subscript"
+    assert isinstance(ret.value.value, ObjectPlaceStateV1)
+    assert ret.value.value.invalidated_by_opaque_call is True

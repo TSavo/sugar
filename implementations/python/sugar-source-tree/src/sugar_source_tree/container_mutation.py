@@ -844,19 +844,20 @@ def _decided_key(value) -> bool:
 def path_steps(receiver):
     """``(root, steps)`` of an attribute/subscript chain, or ``(None, ())``.
 
-    A step is ``("attr", name)``, ``("item", key)`` for a ground ``int``/``str``
-    constant key, or ``("undecided", None)``."""
-    from .nodes import Attribute, Constant, Subscript
+    A step is ``("attr", name)``, ``("item", key)`` for a key whose ground
+    value is an ``int``/``str`` literal (``ground_subscript_key``: a literal,
+    or a key reference whose ``of`` is one; never the key reduced), or
+    ``("undecided", None)``."""
+    from .nodes import Attribute, Subscript, ground_subscript_key
 
     steps = []
     node = receiver
     while isinstance(node, (Attribute, Subscript)):
         if isinstance(node, Attribute):
             steps.append(("attr", node.attr))
-        elif isinstance(node.slice_, Constant) and _decided_key(node.slice_.value):
-            steps.append(("item", node.slice_.value))
         else:
-            steps.append(("undecided", None))
+            key = ground_subscript_key(node.slice_)
+            steps.append(("undecided", None) if key is None else ("item", key.value))
         node = node.value
     if not steps:
         return None, ()

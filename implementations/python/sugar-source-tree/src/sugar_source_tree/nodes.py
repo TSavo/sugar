@@ -3884,7 +3884,8 @@ def _ground_value(node) -> "Optional[Node]":
     The one way substitution asks for a value to decide a shape: how many
     times a loop unrolls (``For._concrete_elements``, ``For._concrete_int``),
     which suite a ground condition selects (``While._ground_truth``), which
-    member a starred unpack gives each name (``Assign._ground_members``).
+    member a starred unpack gives each name (``Assign._ground_members``),
+    which field a subscript key names (``ground_subscript_key``).
     The answer decides the shape only.  It never stands in for a read: a read
     of an assigned name is still the reference to its key, and the statement
     that reads it still reads the key at reduce.
@@ -3928,6 +3929,22 @@ def _ground_value(node) -> "Optional[Node]":
             return None
         return _ground_value(display.elts[index])
     return None
+
+
+def ground_subscript_key(node) -> "Optional[Node]":
+    """The ``int``/``str`` literal a subscript key expression is, or None.
+
+    The one way a store or read decides which field (or member) a key names
+    (``ObjectPlaceStateV1._subscript_coordinate``,
+    ``container_mutation.path_steps``): the key expression's ground value
+    (``_ground_value``: a literal, or a key reference whose ``of`` is
+    ground), as a shape is decided.  The key is never reduced here: a key
+    that is not ground names no known field, and the statement evaluates the
+    key itself, once, at reduce."""
+    ground = _ground_value(node)
+    if ground is None or ground.kind != "Constant":
+        return None
+    return ground if type(ground.value) in (int, str) else None
 
 
 def _object_read_in(reference, reads, scope) -> bool:
@@ -9578,8 +9595,10 @@ def _substituted_store_target(statement, target, scope):
 
     The attribute/subscript NAME is a store selector, never a reference, but
     the RECEIVER is an ordinary expression: it is what carries an authenticated
-    object place or a constructed receiver into the store. Returns the rewritten
-    target, or ``None`` when nothing changed.
+    object place or a constructed receiver into the store. The index stays the
+    key expression: the statement evaluates it, once, at reduce; which field
+    it names is decided by its ground value only (``ground_subscript_key``).
+    Returns the rewritten target, or ``None`` when nothing changed.
     """
     from .shadow import rewrite
 
@@ -9589,10 +9608,6 @@ def _substituted_store_target(statement, target, scope):
         index, index_changed = statement._substitute_field(target.slice_, scope)
         if index_changed:
             changes["slice_"] = index
-        if isinstance(receiver, ObjectPlaceStateV1):
-            projected = receiver.subscript_key_projection(index)
-            if projected is not None:
-                changes["slice_"] = projected
     return rewrite(target, **changes) if changes else None
 
 
@@ -10745,40 +10760,6 @@ class Assign(Statement):
             ),
             self.reporter,
         )
-
-    @staticmethod
-    def _constructed_floor_value(value):
-        """A subscript key's value, to decide which field of an object place
-        a store or read names (``ObjectPlaceStateV1.subscript_key_projection``).
-        Never the object's constructor call nor a stored value: those are
-        named by their expression (``_occurrence_testimony``) and read
-        through their statement's key."""
-        from sugar_lift_py_tests.floor import CallSiteValue
-        from sugar_lift_py_tests.ir import _term_content_cid
-        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
-        from .binding_provenance import ConstructedValueTestimonyV1
-
-        # The value is read here as testimony: a deferred native-operation
-        # carrier is refused by name, never read as "not constructed".
-        outcome = _require_exit_set(
-            value.sugar().desugar(), owner="Assign._constructed_floor_value"
-        )
-        constructed = outcome.completed_value()
-        # A construction testimony has no arm to carry an owed item on: an
-        # owing value is not constructed here.
-        if constructed is None or outcome.owed_items():
-            return None
-        if isinstance(constructed, CallSiteValue):
-            constructed = constructed.force_floor(
-                None,
-                owner="Assign._constructed_floor_value",
-                project_callsite=False,
-            )
-        term = constructed.to_term(owner="Assign._constructed_floor_value")
-        testimony = ConstructedValueTestimonyV1.mint(
-            value.fragment, _term_content_cid(term)
-        )
-        return constructed, testimony
 
     def post_binding_statement(self, binding):
         # ``o = C()`` keeps its call: the statement evaluates it here, once,
@@ -19237,49 +19218,43 @@ class ObjectPlaceStateV1(Expression):
             evaluation,
         )
 
-    @staticmethod
-    def subscript_key_projection(key):
-        if isinstance(key, ConstructedValueProjectionV1):
-            key.validate_testimony()
-            constructed = (key.constructed_value, key.construction_testimony)
-        else:
-            constructed = Assign._constructed_floor_value(key)
-        if constructed is None:
-            return None
-        floor_value, testimony = constructed
-        from sugar_lift_py_tests.floor import StringValue, TermValue
-
-        supported = isinstance(floor_value, StringValue) or (
-            isinstance(floor_value, TermValue) and type(floor_value.value) is int
-        )
-        if not supported:
-            return None
-        if isinstance(key, ConstructedValueProjectionV1):
-            return key
-        return ConstructedValueProjectionV1.create(key, floor_value, testimony)
-
     def _subscript_coordinate(self, key):
-        projected = self.subscript_key_projection(key)
-        if projected is None:
+        """The field ``o[key]`` names, or None.  Decided by the key
+        expression's ground value (``ground_subscript_key``), never by
+        reducing the key: a key that is not ground names no known field.
+        The coordinate names the literal itself (its type and value), so
+        every occurrence of the same key names the same field."""
+        ground = ground_subscript_key(key)
+        if ground is None:
             return None
-        from sugar_lift_py_tests.ir import _term_content_cid
+        from sugar_lift_python_source.canonical import cid_of_json
         from .object_identity import (
             SubscriptFieldCoordinateV1,
             SubscriptKeyCoordinateV1,
         )
 
+        literal_cid = cid_of_json(
+            {
+                "kind": "python-ground-subscript-key",
+                "schemaVersion": "1",
+                "type": type(ground.value).__name__,
+                "value": str(ground.value),
+            }
+        )
+        # A ground literal is its own testimony: nothing was constructed.
         key_coordinate = SubscriptKeyCoordinateV1.mint(
-            constructed_value_cid=_term_content_cid(
-                projected.constructed_value.to_term(owner="subscript-key")
-            ),
-            construction_testimony_cid=projected.construction_testimony.cid,
+            constructed_value_cid=literal_cid,
+            construction_testimony_cid=literal_cid,
         )
         return SubscriptFieldCoordinateV1.mint(self.object_coordinate, key_coordinate)
 
     def with_subscript_store(self, key, value, occurrence, evaluation):
+        """The state after ``o[key] = value``.  A key that is not ground may
+        name any field, so after the store every field is unknown
+        (``invalidate``): never the fields as they were before it."""
         selector = self._subscript_coordinate(key)
         if selector is None:
-            return None
+            return self.invalidate(occurrence)
         return self._with_store(selector, value, occurrence, evaluation)
 
     def _with_store(self, selector, value, occurrence, evaluation):
@@ -19500,64 +19475,6 @@ class ObjectPlaceStateV1(Expression):
         )
 
 
-class ConstructedValueProjectionV1(Expression):
-    """A source value already constructed once and sealed by its testimony."""
-
-    constructed_value: object
-    construction_testimony: object
-    base: Expression
-    _child_fields = ("base",)
-
-    @classmethod
-    def create(cls, base, constructed_value, testimony):
-        from .backend import Child, Leaf, materialize
-        from .shadow import ShadowNode, _handle_of
-
-        return materialize(
-            base.unit,
-            ShadowNode(
-                "ConstructedValueProjectionV1",
-                base.span,
-                (
-                    ("constructed_value", Leaf(constructed_value)),
-                    ("construction_testimony", Leaf(testimony)),
-                    ("base", Child(_handle_of(base))),
-                ),
-            ),
-            base.reporter,
-        )
-
-    def substitute(self, scope):
-        del scope
-        return self
-
-    def validate_testimony(self):
-        from .binding_provenance import (
-            BindingProvenanceGap,
-            ConstructedValueTestimonyV1,
-        )
-        from sugar_lift_py_tests.ir import _term_content_cid
-
-        ConstructedValueTestimonyV1.decode(self.construction_testimony.wire())
-        observed = _term_content_cid(
-            self.constructed_value.to_term(owner="ConstructedValueProjectionV1")
-        )
-        if observed != self.construction_testimony.semantic_value_cid:
-            raise BindingProvenanceGap("constructed field testimony mismatch")
-
-    def _construct_sugar(self):
-        self.validate_testimony()
-        from sugar_lift_py_tests.sugar.constructed_object_place_sugar import (
-            ConstructedObjectPlaceSugar,
-        )
-
-        return ConstructedObjectPlaceSugar(
-            self.constructed_value,
-            self.construction_testimony,
-            self.fragment,
-        )
-
-
 class Attribute(Expression):
     value: Expression
     attr: str
@@ -19702,12 +19619,11 @@ class Subscript(Expression):
             self.slice_, _scope_after(scope, self.value, receiver)
         )
         if isinstance(receiver, ObjectPlaceStateV1):
-            projected_key = receiver.subscript_key_projection(index)
-            if projected_key is not None:
-                # The value the store put there, read through its key.
-                projected = receiver.subscript_read(projected_key, self)
-                if projected is not None:
-                    return projected
+            # The value the store put there, read through its key; the field
+            # is the one the index's ground value names (``ground_subscript_key``).
+            projected = receiver.subscript_read(index, self)
+            if projected is not None:
+                return projected
         if not receiver_changed and not index_changed:
             return self
         return rewrite(self, value=receiver, slice_=index)

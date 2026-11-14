@@ -123,8 +123,8 @@ def test_a_class_statement_is_reduced_once_however_often_it_is_called(
 
 # ---------------------------------------------------------------------------
 # A class statement that is not one completion.  No object place state is
-# built for it (``Assign._object_place_state`` returns ``None`` through
-# ``_constructed_floor_value`` before the address is read), and the statement
+# built for it (``Assign._object_place_state`` returned ``None`` through the
+# deleted ``_constructed_floor_value`` before the address was read), and the statement
 # is still reduced once however often the class is called.
 #
 # Each class call still carries the statement's halts as faces of the function
