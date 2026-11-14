@@ -18,7 +18,7 @@ Python semantic law made constructible here (distinct from the store lanes):
      or above the fixed count. Do not apply exact-arity to a starred pattern.
 
 Producer methods (this PR):
-  - ``Assign.substitute`` via ``_substituted_unpack_store_leaves``
+  - ``Assign.substitute`` via ``_substituted_assignment_targets``
   - ``Assign._flat_store_unpack_pairs`` / ``Assign._construct_sugar``
   - ``UnpackStoreAssignSugar.desugar``
 

@@ -125,6 +125,32 @@ class SubscriptUnpackTarget(UnpackProjectionTarget):
 
 
 @dataclass(frozen=True)
+class NestedUnpackTarget(UnpackProjectionTarget):
+    """Nested level: ``(b, o.x)`` in ``a, (b, o.x) = v``.
+
+    Python unpacks the level's member, then assigns each of its targets left
+    to right, before the next sibling target.  The member is unpacked through
+    the one positional unpack a statement submits
+    (``DynamicUnpackStoreAssignSugar.unpack``), under this level's own site,
+    never a second unpack law.
+    """
+
+    targets: tuple  # UnpackProjectionTarget per element, source order
+    site: object = dataclass_field(compare=False)
+
+    def apply_member(self, member, ctx) -> ExitSet:
+        from sugar_lift_py_tests.sugar.assign_sugar import (
+            DynamicUnpackStoreAssignSugar,
+        )
+
+        # The member is already reduced: the level has no value to evaluate.
+        level = DynamicUnpackStoreAssignSugar(
+            value=None, targets=self.targets, site=self.site
+        )
+        return level.unpack(member, ctx)
+
+
+@dataclass(frozen=True)
 class ApplyUnpackMemberSugar(Sugar):
     """One left-to-right step: typed target applies one roster member."""
 
