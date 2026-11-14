@@ -31,7 +31,8 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
-from sugar_lift_py_tests.ir import ctor, make_var, str_const
+from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+from sugar_lift_py_tests.ir import atomic, ctor, make_var, not_, num, str_const
 from sugar_lift_py_tests.occurrence import (
     entered,
     live_iterations,
@@ -39,7 +40,7 @@ from sugar_lift_py_tests.occurrence import (
     loop_symbolic_item_segment,
     occurrence_path,
 )
-from sugar_lift_py_tests.outcome import Completed, ExitSet
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
 from sugar_lift_py_tests.sugar.assigned_value import carried_write_key
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
@@ -632,9 +633,11 @@ def test_the_symbolic_item_binds_its_keys_in_its_own_segment() -> None:
     )
     runtime = loop.construction.loop_runtime
     [target] = runtime.target_evaluations
-    ctx, item = loop._enter_symbolic_item(
+    projected, enter, item = loop._enter_symbolic_item(
         runtime, ReduceContext.root(owner="live-symbolic-item"), None, ()
     )
+    # A name target's unpack is the item whole: one plain arm.
+    ctx = enter(projected.completed_value())
     ref = EvaluationRefSugar(evaluation=target, name="x", site=None)
     with item():
         assert live_iterations() == (loop_symbolic_item_segment(loop.target_cid),)
@@ -642,6 +645,62 @@ def test_the_symbolic_item_binds_its_keys_in_its_own_segment() -> None:
     assert isinstance(bound, SymbolicValue)
     # Outside the item nothing is bound: the key is the item's own.
     assert ctx.temporal.value_if_bound(target) is None
+
+
+_SYMBOLIC_UNPACK_EXIT = (
+    "def f(xs):\n"
+    "    for a, b in xs:\n"
+    "        if a:\n"
+    "            return b\n"
+)
+
+
+def test_an_exit_in_the_symbolic_item_reads_a_leaf_of_its_unpack() -> None:
+    # ``xs`` is symbolic, so ``for a, b in xs`` runs as its recurrence: the
+    # symbolic item unpacks through the same positional unpack a concrete
+    # item does.  ``return b`` reads ``b``'s key, bound on the unpack's
+    # completed arm to the item's second projection; the unpack's halt (too
+    # few, too many, not iterable) is an arm of the recurrence, never dropped.
+    loop = next(
+        statement
+        for statement in _function(_SYMBOLIC_UNPACK_EXIT).sugar().statements
+        if isinstance(statement, LoopRecurrenceSugar)
+    )
+    assert loop.outward_faces
+    xs = SymbolicValue(make_var("xs"))
+    outcome = loop._desugar_with_iterable(
+        xs, ReduceContext.root(owner="live-symbolic-unpack")
+    )
+    item = ctor(
+        "python:loop.item",
+        [str_const(loop.target_cid), xs.to_term(owner="test")],
+        symbol_kind="coordinate",
+    )
+    second = SymbolicValue(
+        ctor(
+            "python:unpack.project",
+            [item, num(1), num(2)],
+            symbol_kind="coordinate",
+        )
+    )
+    returned = [
+        getattr(entry, "value", None)
+        for exit_ in outcome.exits
+        if isinstance(exit_, Completed)
+        for entry in getattr(exit_.value, "statements", ())
+    ]
+    assert second in returned
+    completes = atomic(
+        "python:unpack.completes",
+        [ctor("python:unpack.destructure", [item, num(2)], symbol_kind="coordinate")],
+    )
+    unpack_halts = [
+        exit_
+        for exit_ in outcome.exits
+        if isinstance(exit_, Halted)
+        and isinstance(exit_.effect, SequenceUnpackRuntimeEffect)
+    ]
+    assert [exit_.guard for exit_ in unpack_halts] == [not_(completes)]
 
 
 def test_each_read_of_an_evaluation_is_spanned_at_its_use() -> None:
