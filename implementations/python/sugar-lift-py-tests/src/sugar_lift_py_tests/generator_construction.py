@@ -1276,9 +1276,13 @@ class YieldEffect:
 
 def _released_at_yield(machine):
     """``machine`` with every container its frame's writes hold ``arrived``
-    (``YieldEffect``)."""
+    (``YieldEffect``): an assignment's, a loop target's, and a walrus's
+    (its assigned value, and the value it presents)."""
     from dataclasses import replace
 
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        NamedExpressionValue,
+    )
     from sugar_lift_py_tests.floor.object_identity import arrived
 
     state = getattr(machine, "binding_state", None)
@@ -1294,6 +1298,26 @@ def _released_at_yield(machine):
             value = arrived(item.value)
             if value is not item.value:
                 item = replace(item, value=value)
+                changed = True
+        elif isinstance(item, GeneratorWalrusBindingV1) and isinstance(
+            item.bind, NamedExpressionValue
+        ):
+            bind = item.bind
+            assigned = arrived(bind.assigned_value)
+            presented = arrived(bind.presented_value)
+            if assigned is not bind.assigned_value or (
+                presented is not bind.presented_value
+            ):
+                item = replace(
+                    item,
+                    bind=NamedExpressionValue.carrying(
+                        bind.name,
+                        assigned,
+                        presented,
+                        evaluation=bind.evaluation,
+                        held=bind.held,
+                    ),
+                )
                 changed = True
         released.append(item)
     if not changed:

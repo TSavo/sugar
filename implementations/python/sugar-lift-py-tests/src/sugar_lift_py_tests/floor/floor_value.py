@@ -454,6 +454,43 @@ class FloorValue:
             node="Call",
         )
 
+    def undecided_truth(self, site, *, owner: str):
+        """``bool(self)`` whose answer is not decided here: a two-faced boolean.
+
+        The value's truth is the opaque ``python:truth(<term>, <site>)``,
+        keyed on the exact source site so two truth tests of the same term
+        are never forced to agree: true under ``py.truthy`` of it, false under
+        its complement.  It completes as that one ``PredicateValue``, so every
+        guarded construct splits on it (``if_sugar.predicate_formula``,
+        ``BoolOpSugar``'s selection, ``not``) and neither face is chosen.
+
+        It owes one ``undecided`` debt only when taking the truth may run
+        user code (``__bool__`` / ``__len__``), which this frame did not look
+        at: that is the two-faced unanswered outcome of
+        :meth:`_undecided_protocol_faces`, never this.  This form is for a
+        receiver whose truth dispatch is the builtin one (a ``list`` /
+        ``dict`` / ``set`` whose contents are not current,
+        ``object_identity.contents_current``): it cannot raise and runs no
+        code, so it is a guarded split with no halt and no debt.
+
+        A read that reached the floor with no site is the lifter's own gap:
+        it cannot key the truth, so it refuses by name.
+        """
+        if site is None:
+            _siteless_undecided_read(owner, f"bool({type(self).__name__})", "Call")
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.ir import ctor, py_truthy, str_const
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        truth = ctor(
+            "python:truth",
+            (self.to_term(owner=owner), str_const(occurrence_key(site))),
+        )
+        return ExitSet.completed(
+            PredicateValue(py_truthy(truth), site, operand_callsites=self.callsites())
+        )
+
     def _undecided_protocol_faces(
         self, protocol: str, operands, site, *, owner: str, read: str, node: str
     ):

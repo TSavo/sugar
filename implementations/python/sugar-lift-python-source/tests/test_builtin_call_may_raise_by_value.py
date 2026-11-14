@@ -525,6 +525,235 @@ def test_a_list_a_generator_yielded_is_not_current_when_it_resumes():
     assert not contents_current(held.value)
 
 
+# The residue of #8117: truth, a slice assignment's right-hand side, item
+# stores and deletes outside the one door, ``match`` patterns, and a
+# generator's walrus bindings each read through ``contents_current``.
+
+
+def _stale_containers():
+    from sugar_lift_py_tests.floor import DictValue
+    from sugar_lift_py_tests.floor.object_identity import arrived
+    from sugar_lift_py_tests.floor.set_value import SetValue
+
+    _made, stale = _made_and_arrived()
+    return (
+        stale,
+        arrived(
+            DictValue(((StringValue("k"), TermValue(1)),), allocation="made-here")
+        ),
+        arrived(SetValue((TermValue(1),), allocation="made-here")),
+    )
+
+
+def test_a_current_containers_truth_is_its_emptiness():
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+
+    made, _stale = _made_and_arrived()
+    assert type(made.truth("truth-site").completed_value()) is TrueBoolLiteralSugar
+    empty = ListValue((), allocation="made-here")
+    assert type(empty.truth("truth-site").completed_value()) is FalseBoolLiteralSugar
+
+
+def test_a_stale_containers_truth_is_the_undecided_truth_never_its_emptiness():
+    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+
+    for container in _stale_containers():
+        outcome = container.truth("truth-site")
+        truth = outcome.completed_value()
+        # One boolean, true under the opaque truth of the value and false
+        # under its complement: neither face is chosen.
+        assert type(truth) is PredicateValue
+        assert truth.formula.name == "py.truthy"
+        assert truth.formula.args[0].name == "python:truth"
+        # A builtin container's truth runs no code: no halt, no debt.
+        assert outcome.halts() == ()
+        assert outcome.owed_items() == ()
+    # Keyed on the site: two truth tests are never forced to agree.
+    stale = _stale_containers()[0]
+    assert (
+        stale.truth("truth-site").completed_value().formula
+        != stale.truth("other-truth-site").completed_value().formula
+    )
+
+
+def test_a_siteless_undecided_truth_refuses_by_name():
+    from sugar_source_tree.panic import SugarNotWritten
+
+    with pytest.raises(SugarNotWritten):
+        _stale_containers()[0].truth(None)
+
+
+@pytest.mark.parametrize(
+    "test",
+    [
+        "return 1 if xs else 0\n",
+        "if xs:\n        return 1\n    return 0\n",
+        "return 0 if not xs else 1\n",
+    ],
+)
+def test_a_helper_never_tests_the_truth_its_list_arrived_with(tmp_path, test):
+    # ``xs`` reaches ``g`` by binding: its truth is not the emptiness of the
+    # contents the caller built, so both faces stand.
+    source = "def g(xs):\n    " + test + "def f():\n    return g([1, 2])\n"
+    returns, _halts = _returns(tmp_path, source)
+    assert TermValue(1) in returns
+    assert TermValue(0) in returns
+
+
+def _completed_values(outcome):
+    from sugar_lift_py_tests.outcome import Completed
+
+    return [exit_.value for exit_ in outcome.exits if isinstance(exit_, Completed)]
+
+
+def _undecided_mutation(outcome):
+    """The undecided item mutation: the receiver after it unknown, and only
+    an undetermined raise -- never an exception read from stale contents."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+
+    completed = _completed_values(outcome)
+    assert completed
+    assert all(
+        type(value) is SymbolicValue
+        and value.term.name == "python:receiver_after_call"
+        for value in completed
+    )
+    assert outcome.halts()
+    assert all(
+        type(halt.effect) is UndeterminedRaiseEffect for halt in outcome.halts()
+    )
+
+
+def test_a_stale_list_on_the_right_of_a_slice_assignment_has_no_members():
+    from sugar_lift_py_tests.floor.slice_value import SliceValue
+    from sugar_lift_py_tests.operations.slice_assign_iterable_operation import (
+        SliceAssignIterableOperation,
+    )
+
+    made, stale = _made_and_arrived()
+    operation = SliceAssignIterableOperation(owner="test", blame="slice-site")
+    assert operation.submit(made, None).completed_value() == made.elements
+    _undecided_mutation(operation.submit(stale, None))
+    # The store into a current list takes no member from it either.
+    target = ListValue((TermValue(0),), allocation="made-here")
+    whole = SliceValue(None, None, None)
+    _undecided_mutation(target.setitem(whole, stale, "slice-site", None))
+    stored = target.setitem(whole, made, "slice-site", None).completed_value()
+    assert stored == ListValue((TermValue(1), TermValue(2)))
+
+
+def test_a_store_or_delete_outside_the_door_never_reads_stale_contents():
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.floor.slice_value import SliceValue
+
+    made, stale = _made_and_arrived()
+    # Current contents decide the bound: index 5 of ``[1, 2]`` is IndexError,
+    # the store's one decided halt.
+    decided = made.setitem(TermValue(5), TermValue(0), "store-site", None)
+    assert decided.halts() and not _completed_values(decided)
+    assert all(
+        type(halt.effect) is not UndeterminedRaiseEffect for halt in decided.halts()
+    )
+    # Stale ones do not: no IndexError, no member written or removed.
+    _undecided_mutation(stale.setitem(TermValue(5), TermValue(0), "store-site", None))
+    _undecided_mutation(stale.setitem(TermValue(0), TermValue(9), "store-site", None))
+    _undecided_mutation(stale.delitem(TermValue(5), "del-site", None))
+    _undecided_mutation(stale.delitem(SliceValue(None, None, None), "del-site", None))
+    stale_dict = _stale_containers()[1]
+    _undecided_mutation(stale_dict.delitem(StringValue("z"), "del-site", None))
+    _undecided_mutation(stale_dict.delitem(StringValue("k"), "del-site", None))
+
+
+def test_a_mapping_patterns_rest_of_a_stale_dict_is_not_current():
+    from sugar_lift_py_tests.floor import DictValue
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+    from sugar_lift_py_tests.sugar.match_sugar import _mapping_rest
+
+    stale_dict = _stale_containers()[1]
+    made_dict = DictValue(((StringValue("k"), TermValue(1)),), allocation="made-here")
+    for subject, current in ((made_dict, True), (stale_dict, False)):
+        matched = _mapping_rest(subject, (), "rest", "match-site").completed_value()
+        ((key, rest),) = matched.binds
+        assert key == "rest"
+        assert contents_current(rest) is current
+
+
+def test_a_sequence_pattern_over_a_stale_list_never_takes_its_length():
+    from sugar_lift_py_tests.sugar.match_sugar import (
+        CapturePatternSpec,
+        SequencePatternSpec,
+        match_pattern,
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    _made, stale = _made_and_arrived()
+    wildcard = CapturePatternSpec(None, None)
+    spec = SequencePatternSpec(before=(wildcard, wildcard))
+    # Its length is the ``call:len`` coordinate: the pattern test is refused
+    # by name, never matched against the two members it arrived with.
+    with pytest.raises(SugarNotWritten):
+        match_pattern(spec, stale, "match-site", None)
+
+
+def test_a_generators_walrus_binding_is_not_current_when_it_resumes():
+    from dataclasses import dataclass
+
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        NamedExpressionValue,
+    )
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+    from sugar_lift_py_tests.generator_construction import (
+        GeneratorWalrusBindingV1,
+        _released_at_yield,
+    )
+
+    @dataclass(frozen=True)
+    class _Frame:
+        binding_state: tuple
+
+    made, _stale = _made_and_arrived()
+    walrus = NamedExpressionValue("xs", made, evaluation="walrus-key")
+    frame = _Frame((GeneratorWalrusBindingV1(walrus),))
+    (held,) = _released_at_yield(frame).binding_state
+    assert held.name == "xs" and held.evaluation == "walrus-key"
+    assert held.bind.assigned_value == made
+    assert not contents_current(held.bind.assigned_value)
+    assert not contents_current(held.bind.presented_value)
+
+
+def test_a_list_a_generators_walrus_yielded_is_not_current_when_it_resumes():
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+    from sugar_lift_py_tests.generator_construction import (
+        GeneratorConstructionV1,
+        GeneratorWalrusBindingV1,
+        YieldEffect,
+    )
+
+    from test_generator_pre_yield_assign_execution import _steps
+
+    steps = _steps("def g():\n    yield (xs := [1])\n    return len(xs)\n")
+    yielded = GeneratorConstructionV1.allocate(
+        allocation_coordinate="enter:walrus-yielded-list",
+        frame_coordinate="frame:walrus-yielded-list",
+        binding_state=(),
+        steps=steps,
+    ).resume()
+    assert isinstance(yielded, YieldEffect)
+    (held,) = [
+        binding
+        for binding in yielded.machine.binding_state
+        if isinstance(binding, GeneratorWalrusBindingV1) and binding.name == "xs"
+    ]
+    assert held.bind.assigned_value == ListValue((TermValue(1),))
+    assert not contents_current(held.bind.assigned_value)
+
+
 def test_a_str_method_over_an_opaque_argument_keeps_its_marker():
     from types import SimpleNamespace
 
