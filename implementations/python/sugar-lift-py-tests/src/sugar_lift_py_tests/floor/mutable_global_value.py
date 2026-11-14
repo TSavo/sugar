@@ -74,12 +74,7 @@ class MutableGlobalValue(FloorValue):
         from sugar_lift_py_tests.floor.ground_exit import ground_raise_effect
         from sugar_lift_py_tests.ir import atomic
         from sugar_lift_py_tests.outcome import ExitSet
-        from sugar_lift_py_tests.outcome.exit_set import (
-            Completed,
-            Halted,
-            complement_guard,
-            partition,
-        )
+        from sugar_lift_py_tests.outcome.exit_set import complement_guard, partition
 
         raises = atomic(
             "python.mutable_dict_lookup_raises_key_error",
@@ -92,23 +87,23 @@ class MutableGlobalValue(FloorValue):
             ("mutable-global-dict-subscript", _occurrence_key(site))
         )
         coordinate = self.py_subscript_coordinate(index, site)
-        completed = coordinate.completed_value()
         effect = ground_raise_effect(
             exception_name="KeyError",
             site=site,
             owner="MutableGlobalValue.subscript",
         )
-        return ExitSet(
-            (
-                Halted(raises, effect, faces=frozenset({halted_face})),
-                Completed(
-                    complement_guard(raises),
-                    completed,
-                    frozenset({completed_face}),
-                    coordinate.owed_items(),
-                ),
+        # The lookup splits beneath every completed arm of the coordinate:
+        # each arm's guard, faces and ``owed`` ride onto both faces, and a
+        # halt of the coordinate stands.
+        return coordinate.sequence(
+            lambda value: ExitSet.halted(effect)
+            .guarded(raises, halted_face)
+            .union(
+                ExitSet.completed(value).guarded(
+                    complement_guard(raises), completed_face
+                )
             )
-        ).normalize()
+        )
 
     def contains(self, item, site):
         if self.kind != "dict":

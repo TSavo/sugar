@@ -271,39 +271,25 @@ class ObjectValue(FloorValue):
             from dataclasses import replace
 
             from sugar_lift_py_tests.effect import RaiseEffect
-            from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+            from sugar_lift_py_tests.outcome import ExitSet
 
             def attribute_owned(outcome):
                 if not isinstance(outcome, ExitSet):
                     return outcome
-                return ExitSet(
-                    tuple(
-                        (
-                            Halted(
-                                face.guard,
-                                (
-                                    replace(
-                                        face.effect,
-                                        producer_node_owner="Attribute",
-                                    )
-                                    if isinstance(face.effect, RaiseEffect)
-                                    else face.effect
-                                ),
-                                face.state,
-                                face.faces,
-                                face.owed,
-                            )
-                            if isinstance(face, Halted)
-                            else Completed(
-                                face.guard,
-                                face.value,
-                                face.faces,
-                                face.owed,
-                            )
+                # A raise continues as the Attribute's own halt beneath its
+                # arm (guard, faces and ``owed`` ride on); every other arm
+                # stands.
+                return outcome.sequence(
+                    lambda value: ExitSet.completed(value),
+                    consume=lambda halt: (
+                        ExitSet.halted(
+                            replace(halt.effect, producer_node_owner="Attribute"),
+                            state=halt.state,
                         )
-                        for face in outcome.exits
-                    )
-                ).normalize()
+                        if isinstance(halt.effect, RaiseEffect)
+                        else None
+                    ),
+                )
 
             return attribute_owned(
                 self.call_method_value(

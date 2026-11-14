@@ -57,20 +57,12 @@ def store_faces(effect):
     from sugar_lift_py_tests.floor.runtime_effect_testimony import (
         RuntimeEffectTestimony,
     )
-    from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
-        ExitSet,
-        Halted,
-        complement_guard,
-    )
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, complement_guard
 
     halted = store_halted_guard(effect)
-    return ExitSet(
-        (
-            Halted(halted, effect, None),
-            Completed(complement_guard(halted), RuntimeEffectTestimony(effect)),
-        )
-    ).normalize()
+    return ExitSet.halted(effect, halted).union(
+        ExitSet.completed(RuntimeEffectTestimony(effect), complement_guard(halted))
+    )
 
 
 def store_occurrence_address(effect) -> str:
