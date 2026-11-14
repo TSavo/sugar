@@ -1,15 +1,10 @@
-"""Plan Cut 3 core: a pytest.raises-shaped manager derives end to end.
+"""An installed pytest.raises-shaped manager is an imported call, cited.
 
-This is the payoff of Cuts 2 (re.search recognition) + 6 (frame-door __init__
-field seeding) + the existing isinstance semantic. A factory that returns a
-RaisesExc whose __init__ stores ``expected``/``match`` and whose __exit__
-checks ``isinstance(exc, self.expected)`` and ``re.search(self.match, ...)``
-constructs a SourceDerivedContextManagerRefV1 -- not enter-may-halt, not a gap.
-
-Key soundness note: ``re`` is NOT enrolled. re.search is recognized at the
-authenticated import target by the Cut 2 seam (ImportMemberValue), so it never
-materializes re's own body (which drags enum). Only the manager's own
-distribution is enrolled.
+``raiselib`` is installed beside the corpus, not one of step 2's files. The
+corpus file imports it, and the import does not enroll it: an imported call
+is a coordinate plus an edge, answered by an imported proof, and its body is
+never lifted (#7796). So the manager is cited, never derived from raiselib's
+source.
 """
 
 from __future__ import annotations
@@ -77,8 +72,7 @@ def _install(root: Path):
 
 
 def _derive(tmp_path: Path, use: str):
-    # ``use.py`` imports raiselib, so raiselib joins the population through
-    # its import alone.
+    # ``use.py`` imports raiselib; the import is an edge, not population.
     _install(tmp_path)
     try:
         corpus = tmp_path / "c"
@@ -101,17 +95,17 @@ def _derive(tmp_path: Path, use: str):
         sys.path[:] = [p for p in sys.path if not p.endswith("/site")]
 
 
-def test_raises_without_match_derives(tmp_path) -> None:
+def test_installed_raises_without_match_is_cited(tmp_path) -> None:
     kinds = _derive(
         tmp_path,
         "from raiselib import raises\n\ndef f():\n    with raises(ValueError):\n        pass\n",
     )
-    assert kinds == ["SourceDerivedContextManagerRefV1"], kinds
+    assert kinds == ["OpaqueCitedContextManagerRefV1"], kinds
 
 
-def test_raises_with_match_derives_via_re_recognition(tmp_path) -> None:
+def test_installed_raises_with_match_is_cited(tmp_path) -> None:
     kinds = _derive(
         tmp_path,
         'from raiselib import raises\n\ndef f():\n    with raises(ValueError, match="bad"):\n        pass\n',
     )
-    assert kinds == ["SourceDerivedContextManagerRefV1"], kinds
+    assert kinds == ["OpaqueCitedContextManagerRefV1"], kinds

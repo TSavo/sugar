@@ -382,7 +382,6 @@ def _measure_clean(module, path: Path, workspace: Path) -> dict[str, Any]:
             file_rel=path.name,
             workspace_root=iso,
             contract_refs=refs,
-            distribution="recensus_path_smoke",
             source_workspace_root=iso,
         )
         row = dict(row)
@@ -424,7 +423,6 @@ def _measure_panic(module, path: Path, workspace: Path) -> dict[str, Any]:
         row = measure_file_via_enumerate(
             file_rel=path.name,
             workspace_root=iso,
-            distribution="recensus_path_smoke",
             source_workspace_root=iso,
         )
     finally:

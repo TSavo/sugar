@@ -299,7 +299,6 @@ class SourceResolutionSession:
     __slots__ = (
         "enabled",
         "enrolled_distributions",
-        "imported_modules",
         "export_resolutions",
         "export_terminals",
         "frame_results",
@@ -332,10 +331,6 @@ class SourceResolutionSession:
         # MaterializeModule. An empty set is authoritative emptiness; there is
         # no unknown/None state that can silently admit every distribution.
         self.enrolled_distributions = enrolled_distributions
-        # Top-level modules the opened code imports, read from the one import
-        # table (``SourceUnit.imported_modules``). Each open contributes its
-        # own; a module the code imports is in the population.
-        self.imported_modules: frozenset[str] = frozenset()
         # (distribution_artifact_cid, module_name, exported_name) -> pure-entry
         # resolution (includes module-structural reexport warrants; no path
         # import_binding_cid).

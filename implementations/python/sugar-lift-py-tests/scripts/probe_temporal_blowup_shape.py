@@ -237,7 +237,6 @@ def _timed_construct(module_source: str, bound_s: float) -> tuple[str, float]:
                 workspace_root=root,
                 file_rel="synth/subject.py",
                 contract_refs=None,
-                distribution="synth-dist",
             )
             kind = row.get("terminalKind")
             if kind is None:

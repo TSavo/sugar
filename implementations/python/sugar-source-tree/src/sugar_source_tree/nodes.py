@@ -1176,22 +1176,6 @@ class SourceUnit:
 
         return member_target_symbol(head_target, tuple(reversed(attributes)))
 
-    def imported_modules(self) -> frozenset[str]:
-        """The top-level module of every import-bound reference in this unit.
-
-        Read from the one import reference table (#7837): nothing else names
-        what this code imports. This is the population the code brings with
-        it; no package name is ever listed in its place. Empty before a typed
-        root exists, and for code that uses no import.
-        """
-        runner = self._lexical_import_pass()
-        if runner is None:
-            return frozenset()
-        return frozenset(
-            target.removeprefix("python:").split(".", 1)[0]
-            for target in runner.reference_targets.values()
-        )
-
     def builtin_reference_at(self, name: str, span) -> Optional[str]:
         """``python:builtins.<name>`` when the name read at ``span`` falls
         through to the builtin namespace, else ``None``.

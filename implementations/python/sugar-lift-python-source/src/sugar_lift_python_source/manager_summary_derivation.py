@@ -1732,7 +1732,8 @@ def populate_source_derived_resource_refs(
 
     ``session`` owns every resolution memo for this population. Its roster is
     step 2's file list (``project_file_roster``), which this function never
-    widens; what the code imports joins through ``imported_modules``.
+    widens: what the code imports is an edge answered by an imported proof,
+    never population (#7796).
     Multi-resolve
     owners (file-open, package enumeration, census walk via ``walk_session_for``)
     must pass one shared session so export/frame amortization is real across
@@ -1773,13 +1774,7 @@ def populate_source_derived_resource_refs(
     # Multi-resolve owner entry: one session for every receipt in this loop.
     # Do not call session_or_new inside the receipt loop.
     session = session_or_new(session)
-    # Population follows imports: the modules this code imports, read from
-    # the one import table, join the population. Never narrowed mid-walk. The
-    # roster itself (step 2's file list) is never widened here.
-    session.imported_modules = (
-        session.imported_modules | source_file.unit.imported_modules()
-    )
-    context = source_file.root.unit.construction_context
+    context =source_file.root.unit.construction_context
     if context is None:
         return
     # Reuse the already-open typed module. A fresh lexical pass used to

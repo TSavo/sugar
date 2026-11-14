@@ -480,7 +480,6 @@ def demand_context_manager_resolution_events(
     workspace_root: Path,
     file_rel: str,
     source_cid: str,
-    distribution: str | None = None,
     source_workspace_root: Path | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Enumerate the raw, coordinate-keyed table With construction consumed."""
@@ -490,7 +489,6 @@ def demand_context_manager_resolution_events(
         at=file_memento(file_rel=file_rel, source_cid=source_cid),
         seek=False,
         options={
-            "distribution": distribution,
             "sourceWorkspaceRoot": (
                 str(source_workspace_root)
                 if source_workspace_root is not None
@@ -787,16 +785,14 @@ def demand_construction_residual(
     workspace_root: Path,
     file_rel: str,
     source_cid: str | None = None,
-    distribution: str | None = None,
     source_workspace_root: Path | None = None,
 ) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """D3: sugar.enumerate level=facts + auditFrontier → construction residual.
 
-    ``distribution`` and ``source_workspace_root`` travel with the demand for
-    the same reason D2 carries them: D3 CONSTRUCTS, so its open needs the same
-    preconstruction authority and the same locus authority D2 used. Sending D3
-    with less than D2 had is what let the frontier report a manufactured
-    ``RuntimeSelectedContextManager`` at every ``With``.
+    ``source_workspace_root`` travels with the demand for the same reason D2
+    carries it: D3 CONSTRUCTS, so its open needs the same locus authority D2
+    used. The population is step 2's file list, which the opener reads from
+    the root; no distribution name travels with the demand (#7796).
     """
     at = file_memento(file_rel=file_rel, source_cid=source_cid)
     result = enumerate_rpc(
@@ -807,7 +803,6 @@ def demand_construction_residual(
         options={
             "auditFrontier": True,
             "allowedBrokenComponents": ["python"],
-            "distribution": distribution,
             "sourceWorkspaceRoot": (
                 str(source_workspace_root)
                 if source_workspace_root is not None
@@ -1090,7 +1085,6 @@ def measure_file_via_enumerate(
     file_rel: str,
     source_cid: str | None = None,
     contract_refs=None,
-    distribution: str | None = None,
     source_workspace_root: Path | None = None,
 ) -> dict[str, Any]:
     """One terminal, plus the attendance the walk that produced it can testify to.
@@ -1119,7 +1113,6 @@ def measure_file_via_enumerate(
                 file_rel=file_rel,
                 source_cid=source_cid,
                 contract_refs=contract_refs,
-                distribution=distribution,
                 source_workspace_root=source_workspace_root,
                 progress=progress,
             )
@@ -1156,7 +1149,6 @@ def _measure_seat_under_ceiling(
     file_rel: str,
     source_cid: str | None,
     contract_refs,
-    distribution: str | None,
     source_workspace_root: Path | None,
     progress: dict[str, Any],
 ) -> dict[str, Any]:
@@ -1166,7 +1158,6 @@ def _measure_seat_under_ceiling(
         file_rel=file_rel,
         source_cid=source_cid,
         contract_refs=contract_refs,
-        distribution=distribution,
         source_workspace_root=source_workspace_root,
         progress=progress,
     )
@@ -1215,7 +1206,6 @@ def _terminal_via_enumerate(
     file_rel: str,
     source_cid: str | None = None,
     contract_refs=None,
-    distribution: str | None = None,
     source_workspace_root: Path | None = None,
     progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -1344,7 +1334,6 @@ def _terminal_via_enumerate(
             workspace_root=workspace_root,
             file_rel=file_rel,
             source_cid=source_cid,
-            distribution=distribution,
             source_workspace_root=source_workspace_root,
         )
     except BaseException as error:  # noqa: BLE001 — distinct instrument/product paths
@@ -1412,7 +1401,6 @@ def _terminal_via_enumerate(
             workspace_root=workspace_root,
             file_rel=file_rel,
             source_cid=source_cid,
-            distribution=distribution,
             source_workspace_root=source_workspace_root,
         )
     except BaseException as error:  # noqa: BLE001 — residual failed; roster stands

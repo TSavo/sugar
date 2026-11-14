@@ -47,7 +47,6 @@ def _construct(module_source: str, bound_s: float):
             workspace_root=root,
             file_rel="synth/subject.py",
             contract_refs=None,
-            distribution="synth-dist",
         )
         return row.get("terminalKind"), time.monotonic() - started
 

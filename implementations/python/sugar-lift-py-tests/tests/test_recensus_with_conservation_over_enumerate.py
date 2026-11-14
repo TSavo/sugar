@@ -104,10 +104,9 @@ def _source_cid(install_root: Path) -> str:
     row = CONSUMER.measure_file_via_enumerate(
         workspace_root=install_root,
         file_rel=FILE_REL,
-        distribution="widget",
         source_workspace_root=install_root,
     )
-    cid = (row.get("inputKey") or {}).get("sourceCid")
+    cid =(row.get("inputKey") or {}).get("sourceCid")
     assert isinstance(cid, str) and cid, row.get("inputKey")
     return cid
 
@@ -127,10 +126,7 @@ def test_the_cm_level_answers_with_cm_nodes_not_some_other_relations(
         workspace_root=installed_corpus,
         at=CONSUMER.file_memento(file_rel=FILE_REL, source_cid=cid),
         seek=False,
-        options={
-            "distribution": "widget",
-            "sourceWorkspaceRoot": str(installed_corpus),
-        },
+        options={"sourceWorkspaceRoot": str(installed_corpus)},
     )
     nodes = result.get("nodes") or []
     # Positive: an empty answer would satisfy any all() below it.
@@ -156,7 +152,6 @@ def test_with_items_conserve_through_the_census_enumerate_door(
         workspace_root=installed_corpus,
         file_rel=FILE_REL,
         source_cid=cid,
-        distribution="widget",
         source_workspace_root=installed_corpus,
     )
     assert gaps == [], gaps
@@ -212,7 +207,6 @@ def test_a_foreign_node_kind_is_named_not_silently_dropped(
                 workspace_root=installed_corpus,
                 file_rel=FILE_REL,
                 source_cid="cid-does-not-matter-here",
-                distribution="widget",
                 source_workspace_root=installed_corpus,
             )
     finally:

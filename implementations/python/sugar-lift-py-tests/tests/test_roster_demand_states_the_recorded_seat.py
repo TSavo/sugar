@@ -139,7 +139,6 @@ def test_the_served_terminal_measures_the_file(installed_corpus) -> None:
     row = CONSUMER.measure_file_via_enumerate(
         workspace_root=package,
         file_rel=file_rel,
-        distribution="widget",
         source_workspace_root=install_root,
     )
 
@@ -194,7 +193,6 @@ def test_the_refused_locus_becomes_a_roster_gap_terminal(installed_corpus) -> No
     row = CONSUMER.measure_file_via_enumerate(
         workspace_root=package,
         file_rel=file_rel,
-        distribution="widget",
         source_workspace_root=package,
     )
 

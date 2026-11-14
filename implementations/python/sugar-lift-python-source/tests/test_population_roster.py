@@ -1,12 +1,13 @@
-"""The roster is step 2's file list; the rest of the population follows imports.
+"""The population is step 2's file list and nothing else.
 
 Every ``sugar.enumerate`` level opens its file through the one opener, and the
 opener populates under the walk session for the root (#7796). That session's
 roster is ``project_file_roster(root)``: the content CID of every file step 2
-lists. No distribution is enrolled by name and no module by a module-scoped
-entry or a standing extra. A module is enrolled when the source its artifact
-seats for it is a listed file, or when the opened code imports its top-level
-module (``imported_modules``, read from the one import table; #7859, #7866).
+lists. No distribution is enrolled by name, no module by a module-scoped
+entry or a standing extra, and no module by being imported. A module is
+enrolled only when the source its artifact seats for it is a listed file. An
+imported call is a coordinate plus an edge answered by an imported proof; its
+body is never lifted, so an installed module outside the list is cited.
 """
 
 from __future__ import annotations
@@ -22,23 +23,11 @@ from sugar_lift_python_source.resolution_session import (
     project_file_roster,
 )
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.context_manager_contract import (
-    EffectBoundarySemanticsV1,
-    NeverSuppressesDispositionV1,
-    ProtocolResourceSemanticsV1,
-)
 from sugar_lift_py_tests.context_manager_resolution import (
+    OpaqueCitedContextManagerRefV1,
     SourceDerivedContextManagerRefV1,
 )
-from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.floor.term_value import TermValue
-from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-from sugar_lift_py_tests.outcome import Complete, Halted
-from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
-from sugar_lift_py_tests.sugar.with_source_resource_sugar import WithSourceResourceSugar
-from sugar_source_tree.nodes import FunctionDef, With
 from sugar_source_tree.reporter import CollectingReporter
 
 def setup_function() -> None:
@@ -111,7 +100,7 @@ def test_the_open_populates_under_the_file_roster(tmp_path, monkeypatch) -> None
     assert seen[0].enrolled_distributions == project_file_roster(root)
 
 
-def test_a_listed_file_or_an_import_enrolls_a_module() -> None:
+def test_only_a_listed_file_enrolls_a_module() -> None:
     session = SourceResolutionSession(
         enrolled_distributions=frozenset({"blake3-512:listed"})
     )
@@ -121,64 +110,35 @@ def test_a_listed_file_or_an_import_enrolls_a_module() -> None:
     assert _graph_is_off_population(other, session=session, module_name="m")
     assert not _graph_is_off_population(listed, session=session)
     assert _graph_is_off_population(other, session=session)
-    # The code imports ``m``: its artifact's module joins the population.
-    session.imported_modules = frozenset({"m"})
-    assert not _graph_is_off_population(other, session=session, module_name="m.sub")
-    assert _graph_is_off_population(other, session=session, module_name="n")
-    # An import never admits a module the artifact holds no source for, nor a
-    # module no artifact authenticates.
+    # Nothing else admits: not a module the artifact holds no source for, not
+    # a module no artifact authenticates.
     assert _graph_is_off_population(_graph(None), session=session, module_name="m")
     assert _graph_is_off_population(None, session=session, module_name="m")
 
 
-def test_importing_contextlib_stops_citing_nullcontext(tmp_path) -> None:
-    """Truthful twin: the code imports contextlib, so nullcontext is derived
-    from its source as a protocol resource that never suppresses."""
+def test_the_session_has_no_import_admission() -> None:
+    """An import is an edge, not population: the session carries no second
+    roster of imported modules beside the file list (#7796)."""
+    session = SourceResolutionSession(enrolled_distributions=frozenset())
+    assert not hasattr(session, "imported_modules")
+
+
+def test_importing_contextlib_leaves_nullcontext_cited(tmp_path) -> None:
+    """contextlib is installed, not one of step 2's files. Importing it does
+    not enroll it: nullcontext is an imported call, cited, never lifted."""
     source = (
         "from contextlib import nullcontext\n"
         "\n"
         "def complete_body():\n"
         "    with nullcontext():\n"
         "        return 1\n"
-        "\n"
-        "def raising_body():\n"
-        "    with nullcontext():\n"
-        "        raise ValueError('boom')\n"
     )
     root = _project(tmp_path, **{"nc.py": source})
     source_file = open_source_file_for_construction(
         root / "nc.py", root=root, reporter=CollectingReporter()
     )
     refs = source_file.root.unit.construction_context.source_derived_contract_refs
-    assert len(refs) == 2
+    assert len(refs) == 1
     for ref in refs.values():
-        assert isinstance(ref, SourceDerivedContextManagerRefV1), ref
-        assert isinstance(ref.semantics, ProtocolResourceSemanticsV1)
-        assert not isinstance(ref.semantics, EffectBoundarySemanticsV1)
-        assert isinstance(ref.semantics.exit.disposition, NeverSuppressesDispositionV1)
-    for node in source_file.nodes():
-        if isinstance(node, With):
-            sugar = node.sugar()
-            assert isinstance(sugar, WithSourceResourceSugar)
-            assert not isinstance(sugar, WithEffectBoundarySugar)
-    funcs = {
-        node.name: node
-        for node in source_file.nodes()
-        if isinstance(node, FunctionDef) and node.name in {"complete_body", "raising_body"}
-    }
-    completed = funcs["complete_body"].sugar().desugar()
-    assert isinstance(completed, Complete)
-    assert isinstance(completed.value, UniverseValue)
-    returns = [
-        statement
-        for statement in completed.value.record.statements
-        if isinstance(statement, ReturnValue)
-    ]
-    assert len(returns) == 1
-    assert isinstance(returns[0].value, TermValue)
-    assert returns[0].value.value == 1
-    raised = funcs["raising_body"].sugar().desugar()
-    halted = [face for face in raised.exits if isinstance(face, Halted)]
-    assert len(halted) == 1
-    assert isinstance(halted[0].effect, RaiseEffect)
-    assert halted[0].effect.exception_name == "ValueError"
+        assert not isinstance(ref, SourceDerivedContextManagerRefV1), ref
+        assert isinstance(ref, OpaqueCitedContextManagerRefV1), ref

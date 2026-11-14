@@ -80,7 +80,6 @@ def _measure(seat: str) -> dict:
     return CONSUMER.measure_file_via_enumerate(
         workspace_root=corpus,
         file_rel=seat,
-        distribution="pandas",
         source_workspace_root=locus_root,
     )
 
