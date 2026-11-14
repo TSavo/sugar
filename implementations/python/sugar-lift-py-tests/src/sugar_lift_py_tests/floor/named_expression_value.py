@@ -377,6 +377,47 @@ def written_by(operand, ctx):
     return bind_walrus_binds(binds, ctx)
 
 
+def evaluated_after(earlier, operand, ctx, *, inside=()):
+    """``operand`` (a sugar) evaluated in ``ctx``, the context the operands
+    evaluated before it in its expression left: ``earlier`` and ``inside``
+    are their values, and ``ctx`` has each one's writes applied
+    (``written_by``).
+
+    Every halt of it carries those writes (``halted_after_writes``): one
+    that offers no record halted at ``operand``'s head, in ``ctx``, and is
+    recorded there; and the callee stores among them were made before it,
+    so they are first in every halt's record's entries, a call's halt
+    inside it (``at_the_call``) included.  ``x = [f(o), d[k]]``: ``d[k]``'s
+    ``KeyError`` carries what ``f`` stored on ``o``, in its entries and its
+    context, never the statement's prefix, which holds none of it.
+
+    The one way an operand is evaluated after the ones before it.
+    ``inside``: the earlier operands whose operand door this one is
+    evaluated inside -- a consumer that evaluates its later operands in the
+    step of an earlier one's door (a call's later actuals, a short-circuit's
+    later operands, a chained comparison's later legs): that door lays their
+    stores in every halt of its step (``consume_operands``), so they are
+    laid there, once, and only their writes in ``ctx`` are read here.
+    ``operand.desugar(ctx)`` exactly where no earlier operand carries a
+    write."""
+    outcome = operand.desugar(ctx)
+    binds = tuple(
+        bind
+        for value in (*inside, *earlier)
+        for bind in peel_walrus_binds(value)[0]
+    )
+    if not binds:
+        return outcome
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        halted_after_writes,
+    )
+
+    _walrus, stores = caller_stores_of(
+        tuple(bind for value in earlier for bind in peel_walrus_binds(value)[0])
+    )
+    return halted_after_writes(outcome, operand, ctx, stores)
+
+
 def reduce_operands(operands, ctx, *, factored: bool = False):
     """``operands`` (sugars) reduced left to right, each in the context the
     ones before it leave (``written_by`` of each in turn), completed as the
@@ -393,10 +434,11 @@ def reduce_operands(operands, ctx, *, factored: bool = False):
     for a fold whose accumulator would otherwise multiply by every
     partitioning operand.
 
-    An operand that halts leaves with the walrus binds the ones before it
-    made: its evaluation records its halt where it was evaluated, in the
-    context they wrote (``sugar_base._recorded_at_its_head``):
-    ``[(a := 1), d[k]]``'s ``KeyError`` carries ``a``."""
+    An operand that halts leaves with the writes the ones before it made:
+    it is evaluated after them (``evaluated_after``), so its halt is
+    recorded where it was evaluated, in the context they wrote, with their
+    callee stores first in its entries: ``[(a := 1), d[k]]``'s
+    ``KeyError`` carries ``a``, and ``[f(o), d[k]]``'s what ``f`` stored."""
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
@@ -406,7 +448,7 @@ def reduce_operands(operands, ctx, *, factored: bool = False):
         operand_ctx = ctx
         for earlier in collected:
             operand_ctx = written_by(earlier, operand_ctx)
-        outcome = operand.desugar(operand_ctx)
+        outcome = evaluated_after(collected, operand, operand_ctx)
         if factored:
             outcome = factored_operand(outcome)
         return outcome.and_then(

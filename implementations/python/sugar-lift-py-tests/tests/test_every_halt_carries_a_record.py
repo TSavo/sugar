@@ -843,10 +843,10 @@ def test_an_unpack_that_fails_after_its_walrus_carries_it() -> None:
 
 
 def test_an_asserts_message_walrus_is_held() -> None:
-    # The message is provenance, never reduced, and held out of equality; a
-    # walrus in it still runs before ``AssertionError``, so the statement
-    # holds it, and its record-less failure is refused, never given the
-    # prefix that drops the bind.
+    # The message is held out of equality and built only where the assert
+    # fails; a walrus in it still runs before ``AssertionError``, so the
+    # statement holds it, and a record-less failure is refused, never given
+    # the prefix that drops the bind.
     assert holds_a_walrus(AssertSugar(_One(), None, message_holds_a_walrus=True))
     assert not holds_a_walrus(AssertSugar(_One(), None))
 
@@ -1126,3 +1126,210 @@ def test_a_store_targets_halt_lays_the_right_sides_callee_store() -> None:
         target_order=("x", 0, "y"),
     )
     assert _halt_entries(statement) == (TermValue(7), _STORE)
+
+
+# -- an operand's halt carries every write of the operands before it ------------
+
+
+@dataclass(frozen=True)
+class _Display(ConstructedTermSugar):
+    """``[*operands]``: its operands reduced left to right through the one
+    fold a display's elements take (``reduce_operands``), then consumed by
+    one step."""
+
+    operands: tuple
+    site: object = field(compare=False, default=None)
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            reduce_operands,
+        )
+
+        return reduce_operands(self.operands, ctx).and_then(
+            lambda values: consume_operands(
+                lambda *presented: ExitSet.completed(TermValue(len(presented))),
+                *values,
+            )
+        )
+
+    def to_term(self, *, owner: str):
+        raise NotImplementedError(owner)
+
+
+def test_a_later_operands_halt_lays_an_earlier_operands_callee_store() -> None:
+    # ``x = [f(o), d[k]]`` where ``f`` stores ``o.x`` and ``d[k]`` raises: the
+    # store was made before the ``KeyError``. The halt used to offer no record
+    # (no walrus anywhere), and the statement's prefix stood in for it,
+    # dropping the store.
+    statement = AssignSugar(
+        "x", _Display((_carries_a_store(), _LeaksAsOperand())), None
+    )
+    assert _halt_entries(statement) == (TermValue(7), _STORE)
+
+
+def test_a_later_operands_own_record_lays_an_earlier_operands_callee_store() -> (
+    None
+):
+    # ``x = [f(o), g()]`` where ``g`` raises inside its body: the call's halt
+    # carries its own record (``at_the_call``); ``f``'s store is laid first.
+    statement = AssignSugar(
+        "x", _Display((_carries_a_store(), _HaltsWhereItRuns())), None
+    )
+    assert _halt_entries(statement) == (TermValue(7), _STORE)
+
+
+def test_an_operand_head_record_after_a_walrus_lays_the_callee_store() -> None:
+    # ``x = [f(o), d[k], (a := 1)]``: the display holds a walrus, so ``d[k]``'s
+    # halt is recorded at its head (``_recorded_at_its_head``), in a context
+    # holding ``f``'s store. The store is in its entries too, where it used
+    # to ride the context alone.
+    statement = AssignSugar(
+        "x", _Display((_carries_a_store(), _LeaksAsOperand(), _walrus())), None
+    )
+    assert _halt_entries(statement) == (TermValue(7), _STORE)
+
+
+def test_an_operand_after_no_write_halts_as_it_did() -> None:
+    # Nothing written before the halting operand: it is handed on with no
+    # record, for its statement to record at its head.
+    ctx = ReduceContext.root(owner="every-halt-record.display-free")
+    (halt,) = [
+        exit_
+        for exit_ in _Display((_One(), _LeaksAsOperand())).desugar(ctx).exits
+        if isinstance(exit_, Halted)
+    ]
+    assert halt.state is None
+
+
+def test_an_operand_evaluated_after_a_store_is_recorded_at_its_head() -> None:
+    # The one operand evaluation after earlier operands (``evaluated_after``):
+    # the record-less halt is recorded where the operand was evaluated, the
+    # earlier store first in its entries.
+    from sugar_lift_py_tests.floor.named_expression_value import evaluated_after
+
+    ctx = ReduceContext.root(owner="every-halt-record.evaluated-after")
+    earlier = carry_caller_stores((_STORE,), TermValue(1))
+    (halt,) = [
+        exit_
+        for exit_ in evaluated_after((earlier,), _LeaksAsOperand(), ctx).exits
+        if isinstance(exit_, Halted)
+    ]
+    assert isinstance(halt.state, _ReducedBlock)
+    assert halt.state.entries == (_STORE,)
+    assert halt.state.context is ctx
+
+
+def test_an_operand_inside_an_earlier_door_is_recorded_without_its_store() -> None:
+    # A later actual runs inside the earlier actual's operand door, which
+    # lays the store in every halt of its step: here the halt is recorded at
+    # the operand's head alone, so the store is laid once.
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        consume_operands,
+        evaluated_after,
+    )
+
+    ctx = ReduceContext.root(owner="every-halt-record.inside-a-door")
+    earlier = carry_caller_stores((_STORE,), TermValue(1))
+    inside = evaluated_after((), _LeaksAsOperand(), ctx, inside=(earlier,))
+    (halt,) = [exit_ for exit_ in inside.exits if isinstance(exit_, Halted)]
+    assert halt.state.entries == ()
+    door = consume_operands(lambda _presented: inside, earlier)
+    (halt,) = [exit_ for exit_ in door.exits if isinstance(exit_, Halted)]
+    assert halt.state.entries == (_STORE,)
+
+
+# -- a Name-only unpack lays its right-hand side's callee stores -----------------
+
+_UNPACK_KEY = EVALUATION_PREFIX + "every-halt-record.unpack"
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["flat", "nested"])
+def test_a_completed_unpack_lays_the_right_sides_callee_store(nested) -> None:
+    # ``a, b = f(o)`` / ``(a, b), c = f(o)`` where ``f`` stores ``o.x``: the
+    # completed record holds the store in its entries, where it used to ride
+    # the carried value alone, and binds every member.
+    from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
+    from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
+        DynamicUnpackAssignSugar,
+    )
+    from sugar_lift_py_tests.sugar.nested_dynamic_unpack_assign_sugar import (
+        NestedDynamicUnpackAssignSugar,
+    )
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+    one, two, three = TermValue(1), TermValue(2), TermValue(3)
+    if nested:
+        value = TupleLiteralValue((TupleLiteralValue((one, two)), three))
+        statement = NestedDynamicUnpackAssignSugar(
+            (("a", "b"), "c"),
+            _Presents(carry_caller_stores((_STORE,), value)),
+            "site",
+            evaluation=_UNPACK_KEY,
+        )
+    else:
+        statement = DynamicUnpackAssignSugar(
+            ("a", "b"),
+            _Presents(carry_caller_stores((_STORE,), TupleLiteralValue((one, two)))),
+            "site",
+            evaluation=_UNPACK_KEY,
+        )
+    ctx = ReduceContext.root(owner="every-halt-record.unpack-stores")
+    record = statement.desugar(ctx).completed_value()
+    assert isinstance(record, _ReducedBlock)
+    assert record.entries == (_STORE,)
+    temporal = record.context.temporal
+    assert temporal.value_if_bound(projection_key(_UNPACK_KEY, "a")) == one
+    assert temporal.value_if_bound(projection_key(_UNPACK_KEY, "b")) == two
+
+
+def test_a_completed_unpack_with_no_callee_store_completes_as_it_did() -> None:
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
+    from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
+    from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
+        DynamicUnpackAssignSugar,
+    )
+
+    statement = DynamicUnpackAssignSugar(
+        ("a", "b"),
+        _Presents(TupleLiteralValue((TermValue(1), TermValue(2)))),
+        "site",
+        evaluation=_UNPACK_KEY,
+    )
+    ctx = ReduceContext.root(owner="every-halt-record.unpack-plain")
+    assert isinstance(statement.desugar(ctx).completed_value(), ScopeRebinds)
+
+
+# -- a failing assert evaluates its message before it raises ---------------------
+
+
+def test_a_failing_asserts_message_walrus_is_bound_when_it_raises() -> None:
+    # ``assert 1 == 2, (a := 1)``: CPython runs the message before it raises
+    # ``AssertionError``, so the handler reads ``a`` as it does when the
+    # walrus ran in a statement of its own. The message was never reduced,
+    # and the statement, holding its walrus, was refused.
+    assert _returned_after(
+        "        assert 1 == 2, (a := 1)\n", "AssertionError"
+    ) == _returned_after("        (a := 1)\n        assert 1 == 2\n", "AssertionError")
+
+
+def test_a_passing_asserts_message_is_never_built() -> None:
+    # The success path never runs the message: ``(yield 2)`` there has no
+    # sugar, and the assert still reduces.
+    from sugar_source_tree.nodes import Assert
+
+    source = "assert 1 == 1, (yield 2)\n"
+    tree = SourceFile(
+        (source, "every_halt_record.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    node = next(node for node in tree.nodes() if isinstance(node, Assert))
+    sugar = node.sugar()
+    assert sugar.message_sugar is not None
+    assert not any(
+        isinstance(exit_, Halted) for exit_ in sugar.desugar(None).exits
+    )

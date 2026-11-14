@@ -75,15 +75,24 @@ class ChainedCompareSugar(ConstructedTermSugar):
 
         first = self.values[0]
         return factored_operand(first.left.desugar(ctx)).and_then(
-            lambda left: self._reduce_from(0, left, written_by(left, ctx))
+            lambda left: self._reduce_from(
+                0, left, written_by(left, ctx), earlier=(left,)
+            )
         )
 
-    def _reduce_from(self, index: int, left, ctx: object) -> ExitSet:
+    def _reduce_from(
+        self, index: int, left, ctx: object, earlier=(), inside=()
+    ) -> ExitSet:
         """Leg ``index`` and the legs after it.  ``ctx``: the context the
         leg's right side is evaluated in, every earlier operand's walrus
-        writes applied (``written_by``)."""
+        writes applied (``written_by``).  The right side's halt carries the
+        writes of every operand before it (``evaluated_after``): ``earlier``
+        (the first leg's left) and ``inside`` (every operand of the legs
+        before this one, whose operand doors this leg runs inside and which
+        lay their stores, ``consume_operands``)."""
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            evaluated_after,
             written_by,
         )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
@@ -96,7 +105,7 @@ class ChainedCompareSugar(ConstructedTermSugar):
         # face and the later legs' faces).  The middle is handed on presented,
         # so a later leg does not carry its bind a second time; the next
         # leg's right side is evaluated with the middle's writes applied.
-        def apply(left, right, after):
+        def apply(left, right, after, before):
             compared = factored_operand(leg.apply_reduced(left, right, ctx))
             if index == len(self.values) - 1:
                 return compared
@@ -106,14 +115,21 @@ class ChainedCompareSugar(ConstructedTermSugar):
                     op_kind="And",
                     site=self.site,
                     index=index,
-                    on_continue=lambda: self._reduce_from(index + 1, right, after),
+                    on_continue=lambda: self._reduce_from(
+                        index + 1, right, after, inside=before
+                    ),
                 )
             )
 
-        return factored_operand(leg.right.desugar(ctx)).and_then(
+        return factored_operand(
+            evaluated_after(earlier, leg.right, ctx, inside=inside)
+        ).and_then(
             lambda right: consume_operands(
                 lambda presented_left, presented_right: apply(
-                    presented_left, presented_right, written_by(right, ctx)
+                    presented_left,
+                    presented_right,
+                    written_by(right, ctx),
+                    (*inside, *earlier, right),
                 ),
                 left,
                 right,

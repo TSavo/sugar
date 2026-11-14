@@ -332,11 +332,10 @@ def evaluate_assignment_values(
         if not stores:
             return outcome
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
-            halts_at_operand_head,
+            halted_after_writes,
         )
 
-        outcome = halts_at_operand_head(outcome, sugar, active)
-        return laid_in_record(stores, outcome, halts_only=True)
+        return halted_after_writes(outcome, sugar, active, stores)
 
     def step(index, active, completed=(), stores=()):
         # ``active``: ``ctx`` with the walrus binds the RHSs before this one

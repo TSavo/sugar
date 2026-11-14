@@ -195,10 +195,10 @@ def _require_recorded_halts(outcome, statement) -> None:
     ``sugar_base._recorded_at_its_head``; every consumer's step,
     ``consume_operands``; a statement's header, a ``raise`` of a walrus's
     value and an ``assert``'s failure after its test bound one included,
-    ``header_applied``). One that still offers no record
-    from a statement holding a walrus (an ``assert``'s failure after its
-    message's walrus, whose value is never reduced) is refused here like
-    any other: the prefix would drop the bind.
+    ``header_applied``; an ``assert``'s failure after its message ran,
+    ``AssertSugar._stated``). One that still offers no record from a
+    statement holding a walrus is refused here like any other: the prefix
+    would drop the bind.
     """
     if not any(
         isinstance(exit_, Halted) and exit_.state is None for exit_ in outcome.exits
@@ -410,6 +410,27 @@ def halts_at_operand_head(outcome, operand, ctx):
     return halts_recorded(outcome, halt_record(ctx))
 
 
+def halted_after_writes(outcome, operand, ctx, stores):
+    """``outcome`` -- ``operand`` evaluated in ``ctx``, after the writes of
+    what ran before it in its statement, applied in ``ctx`` (the operands
+    before it in its expression, an assignment's earlier right-hand sides)
+    -- with every halt carrying them: one that offers no record halted at
+    ``operand``'s head and is recorded there (``halts_at_operand_head``),
+    and ``stores``, the callee stores among the writes, first in every
+    halt's record's entries (``laid_in_record``, the halts alone: a
+    completed arm carries them on its value, and its statement lays them).
+    A halt recorded inside ``operand`` (at a deeper operand's head, a
+    call's at the call) has the context its writes were applied in; its
+    entries get the stores here, once, where they were made before it.
+
+    The one record of a halt after earlier writes: an expression's operand
+    (``named_expression_value.evaluated_after``) and a later right-hand side
+    (``assigned_value.evaluate_assignment_values``)."""
+    return laid_in_record(
+        stores, halts_at_operand_head(outcome, operand, ctx), halts_only=True
+    )
+
+
 def laid_in_record(entries, outcome, *, halts_only: bool = False):
     """``outcome`` with ``entries`` first in the record of every arm: what
     ran in a statement before the part of it that made ``outcome`` -- the
@@ -496,6 +517,39 @@ def laid_in_record(entries, outcome, *, halts_only: bool = False):
     if halts_only:
         return outcome
     return outcome.and_then(lay)
+
+
+def stores_laid_on_completion(value, outcome, ctx):
+    """``outcome`` -- a statement's step on its evaluated right-hand side
+    ``value``, consumed through the one operand door (``consume_operands``)
+    in ``ctx``, the context the statement was handed -- with the callee
+    stores ``value`` carried (``CallerStoreValue``) first in every completed
+    arm's record's entries (``laid_in_record``): the completed value, which
+    carries them on, becomes the statement's record (``statement_record``,
+    in the context it leaves: every write applied to ``ctx``, then what the
+    step bound).  The stores were made before the step ran, and a
+    record's entries are what its caller reads of it
+    (``caller_visible_stores``), not the context alone.  A halted arm holds
+    them already (the door lays them, ``_halted_after``).  ``outcome`` as
+    it is where ``value`` carried no callee store.
+
+    A Name-only unpack of a non-display right-hand side
+    (``DynamicUnpackAssignSugar``, ``NestedDynamicUnpackAssignSugar``) lays
+    them here, as an assignment's values (``evaluate_assignment_values``)
+    and a store unpack (``DynamicUnpackStoreAssignSugar``) lay theirs."""
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        caller_stores_of,
+        peel_walrus_binds,
+    )
+
+    _walrus, stores = caller_stores_of(peel_walrus_binds(value)[0])
+    if not stores:
+        return outcome
+    return outcome.and_then(
+        lambda bound: laid_in_record(
+            stores, ExitSet.completed(statement_record(bound, ctx))
+        )
+    )
 
 
 def header_applied(statement, field: str, ctx):

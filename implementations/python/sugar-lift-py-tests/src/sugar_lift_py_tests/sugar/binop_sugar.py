@@ -87,6 +87,7 @@ class BinOpSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor.floor_value import BINARY_FLOOR_OPERATIONS
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            evaluated_after,
             written_by,
         )
 
@@ -96,7 +97,8 @@ class BinOpSugar(ConstructedTermSugar):
 
         # Both sides are operands: a walrus in either (``(x := 5) + 1``) binds
         # once, through the one operand door.  The right side is evaluated
-        # after the left, with the left's walrus writes applied.
+        # after the left, with the left's writes applied, and its halt
+        # carries them (``evaluated_after``).
         def apply(left, right):
             return operate(
                 left.project_operation_receiver(
@@ -110,7 +112,9 @@ class BinOpSugar(ConstructedTermSugar):
             )
 
         return self.left.desugar(ctx).and_then(
-            lambda left: self.right.desugar(written_by(left, ctx)).and_then(
+            lambda left: evaluated_after(
+                (left,), self.right, written_by(left, ctx)
+            ).and_then(
                 lambda right: consume_operands(apply, left, right)
             )
         )

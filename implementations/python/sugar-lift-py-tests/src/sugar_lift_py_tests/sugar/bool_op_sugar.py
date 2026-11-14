@@ -307,18 +307,26 @@ class BoolOpSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            evaluated_after,
             written_by,
         )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
-        def reduce_from(index: int, operand_ctx):
+        def reduce_from(index: int, operand_ctx, inside=()):
             operand = self.values[index]
+            # The operand runs inside the operand doors of the ones before
+            # it (``inside``), which lay their stores in its halts; its
+            # record-less halt is recorded at its head, in the context
+            # their writes left (``evaluated_after``).
+            evaluated = factored_operand(
+                evaluated_after((), operand, operand_ctx, inside=inside)
+            )
 
             # Python returns the final operand; it does not call bool(final).
             # Its value is the result on the face that reached it, so a
             # walrus in it rides that face only.
             if index == len(self.values) - 1:
-                return factored_operand(operand.desugar(operand_ctx))
+                return evaluated
 
             # A non-final operand goes through the one operand door: a walrus
             # in it binds on its stopping face and on every face the later
@@ -327,7 +335,7 @@ class BoolOpSugar(ConstructedTermSugar):
             # (``written_by``): a read of its walrus there is a reference to
             # the walrus's key (``nodes._scope_after``: ``(m := f()) and
             # m.group(1)``).
-            return factored_operand(operand.desugar(operand_ctx)).and_then(
+            return evaluated.and_then(
                 lambda value: consume_operands(
                     lambda presented: select_boolop_operand(
                         presented,
@@ -335,7 +343,9 @@ class BoolOpSugar(ConstructedTermSugar):
                         site=self.site,
                         index=index,
                         on_continue=lambda: reduce_from(
-                            index + 1, written_by(value, operand_ctx)
+                            index + 1,
+                            written_by(value, operand_ctx),
+                            (*inside, value),
                         ),
                     ),
                     value,

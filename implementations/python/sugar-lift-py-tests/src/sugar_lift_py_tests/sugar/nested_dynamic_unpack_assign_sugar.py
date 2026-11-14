@@ -90,7 +90,14 @@ class NestedDynamicUnpackAssignSugar(Sugar):
         # operand door: a walrus in it (``(a, b), c = (w := v)``) is bound
         # before any level unpacks, so the outer level's halt carries it
         # (``consume_operands``), an inner level's record is built on it
-        # (``_bound_record``), and the completed face carries it on.
+        # (``_bound_record``), and the completed face carries it on.  A
+        # callee's store the value carried was made before any level
+        # unpacked: it is first in the record of every arm, the completed one
+        # included (``stores_laid_on_completion``).
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            stores_laid_on_completion,
+        )
+
         def unpack(value):
             after = written_by(value, ctx)
 
@@ -102,7 +109,9 @@ class NestedDynamicUnpackAssignSugar(Sugar):
                     lambda rebinds: bind_unpack_projections(rebinds, self.evaluation)
                 )
 
-            return consume_operands(step, value)
+            return stores_laid_on_completion(
+                value, consume_operands(step, value), ctx
+            )
 
         return self.value.desugar(ctx).and_then(unpack)
 
