@@ -407,7 +407,7 @@ def reduce_block_to_exitset(
         else:
             # A completed prefix may expose a deferred native operation. Keep
             # that carrier outside ExitSet until caller actuals discharge it;
-            # ExitSet.sequence must only ever receive concrete ExitSets.
+            # no ExitSet ever holds a carrier as an arm.
             exits = NativeOperationExitCarrierV1.compose_prefix(exits, reduce_next)
 
     # The block boundary is where an obligation stops being in flight, so it is

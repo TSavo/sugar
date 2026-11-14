@@ -99,8 +99,13 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
                 enter_facts = EnterResultBinding(
                     resource.enter_slot_id, enter_value
                 ).to_facts(site=resource.site)
-            body_es = ExitSet((enter_face,)).sequence(
-                lambda _entered: reduce_block_to_exitset(resource.body, ctx)
+            # The exit is routed per body face: a body whose carrier
+            # ``sequence`` composed is refused by name here.
+            body_es = _require_exit_set(
+                ExitSet((enter_face,)).sequence(
+                    lambda _entered: reduce_block_to_exitset(resource.body, ctx)
+                ),
+                owner="WithSourceResourceSugar.body",
             )
             concrete_exit = getattr(resource.protocol, "exit_outcome_for_body", None)
             # Generator protocols have a linear resume: retain their single

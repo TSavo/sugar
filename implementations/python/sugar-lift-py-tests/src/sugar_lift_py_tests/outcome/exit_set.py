@@ -921,9 +921,19 @@ class ExitSet(Generic[T]):
         completed arm's is: conjoined guard, both sets of faces, and the
         halt's ``owed`` first. This is the one composition of a continuation
         beneath an arm; there is no second way to carry a prefix's debts.
+
+        A step or ``consume`` that answers a deferred native-operation carrier
+        (a loop or ``with`` body still waiting on its caller's actual) is
+        composed through the carrier's own ``after_discharge``, as
+        ``and_then`` hands one on: once it discharges, its exits are composed
+        beneath that arm exactly as an ``ExitSet``'s are, beside every other
+        arm's continuation in arm order, and the answer is that carrier.
+        Anything else that is not an ``ExitSet`` cannot compose and is refused
+        by name (``_require_exit_set``, owner ``ExitSet.sequence``).
         """
 
         exits: list[Exit[U]] = []
+        deferred: list | None = None
         for exit_ in self.exits:
             if isinstance(exit_, Halted):
                 continued = None if consume is None else consume(exit_)
@@ -932,21 +942,17 @@ class ExitSet(Generic[T]):
                     continue
             else:
                 continued = step(exit_.value)
-            for following in continued.exits:
-                guard = _and_guards(exit_.guard, following.guard)
-                # Conjoined guard: both sets of testimony hold of the result.
-                faces = exit_.faces | following.faces
-                # The prefix's debts ride onto every continuation of its path.
-                owed = _owed_union(exit_.owed, following.owed)
-                if isinstance(following, Completed):
-                    exits.append(Completed(guard, following.value, faces, owed))
-                else:
-                    exits.append(
-                        Halted(
-                            guard, following.effect, following.state, faces, owed
-                        )
-                    )
-        return ExitSet(tuple(exits)).normalize()
+            if isinstance(continued, ExitSet):
+                _extend_beneath(exits, exit_, continued)
+                continue
+            # Where this arm's continuation goes once its carrier discharges:
+            # after every arm already composed, before every later one.
+            if deferred is None:
+                deferred = []
+            deferred.append((len(exits), exit_, _carrier_or_refuse(continued)))
+        if deferred is None:
+            return ExitSet(tuple(exits)).normalize()
+        return _compose_after_discharge(tuple(exits), tuple(deferred))
 
     def and_then(self, step):
         """Run ``step`` on every completed arm's value; halts bypass it.
@@ -1198,6 +1204,69 @@ class ExitSet(Generic[T]):
         return ExitSet(tuple(exits)).normalize()
 
 
+def _extend_beneath(target: list, prefix: Exit, continued: ExitSet) -> None:
+    """Append ``continued``'s arms as the continuation beneath ``prefix``.
+
+    The one composition ``sequence`` performs per arm, whether the
+    continuation was answered at once or after a carrier discharged.
+    """
+    for following in continued.exits:
+        guard = _and_guards(prefix.guard, following.guard)
+        # Conjoined guard: both sets of testimony hold of the result.
+        faces = prefix.faces | following.faces
+        # The prefix's debts ride onto every continuation of its path.
+        owed = _owed_union(prefix.owed, following.owed)
+        if isinstance(following, Completed):
+            target.append(Completed(guard, following.value, faces, owed))
+        else:
+            target.append(Halted(guard, following.effect, following.state, faces, owed))
+
+
+def _carrier_or_refuse(outcome):
+    """A deferred native-operation carrier ``sequence`` can compose, or the
+    refusal of anything else that is not an ``ExitSet``."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    if isinstance(outcome, NativeOperationExitCarrierV1):
+        return outcome
+    return _require_exit_set(outcome, owner="ExitSet.sequence")
+
+
+def _compose_after_discharge(resolved: tuple, deferred: tuple):
+    """``sequence``'s answer when arms' continuations wait on carriers.
+
+    ``resolved`` holds every arm composed already; each ``deferred`` entry is
+    ``(position, prefix arm, carrier)``, its position the slot in
+    ``resolved`` its continuation fills. The first carrier composes the
+    rest through its ``after_discharge``: once it discharges, its exits go
+    beneath their prefix arm at that slot, and a later carrier answered from
+    there is discharged by the same caller in turn (``discharge`` discharges
+    a carrier an ``after_discharge`` step answers).
+    """
+    position, prefix, carrier = deferred[0]
+    rest = deferred[1:]
+
+    def beneath(projected):
+        inserted: list = []
+        _extend_beneath(
+            inserted,
+            prefix,
+            _require_exit_set(projected, owner="ExitSet.sequence"),
+        )
+        composed = (*resolved[:position], *inserted, *resolved[position:])
+        if not rest:
+            return ExitSet(composed).normalize()
+        shift = len(inserted)
+        return _compose_after_discharge(
+            composed,
+            tuple((later + shift, arm, waiting) for later, arm, waiting in rest),
+        )
+
+    return carrier.after_discharge(beneath)
+
+
 def sole_completed_value(outcome: ExitSet):
     """The value of a body outcome's ONE completed arm.
 
@@ -1272,7 +1341,8 @@ def _require_exit_set(outcome, *, owner: str = "ExitSet.and_then") -> ExitSet:
     that reads an outcome's arms directly (``.exits``, ``completed_value()``,
     ``sequence``) and cannot hand a deferred carrier on through the carrier's
     own ``and_then`` / ``after_discharge`` refuses through here too, under its
-    own ``owner``.
+    own ``owner``. ``ExitSet.sequence`` composes a carrier a step answers and
+    refuses anything else here (owner ``ExitSet.sequence``).
 
     Not a conversion: an ``ExitSet`` is handed back as itself and nothing
     else is ever turned into one. A deferred native-operation carrier is

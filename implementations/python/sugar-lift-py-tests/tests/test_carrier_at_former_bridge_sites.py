@@ -29,6 +29,7 @@ from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import PrimitiveSort, atomic, make_var, str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.binding_projection import GuardedProjection
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -134,6 +135,114 @@ def test_and_then_keeps_its_own_owner():
     with pytest.raises(ConstructionPanic) as excinfo:
         prefix.and_then(lambda _value: carrier)
     _refused(excinfo, "ExitSet.and_then")
+
+
+# --- ExitSet.sequence -------------------------------------------------------
+
+
+def _actuals(*coordinates):
+    """Every formal answered in order: 1, 2, 3, ..."""
+    return {
+        coordinate.coordinate_cid: TermValue(index)
+        for index, coordinate in enumerate(coordinates, start=1)
+    }
+
+
+def _testimony(exits):
+    """What rides on each arm beside its guard and destination."""
+    return [(exit_.faces, exit_.owed) for exit_ in exits.exits]
+
+
+def test_sequence_composes_a_loop_body_carrier_beneath_its_arm():
+    carrier, left, right = _carrier()
+    face, _ = partition("carrier-bridge-sites.sequence")
+    first = Completed(
+        atomic("test.first", []), TermValue(1), frozenset({face}), ("owed.first",)
+    )
+    second = Completed(atomic("test.second", []), TermValue(2))
+    body = ExitSet((first, second))
+    tail = ExitSet.completed(TermValue(9))
+
+    composed = body.sequence(lambda value: carrier if value == TermValue(1) else tail)
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    actuals = _actuals(left, right)
+    exits = composed.discharge(None, actuals)
+    discharged = carrier.discharge(None, actuals)
+    eager = body.sequence(lambda value: discharged if value == TermValue(1) else tail)
+    assert isinstance(exits, ExitSet)
+    assert exits == eager
+    assert [exit_.value for exit_ in exits.exits] == [TermValue(3), TermValue(9)]
+    assert _testimony(exits) == _testimony(eager)
+    assert face in exits.exits[0].faces
+    assert "owed.first" in exits.exits[0].owed
+
+
+def test_sequence_composes_a_consume_carrier_beneath_its_halt():
+    carrier, left, right = _carrier()
+    consumed_guard = atomic("test.consumed", [])
+    consumed = Halted(
+        consumed_guard, _raise_effect("loop-control"), None, owed=("owed.halt",)
+    )
+    kept = Halted(atomic("test.kept", []), _raise_effect("other"))
+    body = ExitSet((consumed, kept))
+
+    def handler(halt):
+        return carrier if halt.guard == consumed_guard else None
+
+    composed = body.sequence(ExitSet.completed, consume=handler)
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    actuals = _actuals(left, right)
+    exits = composed.discharge(None, actuals)
+    discharged = carrier.discharge(None, actuals)
+    eager = body.sequence(
+        ExitSet.completed,
+        consume=lambda halt: discharged if halt.guard == consumed_guard else None,
+    )
+    assert isinstance(exits, ExitSet)
+    assert exits == eager
+    assert _testimony(exits) == _testimony(eager)
+    assert isinstance(exits.exits[0], Completed)
+    assert exits.exits[0].value == TermValue(3)
+    assert "owed.halt" in exits.exits[0].owed
+    assert exits.exits[-1] == kept
+
+
+def test_sequence_composes_two_carriers_in_arm_order():
+    first, first_left, first_right = _carrier()
+    second, second_left, second_right = _carrier("second_left", "second_right", base=2)
+    first_guard = atomic("test.first", [])
+    second_guard = atomic("test.second", [])
+    body = ExitSet(
+        (
+            Completed(first_guard, TermValue(1)),
+            Completed(second_guard, TermValue(2)),
+        )
+    )
+
+    composed = body.sequence(lambda value: first if value == TermValue(1) else second)
+
+    assert isinstance(composed, NativeOperationExitCarrierV1)
+    exits = composed.discharge(
+        None, _actuals(first_left, first_right, second_left, second_right)
+    )
+    assert isinstance(exits, ExitSet)
+    assert [exit_.value for exit_ in exits.exits] == [TermValue(3), TermValue(7)]
+
+
+def test_sequence_refuses_an_uncomposable_step_by_name():
+    body = ExitSet.completed(TermValue(0), guard=atomic("test.prefix", []))
+    with pytest.raises(ConstructionPanic) as excinfo:
+        body.sequence(lambda _value: object())
+    assert excinfo.value.info.owner == "ExitSet.sequence"
+
+
+def test_sequence_refuses_an_uncomposable_consume_by_name():
+    body = ExitSet.halted(_raise_effect("uncomposable"))
+    with pytest.raises(ConstructionPanic) as excinfo:
+        body.sequence(ExitSet.completed, consume=lambda _halt: object())
+    assert excinfo.value.info.owner == "ExitSet.sequence"
 
 
 # --- caller_parameter_contract ---------------------------------------------
@@ -592,6 +701,36 @@ def test_formal_manager_exit_carrier_is_refused_by_name(_empty_body):
     _refused(excinfo, "WithFormalManagerSugar.exit")
 
 
+@pytest.fixture
+def _carrier_body(monkeypatch):
+    """A ``with`` body that reduces to a deferred carrier."""
+    from sugar_lift_py_tests.sugar import function_universe_sugar
+
+    carrier, _, _ = _carrier()
+    monkeypatch.setattr(
+        function_universe_sugar,
+        "reduce_block_to_exitset",
+        lambda sugars, ctx: carrier,
+    )
+
+
+def test_source_resource_body_carrier_is_refused_by_name(_carrier_body):
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
+        _route_manager_faces,
+    )
+
+    with pytest.raises(ConstructionPanic) as excinfo:
+        _route_manager_faces(_source_resource(_protocol()), None)
+    _refused(excinfo, "WithSourceResourceSugar.body")
+
+
+def test_formal_manager_body_carrier_is_refused_by_name(_carrier_body):
+    sugar = _formal_manager(_Answer(ExitSet.completed(_Receiver())), _protocol())
+    with pytest.raises(ConstructionPanic) as excinfo:
+        sugar.desugar(None)
+    _refused(excinfo, "WithFormalManagerSugar.body")
+
+
 # --- the other with sugars (former ``sugar_outcome_to_exitset`` sites) ------
 
 
@@ -632,6 +771,12 @@ def test_with_resource_exit_carrier_is_refused_by_name(_empty_body):
     with pytest.raises(ConstructionPanic) as excinfo:
         _with_resource(exit=_Answer(carrier)).desugar(None)
     _refused(excinfo, "WithResourceSugar.exit")
+
+
+def test_with_resource_body_carrier_is_refused_by_name(_carrier_body):
+    with pytest.raises(ConstructionPanic) as excinfo:
+        _with_resource().desugar(None)
+    _refused(excinfo, "WithResourceSugar.body")
 
 
 def test_with_opaque_cited_manager_carrier_is_refused_by_name():

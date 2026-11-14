@@ -264,8 +264,13 @@ class WithOpaqueCitedManagerSugar(Sugar):
                         self.enter_slot_id, enter_exit.value
                     ).to_facts(site=self.site)
 
-                body_es = ExitSet((enter_exit,)).sequence(
-                    lambda _entered: reduce_block_to_exitset(self.body, ctx)
+                # The exit is routed per body face: a body whose carrier
+                # ``sequence`` composed is refused by name here.
+                body_es = _require_exit_set(
+                    ExitSet((enter_exit,)).sequence(
+                        lambda _entered: reduce_block_to_exitset(self.body, ctx)
+                    ),
+                    owner="WithOpaqueCitedManagerSugar.body",
                 )
 
                 for body_exit in body_es.exits:
