@@ -294,7 +294,7 @@ or `bin/sugarbin run --host bx --env docker:solver-z3 -- z3 --version`.
 | `SUGAR_LEAN_PROJECT` | Lean Lake project root | `/home/user/lean-mathlib` |
 | `SUGAR_VERIFY_SAMPLE` | Sample N proofs for verification (diagnostic) | E.g., `"10"` to sample 10 of N proofs |
 | `SUGAR_BIN` | Path to sugar CLI binary | Used by pre-commit hooks; default: `"sugar"` on PATH |
-| `SUGAR_REPO_ROOT` | Repository root (for Python kit bootstrap) | Set by phase5py drivers |
+| `SUGAR_REPO_ROOT` | Repository root | Read before `GITHUB_WORKSPACE` by `tools/sugar_repo_root.py` and `sugar_lift_py_tests.repo_root` |
 | `PYTHON` | Python interpreter to use (fallback) | Default: `sys.executable` or `"python3"` |
 
 **Subsetting for Python kit:**
