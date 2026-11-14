@@ -343,27 +343,40 @@ class FloorValue:
         construction_panic(info)
 
     def undecided_subscript(self, index, site, *, owner: str):
-        """Refuse a lookup whose runtime dispatch is not source-decided.
+        """``self[index]`` whose dispatch is not decided here: the two faces.
 
-        This is accounted named-refusal semantics (``SugarNotWritten``), not a
-        construction-panic harness failure: the producer names the missing
-        testimony without inventing KeyError, IndexError, or a completed
-        ``py.subscript`` coordinate.
+        The receiver's runtime type and ``__getitem__`` (or the index's
+        ``__index__`` / ``__hash__`` / ``__eq__``) are not decided here, so
+        the lookup may complete with any member or raise anything -- the #7587
+        opaque-subscript law.  It is the one two-faced unanswered outcome
+        (``ExitSet.two_faced``, through ``_opaque_subscript_faces``): the
+        symbolic ``py.subscript(<receiver>, <index>)`` completes only under
+        ``python:subscript.completes(python:subscript(<term>, <site>))`` and
+        the complement halts with an ``UndeterminedRaiseEffect`` (producer
+        ``owner``); both arms owe the ``undecided`` member (reason
+        ``unanswered``) at the read's site.  No ``KeyError`` or
+        ``IndexError`` is guessed and no member is chosen.
+
+        A read that reached the floor with no site is the lifter's own gap:
+        it cannot key the completes atom or the debt, so it refuses by name.
         """
-        from sugar_source_tree.panic import SugarNotWritten
+        if site is None:
+            _siteless_undecided_read(
+                owner,
+                f"{type(self).__name__}[{type(index).__name__}]",
+                "Subscript",
+            )
+        from sugar_lift_py_tests.floor.call_site_value import _opaque_subscript_faces
+        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        raise SugarNotWritten(
-            blame=site,
-            owner=owner,
-            observed=(
-                "undecided receiver runtime type or index semantics: "
-                f"{type(self).__name__}[{type(index).__name__}]"
-            ),
-            requested="a source-authenticated subscript success or exceptional exit",
-            fix=(
-                "carry receiver-type and index testimony to its native floor; "
-                "do not guess KeyError, IndexError, or a generic runtime effect"
-            ),
+        term = ctor(
+            "py.subscript",
+            [self.to_term(owner=owner), index.to_term(owner=owner)],
+        )
+        return _opaque_subscript_faces(
+            ExitSet.completed(SymbolicValue(term)), site, producer=owner
         )
 
     def python_index_protocol(self) -> bool | None:
@@ -371,7 +384,8 @@ class FloorValue:
 
         ``None`` is the third value: construction has not authenticated the
         runtime type or its index protocol. Receiver floors may emit TypeError
-        only for ``False``; they must keep ``None`` named-loud.
+        only for ``False``; ``None`` is the two-faced undecided read
+        (:meth:`undecided_subscript`).
         """
         return None
 
@@ -501,31 +515,63 @@ class FloorValue:
         )
 
     def undecided_attribute(self, name, site, *, owner: str):
-        """Refuse lookup when source testimony decides neither outgoing edge.
+        """``self.name`` whose behaviour is not decided here: the two faces.
 
-        This is an accounted named refusal, not a construction failure.  The
-        producer knows the native operation and the missing testimony, but it
-        cannot choose either the completed or AttributeError edge honestly.
+        The receiver's runtime type and ``__getattribute__`` / ``__getattr__``
+        are not decided here, so the read may complete with any member or
+        raise anything -- the #7585 law.  It is the one two-faced unanswered
+        outcome (``ExitSet.two_faced``): the member completes as the
+        coordinate ``attr:<name>(<receiver>)`` -- the spelling ``__name__``
+        already uses, no value invented -- only under
+        ``python:attribute.completes(python:attribute(<receiver>, <name>,
+        <site>))``, keyed on the exact source site; the complement halts with
+        an ``UndeterminedRaiseEffect`` (producer ``owner``).  Both arms owe the
+        ``undecided`` member (reason ``unanswered``) at the read's site.  No
+        ``AttributeError`` is named.
 
         Distinct from the default :meth:`attribute` construction panic: that
-        door means a decided-type floor arm is missing (OUR defect). This door
-        means the receiver's runtime type is not source-decided, so neither
-        completion nor AttributeError is honest yet.
+        door means a decided-type floor arm is missing (OUR defect).  A read
+        that reached the floor with no site is also the lifter's own gap: it
+        cannot key the completes atom or the debt, so it refuses by name.
         """
-        from sugar_source_tree.panic import SugarNotWritten
+        if site is None:
+            _siteless_undecided_read(
+                owner, f"{type(self).__name__}.{name}", "Attribute"
+            )
+        from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+        from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+        from sugar_lift_py_tests.ir import atomic, ctor, str_const
+        from sugar_lift_py_tests.occurrence import occurrence_key
+        from sugar_lift_py_tests.outcome import ExitSet
 
-        raise SugarNotWritten(
-            blame=site,
-            owner=owner,
-            observed=(
-                "undecided receiver runtime type or member semantics: "
-                f"{type(self).__name__}.{name}"
+        receiver_term = self.to_term(owner=str(site))
+        member = CallSiteValue(
+            target_name=name,
+            arg_values=(self,),
+            parameters=(),
+            term=ctor(f"attr:{name}", [receiver_term], symbol_kind="method-coordinate"),
+            body=None,
+            site=site,
+        )
+        key = occurrence_key(site)
+        completes = atomic(
+            "python:attribute.completes",
+            [
+                ctor(
+                    "python:attribute",
+                    (receiver_term, str_const(name), str_const(key)),
+                )
+            ],
+        )
+        return ExitSet.two_faced(
+            member,
+            UndeterminedRaiseEffect(
+                blame=str(site),
+                occurrence=key,
+                producer_node_owner=owner,
             ),
-            requested="a source-authenticated attribute success or exceptional exit",
-            fix=(
-                "carry receiver-type and member testimony to the attribute floor; "
-                "do not guess AttributeError or invent a completed projection"
-            ),
+            guard=completes,
+            site=site,
         )
 
     def undecided_contains(self, item, site, *, owner: str):
@@ -1208,6 +1254,24 @@ class FloorValue:
             requested="format data-model method",
             fix="construct __format__",
         )
+
+
+def _siteless_undecided_read(owner: str, read: str, node: str) -> NoReturn:
+    """The lifter's own gap: an undecided read reached its floor with no site.
+
+    Not the program's undecided behaviour (that is the two-faced outcome):
+    the lifter dropped the read's source fragment, so it cannot key the
+    completes atom or the ``unanswered`` debt the read owes.
+    """
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        blame=None,
+        owner=owner,
+        observed=f"undecided read with no source site: {read}",
+        requested="the read's source site, to key its two faces and its debt",
+        fix=f"carry the {node} node's fragment to the receiver floor",
+    )
 
 
 def undecided_binary_faces(left, right, site, operator: str):

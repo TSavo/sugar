@@ -103,13 +103,18 @@ def _assert_dual_edge_dispatch(node, *, producer: str = "BinOp") -> None:
     assert "TypeError" not in (raised.value.observed or "")
 
 
-def _assert_named_refusal(node, *, owner: str, observed: str) -> None:
-    from sugar_source_tree.panic import SugarNotWritten
+def _assert_two_faced_read(node, *, owner: str) -> None:
+    """The operand read is the one two-faced unanswered outcome, not a refusal."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Halted
 
-    with pytest.raises(SugarNotWritten) as raised:
-        node.sugar().desugar(None)
-    assert raised.value.owner == owner
-    assert raised.value.observed == observed
+    outcome = node.sugar().desugar(None)
+    owners = [
+        arm.effect.producer_node_owner
+        for arm in outcome.exits
+        if isinstance(arm, Halted) and isinstance(arm.effect, UndeterminedRaiseEffect)
+    ]
+    assert owner in owners
 
 
 def _binop_at(source: str, path: Path, *, line: int, kind: str):
@@ -154,14 +159,11 @@ def test_pandas_series_nan_bitand_retains_child_gap_and_binary_dispatch_twin() -
 
     lying = truthful.replace("s_0123 & np.nan", "s_0123 & 0")
     # This focused SourceFile door has no authenticated import table, so it must
-    # not pretend that ``np.nan`` resolved. The ground lying twin removes that
-    # child boundary and reaches the BinOp producer's named undecided refusal.
-    _assert_named_refusal(
-        _line_96_bitand(truthful, path),
-        owner="SymbolicValue.attribute",
-        observed=(
-            "undecided receiver runtime type or member semantics: SymbolicValue.nan"
-        ),
+    # not pretend that ``np.nan`` resolved: the read of ``.nan`` is the
+    # two-faced unanswered read. The ground lying twin removes that child
+    # read and reaches the BinOp producer's own dispatch.
+    _assert_two_faced_read(
+        _line_96_bitand(truthful, path), owner="SymbolicValue.attribute"
     )
     _assert_dual_edge_dispatch(_line_96_bitand(lying, path))
 

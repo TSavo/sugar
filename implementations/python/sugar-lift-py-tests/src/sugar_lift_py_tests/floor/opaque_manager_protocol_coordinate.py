@@ -104,9 +104,9 @@ class OpaqueManagerProtocolCoordinate(FloorValue):
         """
         if self.symbol != "python:cm_enter_result":
             return super().attribute(name, site, ctx)
-        from sugar_lift_py_tests.floor.call_site_value import _opaque_attribute_faces
-
-        return _opaque_attribute_faces(self, name, site)
+        return self.undecided_attribute(
+            name, site, owner="OpaqueManagerProtocolCoordinate.attribute"
+        )
 
 
 def _coordinate(manager_term, site, *, slot: str, symbol: str):

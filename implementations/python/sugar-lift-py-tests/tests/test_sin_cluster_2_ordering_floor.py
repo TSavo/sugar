@@ -12,7 +12,7 @@ pairs construct Sugar (TrueBool/FalseBool) or a ground halt on owned arms only.
 Also covers:
 - undecided binary: nameless halt is forbidden
 - undecided contains: the #7585 two faces (python:compare.completes | undetermined halt)
-- undecided attribute: named refusal (already correct)
+- undecided attribute: the #7585 two faces (python:attribute.completes | undetermined halt)
 
 NOTE: ``tests/sourcefile_construction_door_auditor.py`` audits SourceFile construction ownership
 and cannot see this floor-meaning sin. The AST tooth below is the instrument
@@ -403,12 +403,18 @@ def test_undecided_callsite_contains_is_two_faced() -> None:
     _assert_undecided_membership_faces(_callsite().contains(TermValue(1), SITE))
 
 
-def test_undecided_attribute_remains_named_refusal() -> None:
-    """Attribute over undecided receiver stays SugarNotWritten (already correct)."""
-    with pytest.raises(SugarNotWritten) as raised:
-        _symbolic().attribute("x", SITE, None)
-    assert raised.value.owner == "SymbolicValue.attribute"
-    assert "undecided" in raised.value.observed
+def test_undecided_attribute_is_two_faced() -> None:
+    """Attribute over an undecided receiver is the #7585 two faces
+    (python:attribute.completes | undetermined halt), never a refusal."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
+
+    outcome = _symbolic().attribute("x", SITE, None)
+    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == "SymbolicValue.attribute"
+    assert "python:attribute.completes" in repr(done.guard)
 
 
 def test_source_decided_none_contains_emits_type_error() -> None:

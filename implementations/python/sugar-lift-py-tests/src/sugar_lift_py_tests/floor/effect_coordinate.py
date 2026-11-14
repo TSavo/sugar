@@ -33,11 +33,9 @@ class EffectCoordinate(FloorValue):
             # type nothing here testified to.  The opaque attribute law holds:
             # complete under ``python:attribute.completes``, otherwise an
             # undetermined raise; no member value or exception is invented.
-            from sugar_lift_py_tests.floor.call_site_value import (
-                _opaque_attribute_faces,
+            return self.undecided_attribute(
+                name, site, owner="EffectCoordinate.attribute"
             )
-
-            return _opaque_attribute_faces(self, name, site)
         if name != "__context__":
             return super().attribute(name, site, ctx)
         from sugar_lift_py_tests.gap.info import GapKind

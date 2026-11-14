@@ -349,7 +349,8 @@ class CallSiteValue(FloorValue):
         ``py.subscript``. The spelling is decidable: emit
         ``attr:__name__(receiver)`` the same way a symbolic receiver names the
         attribute and ``format_data_model`` names ``call:__format__`` without
-        inventing the formatted string. Other members stay a named third value.
+        inventing the formatted string. Every other member is not decided
+        here: the one two-faced unanswered read (``undecided_attribute``).
         """
         if name in {"__name__", "__qualname__"}:
             from sugar_lift_py_tests.ir import ctor
@@ -374,7 +375,7 @@ class CallSiteValue(FloorValue):
             # BaseException.args is the constructor's positional arguments.
             # Only an authenticated exception instance has that field; an
             # ordinary unexecuted call still has no runtime type, so .args
-            # stays a named third value rather than inventing a tuple.
+            # is the two-faced undecided read rather than an invented tuple.
             from sugar_lift_py_tests.floor.object_value import ObjectValue
             from sugar_lift_py_tests.outcome import ExitSet
 
@@ -384,7 +385,8 @@ class CallSiteValue(FloorValue):
                 # constructed: ``OSError(2, 'x', 'f').args`` is ``(2, 'x')``
                 # by the pinned interpreter.  A source, imported or
                 # runtime-selected class runs a constructor nothing here
-                # read: ``.args`` is a named third value, never the actuals.
+                # read: ``.args`` is the two-faced undecided read, never the
+                # actuals.
                 if self.constructed_args is not None:
                     return ExitSet.completed(self.constructed_args)
                 return self.undecided_attribute(
@@ -394,7 +396,7 @@ class CallSiteValue(FloorValue):
             # the frame's formals, not in call order, so the instance the
             # call made answers (``ClassConstructorBodySugar`` seats the
             # positional actuals on it as ``args``).  An instance without
-            # them leaves ``.args`` a named third value.
+            # them leaves ``.args`` the two-faced undecided read.
             retained = self._retained_source_completion
             instance = (
                 None
@@ -408,12 +410,9 @@ class CallSiteValue(FloorValue):
             return self.undecided_attribute(
                 name, site, owner="CallSiteValue.attribute"
             )
-        if self.exception_type_coordinate is not None:
-            # An authenticated exception instance has a decided runtime type;
-            # its unprojected members (``__context__``) are not opaque-call
-            # lookups and stay a named third value.
-            return self.undecided_attribute(name, site, owner="CallSiteValue.attribute")
-        return _opaque_attribute_faces(self, name, site)
+        # Any other member -- of an opaque call result or of an authenticated
+        # exception instance (``__context__``) -- is not decided here.
+        return self.undecided_attribute(name, site, owner="CallSiteValue.attribute")
 
     def _identity(self) -> tuple:
         """Authenticate this immutable callsite's finite coordinate once.
@@ -2053,51 +2052,6 @@ def list_append_coordinate_value(prior, value, site) -> CallSiteValue:
             symbol_kind="method-coordinate",
         ),
         body=None,
-        site=site,
-    )
-
-
-def _opaque_attribute_faces(receiver, name, site):
-    """``opaque().name`` may raise: complete only under an opaque atom.
-
-    The #7585 two-faced law, the attribute twin of the #7587 subscript law.
-    The receiver is a call result with no projected body, so its runtime type
-    and ``__getattribute__`` / ``__getattr__`` are undecided.  The member
-    completes as the coordinate ``attr:<name>(<receiver>)`` -- the same
-    spelling ``__name__`` already uses, no value invented -- only under
-    ``python:attribute.completes(python:attribute(<receiver>, <name>,
-    <site>))``, keyed on the exact source site; the complement halts with an
-    ``UndeterminedRaiseEffect``.  No exception type is named.
-    """
-    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
-    from sugar_lift_py_tests.ir import atomic, ctor, str_const
-    from sugar_lift_py_tests.occurrence import occurrence_key
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-
-    if site is None:
-        return receiver.undecided_attribute(name, site, owner="CallSiteValue.attribute")
-    receiver_term = receiver.to_term(owner=str(site))
-    member = CallSiteValue(
-        target_name=name,
-        arg_values=(receiver,),
-        parameters=(),
-        term=ctor(f"attr:{name}", [receiver_term], symbol_kind="method-coordinate"),
-        body=None,
-        site=site,
-    )
-    key = occurrence_key(site)
-    completes = atomic(
-        "python:attribute.completes",
-        [ctor("python:attribute", (receiver_term, str_const(name), str_const(key)))],
-    )
-    return ExitSet.two_faced(
-        member,
-        UndeterminedRaiseEffect(
-            blame=str(site),
-            occurrence=key,
-            producer_node_owner="CallSiteValue.attribute",
-        ),
-        guard=completes,
         site=site,
     )
 

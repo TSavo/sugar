@@ -21,7 +21,6 @@ from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Attribute
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -121,14 +120,22 @@ def test_formal_attribute_completes_or_halts_from_authenticated_actual() -> None
     )
 
 
-def test_undecidable_attribute_actual_remains_named_loud() -> None:
+def test_undecidable_attribute_actual_is_the_two_faced_unanswered_read() -> None:
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
     carrier, formal = _carrier()
 
-    with pytest.raises(SugarNotWritten, match="undecided receiver runtime type"):
-        carrier.discharge(
-            None,
-            {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))},
-        )
+    outcome = carrier.discharge(
+        None,
+        {formal.coordinate_cid: SymbolicValue(make_var("still_unknown"))},
+    )
+    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == "SymbolicValue.attribute"
+    assert "python:attribute.completes" in repr(done.guard)
+    assert any(item.site is not None for item in owed_calls(outcome))
 
 
 def test_lying_exception_type_cannot_consume_attribute_halt() -> None:

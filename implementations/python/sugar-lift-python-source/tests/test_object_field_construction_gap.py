@@ -14,7 +14,6 @@ from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, make_var, str_const
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_python_source.source_oracle import workspace_path_source
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 
@@ -77,9 +76,15 @@ def test_deferred_helper_field_keeps_its_coordinate_not_a_missing_field_panic(tm
     )
 
 
-def test_unknown_receiver_type_keeps_its_distinct_named_refusal(tmp_path):
+def test_unknown_receiver_type_is_the_two_faced_unanswered_read(tmp_path):
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Halted
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
     site = _site(tmp_path, "payload")
     receiver = SymbolicValue(make_var("unknown_receiver"))
-    with pytest.raises(SugarNotWritten) as caught:
-        receiver.attribute("payload", site, None)
-    assert caught.value.owner == "SymbolicValue.attribute"
+    outcome = receiver.attribute("payload", site, None)
+    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == "SymbolicValue.attribute"
+    assert [item.site is not None for item in owed_calls(outcome)] == [True]

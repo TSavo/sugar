@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import TermValue, TupleValue
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_source_tree.nodes import Subscript
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
 
@@ -85,18 +82,20 @@ def test_source_tuple_zero_slice_step_is_exact_value_error(
     assert halt.effect.occurrence_id == str(site)
 
 
-def test_source_tuple_symbolic_slice_bound_stays_typed_loud(
+def test_source_tuple_symbolic_slice_bound_is_the_two_faced_unanswered_read(
     tmp_path: Path, monkeypatch
 ) -> None:
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
     (subscript,) = _subscripts(tmp_path, monkeypatch, "result = (0, 1, 2)[start:]\n")
 
-    with pytest.raises(SugarNotWritten) as raised:
-        _desugar(subscript)
+    outcome = _desugar(subscript)
 
-    assert raised.value.owner == "TupleValue.subscript"
-    assert raised.value.observed == (
-        "undecided receiver runtime type or index semantics: TupleValue[SliceValue]"
-    )
-    assert raised.value.requested == (
-        "a source-authenticated subscript success or exceptional exit"
-    )
+    (halt,) = [arm for arm in outcome.exits if isinstance(arm, Halted)]
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == "TupleValue.subscript"
+    assert "python:subscript.completes" in repr(done.guard)
+    assert any(item.site is not None for item in owed_calls(outcome))

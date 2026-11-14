@@ -29,7 +29,6 @@ from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Subscript
-from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
 
 MANIFEST_CID = (
@@ -282,16 +281,29 @@ def test_swapped_receiver_and_index_retain_distinct_ordered_coordinates() -> Non
     assert swapped.demand.demand_cid != carrier.demand.demand_cid
 
 
-def test_coordinate_free_subscript_retains_existing_named_symbolic_refusal() -> None:
+def _assert_two_faced_read(exits, owner: str) -> None:
+    """The one two-faced unanswered read: completes under the subscript's
+    completes atom, else an undetermined raise owned by ``owner``; the read is
+    owed at its site.  No KeyError or IndexError is guessed."""
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
+    from sugar_lift_py_tests.unanswered_calls import owed_calls
+
+    (halt,) = [arm for arm in exits.exits if isinstance(arm, Halted)]
+    (done,) = [arm for arm in exits.exits if isinstance(arm, Completed)]
+    assert type(halt.effect) is UndeterminedRaiseEffect
+    assert halt.effect.producer_node_owner == owner
+    assert "python:subscript.completes" in repr(done.guard)
+    assert any(item.site is not None for item in owed_calls(exits))
+
+
+def test_coordinate_free_subscript_is_the_two_faced_unanswered_read() -> None:
     carrier, _, _ = _synthetic_carrier()
 
-    with pytest.raises(SugarNotWritten) as raised:
-        SymbolicValue(make_var("obj")).subscript(
-            SymbolicValue(make_var("key")), carrier.site
-        )
+    exits = SymbolicValue(make_var("obj")).subscript(
+        SymbolicValue(make_var("key")), carrier.site
+    )
 
-    assert raised.value.owner == "SymbolicValue.subscript"
-    assert "undecided receiver runtime type" in raised.value.observed
+    _assert_two_faced_read(exits, "SymbolicValue.subscript")
 
 
 def test_helper_alone_stays_named_undischarged() -> None:
@@ -377,33 +389,29 @@ def test_lying_boundary_exception_type_leaves_operation_halted_and_unconsumed() 
     )
 
 
-def test_undecided_caller_receiver_stays_loud() -> None:
+def test_undecided_caller_receiver_is_the_two_faced_unanswered_read() -> None:
     carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
 
-    with pytest.raises(SugarNotWritten) as raised:
-        carrier.discharge(
-            None,
-            {
-                obj_coordinate.coordinate_cid: SymbolicValue(make_var("actual_obj")),
-                key_coordinate.coordinate_cid: TermValue(0),
-            },
-        )
+    exits = carrier.discharge(
+        None,
+        {
+            obj_coordinate.coordinate_cid: SymbolicValue(make_var("actual_obj")),
+            key_coordinate.coordinate_cid: TermValue(0),
+        },
+    )
 
-    assert raised.value.owner == "SymbolicValue.subscript"
-    assert "undecided receiver runtime type" in raised.value.observed
+    _assert_two_faced_read(exits, "SymbolicValue.subscript")
 
 
-def test_undecided_caller_key_stays_loud() -> None:
+def test_undecided_caller_key_is_the_two_faced_unanswered_read() -> None:
     carrier, obj_coordinate, key_coordinate = _synthetic_carrier()
 
-    with pytest.raises(SugarNotWritten) as raised:
-        carrier.discharge(
-            None,
-            {
-                obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
-                key_coordinate.coordinate_cid: SymbolicValue(make_var("actual_key")),
-            },
-        )
+    exits = carrier.discharge(
+        None,
+        {
+            obj_coordinate.coordinate_cid: ListValue((TermValue(7),)),
+            key_coordinate.coordinate_cid: SymbolicValue(make_var("actual_key")),
+        },
+    )
 
-    assert raised.value.owner == "ListValue.subscript"
-    assert "undecided" in raised.value.observed
+    _assert_two_faced_read(exits, "ListValue.subscript")
