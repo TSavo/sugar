@@ -278,7 +278,9 @@ class ComprehensionSugar(ConstructedTermSugar):
             iterable,
             index,
             resolved,
-            self._symbolic_member_ctx(generator, ctx),
+            self._symbolic_final_ctx(
+                generator, iterable, self._symbolic_member_ctx(generator, ctx)
+            ),
         )
 
     def _finite_map(self, generator, iterable, ctx):
@@ -444,6 +446,11 @@ class ComprehensionSugar(ConstructedTermSugar):
 
             return self.element.desugar(inner_ctx).and_then(after_element)
 
+        # The cell holds the last member iterated once the comprehension is
+        # done, whichever members the filters keep: a stored closure's read.
+        final_ctx = (
+            self._final_member_ctx(generator, members[-1], ctx) if members else ctx
+        )
         if generator.filters:
             kept = self._kept_members(generator, members, ctx)
             if kept is None:
@@ -454,7 +461,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         # Outcome.and_then owns terminal/guarded propagation. Every constructed
         # outcome propagates unchanged through its own continuation law and is
         # TRANSPORTED by ``Projected`` -- which is not a non-success cause.
-        return Projected(project(0, (), (), ctx))
+        return Projected(project(0, (), (), final_ctx))
 
     def _member_ctx(self, generator, member, ctx):
         """``ctx`` with one finite member bound to the generator's target.
@@ -543,6 +550,68 @@ class ComprehensionSugar(ConstructedTermSugar):
                 coordinate,
                 SymbolicValue(term),
                 owner="ComprehensionSugar._symbolic_member_ctx",
+                blame=str(self.site),
+            )
+        return ctx
+
+    def _final_member_ctx(self, generator, last, ctx):
+        """``ctx`` with the generator's final member bound: what the
+        comprehension's cell holds once it is done, the ``last`` finite
+        member, under each member coordinate's final coordinate
+        (``final_member_coordinate``) -- the generator's, and each leaf's
+        projection of it for a destructuring target. A lambda the
+        comprehension stores reads these (``_closure_cell_scope``). ``ctx``
+        unchanged when ``last`` does not destructure into the target: the
+        comprehension halts on it, and no stored lambda outlives it.
+        """
+        from dataclasses import replace
+
+        from sugar_source_tree.nodes import final_member_coordinate
+
+        member_ctx = self._member_ctx(generator, last, ctx)
+        if not isinstance(member_ctx, type(ctx)):
+            return ctx
+        temporal = ctx.temporal
+        for coordinate in _member_coordinates(generator):
+            temporal = temporal.bind_value(
+                final_member_coordinate(coordinate),
+                member_ctx.temporal.value_if_bound(coordinate),
+            )
+        return replace(ctx, temporal=temporal)
+
+    def _symbolic_final_ctx(self, generator, iterable, ctx):
+        """``ctx`` with the generator's symbolic final member bound under each
+        member coordinate's final coordinate (``final_member_coordinate``),
+        as ``_final_member_ctx`` binds a finite one: the final member of
+        ``iterable`` (the member's final evaluation), and, for a destructuring
+        target, each leaf's projection of it. A context that carries no
+        temporal is returned unchanged.
+        """
+        from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.temporal.context_helpers import bind_temporal
+        from sugar_source_tree.nodes import final_member_coordinate
+
+        if ctx is not None and not hasattr(ctx, "temporal"):
+            return ctx
+        final = ctor(
+            "python:comprehension.final_member",
+            [
+                iterable.to_term(owner=str(self.site)),
+                str_const(generator.binding_coordinate_cid),
+            ],
+            symbol_kind="coordinate",
+        )
+        terms = (final,)
+        if generator.target.coordinates is not None:
+            terms = (final, *_leaf_projections(generator.target, final))
+        coordinates = _member_coordinates(generator)
+        for coordinate, term in zip(coordinates, terms, strict=True):
+            ctx = bind_temporal(
+                ctx,
+                final_member_coordinate(coordinate),
+                SymbolicValue(term),
+                owner="ComprehensionSugar._symbolic_final_ctx",
                 blame=str(self.site),
             )
         return ctx
@@ -775,6 +844,15 @@ def _target_leaves(
         return (target,)
     assert target.coordinates is not None
     return tuple(leaf for child in target.coordinates for leaf in _target_leaves(child))
+
+
+def _member_coordinates(generator: ComprehensionGeneratorSugar) -> tuple[str, ...]:
+    """Every coordinate a member binds: the generator's, then, for a
+    destructuring target, each leaf's in ``_target_leaves`` order."""
+    return (
+        generator.binding_coordinate_cid,
+        *(coordinate.cid for coordinate in generator.target_coordinates),
+    )
 
 
 def _leaf_projections(target: ComprehensionTargetSugar, element) -> tuple:
