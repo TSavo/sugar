@@ -147,9 +147,23 @@ def test_an_absent_module_is_never_cited(tmp_path):
     assert not isinstance(seated, OpaqueCitedContextManagerRefV1)
 
 
+def _unit(source: str):
+    """The typed unit of ``source``: the head reader walks its tree."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.tree import SourceFile
+
+    return SourceFile(
+        (source, "call_bound_head.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).unit
+
+
 def test_only_a_local_bound_once_by_a_call_qualifies():
     def head(source, line):
-        return call_bound_local_manager_head(source, line, 9)
+        return call_bound_local_manager_head(_unit(source), line, 9)
 
     once = "def f():\n    z = g('m')\n    with z.A().b(1):\n        pass\n"
     assert head(once, 3) == ((2, 8), "A")

@@ -12,7 +12,6 @@ from sugar_lift_py_tests.effect import NameErrorEffect
 from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.builtin_reference import module_name_unbound
 from sugar_source_tree.nodes import FunctionDef
 from sugar_source_tree.tree import SourceFile
 
@@ -47,16 +46,32 @@ def test_unbound_read_halts_with_name_error() -> None:
     assert effect.name == "nowhere_bound"
 
 
+def _name_bound_nowhere(source: str, name: str) -> bool:
+    unit = SourceFile(
+        (source, "unbound_name.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    ).unit
+    return unit.name_bound_nowhere(name)
+
+
 def test_only_a_name_nothing_binds_is_unbound() -> None:
-    assert module_name_unbound("def f():\n    return y\n", "y")
+    assert _name_bound_nowhere("def f():\n    return y\n", "y")
     # module-level, import, parameter, builtin, implicit module name
-    assert not module_name_unbound("y = 1\ndef f():\n    return y\n", "y")
-    assert not module_name_unbound("import y\ndef f():\n    return y\n", "y")
-    assert not module_name_unbound("def f(y):\n    return y\n", "y")
-    assert not module_name_unbound("def f():\n    return len\n", "len")
-    assert not module_name_unbound("def f():\n    return __name__\n", "__name__")
+    assert not _name_bound_nowhere("y = 1\ndef f():\n    return y\n", "y")
+    assert not _name_bound_nowhere("import y\ndef f():\n    return y\n", "y")
+    assert not _name_bound_nowhere("def f(y):\n    return y\n", "y")
+    assert not _name_bound_nowhere("def f():\n    return len\n", "len")
+    assert not _name_bound_nowhere("def f():\n    return __name__\n", "__name__")
+    # bound in another scope, by a loop, a with target or an except name
+    assert not _name_bound_nowhere(
+        "def g():\n    y = 1\ndef f():\n    return y\n", "y"
+    )
+    assert not _name_bound_nowhere("for y in ():\n    pass\n", "y")
+    assert not _name_bound_nowhere("with m() as (x, y):\n    pass\n", "y")
+    # an attribute target binds no name
+    assert _name_bound_nowhere("def f(o):\n    o.y = 1\n    return y\n", "y")
     # a star import or a dynamic global writer may bind it unseen
-    assert not module_name_unbound("from m import *\ndef f():\n    return y\n", "y")
-    assert not module_name_unbound(
+    assert not _name_bound_nowhere("from m import *\ndef f():\n    return y\n", "y")
+    assert not _name_bound_nowhere(
         "globals()['y'] = 1\ndef f():\n    return y\n", "y"
     )

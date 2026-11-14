@@ -6,44 +6,42 @@ attribute reads and calls with constant arguments on it: ``monkeypatch.context()
 the ``with`` (no class body, lambda or nested function in between) and is
 never rebound in that function, so at the ``with`` it still holds the value the
 caller passed.  Anything else returns ``None``.
+
+Every reader here takes the typed ``SourceUnit`` the ``with`` belongs to and
+walks its node tree; the source is never parsed here.  A head's text is its
+own source segment.
 """
 
 from __future__ import annotations
 
-import ast
 
-from .builtin_reference import name_bound_anywhere, parsed_module
+def _binds(node, name: str) -> bool:
+    """Whether ``node`` or anything under it binds ``name`` (or may: ``*``)."""
+    names = node.names_bound_within()
+    return name in names or "*" in names
 
 
-def formal_manager_head(source: str, start_line: int, start_col: int):
+def _parameters(function) -> set[str]:
+    return {param.name for param in function.params}
+
+
+def formal_manager_head(unit, start_line: int, start_col: int):
     """The head's source text when the With item at the site is formal-rooted."""
-    tree = parsed_module(source)
-    if tree is None:
-        return None
-    found = _with_item_expr(tree, start_line, start_col)
+    found = _with_item_expr(unit, start_line, start_col)
     if found is None:
         return None
     function, expr = found
     root = _chain_root(expr, operands_admitted=True)
     if root is None:
         return None
-    arguments = function.args
-    parameters = {
-        arg.arg
-        for arg in (
-            *arguments.posonlyargs,
-            *arguments.args,
-            *arguments.kwonlyargs,
-            *(a for a in (arguments.vararg, arguments.kwarg) if a is not None),
-        )
-    }
+    parameters = _parameters(function)
     if root not in parameters:
         root = _parameter_alias(function, root, parameters, expr)
         if root is None:
             return None
-    if any(name_bound_anywhere(statement, root) for statement in function.body):
+    if any(_binds(statement, root) for statement in function.body):
         return None
-    return ast.unparse(expr)
+    return expr.segment()
 
 
 def _parameter_alias(function, name, parameters, expr):
@@ -54,20 +52,18 @@ def _parameter_alias(function, name, parameters, expr):
     top-level statements run in order, so at the ``with`` the local holds the
     very object the caller passed for that parameter.
     """
-    binders = [
-        statement
-        for statement in function.body
-        if name_bound_anywhere(statement, name)
-    ]
+    from .nodes import Assign, Name
+
+    binders = [statement for statement in function.body if _binds(statement, name)]
     if len(binders) != 1:
         return None
     statement = binders[0]
     if not (
-        isinstance(statement, ast.Assign)
+        isinstance(statement, Assign)
         and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
+        and isinstance(statement.targets[0], Name)
         and statement.targets[0].id == name
-        and isinstance(statement.value, ast.Name)
+        and isinstance(statement.value, Name)
         and statement.value.id in parameters
     ):
         return None
@@ -84,21 +80,22 @@ def _chain_root(expr, *, operands_admitted=False):
     evaluated as ordinary expressions between selecting the callee and
     calling it (``FormalSelectedManagerHeadSugar``), so their effects are kept.
     """
+    from .nodes import Attribute, Call, Constant, Name
+
     node = expr
     while True:
-        if isinstance(node, ast.Name):
+        if isinstance(node, Name):
             return node.id
-        if isinstance(node, ast.Attribute):
+        if isinstance(node, Attribute):
             node = node.value
             operands_admitted = False
             continue
-        if isinstance(node, ast.Call):
+        if isinstance(node, Call):
             if not operands_admitted:
-                if not all(isinstance(arg, ast.Constant) for arg in node.args):
+                if not all(isinstance(arg, Constant) for arg in node.args):
                     return None
                 if not all(
-                    keyword.arg is not None
-                    and isinstance(keyword.value, ast.Constant)
+                    keyword.arg is not None and isinstance(keyword.value, Constant)
                     for keyword in node.keywords
                 ):
                     return None
@@ -108,21 +105,27 @@ def _chain_root(expr, *, operands_admitted=False):
         return None
 
 
-def _with_item_expr(tree, line, col):
+def _with_item_expr(unit, line, col):
     """``(innermost function, context_expr)`` for the With item at the site."""
-    stack = [(tree, None)]
+    from .nodes import AsyncFunctionDef, ClassDef, FunctionDef, Lambda, With
+
+    module = unit.typed_module
+    if module is None:
+        return None
+    stack = [(module, None)]
     while stack:
         node, function = stack.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, (FunctionDef, AsyncFunctionDef)):
             function = node
-        elif isinstance(node, (ast.Lambda, ast.ClassDef)):
+        elif isinstance(node, (Lambda, ClassDef)):
             function = None
-        if isinstance(node, ast.With) and function is not None:
+        if isinstance(node, With) and function is not None:
             for item in node.items:
                 expr = item.context_expr
-                if (expr.lineno, expr.col_offset) == (line, col):
+                span = expr.line_col_span()
+                if (span.start_line, span.start_col) == (line, col):
                     return function, expr
-        for child in ast.iter_child_nodes(node):
+        for _name, _index, child in node.children():
             stack.append((child, function))
     return None
 
@@ -130,9 +133,9 @@ def _with_item_expr(tree, line, col):
 def runtime_selected_manager_head(unit, start_line: int, start_col: int):
     """The head's source text when its manager is selected by name at run time.
 
-    ``unit`` is the typed ``SourceUnit`` the ``with`` belongs to; its source is
-    the text read here, and it answers how the callee of the binding statement
-    is bound.
+    ``unit`` is the typed ``SourceUnit`` the ``with`` belongs to; its node tree
+    is the tree read here, and it answers how the callee of the binding
+    statement is bound.
 
     The head is a chain (attribute reads, constant-argument calls, operands on
     the outermost call) rooted at a local of the innermost function around the
@@ -155,43 +158,37 @@ def runtime_selected_manager_head(unit, start_line: int, start_col: int):
     then:``): no frame knows that object's type, so no source decides the
     manager its enter result is.  Anything else returns ``None``.
     """
-    source = unit.source
-    tree = parsed_module(source)
-    if tree is None:
-        return None
-    found = _with_item_expr(tree, start_line, start_col)
+    from .nodes import Assign, Name, With
+
+    found = _with_item_expr(unit, start_line, start_col)
     if found is None:
         return None
     function, expr = found
     root = _chain_root(expr, operands_admitted=True)
     if root is None:
         return None
-    binders = [
-        statement
-        for statement in function.body
-        if name_bound_anywhere(statement, root)
-    ]
+    binders = [statement for statement in function.body if _binds(statement, root)]
     if len(binders) != 1:
         return None
     statement = binders[0]
-    if isinstance(statement, ast.With):
-        if _formal_enter_result_binder(source, statement, root, expr):
-            return ast.unparse(expr)
+    if isinstance(statement, With):
+        if _formal_enter_result_binder(unit, statement, root, expr):
+            return expr.segment()
         return None
     if not (
-        isinstance(statement, ast.Assign)
+        isinstance(statement, Assign)
         and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
+        and isinstance(statement.targets[0], Name)
         and statement.targets[0].id == root
         and _run_time_getattr(unit, statement.value)
     ):
         return None
     if statement.end_lineno >= expr.lineno:
         return None
-    return ast.unparse(expr)
+    return expr.segment()
 
 
-def call_bound_local_manager_head(source: str, start_line: int, start_col: int):
+def call_bound_local_manager_head(unit, start_line: int, start_col: int):
     """``(binder call (line, col), first attribute)`` for a call-bound local head.
 
     The head is a chain (attribute reads, constant-argument calls, operands on
@@ -203,13 +200,12 @@ def call_bound_local_manager_head(source: str, start_line: int, start_col: int):
     ``with`` the local holds a value that call returned; which value is for the
     caller to decide from the call (#7742: ``zstd =
     import_optional_dependency("zstandard", errors="ignore")`` then ``with
-    zstd.ZstdDecompressor().stream_reader(b"")``).  Anything else returns
-    ``None``.
+    zstd.ZstdDecompressor().stream_reader(b"")``).  The binder call's
+    (line, col) is its own span's start.  Anything else returns ``None``.
     """
-    tree = parsed_module(source)
-    if tree is None:
-        return None
-    found = _with_item_expr(tree, start_line, start_col)
+    from .nodes import Assign, Call, Global, Name, Nonlocal
+
+    found = _with_item_expr(unit, start_line, start_col)
     if found is None:
         return None
     function, expr = found
@@ -219,35 +215,21 @@ def call_bound_local_manager_head(source: str, start_line: int, start_col: int):
     first = _first_attribute_on(expr, root)
     if first is None:
         return None
-    arguments = function.args
-    parameters = {
-        arg.arg
-        for arg in (
-            *arguments.posonlyargs,
-            *arguments.args,
-            *arguments.kwonlyargs,
-            *(a for a in (arguments.vararg, arguments.kwarg) if a is not None),
-        )
-    }
-    if root in parameters:
+    if root in _parameters(function):
         return None
-    for node in ast.walk(function):
-        if isinstance(node, (ast.Global, ast.Nonlocal)) and root in node.names:
+    for node in function.walk():
+        if isinstance(node, (Global, Nonlocal)) and root in node.names:
             return None
-    binders = [
-        statement
-        for statement in function.body
-        if name_bound_anywhere(statement, root)
-    ]
+    binders = [statement for statement in function.body if _binds(statement, root)]
     if len(binders) != 1:
         return None
     statement = binders[0]
     if not (
-        isinstance(statement, ast.Assign)
+        isinstance(statement, Assign)
         and len(statement.targets) == 1
-        and isinstance(statement.targets[0], ast.Name)
+        and isinstance(statement.targets[0], Name)
         and statement.targets[0].id == root
-        and isinstance(statement.value, ast.Call)
+        and isinstance(statement.value, Call)
     ):
         return None
     if statement.end_lineno >= expr.lineno:
@@ -258,80 +240,73 @@ def call_bound_local_manager_head(source: str, start_line: int, start_col: int):
 
 def _first_attribute_on(expr, root: str):
     """The attribute the chain reads directly on its root name, else None."""
+    from .nodes import Attribute, Call, Name
+
     node = expr
     while True:
-        if isinstance(node, ast.Attribute):
-            if isinstance(node.value, ast.Name) and node.value.id == root:
+        if isinstance(node, Attribute):
+            if isinstance(node.value, Name) and node.value.id == root:
                 return node.attr
             node = node.value
-        elif isinstance(node, ast.Call):
+        elif isinstance(node, Call):
             node = node.func
         else:
             return None
 
 
-def _formal_enter_result_binder(source: str, statement, root: str, expr) -> bool:
+def _formal_enter_result_binder(unit, statement, root: str, expr) -> bool:
     """``statement`` binds ``root`` only as a formal-rooted item's enter result."""
+    from .nodes import List, Name, Tuple_
+
     binding_items = [
-        item
-        for item in statement.items
-        if item.optional_vars is not None
-        and name_bound_anywhere(item.optional_vars, root)
+        item for item in statement.items if root in item.names_bound_here()
     ]
     if len(binding_items) != 1:
         return False
     (item,) = binding_items
     target = item.optional_vars
-    names = (
-        target.elts if isinstance(target, (ast.Tuple, ast.List)) else (target,)
-    )
-    if not all(isinstance(name, ast.Name) for name in names):
+    names = target.elts if isinstance(target, (Tuple_, List)) else (target,)
+    if not all(isinstance(name, Name) for name in names):
         return False
     if [name.id for name in names].count(root) != 1:
         return False
-    if any(name_bound_anywhere(item.context_expr, root) for item in statement.items):
+    if any(_binds(item.context_expr, root) for item in statement.items):
         return False
-    if any(name_bound_anywhere(body, root) for body in statement.body):
+    if any(_binds(body, root) for body in statement.body):
         return False
     if not any(_contains(body, expr) for body in statement.body):
         return False
-    head = item.context_expr
-    return formal_manager_head(source, head.lineno, head.col_offset) is not None
+    head = item.context_expr.line_col_span()
+    return formal_manager_head(unit, head.start_line, head.start_col) is not None
 
 
-def _contains(tree, node) -> bool:
-    return any(child is node for child in ast.walk(tree))
+def _contains(outer, inner) -> bool:
+    """Whether ``inner``'s source span lies inside ``outer``'s."""
+    a = outer.line_col_span()
+    b = inner.line_col_span()
+    return (a.start_line, a.start_col) <= (b.start_line, b.start_col) and (
+        b.end_line,
+        b.end_col,
+    ) <= (a.end_line, a.end_col)
 
 
 def _run_time_getattr(unit, value) -> bool:
     """``getattr(<object>, <non-constant name>)`` with no default, its callee
     bound to the builtin ``getattr`` (asked of the unit at the callee's own
     coordinate, never read off its spelling)."""
+    from .nodes import Call, Constant, LanguageCallee, Name, Starred
+
     if not (
-        isinstance(value, ast.Call)
-        and isinstance(value.func, ast.Name)
+        isinstance(value, Call)
+        and isinstance(value.func, Name)
         and len(value.args) == 2
         and not value.keywords
-        and not any(isinstance(arg, ast.Starred) for arg in value.args)
-        and not isinstance(value.args[1], ast.Constant)
+        and not any(isinstance(arg, Starred) for arg in value.args)
+        and not isinstance(value.args[1], Constant)
     ):
         return False
-    from .nodes import LanguageCallee
-    from .spans import LineColSpan
-
     callee = value.func
-    # ``ast`` columns are UTF-8 byte offsets; the unit's spans count codepoints.
-    lines = unit.source.split("\n")
-
-    def column(line: int, byte_col: int) -> int:
-        return len(lines[line - 1].encode("utf-8")[:byte_col].decode("utf-8"))
-
-    span = LineColSpan(
-        callee.lineno,
-        column(callee.lineno, callee.col_offset),
-        callee.end_lineno,
-        column(callee.end_lineno, callee.end_col_offset),
-    )
     return (
-        unit.language_callee_at(callee.id, span) is LanguageCallee.BUILTIN_GETATTR
+        unit.language_callee_at(callee.id, callee.line_col_span())
+        is LanguageCallee.BUILTIN_GETATTR
     )

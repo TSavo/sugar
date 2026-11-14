@@ -31,6 +31,7 @@ carries the rewritten shape, then memoized like any other ref.
 
 from __future__ import annotations
 
+import builtins as _builtins_module
 import enum as _enum
 import symtable
 from dataclasses import dataclass, field, replace
@@ -114,6 +115,34 @@ _EVALUATION_EXIT_PATH = object()
 # about the statement that merely defined it.
 DEFER_DEFINITION_BODY_REFUSAL = object()
 _MISSING = object()
+
+# Names the interpreter binds without a source binding: the module attributes
+# the import system sets, the class-body names, and the implicit ``__class__``
+# cell of a method.
+_INTERPRETER_BOUND_NAMES = frozenset(
+    (
+        "__name__",
+        "__file__",
+        "__doc__",
+        "__spec__",
+        "__loader__",
+        "__package__",
+        "__path__",
+        "__cached__",
+        "__builtins__",
+        "__annotations__",
+        "__dict__",
+        "__module__",
+        "__qualname__",
+        "__class__",
+    )
+)
+
+# A read of one of these can write a global (or a builtin) the source never
+# spells as a binding, so no read in that module is called unbound.
+_DYNAMIC_GLOBAL_WRITERS = frozenset(
+    ("globals", "vars", "locals", "exec", "eval", "builtins", "__builtins__")
+)
 
 
 class LanguageCallee(_enum.Enum):
@@ -916,6 +945,11 @@ class SourceUnit:
     _function_span_index: object = field(
         init=False, default=None, repr=False, compare=False
     )
+    # ``(typed module, names some scope binds, names read)``: one walk of the
+    # typed tree, rebuilt if the typed root is replaced.
+    _module_name_rows_memo: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -946,6 +980,7 @@ class SourceUnit:
         object.__setattr__(self, "_lexical_call_enrollment_index", None)
         object.__setattr__(self, "_function_symtable_index", None)
         object.__setattr__(self, "_function_span_index", None)
+        object.__setattr__(self, "_module_name_rows_memo", None)
 
     def _published_enrollment_decisions(
         self, occurrence: SourceOccurrenceIdentityV1
@@ -1264,6 +1299,9 @@ class SourceUnit:
             return None
         if name in self.module_bound_names:
             return None
+        if "*" in self._module_name_rows()[0]:
+            # A star import may bind any name in the module namespace.
+            return None
         owner = self.innermost_function_containing(span)
         if owner is not None:
             table = self.function_symtable(owner.name, owner.line_col_span().start_line)
@@ -1279,6 +1317,45 @@ class SourceUnit:
             ):
                 return None
         return f"python:builtins.{name}"
+
+    def _module_name_rows(self) -> Tuple[frozenset, frozenset]:
+        """``(names some scope binds, names read)`` over the typed tree.
+
+        Each binding site answers for itself (``Node.names_bound_here``; a
+        star import answers ``"*"``).  One walk per typed root.
+        """
+        module = self._require_typed_module(
+            "SourceUnit._module_name_rows", blame=self.filename
+        )
+        rows = self._module_name_rows_memo
+        if rows is None or rows[0] is not module:
+            bound: set[str] = set()
+            read: set[str] = set()
+            for node in module.walk():
+                bound.update(node.names_bound_here())
+                if isinstance(node, Name):
+                    read.add(node.id)
+            rows = (module, frozenset(bound), frozenset(read))
+            object.__setattr__(self, "_module_name_rows_memo", rows)
+        return rows[1], rows[2]
+
+    def name_bound_nowhere(self, name: str) -> bool:
+        """Whether every read of ``name`` in this module raises ``NameError``.
+
+        True only when nothing binds the name: no scope of the module binds
+        it and no star import may (read off the typed tree), it is not a
+        builtin, not a name the interpreter binds itself, and the module reads
+        no dynamic global writer (``globals``, ``exec``, ...).  Any doubt, and
+        a unit with no typed root, answers False.
+        """
+        if self.typed_module is None:
+            return False
+        if hasattr(_builtins_module, name) or name in _INTERPRETER_BOUND_NAMES:
+            return False
+        bound, read = self._module_name_rows()
+        if name in bound or "*" in bound:
+            return False
+        return not (read & _DYNAMIC_GLOBAL_WRITERS)
 
     def language_callee_at(self, name: str, span) -> Optional["LanguageCallee"]:
         """The language-fixed callee a bare name read at ``span`` is bound to.
@@ -4275,6 +4352,41 @@ class Node(Typed):
             children = [child for _name, _index, child in node._child_edges()]
             stack.extend(reversed(children))
 
+    # Fields holding a name this node binds (a str, or a tuple of str), and
+    # fields holding the target expression(s) it binds through.  Declared per
+    # binding class; every other node binds nothing.
+    _bound_name_fields: ClassVar[Tuple[str, ...]] = ()
+    _bound_target_fields: ClassVar[Tuple[str, ...]] = ()
+
+    def names_bound_here(self) -> Tuple[str, ...]:
+        """The names this node itself binds in its own scope (#7757 item 6).
+
+        A binding site answers for itself: a definition, formal, ``except ...
+        as``, ``match`` capture or type parameter its name; a ``global`` /
+        ``nonlocal`` declaration the names it declares; an import alias the
+        name it binds (``"*"`` for a star import, which may bind any name);
+        an assignment, ``for``, ``with ... as``, walrus, comprehension or
+        ``del`` the names its target binds.  Every other node binds nothing.
+        """
+        names: list[str] = []
+        for field_name in type(self)._bound_name_fields:
+            value = getattr(self, field_name)
+            if isinstance(value, str):
+                names.append(value)
+            elif value:
+                names.extend(value)
+        for field_name in type(self)._bound_target_fields:
+            value = getattr(self, field_name)
+            for target in value if isinstance(value, tuple) else (value,):
+                names.extend(_target_bound_names(target))
+        return tuple(names)
+
+    def names_bound_within(self) -> frozenset:
+        """Every name this node or any node under it binds, in any scope."""
+        return frozenset(
+            name for node in self.walk() for name in node.names_bound_here()
+        )
+
     def __repr__(self) -> str:  # pragma: no cover
         return f"<{self.kind} [{self.span.start},{self.span.end})>"
 
@@ -4364,6 +4476,8 @@ class Pattern(Node):
 class TypeParam(Node):
     """A PEP 695 type parameter."""
 
+    _bound_name_fields = ("name",)
+
 
 # --------------------------------------------------------------------------
 # Helper nodes (grammar constituents that are not statements or expressions)
@@ -4379,6 +4493,7 @@ class Param(Node):
     default: Optional[Expression]
     param_kind: str
     _child_fields = ("annotation", "default")
+    _bound_name_fields = ("name",)
 
     @property
     def arg(self) -> str:
@@ -4439,6 +4554,21 @@ def _arguments_projection(params: Tuple[Param, ...]) -> ArgumentsProjection:
     )
 
 
+def _target_bound_names(target) -> Tuple[str, ...]:
+    """The names a binding target binds: a Name its id, a Tuple/List/Starred
+    its elements' names.  An attribute or subscript target mutates an object
+    and binds no name."""
+    if isinstance(target, Name):
+        return (target.id,)
+    if isinstance(target, (Tuple_, List)):
+        return tuple(
+            name for element in target.elts for name in _target_bound_names(element)
+        )
+    if isinstance(target, Starred):
+        return _target_bound_names(target.value)
+    return ()
+
+
 class Keyword(Node):
     """A keyword argument at a call site. ``arg is None`` means ``**expr``
     (double-star spread) — a structural absence, not a gap."""
@@ -4473,6 +4603,7 @@ class Comprehension(Node):
     ifs: Tuple[Expression, ...]
     is_async: bool
     _child_fields = ("target", "iter", "ifs")
+    _bound_target_fields = ("target",)
 
     def substitute(self, scope):
         """One `for <target> in <iter> [if ...]` clause: iter in the given
@@ -4504,6 +4635,7 @@ class Comprehension(Node):
 
 
 class ExceptHandler(Node):
+    _bound_name_fields = ("name",)
     type_: Optional[Expression]
     name: Optional[str]
     body: Tuple[Statement, ...]
@@ -4539,6 +4671,7 @@ class ExceptHandler(Node):
 
 
 class WithItem(Node):
+    _bound_target_fields = ("optional_vars",)
     context_expr: Expression
     optional_vars: Optional[Expression]
     _child_fields = ("context_expr", "optional_vars")
@@ -4701,6 +4834,13 @@ class ImportAlias(Node):
     name: str
     asname: Optional[str]
 
+    def names_bound_here(self) -> Tuple[str, ...]:
+        """``import a.b`` binds ``a``; ``as n`` binds ``n``; ``*`` may bind
+        any name, so it answers ``"*"``."""
+        if self.name == "*":
+            return ("*",)
+        return (self.asname or self.name.split(".", 1)[0],)
+
     def substitute(self, scope):
         """Binds nothing, no hole: substitutes to itself."""
         return self
@@ -4826,6 +4966,7 @@ def generator_for_target_coordinates(statement):
 
 
 class FunctionDef(Statement):
+    _bound_name_fields = ("name",)
     name: str
     params: Tuple[Param, ...]
     body: Tuple[Statement, ...]
@@ -5963,6 +6104,7 @@ class AsyncFunctionDef(Statement):
     every async function walks child-before-parent via ``_sugar_body_statement``.
     """
 
+    _bound_name_fields = ("name",)
     name: str
     params: Tuple[Param, ...]
     body: Tuple[Statement, ...]
@@ -6034,6 +6176,7 @@ class AsyncFunctionDef(Statement):
 
 
 class ClassDef(Statement):
+    _bound_name_fields = ("name",)
     name: str
     binding_target: Name
     bases: Tuple[Expression, ...]
@@ -7031,6 +7174,7 @@ class Return(Statement):
 
 
 class Delete(Statement):
+    _bound_target_fields = ("targets",)
     targets: Tuple[Expression, ...]
     _child_fields = ("targets",)
 
@@ -7339,6 +7483,7 @@ def _unpack_target_names(target) -> dict:
 
 
 class Assign(Statement):
+    _bound_target_fields = ("targets",)
     targets: Tuple[Expression, ...]
     value: Expression
     _child_fields = ("targets", "value")
@@ -8332,6 +8477,7 @@ class Assign(Statement):
 
 
 class AugAssign(Statement):
+    _bound_target_fields = ("target",)
     target: Expression
     op: BinaryOperator
     value: Expression
@@ -8579,6 +8725,7 @@ class AugAssign(Statement):
 
 
 class AnnAssign(Statement):
+    _bound_target_fields = ("target",)
     target: Expression
     annotation: Expression
     value: Optional[Expression]
@@ -8662,6 +8809,7 @@ class AnnAssign(Statement):
 
 
 class TypeAlias(Statement):
+    _bound_target_fields = ("name",)
     name: Expression
     type_params: Tuple[TypeParam, ...]
     value: Expression
@@ -8690,6 +8838,7 @@ class TypeAlias(Statement):
 
 
 class For(Statement):
+    _bound_target_fields = ("target",)
     target: Expression
     iter: Expression
     body: Tuple[Statement, ...]
@@ -9181,6 +9330,7 @@ class For(Statement):
 
 
 class AsyncFor(Statement):
+    _bound_target_fields = ("target",)
     target: Expression
     iter: Expression
     body: Tuple[Statement, ...]
@@ -12209,6 +12359,7 @@ class ImportFrom(Statement):
 
 
 class Global(Statement):
+    _bound_name_fields = ("names",)
     names: Tuple[str, ...]
 
     def substitute(self, scope):
@@ -12227,6 +12378,7 @@ class Global(Statement):
 
 
 class Nonlocal(Statement):
+    _bound_name_fields = ("names",)
     names: Tuple[str, ...]
 
     def substitute(self, scope):
@@ -12690,6 +12842,7 @@ class BoolOp(Expression):
 
 
 class NamedExpr(Expression):
+    _bound_target_fields = ("target",)
     target: Expression
     value: Expression
     _child_fields = ("target", "value")
@@ -13888,9 +14041,7 @@ class Call(Expression):
         from .locals_snapshot import locals_snapshot_shape
 
         span = self.line_col_span()
-        shape = locals_snapshot_shape(
-            self.unit.source, span.start_line, span.start_col
-        )
+        shape = locals_snapshot_shape(self.unit, span.start_line, span.start_col)
         if shape is None or any(name in scope for name in shape.other_locals):
             return None
         values = []
@@ -16442,6 +16593,7 @@ class MatchSequence(Pattern):
 
 
 class MatchMapping(Pattern):
+    _bound_name_fields = ("rest",)
     keys: Tuple[Expression, ...]
     patterns: Tuple[Pattern, ...]
     rest: Optional[str]
@@ -16465,6 +16617,7 @@ class MatchClass(Pattern):
 
 
 class MatchStar(Pattern):
+    _bound_name_fields = ("name",)
     name: Optional[str]
 
     def substitute(self, scope):
@@ -16473,6 +16626,7 @@ class MatchStar(Pattern):
 
 
 class MatchAs(Pattern):
+    _bound_name_fields = ("name",)
     pattern: Optional[Pattern]
     name: Optional[str]
     _child_fields = ("pattern",)

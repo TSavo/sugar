@@ -61,9 +61,23 @@ def test_formal_manager_is_opaque_and_two_faced(tmp_path, source, head):
     assert all("python:formal_manager.constructs" in repr(face.guard) for face in completed)
 
 
+def _unit(source: str):
+    """The typed unit of ``source``: the head reader walks its tree."""
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.tree import SourceFile
+
+    return SourceFile(
+        (source, "formal_head.py", blake3_512_of(source.encode("utf-8"))),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    ).unit
+
+
 def test_only_a_formal_rooted_effect_free_head_qualifies():
     def head(source):
-        return formal_manager_head(source, 2, 9)
+        return formal_manager_head(_unit(source), 2, 9)
 
     assert head("def f(p):\n    with p.a.b(1, k='x'):\n        pass\n") == "p.a.b(1, k='x')"
     # The parameter is rebound before the with: not the caller's value.
@@ -81,7 +95,7 @@ def test_only_a_formal_rooted_effect_free_head_qualifies():
 
 def test_a_local_bound_only_to_a_parameter_is_that_parameter():
     def head(source, line):
-        return formal_manager_head(source, line, 9)
+        return formal_manager_head(_unit(source), line, 9)
 
     aliased = "def f(all_parsers):\n    parser = all_parsers\n    with parser.read_csv(1):\n        pass\n"
     assert head(aliased, 3) == "parser.read_csv(1)"
