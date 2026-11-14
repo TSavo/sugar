@@ -32,10 +32,15 @@ class RealLiteralSugar(ConstructedTermSugar):
         return ExitSet.completed(TermValue(self.value))
 
     def to_term(self, *, owner: str):
-        from sugar_lift_py_tests.ir import ctor, real_lit
+        from sugar_lift_py_tests.ir import ctor
 
+        # The literal's value term is the one its desugared TermValue names:
+        # the canonical decimal, never the float's Python spelling.
         return ctor(
             "python:real-literal-construction",
-            (self.occurrence_term(owner=owner), real_lit(repr(self.value))),
+            (
+                self.occurrence_term(owner=owner),
+                TermValue(self.value).to_term(owner=owner),
+            ),
             symbol_kind="coordinate",
         )

@@ -257,7 +257,7 @@ def _commit_interned_term(
         key = (
             "lambda",
             term.param_name,
-            repr(term.param_sort),
+            _sort_content_key(term.param_sort),
             id(interned_args[0]),
         )
     else:
@@ -553,7 +553,7 @@ def _structure_id(root: "Term") -> int:
             key = (
                 "lambda",
                 term.param_name,
-                encode_jcs(sort_to_value(term.param_sort)),
+                _sort_content_key(term.param_sort),
                 local[id(term.body)],
             )
         else:
@@ -631,7 +631,7 @@ def _formula_key(formula: "Formula", *, term_key) -> tuple:
                     "quantifier",
                     node.kind,
                     node.name,
-                    repr(node.sort),
+                    _sort_content_key(node.sort),
                     memo[id(node.body)],
                 )
             continue
@@ -791,9 +791,10 @@ def _formula_content_identity(formula: "Formula") -> tuple[tuple, int, bool]:
                 )
             elif isinstance(node, _Quantifier):
                 body_key, body_hash = memo[id(node.body)]
+                sort_key = _sort_content_key(node.sort)
                 memo[marker] = (
-                    ("quantifier", node.kind, node.name, repr(node.sort), body_key),
-                    hash(("quantifier", node.kind, node.name, repr(node.sort), body_hash)),
+                    ("quantifier", node.kind, node.name, sort_key, body_key),
+                    hash(("quantifier", node.kind, node.name, sort_key, body_hash)),
                 )
             continue
         active.add(marker)
@@ -1249,6 +1250,17 @@ def sort_to_value(s: Sort) -> Value:
         return vobj([("kind", vstr("region")), ("name", vstr(s.name))])
 
     raise TypeError(f"Unknown sort: {s!r}")
+
+
+def _sort_content_key(sort: Sort) -> str:
+    """A sort's identity inside a term or formula key: its content encoding.
+
+    The same JCS text the content CID hashes, so a key and the CID can never
+    disagree about which sort a lambda or quantifier binds.  Never ``repr``:
+    a Python spelling is not the sort, and two sorts that print alike are not
+    one sort.
+    """
+    return encode_jcs(sort_to_value(sort))
 
 
 def term_to_value(t: Term) -> Value:
