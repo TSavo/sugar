@@ -565,7 +565,7 @@ def _guard_union(guards, fallback):
     return concrete[0] if len(concrete) == 1 else or_(concrete)
 
 
-def _make_loop_ref(loop, entry, completion_kind):
+def _make_loop_ref(loop, name, entry, completion_kind):
     from .backend import Leaf, materialize
     from .shadow import ShadowNode
 
@@ -578,6 +578,7 @@ def _make_loop_ref(loop, entry, completion_kind):
                 ("target_cid", Leaf(loop.owned_loop_target.target_cid)),
                 ("binding_coordinate_cid", Leaf(entry.coordinate.cid)),
                 ("completion_kind", Leaf(completion_kind)),
+                ("name", Leaf(name)),
             ),
         ),
         loop.reporter,
@@ -717,10 +718,10 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
         projected_entries = tuple(
             replace(
                 entry,
-                state=_make_loop_ref(loop, entry, completion_kind),
+                state=_make_loop_ref(loop, name, entry, completion_kind),
                 sealed_state=None,  # unsealed until face testimony is sealed
             )
-            for entry in pre_entries
+            for name, entry in zip(coordinate_names, pre_entries, strict=True)
         )
         state_record, runtime_snapshot = _sealed_state(projected_entries)
         if all(

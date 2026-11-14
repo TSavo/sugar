@@ -21639,11 +21639,14 @@ class EvaluationRef(Expression):
 
 
 class LoopBindingRef(Expression):
-    """Construction-owned reference to one guarded loop post-binding face."""
+    """Construction-owned reference to one guarded loop post-binding face:
+    the read of ``name`` after the loop, through the binding coordinate the
+    loop publishes it under (``LoopBindingRefSugar``)."""
 
     target_cid: str
     binding_coordinate_cid: str
     completion_kind: str
+    name: str
 
     def substitute(self, scope):
         del scope
@@ -21658,6 +21661,7 @@ class LoopBindingRef(Expression):
             self.target_cid,
             self.binding_coordinate_cid,
             self.completion_kind,
+            self.name,
             self.fragment,
         )
 

@@ -27,6 +27,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
@@ -48,7 +50,10 @@ from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
     EvaluationRefSugar,
     evaluation_here,
 )
-from sugar_lift_py_tests.sugar.loop_recurrence_sugar import LoopRecurrenceSugar
+from sugar_lift_py_tests.sugar.loop_recurrence_sugar import (
+    LoopBindingRefSugar,
+    LoopRecurrenceSugar,
+)
 from sugar_lift_py_tests.temporal.temporal_context import (
     EVALUATION_PREFIX,
     projection_key,
@@ -677,6 +682,79 @@ def test_a_name_first_bound_in_a_symbolic_loop_is_its_value_or_a_name_error() ->
         if isinstance(exit_, Halted) and isinstance(exit_.effect, NameErrorEffect)
     ]
     assert [exit_.effect.name for exit_ in name_errors] == ["last"]
+
+
+# -- a read after the loop is what the loop published, or refused (#7757) ------
+
+
+def _flattened(values) -> list:
+    """``values`` with every guarded value (a read over several exits)
+    opened into the values of its arms."""
+    from sugar_lift_py_tests.floor.guarded_value import GuardedValue
+
+    flat = []
+    pending = list(values)
+    while pending:
+        value = pending.pop()
+        if isinstance(value, GuardedValue):
+            pending.extend((value.when_true, value.when_false))
+            continue
+        flat.append(value)
+    return flat
+
+
+def test_a_break_under_a_symbolic_if_publishes_on_both_exits() -> None:
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``g()`` is concrete, so the loop runs item by item; ``x == stop`` is
+    # symbolic, so each item may leave by the ``break`` or go on.  ``carried``
+    # is carried under its binding coordinate: the read after the loop is a
+    # ``LoopBindingRef`` on each face (``BreakExit``, ``NormalExhaustion``),
+    # and every exit the loop leaves by binds it -- the break in item 0 (the
+    # pre-loop 0), the break in item 1 (1), and exhaustion (2).  None is
+    # refused for want of a binding, and none is a made-up term.
+    function = _function(
+        "def f(stop):\n"
+        "    carried = 0\n"
+        "    for x in g():\n"
+        "        if x == stop:\n"
+        "            break\n"
+        "        carried = x\n"
+        "    return carried\n"
+        "def g():\n"
+        "    return (1, 2)\n"
+    )
+    outcome = function_universe_outcome(function)
+    returned = _flattened(_returned_values(outcome))
+    for value in (TermValue(0), TermValue(1), TermValue(2)):
+        assert value in returned, (value, returned)
+
+
+def test_an_unbound_loop_binding_ref_refuses_by_name() -> None:
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+    ref = LoopBindingRefSugar(
+        target_cid=LOOP,
+        binding_coordinate_cid="blake3-512:test-binding",
+        completion_kind="NormalExhaustion",
+        name="carried",
+        site=None,
+    )
+    # No context, and a context the loop's publication never reached: the
+    # read is refused naming the coordinate and the name, never answered
+    # with an unbound ``python:loop.post_binding`` term.
+    for ctx in (None, ReduceContext.root(owner="live-unbound-post-binding")):
+        with pytest.raises(ConstructionPanic) as refused:
+            ref.desugar(ctx)
+        observed = refused.value.info.observed
+        assert "blake3-512:test-binding" in observed
+        assert "`carried`" in observed
+    # Bound by the loop's publication, the read is the published value.
+    ctx = ReduceContext.root(owner="live-bound-post-binding")
+    ctx = ctx.with_temporal(
+        ctx.temporal.bind_value("blake3-512:test-binding", TermValue(4))
+    )
+    assert ref.desugar(ctx) == ExitSet.completed(TermValue(4))
 
 
 _LIVE_ELSE = (
