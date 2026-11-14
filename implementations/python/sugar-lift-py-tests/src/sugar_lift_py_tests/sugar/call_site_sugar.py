@@ -732,6 +732,9 @@ class CallSiteSugar(ConstructedTermSugar):
                     fix="construct a typed source frame or keep the call loud",
                 )
             ctx = _with_frame_mutable_globals(ctx, source_call_frame)
+            module_halt = _frame_module_halt(source_call_frame)
+            if module_halt is not None:
+                return module_halt
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
             try:
@@ -989,6 +992,18 @@ def _actual_reduce_context(ctx):
     from sugar_lift_py_tests.context import ReduceContext
 
     return ReduceContext.root(owner="CallSiteSugar.desugar")
+
+
+def _frame_module_halt(frame):
+    """The halt of the frame's module, when one of its constants halts.
+
+    ``X = 1 // 0`` at module level: importing the module halts there, so a
+    call into any frame of it is that halt -- the first such constant in
+    source order, reduced once per module and published by its name on the
+    frame (``ImmutableGlobalHaltV1``).  Never dropped, never a free name.
+    """
+    halts = getattr(frame, "immutable_global_halts", ())
+    return halts[0].halt if halts else None
 
 
 def _with_frame_mutable_globals(ctx, frame):

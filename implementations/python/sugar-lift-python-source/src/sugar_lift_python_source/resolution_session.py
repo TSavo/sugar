@@ -323,6 +323,7 @@ class SourceResolutionSession:
         "frame_active",
         "call_closure",
         "module_materializations",
+        "module_constants",
         "prefix_files",
         "prefix_fallthrough",
         "import_use_rosters",
@@ -380,6 +381,10 @@ class SourceResolutionSession:
         # megamodules (pandas/_config/config.py ×18 in one _json.py open). The
         # value is live context-bound, so it lives here — never process-global.
         self.module_materializations: dict[tuple, Any] = {}
+        # source_cid -> (immutable global bindings, immutable global halts).
+        # A module constant is reduced from its own source text alone, so it
+        # is reduced once per module; every dependency frame reads this.
+        self.module_constants: dict[str, Any] = {}
         # Prefix-door SourceFile. Export fallthrough called
         # _module_prefix_outcome once per export locus and rebuilt config N times.
         # Separate from module_materializations: different context settings.
@@ -546,6 +551,13 @@ class SourceResolutionSession:
     def remember_module_materialize(self, key: tuple, product: Any) -> None:
         if self.enabled:
             self.module_materializations[key] = product
+
+    def module_constants_hit(self, source_cid: str) -> Any | None:
+        return self.module_constants.get(source_cid) if self.enabled else None
+
+    def remember_module_constants(self, source_cid: str, product: Any) -> None:
+        if self.enabled:
+            self.module_constants[source_cid] = product
 
     # -- prefix-door SourceFile + fallthrough (export path) --------------
 

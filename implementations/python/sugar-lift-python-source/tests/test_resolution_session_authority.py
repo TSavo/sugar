@@ -451,6 +451,7 @@ def leaky_process_memo(monkeypatch):
         # Per-traversal accounting, not a memo of answers: fresh per init.
         self.call_closure = CallClosureLedger()
         self.module_materializations = modules
+        self.module_constants = {}
         self.prefix_files = prefixes
         self.prefix_fallthrough = fallthroughs
         self.import_use_rosters = import_uses
