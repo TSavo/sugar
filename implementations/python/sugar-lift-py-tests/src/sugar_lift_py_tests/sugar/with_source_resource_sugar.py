@@ -48,7 +48,7 @@ class WithSourceResourceSugar(Sugar):
 def _route_manager_faces(resource, ctx: object = None) -> Outcome:
     """Enter every manager face under its guard; union the exits (8.5)."""
     from sugar_lift_py_tests.outcome import outcome_to_exitset
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted, owed_union
     from sugar_lift_py_tests.outcome.resource_bindings import (
         EnterResultBinding,
         ExitFaceBinding,
@@ -81,8 +81,13 @@ def _route_manager_faces(resource, ctx: object = None) -> Outcome:
         enter_es = outcome_to_exitset(enter_outcome)
         for enter_face in enter_es.exits:
             guard = _and(manager_face.guard, enter_face.guard)
+            # The manager and enter faces this path ran through: every arm
+            # leaving it owes what both incurred.
+            owed = owed_union(manager_face.owed, enter_face.owed)
             if isinstance(enter_face, Halted):
-                parts.append(ExitSet((Halted(guard, enter_face.effect),)))
+                parts.append(
+                    ExitSet((Halted(guard, enter_face.effect, owed=owed),))
+                )
                 continue
             entered = enter_face.value
             enter_value = _returned_value(entered.enter_value)
@@ -157,7 +162,8 @@ def _route_manager_faces(resource, ctx: object = None) -> Outcome:
                     )
                 parts.append(
                     prepend_facts_to_exitset(
-                        routed, (*manager_facts, *enter_facts, *face_facts)
+                        _owing(routed, owed),
+                        (*manager_facts, *enter_facts, *face_facts),
                     )
                 )
     if not parts:
@@ -293,6 +299,7 @@ def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return")
                     _and(face.guard, _and(remaining, local_guard)),
                     item.value,
                     face.faces,
+                    face.owed,
                 )
             )
             remaining = _and(remaining, complement_guard(local_guard))
@@ -313,6 +320,7 @@ def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return")
                     _and(face.guard, _and(remaining, fall_guard)),
                     NoneValue(),
                     face.faces,
+                    face.owed,
                 )
             )
         # A terminal residue without a return contributes no completed result.
@@ -326,6 +334,28 @@ def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return")
             fix="retain the native exit's actual control outcome",
         )
     return result
+
+
+def _owing(exit_es, owed: tuple):
+    """Every arm of ``exit_es`` also owes ``owed``: the debts of the path into it.
+
+    For a composition written by hand rather than through ``ExitSet.sequence``
+    (the With's manager, enter, body and exit; a fold over operands; a loop's
+    iterations): the prefix's ``owed`` is carried here the way ``sequence``
+    carries it, prefix first and then the arm's own, by ``owed_union``.
+    """
+    from dataclasses import replace
+
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, owed_union
+
+    if not owed:
+        return exit_es
+    return ExitSet(
+        tuple(
+            replace(exit_, owed=owed_union(owed, exit_.owed))
+            for exit_ in exit_es.exits
+        )
+    )
 
 
 def _and(left, right):

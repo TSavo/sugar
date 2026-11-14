@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field, replace
 
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import outcome_to_exitset
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -35,6 +35,9 @@ class _StarFace:
     faces: frozenset
     # Exceptional raises collected on THIS face's guard path only.
     exceptional: tuple
+    # What the path into this face owes (``owed_union`` of every arm it ran
+    # through); every arm emitted from the face carries it.
+    owed: tuple
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,7 @@ class TryStarSugar(Sugar):
             ExitSet,
             Halted,
             _and_guards,
+            owed_union,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
@@ -95,6 +99,7 @@ class TryStarSugar(Sugar):
                     state=_seed_temporal(exit_.state, ctx),
                     faces=exit_.faces,
                     exceptional=(),
+                    owed=exit_.owed,
                 )
             ]
             # Faces that leave the residual walk (unknown control / terminal).
@@ -108,8 +113,10 @@ class TryStarSugar(Sugar):
                     handler_residual = face.residual
                     matched_parts = []
                     for matcher in matchers:
-                        expected = matcher.desugar(face.state.context)
-                        if not isinstance(expected, Complete):
+                        expected = outcome_to_exitset(
+                            matcher.desugar(face.state.context)
+                        ).completed_value()
+                        if expected is None:
                             raise SugarNotWritten(
                                 blame=self.site,
                                 owner="TryStarSugar.desugar",
@@ -119,7 +126,7 @@ class TryStarSugar(Sugar):
                             )
                         routed = route_except_star(
                             handler_residual,
-                            expected.value,
+                            expected,
                             slot_id=slot_id,
                             site=self.site,
                         )
@@ -148,6 +155,7 @@ class TryStarSugar(Sugar):
                     for handler_exit in handler_exits.exits:
                         guard = _and_guards(face.guard, handler_exit.guard)
                         faces = face.faces | handler_exit.faces
+                        owed = owed_union(face.owed, handler_exit.owed)
                         if isinstance(handler_exit, Halted) and _is_exceptional_raise(
                             handler_exit.effect
                         ):
@@ -166,6 +174,7 @@ class TryStarSugar(Sugar):
                                         *face.exceptional,
                                         handler_exit.effect,
                                     ),
+                                    owed=owed,
                                 )
                             )
                             continue
@@ -177,6 +186,7 @@ class TryStarSugar(Sugar):
                                     handler_exit.effect,
                                     handler_exit.state,
                                     faces,
+                                    owed,
                                 )
                             )
                             next_state = (
@@ -191,6 +201,7 @@ class TryStarSugar(Sugar):
                                     state=next_state,
                                     faces=faces,
                                     exceptional=face.exceptional,
+                                    owed=owed,
                                 )
                             )
                             continue
@@ -211,11 +222,14 @@ class TryStarSugar(Sugar):
                                     state=next_state,
                                     faces=faces,
                                     exceptional=face.exceptional,
+                                    owed=owed,
                                 )
                             )
                             continue
                         # Unknown face: still conjoin enclosing guard; retain.
-                        retained.append(_rebind_face_guard(handler_exit, guard, faces))
+                        retained.append(
+                            _rebind_face_guard(handler_exit, guard, faces, owed)
+                        )
                         next_frontier.append(
                             _StarFace(
                                 guard=guard,
@@ -223,6 +237,7 @@ class TryStarSugar(Sugar):
                                 state=face.state,
                                 faces=faces,
                                 exceptional=face.exceptional,
+                                owed=owed,
                             )
                         )
                 frontier = next_frontier
@@ -243,10 +258,13 @@ class TryStarSugar(Sugar):
                                 regrouped,
                                 face.state,
                                 face.faces,
+                                face.owed,
                             )
                         )
                 else:
-                    retained.append(Completed(face.guard, face.state, face.faces))
+                    retained.append(
+                        Completed(face.guard, face.state, face.faces, face.owed)
+                    )
 
             if not retained:
                 retained.append(
@@ -254,6 +272,7 @@ class TryStarSugar(Sugar):
                         exit_.guard,
                         _seed_temporal(exit_.state, ctx),
                         exit_.faces,
+                        exit_.owed,
                     )
                 )
             parts.append(ExitSet(tuple(retained)).normalize())
@@ -307,15 +326,15 @@ def _seed_temporal(state, ctx):
     )
 
 
-def _rebind_face_guard(face, guard, faces):
+def _rebind_face_guard(face, guard, faces, owed):
     """Retain a face with the enclosing guard conjoined (all faces, no drop)."""
     from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
     from sugar_source_tree.panic import SugarNotWritten
 
     if isinstance(face, Halted):
-        return Halted(guard, face.effect, face.state, faces)
+        return Halted(guard, face.effect, face.state, faces, owed)
     if isinstance(face, Completed):
-        return Completed(guard, face.value, faces)
+        return Completed(guard, face.value, faces, owed)
     raise SugarNotWritten(
         blame=None,
         owner="TryStarSugar.desugar",
@@ -366,6 +385,7 @@ def _reduce_one_from(state, statement):
                         transforms=(*state.transforms, *face.value.transforms),
                     ),
                     face.faces,
+                    face.owed,
                 )
             )
         elif isinstance(face, Halted):
@@ -384,6 +404,7 @@ def _reduce_one_from(state, statement):
                     face.effect,
                     halt_state,
                     face.faces,
+                    face.owed,
                 )
             )
         else:

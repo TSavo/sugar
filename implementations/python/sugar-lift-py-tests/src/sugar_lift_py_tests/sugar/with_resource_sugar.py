@@ -96,7 +96,7 @@ class WithResourceSugar(Sugar):
         # Construction boundary: only ExitSet algebra + binding facts.
         # No sugar-class imports or construction on this path.
         from sugar_lift_py_tests.floor import EnteredManagerStateValue
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted, owed_union
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             ExitFaceBinding,
@@ -110,6 +110,7 @@ class WithResourceSugar(Sugar):
             _ReducedBlock,
             reduce_block_to_exitset,
         )
+        from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
         del ctx
 
@@ -130,6 +131,9 @@ class WithResourceSugar(Sugar):
             enter_es = sugar_outcome_to_exitset(self.enter.desugar())
             for enter_exit in enter_es.exits:
                 face_guard = _and_guards(mgr_exit.guard, enter_exit.guard)
+                # Every arm leaving this path owes what manager and enter
+                # incurred on it.
+                owed = owed_union(mgr_exit.owed, enter_exit.owed)
                 if isinstance(enter_exit, Halted):
                     parts.append(
                         ExitSet(
@@ -139,6 +143,7 @@ class WithResourceSugar(Sugar):
                                     enter_exit.effect,
                                     enter_exit.state,
                                     enter_exit.faces,
+                                    owed,
                                 ),
                             )
                         )
@@ -204,7 +209,7 @@ class WithResourceSugar(Sugar):
                         )
                         after = face.and_exit(exit_es, disposition=disposition)
                     after = prepend_facts_to_exitset(
-                        after, (*mgr_facts, *enter_facts, *face_facts)
+                        _owing(after, owed), (*mgr_facts, *enter_facts, *face_facts)
                     )
                     parts.append(after)
 

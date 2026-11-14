@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.ir import atomic, ctor, not_, or_, str_const
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -64,8 +64,10 @@ class LoopBindingRefSugar(ConstructedTermSugar):
         if temporal is not None:
             bound = temporal.value_if_bound(self.binding_coordinate_cid)
             if bound is not None:
-                return Complete(bound)
-        return Complete(SymbolicValue(self.to_term(owner="LoopBindingRefSugar")))
+                return ExitSet.completed(bound)
+        return ExitSet.completed(
+            SymbolicValue(self.to_term(owner="LoopBindingRefSugar"))
+        )
 
 
 @dataclass(frozen=True)
@@ -149,9 +151,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             and runtime is not None
             and not isinstance(iterable, SymbolicValue)
         ):
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
             from sugar_lift_py_tests.operations.iterator_operation import (
                 IteratorOperation,
             )
+            from sugar_lift_py_tests.outcome import outcome_to_exitset
             from sugar_lift_py_tests.temporal import bind_temporal
 
             from dataclasses import replace
@@ -171,12 +177,19 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 runtime.carried_names, runtime.initial_value_sugars, strict=True
             ):
                 initial = sugar.desugar(runtime_ctx)
-                if not isinstance(initial, Complete):
+                if isinstance(initial, NativeOperationExitCarrierV1):
+                    return initial
+                initial = outcome_to_exitset(initial)
+                initial_value = initial.completed_value()
+                # Only one unconditional value owing nothing is bound and
+                # carried on; any other shape (a halt, several faces, an arm
+                # that owes) is returned whole, with every arm it has.
+                if initial_value is None or initial.owed_items():
                     return initial
                 runtime_ctx = bind_temporal(
                     runtime_ctx,
                     name,
-                    initial.value,
+                    initial_value,
                     owner="LoopRecurrenceSugar",
                     blame=str(self.site),
                 )
@@ -216,10 +229,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             recurrences.append(InvValue(atomic("=", [h, step]), self.site))
         recurrence = BlockValue(tuple(recurrences), can_fall_through=True)
         if not self.outward_faces:
-            return Complete(recurrence)
+            return ExitSet.completed(recurrence)
 
-        from sugar_lift_py_tests.floor import ReturnValue
-        from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, Incomplete
+        from sugar_lift_py_tests.outcome import Completed
 
         halted_guards = [face.guard for face in self.outward_faces]
         completed_guard = not_(
@@ -247,30 +259,23 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 )
                 exits.append(Completed(face.guard, marker))
                 continue
-            if isinstance(outcome, Complete) and isinstance(outcome.value, ReturnValue):
-                exits.append(
-                    Completed(
-                        face.guard,
-                        BlockValue((outcome.value,), can_fall_through=False),
-                    )
-                )
-            elif isinstance(outcome, Incomplete):
-                exits.append(Halted(face.guard, outcome.effect, face.state))
-            else:
-                # The face reduced to something richer than one return value or
-                # one effect: a return whose expression PARTITIONS (`return
-                # d.setdefault(k, v)`), a guarded return, or a return that owes a
-                # parameter contract (`return p[0]`). None of those is a missing
-                # wire -- each is a partition the face contributes under its own
-                # guard, which is what `BindingStateWireGap: loop outward face did
-                # not construct return or raise testimony` was refusing to state.
-                exits.extend(_outward_face_partition(outcome, face, guarded=True))
+            # Every face the statement reduced to, under the outward face's
+            # guard: a return is the face's one block entry, a halt keeps the
+            # face's state, and each arm keeps what it owes. One return value
+            # or one effect is the one-arm case of the same partition; a return
+            # whose expression PARTITIONS (`return d.setdefault(k, v)`), a
+            # guarded return, or a return that owes a parameter contract
+            # (`return p[0]`) is not a missing wire -- each is a partition the
+            # face contributes under its own guard, which is what
+            # `BindingStateWireGap: loop outward face did not construct return
+            # or raise testimony` was refusing to state.
+            exits.extend(_outward_face_partition(outcome, face, guarded=True))
         if deferred:
 
             def select(value):
                 if isinstance(value, _DeferredOutwardFace):
                     return deferred[value.index]
-                return Complete(value)
+                return ExitSet.completed(value)
 
             return NativeOperationExitCarrierV1.compose_prefix(
                 ExitSet(tuple(exits)), select
@@ -282,47 +287,55 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.iterator_value import NextResult
+        from dataclasses import replace
+
         from sugar_lift_py_tests.operations.next_operation import NextOperation
-        from sugar_lift_py_tests.outcome import (
-            Complete,
-            Completed,
-            ExitSet,
-            Halted,
-            Incomplete,
-        )
+        from sugar_lift_py_tests.outcome import outcome_to_exitset
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
+        from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
         from sugar_lift_py_tests.temporal import bind_temporal
 
-        outcome = NextOperation(owner="LoopRecurrenceSugar", blame=self.site).submit(
-            iterator, ctx
+        outcome = outcome_to_exitset(
+            NextOperation(owner="LoopRecurrenceSugar", blame=self.site).submit(
+                iterator, ctx
+            )
         )
-        if isinstance(outcome, Incomplete):
-            effect = outcome.effect
-            if isinstance(effect, RaiseEffect) and _is_authenticated_stop_iteration(
-                effect
+        if outcome.exits and outcome.halts() == outcome.exits:
+            effect = outcome.exits[0].effect
+            if (
+                len(outcome.exits) == 1
+                and isinstance(effect, RaiseEffect)
+                and _is_authenticated_stop_iteration(effect)
             ):
-                return self._finish_iterator(runtime, ctx, entries=entries)
+                finished = self._finish_iterator(runtime, ctx, entries=entries)
+                if isinstance(finished, ExitSet):
+                    # Exhaustion ends the loop; whatever the exhausting
+                    # ``next`` owed rides onto what the loop leaves with.
+                    return _owing(finished, outcome.owed_items())
+                return finished
             return outcome
-        if not isinstance(outcome, Complete) or not isinstance(
-            outcome.value, NextResult
-        ):
+        next_result = outcome.completed_value()
+        # A NextResult owing something has no linear place for the debt: it
+        # is refused with every other shape, never carried on without it.
+        if not isinstance(next_result, NextResult) or outcome.owed_items():
             raise TypeError(
                 "NextOperation must produce NextResult or a named exception"
             )
 
-        next_result = outcome.value
         projected = self._project_iteration_target(
             runtime.target_pattern, next_result.value, ctx
         )
-        if isinstance(projected, Incomplete):
+        if projected.exits and projected.halts() == projected.exits:
             # Assignment has not begun: the positional-unpack Floor owns the
             # halt and the exact context entering this iteration is its state.
-            return ExitSet.halted(projected.effect, state=ctx)
-        if not isinstance(projected, Complete):
+            return ExitSet(
+                tuple(replace(face, state=ctx) for face in projected.halts())
+            ).normalize()
+        target_bindings = projected.completed_value()
+        if target_bindings is None or projected.owed_items():
             return projected
-        target_bindings = projected.value
         iteration_ctx = ctx
         for name, coordinate_cid, value in target_bindings:
             iteration_ctx = bind_temporal(
@@ -356,8 +369,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             # loop under its guard, a completed face carries its own state into
             # the next iteration under its guard. The first iteration's faces
             # are never the loop's outcome.
-            from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
-
             exits = []
             for face in body.exits:
                 following = self._after_iteration_face(
@@ -371,13 +382,24 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 if following is None:
                     exits.append(face)
                     continue
-                exits.extend(outcome_to_exitset(following).guarded(face.guard).exits)
+                # What this face incurred rides onto everything after it.
+                exits.extend(
+                    _owing(
+                        outcome_to_exitset(following).guarded(face.guard),
+                        face.owed,
+                    ).exits
+                )
             return ExitSet(tuple(exits)).normalize()
         face = body.exits[0]
         following = self._after_iteration_face(
             face, next_result, runtime, target_bindings, entries=entries, index=index
         )
-        return body if following is None else following
+        if following is None:
+            return body
+        if isinstance(following, ExitSet):
+            # What this face incurred rides onto everything after it.
+            return _owing(following, face.owed)
+        return following
 
     def _after_iteration_face(
         self, face, next_result, runtime, target_bindings, *, entries, index
@@ -386,7 +408,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         face leaves the loop as it is (a halt that is not this loop's control)."""
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
         from sugar_lift_py_tests.floor.block_value import BlockValue
-        from sugar_lift_py_tests.outcome import Complete, Completed, Halted
+        from sugar_lift_py_tests.outcome import Completed, Halted
 
         if isinstance(face, Halted):
             effect = face.effect
@@ -416,7 +438,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         state = face.value
         combined = (*entries, *state.entries)
         if not state.can_fall_through:
-            return Complete(BlockValue(combined, can_fall_through=False))
+            return ExitSet.completed(BlockValue(combined, can_fall_through=False))
         return self._advance_iterator(
             next_result.advanced,
             runtime,
@@ -431,7 +453,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             PositionalUnpackOperation,
             UnpackMemberRoster,
         )
-        from sugar_lift_py_tests.outcome import Complete, Incomplete
+        from sugar_lift_py_tests.outcome import outcome_to_exitset
         from sugar_source_tree.nodes import List, Name, Tuple_
 
         coordinates = {
@@ -442,7 +464,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         def project(target, current, path=()):
             if isinstance(target, Name):
                 coordinate = coordinates[("target", *path)]
-                return Complete(((target.id, coordinate.cid, current),))
+                return ExitSet.completed(((target.id, coordinate.cid, current),))
             if not isinstance(target, (Tuple_, List)):
                 raise TypeError("live for target contains an unsupported target leaf")
             operation = PositionalUnpackOperation(
@@ -452,32 +474,34 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 owner="LoopRecurrenceSugar.target",
                 blame=target.fragment,
             )
-            unpacked = operation.submit(current, ctx)
-            if isinstance(unpacked, Incomplete):
+            unpacked = outcome_to_exitset(operation.submit(current, ctx))
+            if unpacked.exits and unpacked.halts() == unpacked.exits:
                 return unpacked
-            if not isinstance(unpacked, Complete) or not isinstance(
-                unpacked.value, UnpackMemberRoster
-            ):
+            roster = unpacked.completed_value()
+            # A roster owing something has no linear place for the debt: it is
+            # refused with every other shape, never carried on without it.
+            if not isinstance(roster, UnpackMemberRoster) or unpacked.owed_items():
                 raise TypeError(
                     "positional target unpack omitted its authenticated roster"
                 )
             if (
-                unpacked.value.occurrence is not target.fragment
-                or unpacked.value.demand_cid != operation.demand_cid()
-                or len(unpacked.value.members) != len(target.elts)
+                roster.occurrence is not target.fragment
+                or roster.demand_cid != operation.demand_cid()
+                or len(roster.members) != len(target.elts)
             ):
                 raise TypeError(
                     "positional target unpack returned cross-wired testimony"
                 )
             bindings = []
             for index, (child, member) in enumerate(
-                zip(target.elts, unpacked.value.members, strict=True)
+                zip(target.elts, roster.members, strict=True)
             ):
                 child_result = project(child, member, (*path, index))
-                if not isinstance(child_result, Complete):
+                child_bindings = child_result.completed_value()
+                if child_bindings is None:
                     return child_result
-                bindings.extend(child_result.value)
-            return Complete(tuple(bindings))
+                bindings.extend(child_bindings)
+            return ExitSet.completed(tuple(bindings))
 
         return project(pattern.target, value)
 
@@ -509,6 +533,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             reduce_block_to_exitset,
         )
         from sugar_lift_py_tests.outcome import Completed, ExitSet
+        from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
         if not runtime.else_statements:
             return self._publish_runtime_bindings(runtime, ctx, entries=entries)
@@ -521,12 +546,17 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         if not isinstance(face, Completed):
             return otherwise
         state = face.value
-        return self._publish_runtime_bindings(
-            runtime,
-            state.context,
-            entries=(*entries, *state.entries),
-            fall_through=state.fall_through,
-            can_fall_through=state.can_fall_through,
+        # The published bindings are rebuilt from the else suite's one
+        # completed face: they owe what that face owes.
+        return _owing(
+            self._publish_runtime_bindings(
+                runtime,
+                state.context,
+                entries=(*entries, *state.entries),
+                fall_through=state.fall_through,
+                can_fall_through=state.can_fall_through,
+            ),
+            face.owed,
         )
 
     def _publish_runtime_bindings(
@@ -540,7 +570,6 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     ):
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
-        from sugar_lift_py_tests.outcome import Complete
 
         temporal = getattr(ctx, "temporal", None)
         if temporal is None:
@@ -554,7 +583,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 raise TypeError("loop recurrence omitted a carried binding")
             projected.append(ScopeRebind(name, value))
             projected.append(ScopeRebind(coordinate_cid, value))
-        return Complete(
+        return ExitSet.completed(
             BlockValue(
                 (*entries, *projected),
                 fall_through=fall_through,

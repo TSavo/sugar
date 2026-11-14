@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     Sugar,
@@ -48,14 +48,19 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
         _and_guards,
         _is_true,
         outcome_to_exitset,
+        owed_union,
         true_guard,
     )
 
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
+    from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
     prefix_guard = true_guard()
+    # What the operands' completed faces so far owe: every arm continuing
+    # past them owes it (the ``sequence`` law, by union).
+    prefix_owed: tuple = ()
     values = list(done)
     halted: list = []
 
@@ -80,6 +85,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
                         _and_guards(prefix_guard, exit_.guard),
                         exit_.effect,
                         exit_.state,
+                        owed=owed_union(prefix_owed, exit_.owed),
                     )
                 )
             else:
@@ -88,16 +94,16 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
             # Every path through this operand halts: there is no completed
             # continuation to hand to ``finish``, and the halted face is the
             # whole meaning.
-            return ExitSet(tuple(halted)).normalize().collapse()
+            return ExitSet(tuple(halted)).normalize()
         prefix_guard = _and_guards(prefix_guard, completed.guard)
+        prefix_owed = owed_union(prefix_owed, completed.owed)
         values.append(completed.value)
 
     tail = outcome_to_exitset(finish(tuple(values)))
     if not _is_true(prefix_guard):
         tail = tail.guarded(prefix_guard)
-    # ``collapse`` restores the linear ``Outcome`` for the unconditional case, so
-    # a spread with no guarded operand desugars to exactly what it did before.
-    return ExitSet((*halted, *tail.exits)).normalize().collapse()
+    tail = _owing(tail, prefix_owed)
+    return ExitSet((*halted, *tail.exits)).normalize()
 
 
 @dataclass(frozen=True)
@@ -165,7 +171,9 @@ class SpreadCollectionSugar(ConstructedTermSugar):
             for (wrapper, _), value in zip(self.elements, values):
                 term = value.to_term(owner=owner)
                 terms.append(ctor(wrapper, [term]) if wrapper is not None else term)
-            return Complete(SymbolicValue(ctor(f"python:{self.kind}", terms)))
+            return ExitSet.completed(
+                SymbolicValue(ctor(f"python:{self.kind}", terms))
+            )
 
         return _collect(sugars, ctx, (), finish)
 
@@ -243,7 +251,7 @@ class SpreadDictSugar(ConstructedTermSugar):
                     key_term = next(value_iter).to_term(owner=owner)
                     value_term = next(value_iter).to_term(owner=owner)
                 terms.append(ctor("python:dict_entry", [key_term, value_term]))
-            return Complete(SymbolicValue(ctor("python:dict", terms)))
+            return ExitSet.completed(SymbolicValue(ctor("python:dict", terms)))
 
         return _collect(flattened, ctx, (), finish)
 
@@ -382,7 +390,7 @@ class SpreadCallSugar(ConstructedTermSugar):
             site=self.site,
         )
         if self.site is None:
-            return Complete(callsite)
+            return ExitSet.completed(callsite)
         return _unprojected_spread_call_faces(
             callsite, self.callee_name or "python:call", self.site
         )

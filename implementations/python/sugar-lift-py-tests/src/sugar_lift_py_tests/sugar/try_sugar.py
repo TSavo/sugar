@@ -321,7 +321,7 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
         MatchDecided,
         matches_raise_effect,
     )
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import outcome_to_exitset
     from sugar_source_tree.panic import SugarNotWritten
 
     # An ``UndeterminedRaiseEffect`` is an ordinary (non-group) exception
@@ -340,8 +340,8 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
         )
     if matcher is None:
         return MatchDecided(True)
-    expected = matcher.desugar(ctx)
-    if not isinstance(expected, Complete):
+    expected = outcome_to_exitset(matcher.desugar(ctx)).completed_value()
+    if expected is None:
         raise SugarNotWritten(
             blame=effect.occurrence_id,
             owner="TrySugar._effect_matches",
@@ -349,7 +349,7 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
             requested="an authenticated exception-type value",
             fix="keep unresolved handler types loud",
         )
-    return matches_raise_effect(effect, expected.value)
+    return matches_raise_effect(effect, expected)
 
 
 def _binding_facts_for(slot_id, effect, site) -> tuple:
