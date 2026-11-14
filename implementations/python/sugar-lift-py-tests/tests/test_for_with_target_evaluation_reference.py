@@ -98,7 +98,7 @@ def _node(function, kind):
 
 def _keyed(node) -> bool:
     # An iteration's unpack (``a, b = <item>``).  ``x = a`` in the body is
-    # keyed too, as an alias of ``a``'s projection, but it is no unpack.
+    # keyed too, as every assignment is, but it is no unpack.
     return (
         isinstance(node, Assign)
         and isinstance(getattr(node, "evaluation", None), str)
@@ -154,21 +154,26 @@ def test_the_same_source_gives_the_same_iteration_keys() -> None:
     assert keys() == keys()
 
 
-def test_display_items_still_pair_by_substitution() -> None:
+def test_display_items_are_keyed_per_iteration_too() -> None:
+    # A display item is paired by the iteration's own display unpack, keyed
+    # as that iteration's evaluation: the target never inlines the member.
     body = _function(FOR_DISPLAYS).substitute({}).body
-    assert not _unpacks(body)
+    unpacks = _unpacks(body)
+    assert len(unpacks) == 2
+    assert unpacks[0].evaluation != unpacks[1].evaluation
     ret = body[-1]
     assert isinstance(ret, Return)
-    assert not isinstance(ret.value, EvaluationRef)
+    assert isinstance(ret.value, EvaluationRef)
+    assert ret.value.evaluation == projection_key(unpacks[-1].evaluation, "b")
 
 
-def test_only_a_non_display_item_is_unpacked() -> None:
+def test_every_item_is_keyed_display_or_not() -> None:
     body = _function(FOR_MIXED).substitute({}).body
     unpacks = _unpacks(body)
-    assert len(unpacks) == 1
+    assert len(unpacks) == 2
     ret = body[-1]
     assert isinstance(ret.value, EvaluationRef)
-    assert ret.value.evaluation == projection_key(unpacks[0].evaluation, "b")
+    assert ret.value.evaluation == projection_key(unpacks[-1].evaluation, "b")
 
 
 def test_the_iteration_unpack_sugar_carries_its_key() -> None:

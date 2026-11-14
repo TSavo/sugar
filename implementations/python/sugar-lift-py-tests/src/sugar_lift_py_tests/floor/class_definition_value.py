@@ -50,9 +50,10 @@ class ConstructedClassFieldV1:
     value_sugar: object = field(compare=False)
     binding_target_occurrence: SourceFragmentCoordinateV1
     evaluation_group_cid: str | None = None
-    # ``y = x`` where ``x`` reads an evaluation: the key a later read of the
-    # field's name references (``Assign.alias_evaluations``).  The class body
-    # binds the field's value under it, as an assignment anywhere else does.
+    # The key a later read of the field's name in the class body references
+    # (``Assign.target_evaluations``, ``AnnAssign.target_evaluations``).  The
+    # class body binds the field's value under it, as an assignment anywhere
+    # else does.
     evaluation_key: str | None = field(default=None, compare=False)
 
     def __post_init__(self):

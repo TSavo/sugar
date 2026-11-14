@@ -5,11 +5,10 @@ evaluation, never ``x`` read again where ``y`` is used (temporal choice 1,
 Before, ``y`` was bound to the reference ``y = x`` read, which names ``x``,
 and a reference reads the latest of its evaluation and a write of its name.
 So ``x = 1; x += 1; y = x; x += 1; return y`` returned 3.  #7928 closed this
-in live loop bodies only.  Now every assignment whose value is a reference to
-an evaluation binds each such Name target to its own projection of the
-assignment's evaluation (``Assign.alias_evaluations``); the assignment binds
-the value it read under that key at reduce, and every later read of the name
-reads that key.
+in live loop bodies only.  Now every assignment, whatever its right-hand side,
+binds each Name target to its own projection of the assignment's evaluation
+(``Assign.target_evaluations``); the assignment binds the value it read under
+that key at reduce, and every later read of the name reads that key.
 """
 
 from __future__ import annotations
@@ -177,8 +176,9 @@ def test_an_alias_reads_its_own_projection_of_the_assignment() -> None:
     first, assign = [node for node in body if isinstance(node, Assign)]
     ret = body[-1]
     assert isinstance(ret, Return)
-    # ``x = 1`` reads no evaluation and carries no key.
-    assert getattr(first, "evaluation", None) is None
+    # ``x = 1`` is keyed too: every assignment is its own evaluation.
+    assert isinstance(first.evaluation, str)
+    assert first.evaluation != assign.evaluation
     assert isinstance(assign.evaluation, str)
     assert isinstance(ret.value, EvaluationRef)
     assert ret.value.evaluation == projection_key(assign.evaluation, "y")
@@ -198,26 +198,30 @@ def test_the_assignment_sugar_carries_the_alias_key() -> None:
     assigns = {
         sugar.name: sugar for sugar in statements if isinstance(sugar, AssignSugar)
     }
-    # ``x = 1`` reads no evaluation; ``y = x`` reads ``x += 1``'s.
-    assert assigns["x"].evaluations == ()
-    ((name, key),) = assigns["y"].evaluations
-    assert name == "y"
-    assert key.startswith(EVALUATION_PREFIX)
-    assert key.endswith("/y")
+    # Every assignment carries its target's key: ``x = 1`` and ``y = x``.
+    for target in ("x", "y"):
+        ((name, key),) = assigns[target].evaluations
+        assert name == target
+        assert key.startswith(EVALUATION_PREFIX)
+        assert key.endswith(f"/{target}")
 
 
-def test_an_assignment_of_no_evaluation_carries_no_key() -> None:
+def test_an_assignment_of_a_formal_is_keyed_too() -> None:
     body = _function("def f(z):\n    y = z\n    return y\n").substitute({}).body
     assign = next(node for node in body if isinstance(node, Assign))
-    assert getattr(assign, "evaluation", None) is None
-    assert not isinstance(body[-1].value, EvaluationRef)
+    assert isinstance(assign.evaluation, str)
+    assert isinstance(body[-1].value, EvaluationRef)
+    assert body[-1].value.evaluation == projection_key(assign.evaluation, "y")
 
 
 def test_each_unrolled_iteration_aliases_its_own_evaluation() -> None:
     body = _function(IN_UNROLLED_FOR).substitute({}).body
     assigns = [node for node in body if isinstance(node, Assign)]
     aliases = [
-        node for node in assigns if isinstance(getattr(node, "evaluation", None), str)
+        node
+        for node in assigns
+        if isinstance(getattr(node, "evaluation", None), str)
+        and node.targets[0].id == "y"
     ]
     assert len(aliases) == 2
     assert aliases[0].evaluation != aliases[1].evaluation

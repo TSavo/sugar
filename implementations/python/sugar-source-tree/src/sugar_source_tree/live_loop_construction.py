@@ -82,9 +82,10 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
     ``else`` suite) binds the written value under, by name.
 
     A write binds a key, never the name: ``x += e`` and a walrus their
-    evaluation, an unpack or an alias each target's projection of its
-    evaluation, every assignment (an ``if``'s phi among them) its carried
-    write of the name (``carried_write_key``), and a nested live ``for`` the
+    evaluation, every assignment (``y = e``, ``y: T = e``, an unpack) each
+    target's projection of its evaluation, every assignment (an ``if``'s phi
+    among them) its carried write of the name (``carried_write_key``), and a
+    nested live ``for`` the
     binding coordinate it publishes the name under.  The recurrence reads the
     latest of these and the header, so what an item hands on is the write
     that ran last on the path it took: a ``continue`` or ``break`` mid-body,
@@ -101,6 +102,7 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
     from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
     from .nodes import (
+        AnnAssign,
         Assign,
         AsyncFunctionDef,
         AugAssign,
@@ -139,8 +141,15 @@ def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
         evaluation = getattr(node, "evaluation", None)
         if isinstance(node, (AugAssign, NamedExpr)) and isinstance(node.target, Name):
             write(node.target.id, evaluation)
-        elif isinstance(node, Assign):
-            for target in node.targets:
+        elif isinstance(node, Assign) or (
+            isinstance(node, AnnAssign)
+            and isinstance(node.target, Name)
+            and node.value is not None
+        ):
+            # ``y: T = e`` is the assignment ``y = e`` (``AnnAssign``
+            # constructs ``AssignSugar``): it writes the same keys.
+            targets = node.targets if isinstance(node, Assign) else (node.target,)
+            for target in targets:
                 for name in _target_bound_names(target):
                     if name not in writes:
                         continue

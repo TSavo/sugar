@@ -14,16 +14,15 @@ from sugar_lift_py_tests.sugar.witnesses import (
 
 @dataclass(frozen=True)
 class AssignSugar(Sugar):
-    """A `name = <rhs>` statement -- SPENT by the time it reaches the meaning layer.
+    """A `name = <rhs>` statement: the rhs is evaluated HERE, once.
 
-    substitute runs before sugar (FunctionDef.sugar), and an assignment IS a
-    temporal binding: substitute threads it, inlining the rhs into every later
-    reference of the name. So by the time this sugar reduces, the binding has
-    already done its work in the tree -- there is nothing left to state. An
-    assignment contributes no fact, no post, no effect; it is inert meaning.
-
-    (The rhs is not re-stated either: wherever the name was used, the rhs node
-    was substituted in and sugared THERE, in the position that consumes it.)
+    substitute runs before sugar (FunctionDef.sugar) and threads the binding:
+    every later read of the name is a reference to the name's projection of
+    this statement's evaluation (``Assign.target_evaluations``), never the rhs
+    inlined at the read.  This sugar evaluates the rhs at the statement (its
+    halts are the statement's) and binds the completed value under that key,
+    so the read answers the value the name was given here, whatever was
+    rebound since.  An assignment states no fact, post or effect of its own.
 
     Meaning-only, node-constructed: no owns/new/role. Single Name target only;
     other target shapes stay gaps on the tree node.
@@ -32,8 +31,8 @@ class AssignSugar(Sugar):
     name: str
     value: object  # the rhs sugar, evaluated at this statement
     site: object = dataclass_field(compare=False)
-    # ``(name, key)``: the name is an alias of an evaluation (``y = x`` after
-    # ``x += e``); its value is bound under ``key`` (``Assign.alias_evaluations``).
+    # ``(name, key)``: the name's value is bound under ``key``
+    # (``Assign.target_evaluations``); every later read of the name reads it.
     evaluations: tuple = ()
     # Evaluating the RHS is the statement's only work before it binds.
     halts_at_statement_head: ClassVar[bool] = True
@@ -85,7 +84,7 @@ class MultiAssignSugar(Sugar):
 
     bindings: tuple  # tuple of (name, value_sugar) pairs, in target order
     site: object = dataclass_field(compare=False)
-    evaluations: tuple = ()  # (name, key) per aliased name, as AssignSugar's
+    evaluations: tuple = ()  # (name, key) per Name target, as AssignSugar's
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -129,7 +128,7 @@ class ChainedAssignSugar(Sugar):
     stores: tuple
     value: object
     site: object = dataclass_field(compare=False)
-    evaluations: tuple = ()  # (name, key) per aliased name, as AssignSugar's
+    evaluations: tuple = ()  # (name, key) per Name target, as AssignSugar's
 
     @classmethod
     def witnesses(cls):
@@ -358,7 +357,7 @@ class UnpackStoreAssignSugar(Sugar):
     bindings: tuple  # (name, value_sugar) — provenance; substitute spent them
     stores: tuple  # AttributeStoreEffectSugar | SubscriptStoreEffectSugar | PlaceAssign
     site: object = dataclass_field(compare=False)
-    evaluations: tuple = ()  # (name, key) per aliased name, as AssignSugar's
+    evaluations: tuple = ()  # (name, key) per Name leaf, as AssignSugar's
 
     @classmethod
     def witnesses(cls):
@@ -425,9 +424,9 @@ class UnpackStoreAssignSugar(Sugar):
 
 
 def _evaluation_indices(evaluations, bind):
-    """``(key, value index)`` for each aliased name: ``evaluations`` holds
-    ``(name, key)`` (``Assign.alias_evaluations``), ``bind`` the index of the
-    value each name is bound to."""
+    """``(key, value index)`` for each keyed name: ``evaluations`` holds
+    ``(name, key)`` (``Assign.target_evaluations``), ``bind`` the index of
+    the value each name is bound to."""
     keys = dict(evaluations)
     return tuple((keys[name], index) for name, index in bind if name in keys)
 
@@ -437,7 +436,7 @@ def _reduce_targets(targets, active, ctx):
 
     Where the RHS recorded nothing and bound no evaluation this is the block
     the statement always reduced to; where it recorded completed values or
-    bound an aliased name's evaluation, the targets' exits carry that context
+    bound a Name target's evaluation, the targets' exits carry that context
     on to the next statement.
     """
     from sugar_lift_py_tests.sugar.function_universe_sugar import (

@@ -1,10 +1,12 @@
 """A built-in container's mutation is a store on the object, seen by every alias.
 
 ``r = []; a = r; r.append(1); return a`` returns ``[1]``: ``append`` changes
-the list object, and ``a`` names that same object. Substitution binds names to
-the node that built their value, so the object a name denotes is that node:
-two names bound to the same node (``a = r``, ``x = y = []``) are the same
-object, and a node built by another evaluation is another object.
+the list object, and ``a`` names that same object. An assignment binds its
+target to a reference to its own evaluation (``Assign.target_evaluations``),
+which carries the right-hand side it was given as the object the name denotes
+(``_evaluation_ref``, ``of``); the object is that node (``_identity``): two
+names given the same node (``a = r``, ``x = y = []``) are the same object,
+and a node built by another evaluation is another object.
 
 THE LAW, at a statement that calls a mutating method of a built-in container:
 
@@ -102,10 +104,29 @@ def runs_operand_code(call, scope) -> bool:
     return isinstance(call, Call) and not _is_pure_call(call, scope)
 
 
+def _identity(node):
+    """The node whose object ``node`` denotes.
+
+    A read of a name an assignment bound is a reference to the assignment's
+    evaluation (``EvaluationRef``) carrying the right-hand side the name was
+    given (``of``): the name denotes the object that right-hand side built
+    (or names), never the reference node, which every read mints afresh.
+    Any other node denotes itself."""
+    seen = 0
+    while getattr(node, "kind", None) == "EvaluationRef" and seen < 64:
+        of = getattr(node, "of", None)
+        if of is None:
+            break
+        node = of
+        seen += 1
+    return node
+
+
 def decided_container_kind(node) -> Optional[str]:
     """``list``/``dict``/``set`` when ``node`` builds (or is the post-state of) one."""
     from .nodes import BuiltinContainerProjection
 
+    node = _identity(node)
     if isinstance(node, BuiltinContainerProjection):
         return node.call.container_kind if node.index == 0 else None
     kind = getattr(node, "kind", None)
@@ -136,9 +157,10 @@ def _state(value):
     if isinstance(value, BindingEntryV1):
         value = value.state
     try:
-        return unwrap_binding_state(value)
+        value = unwrap_binding_state(value)
     except Exception:  # pragma: no cover - defensive: not a node state
         return value
+    return _identity(value)
 
 
 _FORMAL_KINDS = ("FormalRef", "BindingCoordinateRef")
@@ -148,7 +170,9 @@ def _ref(node):
     """The object a node denotes: its backend handle, or a formal's coordinate.
 
     A read of a formal is re-spanned to its use site (``Name.substitute``), so
-    every read is a fresh node over the same ``coordinate``."""
+    every read is a fresh node over the same ``coordinate``.  A read of an
+    assigned name is the object its assignment was given (``_identity``)."""
+    node = _identity(node)
     if getattr(node, "kind", None) in _FORMAL_KINDS and hasattr(node, "coordinate"):
         return ("formal", node.kind, _coordinate_key(node.coordinate))
     return getattr(node, "ref", node)
@@ -172,7 +196,7 @@ def same_object(left, right) -> bool:
 
 
 def _is_formal(node) -> bool:
-    return getattr(node, "kind", None) in _FORMAL_KINDS
+    return getattr(_identity(node), "kind", None) in _FORMAL_KINDS
 
 
 # Builtins whose result never holds a reference to an argument object.
@@ -242,6 +266,11 @@ def _walk_values(node, *, kept_only=True):
         if _holds_no_reference(current) and (
             kept_only or getattr(current, "kind", None) != "Subscript"
         ):
+            continue
+        denoted = _identity(current)
+        if denoted is not current and isinstance(denoted, Node):
+            # A read of an assigned name holds what its assignment was given.
+            stack.append(denoted)
             continue
         for _name, _index, child in current._child_edges():
             if isinstance(child, Node):
@@ -638,6 +667,7 @@ def builtin_typed(node, scope, depth=0) -> bool:
 
     if depth > 32:
         return False
+    node = _identity(node)
     if isinstance(node, Constant):
         return True
     if isinstance(node, (List, Tuple_, Set)):
@@ -829,7 +859,7 @@ def _static_member(root, steps):
 
     node = root
     for step in steps:
-        node = _display_member(node, step)
+        node = _display_member(_identity(node), step)
         if node is None or isinstance(node, Name):
             return None
     return node
@@ -844,7 +874,13 @@ def _path_count(node, target, memo):
         return memo[key]
     memo[key] = 0
     count = 1 if same_object(node, target) else 0
-    if not isinstance(node, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef)):
+    denoted = _identity(node)
+    if denoted is not node:
+        # A read of an assigned name reaches what its assignment was given;
+        # when it is the target itself that is this one path.
+        if not count and isinstance(denoted, Node):
+            count += _path_count(denoted, target, memo)
+    elif not isinstance(node, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef)):
         for _name, _index, child in node._child_edges():
             if isinstance(child, Node):
                 count += _path_count(child, target, memo)
@@ -928,6 +964,7 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
         return None
     receiver = call.func.value
     root, steps = path_steps(receiver)
+    root = _identity(root)
     if root is None or getattr(root, "kind", None) not in _PATH_ROOT_KINDS:
         return None
     bound = {
@@ -1040,7 +1077,18 @@ _HELPER_STATEMENT_KINDS = frozenset(
 # in progress or not as it was.
 _HELPERS_IN_PROGRESS: AmbientSet = AmbientSet("helpers_in_progress")
 _CLOSED_OPERAND_KINDS = frozenset(
-    {"Constant", "List", "Tuple", "Set", "Dict", "FormalRef", "BindingCoordinateRef"}
+    {
+        "Constant",
+        "List",
+        "Tuple",
+        "Set",
+        "Dict",
+        "FormalRef",
+        "BindingCoordinateRef",
+        # A read of a key: the value its evaluation completed with, read
+        # again at any later point without running anything.
+        "EvaluationRef",
+    }
 )
 
 
@@ -1232,6 +1280,7 @@ _IDENTITY_STATE_KINDS = frozenset(
 
 def _identity_root(node):
     """The creation node (or formal) whose object ``node`` denotes, else None."""
+    node = _identity(node)
     kind = getattr(node, "kind", None)
     if kind == "BuiltinContainerProjection":
         return _identity_root(node.call.receiver) if node.index == 0 else None
@@ -1249,6 +1298,9 @@ def _identity_root(node):
 def _runs_no_code(node) -> bool:
     """Evaluating ``node`` (a decided container operand) calls nothing."""
     kind = getattr(node, "kind", None)
+    if kind == "EvaluationRef":
+        # A read of a key: the value its evaluation already completed with.
+        return True
     if kind in _IDENTITY_STATE_KINDS:
         # Answered from the evaluation its statement already recorded.
         return True

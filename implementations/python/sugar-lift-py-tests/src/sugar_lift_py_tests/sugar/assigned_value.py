@@ -1,27 +1,32 @@
 """An assignment evaluates its RHS at the statement; later reads see its value.
 
-Substitution threads ``x = <rhs>`` by inlining the RHS sugar at every later
-read of ``x``. Python does not: it evaluates the RHS once, at the assignment
-statement, inside whatever ``try``/``with`` encloses it and in statement order.
-So ``try: x = textwrap.dedent('a') except ValueError: x = 'h'; return x`` may
-take the handler, and ``x = may_raise(); return 3`` may raise even though
-``x`` is never read.
+Python evaluates the RHS once, at the assignment statement, inside whatever
+``try``/``with`` encloses it and in statement order. So ``try: x =
+textwrap.dedent('a') except ValueError: x = 'h'; return x`` may take the
+handler, and ``x = may_raise(); return 3`` may raise even though ``x`` is never
+read.
 
 The law has two halves, and this module owns both:
 
 - **The statement evaluates.** ``evaluate_assignment_values`` desugars each RHS
   at the assignment, in Python's evaluation order. Its halt faces leave HERE,
   as the statement's own exits; only its completed faces continue, each with
-  ``ctx.assigned_values`` extended by ``(rhs key, completed value)``.
-- **A read never re-evaluates.** ``Sugar.desugar`` of a sugar whose key is
-  recorded answers ``ExitSet.completed(<completed value>)``: the value from the
-  face the statement completed under, never a second evaluation that could
-  raise again. The completed face's guard already rides the path that reaches
-  the read, so each effect is counted once.
+  the value bound under each Name target's key (``evaluations``,
+  ``Assign.target_evaluations``) and ``ctx.assigned_values`` extended by
+  ``(rhs key, completed value)``.
+- **A read never re-evaluates.** Substitution rewrites every later read of a
+  Name target to a reference to its key (``EvaluationRefSugar``): the value
+  the statement completed with, never the RHS inlined at the read and
+  evaluated again against whatever was rebound since.  A read of the RHS
+  sugar itself that is still inlined (a call's result kept as its object
+  identity, ``Assign.refine_binding_entries``; a stored field) answers
+  ``ExitSet.completed(<completed value>)`` from the record when it is
+  recorded: the value from the face the statement completed under, never a
+  second evaluation that could raise again.
 
 A RHS that reduces to one plain completed arm (unguarded, no faces, owing
-nothing) cannot halt; its reads keep the substitution they always had
-(re-reducing a total RHS denotes the same value).
+nothing) cannot halt and is recorded only inside a live loop body; outside one
+an inlined read of it is reduced again.
 """
 
 from __future__ import annotations
@@ -135,14 +140,14 @@ def _bind_carried_writes(active, bind, completed, site):
 
 def _bind_evaluations(active, evaluations, index, value):
     """``active`` with RHS ``index``'s completed ``value`` bound under the key
-    of each aliased name it is assigned to (``evaluations``: ``(key, value
-    index)``, ``Assign.alias_evaluations``), qualified by the live loop item
-    it runs in (``evaluation_here``).  After ``y = x`` every later read of
-    ``y`` is a reference to that key: the value ``x`` held here, never a later
-    rebind of ``x``.  Bound as soon as the RHS completes, as a walrus inside
-    it is (``_walrus_bound``), so a class body's later field reads it too; no
-    RHS of the same statement reads it (substitution threads the binding to
-    the statements after this one)."""
+    of each Name target it is assigned to (``evaluations``: ``(key, value
+    index)``, ``Assign.target_evaluations``), qualified by the live loop item
+    it runs in (``evaluation_here``).  After ``y = e`` every later read of
+    ``y`` is a reference to that key: the value ``e`` had here, never ``e``
+    evaluated again after a rebind.  Bound as soon as the RHS completes, as a
+    walrus inside it is (``_walrus_bound``), so a class body's later field
+    reads it too; no RHS of the same statement reads it (substitution threads
+    the binding to the statements after this one)."""
     from sugar_lift_py_tests.floor.floor_value import FloorValue
     from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
     from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
@@ -171,7 +176,7 @@ def evaluate_assignment_values(
     ``site``) assigns: the completed path binds each name a live loop carries
     under the statement's write of it (``_bind_carried_writes``).
     ``evaluations`` names ``(key, value index)`` pairs: each
-    RHS's completed value is bound under an aliased name's key as soon as it
+    RHS's completed value is bound under a Name target's key as soon as it
     completes (``_bind_evaluations``), so the completed path and ``tail``
     carry it.
     """
