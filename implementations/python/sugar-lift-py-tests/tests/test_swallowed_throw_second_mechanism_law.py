@@ -283,10 +283,6 @@ def test_drained_sin_cluster_4_sites_are_absent_on_live_tree() -> None:
         and o.kind == "construction-panic-soft-continue"
         for o in offenders
     ), _SCANNER.format_report(offenders)
-    assert not any(
-        o.path.endswith("bench_backends.py") and o.kind == "exception-soft-continue"
-        for o in offenders
-    ), _SCANNER.format_report(offenders)
     # Permanent membrane residual: multi-file corpus census only.
     residual = [o for o in offenders if o.kind == "exception-soft-continue"]
     assert all(o.path.endswith("census.py") for o in residual), _SCANNER.format_report(
