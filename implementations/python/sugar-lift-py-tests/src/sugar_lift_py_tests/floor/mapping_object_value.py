@@ -47,27 +47,27 @@ class MappingObjectValue(ObjectValue):
     def subscript(self, index, site):
         return DictValue(self.entries).subscript(index, site)
 
-    def setitem(self, index, value, site):
-        if self.has_method("__setitem__"):
+    def setitem(self, index, value, site, ctx):
+        # One store door: the store statement's context reaches a source
+        # ``__setitem__`` and the builtin storage alike (#7757). The former
+        # ``setitem_with_context`` second door is folded in here.
+        if not self.has_method("__setitem__"):
+            return self.mapping_builtin_setitem(index, value, site, ctx)
+        if ctx is None:
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
             construction_panic_gap(
                 owner="MappingObjectValue.setitem",
                 blame=site,
                 observed="source-defined __setitem__ without reduction context",
-                requested="setitem_with_context through the ordinary store producer",
+                requested="the store statement's context",
                 fix="thread the caller context; zero-arg super requires its __class__ cell",
             )
-        return self.mapping_builtin_setitem(index, value, site)
-
-    def setitem_with_context(self, index, value, site, ctx):
-        if not self.has_method("__setitem__"):
-            return self.mapping_builtin_setitem(index, value, site)
         if self.defining_class is None:
             from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
             construction_panic_gap(
-                owner="MappingObjectValue.setitem_with_context",
+                owner="MappingObjectValue.setitem",
                 blame=site,
                 observed="mapping receiver lacks defining class",
                 requested="authenticated source class for __setitem__ dispatch",
@@ -94,13 +94,13 @@ class MappingObjectValue(ObjectValue):
             )
         )
 
-    def mapping_builtin_setitem(self, index, value, site):
+    def mapping_builtin_setitem(self, index, value, site, ctx):
         """Apply authenticated builtin-dict storage without source redispatch."""
         from sugar_lift_py_tests.outcome import ExitSet
 
         return (
             DictValue(self.entries)
-            .setitem(index, value, site)
+            .setitem(index, value, site, ctx)
             .and_then(
                 lambda updated: ExitSet.completed(
                     self.mapping_with_entries(updated.entries)
@@ -134,12 +134,12 @@ class MappingObjectValue(ObjectValue):
             )
         return ExitSet.completed(mutations[0].receiver_after)
 
-    def delitem(self, index, site):
+    def delitem(self, index, site, ctx):
         from sugar_lift_py_tests.outcome import ExitSet
 
         return (
             DictValue(self.entries)
-            .delitem(index, site)
+            .delitem(index, site, ctx)
             .and_then(
                 lambda updated: ExitSet.completed(
                     self.mapping_with_entries(updated.entries)
@@ -167,9 +167,11 @@ class MappingObjectValue(ObjectValue):
                 and len(arguments) == 2
                 and not self.has_method("__setitem__")
             ):
-                return self.mapping_builtin_setitem(arguments[0], arguments[1], blame)
+                return self.mapping_builtin_setitem(
+                    arguments[0], arguments[1], blame, ctx
+                )
             if name == "__delitem__" and len(arguments) == 1:
-                return self.delitem(arguments[0], blame)
+                return self.delitem(arguments[0], blame, ctx)
             if (
                 name == "get"
                 and len(arguments) in (1, 2)

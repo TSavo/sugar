@@ -68,34 +68,34 @@ class BytesValue(GuardStableValue):
 
         return ExitSet.completed(tuple(TermValue(byte) for byte in self.value))
 
-    def setitem(self, index, value, site):
+    def setitem(self, index, value, site, ctx):
         """Bytes are immutable: every subscript store is exact TypeError."""
-        del index, value
+        del index, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="BytesValue.setitem"
         )
 
-    def delitem(self, index, site):
+    def delitem(self, index, site, ctx):
         """Bytes are immutable: every subscript delete is exact TypeError."""
-        del index
+        del index, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="BytesValue.delitem"
         )
 
-    def setattr(self, name, value, site):
-        del name, value
+    def setattr(self, name, value, site, ctx):
+        del name, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="AttributeError", site=site, owner="BytesValue.setattr"
         )
 
-    def delattr(self, name, site):
-        del name
+    def delattr(self, name, site, ctx):
+        del name, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(

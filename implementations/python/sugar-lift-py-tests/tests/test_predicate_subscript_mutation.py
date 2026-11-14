@@ -18,12 +18,12 @@ def _outcomes(tmp_path):
     value = PredicateValue(atomic("p", []))
     return (
         (
-            value.setitem(TermValue(0), TermValue(7), store_site),
+            value.setitem(TermValue(0), TermValue(7), store_site, None),
             "PredicateValue.setitem",
             store_site,
         ),
         (
-            value.delitem(TermValue(0), delete_site),
+            value.delitem(TermValue(0), delete_site, None),
             "PredicateValue.delitem",
             delete_site,
         ),

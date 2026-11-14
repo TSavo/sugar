@@ -291,7 +291,9 @@ def dispatch_method_call(
 
     kind = law.container_kind(receiver)
     if kind is not None:
-        return _container_method_call(kind, name, receiver, positional, kw_values, site)
+        return _container_method_call(
+            kind, name, receiver, positional, kw_values, site, ctx
+        )
     # No floor of the receiver answered the method and no formal defers it
     # to a caller: what runs was not looked at.  A method call is the plain
     # call with the receiver bound first, so this is the plain call to a
@@ -320,7 +322,7 @@ _CONTENTS_FREE_METHODS = {
 }
 
 
-def _container_method_call(kind, name, receiver, positional, kw_values, site):
+def _container_method_call(kind, name, receiver, positional, kw_values, site, ctx):
     """A built-in container's method that no floor of the receiver answered.
 
     This value reached the call by binding (a helper's formal bound to the
@@ -336,7 +338,7 @@ def _container_method_call(kind, name, receiver, positional, kw_values, site):
 
     decided = None
     if not kw_values and name in _CONTENTS_FREE_METHODS.get(kind, ()):
-        decided = law.apply(kind, name, receiver, tuple(positional), site)
+        decided = law.apply(kind, name, receiver, tuple(positional), site, ctx)
     if decided is None:
         decided = _opaque_pair(kind, name, site)
 

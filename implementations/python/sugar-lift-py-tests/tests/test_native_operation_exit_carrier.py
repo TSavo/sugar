@@ -850,8 +850,8 @@ class _AttrStoreReceiver(FloorValue):
 
     fields: tuple[tuple[str, FloorValue], ...] = ()
 
-    def setattr(self, name, value, site):
-        del site
+    def setattr(self, name, value, site, ctx):
+        del site, ctx
         remaining = tuple(field for field in self.fields if field[0] != name)
         return ExitSet.completed(_AttrStoreReceiver((*remaining, (name, value))))
 
@@ -973,7 +973,7 @@ def test_source_evaluation_order_rhs_receiver_index_is_independent_of_discharge(
     source_outcome = value.desugar().and_then(
         lambda stored: receiver.desugar().and_then(
             lambda recv: index.desugar().and_then(
-                lambda idx: recv.setitem(idx, stored, _setitem_site())
+                lambda idx: recv.setitem(idx, stored, _setitem_site(), None)
             )
         )
     )

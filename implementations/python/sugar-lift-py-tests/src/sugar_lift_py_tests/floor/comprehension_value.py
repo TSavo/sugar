@@ -284,7 +284,7 @@ class ComprehensionValue(GuardStableValue):
         return self.py_subscript_coordinate(index, site)
 
     def setitem(  # pyright: ignore[reportIncompatibleMethodOverride]
-        self, index, value, site
+        self, index, value, site, ctx
     ):
         """Carry the exact post-state of a name-bound comprehension store."""
         from typing import cast

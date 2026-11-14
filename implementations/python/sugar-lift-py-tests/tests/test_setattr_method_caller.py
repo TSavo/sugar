@@ -425,7 +425,7 @@ def test_getter_only_property_method_call_binds_and_floor_refuses_store() -> Non
     # Use a source fragment site from the method body store statement.
     _, method, _pending = _method_definition()
     floor_site = method.body[0].fragment
-    direct = target.setattr("field", TermValue(7), floor_site)
+    direct = target.setattr("field", TermValue(7), floor_site, None)
     assert direct.halts() == direct.exits
     (halt,) = direct.halts()
     assert isinstance(halt.effect, RaiseEffect)

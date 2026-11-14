@@ -17,12 +17,12 @@ def _outcomes(tmp_path):
     receiver = ComplexValue(1.0, 2.0)
     return (
         (
-            receiver.setitem(TermValue(0), TermValue(7), store_site),
+            receiver.setitem(TermValue(0), TermValue(7), store_site, None),
             "ComplexValue.setitem",
             store_site,
         ),
         (
-            receiver.delitem(TermValue(0), delete_site),
+            receiver.delitem(TermValue(0), delete_site, None),
             "ComplexValue.delitem",
             delete_site,
         ),

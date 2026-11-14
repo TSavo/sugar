@@ -10,24 +10,24 @@ from .floor_value import FloorValue
 class TupleLiteralValue(FloorValue):
     items: tuple[FloorValue, ...]
 
-    def setitem(self, index, value, site):
-        del index, value
+    def setitem(self, index, value, site, ctx):
+        del index, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="TupleLiteralValue.setitem"
         )
 
-    def delitem(self, index, site):
-        del index
+    def delitem(self, index, site, ctx):
+        del index, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="TupleLiteralValue.delitem"
         )
 
-    def setattr(self, name, value, site):
-        del name, value
+    def setattr(self, name, value, site, ctx):
+        del name, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
@@ -36,8 +36,8 @@ class TupleLiteralValue(FloorValue):
             owner="TupleLiteralValue.setattr",
         )
 
-    def delattr(self, name, site):
-        del name
+    def delattr(self, name, site, ctx):
+        del name, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(

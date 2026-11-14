@@ -410,35 +410,35 @@ class TupleValue(GuardStableValue):
             )
         return self.undecided_subscript(index, site, owner="TupleValue.subscript")
 
-    def setitem(self, index, value, site):
-        del index, value
+    def setitem(self, index, value, site, ctx):
+        del index, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="TupleValue.setitem"
         )
 
-    def delitem(self, index, site):
+    def delitem(self, index, site, ctx):
         """Tuples are immutable: every subscript delete is exact TypeError."""
-        del index
+        del index, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="TupleValue.delitem"
         )
 
-    def setattr(self, name, value, site):
+    def setattr(self, name, value, site, ctx):
         """Tuples have no ``__dict__``; attribute store is AttributeError."""
-        del name, value
+        del name, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="AttributeError", site=site, owner="TupleValue.setattr"
         )
 
-    def delattr(self, name, site):
+    def delattr(self, name, site, ctx):
         """Tuples have no ``__dict__``; attribute delete is AttributeError."""
-        del name
+        del name, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(

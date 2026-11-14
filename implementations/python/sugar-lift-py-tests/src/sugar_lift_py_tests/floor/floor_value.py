@@ -582,8 +582,14 @@ class FloorValue:
         )
         construction_panic(info)
 
-    def setitem(self, index, value, site):
-        del index, value
+    def setitem(self, index, value, site, ctx):
+        """``receiver[index] = value`` under the store statement's context.
+
+        Every floor's store family (``setitem``, ``delitem``, ``setattr``,
+        ``delattr``) takes the statement's ``ctx``: an operation a store
+        submits applies under it, never under none (#7757).
+        """
+        del index, value, ctx
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
@@ -599,13 +605,13 @@ class FloorValue:
         )
         construction_panic(info)
 
-    def setattr(self, name, value, site):
+    def setattr(self, name, value, site, ctx):
         """``receiver.name = value`` — the store path, never the read path.
 
         Distinct from :meth:`attribute` / ``__getattr__`` / ``__getattribute__``.
         A readable name does not license a write. Default: loud floor gap.
         """
-        del name, value
+        del name, value, ctx
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
@@ -621,8 +627,8 @@ class FloorValue:
         )
         construction_panic(info)
 
-    def delitem(self, index, site):
-        del index
+    def delitem(self, index, site, ctx):
+        del index, ctx
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 
@@ -638,8 +644,8 @@ class FloorValue:
         )
         construction_panic(info)
 
-    def delattr(self, name, site):
-        del name
+    def delattr(self, name, site, ctx):
+        del name, ctx
         from sugar_lift_py_tests.gap.panic import construction_panic
         from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
 

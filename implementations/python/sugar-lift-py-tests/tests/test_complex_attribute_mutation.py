@@ -17,11 +17,15 @@ def _outcomes(tmp_path):
     value = ComplexValue(1.0, 2.0)
     return (
         (
-            value.setattr("attr", TermValue(7), store_site),
+            value.setattr("attr", TermValue(7), store_site, None),
             "ComplexValue.setattr",
             store_site,
         ),
-        (value.delattr("attr", delete_site), "ComplexValue.delattr", delete_site),
+        (
+            value.delattr("attr", delete_site, None),
+            "ComplexValue.delattr",
+            delete_site,
+        ),
     )
 
 

@@ -73,9 +73,9 @@ class NoneValue(GuardStableValue):
 
         return getattr_coordinate(self, name, owner="NoneValue.attribute")
 
-    def setattr(self, name, value, site):
+    def setattr(self, name, value, site, ctx):
         """``None.name = value`` is always AttributeError — store, not read."""
-        del name, value
+        del name, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
@@ -84,9 +84,9 @@ class NoneValue(GuardStableValue):
             owner="NoneValue.setattr",
         )
 
-    def delattr(self, name, site):
+    def delattr(self, name, site, ctx):
         """``del None.name`` is always AttributeError — delete, not read."""
-        del name
+        del name, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
@@ -104,18 +104,18 @@ class NoneValue(GuardStableValue):
             exception_name="TypeError", site=site, owner="ground_type_error"
         )
 
-    def setitem(self, index, value, site):
+    def setitem(self, index, value, site, ctx):
         """``None[index] = value`` is an exact ground TypeError."""
-        del index, value
+        del index, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="NoneValue.setitem"
         )
 
-    def delitem(self, index, site):
+    def delitem(self, index, site, ctx):
         """``del None[index]`` is an exact ground TypeError."""
-        del index
+        del index, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(

@@ -204,11 +204,14 @@ def _not_iterable(value) -> bool:
     return type(value) in (TermValue, NoneValue)
 
 
-def apply(kind, method, receiver, args, site):
-    """``(post-state, result)`` of ``receiver.<method>(*args)``, or None."""
+def apply(kind, method, receiver, args, site, ctx):
+    """``(post-state, result)`` of ``receiver.<method>(*args)``, or None.
+
+    ``ctx`` is the calling statement's context: a store (``__setitem__`` /
+    ``__delitem__``) applies under it."""
     owner = f"builtins.{kind}.{method}"
     if kind == "list":
-        return _list(method, receiver, args, site, owner)
+        return _list(method, receiver, args, site, owner, ctx)
     if kind == "dict":
         return _dict(method, receiver, args, site, owner)
     if kind == "set":
@@ -216,7 +219,7 @@ def apply(kind, method, receiver, args, site):
     return UNDECIDED
 
 
-def _list(method, receiver, args, site, owner):
+def _list(method, receiver, args, site, owner, ctx):
     from .list_value import ListValue
 
     elements = tuple(receiver.elements)
@@ -265,9 +268,9 @@ def _list(method, receiver, args, site, owner):
     if method == "sort" and not args:
         return _sorted_list(elements, site, owner)
     if method == "__setitem__" and len(args) == 2:
-        return _then_pair(receiver.setitem(args[0], args[1], site))
+        return _then_pair(receiver.setitem(args[0], args[1], site, ctx))
     if method == "__delitem__" and len(args) == 1:
-        return _then_pair(receiver.delitem(args[0], site))
+        return _then_pair(receiver.delitem(args[0], site, ctx))
     return UNDECIDED
 
 

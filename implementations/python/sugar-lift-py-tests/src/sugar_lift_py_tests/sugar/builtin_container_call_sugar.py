@@ -136,7 +136,7 @@ class BuiltinContainerCallSugar(ConstructedTermSugar):
         # one (``xs.append((x := 5))``) binds once, through the one operand
         # door, and the law holds the values they present.
         def apply(receiver, *operands):
-            return self._apply(receiver, operands)
+            return self._apply(receiver, operands, ctx)
 
         if self.value_first:
             *keys, value = self.args
@@ -146,7 +146,7 @@ class BuiltinContainerCallSugar(ConstructedTermSugar):
                         # In evaluation order: the stored value first.
                         lambda operands: consume_operands(
                             lambda stored, receiver, *operands: self._apply(
-                                receiver, (*operands, stored)
+                                receiver, (*operands, stored), ctx
                             ),
                             stored,
                             receiver,
@@ -164,11 +164,13 @@ class BuiltinContainerCallSugar(ConstructedTermSugar):
     def _operands(self, pending, done, ctx):
         return _operands(pending, done, ctx)
 
-    def _apply(self, receiver, operands):
+    def _apply(self, receiver, operands, ctx):
         from sugar_lift_py_tests.floor import builtin_container_method as law
 
         if law.container_kind(receiver) == self.kind:
-            decided = law.apply(self.kind, self.method, receiver, operands, self.site)
+            decided = law.apply(
+                self.kind, self.method, receiver, operands, self.site, ctx
+            )
             if decided is not None:
                 return decided
         return _opaque_pair(self.kind, self.method, self.site)
@@ -376,7 +378,7 @@ class PathContainerCallSugar(ConstructedTermSugar):
                 return _operands(self.args, (), ctx).and_then(
                     lambda operands: consume_operands(
                         lambda *held: law.apply(
-                            kind, self.method, receiver, held, self.site
+                            kind, self.method, receiver, held, self.site, ctx
                         )
                         or _opaque_pair(kind, self.method, self.site),
                         *operands,

@@ -156,11 +156,13 @@ class NamedExpressionValue(FloorValue):
     def subscript(self, index, site):
         return self.presented_value.subscript(index, site).and_then(self._carry)
 
-    def setitem(self, index, value, site):
-        return self.presented_value.setitem(index, value, site).and_then(self._carry)
+    def setitem(self, index, value, site, ctx):
+        return self.presented_value.setitem(index, value, site, ctx).and_then(
+            self._carry
+        )
 
-    def delitem(self, index, site):
-        return self.presented_value.delitem(index, site).and_then(self._carry)
+    def delitem(self, index, site, ctx):
+        return self.presented_value.delitem(index, site, ctx).and_then(self._carry)
 
     def attribute(self, name, site, ctx):
         return self.presented_value.attribute(name, site, ctx).and_then(self._carry)

@@ -21,6 +21,17 @@ class FunctionCallable(FloorValue):
     decorators: tuple[Any, ...] = ()
     exit_suppression: Any = None
     body: Any = dataclass_field(default=None, compare=False)
+    definition_context: Any = dataclass_field(default=None, compare=False)
+    """The context at the ``def`` statement: the enclosing scope's temporal
+    where Python applies the decorators, once. A decorator never runs under a
+    caller's context and never under none (#7757)."""
+
+    def __post_init__(self) -> None:
+        if self.decorators and self.definition_context is None:
+            raise ValueError(
+                f"FunctionCallable `{self.name}` carries decorators without the "
+                "context at its definition"
+            )
 
     def to_term(self, *, owner: str):
         """Project the callable as the coordinate bound by its def statement."""
@@ -457,7 +468,10 @@ class FunctionCallable(FloorValue):
             # Only the NEP-18 name enrollment below remains (floor, not recognition).
             return False
 
-        current = replace(self, decorators=())
+        # Python applies a decorator once, at the ``def`` statement: it runs
+        # under the context at that definition, carried on the callable.
+        ctx = self.definition_context
+        current = replace(self, decorators=(), definition_context=None)
         for decorator in reversed(self.decorators):
             # NEP-18 array_function_dispatch enrollment (floor name set only).
             if decorator_value_preserves_implementation(decorator):
@@ -499,7 +513,7 @@ class FunctionCallable(FloorValue):
                         ),
                     )
                 decorator = decorator.force_floor(
-                    None,
+                    ctx,
                     owner=f"FunctionCallable decorator factory:{factory_name}",
                     project_callsite=False,
                 )
@@ -542,7 +556,7 @@ class FunctionCallable(FloorValue):
             assert applied.body is not None
             result_outcome = _reduce_callsite_body(
                 applied.body,
-                _ctx_with_curried_args(None, applied.parameters, applied.arg_values),
+                _ctx_with_curried_args(ctx, applied.parameters, applied.arg_values),
                 blame=applied.target_name,
             )
             if (
@@ -584,7 +598,7 @@ class FunctionCallable(FloorValue):
             else:
                 current = force_floor(
                     result,
-                    None,
+                    ctx,
                     owner="FunctionCallable decorator result",
                     project_callsite=False,
                 )

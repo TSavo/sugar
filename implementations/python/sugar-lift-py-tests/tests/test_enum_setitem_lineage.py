@@ -50,9 +50,7 @@ def _source_method_outcome(receiver, context, key="member", value=7):
     assert isinstance(
         selected, CallSiteValue
     ), "a source __setitem__ override must be selected before builtin dict mutation"
-    return receiver.setitem_with_context(
-        StringValue(key), TermValue(value), "setitem-site", context
-    )
+    return receiver.setitem(StringValue(key), TermValue(value), "setitem-site", context)
 
 
 def _mutation_products(outcome):

@@ -133,7 +133,7 @@ def test_raw_state_substitutes_are_rejected_at_carrier_enrollment(lie: str) -> N
     elif lie == "receiver":
         substitute = receiver
     else:
-        completed = receiver.setattr("other", TermValue(9), pending.site)
+        completed = receiver.setattr("other", TermValue(9), pending.site, None)
         substitute = completed.completed_value()
         assert substitute is not None
 

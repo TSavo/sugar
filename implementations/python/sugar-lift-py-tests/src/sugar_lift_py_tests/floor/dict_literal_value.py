@@ -32,8 +32,8 @@ class DictLiteralValue(FloorValue):
 
     entries: tuple[tuple[Term, Term], ...]
 
-    def setattr(self, name, value, site):
-        del name, value
+    def setattr(self, name, value, site, ctx):
+        del name, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
@@ -42,8 +42,8 @@ class DictLiteralValue(FloorValue):
             owner="DictLiteralValue.setattr",
         )
 
-    def delattr(self, name, site):
-        del name
+    def delattr(self, name, site, ctx):
+        del name, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(

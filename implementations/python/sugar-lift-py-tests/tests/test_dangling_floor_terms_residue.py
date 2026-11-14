@@ -107,7 +107,7 @@ def test_setitem_projects_index_and_value_directly(
     index = TermValue(0)
     value = TermValue(7)
 
-    outcome = receiver.setitem(index, value, _sites(tmp_path)[1])
+    outcome = receiver.setitem(index, value, _sites(tmp_path)[1], None)
 
     assert outcome.completed_value() is not None
     assert outcome.completed_value().term.args[1:] == (
@@ -133,7 +133,7 @@ def test_delitem_projects_index_directly(tmp_path, receiver_kind: str) -> None:
     receiver = _receiver(receiver_kind)
     index = TermValue(0)
 
-    outcome = receiver.delitem(index, _sites(tmp_path)[3])
+    outcome = receiver.delitem(index, _sites(tmp_path)[3], None)
 
     assert outcome.completed_value() is not None
     assert outcome.completed_value().term.args[1] == index.to_term(

@@ -31,9 +31,9 @@ def test_set_literal_subscript_mutations_have_exact_owner_occurrences(
     site = sites[site_index]
     value = SetLiteralValue((num(1),))
     outcome = (
-        value.setitem(TermValue(0), TermValue(7), site)
+        value.setitem(TermValue(0), TermValue(7), site, None)
         if operation == "setitem"
-        else value.delitem(TermValue(0), site)
+        else value.delitem(TermValue(0), site, None)
     )
     assert outcome.value.effect.exception_name == "TypeError"
     assert outcome.value.effect.producer_node_owner == owner
@@ -43,7 +43,7 @@ def test_set_literal_subscript_mutations_have_exact_owner_occurrences(
 def test_set_literal_subscript_mutations_reject_wrong_site(tmp_path):
     store_site, delete_site = _sites(tmp_path)
     value = SetLiteralValue((num(1),))
-    store = value.setitem(TermValue(0), TermValue(7), store_site)
-    delete = value.delitem(TermValue(0), delete_site)
+    store = value.setitem(TermValue(0), TermValue(7), store_site, None)
+    delete = value.delitem(TermValue(0), delete_site, None)
     assert store.value.effect.occurrence_id != str(delete_site)
     assert delete.value.effect.occurrence_id != str(store_site)

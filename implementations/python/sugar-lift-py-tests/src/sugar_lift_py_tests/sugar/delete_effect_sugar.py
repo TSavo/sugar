@@ -17,10 +17,10 @@ class AttributeDeleteEffectSugar(Sugar):
        ``delattr_named`` with operands
        ``(receiver, StringValue(name))`` and coordinates
        ``(receiver.formal_coordinate, None)``.  Explicit projector
-       ``_project_delattr_named(receiver, name, site)`` unwraps the name
-       and calls ``receiver.delattr(name.value, site)`` (Python
+       ``_project_delattr_named(receiver, name, site, ctx)`` unwraps the name
+       and calls ``receiver.delattr(name.value, site, ctx)`` (Python
        ``__delattr__``).  Helper alone stays undischarged.
-    2. **Decided runtime type** → ``receiver.delattr(attr, site)`` projecting
+    2. **Decided runtime type** → ``receiver.delattr(attr, site, ctx)`` projecting
        its completed or halted faces through the delete path (never the
        read path — readability never authorizes deletion).
     3. **Undecided non-formal** → ``AttributeDeleteRuntimeEffect`` dual faces
@@ -42,10 +42,10 @@ class AttributeDeleteEffectSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         return self.receiver.desugar(ctx).and_then(
-            lambda receiver: self._delete(receiver)
+            lambda receiver: self._delete(receiver, ctx)
         )
 
-    def _delete(self, receiver) -> Outcome:
+    def _delete(self, receiver, ctx) -> Outcome:
         formal_coordinate = getattr(receiver, "formal_coordinate", None)
         if formal_coordinate is not None:
             # Undischarged demand awaiting caller actuals — not a refusal.
@@ -56,7 +56,7 @@ class AttributeDeleteEffectSugar(Sugar):
             )
 
         if receiver.runtime_type_is_decided():
-            return receiver.delattr(self.attr, self.site)
+            return receiver.delattr(self.attr, self.site, ctx)
 
         from sugar_lift_py_tests.effect import (
             AttributeDeleteRuntimeEffect,
@@ -82,7 +82,7 @@ class AttributeDeleteEffectSugar(Sugar):
         """Producer-side contract for n-ary ``delattr_named`` discharge.
 
         Operand order matches the projector table:
-        ``receiver.delattr(name.value, site)`` after unwrap.
+        ``receiver.delattr(name.value, site, ctx)`` after unwrap.
         Coordinates: ``(receiver.formal, None)`` — lengths and order are
         load-bearing (#6613 ``__post_init__``).
         """
@@ -113,10 +113,10 @@ class SubscriptDeleteEffectSugar(Sugar):
     1. **Any formal operand** → ``NativeOperationExitCarrierV1`` demand
        ``delitem`` with operands and coordinates in *discharge* order
        ``(receiver, index)``.  Explicit projector
-       ``_project_delitem(receiver, index, site)`` calls
-       ``receiver.delitem(index, site)`` (Python ``__delitem__``).  Helper
+       ``_project_delitem(receiver, index, site, ctx)`` calls
+       ``receiver.delitem(index, site, ctx)`` (Python ``__delitem__``).  Helper
        alone stays undischarged; an ordinary source caller supplies actuals.
-    2. **Decided runtime type** → ``receiver.delitem(index, site)`` projecting
+    2. **Decided runtime type** → ``receiver.delitem(index, site, ctx)`` projecting
        its completed or halted faces through the delete path (never the
        load path).  Earlier bindings survive later delete
        halts via reducer pre-effect state on the carrier.
@@ -144,11 +144,11 @@ class SubscriptDeleteEffectSugar(Sugar):
     def desugar(self, ctx: object = None) -> Outcome:
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.index.desugar(ctx).and_then(
-                lambda index: self._delete(receiver, index)
+                lambda index: self._delete(receiver, index, ctx)
             )
         )
 
-    def _delete(self, receiver, index) -> Outcome:
+    def _delete(self, receiver, index, ctx) -> Outcome:
         coordinates = tuple(
             getattr(operand, "formal_coordinate", None) for operand in (receiver, index)
         )
@@ -170,14 +170,14 @@ class SubscriptDeleteEffectSugar(Sugar):
                 method="__delitem__",
                 owner="UndecidedDelitem",
             )
-        return receiver.delitem(index, self.site)
+        return receiver.delitem(index, self.site, ctx)
 
     @staticmethod
     def mint_delitem_carrier(*, site, receiver, index):
         """Producer-side contract for n-ary ``delitem`` discharge.
 
         Operand order matches the projector table:
-        ``receiver.delitem(index, site)``.  Discharge order is
+        ``receiver.delitem(index, site, ctx)``.  Discharge order is
         ``(receiver, index)``.  Coordinates are exactly one slot per ordered
         operand; lengths and order are load-bearing (#6613 ``__post_init__``).
         """

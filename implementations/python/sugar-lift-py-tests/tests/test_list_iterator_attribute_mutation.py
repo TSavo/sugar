@@ -13,11 +13,15 @@ def _outcomes(tmp_path):
     value = ListIteratorValue((TermValue(1),))
     return (
         (
-            value.setattr("attr", TermValue(7), store_site),
+            value.setattr("attr", TermValue(7), store_site, None),
             "ListIteratorValue.setattr",
             store_site,
         ),
-        (value.delattr("attr", delete_site), "ListIteratorValue.delattr", delete_site),
+        (
+            value.delattr("attr", delete_site, None),
+            "ListIteratorValue.delattr",
+            delete_site,
+        ),
     )
 
 

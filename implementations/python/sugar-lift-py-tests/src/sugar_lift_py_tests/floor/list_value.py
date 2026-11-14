@@ -40,22 +40,22 @@ class ListValue(GuardStableValue):
 
         return getattr_coordinate(self, name, owner="ListValue.attribute")
 
-    def setattr(self, name, value, site):
+    def setattr(self, name, value, site, ctx):
         """Lists have no instance ``__dict__``; attribute store is AttributeError.
 
         Distinct from the read path: ``xs.append`` may resolve as a bound method
         coordinate while ``xs.append = f`` still raises AttributeError.
         """
-        del name, value
+        del name, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="AttributeError", site=site, owner="ListValue.setattr"
         )
 
-    def delattr(self, name, site):
+    def delattr(self, name, site, ctx):
         """Lists have no instance ``__dict__``; delete is AttributeError."""
-        del name
+        del name, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
@@ -292,13 +292,13 @@ class ListValue(GuardStableValue):
             )
         return self.undecided_subscript(index, site, owner="ListValue.subscript")
 
-    def setitem(self, index, value, site):
+    def setitem(self, index, value, site, ctx):
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import ExitSet
 
         if isinstance(index, SliceValue):
-            return self._setitem_slice(index, value, site)
+            return self._setitem_slice(index, value, site, ctx)
 
         if type(index) is TermValue and type(index.value) is int:
             i = index.value
@@ -334,7 +334,7 @@ class ListValue(GuardStableValue):
             )
         )
 
-    def _setitem_slice(self, index, value, site):
+    def _setitem_slice(self, index, value, site, ctx):
         """Python list slice assignment: ``xs[lo:hi:st] = iterable``.
 
         Ground integer (or omitted) bounds only — same decidability law as
@@ -378,10 +378,11 @@ class ListValue(GuardStableValue):
                 owner="ListValue.setitem",
             )
 
+        # The RHS materializes under the store statement's context.
         members_out = SliceAssignIterableOperation(
             owner="ListValue.setitem",
             blame=site,
-        ).submit(value, None)
+        ).submit(value, ctx)
 
         # A decided TypeError is a halt: it never reaches the write step.
         if members_out.halts() == members_out.exits:
@@ -422,7 +423,8 @@ class ListValue(GuardStableValue):
 
         return ExitSet.completed(self.elements)
 
-    def delitem(self, index, site):
+    def delitem(self, index, site, ctx):
+        del ctx
         from sugar_lift_py_tests.floor.slice_value import SliceValue
         from sugar_lift_py_tests.floor.term_value import TermValue
         from sugar_lift_py_tests.outcome import ExitSet

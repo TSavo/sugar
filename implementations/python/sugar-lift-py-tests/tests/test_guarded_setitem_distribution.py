@@ -5,7 +5,7 @@ from sugar_lift_py_tests.outcome.exit_set import Completed
 
 
 def _store(receiver, index, value):
-    return receiver.setitem(index, value, "store-site")
+    return receiver.setitem(index, value, "store-site", None)
 
 
 def _entry_map(value):

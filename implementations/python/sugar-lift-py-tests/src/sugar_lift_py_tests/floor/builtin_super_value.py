@@ -96,7 +96,9 @@ class BuiltinSuperValue(FloorValue):
                     fix="preserve the source method receiver through zero-arg super",
                 )
             key, value = arguments
-            return self.receiver.mapping_builtin_setitem(key, value, blame).and_then(
+            return self.receiver.mapping_builtin_setitem(
+                key, value, blame, ctx
+            ).and_then(
                 lambda updated: ExitSet.completed(
                     ReceiverOwnedMutationResult(self.receiver, updated, NoneValue())
                 )

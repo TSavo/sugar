@@ -15,16 +15,16 @@ class ExceptionValue(FloorValue):
     arguments: tuple[FloorValue, ...]
     site: object = dataclass_field(compare=False)
 
-    def setitem(self, index, value, site):
-        del index, value
+    def setitem(self, index, value, site, ctx):
+        del index, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="ExceptionValue.setitem"
         )
 
-    def delitem(self, index, site):
-        del index
+    def delitem(self, index, site, ctx):
+        del index, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(

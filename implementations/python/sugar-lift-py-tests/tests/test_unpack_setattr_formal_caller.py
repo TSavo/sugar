@@ -202,7 +202,7 @@ def test_property_without_setter_named_attribute_error_preserves_x_state() -> No
     # Floor store path (not read) refuses.
     site = helper.body[0].fragment
     from sugar_lift_py_tests.effect import RaiseEffect
-    direct = receiver.setattr("field", TermValue(7), site)
+    direct = receiver.setattr("field", TermValue(7), site, None)
     assert direct.halts() == direct.exits
     (direct_halt,) = direct.halts()
     assert isinstance(direct_halt.effect, RaiseEffect)

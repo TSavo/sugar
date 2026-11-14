@@ -560,7 +560,7 @@ class SymbolicValue(FloorValue):
     def project_sequence_with(self, operation, ctx):
         return operation.project_symbolic(self, ctx)
 
-    def setitem(self, index, value, site):
+    def setitem(self, index, value, site, ctx):
         """Rebind a symbolic container after ``xs[k] = v``.
 
         Concrete containers fold post-state. A symbolic formal (for example
@@ -589,7 +589,7 @@ class SymbolicValue(FloorValue):
             )
         )
 
-    def delitem(self, index, site):
+    def delitem(self, index, site, ctx):
         """Rebind a symbolic container after ``del xs[k]``.
 
         A symbolic receiver has no element history to fold, but deletion still

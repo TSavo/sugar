@@ -39,9 +39,9 @@ def test_authenticated_exception_type_attribute_mutations_dispatch_to_exact_carr
     site = sites[site_index]
     value = _value()
     outcome = (
-        value.setattr("attr", TermValue(7), site)
+        value.setattr("attr", TermValue(7), site, None)
         if operation == "setattr"
-        else value.delattr("attr", site)
+        else value.delattr("attr", site, None)
     )
     assert outcome.value.effect.exception_name == "TypeError"
     assert outcome.value.effect.producer_node_owner == owner
@@ -51,7 +51,7 @@ def test_authenticated_exception_type_attribute_mutations_dispatch_to_exact_carr
 def test_authenticated_exception_type_attribute_mutations_reject_wrong_site(tmp_path):
     store_site, delete_site = _sites(tmp_path)
     value = _value()
-    store = value.setattr("attr", TermValue(7), store_site)
-    delete = value.delattr("attr", delete_site)
+    store = value.setattr("attr", TermValue(7), store_site, None)
+    delete = value.delattr("attr", delete_site, None)
     assert store.value.effect.occurrence_id != str(delete_site)
     assert delete.value.effect.occurrence_id != str(store_site)

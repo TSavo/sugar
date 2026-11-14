@@ -293,7 +293,7 @@ def test_delete_then_restore_setitem_reads_new_value() -> None:
     original = DictValue(((StringValue("a"), TermValue(1)),))
     deleted = pending.discharge(None, {obj_cid: original, key_cid: StringValue("a")})
     post = _post_dict(deleted.exits[0])
-    restored = post.setitem(StringValue("a"), TermValue(99), site)
+    restored = post.setitem(StringValue("a"), TermValue(99), site, None)
     assert restored.completed_value() is not None
     assert isinstance(restored.completed_value(), DictValue)
     read = restored.completed_value().subscript(StringValue("a"), site)
@@ -315,7 +315,7 @@ def test_delete_then_restore_setattr_reads_new_value() -> None:
     )
     deleted = pending.discharge(None, {obj_cid: receiver})
     post = _post_object(deleted.exits[0])
-    restored = post.setattr("field", TermValue(99), site)
+    restored = post.setattr("field", TermValue(99), site, None)
     assert restored.completed_value() is not None
     assert isinstance(restored.completed_value(), ObjectValue)
     fields = {f.name: f.value for f in restored.completed_value().fields}

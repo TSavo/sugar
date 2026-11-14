@@ -416,7 +416,7 @@ class ObjectValue(FloorValue):
             for method in self.methods
         )
 
-    def setattr(self, name, value, site):
+    def setattr(self, name, value, site, ctx):
         """``self.name = value`` via instance-field store or property refusal.
 
         Properties are data descriptors: a getter without an authenticated
@@ -438,7 +438,7 @@ class ObjectValue(FloorValue):
             )
         return ExitSet.completed(self.with_field_store(name, value))
 
-    def delattr(self, name, site):
+    def delattr(self, name, site, ctx):
         """``del self.name`` via instance-field delete or property refusal.
 
         Properties are data descriptors: a getter without an authenticated

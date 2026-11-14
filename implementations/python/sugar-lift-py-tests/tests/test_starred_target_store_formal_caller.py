@@ -225,7 +225,7 @@ def test_first_store_halt_blocks_later_name() -> None:
     site = _site("def f(obj, xs):\n    obj.x, name = xs\n")
 
     class _RefuseSet(ObjectValue):
-        def setattr(self, name, value, site_):
+        def setattr(self, name, value, site_, ctx):
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(
@@ -263,7 +263,7 @@ def test_earlier_name_survives_later_store_halt() -> None:
     site = _site("def f(obj, xs):\n    name, obj.x = xs\n")
 
     class _RefuseSet(ObjectValue):
-        def setattr(self, name, value, site_):
+        def setattr(self, name, value, site_, ctx):
             from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
             return ground_exceptional_exit(

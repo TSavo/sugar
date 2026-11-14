@@ -27,18 +27,18 @@ class SetValue(GuardStableValue):
 
         return getattr_coordinate(self, name, owner="SetValue.attribute")
 
-    def setattr(self, name, value, site):
+    def setattr(self, name, value, site, ctx):
         """Sets have no instance ``__dict__``; store is AttributeError."""
-        del name, value
+        del name, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="AttributeError", site=site, owner="SetValue.setattr"
         )
 
-    def delattr(self, name, site):
+    def delattr(self, name, site, ctx):
         """Sets have no instance ``__dict__``; delete is AttributeError."""
-        del name
+        del name, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
@@ -69,18 +69,18 @@ class SetValue(GuardStableValue):
             owner="SetValue.subscript",
         )
 
-    def setitem(self, index, value, site):
+    def setitem(self, index, value, site, ctx):
         """Sets reject subscript store with exact TypeError."""
-        del index, value
+        del index, value, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner="SetValue.setitem"
         )
 
-    def delitem(self, index, site):
+    def delitem(self, index, site, ctx):
         """Sets reject subscript delete with exact TypeError."""
-        del index
+        del index, ctx
         from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 
         return ground_exceptional_exit(

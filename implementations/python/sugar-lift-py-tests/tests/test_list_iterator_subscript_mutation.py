@@ -17,12 +17,12 @@ def _outcomes(tmp_path):
     value = ListIteratorValue((TermValue(1),))
     return (
         (
-            value.setitem(TermValue(0), TermValue(7), store_site),
+            value.setitem(TermValue(0), TermValue(7), store_site, None),
             "ListIteratorValue.setitem",
             store_site,
         ),
         (
-            value.delitem(TermValue(0), delete_site),
+            value.delitem(TermValue(0), delete_site, None),
             "ListIteratorValue.delitem",
             delete_site,
         ),
