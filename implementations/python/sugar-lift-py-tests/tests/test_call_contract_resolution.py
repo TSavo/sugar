@@ -61,11 +61,7 @@ def test_import_demand_enrollment_has_positional_arity_and_module_identity(tmp_p
         "from producer import pair\n" "value = pair(1)\n" "not_enrolled = pair(x=1)\n"
     )
 
-    rows = [
-        row
-        for row in lift_rpc._call_contract_demand_rows(tmp_path)
-        if row["kind"] == "call-contract-demand"
-    ]
+    rows = lift_rpc._call_use_rows(tmp_path)
 
     assert len(rows) == 1
     assert rows[0]["targetSymbol"] == "python:producer.pair"
@@ -86,11 +82,7 @@ def test_import_binding_authenticates_alias_and_module_identity(tmp_path):
         "c = pair()\n"
     )
 
-    rows = [
-        row
-        for row in lift_rpc._call_contract_demand_rows(tmp_path)
-        if row["kind"] == "call-contract-demand"
-    ]
+    rows = lift_rpc._call_use_rows(tmp_path)
 
     assert [row["targetSymbol"] for row in rows] == [
         "python:first.pair",
@@ -139,29 +131,12 @@ def test_global_and_method_lookup_never_inherit_enclosing_or_class_import(tmp_pa
         "        return pair(2)\n"
     )
 
-    rows = [
-        row
-        for row in lift_rpc._call_contract_demand_rows(tmp_path)
-        if row["kind"] == "call-contract-demand"
-    ]
+    rows = lift_rpc._call_use_rows(tmp_path)
 
     assert [row["targetSymbol"] for row in rows] == [
         "python:right.pair",
         "python:right.pair",
     ]
-
-
-def test_shadowed_reexport_is_not_published(tmp_path):
-    from sugar_lift_python_source.source_oracle import path_source
-    from sugar_lift_py_tests.import_binding import authenticated_module_exports
-
-    public = tmp_path / "public.py"
-    public.write_text("from provider import pair\npair = lambda x: x\n")
-    source, _filename, source_cid = path_source(str(public))
-
-    rows = authenticated_module_exports(tmp_path, public, source, source_cid)
-
-    assert not any(row["exportedSymbol"] == "python:public.pair" for row in rows)
 
 
 def test_try_handler_sees_exceptional_prefix_rebind_and_never_authenticates_import(
@@ -240,40 +215,25 @@ def test_relative_import_is_package_qualified_and_binding_coordinate_is_typed(tm
     assert use["cid"].startswith("blake3-512:")
 
 
-def test_reexport_declaration_is_static_and_source_authenticated(tmp_path):
+def test_demand_table_carries_with_demands_only(tmp_path):
+    """No call-contract demand or export row rides the table: nothing reads
+    one since the prebind went (#7879). The With demand still takes its
+    manager's import identity from the call at its coordinate."""
     (tmp_path / "provider.py").write_text("def pair(x):\n    return (x, x)\n")
     (tmp_path / "public.py").write_text("from provider import pair\n")
     (tmp_path / "consumer.py").write_text(
-        "from public import pair as renamed\nrenamed(1)\n"
-    )
-
-    rows = lift_rpc._call_contract_demand_rows(tmp_path)
-    export = next(
-        row for row in rows if row.get("exportedSymbol") == "python:public.pair"
-    )
-    demand = next(row for row in rows if row["kind"] == "call-contract-demand")
-
-    assert export["targetSymbol"] == "python:provider.pair"
-    assert export["sourceCid"].startswith("blake3-512:")
-    assert demand["targetSymbol"] == "python:public.pair"
-    assert demand["authenticatedImportUse"]["kind"] == "authenticated-import-use"
-
-
-def test_with_manager_call_is_owned_only_by_context_manager_preconstruction(tmp_path):
-    (tmp_path / "consumer.py").write_text(
         "import pytest\n"
+        "from public import pair as renamed\n"
+        "renamed(1)\n"
         "with pytest.raises(ValueError, match='bad'):\n"
         "    raise ValueError('bad')\n"
     )
 
     rows = lift_rpc._preconstruction_demand_rows(tmp_path)
-    cm_rows = [row for row in rows if row["kind"] == "context-manager-demand"]
-    call_rows = [row for row in rows if row["kind"] == "call-contract-demand"]
 
-    assert len(cm_rows) == 1
-    assert cm_rows[0]["targetSymbol"] == "pytest.raises"
-    assert cm_rows[0]["authenticatedImportUse"]["kind"] == "authenticated-import-use"
-    assert call_rows == []
+    assert [row["kind"] for row in rows] == ["context-manager-demand"]
+    assert rows[0]["targetSymbol"] == "pytest.raises"
+    assert rows[0]["authenticatedImportUse"]["kind"] == "authenticated-import-use"
 
 
 def test_shadowed_local_raises_does_not_inherit_pytest_provider_contract(tmp_path):

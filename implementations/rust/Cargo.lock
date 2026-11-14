@@ -1766,7 +1766,6 @@ dependencies = [
  "sugar-ir-compiler",
  "sugar-ir-compiler-smt-lib",
  "sugar-ir-types",
- "sugar-proof-envelope",
  "sugar-verifier",
 ]
 
