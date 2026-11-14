@@ -45,41 +45,7 @@ class WithSourceResourceSugar(Sugar):
         return _route_manager_faces(self, ctx)
 
 
-@dataclass(frozen=True)
-class WithManagerPartitionSugar(Sugar):
-    """A With over a factory whose faces return managers of different kinds.
-
-    The head is reduced once.  Every manager face it produces is entered by
-    the partition protocol's member for that kind of manager, under the
-    face's own guard; the body and exit run per entered face and the exit
-    sets are unioned (#7669).  There is no single ``__enter__`` call to
-    authenticate here: each member carries its own native definitions.
-    """
-
-    manager: Sugar
-    protocol: object
-    summary: object
-    body: tuple[Sugar, ...]
-    manager_slot_id: str
-    enter_slot_id: str | None
-    exit_face_id: str
-    site: object = field(compare=False, default=None)
-
-    def __post_init__(self) -> None:
-        if not callable(getattr(self.protocol, "exit_outcome_for_body", None)):
-            raise TypeError("a manager partition exits per body face")
-
-    @classmethod
-    def witnesses(cls):
-        return ()
-
-    def desugar(self, ctx: object = None) -> Outcome:
-        return _route_manager_faces(self, ctx, project=_project_partition_manager)
-
-
-def _route_manager_faces(
-    resource, ctx: object = None, *, project=None
-) -> Outcome:
+def _route_manager_faces(resource, ctx: object = None) -> Outcome:
     """Enter every manager face under its guard; union the exits (8.5)."""
     from sugar_lift_py_tests.outcome import outcome_to_exitset
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
@@ -99,7 +65,7 @@ def _route_manager_faces(
     # A manager call coordinate is not its returned receiver. Perform its
     # source outcome once, preserving exceptional faces before enter.
     manager_es = sugar_outcome_to_exitset(resource.manager.desugar(ctx)).sequence(
-        lambda value: (project or _project_manager_receiver)(value, ctx)
+        lambda value: _project_manager_receiver(value, ctx)
     )
     parts = []
     for manager_face in manager_es.exits:
@@ -246,45 +212,6 @@ def _project_manager_receiver(value, ctx, seen=frozenset()):
             else _project_manager_receiver(receiver, ctx, seen | {id(value)})
         )
     )
-
-
-def _project_partition_manager(value, ctx, seen=frozenset()):
-    """One manager face per return of a factory with several returns.
-
-    A factory call whose retained completion has several guarded returns
-    stays its own CallSiteValue under ``project_operation_receiver_outcome``
-    (no single return speaks for the rest).  A manager partition enters each
-    of those returns under its own guard, so the returns are projected here
-    with their branch authentication, exactly as an exit's returns are.
-    """
-    from sugar_lift_py_tests.floor import BlockValue, CallSiteValue
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-    from sugar_source_tree.panic import SugarNotWritten
-
-    if isinstance(value, CallSiteValue) and value.body is not None:
-        retained = value.retained_source_completion_outcome()
-        if retained is not None and isinstance(retained.value, BlockValue):
-            projected = value.project_operation_receiver_outcome(
-                ctx, owner="WithManagerPartitionSugar.manager"
-            )
-            if projected.value is value:
-                if id(value) in seen:
-                    raise SugarNotWritten(
-                        blame="WithManagerPartitionSugar.manager",
-                        owner="WithManagerPartitionSugar.manager",
-                        observed="cycle in retained manager return projections",
-                        requested="an acyclic constructed manager receiver",
-                        fix="retain the source call-graph cycle as a construction gap",
-                    )
-                return _exit_return_values(
-                    ExitSet.completed(retained.value),
-                    owner="WithManagerPartitionSugar.manager-return",
-                ).sequence(
-                    lambda returned: _project_partition_manager(
-                        returned, ctx, seen | {id(value)}
-                    )
-                )
-    return _project_manager_receiver(value, ctx, seen)
 
 
 def _returned_value(value):

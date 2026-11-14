@@ -107,17 +107,6 @@ _EVALUATION_OCCURRENCE = object()
 # function (whose frame substitutes the body again) and is not testimony
 # about the statement that merely defined it.
 DEFER_DEFINITION_BODY_REFUSAL = object()
-
-# The methods a used-method class projection constructs, keyed by class name
-# (``None``: every method).  Set only by the source-frame door while a root
-# whose whole projection exceeds the call-closure bound is projected again
-# (#7664, #7733), to the classes of the module being projected: the class
-# statement still binds every method, but a method nothing on the projected
-# path names keeps its source body for whoever calls it
-# (``DeferredClassMethodV1``).
-PROJECTED_CLASS_METHODS: AmbientVar = AmbientVar(
-    "projected_class_methods", default=None
-)
 _MISSING = object()
 
 
@@ -6043,20 +6032,6 @@ class ClassDef(Statement):
             )
             from sugar_source_tree.panic import SugarNotWritten
 
-            projected = PROJECTED_CLASS_METHODS.get()
-            if (
-                projected is not None
-                and self.name in projected
-                and method.name not in projected[self.name]
-            ):
-                # Not on the projected path: bound, not run, not constructed.
-                return DeferredClassMethodV1(
-                    method.name,
-                    method.fragment.seal().cid,
-                    method,
-                    self._method_descriptor_kind(method),
-                    unprojected=True,
-                )
             try:
                 body = method.sugar()
                 frame = method.source_visible_call_frame()
@@ -10213,35 +10188,6 @@ class With(Statement):
                 enter_slot = (
                     f"{manager_slot}#enter_result" if binds_enter_result else None
                 )
-                from sugar_lift_python_source.manager_protocol_construction import (
-                    GuardedManagerPartitionProtocolV1,
-                )
-
-                if isinstance(resolved_ref.protocol, GuardedManagerPartitionProtocolV1):
-                    # Each face's manager carries its own native definitions;
-                    # the With enters each under its own guard (#7669).
-                    from sugar_lift_py_tests.context_manager_resolution import (
-                        SourceFragmentCoordinateV1,
-                    )
-                    from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
-                        WithManagerPartitionSugar,
-                    )
-
-                    return WithManagerPartitionSugar(
-                        manager=resolved_ref.call_actual_sugars.bind(
-                            item.context_expr.sugar(),
-                            use_site=SourceFragmentCoordinateV1(
-                                self.unit.source_cid, *item._manager_use_site_span()
-                            ),
-                        ),
-                        protocol=resolved_ref.protocol,
-                        summary=resolved_ref,
-                        body=tuple(stmt.sugar() for stmt in self.body),
-                        manager_slot_id=manager_slot,
-                        enter_slot_id=enter_slot,
-                        exit_face_id=item._exit_face_id(),
-                        site=self.fragment,
-                    )
                 enter_definition, exit_definition = (
                     self._require_native_resource_definitions(resolved_ref)
                 )
