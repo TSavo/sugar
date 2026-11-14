@@ -8,7 +8,11 @@ from .floor_value import FloorValue
 
 @dataclass(frozen=True)
 class LambdaCallable(FloorValue):
-    """In-source lambda floor: parameters + body SugarBody for dig/apply.
+    """In-source function floor: parameters + body SugarBody for dig/apply.
+
+    A lambda's value, and the function a ``def`` statement builds before its
+    decorators apply (``DecoratorApplicationSugar``): either is called
+    through its own source frame by ``callable_application_with``.
 
     ``to_term`` is an opaque callable identity coordinate containing parameter
     names only.  ``python:lambda`` is an ordinary ctor in ProofIR, not a binder;

@@ -18,7 +18,6 @@ import pytest
 from sugar_lift_py_tests.context_manager_resolution import (
     ImportedCallValueSubsumptionV1,
 )
-from sugar_lift_py_tests.floor import decorated_class_value
 from sugar_lift_py_tests.floor.import_member_value import ImportMemberValue
 from sugar_source_tree.binding_state import constructed_value_cid_v2
 from sugar_source_tree import nodes
@@ -29,7 +28,7 @@ def _authority_classes():
     from sugar_lift_py_tests import import_binding
 
     found = [ImportedCallValueSubsumptionV1, ImportMemberValue]
-    for module in (decorated_class_value, nodes, import_binding):
+    for module in (nodes, import_binding):
         for value in vars(module).values():
             if isinstance(value, type) and value.__module__ == module.__name__:
                 if any(f.name == "_authority" for f in getattr(value, "__dataclass_fields__", {}).values()):
