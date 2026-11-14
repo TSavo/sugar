@@ -110,9 +110,9 @@ def holds_a_walrus(sugar: object) -> bool:
     them built in this package (an unpack target) -- never what is held out
     of equality as a lookup aid (a site, a callee's body, a frame table):
     a walrus in a callee runs in the callee's frame. An operand a sugar
-    holds out of its equality and never reduces still runs where Python
-    runs it (an ``assert``'s message, provenance only, runs before the
-    ``AssertionError``): the sugar answers for it
+    holds out of its equality still runs where Python runs it (an
+    ``assert``'s message, built and evaluated only where the assert fails,
+    before the ``AssertionError``): the sugar answers for it
     (``AssertSugar.message_holds_a_walrus``).
 
     Every evaluation asks it of the sugar that evaluated a halting operand

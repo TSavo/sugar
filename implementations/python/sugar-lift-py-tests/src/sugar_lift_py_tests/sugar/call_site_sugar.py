@@ -694,9 +694,12 @@ class CallSiteSugar(ConstructedTermSugar):
             ctx, frame, captured_values, site=self.site, blame=self.target_name
         )
 
-    def _collect(self, remaining: tuple, accumulated: tuple, ctx: object) -> ExitSet:
+    def _collect(
+        self, remaining: tuple, accumulated: tuple, ctx: object, inside=()
+    ) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            evaluated_after,
             written_by,
         )
 
@@ -707,8 +710,11 @@ class CallSiteSugar(ConstructedTermSugar):
             # once, through the one operand door.  The later actuals, the
             # keywords and the call itself (the closure cells it reads among
             # them) are evaluated after it, with its writes applied
-            # (``written_by``: ``f((a := 1), a)``).
-            return head.desugar(actual_ctx).and_then(
+            # (``written_by``: ``f((a := 1), a)``), inside its door, which
+            # lays its stores in their halts; a later actual's halt is
+            # recorded where it was evaluated, after every earlier actual's
+            # writes (``inside``, ``evaluated_after``).
+            return evaluated_after((), head, actual_ctx, inside=inside).and_then(
                 lambda value: consume_operands(
                     lambda presented: presented.project_operation_receiver_outcome(
                         actual_ctx, owner="CallSiteSugar positional actual"
@@ -717,26 +723,33 @@ class CallSiteSugar(ConstructedTermSugar):
                             tuple(rest),
                             accumulated + (actual,),
                             written_by(value, ctx),
+                            (*inside, value),
                         )
                     ),
                     value,
                 )
             )
-        return self._collect_kwargs(self.keywords, (), accumulated, ctx)
+        return self._collect_kwargs(self.keywords, (), accumulated, ctx, inside)
 
     def _collect_kwargs(
-        self, remaining: tuple, kw_values: tuple, positional: tuple, ctx: object
+        self,
+        remaining: tuple,
+        kw_values: tuple,
+        positional: tuple,
+        ctx: object,
+        inside=(),
     ) -> ExitSet:
         if remaining:
             from sugar_lift_py_tests.floor.named_expression_value import (
                 consume_operands,
+                evaluated_after,
                 written_by,
             )
 
             (name, sugar), *rest = remaining
             actual_ctx = _actual_reduce_context(ctx)
             # Same order as the positional actuals (``_collect``).
-            return sugar.desugar(actual_ctx).and_then(
+            return evaluated_after((), sugar, actual_ctx, inside=inside).and_then(
                 lambda value: consume_operands(
                     lambda presented: presented.project_operation_receiver_outcome(
                         actual_ctx, owner="CallSiteSugar keyword actual"
@@ -746,6 +759,7 @@ class CallSiteSugar(ConstructedTermSugar):
                             kw_values + ((name, actual),),
                             positional,
                             written_by(value, ctx),
+                            (*inside, value),
                         )
                     ),
                     value,

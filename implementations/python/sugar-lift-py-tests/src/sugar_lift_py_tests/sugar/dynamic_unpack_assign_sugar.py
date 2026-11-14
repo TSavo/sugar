@@ -102,7 +102,13 @@ class DynamicUnpackAssignSugar(Sugar):
         # (``x, y = (a := v)``) is bound before the unpack runs, so the unpack
         # reads what it wrote, its halt carries the bind
         # (``consume_operands``), and its completed face carries it on to the
-        # block.
+        # block.  A callee's store the value carried was made before the
+        # unpack: it is first in the record of every arm, the completed one
+        # included (``stores_laid_on_completion``).
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            stores_laid_on_completion,
+        )
+
         def unpack(value):
             after = written_by(value, ctx)
 
@@ -114,6 +120,8 @@ class DynamicUnpackAssignSugar(Sugar):
                     lambda rebinds: bind_unpack_projections(rebinds, self.evaluation)
                 )
 
-            return consume_operands(step, value)
+            return stores_laid_on_completion(
+                value, consume_operands(step, value), ctx
+            )
 
         return self.value.desugar(ctx).and_then(unpack)

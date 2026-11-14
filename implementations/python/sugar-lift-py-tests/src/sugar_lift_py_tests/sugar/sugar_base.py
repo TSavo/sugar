@@ -42,7 +42,11 @@ def _recorded_at_its_head(sugar, ctx, outcome, evaluator):
     when ``g()`` raises); the halt's record is built from the binds already
     made, which the context the later operand was evaluated in holds
     (``written_by``), and never stood in for by the statement's head, which
-    holds none of them (``function_universe_sugar.halts_at_operand_head``).
+    holds none of them (``function_universe_sugar.halts_at_operand_head``);
+    the callee stores among those writes are laid first in its entries by
+    the consumer that evaluated it after them, once
+    (``named_expression_value.evaluated_after``, ``consume_operands``),
+    which also records such a halt where the consumer holds no walrus.
     An expression that holds a walrus records nothing here: its own
     walrus-free operands recorded theirs, and its step's halt is recorded
     with its operands' binds (``consume_operands``).  Where the evaluator

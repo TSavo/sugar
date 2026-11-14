@@ -229,9 +229,11 @@ class JoinedStrSugar(ConstructedTermSugar):
         # once, through the one operand door; the joined value so far carries
         # the binds of the parts before it, so they ride to the end in order,
         # and each part is evaluated with their writes applied
-        # (``written_by``: ``f"{(n := 1)}{n}"``).
+        # (``written_by``: ``f"{(n := 1)}{n}"``), its halt carrying them
+        # (``evaluated_after``).
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            evaluated_after,
             written_by,
         )
 
@@ -242,7 +244,7 @@ class JoinedStrSugar(ConstructedTermSugar):
         for part in self.parts[1:]:
             outcome = outcome.and_then(
                 lambda left, part=part: factored_operand(
-                    part.desugar(written_by(left, ctx))
+                    evaluated_after((left,), part, written_by(left, ctx))
                 ).and_then(lambda right: consume_operands(concatenate, left, right))
             )
         return outcome

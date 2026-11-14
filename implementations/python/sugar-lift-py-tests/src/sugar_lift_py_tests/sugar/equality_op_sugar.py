@@ -70,12 +70,17 @@ class EqualityOpSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> ExitSet:
         # Reduce both sides; the left, standing on the equals floor, answers
         # whether it equals the right. That is all `==` desugars to.  The
-        # right side is evaluated after the left, with the left's walrus
-        # writes applied.
-        from sugar_lift_py_tests.floor.named_expression_value import written_by
+        # right side is evaluated after the left, with the left's writes
+        # applied, and its halt carries them (``evaluated_after``).
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            evaluated_after,
+            written_by,
+        )
 
         return self.left.desugar(ctx).and_then(
-            lambda left: self.right.desugar(written_by(left, ctx)).and_then(
+            lambda left: evaluated_after(
+                (left,), self.right, written_by(left, ctx)
+            ).and_then(
                 lambda right: self.apply_reduced(left, right, ctx)
             )
         )

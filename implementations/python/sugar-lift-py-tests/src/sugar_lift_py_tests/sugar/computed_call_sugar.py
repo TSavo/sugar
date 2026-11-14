@@ -102,7 +102,8 @@ class ComputedCallSugar(ConstructedTermSugar):
         # The callee, then each actual, then the call: each is evaluated with
         # the walrus writes of the ones before it applied (``written_by``), so
         # a later actual and the closure cells the call reads see an earlier
-        # actual's walrus.
+        # actual's walrus, and an actual's halt carries every write before
+        # it (``evaluated_after``).
         from sugar_lift_py_tests.floor.named_expression_value import written_by
 
         return self.callee.desugar(ctx).and_then(
@@ -112,11 +113,14 @@ class ComputedCallSugar(ConstructedTermSugar):
         )
 
     def _collect(self, callee, remaining: tuple, accumulated: tuple, ctx) -> ExitSet:
-        from sugar_lift_py_tests.floor.named_expression_value import written_by
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            evaluated_after,
+            written_by,
+        )
 
         if remaining:
             head, *rest = remaining
-            return head.desugar(ctx).and_then(
+            return evaluated_after((callee, *accumulated), head, ctx).and_then(
                 lambda value: self._collect(
                     callee,
                     tuple(rest),
@@ -129,11 +133,15 @@ class ComputedCallSugar(ConstructedTermSugar):
     def _collect_kwargs(
         self, callee, remaining: tuple, kw_values: tuple, positional: tuple, ctx
     ) -> ExitSet:
-        from sugar_lift_py_tests.floor.named_expression_value import written_by
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            evaluated_after,
+            written_by,
+        )
 
         if remaining:
             (name, sugar), *rest = remaining
-            return sugar.desugar(ctx).and_then(
+            earlier = (callee, *positional, *(value for _name, value in kw_values))
+            return evaluated_after(earlier, sugar, ctx).and_then(
                 lambda value: self._collect_kwargs(
                     callee,
                     tuple(rest),

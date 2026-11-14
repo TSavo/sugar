@@ -109,7 +109,10 @@ class MethodCallSugar(ConstructedTermSugar):
         # count is the base of the exponent every argument raises (#6324).
         # It is an operand: a walrus in it binds once, through the one door,
         # and the arguments are evaluated with its writes applied
-        # (``written_by``).
+        # (``written_by``), inside its door, which lays its stores in their
+        # halts; an argument's halt is recorded where it was evaluated,
+        # after every earlier operand's writes (``inside``,
+        # ``evaluated_after``).
         return factored_operand(self.receiver.desugar(ctx)).and_then(
             lambda receiver: consume_operands(
                 lambda presented: self._collect(
@@ -119,14 +122,18 @@ class MethodCallSugar(ConstructedTermSugar):
                     self.args,
                     (),
                     written_by(receiver, ctx),
+                    (receiver,),
                 ),
                 receiver,
             )
         )
 
-    def _collect(self, receiver, remaining: tuple, accumulated: tuple, ctx) -> ExitSet:
+    def _collect(
+        self, receiver, remaining: tuple, accumulated: tuple, ctx, inside=()
+    ) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            evaluated_after,
             written_by,
         )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
@@ -140,7 +147,9 @@ class MethodCallSugar(ConstructedTermSugar):
             # The actual is an operand: a walrus in it binds once, through
             # the one operand door (``consume_operands``), and the later
             # actuals are evaluated with its writes applied (``written_by``).
-            return factored_operand(head.desugar(ctx)).and_then(
+            return factored_operand(
+                evaluated_after((), head, ctx, inside=inside)
+            ).and_then(
                 lambda value: consume_operands(
                     lambda presented: self._collect(
                         receiver,
@@ -152,17 +161,27 @@ class MethodCallSugar(ConstructedTermSugar):
                             ),
                         ),
                         written_by(value, ctx),
+                        (*inside, value),
                     ),
                     value,
                 )
             )
-        return self._collect_kwargs(receiver, self.keywords, (), accumulated, ctx)
+        return self._collect_kwargs(
+            receiver, self.keywords, (), accumulated, ctx, inside
+        )
 
     def _collect_kwargs(
-        self, receiver, remaining: tuple, kw_values: tuple, positional: tuple, ctx
+        self,
+        receiver,
+        remaining: tuple,
+        kw_values: tuple,
+        positional: tuple,
+        ctx,
+        inside=(),
     ) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            evaluated_after,
             written_by,
         )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
@@ -170,7 +189,9 @@ class MethodCallSugar(ConstructedTermSugar):
         if remaining:
             (name, sugar), *rest = remaining
             # Same law and order as the positional fold (#6324).
-            return factored_operand(sugar.desugar(ctx)).and_then(
+            return factored_operand(
+                evaluated_after((), sugar, ctx, inside=inside)
+            ).and_then(
                 lambda value: consume_operands(
                     lambda presented: self._collect_kwargs(
                         receiver,
@@ -186,6 +207,7 @@ class MethodCallSugar(ConstructedTermSugar):
                         ),
                         positional,
                         written_by(value, ctx),
+                        (*inside, value),
                     ),
                     value,
                 )
