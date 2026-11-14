@@ -355,6 +355,30 @@ def test_a_nested_unpack_of_the_wrong_arity_halts_at_the_resume() -> None:
     )
     assert isinstance(halted, ExitSet)
     assert halted.exits and halted.halts() == halted.exits
+    # The outer level halted before any leaf was bound: the frame it leaves
+    # binds none.
+    for halt in halted.halts():
+        assert _assigned(halt.state.frame) == []
+
+
+def test_a_nested_unpack_whose_inner_level_fails_keeps_the_outer_leaves() -> None:
+    # CPython stores ``a`` before it unpacks ``(2,)`` into ``(b, c)`` and
+    # raises: the halt leaves the frame with ``a`` bound, under its key, as
+    # the completed face binds it (#7757, leftover of #8134). It used to leave
+    # the frame poised on the statement with nothing bound.
+    step, halted = _send_after_first_yield(
+        "nested_inner_arity",
+        "def g():\n    (a, (b, c)) = yield 5\n    return a\n",
+        TupleValue((TermValue(1), TupleValue((TermValue(2),)))),
+    )
+    assert isinstance(halted, ExitSet)
+    halts = halted.halts()
+    assert halts and halts == halted.exits
+    keys = dict(step.targets)
+    for halt in halts:
+        frame = halt.state.frame
+        assert isinstance(frame, GeneratorConstructionV1)
+        assert _assigned(frame) == [("a", TermValue(1), keys["a"])]
 
 
 # ---------------------------------------------------------------------------

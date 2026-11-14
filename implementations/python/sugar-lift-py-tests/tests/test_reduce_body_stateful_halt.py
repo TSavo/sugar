@@ -1,6 +1,8 @@
 """Reducer boundary law for state-bearing exceptional exits."""
 
+from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.effect import RaiseEffect
+from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.outcome import ExitSet, true_guard
 from sugar_lift_py_tests.outcome.exit_set import Halted
 from sugar_lift_py_tests.sugar import function_universe_sugar
@@ -11,7 +13,12 @@ def test_reduce_body_retains_one_unconditional_stateful_halt(monkeypatch):
         "AttributeError",
         occurrence="implementations/python/sugar-lift-py-tests/tests/test_reduce_body_stateful_halt.py:26:0",
     )
-    pre_effect_state = object()
+    # A halt's state is the record it halted with (#7757): what the block
+    # reached before it, in the context it halted in.
+    ctx = ReduceContext.root(owner="test_reduce_body_stateful_halt")
+    pre_effect_state = function_universe_sugar._ReducedBlock(
+        (TermValue(1),), False, (), context=ctx
+    )
     exits = ExitSet((Halted(true_guard(), effect, pre_effect_state),))
     monkeypatch.setattr(
         function_universe_sugar,
