@@ -338,8 +338,10 @@ class PathContainerCallSugar(ConstructedTermSugar):
     """One mutating operation: ``(receiver after, result)``.
 
     ``r.append(x)``, ``r[k] = v`` (``__setitem__``), ``del r[k]``
-    (``__delitem__``), ``r += x`` (``__iadd__``...), on a name or through a
-    path.  The receiver is evaluated once.  A ``ListValue``/``DictValue``/
+    (``__delitem__``), ``r += x`` (``__iadd__``...), ``r[k] += x``
+    (``__setitem__`` with an operator: the store of the item's in-place
+    result, ``_read_modify_store``), on a name or through a path.  The
+    receiver is evaluated once.  A ``ListValue``/``DictValue``/
     ``SetValue`` receiver takes the cited CPython mutation; any other
     receiver takes the ordinary operation -- the call (``fallback``), which
     reads the receiver from this one evaluation, the floor's item store or
@@ -400,6 +402,8 @@ class PathContainerCallSugar(ConstructedTermSugar):
         # walrus in one binds once, through the one operand door.  They
         # reduce left to right, each under the state after the ones before
         # it (``reduce_operands``).
+        if self.operator is not None and self.method == "__setitem__":
+            return self._read_modify_store(ctx)
         if self.value_first and self.args:
             *keys, value = self.args
             # In evaluation order: the stored value first.
@@ -414,6 +418,58 @@ class PathContainerCallSugar(ConstructedTermSugar):
         return reduce_operands((self.receiver, *self.args), ctx).and_then(
             lambda operands: consume_operands(
                 lambda receiver, *held: self._apply(receiver, held, ctx),
+                *operands,
+            )
+        )
+
+    def _read_modify_store(self, ctx) -> ExitSet:
+        """``t[k] OP= v`` (``__setitem__`` with an operator, ``args`` the key
+        and ``v``): the receiver and the key, the item read (the one
+        subscript door, ``discharge_subscript``), ``v``, the in-place
+        operator on the item (``project_augmented``), then the store of its
+        result on the receiver (``_apply``) -- each once, in Python's order.
+        A halt at any step leaves before the store."""
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            reduce_operands,
+            written_by,
+        )
+        from sugar_lift_py_tests.operations.subscript_operation import (
+            discharge_subscript,
+        )
+        from sugar_lift_py_tests.sugar.augassign_sugar import project_augmented
+
+        key_sugar, right_sugar = self.args
+        op_site = self.operator_site if self.operator_site is not None else self.site
+
+        def store(receiver, key, after):
+            return discharge_subscript(
+                receiver, key, self.site, after, owner=type(self).__name__
+            ).and_then(
+                lambda current: right_sugar.desugar(after).and_then(
+                    lambda right: consume_operands(
+                        lambda operand: project_augmented(
+                            current,
+                            operand,
+                            operator=type(self.operator).inplace_operator,
+                            projector=self.operator.project_inplace,
+                            site=op_site,
+                            ctx=ctx,
+                        ).and_then(
+                            lambda result: self._apply(receiver, (key, result), ctx)
+                        ),
+                        right,
+                    )
+                )
+            )
+
+        return reduce_operands((self.receiver, key_sugar), ctx).and_then(
+            lambda operands: consume_operands(
+                lambda receiver, key: store(
+                    receiver,
+                    key,
+                    written_by(operands[1], written_by(operands[0], ctx)),
+                ),
                 *operands,
             )
         )
