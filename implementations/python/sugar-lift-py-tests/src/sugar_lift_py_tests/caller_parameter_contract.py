@@ -159,6 +159,7 @@ class NativeOperationResolutionV1:
                     exception_type_coordinate=self.exception_type_coordinate,
                     occurrence=AuthenticatedRaiseLocus.of(str(occurrence.wire())),
                     blame=str(occurrence.wire()),
+                    site=source_node,
                 )
             if not isinstance(effect, RaiseEffect):
                 raise TypeError(

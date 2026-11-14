@@ -226,6 +226,7 @@ class GroupedRaiseSugar(Sugar):
                 occurrence=occurrence,
                 exception_type_coordinate=identity,
                 exception_type_mro=mro,
+                site=self.site,
             )
         )
 
@@ -253,6 +254,7 @@ class GroupedRaiseSugar(Sugar):
                 message_value,
                 members,
                 occurrence=occurrence,
+                site=self.site,
             ),
             UndeterminedRaiseEffect(
                 blame=str(self.site),

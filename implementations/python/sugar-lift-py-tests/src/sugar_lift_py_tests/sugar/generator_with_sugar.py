@@ -189,8 +189,7 @@ class GeneratorWithSugar(Sugar):
             )
         return prepend_facts_to_exitset(result, facts)
 
-    @staticmethod
-    def _entry_refusal_exit(machine, ctx):
+    def _entry_refusal_exit(self, machine, ctx):
         """Turn first-resume termination into the authenticated raise ExitSet arm.
 
         Observation lives in ``generator_entry_refusal`` (vendor conversion).
@@ -212,6 +211,7 @@ class GeneratorWithSugar(Sugar):
             occurrence=f"generator-entry-refusal:{blame}",
             blame=blame,
             raised_value=refusal.message,
+            site=self.site,
         )
         return ExitSet.halted(effect, state=halt_record(ctx))
 
@@ -296,6 +296,7 @@ class GeneratorObjectWithSugar(Sugar):
                 blame=blame,
                 raised_value=refusal.message,
                 producer_node_owner="GeneratorObjectWithSugar",
+                site=self.site,
             )
             # The with halts at its head: nothing was reached inside the
             # statement, so its state is the empty record where it halted
@@ -364,6 +365,7 @@ class NonManagerObjectWithSugar(Sugar):
                 blame=blame,
                 raised_value=refusal.message,
                 producer_node_owner="NonManagerObjectWithSugar",
+                site=self.site,
             )
             # Halted at the head: the empty record where it halted
             # (``halt_record``), which the reducer splices onto.
