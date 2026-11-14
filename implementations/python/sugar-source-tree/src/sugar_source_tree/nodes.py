@@ -10415,6 +10415,9 @@ class FunctionDef(Statement):
                         statement.targets[0].id,
                         statement.value.sugar(),
                         statement.fragment.seal().cid,
+                        evaluation=dict(statement.target_evaluations()).get(
+                            statement.targets[0].id
+                        ),
                     )
                 )
             if (
@@ -10445,6 +10448,9 @@ class FunctionDef(Statement):
                         statement.target.id,
                         statement.value.sugar(),
                         statement.fragment.seal().cid,
+                        evaluation=dict(statement.target_evaluations()).get(
+                            statement.target.id
+                        ),
                     )
                 )
             if isinstance(statement, Assert) and not FunctionDef._owns_yield((statement,)):
@@ -24415,7 +24421,10 @@ class PathContainerCall(Expression):
     ``fallback`` is the ordinary call a method takes on a value the floor
     does not cite; an item store (``value_first``: the stored value is
     evaluated first), an item delete and an in-place operator
-    (``operator_kind``, ``operator_site``) have none."""
+    (``operator_kind``, ``operator_site``) have none.  Its receiver is a
+    reference to ``receiver_evaluation`` (``container_mutation.
+    _container_call``): the operation evaluates the receiver once and binds
+    it there, and the call reads it through that key."""
 
     receiver: Expression
     args: Tuple[Expression, ...]
@@ -24463,7 +24472,7 @@ class PathContainerCall(Expression):
             args=args,
             fallback=None if fallback is None else fallback.sugar(),
             site=self.fragment,
-            evaluation_token=self.occurrence,
+            receiver_evaluation=getattr(self, "receiver_evaluation", None),
             label=getattr(self, "label", None) or "receiver",
             value_first=value_first,
             operator=operator,
@@ -24517,7 +24526,6 @@ class PathAfterCall(Expression):
             mode=self.mode,
             unshared=self.unshared,
             site=self.fragment,
-            evaluation_token=self.occurrence,
             label=self.label,
             prior=None if prior is None else prior.sugar(),
         )
@@ -24587,7 +24595,6 @@ class ReceiverAfterCall(Expression):
         return ReceiverAfterCallSugar(
             label=self.label,
             site=self.fragment,
-            evaluation_token=self.occurrence,
             prior=None if prior is None or not rules else prior.sugar(),
             subjects=tuple(subject.sugar() for subject in subjects),
             rules=tuple(rules),
@@ -24615,7 +24622,6 @@ class SourceCallActualAfter(Expression):
             state=self.state.sugar(),
             label=self.label,
             site=self.fragment,
-            evaluation_token=self.occurrence,
         )
 
 

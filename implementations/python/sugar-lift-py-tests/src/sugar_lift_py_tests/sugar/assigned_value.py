@@ -12,8 +12,7 @@ The law has two halves, and this module owns both:
   at the assignment, in Python's evaluation order. Its halt faces leave HERE,
   as the statement's own exits; only its completed faces continue, each with
   the value bound under each Name target's key (``evaluations``,
-  ``Assign.target_evaluations``) and ``ctx.assigned_values`` extended by
-  ``(rhs key, completed value)``.
+  ``Assign.target_evaluations``).
 - **A read never re-evaluates.** Substitution rewrites every later read of a
   Name target to a reference to its key (``EvaluationRefSugar``): the value
   the statement completed with, never the RHS inlined at the read and
@@ -23,15 +22,16 @@ The law has two halves, and this module owns both:
   stored field or a container's contents after a store read the store's key
   (``place``), and an object after its field stores is that key with each
   store's key read folded over it.  A path's root after a path mutation is
-  read through the name's key, never the display it was given.  A
-  read of a RHS sugar that is still inlined answers
-  ``ExitSet.completed(<completed value>)`` from the record when it is
-  recorded: the value from the face the statement completed under, never a
-  second evaluation that could raise again.
+  read through the name's key, never the display it was given.  An
+  unpack's names read their projections of the statement's key
+  (``Assign._unpack_projection_binding``); a generator's assignment step
+  binds the key it was constructed with (``AssignStepV1.evaluation``); the
+  ordinary call a mutating method takes reads its receiver through the key
+  the one door binds it under (``PathContainerCall.receiver_evaluation``).
 
-A RHS that reduces to one plain completed arm (unguarded, no faces, owing
-nothing) cannot halt and is recorded only inside a live loop body; outside one
-an inlined read of it is reduced again.
+Every read is keyed at construction: no record of evaluated right-hand sides
+answers a second evaluation of the same sugar.  A statement never substituted
+carries no key, and its later reads are name reads.
 """
 
 from __future__ import annotations
@@ -40,63 +40,6 @@ from dataclasses import dataclass, field as dataclass_field
 import functools
 
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
-
-_MISS = object()
-
-
-def assigned_key(sugar) -> object | None:
-    """The key of one evaluation of a RHS sugar: its type, and its source
-    fragment qualified by the occurrence it is evaluated in
-    (``occurrence.occurrence_key`` of the site under
-    ``occurrence.evaluation_path``: the unrolled copy it is, the live loop
-    items and callee frames around it).
-
-    Substitution shares the RHS node, but a read may sit in a different
-    construction coordinate and so hold a different sugar object for it; the
-    type and the site's occurrence are what both name.  Every key the record
-    is written and read under is this one, so an evaluation is answered only
-    from a record of the same occurrence: a later loop item's evaluation of
-    the sugar at the same site is evaluated, never answered from an earlier
-    item's record, and a statement run once per item (a ``class``
-    statement's run, a decorated statement's application) runs at each.
-
-    A sugar without a source fragment has no occurrence to key and is never
-    recorded; the statement's own targets still receive its one completed
-    value directly.
-    """
-    site = getattr(sugar, "site", None)
-    if site is None or not hasattr(site, "span") or not hasattr(site, "unit"):
-        return None
-    from sugar_lift_py_tests.occurrence import evaluation_path, occurrence_key
-
-    occurrence = occurrence_key(site, evaluation_path(sugar))
-    # A shadow evaluation minted once per substitution (an unrolled
-    # iteration's mutating call) shares its span with every other iteration's;
-    # its evaluation coordinate (span plus occurrence tags, never a process
-    # draw) is what tells their evaluations apart.
-    token = getattr(sugar, "evaluation_token", None)
-    if token is not None:
-        return (type(sugar), occurrence, token)
-    return (type(sugar), occurrence)
-
-
-def recorded_value(ctx, sugar):
-    """The completed value an assignment recorded for this evaluation of
-    ``sugar`` (``assigned_key``: this occurrence), or _MISS."""
-    rows = getattr(ctx, "assigned_values", None)
-    if not rows:
-        return _MISS
-    kind = type(sugar)
-    if not any(candidate[0] is kind for candidate, _value in rows):
-        # No record of this sugar type: nothing to key.
-        return _MISS
-    key = assigned_key(sugar)
-    if key is None:
-        return _MISS
-    for candidate, value in reversed(rows):
-        if candidate == key:
-            return value
-    return _MISS
 
 
 def carried_write_key(site, name: str) -> str:
@@ -361,11 +304,7 @@ def evaluate_assignment_values(
         if index == len(values):
             return finish(active, completed, stores)
         sugar = values[index]
-        key = assigned_key(sugar)
-        # The statement's own evaluation is never answered from the record:
-        # a loop re-reducing this statement evaluates its RHS again.
-        own_ctx = active if key is None else active.without_assigned_value(key)
-        outcome = recorded(sugar.desugar(own_ctx), sugar, own_ctx, stores)
+        outcome = recorded(sugar.desugar(active), sugar, active, stores)
         if isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits:
             # Every arm halts: no later RHS or target runs.
             return outcome
@@ -378,26 +317,12 @@ def evaluate_assignment_values(
                 # the enclosing block routes it.
                 return outcome
             evaluated, plain, more = _walrus_bound(active, plain)
-            if key is not None and _binds_live_name(active, bind, index):
-                # A live loop body rebinds names this RHS may read: a later
-                # read of this RHS must see this evaluation, not re-reduce
-                # over the rebound temporal.
-                return step(
-                    index + 1,
-                    evaluated.with_assigned_value(key, plain),
-                    (*completed, plain),
-                    (*stores, *more),
-                )
             return step(index + 1, evaluated, (*completed, plain), (*stores, *more))
+
         def completed_face(value):
             evaluated, value, more = _walrus_bound(active, value)
-            if key is not None:
-                evaluated = evaluated.with_assigned_value(key, value)
             return step(index + 1, evaluated, (*completed, value), (*stores, *more))
 
-        # With no occurrence to record (``key is None``) the statement still
-        # halts here, and a read keeps substitution (it was never answered
-        # from a record).
         return outcome.and_then(completed_face)
 
     return step(0, ctx)
@@ -425,11 +350,3 @@ def _walrus_bound(active, value):
     binds, presented = peel_walrus_binds(value)
     _walrus, stores = caller_stores_of(binds)
     return bind_walrus_binds(binds, active), presented, stores
-
-
-def _binds_live_name(ctx, bind, index) -> bool:
-    """Inside a live loop body every assignment's RHS is recorded: a later
-    statement reads it through substitution, and the temporal it was reduced
-    over may since have been rebound."""
-    del bind, index
-    return bool(getattr(ctx, "live_loop_names", frozenset()))

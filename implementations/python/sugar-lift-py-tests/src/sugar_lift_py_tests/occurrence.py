@@ -52,8 +52,7 @@ def evaluation_path(sugar) -> tuple[str, ...]:
     (``nodes._as_evaluation_of``: its ``_occurrence_tags``), that iteration's
     segments after it -- unless the path already ends in them (the copy's
     statement entered them).  The one path ``Sugar.desugar`` reduces a sugar
-    under, and the one a record of its evaluation is keyed on
-    (``assigned_value.assigned_key``)."""
+    under."""
     path = _PATH.get()
     tags = getattr(sugar, "__dict__", {}).get("_occurrence_tags")
     if not tags or path[len(path) - len(tags) :] == tags:

@@ -36,17 +36,10 @@ class ReduceContext:
     # still reads a BranchResultRef of that slot; record the folded bool
     # here so the phi can drop the dead arm without inventing BRA.to_term.
     ground_branch_results: dict = field(default_factory=dict)
-    # Assignment statements already evaluated, in statement order: each row is
-    # ``(rhs key, completed value)``. Python evaluates an assignment's RHS at
-    # the statement; substitution still inlines the RHS sugar at every later
-    # read, and such a read must see the completed face's value, never
-    # re-evaluate the RHS (which would raise again, outside whatever try/with
-    # enclosed the assignment). See ``sugar/assigned_value.py``.
-    assigned_values: tuple[tuple[object, object], ...] = ()
-    # Names a live loop body (``LoopRecurrenceSugar``'s per-item recurrence,
-    # read through the temporal rather than substituted) rebinds: an
-    # assignment to one rebinds it in the temporal and records its RHS value,
-    # so the next statement and the next item read the stored value.
+    # Names a live loop body (``LoopRecurrenceSugar``'s per-item recurrence)
+    # carries: an assignment to one binds its value under the statement's
+    # write of the name (``assigned_value.carried_write_key``), which the
+    # next statement and the next item read.
     live_loop_names: frozenset[str] = field(default_factory=frozenset)
 
     @classmethod
@@ -75,7 +68,6 @@ class ReduceContext:
             in_flight_effects=getattr(source, "in_flight_effects", ()),
             observed_effects=getattr(source, "observed_effects", ()),
             ground_branch_results=getattr(source, "ground_branch_results", {}),
-            assigned_values=getattr(source, "assigned_values", ()),
             live_loop_names=getattr(source, "live_loop_names", frozenset()),
         )
 
@@ -103,22 +95,3 @@ class ReduceContext:
             if candidate_slot == slot_id:
                 return effect
         return None
-
-    def with_assigned_value(self, key: object, value: object) -> "ReduceContext":
-        return replace(
-            self,
-            assigned_values=(
-                *(row for row in self.assigned_values if row[0] != key),
-                (key, value),
-            ),
-        )
-
-    def without_assigned_value(self, key: object) -> "ReduceContext":
-        if not any(row[0] == key for row in self.assigned_values):
-            return self
-        return replace(
-            self,
-            assigned_values=tuple(
-                row for row in self.assigned_values if row[0] != key
-            ),
-        )
