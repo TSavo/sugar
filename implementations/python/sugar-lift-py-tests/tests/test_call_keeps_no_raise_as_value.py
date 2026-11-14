@@ -286,3 +286,67 @@ def test_a_completed_call_carries_the_callees_field_store_to_its_statement(
     assert isinstance(call, CallSiteValue)
     assert caller_stores_of(binds) == ((), (store,))
     assert bind_walrus_binds(binds, ctx).temporal.value_for("box") == stored
+
+
+class _Completes:
+    """A right-hand side (or returned value) whose one completed value is
+    ``value``: a call that completed carrying its callee's stores."""
+
+    site = None
+
+    def __init__(self, value):
+        self.value = value
+
+    def desugar(self, ctx=None):
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        return ExitSet.completed(self.value)
+
+
+def test_an_assignment_lays_the_callees_field_store_in_its_record() -> None:
+    """``y = g(box)`` where ``g`` stored ``box.x``: the assignment applies the
+    store the call's value carries and lays it in its record, as ``g(box)``
+    alone does, so the frame's exit hands it to the frame's caller
+    (``caller_visible_stores``) -- never only the context."""
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        carry_caller_stores,
+    )
+    from sugar_lift_py_tests.sugar.assigned_value import (
+        evaluate_assignment_values,
+    )
+
+    ctx, store, stored = _caller_holding_a_receiver()
+    rhs = _Completes(carry_caller_stores((store,), TermValue(2)))
+
+    record = evaluate_assignment_values((rhs,), ctx).completed_value()
+
+    assert record.entries == (store,)
+    assert record.context.temporal.value_for("box") == stored
+
+
+def test_a_return_lays_the_callees_field_store_before_it() -> None:
+    """``return g(box)`` where ``g`` stored ``box.x``: the return answers the
+    call's value and lays the store before it in the record, so the caller
+    of the frame reads it (``caller_visible_stores``); the return drops no
+    store the call carried."""
+    from sugar_lift_py_tests.floor import TermValue
+    from sugar_lift_py_tests.floor.block_value import BlockValue
+    from sugar_lift_py_tests.floor.call_site_value import caller_visible_stores
+    from sugar_lift_py_tests.floor.named_expression_value import (
+        carry_caller_stores,
+    )
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+    from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
+
+    ctx, store, _stored = _caller_holding_a_receiver()
+    returned = ReturnSugar(
+        value=_Completes(carry_caller_stores((store,), TermValue(2))), site=None
+    )
+
+    value = returned.desugar(ctx).completed_value()
+
+    assert isinstance(value, BlockValue)
+    assert value.statements[0] == store
+    assert isinstance(value.statements[-1], ReturnValue)
+    assert caller_visible_stores(value.statements) == (store,)

@@ -45,15 +45,29 @@ class ReturnSugar(Sugar):
         # after the return sees: the return holds the value it presents, so
         # the bind never reaches the caller's temporal as a write of the
         # caller's own name.
+        #
+        # A store a callee the value called made on an object the caller sees
+        # (``CallerStoreValue``) is not this frame's: it is laid in the record
+        # before the return, as a statement alone lays it
+        # (``record_statement_value``), so the caller of this frame reads it
+        # there (``caller_visible_stores``) and never misses it.
+        from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.named_expression_value import (
+            caller_stores_of,
             peel_walrus_binds,
         )
         from sugar_lift_py_tests.floor.object_identity import arrived
 
-        # The caller holds the returned value by binding: what this frame
-        # made is not current in the caller's (``object_identity``).
-        return self.value.desugar(ctx).and_then(
-            lambda value: ExitSet.completed(
-                ReturnValue(arrived(peel_walrus_binds(value)[1], self.site))
+        def returned(value):
+            binds, presented = peel_walrus_binds(value)
+            _walrus, stores = caller_stores_of(binds)
+            # The caller holds the returned value by binding: what this frame
+            # made is not current in the caller's (``object_identity``).
+            result = ReturnValue(arrived(presented, self.site))
+            if not stores:
+                return ExitSet.completed(result)
+            return ExitSet.completed(
+                BlockValue((*stores, result), can_fall_through=True)
             )
-        )
+
+        return self.value.desugar(ctx).and_then(returned)

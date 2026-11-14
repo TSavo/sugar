@@ -6705,6 +6705,14 @@ class Node(Typed):
             if new_gen is not gen:
                 changed = True
             new_gens.append(new_gen)
+            if index == 0:
+                # The first iterable is evaluated once, before any member: an
+                # object its calls changed is read as they left it in every
+                # condition, later iterable and element
+                # (``container_mutation.thread_header``).
+                from .container_mutation import thread_header
+
+                scope = thread_header(new_gen.iter, inner, scope)
             gen_bound = self._bound_names_in(gen.target)
             bound |= gen_bound
             # A later target rebinding a name ends the earlier reference.
@@ -13377,8 +13385,14 @@ class For(Statement):
             subst_iter = new_iter if iter_changed else self.iter
             # The iterable is evaluated once, before every item and the
             # ``else``: a walrus in it is read there through its key
-            # (``_scope_after``), never the name as it stood before the loop.
-            scope = _scope_after(scope, self.iter, subst_iter)
+            # (``_scope_after``), never the name as it stood before the loop,
+            # and an object its calls changed is read as they left it
+            # (``container_mutation.thread_header``).
+            from .container_mutation import thread_header
+
+            scope = thread_header(
+                subst_iter, scope, _scope_after(scope, self.iter, subst_iter)
+            )
 
             # `else` is unrollable too: the jump-guard means no `break` exists, and
             # with no break the else ALWAYS runs -- it is just more block, spliced
@@ -14096,11 +14110,23 @@ class While(Statement):
         new_test, d = self._substitute_field(self.test, header_scope)
         if d:
             changed["test"] = new_test
-        body_scope = _scope_after(header_scope, self.test, new_test)
-        else_scope = _scope_after(
-            {**bs, **_loop_header_bindings(self, else_bound, scope)},
-            self.test,
+        # An object the test's calls changed is read after them too
+        # (``container_mutation.thread_header``): the test runs again before
+        # every item, so its calls take the loop's rule.
+        from .container_mutation import thread_header
+
+        body_scope = thread_header(
             new_test,
+            header_scope,
+            _scope_after(header_scope, self.test, new_test),
+            repeated=True,
+        )
+        else_header = {**bs, **_loop_header_bindings(self, else_bound, scope)}
+        else_scope = thread_header(
+            new_test,
+            else_header,
+            _scope_after(else_header, self.test, new_test),
+            repeated=True,
         )
         for f, field_scope in (
             ("body", body_scope),
@@ -14248,22 +14274,15 @@ class If(Statement):
         # from the test itself (``_substitute_body_tracked``).
         #
         # What the test's calls did to the objects they reach is threaded
-        # here too, before either branch (``container_mutation.havoc_after``
-        # over the test): a branch reads an object as the test's calls left
-        # it, never as it stood before the ``if``.  A name no branch rebinds
-        # leaves the ``if`` in that state; the block's own threading of this
-        # statement leaves the test to it (``_threaded_header``).
-        from .container_mutation import havoc_after
+        # here too, before either branch (``container_mutation.thread_header``,
+        # the one rule for every statement's header): a branch reads an
+        # object as the test's calls left it, never as it stood before the
+        # ``if``.  The block threads the test the same way before the rest of
+        # the statement's calls (``havoc_after``), so a name no branch
+        # rebinds leaves the ``if`` in that state.
+        from .container_mutation import thread_header
 
-        pre_test = scope
-        scope = _scope_after(scope, self.test, new_test)
-        walrus_scope = scope
-        scope = havoc_after(new_test, pre_test, scope)
-        tested = {
-            name: state
-            for name, state in scope.items()
-            if isinstance(name, str) and walrus_scope.get(name, _MISSING) is not state
-        }
+        scope = thread_header(new_test, scope, _scope_after(scope, self.test, new_test))
         new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
         if d:
             changed["body"] = new_body
@@ -14294,9 +14313,6 @@ class If(Statement):
                 phis.append(self._make_assign(name, joined))
             else:
                 availability[name] = joined
-        for name, state in tested.items():
-            if name not in names:
-                availability[name] = state
         if not phis and not availability:
             return node
         return _Splice((node, *phis), availability)
@@ -15639,8 +15655,18 @@ class With(Statement):
 
         # The item is evaluated before the body (and, nested, before every
         # later item): a walrus in it is read there through its key
-        # (``_scope_after``), never the name as it stood before the ``with``.
-        body_scope = dict(_scope_after(scope, self.items, items))
+        # (``_scope_after``), never the name as it stood before the ``with``,
+        # and an object its manager's calls changed is read as they left it
+        # (``container_mutation.thread_header``).
+        from .container_mutation import thread_header
+
+        body_scope = dict(
+            thread_header(
+                tuple(item.context_expr for item in items),
+                scope,
+                _scope_after(scope, self.items, items),
+            )
+        )
         if self.unit.construction_context is not None:
             if len(items) != 1:
                 return self if not changed else rewrite(self, **changed)
@@ -16610,11 +16636,12 @@ class Try(Statement):
             kept = decided or holds
             if compound:
                 # An ``if`` binds what its test's calls changed before either
-                # branch (``If.substitute``), and a name a branch rebinds
-                # leaves it joined: a name still in such a state after the
-                # ``if`` holds it at every halt inside the statement, as at a
-                # simple statement.  Any other compound statement may halt
-                # after any of its inner stores.
+                # branch (``container_mutation.thread_header``), and a name a
+                # branch rebinds leaves it joined: a name still in such a
+                # state after the ``if`` holds it at every halt inside the
+                # statement, as at a simple statement.  Any other compound
+                # statement may halt after any of its inner stores (a
+                # ``with`` body's are not threaded out of it).
                 binding[name] = (
                     state
                     if kept and getattr(statement, "kind", None) == "If"
@@ -17427,8 +17454,13 @@ class Match(Statement):
         new_subject, subj_changed = self._substitute_field(self.subject, scope)
         subject = new_subject if subj_changed else self.subject
         # The subject is evaluated before every case: a walrus in it is read
-        # there through its key (``_scope_after``).
-        scope = _scope_after(scope, self.subject, subject)
+        # there through its key (``_scope_after``), and an object its calls
+        # changed is read as they left it (``container_mutation.thread_header``).
+        from .container_mutation import thread_header
+
+        scope = thread_header(
+            subject, scope, _scope_after(scope, self.subject, subject)
+        )
 
         site_id = getattr(self, "match_route_site_id", None)
         retained_site = site_id is not None
