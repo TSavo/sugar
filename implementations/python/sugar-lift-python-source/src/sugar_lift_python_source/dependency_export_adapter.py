@@ -16,28 +16,18 @@ import re
 from typing import Any, Literal
 
 from .canonical import blake3_512_of
+from .dependency_artifact import (
+    AuthenticatedModuleSourceV1,
+    DefinitionCoordinateV1,
+    DependencyArtifactGraph,
+    PythonObjectResolutionGapV1,
+    PythonObjectResolutionV1,
+    ReexportWarrantV1,
+    ResolvedPythonObjectV1,
+    _gap,
+)
 from .resolution_session import SourceResolutionSession, session_or_new
 from .source_tables import parsed_tree
-
-
-def _bind() -> None:
-    """Late-bind parent symbols to avoid import cycles."""
-    from . import dependency_artifact as da
-
-    g = globals()
-    for name in (
-        "AuthenticatedModuleSourceV1",
-        "DefinitionCoordinateV1",
-        "DependencyArtifactGraph",
-        "PythonObjectResolutionGapV1",
-        "PythonObjectResolutionV1",
-        "ReexportWarrantV1",
-        "ResolvedPythonObjectV1",
-        "_cid",
-        "_gap",
-        "_string",
-    ):
-        g[name] = getattr(da, name)
 
 
 def _export_terminal_result(result: Any, prefix: int) -> Any:
@@ -125,7 +115,6 @@ def resolve_export(
 
     ``seen`` still owns cycle detection and is checked before either memo.
     """
-    _bind()
     session = session_or_new(session)
     if (module_name, exported_name) in seen:
         return _gap("reexport-cycle", binding_cid, graph, module_name, exported_name)
@@ -594,7 +583,6 @@ def resolve_class_body_member(graph, binding_cid: str, resolved, member_name: st
     Inherited methods and class-body assignments stay outside-binding: only a
     unique FunctionDef or AsyncFunctionDef on the class itself.
     """
-    _bind()
     if isinstance(resolved, PythonObjectResolutionGapV1):
         return resolved
     if not isinstance(resolved, ResolvedPythonObjectV1):

@@ -33,10 +33,6 @@ class DeferredClassMethodV1:
     definition_fragment_cid: str
     definition: object = field(compare=False, metadata={"testimony": "lookup"})
     descriptor_kind: str | None = None
-    # True when the class was projected over the methods its instances run
-    # and this one is not among them (#7664): its body was never attempted.
-    # False when the body was attempted and refused (#7659).
-    unprojected: bool = False
 
     @property
     def body(self):
@@ -45,31 +41,6 @@ class DeferredClassMethodV1:
     @property
     def source_call_frame(self):
         return self.definition.source_visible_call_frame()
-
-
-    def object_method(self, defining_class):
-        """The instance's view of this method: bound, its body not constructed.
-
-        An instance's method table names every method its class binds, but
-        building the instance runs none of them.  The body stands as
-        :class:`DeferredMethodBodySugar`, which refuses by name wherever the
-        method is actually run, so a deferred method never silently completes.
-        """
-        from sugar_lift_py_tests.floor import ObjectMethodValue
-        from sugar_lift_py_tests.sugar.deferred_method_body_sugar import (
-            DeferredMethodBodySugar,
-        )
-
-        return ObjectMethodValue(
-            self.name,
-            tuple(param.name for param in self.definition.params),
-            DeferredMethodBodySugar(self),
-            None,
-            (),
-            None,
-            self.descriptor_kind,
-            defining_class=defining_class,
-        )
 
 
 @dataclass(frozen=True)
@@ -528,9 +499,7 @@ class ClassDefinitionValue(GuardStableValue):
         )
         owned = (*inherited, *((self, method) for method in self.methods))
         return tuple(
-            method.object_method(defining_class)
-            if isinstance(method, DeferredClassMethodV1) and method.unprojected
-            else ObjectMethodValue(
+            ObjectMethodValue(
                 method.name,
                 method.source_call_frame.parameters,
                 method.source_call_frame.body,

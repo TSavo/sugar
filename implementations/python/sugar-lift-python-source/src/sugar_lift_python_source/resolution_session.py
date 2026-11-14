@@ -12,12 +12,11 @@ interchangeable:
   *is* the complete key: the same content addresses to the same value
   everywhere, forever, under every authority.
 
-* A **projection** memo is not. ``resolve_export`` and
-  ``resolve_source_visible_frame`` are keyed by a content address, but their
-  *values* are not content: they are objects bound to one live
-  ``TreeConstructionContextV1`` -- a mutable per-session table of
-  ``source_call_frames`` / ``source_call_resolutions`` / ``source_class_bases``
-  that ``_resolve_source_visible_frame_uncached`` writes into as it projects.
+* A **projection** memo is not. ``resolve_export`` and module materialization
+  are keyed by a content address, but their *values* are not content: they are
+  objects bound to one live ``TreeConstructionContextV1`` -- a mutable
+  per-session table of ``source_call_frames`` / ``source_call_resolutions`` /
+  ``source_class_bases`` that construction writes into as it projects.
   Serving such a value to a later construction hands that construction a node
   whose context belongs to somebody else's session. That is a leak of authority,
   not a cache hit, and it is how one project warms another project's answer
@@ -39,8 +38,8 @@ The memos on this class are real amortization, not decorative. They fire in two
 places:
 
 1. **Inside one call tree** -- even a single-shot explicitly constructed session
-   still needs ``frame_active`` (cycle detection) and nested export/frame hits
-   while that one top-level resolve walks reexports and nested callees.
+   still needs nested export hits while that one top-level resolve walks
+   reexports.
 2. **Across top-level resolves** -- only when the *same* session object is
    threaded. Multi-resolve owners (file-open population, package-level
    enumeration that projects the same dependency definitions for many consumer
@@ -69,20 +68,10 @@ Legitimacy (why this is not process-global free-for-all):
 * Key is the resolved workspace root — the authority locus of the walk, not a
   content CID. Different roots mint different sessions; one project cannot warm
   another's answers.
-* Values remain session-bound live Nodes (frame / module materialize). They are
+* Values remain session-bound live Nodes (module materialize). They are
   never parked under a process-global content map. §4 residency covers pure
-  content-derived prep (SourceFile body, lexical import pass); visible-frame
-  projection stays on the session object the walk owns.
-* ``frame_results`` / ``frame_holds`` are LRU-capped (default 512, same order
-  of magnitude as process-resident file limit). A hold exists only while its
-  memo row is served — walk-scoped sessions must not retain every projected
-  SourceFile for the whole corpus (that was the unbounded-accumulation
-  disease: shared session degraded across opens while fresh stayed flat).
-* Measured (orange, tip #7078): cross-file shared session is ~15% on a mixed
-  20-file lib sample (frame_results after 20 files ≈ 1 — almost no shared
-  definitions). Same-content re-open under the same walk session is the
-  amortization that is real (identical definition coordinates hit). Do not bet
-  a 6× census cut on walk session alone.
+  content-derived prep (SourceFile body, lexical import pass); module
+  materialization stays on the session object the walk owns.
 
 ``walk_session_for(root, enrolled_distributions=project_file_roster(root))`` is
 the production default for multi-file doors: the population is step 2's file
@@ -94,8 +83,6 @@ authority is not a session state; an authoritative empty population is
 
 from __future__ import annotations
 
-import collections
-import os
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -106,12 +93,6 @@ if TYPE_CHECKING:
 # Not content-keyed; not a substitute for §4 residency. Cleared only by tests.
 _WALK_SESSIONS: dict[tuple[str, frozenset[str]], "SourceResolutionSession"] = {}
 _ROSTER_UNSET = object()
-
-# Default matches process-resident file LRU (#7071). A walk-scoped session that
-# retained frame_holds for every projected SourceFile forever recreated the
-# "shared context degrades across opens" disease at corpus scale.
-_DEFAULT_FRAME_MEMO_LIMIT = 512
-
 
 # resolved workspace root -> step 2's file list for it, as content CIDs.
 _PROJECT_FILE_ROSTERS: dict[str, frozenset[str]] = {}
@@ -161,138 +142,6 @@ def _require_enrolled_distribution_roster(value: object) -> frozenset[str]:
     return value
 
 
-def _frame_memo_limit() -> int:
-    """Cap for session frame_results (+ co-evicted frame_holds).
-
-    Env ``SUGAR_SESSION_FRAME_MEMO_LIMIT`` (default 512). Hold lifetime must
-    track the memo row it guards — never longer (see remember_frame).
-    """
-    raw = os.environ.get(
-        "SUGAR_SESSION_FRAME_MEMO_LIMIT", str(_DEFAULT_FRAME_MEMO_LIMIT)
-    )
-    try:
-        return max(1, int(raw))
-    except ValueError:
-        return _DEFAULT_FRAME_MEMO_LIMIT
-
-
-# How many distinct definitions one projection may reach through its source
-# calls -- itself included -- before construction stops following them.  A
-# definition whose call closure is larger is not projected; it is refused by
-# name (``call-closure-over-bound``).  The closure is counted in definitions,
-# not in time, so the verdict is the same on every machine and in every run.
-#
-# The largest closure anything constructs through today is 9 (installed
-# ``pytest.raises``); every root in the 1200 constructed files of the pinned
-# pandas corpus reaches at most 2.  The closures this refuses run to
-# thousands.
-SOURCE_CALL_CLOSURE_FRAME_BOUND = 16
-
-
-class CallClosureOverBound(Exception):
-    """The outermost projection's call closure passed the frame bound.
-
-    Raised at the frame that would be one too many and caught only by the
-    outermost ``resolve_source_visible_frame``.  It is deliberately not a
-    ``SugarNotWritten`` / ``TypeError`` / binding gap: the doors that park a
-    callee under those must not park this one, because a callee cut short here
-    is unfinished, not opaque.
-    """
-
-
-class CallClosureLedger:
-    """Which definitions the frame projections in flight have reached.
-
-    ``closures`` records, for every memoized frame result, the definitions its
-    projection reached.  A memo hit charges that whole set, so the closure of
-    a definition is the same whether its callees were projected just now or by
-    an earlier root -- a warm session cannot make an over-bound closure fit.
-
-    ``absences`` records, beside the same row, every dependency top that
-    projection found WITHOUT a seat at the import value-use door.  That door
-    answers an unseated top with the bare receipt, so the row stands only
-    while those tops stay unseated; it is rebuilt once one of them is seated.
-    """
-
-    __slots__ = ("stack", "root", "closures", "absent", "absences", "left_absent")
-
-    def __init__(self) -> None:
-        # One set per projection in flight, innermost last.
-        self.stack: list[set[tuple]] = []
-        # Everything the outermost projection in flight has reached so far.
-        self.root: set[tuple] = set()
-        # definition coordinate -> its completed projection's closure.
-        self.closures: dict[tuple, frozenset[tuple]] = {}
-        # Unseated tops read so far, one set per projection in flight.
-        self.absent: list[set[str]] = []
-        # definition coordinate -> unseated tops its completed projection read.
-        self.absences: dict[tuple, frozenset[str]] = {}
-        # What the projection closed by the last ``leave`` read unseated.
-        self.left_absent: frozenset[str] = frozenset()
-
-    def enter(self, key: tuple) -> None:
-        self.root.add(key)
-        if len(self.root) > SOURCE_CALL_CLOSURE_FRAME_BOUND:
-            raise CallClosureOverBound
-        self.stack.append({key})
-        self.absent.append(set())
-
-    def saw_absent(self, top_level: str) -> None:
-        """The projection in flight was answered by ``top_level`` having no seat."""
-        if self.absent:
-            self.absent[-1].add(top_level)
-
-    def stale(self, key: tuple, seats: Any) -> bool:
-        """A top the row at ``key`` was built without is seated now."""
-        absent = self.absences.get(key)
-        return bool(absent) and not absent.isdisjoint(seats)
-
-    def charge(self, closure: frozenset[tuple], absent: frozenset[str] = frozenset()) -> None:
-        """Count a memo hit's closure against the projections in flight."""
-        self.stack[-1] |= closure
-        self.absent[-1] |= absent
-        self.root |= closure
-        if len(self.root) > SOURCE_CALL_CLOSURE_FRAME_BOUND:
-            raise CallClosureOverBound
-
-    def leave(self) -> frozenset[tuple]:
-        """Close the innermost projection; its caller inherits what it reached."""
-        closure = frozenset(self.stack.pop())
-        self.left_absent = frozenset(self.absent.pop())
-        if self.stack:
-            self.stack[-1] |= closure
-            self.absent[-1] |= self.left_absent
-        else:
-            self.root.clear()
-        return closure
-
-
-def _artifact_cid(graph: Any) -> Any:
-    return getattr(graph, "distribution_artifact_cid", None)
-
-
-class DependencySeats(dict):
-    """``top_level -> DependencyArtifactGraph`` seated by one session.
-
-    A top is authenticated at the first door that asks for it and every later
-    asker reads that seat.  WHICH tops are seated so far is therefore history
-    of the traversal and decides nothing.  A seat moved to a different
-    artifact does decide: ``reseated`` names every top that has held two.
-    """
-
-    __slots__ = ("reseated",)
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.reseated: set[str] = set()
-
-    def __setitem__(self, top_level: str, graph: Any) -> None:
-        held = self.get(top_level)
-        if held is not None and _artifact_cid(held) != _artifact_cid(graph):
-            self.reseated.add(top_level)
-        super().__setitem__(top_level, graph)
-
-
 class SourceResolutionSession:
     """One bounded construction / source-oracle session and its memo tables."""
 
@@ -301,10 +150,6 @@ class SourceResolutionSession:
         "enrolled_distributions",
         "export_resolutions",
         "export_terminals",
-        "frame_results",
-        "frame_holds",
-        "frame_active",
-        "call_closure",
         "module_materializations",
         "module_constants",
         "prefix_files",
@@ -313,7 +158,6 @@ class SourceResolutionSession:
         "import_value_rosters",
         "lexical_passes",
         "dependency_graphs",
-        "construction_refusals",
     )
 
     def __init__(
@@ -338,26 +182,6 @@ class SourceResolutionSession:
         # Same key -> definition/gap only (no warrants). Shared by reexport hops
         # that carry path warrants and cannot use export_resolutions.
         self.export_terminals: dict[tuple[str, str, str], Any] = {}
-        # definition coordinate -> (frame, target) | ManagerConstructionGapV1.
-        # OrderedDict LRU: walk-scoped sessions must not retain every projected
-        # definition forever. Access order tracks hits/remembers; oldest keys
-        # evict with their frame_holds (hold outlives memo by zero extra time).
-        self.frame_results: collections.OrderedDict[tuple, Any] = (
-            collections.OrderedDict()
-        )
-        # SourceFile that owns cached (frame, target) node identity — alive for
-        # exactly as long as frame_results serves that key, not one moment longer.
-        self.frame_holds: collections.OrderedDict[tuple, Any] = (
-            collections.OrderedDict()
-        )
-        # In-progress definition coordinates.  A cross-module call graph that
-        # re-enters a definition already being projected is a cycle: it stays
-        # typed-loud exactly like the local recursive case, and never loops.
-        # Re-entrancy is a property of THIS traversal, so it is session state.
-        self.frame_active: set[tuple] = set()
-        # What the projections in flight have reached, and what each memoized
-        # result reached.  Bounds one root's source call closure.
-        self.call_closure = CallClosureLedger()
         # Module SourceFile + producer root + pin roster for one authenticated
         # module under this session. Frame projection is per-definition, but
         # materializing the whole module per definition multiplied in-population
@@ -391,59 +215,7 @@ class SourceResolutionSession:
         # Graphs are content-addressed install facts (no live construction
         # context) — process-resident top-level cache remains legal; this
         # table deletes the path-local re-ask disease.
-        self.dependency_graphs: dict[str, Any] = DependencySeats()
-        # Top-level manager constructions that REFUSED, keyed by everything
-        # the construction reads: the resolved definition, its artifact, the
-        # call site, each actual's constructed-value testimony, and the
-        # dependency seats.  A file's with-sites are populated twice under one
-        # walk session (the enumerate pass and the audit roll call); a refusal
-        # is a closed verdict, so the second pass reads it instead of reducing
-        # the same constructor body again.  Only refusals are kept: a
-        # constructed behavior holds live nodes of the open that built it.
-        # LRU-capped like ``frame_results``.
-        self.construction_refusals: collections.OrderedDict[tuple, Any] = (
-            collections.OrderedDict()
-        )
-
-    # -- dependency seats -------------------------------------------------
-
-    def dependency_seat_key(self, held: Any) -> tuple:
-        """The dependency seats an answer for an asker holding ``held`` stands on.
-
-        Not the roster of tops seated so far.  That roster only grows as doors
-        ask for tops, and a memo keyed on it forgets every projected frame and
-        every materialized module each time it grows (``StataReader`` six
-        times, the pandas megamodules nine, in one test_stata open).  Every
-        door but one authenticates the top it needs when it asks, so a top
-        not seated yet is not an input there.  The one door that reads an
-        unseated top as an answer records that read beside the row
-        (``CallClosureLedger.absences``), and the row is rebuilt when it stops
-        being true.
-
-        What IS an input: a top whose seat moved to another artifact in this
-        session, and a top the asker itself holds at an artifact other than
-        the session's.  The key names exactly those, each with its artifact.
-        """
-        seats = self.dependency_graphs
-        held = held or {}
-        if self.enabled:
-            for top_level, graph in held.items():
-                seats.setdefault(top_level, graph)
-        moved = tuple(
-            sorted(
-                (top_level, _artifact_cid(seats[top_level]))
-                for top_level in getattr(seats, "reseated", ())
-            )
-        )
-        own = tuple(
-            sorted(
-                (top_level, _artifact_cid(graph))
-                for top_level, graph in held.items()
-                if top_level in seats
-                and _artifact_cid(seats[top_level]) != _artifact_cid(graph)
-            )
-        )
-        return (moved, own)
+        self.dependency_graphs: dict[str, Any] = {}
 
     # -- export resolution memo ------------------------------------------
 
@@ -460,71 +232,6 @@ class SourceResolutionSession:
     def remember_export_terminal(self, key: tuple[str, str, str], result: Any) -> None:
         if self.enabled:
             self.export_terminals[key] = result
-
-    # -- source-visible frame memo ---------------------------------------
-
-    def frame_hit(self, key: tuple) -> Any | None:
-        if not self.enabled:
-            return None
-        hit = self.frame_results.get(key)
-        if hit is not None:
-            # LRU access: keep hold + memo co-ordered.
-            self.frame_results.move_to_end(key)
-            if key in self.frame_holds:
-                self.frame_holds.move_to_end(key)
-        return hit
-
-    def remember_frame(self, key: tuple, result: Any, hold: Any = None) -> None:
-        """Memo one frame result; pin hold for exactly the memo's lifetime.
-
-        Hold invariant: a ``frame_holds`` entry outlives its ``frame_results``
-        row by zero extra time. Walk-scoped sessions used to retain every
-        projected SourceFile for the whole 1421-file walk; that unbounded hold
-        is the accumulation disease (shared context degrades across opens).
-        LRU co-evicts hold when the memo row is dropped.
-        """
-        if not self.enabled:
-            return
-        if hold is not None:
-            self.frame_holds[key] = hold
-            self.frame_holds.move_to_end(key)
-        self.frame_results[key] = result
-        self.frame_results.move_to_end(key)
-        self._evict_frame_memo_lru()
-
-    def _evict_frame_memo_lru(self) -> None:
-        """Drop oldest frame memos until at limit; release holds in lockstep."""
-        limit = _frame_memo_limit()
-        while len(self.frame_results) > limit:
-            old_key, _ = self.frame_results.popitem(last=False)
-            self.frame_holds.pop(old_key, None)
-            self.call_closure.closures.pop(old_key, None)
-            self.call_closure.absences.pop(old_key, None)
-        # Holds without a memo row are dead weight (should not happen if
-        # remember_frame is the only writer; scrub anyway).
-        if len(self.frame_holds) > len(self.frame_results):
-            for dead in list(self.frame_holds.keys()):
-                if dead not in self.frame_results:
-                    del self.frame_holds[dead]
-
-    # -- manager construction refusal memo --------------------------------
-
-    def construction_refusal_hit(self, key: tuple) -> Any | None:
-        if not self.enabled:
-            return None
-        hit = self.construction_refusals.get(key)
-        if hit is not None:
-            self.construction_refusals.move_to_end(key)
-        return hit
-
-    def remember_construction_refusal(self, key: tuple, refusal: Any) -> None:
-        if not self.enabled:
-            return
-        self.construction_refusals[key] = refusal
-        self.construction_refusals.move_to_end(key)
-        limit = _frame_memo_limit()
-        while len(self.construction_refusals) > limit:
-            self.construction_refusals.popitem(last=False)
 
     # -- module materialize memo (shared across definitions in one module) --
 

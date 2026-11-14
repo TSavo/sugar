@@ -1345,7 +1345,6 @@ class ManagerConstructionGapV1:
         "non-manager-result",
         "call-binding",
         "force-floor",
-        "call-closure-over-bound",
     ]
     resolved_object_cid: str
     detail: str
@@ -1893,7 +1892,6 @@ def _seat_import_value_use_receipts(
             # absent graph carries no source authority.  Leave the exact
             # import-use coordinate unseated; any consumer that needs it stays
             # typed-loud at its ordinary resolution door.
-            session.call_closure.saw_absent(top_level)
             seat_receipt()
             continue
         binding_target = receipt.import_binding.value["target"]
