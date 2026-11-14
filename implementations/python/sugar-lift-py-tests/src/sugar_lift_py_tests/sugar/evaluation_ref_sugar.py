@@ -4,6 +4,9 @@ Temporal choice 1 (#7661): substitution rewrites a read of ``x`` after
 ``x += e`` to ``EvaluationRef(<the statement's coordinate>)``, never to the
 bare name. The statement binds its completed value under that coordinate at
 reduce, and the read answers it: the value is not looked up by spelling.
+A comprehension's element and conditions read a target name the same way:
+the comprehension binds each member under the generator's (or the target
+leaf's) coordinate (``ComprehensionSugar._member_ctx``).
 
 A write of the name that substitution does not see (a dynamic unpack, a
 ``raises ... as``, a live loop's next item) still binds the name. The read is

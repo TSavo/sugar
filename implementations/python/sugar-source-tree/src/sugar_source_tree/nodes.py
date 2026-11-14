@@ -3120,6 +3120,27 @@ def _holds_evaluation(statements) -> bool:
     )
 
 
+def _evaluation_ref(owner, span, evaluation: str, name: str) -> "Node":
+    """``EvaluationRef(evaluation, name)`` at ``span``: a read of ``name``
+    rewritten to a reference to the evaluation bound under ``evaluation``
+    (temporal choice 1, #7661).  The one constructor of that node: an
+    ``x += e`` statement's evaluation, a comprehension generator's binding
+    of one member, and the re-span of either to the read's own site
+    (``Name.substitute``)."""
+    from .backend import Leaf, materialize
+    from .shadow import ShadowNode
+
+    return materialize(
+        owner.unit,
+        ShadowNode(
+            "EvaluationRef",
+            span,
+            (("evaluation", Leaf(evaluation)), ("name", Leaf(name))),
+        ),
+        owner.reporter,
+    )
+
+
 class _Splice:
     """A substitute result that EXPANDS one statement into several. Returned by
     ``For.substitute`` when a concrete loop unrolls: the loop dissolves into its
@@ -3878,20 +3899,36 @@ class Node(Typed):
 
     def _substitute_generators(self, generators, scope):
         """Substitute comprehension generators, threading each target as a
-        binding for the FOLLOWING generators and the result expression. Returns
-        (new_generators, result_scope, changed) -- result_scope has every
-        generator target masked."""
+        binding for its own ifs, the FOLLOWING generators and the result
+        expression. Returns (new_generators, result_scope, changed) --
+        result_scope has every generator target masked from ``scope``.
+
+        A name a target binds is bound to a reference to the coordinate the
+        comprehension binds it under for each member (temporal choice 1,
+        #7661; ``ListComp._target_references``): a read in the element or a
+        condition is an ``EvaluationRef``, never the name looked up by
+        spelling. A target shape the comprehension has no sugar for binds no
+        reference; its names stay masked."""
         bound = set()
         inner = scope
+        carried = {}
         new_gens = []
         changed = False
-        for gen in generators:
-            new_gen = gen.substitute(inner)
+        for index, gen in enumerate(generators):
+            references = ListComp._target_references(self, index, gen)
+            new_gen = gen._substitute_clause(inner, references)
             if new_gen is not gen:
                 changed = True
             new_gens.append(new_gen)
-            bound |= self._bound_names_in(gen.target)
-            inner = {k: v for k, v in scope.items() if k not in bound}
+            gen_bound = self._bound_names_in(gen.target)
+            bound |= gen_bound
+            # A later target rebinding a name ends the earlier reference.
+            carried = {k: v for k, v in carried.items() if k not in gen_bound}
+            carried.update(references)
+            inner = {
+                **{k: v for k, v in scope.items() if k not in bound},
+                **carried,
+            }
         return (tuple(new_gens) if changed else generators), inner, changed
 
     def _pattern_bound_names(self, pattern) -> set:
@@ -4357,6 +4394,13 @@ class Comprehension(Node):
         """One `for <target> in <iter> [if ...]` clause: iter in the given
         scope; the target binds for its own ifs. Threading across clauses is the
         enclosing comprehension's job (_substitute_generators)."""
+        return self._substitute_clause(scope, {})
+
+    def _substitute_clause(self, scope, references):
+        """This clause with ``iter`` substituted in ``scope`` and its ifs in
+        ``scope`` with the target's names masked, then bound to
+        ``references``: the enclosing comprehension's reference for each name
+        this target binds (``ListComp._target_references``)."""
         from .shadow import rewrite
 
         new_iter, di = self._substitute_field(self.iter, scope)
@@ -4364,6 +4408,8 @@ class Comprehension(Node):
         ifs_scope = (
             {k: v for k, v in scope.items() if k not in bound} if bound else scope
         )
+        if references:
+            ifs_scope = {**ifs_scope, **references}
         new_ifs, df = self._substitute_field(self.ifs, ifs_scope)
         changed = {}
         if di:
@@ -8377,21 +8423,9 @@ class AugAssign(Statement):
         evaluation = getattr(self, "evaluation", None)
         if not isinstance(evaluation, str):
             return {self.target.id: self.target}
-        from .backend import Leaf, materialize
-        from .shadow import ShadowNode
-
         return {
-            self.target.id: materialize(
-                self.unit,
-                ShadowNode(
-                    "EvaluationRef",
-                    self.target.span,
-                    (
-                        ("evaluation", Leaf(evaluation)),
-                        ("name", Leaf(self.target.id)),
-                    ),
-                ),
-                self.reporter,
+            self.target.id: _evaluation_ref(
+                self, self.target.span, evaluation, self.target.id
             )
         }
 
@@ -13153,14 +13187,14 @@ class ListComp(Expression):
             return None
         return ComprehensionTargetSugar(coordinates=tuple(coordinates))
 
-    def _recurrence_generators(self):
+    def _generator_binding_coordinate(self, generator_index: int, gen) -> str:
+        """The coordinate generator ``generator_index`` binds each member
+        under: the comprehension's source occurrence and the target's site.
+        A rewrite borrows the origin's span, so substitution and construction
+        mint the same coordinate."""
         from sugar_lift_python_source.canonical import cid_of_json
-        from sugar_lift_py_tests.sugar.comprehension_sugar import (
-            ComprehensionGeneratorSugar,
-        )
         from .binding_state import mint_binding_coordinate_v1
 
-        specs = []
         scope_owner_cid = cid_of_json(
             {
                 "kind": "comprehension-binding-scope",
@@ -13168,6 +13202,46 @@ class ListComp(Expression):
                 "source": self.fragment.seal().to_dict(),
             }
         )
+        return mint_binding_coordinate_v1(
+            scope_owner_cid=scope_owner_cid,
+            binding_site=gen.target.fragment,
+            projection_path=("generators", generator_index, "target"),
+        ).cid
+
+    def _target_references(self, generator_index: int, gen) -> dict:
+        """Each name generator ``generator_index``'s target binds, to an
+        ``EvaluationRef`` to the coordinate ``ComprehensionSugar`` binds its
+        value under per member (temporal choice 1, #7661): the generator's
+        coordinate for a name target, the target pattern's leaf coordinate
+        for a destructuring one. Empty for a shape with no sugar
+        (``_comprehension_target`` is None): that comprehension stays loud.
+        """
+        target = ListComp._comprehension_target(self, gen.target)
+        if target is None:
+            return {}
+        if target.source_name is not None:
+            return {
+                target.source_name: _evaluation_ref(
+                    self,
+                    gen.target.span,
+                    ListComp._generator_binding_coordinate(self, generator_index, gen),
+                    target.source_name,
+                )
+            }
+        pattern = self.unit.require_target_pattern_for_target(gen.target)
+        return {
+            leaf.id: _evaluation_ref(self, leaf.span, coordinate.cid, leaf.id)
+            for leaf, coordinate in zip(
+                pattern.leaves, pattern.target_coordinates, strict=True
+            )
+        }
+
+    def _recurrence_generators(self):
+        from sugar_lift_py_tests.sugar.comprehension_sugar import (
+            ComprehensionGeneratorSugar,
+        )
+
+        specs = []
         for generator_index, gen in enumerate(self.generators):
             if gen.is_async or ListComp._contains_named_expression(
                 self, (gen.iter, *gen.ifs)
@@ -13191,11 +13265,9 @@ class ListComp(Expression):
             specs.append(
                 ComprehensionGeneratorSugar(
                     target=target,
-                    binding_coordinate_cid=mint_binding_coordinate_v1(
-                        scope_owner_cid=scope_owner_cid,
-                        binding_site=gen.target.fragment,
-                        projection_path=("generators", generator_index, "target"),
-                    ).cid,
+                    binding_coordinate_cid=ListComp._generator_binding_coordinate(
+                        self, generator_index, gen
+                    ),
                     iterable=gen.iter.sugar(),
                     filters=tuple(guard.sugar() for guard in gen.ifs),
                     target_coordinates=target_coordinates,
@@ -15521,6 +15593,12 @@ class Name(Expression):
                     ),
                     self.reporter,
                 )
+            if bound.kind == "EvaluationRef" and bound.span != self.span:
+                # The same reason: an evaluation reference was minted at its
+                # binding site (the `x += e` target, a comprehension target),
+                # which is not where this read sits.  Re-span to the read;
+                # the evaluation key is unchanged.
+                return _evaluation_ref(self, self.span, bound.evaluation, bound.name)
             return bound
         span = self.line_col_span()
         if (
@@ -15659,7 +15737,11 @@ class EvaluationRef(Expression):
     Temporal choice 1 (#7661): after ``x += e`` substitution rewrites a read
     of ``x`` to ``EvaluationRef(<the statement's evaluation key>)``; the
     statement binds its completed value under that key at reduce
-    (``AugAssign._evaluation_key``, ``EvaluationRefSugar``).
+    (``AugAssign._evaluation_key``, ``EvaluationRefSugar``).  In a
+    comprehension's element and conditions a read of a target name is an
+    ``EvaluationRef`` to the coordinate the comprehension binds each member
+    under (``ListComp._target_references``, ``ComprehensionSugar._member_ctx``).
+    Built by ``_evaluation_ref`` only.
     """
 
     evaluation: str
