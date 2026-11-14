@@ -62,10 +62,11 @@ def test_open_default_uses_walk_session(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(msd, "populate_source_derived_resource_refs", capture)
 
-    distribution = "walk-session-fixture"
-    roster = frozenset({distribution})
-    open_source_file_for_construction(path, root=root, distribution=distribution)
-    open_source_file_for_construction(path, root=root, distribution=distribution)
+    from sugar_lift_python_source.resolution_session import project_file_roster
+
+    roster = project_file_roster(root)
+    open_source_file_for_construction(path, root=root)
+    open_source_file_for_construction(path, root=root)
     assert len(seen) == 2
     assert (
         seen[0] is seen[1] is walk_session_for(root, enrolled_distributions=roster)

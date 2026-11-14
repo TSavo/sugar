@@ -228,7 +228,6 @@ def main(argv: list[str] | None = None) -> int:
                 path,
                 root=corpus,
                 source_workspace_root=locus_root,
-                distribution="pandas",
             )
             table = source_file.unit.module_direct_bindings or {}
             names = args.name or sorted(table)

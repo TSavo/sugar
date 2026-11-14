@@ -6,8 +6,8 @@ pandas/_testing/contexts.py) were two exception classes that, raised by
 populate after the SourceFile was built, made the board report zero functions.
 The repair caught the failure inside ``open_source_file_for_construction`` and
 returned the file, which dropped the halt. The catch is deleted: both classes
-reach the caller. The board's function count comes from the ``functions``
-level, which does not populate.
+reach the caller. Every level populates (#7796), so a populate failure is a
+failure of every level that opens the file.
 
 A ``TypeError`` raised while projecting one receipt is still cited inside
 populate and populate goes on (last test); that is populate's own handling and
@@ -48,8 +48,6 @@ def _open_with_populate(tmp_path: Path, path: Path):
         root=tmp_path,
         reporter=CollectingReporter(),
         construction_context=ctx,
-        populate_derived=True,
-        distribution="populate-roster-fixture",
         source_workspace_root=tmp_path,
     )
 
@@ -140,7 +138,6 @@ def test_open_failure_before_sourcefile_still_raises(
             root=tmp_path,
             reporter=CollectingReporter(),
             construction_context=ctx,
-            populate_derived=True,
         )
 
 
@@ -190,8 +187,6 @@ def test_per_receipt_typeerror_cites_gap_and_continues(
         root=tmp_path,
         reporter=CollectingReporter(),
         construction_context=ctx,
-        populate_derived=True,
-        distribution="populate-roster-fixture",
         source_workspace_root=tmp_path,
     )
     assert len(tuple(source_file.functions())) == 3

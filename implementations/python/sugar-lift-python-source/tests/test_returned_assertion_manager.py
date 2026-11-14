@@ -113,9 +113,7 @@ def _feather_tree():
         path,
         root=corpus.root.parent,
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=True,
         source_workspace_root=corpus.root,
-        distribution=corpus.distribution,
     )
 
 

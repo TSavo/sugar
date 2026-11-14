@@ -36,9 +36,7 @@ def _class(tmp_path):
         path,
         root=tmp_path,
         reporter=CollectingReporter(),
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
     return next(n for n in source_file.nodes() if isinstance(n, ClassDef))
 
 

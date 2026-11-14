@@ -31,7 +31,7 @@ def _fn(tmp_path: Path, body: str, name: str = "f"):
     pin_corpus(root, distribution="tiny-corpus", version="0.0.1")
     source_file = open_source_file_for_construction(
         root / "m.py", root=root, reporter=CollectingReporter(),
-        distribution="tiny-corpus", source_workspace_root=root,
+        source_workspace_root=root,
     )
     return next(n for n in source_file.functions() if n.name == name)
 

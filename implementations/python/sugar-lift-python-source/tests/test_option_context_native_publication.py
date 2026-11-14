@@ -94,7 +94,7 @@ def test_option_context_publishes_both_context_enter_and_exit_coordinates():
     path = root / "pandas/tests/io/formats/test_ipython_compat.py"
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = open_source_file_for_construction(
-        path, root=root, construction_context=context, populate_derived=False
+        path, root=root, construction_context=context
     )
     populate_source_derived_resource_refs(
         tree,
@@ -136,7 +136,7 @@ def test_option_context_publishes_at_every_seated_generator_use_site():
     path = root / "pandas/tests/io/formats/test_ipython_compat.py"
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = open_source_file_for_construction(
-        path, root=root, construction_context=context, populate_derived=False
+        path, root=root, construction_context=context
     )
     populate_source_derived_resource_refs(
         tree,

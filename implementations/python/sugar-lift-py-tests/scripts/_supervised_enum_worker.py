@@ -26,7 +26,6 @@ from pathlib import Path
 
 _CORPUS_ROOT: Path | None = None
 _SOURCE_WORKSPACE_ROOT: Path | None = None
-_DISTRIBUTION: str | None = None
 _CONSTRUCTION_CONTEXT = None
 
 
@@ -72,7 +71,6 @@ def _lift(path: str, rel: str) -> dict:
         corpus_root=_CORPUS_ROOT,
         construction_context=_CONSTRUCTION_CONTEXT,
         source_workspace_root=_SOURCE_WORKSPACE_ROOT,
-        distribution=_DISTRIBUTION,
     )
     return {"kind": "lift-result", "file": rel, "terminal": terminal}
 
@@ -95,7 +93,7 @@ def _initialize(
     allow_local_demand_derivation: bool,
     source_workspace_root: str | None = None,
 ) -> dict:
-    global _CONSTRUCTION_CONTEXT, _CORPUS_ROOT, _SOURCE_WORKSPACE_ROOT, _DISTRIBUTION
+    global _CONSTRUCTION_CONTEXT, _CORPUS_ROOT, _SOURCE_WORKSPACE_ROOT
     import os
 
     # Test-only plant: hang after first progress so supervisor timeout names phase.
@@ -232,7 +230,6 @@ def _initialize(
                 f"{SHARED_DEMAND_TABLE_CONTENT_KEY}"
             )
         validate_prebuilt_demand_table(table, corpus)
-        _DISTRIBUTION = corpus.distribution
         contract_refs = provisional_contract_refs_from_demand_rows(list(table.rows))
         demand_table_identity = table.semantic_identity.content_key
     elif not allow_local_demand_derivation:

@@ -97,7 +97,6 @@ def _imported_manager_gap(
         root=tmp_path,
         path=path,
         distribution_index=distribution_index,
-        distribution=enrolled_distribution,
         session=SourceResolutionSession(
             enrolled_distributions=frozenset({enrolled_distribution})
         ),

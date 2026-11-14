@@ -69,7 +69,6 @@ def _open(root: Path, name: str):
         root / name,
         root=root,
         reporter=CollectingReporter(),
-        distribution="tiny-corpus",
         source_workspace_root=root,
     )
 

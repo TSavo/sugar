@@ -1564,55 +1564,38 @@ def _graph_is_off_population(
     """True when ``graph`` is outside the enrolled measurement population.
 
     This is the one answer to "is this callee bridged": the lifter has it
-    only when an authenticated artifact holds its source AND the measurement
-    enrolls that artifact.  A graph that holds no source for ``module_name``
+    only when an authenticated artifact holds its source AND the population
+    enrolls that source.  A graph that holds no source for ``module_name``
     does not have it.  ``graph=None`` means no artifact authenticates
-    ``module_name``'s top-level module at all, so the lifter does not have it
-    either: it is not bridged, whatever it is implemented in, unless the
-    roster names that top-level module as an enrolled distribution (an
-    enrolled distribution that fails authentication is a defect, kept loud by
-    the caller).
+    ``module_name``'s top-level module at all, so the lifter does not have
+    it either: it is not bridged, whatever it is implemented in.
 
-    POPULATION FOLLOWS IMPORTS. The population is the corpus distribution and
-    every top-level module the opened code imports (``session.imported_modules``,
-    read from the one import table). No package name is listed in code or in
-    the environment.
-    An import admits only an authenticated graph's module: ``graph=None``
-    stays cited unless a distribution-level entry names it. Nothing is
-    refused by kind; stdlib used to be refused unconditionally, which is why
-    every ``pytest.raises`` / ``nullcontext`` / ``open`` on the 2026-09-05
-    board was cited or gapped and ``cmResolutions.constructed`` was 0.
-
-    - stdlib is always off-pin (CPython is not the corpus pin).
-    - any distribution whose name is absent from the session's authoritative
-      roster is off-pin (pytest on a pandas test open was 40 frames / ~3.8s
-      after the stdlib-only membrane — same law, broader door).
+    The roster (``session.enrolled_distributions``) is step 2's file list
+    (``project_file_roster``): the content CID of every file the lift lists,
+    and nothing else. No distribution is enrolled by name and no module by a
+    module-scoped entry. A module is enrolled when the source its artifact
+    seats for it is one of those files, or when the opened code imports its
+    top-level module (``session.imported_modules``, read from the one import
+    table). Without ``module_name`` only a listed file of the graph admits.
     """
     if session is None:
         raise TypeError(
             "population classification requires an enrolled distribution roster"
         )
-    from .resolution_session import population_admits
-
+    roster = session.enrolled_distributions
     if graph is None:
-        if not module_name:
-            return False
-        top = module_name.split(".", 1)[0]
-        return not population_admits(session.enrolled_distributions, top, None)
-    if module_name and module_name not in graph.modules:
+        return bool(module_name)
+    if not module_name:
+        return not any(item.content_cid in roster for item in graph.files)
+    source_cid = graph.modules.source_cid_of(module_name)
+    if source_cid is None:
         # The artifact authenticates, but holds no source for this module
         # (an extension file, or a module it never ships): the lifter does
         # not have it, enrolled or not.
         return True
-    name = getattr(graph, "distribution_name", None)
-    if name is None:
+    if source_cid in roster:
         return False
-    return not population_admits(
-        session.enrolled_distributions,
-        name,
-        module_name,
-        session.imported_modules,
-    )
+    return module_name.split(".", 1)[0] not in session.imported_modules
 
 
 def _absent_module_is_off_population(

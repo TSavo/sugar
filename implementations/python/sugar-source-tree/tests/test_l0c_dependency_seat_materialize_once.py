@@ -78,9 +78,7 @@ def test_json_open_enum_and_config_at_most_once() -> None:
         sf = open_source_file_for_construction(
             path,
             root=install_root,
-            distribution="pandas",
             construction_context=TreeConstructionContextV1.for_source_call_construction(),
-            populate_derived=True,
         )
         fns = len(tuple(sf.functions()))
     finally:

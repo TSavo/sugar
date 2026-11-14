@@ -84,10 +84,12 @@ Legitimacy (why this is not process-global free-for-all):
   amortization that is real (identical definition coordinates hit). Do not bet
   a 6× census cut on walk session alone.
 
-``walk_session_for(root, enrolled_distributions=...)`` is the small production
-default for multi-file doors. Callers that need isolation construct an explicit
-``SourceResolutionSession(enrolled_distributions=...)``. Unknown authority is
-not a session state; an authoritative empty population is ``frozenset()``.
+``walk_session_for(root, enrolled_distributions=project_file_roster(root))`` is
+the production default for multi-file doors: the population is step 2's file
+list (content CIDs), nothing else. Callers that need isolation construct an
+explicit ``SourceResolutionSession(enrolled_distributions=...)``. Unknown
+authority is not a session state; an authoritative empty population is
+``frozenset()``.
 """
 
 from __future__ import annotations
@@ -111,23 +113,40 @@ _ROSTER_UNSET = object()
 _DEFAULT_FRAME_MEMO_LIMIT = 512
 
 
-def population_admits(
-    roster: frozenset[str],
-    name: str,
-    module_name: str | None,
-    imported: frozenset[str] = frozenset(),
-) -> bool:
-    """True when ``name`` (a graph's distribution name) is enrolled for this
-    module: by distribution, by a module-scoped entry naming its top-level
-    module, or because the code imports that top-level module (``imported``,
-    from the one import table). ``None`` module means only a
-    distribution-level entry admits."""
-    if name in roster:
-        return True
-    if module_name:
-        top = module_name.split(".", 1)[0]
-        return f"{name}:{top}" in roster or top in imported
-    return False
+# resolved workspace root -> step 2's file list for it, as content CIDs.
+_PROJECT_FILE_ROSTERS: dict[str, frozenset[str]] = {}
+
+
+def project_file_roster(workspace_root: Path | str) -> frozenset[str]:
+    """The population of a lift: step 2's file list, and nothing else.
+
+    Step 2 lists the files as content-addressed mementos (the ``source_files``
+    level: ``SourceTree.paths()`` through the oracle's ``fragment_of``). The
+    roster is the content CID of every file on that list. A file the oracle
+    cannot read is not on the list, so it is not on the roster. No distribution
+    name, no standing extra and no environment entry is added: a module whose
+    source is not one of these files is not enrolled, whatever it is.
+
+    Read once per resolved root and shared by every open under it, so a walk
+    lists its files once, not once per file.
+    """
+    from sugar_source_tree.tree import SourceTree
+
+    from .source_oracle import SourceUnavailable
+
+    key = str(Path(workspace_root).resolve())
+    roster = _PROJECT_FILE_ROSTERS.get(key)
+    if roster is None:
+        tree = SourceTree(Path(key))
+        cids: set[str] = set()
+        for path in tree.paths():
+            try:
+                cids.add(tree.fragment_of(path).source_cid)
+            except SourceUnavailable:
+                continue
+        roster = frozenset(cids)
+        _PROJECT_FILE_ROSTERS[key] = roster
+    return roster
 
 
 def _require_enrolled_distribution_roster(value: object) -> frozenset[str]:
@@ -636,3 +655,4 @@ def walk_session_for(
 def clear_walk_sessions() -> None:
     """Test door: drop walk-owned sessions so teeth start cold."""
     _WALK_SESSIONS.clear()
+    _PROJECT_FILE_ROSTERS.clear()

@@ -125,6 +125,15 @@ class _ParseGatedModules(Mapping[str, "AuthenticatedModuleSourceV1"]):
     def __len__(self) -> int:
         return len(self._seated)
 
+    def source_cid_of(self, module_name: str) -> str | None:
+        """The seated module's content CID, or ``None`` when no seat holds it.
+
+        Identity only: the CID was minted from the retained bytes when the
+        graph was authenticated, so this reads no source and runs no gate.
+        """
+        module = self._seated.get(module_name)
+        return None if module is None else module.source_cid
+
 
 @dataclass(frozen=True)
 class AuthenticatedArtifactFileV1:

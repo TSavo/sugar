@@ -524,9 +524,7 @@ def test_authenticated_pandas_303_site_has_two_independent_manager_items():
     tree = open_source_file_for_construction(
         path,
         root=corpus.root.parent,
-        construction_context=TreeConstructionContextV1.for_source_call_construction(),
-        populate_derived=False,
-    )
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),    )
     site = next(
         node
         for node in tree.nodes()

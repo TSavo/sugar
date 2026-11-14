@@ -394,27 +394,35 @@ def open_source_file_for_construction(
     reporter=None,
     contract_refs=None,
     construction_context=None,
-    populate_derived: bool = True,
     resolution_session=None,
     source_workspace_root: Path | None = None,
-    distribution: str | None = None,
 ):
     """Open a SourceFile the way production enumerate does — never bare context.
 
-    Injects ``TreeConstructionContextV1`` (bound or provisional) and, by default,
-    freezes source-derived manager refs at exact use-sites. Callers that already
-    hold a frozen context (shared demand table across a census) may pass it.
+    Injects ``TreeConstructionContextV1`` (bound or provisional) and freezes
+    source-derived manager refs at exact use-sites. Every open populates: there
+    is no open that skips it, so every level reads the same tree. Callers that
+    already hold a frozen context (shared demand table across a census) may
+    pass it.
 
     ``resolution_session`` owns every source-resolution memo for this open. When
-    omitted, this door uses the walk-scoped session for ``root`` so multi-file
-    census / re-open of the same content amortize projection under one workspace
-    authority (see ``walk_session_for``). Pass an explicit session to isolate.
+    omitted, this door uses the walk-scoped session for ``root``, whose roster is
+    step 2's file list for ``root`` (``project_file_roster``) and nothing else,
+    so multi-file census / re-open of the same content amortize projection under
+    one workspace authority (see ``walk_session_for``). Pass an explicit session
+    to isolate.
 
     A failure while populating source-derived refs propagates to the caller,
     as it does at the ``context-manager-resolutions`` level: a halt is not
     turned into a file that opened (#7795).
     """
-    from sugar_lift_python_source.resolution_session import walk_session_for
+    from sugar_lift_python_source.manager_summary_derivation import (
+        populate_source_derived_resource_refs,
+    )
+    from sugar_lift_python_source.resolution_session import (
+        project_file_roster,
+        walk_session_for,
+    )
     from sugar_lift_python_source.source_oracle import workspace_path_source
     from sugar_source_tree.reporter import NULL_REPORTER
     from sugar_source_tree.tree import SourceFile
@@ -459,33 +467,22 @@ def open_source_file_for_construction(
     # does. This parses nothing and prepares nothing.
     if reporter is not NULL_REPORTER:
         _seat_roll_call_reporter(source_file, reporter)
-    if populate_derived:
-        from sugar_lift_python_source.manager_summary_derivation import (
-            populate_source_derived_resource_refs,
+    # Multi-resolve owner: walk-scoped session when none given so census and
+    # same-content re-open share projection memos under one root. Its roster
+    # is the files this root lists (step 2), with no extras.
+    if resolution_session is not None:
+        session = resolution_session
+    else:
+        session = walk_session_for(
+            root,
+            enrolled_distributions=project_file_roster(root),
         )
-
-        # Multi-resolve owner: walk-scoped session when none given so census
-        # and same-content re-open share projection memos under one root.
-        if resolution_session is not None:
-            session = resolution_session
-        else:
-            if distribution is None:
-                raise TypeError(
-                    "open_source_file_for_construction requires distribution "
-                    "to construct the walk session's enrolled distribution roster"
-                )
-            session = walk_session_for(
-                root,
-                enrolled_distributions=frozenset({distribution}),
-            )
-        populate_source_derived_resource_refs(
-            source_file,
-            root=root,
-            path=path,
-            session=session,
-            source_workspace_root=source_workspace_root,
-            distribution=distribution,
-        )
+    populate_source_derived_resource_refs(
+        source_file,
+        root=root,
+        path=path,
+        session=session,
+    )
     return source_file
 
 
@@ -668,8 +665,7 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
         # (fn.sugar()), so the tree opens through the construction door: the
         # bare door has no construction context and every Call refuses
         # (BareConstructionDoor), which failed every mint that reached a call.
-        # Same door as the `functions` level: no distribution is named here,
-        # so source-derived manager refs are not populated.
+        # Same door as the `functions` level, populated the same way.
         sf = _open_enumerated_file(source_path, root=root, locus_root=None)
         for fn in sf.functions():
             try:
@@ -1989,8 +1985,8 @@ def enumerate_construction_context(root: Path):
 
 def _open_enumerated_file(full_path: Path, *, root: Path, locus_root: Path | None):
     """How every ``sugar.enumerate`` level opens its file: the one opener, the one
-    authority, a seated registration channel, no source-derived population (the
-    levels that populate do it themselves, with the distribution they name)."""
+    authority, a seated registration channel, and the one population (step 2's
+    file list), so every level reads the same populated tree."""
     from sugar_source_tree.reporter import CollectingReporter
 
     return open_source_file_for_construction(
@@ -1998,7 +1994,6 @@ def _open_enumerated_file(full_path: Path, *, root: Path, locus_root: Path | Non
         root=root,
         reporter=CollectingReporter(),
         construction_context=enumerate_construction_context(root),
-        populate_derived=False,
         source_workspace_root=locus_root,
     )
 
@@ -2009,7 +2004,6 @@ def _roll_call_audit_leaf(
     *,
     root: Path,
     locus_root: Path | None = None,
-    distribution: str | None = None,
     expected_source_cid: str | None = None,
 ) -> dict:
     from sugar_lift_py_tests.kit_rpc import AuditLeafEnvelopeDto
@@ -2047,14 +2041,6 @@ def _roll_call_audit_leaf(
             reporter=reporter,
             construction_context=enumerate_construction_context(root),
             source_workspace_root=locus_root,
-            # Source-derived manager refs are frozen at exact use-sites only
-            # when the demand names its enrolled distribution -- the same
-            # condition D2's `context-manager-resolutions` level requires. A
-            # demand without one is NOT quietly derived against a guessed
-            # roster: it constructs against the contract table alone, and any
-            # manager that would have derived stays a countable panic.
-            populate_derived=bool(distribution),
-            distribution=distribution,
         )
         report = discharge(source_file)
     finally:
@@ -2447,12 +2433,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         file_rel,
                         root=root,
                         locus_root=locus_root,
-                        distribution=(
-                            options.get("distribution")
-                            if isinstance(options.get("distribution"), str)
-                            and options.get("distribution")
-                            else None
-                        ),
                         expected_source_cid=(
                             str(expected_source_cid)
                             if isinstance(expected_source_cid, str)
@@ -2499,8 +2479,9 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 from sugar_lift_py_tests import tree_enumerate as _tree
                 from sugar_lift_python_source.source_oracle import SourceUnavailable
                 # SEAT THE REGISTRATION CHANNEL (#7171 class, second costume):
-                # this door CONSTRUCTS sugar (`populate_source_derived_resource_refs`
-                # below reaches `ClassDef.sugar()`), so the tree must be opened
+                # this door CONSTRUCTS sugar (the opener's
+                # `populate_source_derived_resource_refs` reaches
+                # `ClassDef.sugar()`), so the tree must be opened
                 # on a reporter that can hold a registration. The one enumerate
                 # opener seats it.
                 try:
@@ -2526,37 +2507,13 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         ],
                     )
                     return
-                from sugar_lift_python_source.manager_summary_derivation import (
-                    populate_source_derived_resource_refs,
-                )
-                from sugar_lift_python_source.resolution_session import (
-                    walk_session_for,
-                )
-
-                # Walk-scoped multi-resolve owner: same session as other opens
-                # under this workspace root (census / re-open amortization).
-                # Construction terminals stay loud here. The recensus consumer
-                # preserves the already-authenticated provisional key manifest
-                # alongside the panic; this producer never converts panic into a
-                # completed resolution response.
+                # The opener above already populated this tree under the walk
+                # session for this root (step 2's file list). Construction
+                # terminals stay loud here. The recensus consumer preserves the
+                # already-authenticated provisional key manifest alongside the
+                # panic; this producer never converts panic into a completed
+                # resolution response.
                 if level == "context-manager-resolutions":
-                    distribution = options.get("distribution")
-                    if not isinstance(distribution, str) or not distribution:
-                        raise TypeError(
-                            "context-manager-resolutions requires distribution "
-                            "to construct the walk session's enrolled distribution roster"
-                        )
-                    populate_source_derived_resource_refs(
-                        tree_file,
-                        root=root,
-                        path=full_path,
-                        session=walk_session_for(
-                            root,
-                            enrolled_distributions=frozenset({distribution}),
-                        ),
-                        source_workspace_root=locus_root,
-                        distribution=distribution,
-                    )
                     from sugar_lift_py_tests.context_manager_resolution import (
                         context_manager_resolution_outcome,
                         effective_context_manager_resolutions_for_source,

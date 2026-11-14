@@ -43,7 +43,7 @@ def test_option_context_publishes_one_generator_backed_resource_ref():
     path = root / "pandas/tests/io/formats/test_ipython_compat.py"
     context = TreeConstructionContextV1.for_source_call_construction()
     tree = open_source_file_for_construction(
-        path, root=root, construction_context=context, populate_derived=False
+        path, root=root, construction_context=context
     )
     populate_source_derived_resource_refs(
         tree,

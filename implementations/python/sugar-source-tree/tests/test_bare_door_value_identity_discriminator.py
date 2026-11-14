@@ -244,9 +244,7 @@ def _bridge_symbols(root, relative_parts):
         path,
         root=root,
         reporter=CollectingReporter(),
-        construction_context=tree_construction_context_for_workspace(root),
-        populate_derived=False,
-    )
+        construction_context=tree_construction_context_for_workspace(root),    )
     out = {}
     for coordinate, (status, text) in _construct_all(source, "FunctionDef").items():
         if status != "ok":
