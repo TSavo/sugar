@@ -197,12 +197,12 @@ def cpython_cited_fold(
     """A stdlib call with no projected body whose result CPython's source decides.
 
     ``unprojected`` is the call's may-raise testimony: an off-population
-    citation (``python:operator.index``) or an unprojected source function
-    (``operator`` / ``index``).  Either names the same stdlib callee.
+    citation or an unprojected source function; it says only that the call
+    has no projected body, never which callee it is.
 
     ``language_callee`` is the ``LanguageCallee`` the Call node bound the
-    callee to; ``importlib.import_module`` is recognised by that member (its
-    binding), never by the callee's name.
+    callee to; ``importlib.import_module`` and ``operator.index`` are
+    recognised by that member (their binding), never by the callee's name.
 
     ``operator.index(a)`` is ``_operator.index`` (Modules/_operator.c,
     ``_operator_index``: ``return PyNumber_Index(a);``).  In
@@ -217,14 +217,10 @@ def cpython_cited_fold(
     from .floor.term_value import TermValue
     from .outcome import Complete
 
-    if isinstance(unprojected, OffPopulationSourceCallV1):
-        qualified = unprojected.target_name.removeprefix("python:")
-    elif (
+    if not isinstance(unprojected, OffPopulationSourceCallV1) and not (
         isinstance(unprojected, UnprojectedSourceCallV1)
         and unprojected.definition_kind == "function"
     ):
-        qualified = f"{unprojected.module_name}.{unprojected.definition_name}"
-    else:
         return None
     from sugar_source_tree.nodes import LanguageCallee
 
@@ -255,7 +251,7 @@ def cpython_cited_fold(
             site=site,
             owner="cpython_cited_fold:importlib.import_module",
         )
-    if qualified != "operator.index" or keyword_names:
+    if language_callee is not LanguageCallee.OPERATOR_INDEX or keyword_names:
         return None
     if len(arg_values) != 1:
         return None

@@ -90,9 +90,14 @@ def test_recognition_is_keyed_on_the_authenticated_target_not_spelling(tmp_path)
     """A member whose authenticated qualified_name is not a C-floor semantic
     stays the ordinary boundary even if it is spelled ``search``."""
     member, site = _re_search_member(tmp_path)
-    from dataclasses import replace
+    from sugar_source_tree.nodes import LanguageCallee
 
-    # Same receipt, but pretend the authenticated name is a different module's
-    # ``search`` -- recognition must not fire on the bare attribute spelling.
-    assert member._C_FLOOR_SEMANTIC_OPERATIONS.get("thirdparty.search") is None
-    assert member._C_FLOOR_SEMANTIC_OPERATIONS.get("re.search") == "python.re.search"
+    # A different module's ``search`` binds no LanguageCallee member, so
+    # recognition cannot fire on the bare attribute spelling.
+    assert LanguageCallee.of("python:thirdparty.search") is None
+    assert member.c_floor_semantic_operation(None) is None
+    assert member.language_callee() is LanguageCallee.RE_SEARCH
+    assert (
+        member.c_floor_semantic_operation(LanguageCallee.RE_SEARCH)
+        == "python.re.search"
+    )

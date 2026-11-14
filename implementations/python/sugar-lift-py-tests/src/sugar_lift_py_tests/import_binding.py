@@ -510,24 +510,23 @@ def _importorskip_module(value: Node | None, state: "State | None") -> str | Non
     module = value.args[0].value
     if not isinstance(module, str) or not module:
         return None
+    from sugar_source_tree.nodes import LanguageCallee
+
     func = value.func
     if func.kind == "Name":
         binding = _unique_import_def_from_state(state, func.id)
-        if (
-            binding is not None
-            and binding.target_symbol == "python:pytest.importorskip"
-        ):
-            return module
-        return None
-    if (
-        func.kind == "Attribute"
-        and func.attr == "importorskip"
-        and func.value.kind == "Name"
-    ):
+        target = None if binding is None else binding.target_symbol
+    elif func.kind == "Attribute" and func.value.kind == "Name":
         binding = _unique_import_def_from_state(state, func.value.id)
-        if binding is not None and binding.target_symbol == "python:pytest":
-            return module
+        target = (
+            None
+            if binding is None
+            else member_target_symbol(binding.target_symbol, (func.attr,))
+        )
+    else:
         return None
+    if LanguageCallee.of(target) is LanguageCallee.PYTEST_IMPORTORSKIP:
+        return module
     return None
 
 

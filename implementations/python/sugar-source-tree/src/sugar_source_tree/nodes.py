@@ -122,7 +122,8 @@ _MISSING = object()
 
 
 class LanguageCallee(_enum.Enum):
-    """A callee whose behaviour the Python language fixes, named by identity.
+    """A callee whose behaviour the Python language fixes, named by identity
+    (and ``pytest.importorskip``, fixed by the harness lifted tests run under).
 
     A call reaches a member only through its callee's BINDING: the one import
     reference table (``from typing import cast`` -> ``python:typing.cast``,
@@ -145,6 +146,22 @@ class LanguageCallee(_enum.Enum):
     BUILTIN_SUPER = "python:builtins.super"
     # ``importlib.import_module(name)``: ``sys.modules[name]`` once imported.
     IMPORTLIB_IMPORT_MODULE = "python:importlib.import_module"
+    # ``operator.index(a)``: ``_operator.index`` -> ``PyNumber_Index(a)``
+    # (Modules/_operator.c, Objects/abstract.c).
+    OPERATOR_INDEX = "python:operator.index"
+    # ``warnings.warn(message, category, ...)``: CPython's fixed signature.
+    WARNINGS_WARN = "python:warnings.warn"
+    # ``list(iterable)``: the builtin list constructor.
+    BUILTIN_LIST = "python:builtins.list"
+    # ``typing.final(f)``: sets ``f.__final__`` if it can and returns ``f``.
+    TYPING_FINAL = "python:typing.final"
+    # ``re.search`` / ``re.match`` / ``re.fullmatch``: the C-floor matchers.
+    RE_SEARCH = "python:re.search"
+    RE_MATCH = "python:re.match"
+    RE_FULLMATCH = "python:re.fullmatch"
+    # ``pytest.importorskip(name)``: the harness the lifted tests run under
+    # skips the test unless ``name`` imports.
+    PYTEST_IMPORTORSKIP = "python:pytest.importorskip"
 
     @classmethod
     def of(cls, target_symbol: Optional[str]) -> Optional["LanguageCallee"]:
@@ -14204,12 +14221,8 @@ class Call(Expression):
                 # the whole dotted spelling exactly as it does for a Name
                 # callee. No receiver constructs, so no module alias is minted
                 # as a universe Var it was never declared as.
-                from sugar_lift_py_tests.sugar.warning_observation_producer import (
-                    WARNING_OCCURRENCE_SYMBOL,
-                )
-
                 args_sugar = tuple(a.sugar() for a in self.args)
-                if closed_symbol == WARNING_OCCURRENCE_SYMBOL:
+                if language_callee is LanguageCallee.WARNINGS_WARN:
                     args_sugar, keyword_sugars = self._authenticate_warning_category(
                         args_sugar, keyword_sugars
                     )

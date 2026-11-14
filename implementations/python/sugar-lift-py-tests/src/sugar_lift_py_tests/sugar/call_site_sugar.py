@@ -845,6 +845,7 @@ class CallSiteSugar(ConstructedTermSugar):
             python_type_coordinate=self._applied_builtin_type_of(
                 ctx, source_call_frame, positional, kw_values, term
             ),
+            language_callee=self.language_callee,
         )
         if native_operation_actuals is not None:
             pending = source_call_frame.pending_native_operation.discharge(
