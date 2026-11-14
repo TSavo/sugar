@@ -76,7 +76,7 @@ __all__ = [
 ]
 
 
-def _occurrence_result(callsite, key):
+def _occurrence_result(callsite, site):
     """The value ONE evaluation of a bodiless call returned.
 
     ``call:<target>(<args>)`` names the callee applied to its arguments; as a
@@ -84,19 +84,21 @@ def _occurrence_result(callsite, key):
     same object (two iterations of ``r.append(textwrap.dedent(s))``, or two
     sites calling it with equal arguments). Nothing testified to that, so the
     completed result is ``python:call_result(<call term>, <occurrence>)``: the
-    application is kept, and the occurrence key makes each evaluation its own
-    unknown.
+    application is kept, and the occurrence makes each evaluation its own
+    unknown. The occurrence is ``python:occurrence(<site coordinate CID>,
+    <path>…)`` (#7808), read under the same path the caller's own key was.
     """
     from dataclasses import replace
 
     from .floor.call_site_value import CallSiteValue
-    from .ir import ctor, str_const
+    from .ir import ctor
+    from .occurrence import occurrence_term
 
-    if not isinstance(callsite, CallSiteValue) or key is None:
+    if not isinstance(callsite, CallSiteValue):
         return callsite
     return replace(
         callsite,
-        term=ctor("python:call_result", (callsite.term, str_const(key))),
+        term=ctor("python:call_result", (callsite.term, occurrence_term(site))),
     )
 
 
@@ -150,7 +152,7 @@ class UnprojectedSourceCallV1:
         )
         return ExitSet(
             (
-                Completed(completes, _occurrence_result(callsite, key)),
+                Completed(completes, _occurrence_result(callsite, site)),
                 Halted(
                     complement_guard(completes),
                     UndeterminedRaiseEffect(
@@ -356,7 +358,7 @@ class OffPopulationSourceCallV1:
             (str_const(self.target_name), str_const(key)),
         )
         completes = atomic("python:off_population_call.completes", [call])
-        result = _occurrence_result(callsite, key)
+        result = _occurrence_result(callsite, site)
         if isinstance(result, CallSiteValue):
             result = replace(result, off_population_target=self.target_name)
         return ExitSet(
@@ -397,18 +399,20 @@ class UnknownCalleeCallV1:
     def faces(self, callsite, site):
         from .effect.raise_effect import UndeterminedRaiseEffect
         from .ir import atomic, ctor, str_const
-        from .occurrence import occurrence_key
+        from .occurrence import occurrence_key, occurrence_term
         from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
 
         key = occurrence_key(site)
+        # The call term names its occurrence by coordinate (#7808); `key`
+        # stays the raise effect's own occurrence (listed on #7808).
         call = ctor(
             "python:unknown_callee_call",
-            (str_const(self.callee_name), str_const(key)),
+            (str_const(self.callee_name), occurrence_term(site)),
         )
         completes = atomic("python:unknown_callee_call.completes", [call])
         return ExitSet(
             (
-                Completed(completes, _occurrence_result(callsite, key)),
+                Completed(completes, _occurrence_result(callsite, site)),
                 Halted(
                     complement_guard(completes),
                     UndeterminedRaiseEffect(
@@ -455,7 +459,7 @@ class BuiltinDunderCallV1:
         completes = atomic("python:builtin_dunder_call.completes", [call])
         return ExitSet(
             (
-                Completed(completes, _occurrence_result(callsite, key)),
+                Completed(completes, _occurrence_result(callsite, site)),
                 Halted(
                     complement_guard(completes),
                     UndeterminedRaiseEffect(
@@ -500,7 +504,7 @@ class BuiltinValueCallV1:
         completes = atomic("python:builtin_call.completes", [call])
         return ExitSet(
             (
-                Completed(completes, _occurrence_result(callsite, key)),
+                Completed(completes, _occurrence_result(callsite, site)),
                 Halted(
                     complement_guard(completes),
                     UndeterminedRaiseEffect(

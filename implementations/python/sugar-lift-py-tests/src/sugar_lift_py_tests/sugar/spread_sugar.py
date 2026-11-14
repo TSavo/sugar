@@ -532,7 +532,7 @@ def _unprojected_spread_call_faces(callsite, callee: str, site):
     )
     return ExitSet(
         (
-            Completed(completes, _occurrence_result(callsite, key)),
+            Completed(completes, _occurrence_result(callsite, site)),
             Halted(
                 complement_guard(completes),
                 UndeterminedRaiseEffect(
