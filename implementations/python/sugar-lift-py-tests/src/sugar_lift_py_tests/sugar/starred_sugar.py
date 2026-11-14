@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -52,7 +52,7 @@ class StarredSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.ir import ctor
 
         return self.value.desugar(ctx).and_then(
-            lambda inner: Complete(
+            lambda inner: ExitSet.completed(
                 SymbolicValue(
                     ctor(
                         "python:starred",

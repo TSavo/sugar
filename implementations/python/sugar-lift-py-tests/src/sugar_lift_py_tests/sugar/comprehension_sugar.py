@@ -232,7 +232,7 @@ class ComprehensionSugar(ConstructedTermSugar):
             )
             # EXHAUSTIVE. Only the two LAWFUL non-application reasons may fall
             # through to symbolic construction; the other two are construction
-            # refusals and may never reach ``Complete`` (#7347).
+            # refusals and may never reach a completed arm (#7347).
             match decision:
                 case Projected(outcome=outcome):
                     return outcome
@@ -288,7 +288,7 @@ class ComprehensionSugar(ConstructedTermSugar):
             _intern_term,
             ctor,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
         from sugar_lift_py_tests.sugar.finite_projection import (
             FiniteProjectionNonSuccessV1,
             NotProjected,
@@ -316,7 +316,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         if target.coordinates is not None and generator.target_pattern is None:
             # The producer's OWN enrollment answer decides which fact this is.
             # ENROLLED + missing pattern is a stranded authenticated lookup, not
-            # an absence, and it may not be spent as a symbolic Complete.
+            # an absence, and it may not be spent as a symbolic completion.
             if isinstance(
                 generator.target_pattern_enrollment, TargetPatternEnrolledV1
             ):
@@ -344,7 +344,7 @@ class ComprehensionSugar(ConstructedTermSugar):
         def project(index, projected):
             if index == len(members):
                 if self.key is not None:
-                    return Complete(DictValue(tuple(projected)))
+                    return ExitSet.completed(DictValue(tuple(projected)))
                 if projected:
                     element_term = projected[0].to_term(owner=owner)
                 else:
@@ -366,7 +366,7 @@ class ComprehensionSugar(ConstructedTermSugar):
                     ],
                     symbol_kind="coordinate",
                 )
-                return Complete(
+                return ExitSet.completed(
                     ComprehensionValue(term, finite_elements=tuple(projected))
                 )
 
@@ -419,7 +419,9 @@ class ComprehensionSugar(ConstructedTermSugar):
         """
         from dataclasses import replace
 
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
+        )
 
         target = generator.target
         member = member.project_operation_receiver(
@@ -443,14 +445,13 @@ class ComprehensionSugar(ConstructedTermSugar):
                 owner="ComprehensionSugar._finite_map.target",
                 blame=self.site,
             ).submit(member, ctx)
-            if not isinstance(unpacked, Complete) or not isinstance(
-                unpacked.value, UnpackMemberRoster
-            ):
+            roster = plain_completed_value(unpacked)
+            if not isinstance(roster, UnpackMemberRoster):
                 return unpacked
             for leaf, coordinate, value in zip(
                 leaves,
                 generator.target_coordinates,
-                unpacked.value.members,
+                roster.members,
                 strict=True,
             ):
                 temporal = temporal.bind_value(leaf.source_name, value)
@@ -467,8 +468,6 @@ class ComprehensionSugar(ConstructedTermSugar):
         projects over exactly those.  Any other verdict returns ``None`` and
         the comprehension stays symbolic, as before.
         """
-        from sugar_lift_py_tests.outcome import Complete
-
         kept = []
         for member in members:
             inner_ctx = self._member_ctx(generator, member, ctx)
@@ -529,7 +528,7 @@ class ComprehensionSugar(ConstructedTermSugar):
             make_var,
             subst_var_in_term,
         )
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         owner = str(self.site)
         element_term = (
@@ -588,21 +587,23 @@ class ComprehensionSugar(ConstructedTermSugar):
             ],
             symbol_kind="coordinate",
         )
-        return Complete(ComprehensionValue(term))
+        return ExitSet.completed(ComprehensionValue(term))
 
 
 def _decided_bool(outcome):
     """``True``/``False`` when ``outcome`` is a plain decided bool, else ``None``."""
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
         FalseBoolLiteralSugar,
     )
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
     from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
-    if type(outcome) is not Complete:
+    value = plain_completed_value(outcome)
+    if value is None:
         return None
-    value = outcome.value
     if isinstance(value, TrueBoolLiteralSugar):
         return True
     if isinstance(value, FalseBoolLiteralSugar):

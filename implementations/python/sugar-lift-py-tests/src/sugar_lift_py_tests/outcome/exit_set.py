@@ -929,7 +929,28 @@ class ExitSet(Generic[T]):
         ``Incomplete`` while its callers convert (lifted here through
         ``outcome_to_exitset``); once it answers ``ExitSet`` only, call
         ``o.sequence(step)``.
+
+        Over ONE plain arm (truth, no faces, owing nothing) it is exactly
+        ``step(v)``, including when ``step`` answers a deferred
+        native-operation carrier: ``Complete(v).and_then(step)`` handed that
+        carrier on, and so does this. Over any other shape a carrier still
+        meets ``outcome_to_exitset``'s loud door, as it did before.
         """
+        if (
+            len(self.exits) == 1
+            and isinstance(self.exits[0], Completed)
+            and _is_true(self.exits[0].guard)
+            and not self.exits[0].faces
+            and not self.exits[0].owed
+        ):
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
+
+            following = step(self.exits[0].value)
+            if isinstance(following, NativeOperationExitCarrierV1):
+                return following
+            return self.sequence(lambda _value: outcome_to_exitset(following))
         return self.sequence(lambda value: outcome_to_exitset(step(value)))
 
     def and_finally(
@@ -1231,10 +1252,15 @@ def factored_operand(outcome):
     Same denotation, linear growth. Nothing is capped, pruned, or dropped, and
     ``ExitSetFactoringGap`` still refuses loudly when an operand's completed
     arms are not provably pairwise exclusive.
+
+    The factored operand stays an ``ExitSet`` (#7825: no ``collapse``). A
+    deferred native-operation carrier is not an ``ExitSet`` and passes through
+    as itself, which is why the operand folds call this door rather than
+    ``factor_completed`` directly.
     """
     if not isinstance(outcome, ExitSet):
         return outcome
-    return outcome.factor_completed().collapse()
+    return outcome.factor_completed()
 
 
 def outcome_to_exitset(outcome) -> ExitSet:

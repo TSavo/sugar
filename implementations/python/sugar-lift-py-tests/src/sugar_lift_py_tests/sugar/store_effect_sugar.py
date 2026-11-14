@@ -71,12 +71,12 @@ class AttributeStoreEffectSugar(Sugar):
     def project_setattr(receiver, attr: str, value, site) -> Outcome:
         """Producer-owned attribute **store** projection (one door).
 
-        Complete law shared by ordinary AttributeStoreEffectSugar and
+        The law shared by ordinary AttributeStoreEffectSugar and
         Attribute AugAssign (already-evaluated receiver and value):
 
         1. Formal receiver → undischarged ``setattr_named`` carrier
         2. Decided runtime type → Floor ``setattr``; a raise is its
-           ``Incomplete(effect)`` (halted store, not statement green)
+           halted arm (halted store, not statement green)
         3. Undecided non-formal → dual-face ``AttributeStoreRuntimeEffect``
            (never consumer ``SugarNotWritten``)
         """

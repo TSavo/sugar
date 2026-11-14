@@ -13,18 +13,18 @@ class BranchResultRefSugar(ConstructedTermSugar):
         return ()
 
     def desugar(self, ctx=None):
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         table = getattr(ctx, "ground_branch_results", None)
         if isinstance(table, dict):
             bound = table.get(self.slot.slot_id)
             if bound is not None:
-                return Complete(bound)
+                return ExitSet.completed(bound)
         from sugar_lift_py_tests.floor.branch_result_coordinate import (
             BranchResultCoordinate,
         )
 
-        return Complete(BranchResultCoordinate(self.slot, self.site))
+        return ExitSet.completed(BranchResultCoordinate(self.slot, self.site))
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const

@@ -18,7 +18,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.call_symbol import call_symbol
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -261,7 +261,7 @@ def dispatch_method_call(
         exception_type_mro=exception_type_mro,
     )
     if site is None:
-        return Complete(callsite)
+        return ExitSet.completed(callsite)
     if may_defer:
         deferred = _defer_formal_method_call(name, receiver, positional, kw_values, site)
         if deferred is not None:
@@ -321,8 +321,8 @@ def _container_method_call(kind, name, receiver, positional, kw_values, site):
 
     def result(pair):
         if type(pair) is TupleValue and len(pair.elements) == 2:
-            return Complete(pair.elements[1])
-        return Complete(pair)
+            return ExitSet.completed(pair.elements[1])
+        return ExitSet.completed(pair)
 
     return decided.and_then(result)
 

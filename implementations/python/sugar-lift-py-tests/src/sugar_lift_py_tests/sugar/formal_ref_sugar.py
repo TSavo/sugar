@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from sugar_lift_py_tests.floor import SymbolicValue
 from sugar_lift_py_tests.formal_parameter import FormalParameterCoordinateV1
 from sugar_lift_py_tests.ir import make_var
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -41,8 +41,8 @@ class FormalRefSugar(ConstructedTermSugar):
         if temporal is not None:
             bound = temporal.value_if_bound(self.coordinate.coordinate_cid)
             if bound is not None:
-                return Complete(bound)
-        return Complete(
+                return ExitSet.completed(bound)
+        return ExitSet.completed(
             SymbolicValue(
                 make_var(self.coordinate.declared_name),
                 formal_coordinate=self.coordinate,

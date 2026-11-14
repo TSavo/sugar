@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -48,11 +48,11 @@ class EffectRefSugar(ConstructedTermSugar):
             # the arm's type test was stated over -- not a reconstruction.
             exception_value = getattr(effect, "exception_value", None)
             if exception_value is not None:
-                return Complete(exception_value)
-            return Complete(
+                return ExitSet.completed(exception_value)
+            return ExitSet.completed(
                 ObservedEffectValue(slot_id=self.slot_id, effect=effect, site=self.site)
             )
-        return Complete(EffectCoordinate(slot_id=self.slot_id, site=self.site))
+        return ExitSet.completed(EffectCoordinate(slot_id=self.slot_id, site=self.site))
 
 
 @dataclass(frozen=True)
@@ -89,12 +89,12 @@ class ObservationRefSugar(ConstructedTermSugar):
             reader = getattr(ctx, "observed_effect_for", None)
             effect = reader(self.slot_id) if reader is not None else None
             if effect is not None:
-                return Complete(
+                return ExitSet.completed(
                     ObservedExceptionInfoValue(
                         slot_id=self.slot_id, effect=effect, site=self.site
                     )
                 )
-            return Complete(
+            return ExitSet.completed(
                 ExceptionInfoCoordinate(slot_id=self.slot_id, site=self.site)
             )
         if self.projection == "enter_result":
@@ -102,6 +102,6 @@ class ObservationRefSugar(ConstructedTermSugar):
                 EnterResultCoordinate,
             )
 
-            return Complete(EnterResultCoordinate(slot_id=self.slot_id, site=self.site))
+            return ExitSet.completed(EnterResultCoordinate(slot_id=self.slot_id, site=self.site))
         # warning_observation / effect: pure coordinate until binding facts exist
-        return Complete(EffectCoordinate(slot_id=self.slot_id, site=self.site))
+        return ExitSet.completed(EffectCoordinate(slot_id=self.slot_id, site=self.site))

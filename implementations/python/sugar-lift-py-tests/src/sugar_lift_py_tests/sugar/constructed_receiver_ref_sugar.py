@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from sugar_lift_py_tests.floor import ObjectValue
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 
 
@@ -40,7 +40,7 @@ class ConstructedReceiverRefSugar(ConstructedTermSugar):
         if ctx is not None:
             receiver = ctx.temporal.value_if_bound(self.binding_coordinate_cid)
             if isinstance(receiver, ObjectValue):
-                return Complete(receiver)
+                return ExitSet.completed(receiver)
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
         construction_panic_gap(

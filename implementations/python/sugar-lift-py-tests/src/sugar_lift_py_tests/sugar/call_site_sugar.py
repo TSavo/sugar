@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, TypeAlias
 from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordinateV1
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
@@ -792,7 +792,7 @@ class CallSiteSugar(ConstructedTermSugar):
                 )
                 from sugar_lift_py_tests.occurrence import site_coordinate_cid
 
-                return Complete(
+                return ExitSet.completed(
                     GeneratorConstructionV1.allocate(
                         allocation_coordinate=site_coordinate_cid(self.site),
                         frame_coordinate=source_call_frame.frame_cid,

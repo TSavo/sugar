@@ -62,13 +62,13 @@ class AuthenticatedExceptionTypeSugar(ConstructedTermSugar):
             AuthenticatedExceptionTypeValue,
         )
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         # When construction already projected the exception-class floor (import
         # Attribute paths, source ClassDef graphs), do not re-enter Attribute
         # or other receivers that only exist to name the same identity.
         if self.class_value is not None:
-            return Complete(
+            return ExitSet.completed(
                 AuthenticatedExceptionTypeValue(
                     self.class_value,
                     self.identity,
@@ -79,7 +79,7 @@ class AuthenticatedExceptionTypeSugar(ConstructedTermSugar):
 
         import_floor = _import_bound_exception_floor(self.identity)
         if import_floor is not None:
-            return Complete(
+            return ExitSet.completed(
                 AuthenticatedExceptionTypeValue(
                     import_floor, self.identity, self.mro, import_floor
                 )
@@ -87,7 +87,7 @@ class AuthenticatedExceptionTypeSugar(ConstructedTermSugar):
 
         # Provider-gated / non-import sealed identity: do not re-desugar Attribute
         # chains on opaque module receivers.
-        return Complete(
+        return ExitSet.completed(
             AuthenticatedExceptionTypeValue(
                 SymbolicValue(self.identity),
                 self.identity,

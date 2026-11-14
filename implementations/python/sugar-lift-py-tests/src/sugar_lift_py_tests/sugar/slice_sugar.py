@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -63,31 +63,34 @@ class SliceSugar(ConstructedTermSugar):
         # upper, then step.  A lower-bound halt must not evaluate upper/step
         # (Python source order).  Collection ``_reduce_into`` eagerly maps
         # ``desugar`` over every element before folding — that is wrong for
-        # slice bounds.  Sequence each present bound through ``and_then`` so
-        # Incomplete short-circuits later desugars while ExitSet / pending
-        # still thread.
+        # slice bounds.  Sequence each present bound through ``and_then`` so a
+        # halted arm short-circuits later desugars while completed arms and
+        # pending carriers still thread.
         from sugar_lift_py_tests.floor.slice_value import SliceValue
-        from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
         positions = (self.lower, self.upper, self.step)
         # Seed: no bounds reduced yet.  Each present bound desugars only after
-        # the prior outcome continues (Complete / ExitSet completed arms).
-        outcome: Outcome = Complete(())
+        # the prior outcome continues (its completed arms).
+        outcome: Outcome = ExitSet.completed(())
         for bound in positions:
             if bound is None:
                 # Omitted position: Python fills None; do not desugar.
                 outcome = outcome.and_then(
-                    lambda collected: Complete((*collected, None))
+                    lambda collected: ExitSet.completed((*collected, None))
                 )
                 continue
 
             def _step(collected, bound_sugar=bound):
                 factored = factored_operand(bound_sugar.desugar(ctx))
-                return factored.and_then(lambda value: Complete((*collected, value)))
+                return factored.and_then(
+                    lambda value: ExitSet.completed((*collected, value))
+                )
 
             outcome = outcome.and_then(_step)
 
         return outcome.and_then(
-            lambda values: Complete(SliceValue(values[0], values[1], values[2]))
+            lambda values: ExitSet.completed(
+                SliceValue(values[0], values[1], values[2])
+            )
         )

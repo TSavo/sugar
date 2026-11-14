@@ -58,7 +58,7 @@ class AttributeSugar(ConstructedTermSugar):
     def project_attribute(receiver, name: str, site, ctx: object = None) -> Outcome:
         """Producer-owned attribute **read** projection (one door).
 
-        Complete law shared by ordinary AttributeSugar and Attribute AugAssign:
+        The law shared by ordinary AttributeSugar and Attribute AugAssign:
 
         1. Formal receiver → undischarged ``attribute_named`` carrier
         2. Authenticated CallSiteValue body → ``force_floor`` then attribute
@@ -117,9 +117,9 @@ class AttributeSugar(ConstructedTermSugar):
                     MessageOpaqueValue,
                 )
                 from sugar_lift_py_tests.ir import ctor, str_const
-                from sugar_lift_py_tests.outcome import Complete
+                from sugar_lift_py_tests.outcome import ExitSet
 
-                return Complete(
+                return ExitSet.completed(
                     MessageOpaqueValue(
                         term=ctor(
                             "python:message-opaque-value",
@@ -220,9 +220,9 @@ class AttributeSugar(ConstructedTermSugar):
                         SymbolicValue,
                     )
                     from sugar_lift_py_tests.ir import ctor, str_const
-                    from sugar_lift_py_tests.outcome import Complete
+                    from sugar_lift_py_tests.outcome import ExitSet
 
-                    return Complete(
+                    return ExitSet.completed(
                         SymbolicValue(
                             ctor(
                                 "python:module",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -30,7 +30,7 @@ class ReceiverFieldStoreSugar(Sugar):
 
         return self.receiver.desugar(ctx).and_then(
             lambda receiver: self.value.desugar(ctx).and_then(
-                lambda value: Complete(
+                lambda value: ExitSet.completed(
                     ReceiverFieldStoreValue(receiver, self.attr, value)
                 )
             )

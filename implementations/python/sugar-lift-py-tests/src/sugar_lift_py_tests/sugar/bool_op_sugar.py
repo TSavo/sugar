@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.ir import Term
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -106,7 +106,9 @@ def _symbolic_boolop_selection(value, site):
     )
 
     return value.truth(site).and_then(
-        lambda truth_value: Complete(BoolOpTruthSelection(value, truth_value))
+        lambda truth_value: ExitSet.completed(
+            BoolOpTruthSelection(value, truth_value)
+        )
     )
 
 
@@ -126,12 +128,15 @@ def _two_faced_call_truth(outcome, value, site):
     from sugar_lift_py_tests.occurrence import occurrence_key
     from sugar_lift_py_tests.outcome.exit_set import (
         Completed,
-        ExitSet,
         Halted,
         complement_guard,
     )
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
 
-    if not isinstance(outcome, Complete):
+    selection = plain_completed_value(outcome)
+    if selection is None:
         return outcome
     key = occurrence_key(site)
     truth = ctor(
@@ -141,7 +146,7 @@ def _two_faced_call_truth(outcome, value, site):
     completes = atomic("python:truth.completes", [truth])
     return ExitSet(
         (
-            Completed(completes, outcome.value),
+            Completed(completes, selection),
             Halted(
                 complement_guard(completes),
                 UndeterminedRaiseEffect(
@@ -167,7 +172,6 @@ def select_boolop_operand(
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
-    from sugar_lift_py_tests.outcome import Complete, ExitSet, outcome_to_exitset
     from sugar_lift_py_tests.outcome.exit_set import (
         complement_guard,
         false_guard,
@@ -222,7 +226,7 @@ def select_boolop_operand(
 
     def continue_from(selected_operand, formula):
         if formula == stop_formula:
-            return Complete(selected_operand)
+            return ExitSet.completed(selected_operand)
         if formula == continue_formula:
             return on_continue()
 
@@ -239,7 +243,7 @@ def select_boolop_operand(
                 continuing_face=rhs_face,
                 stopped_face=stop_face,
             )
-        rhs = outcome_to_exitset(continued).guarded(rhs_guard, rhs_face)
+        rhs = continued.guarded(rhs_guard, rhs_face)
         return rhs.union(stopped.guarded(true_guard(), stop_face))
 
     formal_coordinate = getattr(value, "formal_coordinate", None)

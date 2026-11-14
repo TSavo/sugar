@@ -22,11 +22,9 @@ from dataclasses import dataclass, field as dataclass_field
 from sugar_lift_py_tests.floor import BlockValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.outcome import (
-    Complete,
     Completed,
     ExitSet,
     Halted,
-    Incomplete,
     Outcome,
     true_guard,
 )
@@ -54,10 +52,49 @@ def _extend_receiver_store_scope(value, ctx):
     The reducer does not probe capability, ladder rebind kinds, or mint root
     contexts.  Default FloorValue.extend_scope is identity; Floors that rebind
     (ScopeRebind, ReceiverFieldStoreValue, …) own their own root-context mint
-    when ``ctx`` is absent.  ``value`` is an Outcome (Complete/Incomplete) or a
-    FloorValue — both expose Floor-owned ``extend_scope``.
+    when ``ctx`` is absent.  ``value`` is the completed arm's FloorValue, which
+    owns ``extend_scope``.
     """
     return value.extend_scope(ctx)
+
+
+def plain_completed_value(outcome):
+    """The value of ONE plain completed arm, else ``None``.
+
+    Plain: one completed arm under truth, carrying no partition faces and owing
+    nothing -- the arm a total step answers. Its value may be handed on alone.
+    An arm with faces or debts is sequenced instead, so the sequencing carries
+    them onto every continuation (``owed`` is never dropped). A deferred
+    native-operation carrier is not an ``ExitSet`` and answers ``None``. A
+    set of several arms answers ``None`` before anything normalizes it.
+    """
+    if not isinstance(outcome, ExitSet) or len(outcome.exits) != 1:
+        return None
+    arm = outcome.exits[0]
+    if arm.faces or arm.owed:
+        return None
+    return outcome.completed_value()
+
+
+def _plain_halt(outcome: ExitSet):
+    """The effect of ONE plain halted arm that carries no state, else ``None``.
+
+    Plain: one halted arm under truth, no partition faces, owing nothing, and
+    no temporal state of its own -- a halt at the head of the statement, whose
+    pre-halt state is the enclosing block's prefix.
+    """
+    if len(outcome.exits) != 1:
+        return None
+    arm = outcome.exits[0]
+    if (
+        isinstance(arm, Halted)
+        and arm.guard == true_guard()
+        and arm.state is None
+        and not arm.faces
+        and not arm.owed
+    ):
+        return arm.effect
+    return None
 
 
 def _prefixed(state: _ReducedBlock, inner: object) -> object:
@@ -98,10 +135,10 @@ def _halt_state(state: _ReducedBlock, exit_) -> object:
 
     Normally ``_prefixed``: the nested reduction's own record with this block's
     prefix spliced in front. A nested payload that is not a block record has
-    nothing to splice onto and is left alone -- ``outcome_to_exitset`` converts
-    an ``Incomplete`` to ``Halted(guard, effect, None)`` because that conversion
-    has no record to offer, and ``and_finally`` / ``and_exit`` fan cleanup and
-    exit halts across incoming arms the same way.
+    nothing to splice onto and is left alone -- ``ExitSet.halted(effect)``
+    builds ``Halted(guard, effect, None)`` because its producer has no record
+    to offer, and ``and_finally`` / ``and_exit`` fan cleanup and exit halts
+    across incoming arms the same way.
     """
     return _prefixed(state, exit_.state)
 
@@ -211,9 +248,9 @@ def reduce_block_to_exitset(
                         value.context if value.context is not None else active_ctx
                     )
                 else:
-                    linear = Complete(value)
-                    contribution = linear.contribution()
-                    follow = linear.follow()
+                    # The value owns its contribution, its follow and its scope.
+                    contribution = value.contribution()
+                    follow = value.follow_rest()
                     continues = follow.continues
                     nested_fall_through = (
                         ()
@@ -223,7 +260,7 @@ def reduce_block_to_exitset(
                     nested_transforms = (
                         () if follow.transform is None else (follow.transform,)
                     )
-                    next_context = _extend_receiver_store_scope(linear, active_ctx)
+                    next_context = _extend_receiver_store_scope(value, active_ctx)
                 for transform in reversed(state.transforms):
                     contribution = transform(contribution)
                 entries = (*state.entries, *contribution)
@@ -263,9 +300,24 @@ def reduce_block_to_exitset(
                     pre_effect_state=ReducerPreEffectStateV1._from_reducer(state),
                 )
 
-            if isinstance(outcome, ExitSet):
+            plain = plain_completed_value(outcome)
+            if plain is not None and not isinstance(plain, _ReducedBlock):
+                # One plain completion: the statement's value carries the block
+                # straight on. The value owns its contribution, its follow and
+                # its scope (``project``); the fall-through guard stays in the
+                # record, where every earlier statement left it. A store is not
+                # split here: its producer answers its two faces
+                # (``store_faces``), and they arrive through the seam below.
+                return project(plain)
+
+            effect = _plain_halt(outcome)
+            if effect is not None:
+                # One plain halt at the statement: nothing ran inside it before
+                # the halt, so its pre-halt state is this block's prefix.
+                halted = ExitSet.halted(effect, state=state)
                 returned = _prior_return_face(state, active_ctx)
-                if state.fall_through:
+                if returned:
+                    # Reached only where no earlier ``return`` fired.
                     from sugar_lift_py_tests.ir import and_
 
                     continuation = (
@@ -273,106 +325,64 @@ def reduce_block_to_exitset(
                         if len(state.fall_through) == 1
                         else and_(list(state.fall_through))
                     )
-                    outcome = outcome.guarded(continuation)
-
-                # A statement that reduces to its OWN ExitSet (a nested block:
-                # try/with, or an unpack assignment whose store leaves are
-                # sequenced by this same reducer) hands back halted arms whose
-                # state is the state reached INSIDE that statement. It cannot
-                # know the prefix -- `head.desugar(ctx)` is given no state -- so
-                # the prefix is spliced on here, at the one seam that owns
-                # sequencing. Without this, a halt inside a nested statement
-                # would report an empty temporal state and every earlier store
-                # would read as rolled back (Python never rolls back a store).
-                head_halt = getattr(statement, "halts_at_statement_head", False)
-                outcome = ExitSet(
-                    tuple(
-                        (
-                            Halted(
-                                exit_.guard,
-                                exit_.effect,
-                                # A simple statement binds nothing before its
-                                # own halt (an expression halt, a store's
-                                # halted face): a stateless arm halted at its
-                                # head, where the prefix is the whole record --
-                                # the same state the Incomplete path below gives.
-                                state
-                                if head_halt and exit_.state is None
-                                else _halt_state(state, exit_),
-                                # This rebuild used to state three fields, so it
-                                # dropped the arm's partition testimony on the way
-                                # through -- the same shape of loss
-                                # `ExitSet.guarded` had.
-                                exit_.faces,
-                                exit_.owed,
-                            )
-                            if isinstance(exit_, Halted)
-                            else exit_
-                        )
-                        for exit_ in outcome.exits
-                    )
-                )
-                if returned:
                     return ExitSet(
-                        (*outcome.and_then(project).exits, *returned)
+                        (*halted.guarded(continuation).exits, *returned)
                     ).normalize()
-                return outcome.and_then(project)
-            contribution = outcome.contribution()
-            for transform in reversed(state.transforms):
-                contribution = transform(contribution)
-            entries = (*state.entries, *contribution)
-            next_context = _extend_receiver_store_scope(outcome, active_ctx)
+                return halted
 
-            # A store is not split here: its producer answers its two faces
-            # (``store_faces``), and they arrive through the ExitSet seam above.
-            follow = outcome.follow()
-            if not follow.continues:
-                if isinstance(outcome, Incomplete):
-                    if outcome.branch_conditions:
-                        from sugar_lift_py_tests.ir import and_
+            returned = _prior_return_face(state, active_ctx)
+            if state.fall_through:
+                from sugar_lift_py_tests.ir import and_
 
-                        condition = (
-                            outcome.branch_conditions[0]
-                            if len(outcome.branch_conditions) == 1
-                            else and_(list(outcome.branch_conditions))
-                        )
-                        halted = ExitSet.conditional_halt(
-                            condition, outcome.effect, state
-                        )
-                    else:
-                        halted = ExitSet.halted(outcome.effect, state=state)
-                    returned = _prior_return_face(state, active_ctx)
-                    if returned:
-                        # Reached only where no earlier ``return`` fired.
-                        from sugar_lift_py_tests.ir import and_
-
-                        continuation = (
-                            state.fall_through[0]
-                            if len(state.fall_through) == 1
-                            else and_(list(state.fall_through))
-                        )
-                        return ExitSet(
-                            (*halted.guarded(continuation).exits, *returned)
-                        ).normalize()
-                    return halted
-                return ExitSet.completed(
-                    _ReducedBlock(
-                        entries,
-                        can_fall_through=False,
-                        fall_through=(),
-                        context=next_context,
-                    )
+                continuation = (
+                    state.fall_through[0]
+                    if len(state.fall_through) == 1
+                    else and_(list(state.fall_through))
                 )
+                outcome = outcome.guarded(continuation)
 
-            transforms = state.transforms
-            if follow.transform is not None:
-                transforms = (*transforms, follow.transform)
-            fall_through = state.fall_through
-            if follow.continuation_guard is not None:
-                fall_through = (*fall_through, follow.continuation_guard)
-            return ExitSet.completed(
-                _ReducedBlock(entries, True, fall_through, transforms, next_context)
+            # A statement that reduces to its OWN ExitSet (a nested block:
+            # try/with, or an unpack assignment whose store leaves are
+            # sequenced by this same reducer) hands back halted arms whose
+            # state is the state reached INSIDE that statement. It cannot
+            # know the prefix -- `head.desugar(ctx)` is given no state -- so
+            # the prefix is spliced on here, at the one seam that owns
+            # sequencing. Without this, a halt inside a nested statement
+            # would report an empty temporal state and every earlier store
+            # would read as rolled back (Python never rolls back a store).
+            head_halt = getattr(statement, "halts_at_statement_head", False)
+            outcome = ExitSet(
+                tuple(
+                    (
+                        Halted(
+                            exit_.guard,
+                            exit_.effect,
+                            # A simple statement binds nothing before its
+                            # own halt (an expression halt, a store's
+                            # halted face): a stateless arm halted at its
+                            # head, where the prefix is the whole record --
+                            # the same state the plain halt above gives.
+                            state
+                            if head_halt and exit_.state is None
+                            else _halt_state(state, exit_),
+                            # This rebuild used to state three fields, so it
+                            # dropped the arm's partition testimony on the way
+                            # through -- the same shape of loss
+                            # `ExitSet.guarded` had.
+                            exit_.faces,
+                            exit_.owed,
+                        )
+                        if isinstance(exit_, Halted)
+                        else exit_
+                    )
+                    for exit_ in outcome.exits
+                )
             )
+            if returned:
+                return ExitSet(
+                    (*outcome.sequence(project).exits, *returned)
+                ).normalize()
+            return outcome.sequence(project)
 
         from sugar_lift_py_tests.caller_parameter_contract import (
             NativeOperationExitCarrierV1,
@@ -417,63 +427,30 @@ def reduce_block_to_exitset(
 
 
 def reduce_body(statements: tuple, ctx: object = None):
-    """Reduce a function body to ONE Outcome, preserving Complete/Incomplete.
+    """Reduce a function body to ONE ``ExitSet`` of the body's exits.
 
-    A body that reduces to a value is `Complete(BlockValue(record))` -- the
-    record carries every entry, including any halting effect absorbed as red
-    testimony (Incomplete.contribution is the effect itself). A body that
-    reduces to a bare, non-absorbed effect stays `Incomplete` and propagates:
-    the caller wraps via `.and_then`, so an effect never becomes a false
-    universe. Today no written statement sugar throws an effect, so this is
-    always Complete -- the distinction is carried structurally for the sugars
-    (calls, unsupported statements) that will.
+    Every completed arm becomes `BlockValue(record)` -- the record carries
+    every entry the arm reached. Every halted arm is kept as it is, with its
+    guard, its pre-halt state and what it owes: the caller wraps via
+    `.and_then`, so a halt never becomes a false universe.
     """
     exits = reduce_block_to_exitset(statements, ctx)
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
 
+    def block_value(state):
+        return ExitSet.completed(
+            BlockValue(
+                state.entries,
+                fall_through=state.fall_through,
+                can_fall_through=state.can_fall_through,
+            )
+        )
+
     if isinstance(exits, NativeOperationExitCarrierV1):
-        return exits.and_then(
-            lambda state: Complete(
-                BlockValue(
-                    state.entries,
-                    fall_through=state.fall_through,
-                    can_fall_through=state.can_fall_through,
-                )
-            )
-        )
-    if (
-        len(exits.exits) == 1
-        and isinstance(exits.exits[0], Halted)
-        and exits.exits[0].guard == true_guard()
-        and exits.exits[0].state is not None
-    ):
-        # Incomplete has no temporal-state slot. Keep the authenticated halt
-        # face intact rather than laundering its pre-effect state through a
-        # representation that cannot carry it.
-        return exits
-    collapsed = exits.collapse()
-    if isinstance(collapsed, Incomplete):
-        return collapsed
-    if not isinstance(collapsed, Complete):
-        return exits.and_then(
-            lambda state: Complete(
-                BlockValue(
-                    state.entries,
-                    fall_through=state.fall_through,
-                    can_fall_through=state.can_fall_through,
-                )
-            )
-        )
-    state = collapsed.value
-    return Complete(
-        BlockValue(
-            state.entries,
-            fall_through=state.fall_through,
-            can_fall_through=state.can_fall_through,
-        )
-    )
+        return exits.and_then(block_value)
+    return exits.sequence(block_value)
 
 
 @dataclass(frozen=True)
@@ -515,7 +492,7 @@ class FunctionUniverseSugar(Sugar):
         # here lets the existing block reducer resolve it; callers without such
         # authority continue to pass ``None`` and retain the ordinary behavior.
         return reduce_body(self.statements, ctx).and_then(
-            lambda record: Complete(
+            lambda record: ExitSet.completed(
                 UniverseValue(
                     name=self.name,
                     formals=self.formals,

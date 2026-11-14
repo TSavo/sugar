@@ -10,7 +10,7 @@ from sugar_lift_py_tests.effect import (
     RaiseEffect,
     UndeterminedRaiseEffect,
 )
-from sugar_lift_py_tests.outcome import Incomplete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import typed_red_effect_witness
 
@@ -21,9 +21,9 @@ class RaiseSugar(Sugar):
 
     A raise never states a fact and never returns a value: it exits. So it is
     the halt arm of ``match(Sugar) { Some => cite_or_effect, None => panic }`` --
-    it desugars to a typed-red effect, ``Incomplete(RaiseEffect)``, not to a
-    ``Complete`` floor value. Its ``follow`` halts the block (a RaiseEffect is
-    not a store effect, so the rest of the block stays unreduced); a matching
+    it desugars to a typed-red effect, ``ExitSet.halted(RaiseEffect)``, not to
+    a completed floor value. Its halted arm bypasses the rest of the block (a
+    RaiseEffect is not a store effect, so the rest stays unreduced); a matching
     ``TrySugar`` handler may later route it, and unrouted it is the block's exit.
 
     The exception child is built normally and carried on the effect.  Its
@@ -55,7 +55,7 @@ class RaiseSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        # The halt: an Incomplete carrying the named raise effect. blame is the
+        # The halt: a halted arm carrying the named raise effect. blame is the
         # construction locus; source_sha256 pins the text the raise lives in.
         source = getattr(self.site.unit, "source", None)
         source_sha256 = (
@@ -80,7 +80,7 @@ class RaiseSugar(Sugar):
                 resolve_in_flight_effect,
             )
 
-            return Incomplete(
+            return ExitSet.halted(
                 resolve_in_flight_effect(ctx, self.in_flight_slot, blame=self.site)
             )
 
@@ -109,7 +109,7 @@ class RaiseSugar(Sugar):
                     UndeterminedRaiseEffect,
                 )
 
-                return Incomplete(
+                return ExitSet.halted(
                     UndeterminedRaiseEffect(
                         exception_name=self.exception_name,
                         blame=blame,
@@ -126,7 +126,7 @@ class RaiseSugar(Sugar):
                 if callable(mro_reader)
                 else getattr(raised_value, "exception_type_mro", None)
             )
-            return Incomplete(
+            return ExitSet.halted(
                 RaiseEffect(
                     exception_type_coordinate=coordinate,
                     occurrence=AuthenticatedRaiseLocus.of(blame),
@@ -158,7 +158,7 @@ class RaiseSugar(Sugar):
                         requested="group __cause__/__context__ semantics",
                         fix="keep group chaining loud",
                     )
-                return Incomplete(raised_value.effect)
+                return ExitSet.halted(raised_value.effect)
             if self.cause is None:
                 return halt(raised_value)
             return self.cause.desugar(ctx).and_then(

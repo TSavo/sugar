@@ -29,7 +29,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
@@ -122,7 +122,11 @@ def _halted_face(face, prefix_guard):
 
 
 def _incomplete_as_halted(incomplete, prefix_guard):
-    """Incomplete has no state; Halted under prefix with state=None is honest."""
+    """A stateless halt under prefix: Halted with state=None is honest.
+
+    No match path calls this since the match reads ``ExitSet`` arms only
+    (#7825); ``test_halt_drops_7827`` pins that no path reaches it.
+    """
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     return ExitSet.halted(incomplete.effect, prefix_guard, state=None)
@@ -141,8 +145,7 @@ def _exceptional_faces_only(exits, prefix_guard):
     Completed faces feed matching / guard truth; they must not also escape as
     completed Match outcomes by wholesale ExitSet union.
     """
-    from sugar_lift_py_tests.outcome import Completed, Halted, Incomplete
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+    from sugar_lift_py_tests.outcome import Completed, Halted
 
     side = ExitSet(())
     for face in exits.exits:
@@ -150,8 +153,6 @@ def _exceptional_faces_only(exits, prefix_guard):
             continue
         if isinstance(face, Halted):
             side = side.union(_halted_face(face, prefix_guard))
-        elif isinstance(face, Incomplete):
-            side = side.union(_incomplete_as_halted(face, prefix_guard))
         else:
             raise NotImplementedError(
                 f"match side face not lifted: {type(face).__name__}"
@@ -167,8 +168,8 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
     they are never unioned wholesale into the Match outcome.
     """
     from sugar_lift_py_tests.ir import or_
-    from sugar_lift_py_tests.outcome import Complete, Completed, Incomplete
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, true_guard
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
 
     if not alternatives:
         return true_guard(), ExitSet(())
@@ -177,32 +178,23 @@ def _pattern_match_formula_and_side_exits(subject, alternatives, site, not_prev,
     side = ExitSet(())
     for alt in alternatives:
         alt_out = alt.desugar(ctx)
-        if isinstance(alt_out, Incomplete):
-            side = side.union(_incomplete_as_halted(alt_out, not_prev))
-            continue
-        if isinstance(alt_out, ExitSet):
-            # Exceptional/control faces only — not Completed outcomes.
-            side = side.union(_exceptional_faces_only(alt_out, not_prev))
-            for face in alt_out.exits:
-                if not isinstance(face, Completed):
-                    continue
-                # Matching under not_prev ∧ alt-face polarity.
-                eq_prefix = _and_parts(not_prev, face.guard)
-                eq_out = subject.equals(face.value, site, ctx)
-                side, formula = _equality_outcome_under(eq_out, eq_prefix, site, side)
-                if formula is not None:
-                    # Alt polarity is already in formula when equality is Complete;
-                    # when multi-face equality, formula is OR of (face.guard ∧ truth).
-                    alts.append(_and_parts(face.guard, formula))
-            continue
-        if not isinstance(alt_out, Complete):
+        if not isinstance(alt_out, ExitSet):
             raise NotImplementedError(
                 f"match alternative outcome not lifted: {type(alt_out).__name__}"
             )
-        eq_out = subject.equals(alt_out.value, site, ctx)
-        side, formula = _equality_outcome_under(eq_out, not_prev, site, side)
-        if formula is not None:
-            alts.append(formula)
+        # Exceptional/control faces only — not Completed outcomes.
+        side = side.union(_exceptional_faces_only(alt_out, not_prev))
+        for face in alt_out.exits:
+            if not isinstance(face, Completed):
+                continue
+            # Matching under not_prev ∧ alt-face polarity (an unguarded face
+            # adds nothing to either).
+            eq_prefix = _and_parts(not_prev, face.guard)
+            eq_out = subject.equals(face.value, site, ctx)
+            side, formula = _equality_outcome_under(eq_out, eq_prefix, site, side)
+            if formula is not None:
+                # When multi-face equality, formula is OR of (face.guard ∧ truth).
+                alts.append(_and_parts(face.guard, formula))
 
     if not alts:
         return None, side
@@ -218,36 +210,28 @@ def _equality_outcome_under(eq_out, not_prev, site, side):
     preserved). Never wholesale-unions Completed equality faces into side.
     """
     from sugar_lift_py_tests.ir import or_
-    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
+    from sugar_lift_py_tests.outcome import Completed, Halted
 
-    if isinstance(eq_out, Incomplete):
-        return side.union(_incomplete_as_halted(eq_out, not_prev)), None
-    if isinstance(eq_out, ExitSet):
-        formulas = []
-        for face in eq_out.exits:
-            if isinstance(face, Halted):
-                side = side.union(_halted_face(face, not_prev))
-                continue
-            if isinstance(face, Completed):
-                truth = _formula_from_floor_value(face.value, site)
-                formulas.append(_and_parts(face.guard, truth))
-                continue
-            if isinstance(face, Incomplete):
-                side = side.union(_incomplete_as_halted(face, not_prev))
-                continue
-            raise NotImplementedError(
-                f"match equality face not lifted: {type(face).__name__}"
-            )
-        if not formulas:
-            return side, None
-        formula = or_(tuple(formulas)) if len(formulas) > 1 else formulas[0]
-        return side, formula
-    if isinstance(eq_out, Complete):
-        return side, _formula_from_floor_value(eq_out.value, site)
-    raise NotImplementedError(
-        f"match equality outcome not lifted: {type(eq_out).__name__}"
-    )
+    if not isinstance(eq_out, ExitSet):
+        raise NotImplementedError(
+            f"match equality outcome not lifted: {type(eq_out).__name__}"
+        )
+    formulas = []
+    for face in eq_out.exits:
+        if isinstance(face, Halted):
+            side = side.union(_halted_face(face, not_prev))
+            continue
+        if isinstance(face, Completed):
+            truth = _formula_from_floor_value(face.value, site)
+            formulas.append(_and_parts(face.guard, truth))
+            continue
+        raise NotImplementedError(
+            f"match equality face not lifted: {type(face).__name__}"
+        )
+    if not formulas:
+        return side, None
+    formula = or_(tuple(formulas)) if len(formulas) > 1 else formulas[0]
+    return side, formula
 
 
 def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula):
@@ -257,7 +241,7 @@ def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula):
     Per Halted face: preserve Halted under ``reached ∧ face.guard``; mark only
     ``match_formula ∧ face.guard`` consumed (not the whole match path).
     """
-    from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+    from sugar_lift_py_tests.outcome import Completed, Halted
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
@@ -265,48 +249,27 @@ def _guard_faces_under(guard_out, reached, site, body, body_ctx, match_formula):
     parts: list = []
     earlier_bits: list = []
 
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
-
-    if isinstance(guard_out, Incomplete):
-        parts.append(_incomplete_as_halted(guard_out, reached))
-        # No face polarity: whole reached path is consumed by the halt.
-        earlier_bits.append(match_formula)
-        return parts, earlier_bits
-
-    if isinstance(guard_out, ExitSet):
-        for face in guard_out.exits:
-            if isinstance(face, Halted):
-                parts.append(_halted_face(face, reached))
-                # Only this polarity of the match is consumed by the halt.
-                earlier_bits.append(_and_parts(match_formula, face.guard))
-                continue
-            if isinstance(face, Completed):
-                truth = _formula_from_floor_value(face.value, site)
-                selection = _and_parts(reached, face.guard, truth)
-                body_exits = reduce_block_to_exitset(body, body_ctx)
-                parts.append(_restrict(body_exits, selection))
-                earlier_bits.append(_and_parts(match_formula, face.guard, truth))
-                continue
-            if isinstance(face, Incomplete):
-                parts.append(_incomplete_as_halted(face, reached))
-                earlier_bits.append(match_formula)
-                continue
-            raise NotImplementedError(
-                f"match guard ExitSet face not lifted: {type(face).__name__}"
-            )
-        return parts, earlier_bits
-
-    if isinstance(guard_out, Complete):
-        truth = _formula_from_floor_value(guard_out.value, site)
-        selection = _and_parts(reached, truth)
-        body_exits = reduce_block_to_exitset(body, body_ctx)
-        parts.append(_restrict(body_exits, selection))
-        earlier_bits.append(_and_parts(match_formula, truth))
-        return parts, earlier_bits
-
-    raise NotImplementedError(
-        f"match guard outcome not lifted: {type(guard_out).__name__}"
-    )
+    if not isinstance(guard_out, ExitSet):
+        raise NotImplementedError(
+            f"match guard outcome not lifted: {type(guard_out).__name__}"
+        )
+    for face in guard_out.exits:
+        if isinstance(face, Halted):
+            parts.append(_halted_face(face, reached))
+            # Only this polarity of the match is consumed by the halt.
+            earlier_bits.append(_and_parts(match_formula, face.guard))
+            continue
+        if isinstance(face, Completed):
+            truth = _formula_from_floor_value(face.value, site)
+            selection = _and_parts(reached, face.guard, truth)
+            body_exits = reduce_block_to_exitset(body, body_ctx)
+            parts.append(_restrict(body_exits, selection))
+            earlier_bits.append(_and_parts(match_formula, face.guard, truth))
+            continue
+        raise NotImplementedError(
+            f"match guard ExitSet face not lifted: {type(face).__name__}"
+        )
+    return parts, earlier_bits
 
 
 @dataclass(frozen=True)
@@ -327,17 +290,22 @@ class MatchSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.ir import or_
-        from sugar_lift_py_tests.outcome import Incomplete
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, true_guard
+        from sugar_lift_py_tests.outcome.exit_set import true_guard
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            plain_completed_value,
             reduce_block_to_exitset,
         )
 
         subject_out = self.subject.desugar(ctx)
-        if isinstance(subject_out, Incomplete):
+        if not isinstance(subject_out, ExitSet):
+            raise NotImplementedError(
+                f"match subject outcome not lifted: {type(subject_out).__name__}"
+            )
+        if subject_out.exits and subject_out.halts() == subject_out.exits:
             # Subject halt is before any case; no later case can run.
             return subject_out
-        if isinstance(subject_out, ExitSet):
+        subject = plain_completed_value(subject_out)
+        if subject is None:
             # Multi-face subject: fan the whole match under each completed face.
             # Halted subject faces preserve state under their own guards.
             from sugar_lift_py_tests.outcome import Completed, Halted
@@ -349,27 +317,20 @@ class MatchSugar(Sugar):
                     continue
                 if isinstance(face, Completed):
                     # Re-enter with a constant subject sugar is not needed:
-                    # recurse by building a one-shot match over Complete value
-                    # via a synthetic sugar wrapper.
+                    # recurse by building a one-shot match over the face's
+                    # value via a synthetic sugar wrapper.
                     sub = _CompleteValueSugar(face.value, self.site)
                     nested = MatchSugar(sub, self.cases, self.site).desugar(ctx)
-                    nested_es = _outcome_as_exitset(nested)
-                    parts = parts.union(_restrict(nested_es, face.guard))
-            return (
-                parts.normalize()
-                if parts.exits
-                else Complete(
-                    __import__(
-                        "sugar_lift_py_tests.floor.block_value", fromlist=["BlockValue"]
-                    ).BlockValue((), can_fall_through=True)
-                )
-            )
+                    # Sequenced under the face: its guard, its partition
+                    # testimony and what it owes ride onto every nested arm.
+                    parts = parts.union(
+                        ExitSet((face,)).sequence(lambda _value, n=nested: n)
+                    )
+            if parts.exits:
+                return parts.normalize()
+            from sugar_lift_py_tests.floor.block_value import BlockValue
 
-        if not isinstance(subject_out, Complete):
-            raise NotImplementedError(
-                f"match subject outcome not lifted: {type(subject_out).__name__}"
-            )
-        subject = subject_out.value
+            return ExitSet.completed(BlockValue((), can_fall_through=True))
 
         accumulated = ExitSet(())
         earlier: list = []  # selection formulas of prior *selected* cases
@@ -429,9 +390,9 @@ class MatchSugar(Sugar):
         if not accumulated.exits:
             from sugar_lift_py_tests.floor.block_value import BlockValue
 
-            return Complete(BlockValue((), can_fall_through=True))
+            return ExitSet.completed(BlockValue((), can_fall_through=True))
         # Shared ExitSet projection — no output-kind membrane on value shape.
-        return accumulated.normalize().collapse()
+        return accumulated.normalize()
 
 
 @dataclass(frozen=True)
@@ -447,17 +408,4 @@ class _CompleteValueSugar(Sugar):
 
     def desugar(self, ctx=None) -> Outcome:
         del ctx
-        return Complete(self.value)
-
-
-def _outcome_as_exitset(outcome):
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, outcome_to_exitset
-
-    if isinstance(outcome, ExitSet):
-        return outcome
-    if isinstance(outcome, Incomplete):
-        return ExitSet.halted(outcome.effect)
-    if isinstance(outcome, Complete):
-        return ExitSet.completed(outcome.value)
-    return outcome_to_exitset(outcome)
+        return ExitSet.completed(self.value)

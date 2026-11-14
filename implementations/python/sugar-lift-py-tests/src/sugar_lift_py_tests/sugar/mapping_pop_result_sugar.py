@@ -55,7 +55,7 @@ class MappingPopResultSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
         from sugar_lift_py_tests.floor.set_value import _closed_member_equal
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
-        from sugar_lift_py_tests.outcome import Complete
+        from sugar_lift_py_tests.outcome import ExitSet
 
         if not isinstance(receiver, (DictValue, MappingObjectValue)):
             construction_panic_gap(
@@ -90,4 +90,4 @@ class MappingPopResultSugar(ConstructedTermSugar):
                 requested="one canonical mapping entry per key",
                 fix="repair mapping construction before pop",
             )
-        return Complete(entries[matches[0]][1] if matches else default)
+        return ExitSet.completed(entries[matches[0]][1] if matches else default)

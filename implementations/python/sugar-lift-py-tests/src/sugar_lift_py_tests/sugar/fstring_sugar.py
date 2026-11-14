@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import (
     ConstructedTermSugar,
     require_constructed_term_sugar,
@@ -40,7 +40,7 @@ def _concatenate_joined_parts(left, right, site, ctx):
 
     if type(left) is StringValue and type(right) is StringValue:
         return left.add(right, site, ctx)
-    return Complete(
+    return ExitSet.completed(
         CallSiteValue(
             target_name="__add__",
             arg_values=(left, right),
@@ -122,7 +122,7 @@ class FormattedValueSugar(ConstructedTermSugar):
                 and self.conversion is None
                 and self.format_spec is None
             ):
-                return Complete(value)
+                return ExitSet.completed(value)
             formatted = SymbolicValue(
                 ctor(
                     "python:fstring_value",
@@ -143,12 +143,11 @@ class FormattedValueSugar(ConstructedTermSugar):
                 # its ``__str__``/``__repr__`` first): not CPython's own when
                 # ``c`` is not a decided builtin, so it may raise.
                 return BuiltinDunderCallV1("format").faces(formatted, self.site)
-            return Complete(formatted)
+            return ExitSet.completed(formatted)
 
         # `f"{expr!r:{spec}}"` evaluates expr then spec, and EITHER can halt or
         # partition (`f"{d[k] := v}"`). Both thread through `and_then` -- the one
-        # door every Outcome variant implements -- so a halt propagates and a
-        # partition keeps every arm. Reading `.value` off the outcome assumed one
+        # door -- so a halt propagates and a partition keeps every arm. Reading `.value` off the outcome assumed one
         # unconditional arm and was the `'ExitSet' has no attribute 'value'`
         # defect here.
         def with_spec(value):
@@ -202,12 +201,11 @@ class JoinedStrSugar(ConstructedTermSugar):
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
         if not self.parts:
-            return Complete(StringValue(""))
-        # Concatenate left-to-right through `and_then`, the one door every
-        # Outcome variant implements: a part that halts propagates, a part that
-        # PARTITIONS keeps every arm and each arm concatenates under its own
-        # guard. `acc.value.add(right.value, ...)` assumed both sides were one
-        # unconditional value.
+            return ExitSet.completed(StringValue(""))
+        # Concatenate left-to-right through `and_then`, the one door: a part
+        # that halts propagates, a part that PARTITIONS keeps every arm and
+        # each arm concatenates under its own guard. `acc.value.add(right.value,
+        # ...)` assumed both sides were one unconditional value.
         # One completed arm per part (#6324): concatenation is a k-step fold
         # through `ExitSet.sequence`, so an unfactored partitioning part
         # multiplies the accumulator at every remaining part.
@@ -223,16 +221,15 @@ class JoinedStrSugar(ConstructedTermSugar):
     def reference_term(self, ctx: object = None) -> Outcome:
         """Project this JoinedStr as the reference ``python:fstring`` ctor."""
         from sugar_lift_py_tests.ir import ctor
-        from sugar_lift_py_tests.outcome import Complete
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
         # Same law as `desugar`: every part threads through `and_then`, so a
         # halting or partitioning part is conserved rather than read as `.value`.
-        outcome = Complete(())
+        outcome = ExitSet.completed(())
         for part in self.parts:
             outcome = outcome.and_then(
                 lambda terms, part=part: factored_operand(part.desugar(ctx)).and_then(
-                    lambda value: Complete(
+                    lambda value: ExitSet.completed(
                         (
                             *terms,
                             value.to_term(owner="JoinedStrSugar.reference_term"),
@@ -241,5 +238,5 @@ class JoinedStrSugar(ConstructedTermSugar):
                 )
             )
         return outcome.and_then(
-            lambda terms: Complete(ctor("python:fstring", list(terms)))
+            lambda terms: ExitSet.completed(ctor("python:fstring", list(terms)))
         )

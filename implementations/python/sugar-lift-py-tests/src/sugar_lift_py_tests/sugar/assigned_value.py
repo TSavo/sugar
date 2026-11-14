@@ -14,13 +14,14 @@ The law has two halves, and this module owns both:
   as the statement's own exits; only its completed faces continue, each with
   ``ctx.assigned_values`` extended by ``(rhs key, completed value)``.
 - **A read never re-evaluates.** ``Sugar.desugar`` of a sugar whose key is
-  recorded answers ``Complete(<completed value>)``: the value from the face the
-  statement completed under, never a second evaluation that could raise again.
-  The completed face's guard already rides the path that reaches the read, so
-  each effect is counted once.
+  recorded answers ``ExitSet.completed(<completed value>)``: the value from the
+  face the statement completed under, never a second evaluation that could
+  raise again. The completed face's guard already rides the path that reaches
+  the read, so each effect is counted once.
 
-A RHS that reduces to one plain ``Complete`` cannot halt; its reads keep the
-substitution they always had (re-reducing a total RHS denotes the same value).
+A RHS that reduces to one plain completed arm (unguarded, no faces, owing
+nothing) cannot halt; its reads keep the substitution they always had
+(re-reducing a total RHS denotes the same value).
 """
 
 from __future__ import annotations
@@ -100,8 +101,11 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=()):
     """
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor.block_value import BlockValue
-    from sugar_lift_py_tests.outcome import Complete, ExitSet, Incomplete
-    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _ReducedBlock,
+        plain_completed_value,
+    )
 
     if ctx is None:
         ctx = ReduceContext.root(owner="evaluate_assignment_values")
@@ -115,7 +119,7 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=()):
                 return ExitSet.completed(_ReducedBlock((), True, (), (), bound))
         if active is ctx:
             # Nothing recorded: the statement contributes nothing, as before.
-            return Complete(BlockValue((), can_fall_through=True))
+            return ExitSet.completed(BlockValue((), can_fall_through=True))
         return ExitSet.completed(_ReducedBlock((), True, (), (), active))
 
     def step(index, active, completed=()):
@@ -127,10 +131,12 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=()):
         # a loop re-reducing this statement evaluates its RHS again.
         own_ctx = active if key is None else active.without_assigned_value(key)
         outcome = sugar.desugar(own_ctx)
-        if isinstance(outcome, Incomplete):
+        if isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits:
+            # Every arm halts: no later RHS or target runs.
             return outcome
-        if isinstance(outcome, Complete):
-            follow = outcome.follow()
+        plain = plain_completed_value(outcome)
+        if plain is not None:
+            follow = plain.follow_rest()
             if not follow.continues:
                 # A value whose rest does not run: the statement halts here
                 # and no later RHS or target runs. It is handed back as-is so
@@ -142,10 +148,10 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=()):
                 # over the rebound temporal.
                 return step(
                     index + 1,
-                    active.with_assigned_value(key, outcome.value),
-                    (*completed, outcome.value),
+                    active.with_assigned_value(key, plain),
+                    (*completed, plain),
                 )
-            return step(index + 1, active, (*completed, outcome.value))
+            return step(index + 1, active, (*completed, plain))
         if key is None:
             # No occurrence to record: the statement still halts here, and a
             # read keeps substitution (it was never answered from a record).

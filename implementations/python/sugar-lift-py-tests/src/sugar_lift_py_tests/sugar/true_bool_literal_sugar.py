@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.floor.guard_stable_value import GuardStableValue
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
@@ -32,7 +32,7 @@ class TrueBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
 
     def desugar(self, ctx: object = None) -> Outcome:
         del ctx  # the literal is its own floor value
-        return Complete(self)
+        return ExitSet.completed(self)
 
     def contribution(self):
         # Its own floor value: contributes itself to the block record.
@@ -41,7 +41,7 @@ class TrueBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
     def truth(self, site):
         # A bool's truth is itself.
         del site
-        return Complete(self)
+        return ExitSet.completed(self)
 
     def stated(self, site):
         # An assert always states its fact. A test the floor decided True
@@ -50,7 +50,7 @@ class TrueBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
         from sugar_lift_py_tests.floor.inv_value import InvValue
         from sugar_lift_py_tests.outcome.exit_set import true_guard
 
-        return Complete(InvValue(true_guard(), site))
+        return ExitSet.completed(InvValue(true_guard(), site))
 
     def negate(self) -> Outcome:
         # True negates to False -- the literal knows its opposite, no fork.
@@ -58,7 +58,7 @@ class TrueBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
             FalseBoolLiteralSugar,
         )
 
-        return Complete(FalseBoolLiteralSugar(site=self.site))
+        return ExitSet.completed(FalseBoolLiteralSugar(site=self.site))
 
     def add(self, other, site, ctx):
         # Python bool is a closed integer subtype: True contributes exactly
@@ -76,7 +76,7 @@ class TrueBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
         del site
         from sugar_lift_py_tests.floor.term_value import TermValue
 
-        return Complete(TermValue(-1))
+        return ExitSet.completed(TermValue(-1))
 
     def bitwise_and(self, other, site, ctx):
         from sugar_lift_py_tests.floor.predicate_value import PredicateValue
@@ -85,18 +85,18 @@ class TrueBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
         )
 
         if type(other) is PredicateValue:
-            return Complete(other)
+            return ExitSet.completed(other)
         if type(other) is TrueBoolLiteralSugar:
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         if type(other) is FalseBoolLiteralSugar:
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         return super().bitwise_and(other, site, ctx)
 
     def bitwise_invert(self, site):
         del site
         from sugar_lift_py_tests.floor.term_value import TermValue
 
-        return Complete(TermValue(-2))
+        return ExitSet.completed(TermValue(-2))
 
     def bitwise_xor(self, other, site, ctx):
         from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
@@ -104,9 +104,9 @@ class TrueBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
         )
 
         if type(other) is TrueBoolLiteralSugar:
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         if type(other) is FalseBoolLiteralSugar:
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         return super().bitwise_xor(other, site, ctx)
 
     def is_identical(self, other, site):
@@ -117,9 +117,9 @@ class TrueBoolLiteralSugar(ConstructedTermSugar, GuardStableValue):
         )
 
         if type(other) is TrueBoolLiteralSugar:
-            return Complete(TrueBoolLiteralSugar(site=site))
+            return ExitSet.completed(TrueBoolLiteralSugar(site=site))
         if type(other) is FalseBoolLiteralSugar:
-            return Complete(FalseBoolLiteralSugar(site=site))
+            return ExitSet.completed(FalseBoolLiteralSugar(site=site))
         from sugar_lift_py_tests.floor.floor_value import FloorValue
 
         return FloorValue.is_identical(self, other, site)
