@@ -30,7 +30,7 @@ from sugar_source_tree.nodes import (
     FunctionDef,
 )
 from sugar_source_tree.panic import SourceTreePanic, SugarNotWritten
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 
 ASSIGNMENT = (ast.Assign, ast.AnnAssign, ast.AugAssign)
 
@@ -186,7 +186,7 @@ def measure(
             continue
         counts["files_total"] += 1
         try:
-            source, filename, source_cid = path_source(path)
+            source, _filename, _source_cid = path_source(path)
             parsed = ast.parse(source, filename=str(path))
             plain_class_names = _plain_class_names(parsed)
             native_assignments = [
@@ -195,10 +195,11 @@ def measure(
             if not native_assignments:
                 counts["files_without_assignment"] += 1
                 continue
-            # The one door: the unit is read with its typed tree bound.  The
-            # native ``ast`` stays a measurement label only; each label is
-            # paired with the typed node at its own source position.
-            source_file = SourceFile((source, filename, source_cid))
+            # The one opener: the unit is seated, contextualized and populated
+            # the way the board reads it.  The native ``ast`` stays a
+            # measurement label only; each label is paired with the typed node
+            # at its own source position.
+            source_file = open_source_file_for_construction(path, root=root)
             typed_assignments = _paired(
                 native_assignments,
                 [

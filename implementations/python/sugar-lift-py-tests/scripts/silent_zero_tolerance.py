@@ -221,8 +221,9 @@ def _audit_file(path: Path, *, rel: str) -> tuple[str, tuple[SilentOffender, ...
     The file is opened the one way every enumerate level opens it.
     """
     from sugar_lift_py_tests.idd.lift_coverage_census import census_source
-    from sugar_lift_py_tests.lift_rpc import _open_enumerated_file
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
     from sugar_lift_py_tests.tree_enumerate import source_audit_from_report
+    from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.roll_call import minority_report
 
     source = path.read_text(encoding="utf-8", errors="replace")
@@ -230,8 +231,8 @@ def _audit_file(path: Path, *, rel: str) -> tuple[str, tuple[SilentOffender, ...
     # Empty disk census → 0 silent by construction; skip tree work entirely.
     if disk_census_empty(census):
         return "completed", ()
-    source_file = _open_enumerated_file(
-        path, root=_root_of(path, rel), locus_root=None
+    source_file = open_source_file_for_construction(
+        path, root=_root_of(path, rel), reporter=CollectingReporter()
     )
     audit = source_audit_from_report(minority_report(source_file), rel)
     return "completed", tuple(silent_offenders(census, audit))

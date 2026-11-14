@@ -638,9 +638,7 @@ def discover_no_call_body_probes(
     object or an ``AttributionInvariantError`` that names the coordinate and
     reason. There is no function-attribute side channel.
     """
-    from sugar_lift_py_tests.context_manager_resolution import (
-        TreeConstructionContextV1,
-    )
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
     from sugar_lift_python_source.canonical import blake3_512_of
     from sugar_source_tree.nodes import (
         Attribute,
@@ -652,7 +650,7 @@ def discover_no_call_body_probes(
         UnaryOp,
         With,
     )
-    from sugar_source_tree.tree import SourceFile, SourceTree
+    from sugar_source_tree.tree import SourceTree
 
     # Full recognition map — family filter is a post-recognition disposition,
     # never a pre-filter that collapses family-filter into root-outside.
@@ -690,10 +688,11 @@ def discover_no_call_body_probes(
             raise AttributionInvariantError(
                 f"demand table names source CID absent from authenticated corpus: {source_cid}"
             )
-        source = path.read_text(encoding="utf-8")
-        tree = SourceFile(
-            (source, str(path), source_cid),
-            construction_context=TreeConstructionContextV1.for_source_call_construction(),
+        # The one opener: the same seated, populated unit the board reads.
+        tree = open_source_file_for_construction(
+            path,
+            root=corpus_root,
+            source_workspace_root=source_workspace_root,
         )
         # Index every With by manager span — body-shape filtering happens after
         # a demand matches, so a resolved demand can never vanish as "no managers"

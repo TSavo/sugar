@@ -141,16 +141,17 @@ def _effectful_open_source() -> str:
 
 def _runtime_effect_incomplete(reason: str) -> ExitSet:
     import tempfile
+    from pathlib import Path
 
-    from sugar_lift_python_source.source_oracle import path_source
-    from sugar_source_tree.tree import SourceFile
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
 
-    with tempfile.NamedTemporaryFile(
-        "w", suffix=".py", delete=False, dir="/tmp"
-    ) as handle:
-        handle.write("def _boundary_print(x):\n    print(x)\n")
-        path = handle.name
-    site = next(SourceFile(path_source(path)).functions()).fragment
+    # A workspace of its own, opened the one way a file is opened.
+    root = Path(tempfile.mkdtemp(prefix="boundary-record-"))
+    path = root / "boundary_print.py"
+    path.write_text("def _boundary_print(x):\n    print(x)\n", encoding="utf-8")
+    site = next(
+        open_source_file_for_construction(path, root=root).functions()
+    ).fragment
     return ExitSet.halted(
         CallResultTypeRuntimeEffect(
             reason,

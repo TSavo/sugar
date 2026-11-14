@@ -319,7 +319,7 @@ class NativeOperationDemandV1:
         )
 
 
-def _typed_minted_native_operator_constants() -> frozenset[str]:
+def _typed_minted_native_operator_constants(package_root=None) -> frozenset[str]:
     """String ``operator=`` kwargs that feed native-operation carrier mints.
 
     Discovers:
@@ -335,18 +335,25 @@ def _typed_minted_native_operator_constants() -> frozenset[str]:
     Single-character / non-identifier strings (e.g. ``BinaryOperatorOperation``
     term coordinates ``"+"``) are excluded — those are term spellings, not
     carrier operator names.
+
+    ``package_root`` is this package unless a caller names another root.
     """
     from pathlib import Path
+    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
     from sugar_source_tree.nodes import Call, Constant
-    from sugar_source_tree.tree import SourceFile
+    from sugar_source_tree.tree import SourceTree
 
-    package_root = Path(__file__).resolve().parent
+    package_root = (
+        Path(__file__).resolve().parent if package_root is None else Path(package_root)
+    )
     found: set[str] = set()
-    for path in package_root.rglob("*.py"):
+    # Step 2's file list, each opened the one way a file is opened: the same
+    # seated, populated unit the board's door reads (#7757 item 5).
+    for path in SourceTree(package_root).paths():
         if path.name == "caller_parameter_contract.py":
             # This module defines projectors and mint plumbing, not producers.
             continue
-        source_file = SourceFile.from_path(path)
+        source_file = open_source_file_for_construction(path, root=package_root)
         registered = (
             source_file.constructed_module.construction_event_receipt.registered_occurrences
         )

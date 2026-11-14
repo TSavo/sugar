@@ -30,11 +30,14 @@ _SOURCE = "def test_h():\n    assert h() == 3\n"
 
 def _call_fragment(root: Path):
     from sugar_source_tree.nodes import Call
+    from sugar_source_tree.reporter import CollectingReporter
 
     path = root / "m.py"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(_SOURCE, encoding="utf-8")
-    tree = lift_rpc._open_enumerated_file(path, root=root, locus_root=root)
+    tree = lift_rpc.open_source_file_for_construction(
+        path, root=root, reporter=CollectingReporter()
+    )
     (fn,) = tuple(tree.functions())
     (call,) = [node for node in fn.walk() if isinstance(node, Call)]
     return tree, fn, call.fragment

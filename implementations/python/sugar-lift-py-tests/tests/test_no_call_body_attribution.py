@@ -622,17 +622,25 @@ def test_discovery_projects_one_family_through_one_typed_construction_per_source
             }
         )
 
-    original = SourceFile.__init__
-    constructed_source_cids = []
+    from sugar_lift_py_tests import lift_rpc
 
-    def record_construction(self, source, *args, **kwargs):
-        constructed_source_cids.append(source[2])
-        return original(self, source, *args, **kwargs)
+    # The consumer opens each source once, through the one opener; the
+    # opener's own step-3 reads may traverse, the consumer may not.
+    original_open = lift_rpc.open_source_file_for_construction
+    original_nodes = SourceFile.nodes
+    constructed_source_cids = []
 
     def refuse_second_traversal(self):
         raise AssertionError("consumer started a second typed traversal")
 
-    monkeypatch.setattr(SourceFile, "__init__", record_construction)
+    def record_open(path, **kwargs):
+        monkeypatch.setattr(SourceFile, "nodes", original_nodes)
+        opened = original_open(path, **kwargs)
+        constructed_source_cids.append(opened.unit.source_cid)
+        monkeypatch.setattr(SourceFile, "nodes", refuse_second_traversal)
+        return opened
+
+    monkeypatch.setattr(lift_rpc, "open_source_file_for_construction", record_open)
     monkeypatch.setattr(SourceFile, "nodes", refuse_second_traversal)
     probes = discover_no_call_body_probes(
         {"rows": rows}, package, families=frozenset({ProducerFamily.ATTRIBUTE})
