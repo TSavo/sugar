@@ -211,6 +211,7 @@ class LanguageOwnedContextVarReadValue(FloorValue):
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.occurrence import site_coordinate_cid
 
         del owner
         return ctor(
@@ -252,6 +253,7 @@ class LanguageOwnedContextVarMethodValue(FloorValue):
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.occurrence import site_coordinate_cid
 
         del owner
         return ctor(
@@ -297,6 +299,7 @@ class LanguageOwnedCExtensionCallableValue(FloorValue):
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.occurrence import site_coordinate_cid
 
         del owner
         return ctor(
@@ -404,6 +407,7 @@ class LanguageOwnedCExtensionResultValue(FloorValue):
 
     def to_term(self, *, owner: str):
         from sugar_lift_py_tests.ir import ctor, str_const
+        from sugar_lift_py_tests.occurrence import site_coordinate_cid
 
         del owner
         return ctor(
@@ -411,7 +415,7 @@ class LanguageOwnedCExtensionResultValue(FloorValue):
             (
                 str_const(self.module_name),
                 str_const(self.exported_name),
-                str_const(self.occurrence or str(self.site)),
+                str_const(self.occurrence or site_coordinate_cid(self.site)),
             ),
         )
 

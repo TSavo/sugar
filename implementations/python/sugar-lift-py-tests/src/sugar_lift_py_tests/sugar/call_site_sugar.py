@@ -823,9 +823,11 @@ class CallSiteSugar(ConstructedTermSugar):
                     )
                     for pair in bound_source_actuals.projected_pairs
                 )
+                from sugar_lift_py_tests.occurrence import site_coordinate_cid
+
                 return Complete(
                     GeneratorConstructionV1.allocate(
-                        allocation_coordinate=str(self.site),
+                        allocation_coordinate=site_coordinate_cid(self.site),
                         frame_coordinate=source_call_frame.frame_cid,
                         binding_state=source_call_frame.runtime_entries,
                         steps=source_call_frame.generator_steps,

@@ -33,10 +33,11 @@ def current_path() -> tuple[str, ...]:
 
 
 def occurrence_key(site, path: tuple[str, ...] | None = None) -> str:
-    """``str(site)`` qualified by the occurrence path of this evaluation."""
+    """The site's coordinate CID qualified by the occurrence path of this
+    evaluation (#7808): content, never the site object's ``repr``."""
     if path is None:
         path = _PATH.get()
-    text = str(site)
+    text = site_coordinate_cid(site)
     if not path:
         return text
     return f"{text}@{'/'.join(path)}"

@@ -248,9 +248,9 @@ def _and_finally_with_raise_context(
         finalbody, _ground_edges(ctx, edge_keys, None)
     )
     # Slot for bind/resolve when reducing finally over a body halt.
-    site_key = getattr(site, "filename", None) or repr(site)
-    site_line = getattr(site, "line", "")
-    finally_slot = f"try-finally-in-flight:{site_key}:{site_line}"
+    from sugar_lift_py_tests.occurrence import site_coordinate_cid
+
+    finally_slot = f"try-finally-in-flight:{site_coordinate_cid(site)}"
 
     exits: list = []
     for incoming in pre_finally.exits:

@@ -91,8 +91,30 @@ def _label(kind, payload):
     return "halt " + str(getattr(payload, "exception_name", type(payload).__name__))
 
 
+_STARTS: dict[str, int] = {}
+
+
+def _index_starts(source):
+    """Each node's site coordinate CID -> its start offset in ``source``.
+
+    An occurrence names its site by coordinate CID, never by a fragment's
+    repr (#7808), so source order is read back through the source itself.
+    """
+    from sugar_lift_py_tests.occurrence import site_coordinate_cid
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_source_tree.tree import SourceFile
+
+    tree = SourceFile((source, "m.py", blake3_512_of(source.encode("utf-8"))))
+    _STARTS.clear()
+    for node in tree.nodes():
+        fragment = getattr(node, "fragment", None)
+        if fragment is not None:
+            _STARTS.setdefault(site_coordinate_cid(fragment), fragment.span.start)
+
+
 def _worlds(source, tmp_path):
     """Every atom assignment -> the sorted labels of the rows reachable there."""
+    _index_starts(source)
     rows = _rows(_exits(tmp_path, source))
     atoms = {}
     for _kind, _payload, guard in rows:
@@ -115,8 +137,9 @@ def _worlds(source, tmp_path):
 
 
 def _start(site_text):
-    """The start offset of a ``<SourceFragment 'f' [start, end) ...>`` spelling."""
-    return int(str(site_text).split("[", 1)[1].split(",", 1)[0])
+    """The start offset of the site an occurrence key names (its coordinate
+    CID, before any ``@`` occurrence path)."""
+    return _STARTS[str(site_text).split("@", 1)[0]]
 
 
 def _call_start(atom):
