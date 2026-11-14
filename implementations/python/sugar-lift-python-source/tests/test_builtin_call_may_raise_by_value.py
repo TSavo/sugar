@@ -1117,3 +1117,141 @@ def test_a_str_method_over_an_opaque_argument_keeps_its_marker():
         ).completed_value()
         assert type(minted) is OpaqueOpCallsite
         assert minted.language_callee is marker
+
+
+# The residue of #8145: a mapping pattern's ``**rest`` over a stale dict
+# walked the entries the dict arrived with (a contents read that bypassed
+# ``contents_current``), and a container a builtin handed back from its
+# operand had no ``allocation`` and no ``arrival``, so an undecided read of
+# it refused.
+
+
+def test_a_stale_dicts_rest_is_a_new_dict_whose_contents_are_undecided():
+    from sugar_lift_py_tests.floor import DictValue
+    from sugar_lift_py_tests.floor.object_identity import (
+        arrived,
+        contents_current,
+        identity_term,
+    )
+    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+        FalseBoolLiteralSugar,
+    )
+    from sugar_lift_py_tests.sugar.match_sugar import _mapping_rest
+
+    made = DictValue(((StringValue("k"), TermValue(1)),), allocation="made-here")
+    rests = []
+    for read in ("read-a", "read-b"):
+        stale = arrived(made, read)
+        matched = _mapping_rest(stale, (), "rest", "match-site").completed_value()
+        ((_key, rest),) = matched.binds
+        # A new dict, holding none of the entries the subject arrived with.
+        assert type(rest) is DictValue
+        assert rest.entries == ()
+        assert not contents_current(rest)
+        # Named by its derivation from the subject's arrival.
+        assert rest.arrival == f"{{**}}({read})@match-site"
+        # No read takes its contents: its truth is not its emptiness.
+        truth = rest.truth("truth-site").completed_value()
+        assert type(truth) is not FalseBoolLiteralSugar
+        rests.append(rest)
+    # Two rests of two stale dicts at one match: two objects, two terms.
+    first, second = (
+        identity_term(rest, "len-site", "receiver", owner="t") for rest in rests
+    )
+    assert first != second
+    # A current subject's rest is still its other entries, current.
+    matched = _mapping_rest(made, (), "rest", "match-site").completed_value()
+    ((_key, rest),) = matched.binds
+    assert rest.entries == made.entries
+    assert contents_current(rest)
+
+
+def test_a_stale_dicts_entries_are_never_walked_for_the_rest():
+    # Whether a symbolic key is a pattern key is undecided: walking the
+    # entries the dict arrived with would refuse over contents it may no
+    # longer hold.  Nothing reads them.
+    from sugar_lift_py_tests.floor import DictValue, SymbolicValue
+    from sugar_lift_py_tests.floor.object_identity import arrived
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.sugar.match_sugar import _mapping_rest
+
+    stale = arrived(
+        DictValue(
+            ((SymbolicValue(make_var("k")), TermValue(1)),), allocation="made-here"
+        ),
+        "dict-read",
+    )
+    outcome = _mapping_rest(stale, (StringValue("a"),), "rest", "match-site")
+    ((_key, rest),) = outcome.completed_value().binds
+    assert rest.entries == ()
+    assert rest.arrival == "{**}(dict-read)@match-site"
+
+
+def test_a_builtin_that_returns_its_operand_returns_that_object():
+    from sugar_lift_py_tests.floor.object_identity import (
+        contents_current,
+        identity_term,
+        object_identity,
+    )
+    from sugar_lift_py_tests.source_call_resolution import builtin_ground_fold
+    from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+        TrueBoolLiteralSugar,
+    )
+    from sugar_source_tree.nodes import LanguageCallee
+
+    xs = ListValue((TermValue(3),), allocation="xs-display")
+    ys = ListValue((TermValue(1),), allocation="ys-display")
+    # ``max(xs, ys)`` is ``xs``: the same object, so the same value.
+    larger = builtin_ground_fold(
+        LanguageCallee.BUILTIN_MAX, (xs, ys), "max-site"
+    ).completed_value()
+    assert larger is xs
+    assert contents_current(larger)
+    # An undecided read of it names it by its contents, never refuses.
+    assert identity_term(larger, "len-site", "receiver", owner="t") == xs.to_term(
+        owner="t"
+    )
+    same = object_identity(larger, xs, "is-site").completed_value()
+    assert type(same) is TrueBoolLiteralSugar
+    # ``sum([], start)`` is ``start``.
+    start = ListValue((TermValue(7),), allocation="start-display")
+    empty = ListValue((), allocation="empty-display")
+    total = builtin_ground_fold(
+        LanguageCallee.BUILTIN_SUM, (empty, start), "sum-site"
+    ).completed_value()
+    assert total is start
+    # A list the builtin made is new here, at the call's site.
+    copied = builtin_ground_fold(
+        LanguageCallee.BUILTIN_LIST, (xs,), "list-site"
+    ).completed_value()
+    assert copied is not xs
+    assert copied.elements == xs.elements
+    assert copied.allocation == "list-site"
+
+
+def test_a_member_a_method_hands_back_is_that_member():
+    from sugar_lift_py_tests.floor import DictValue
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+    from sugar_lift_py_tests.source_call_resolution import container_method_cited_fold
+
+    inner = ListValue((TermValue(1),), allocation="inner-display")
+    receiver = DictValue(((StringValue("k"), inner),), allocation="dict-display")
+    got = container_method_cited_fold(
+        receiver, "get", (StringValue("k"),), "get-site"
+    ).completed_value()
+    assert got is inner
+    assert contents_current(got)
+
+
+def test_a_list_max_hands_back_is_current(tmp_path):
+    # ``m`` is ``xs``, a list this frame built: its length is read from it.
+    returns, halts = _returns(
+        tmp_path,
+        "def f():\n"
+        "    xs = [3]\n"
+        "    ys = [1]\n"
+        "    m = max(xs, ys)\n"
+        "    return len(m)\n",
+    )
+    assert returns == [TermValue(1)]
+    assert halts == []

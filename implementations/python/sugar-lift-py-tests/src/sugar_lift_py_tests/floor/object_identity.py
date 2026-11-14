@@ -29,9 +29,11 @@ from __future__ import annotations
 # There is no default ``allocation``: every ``list``/``dict``/``set`` value
 # constructor names it (a required keyword).  A fresh object names the
 # source site that made it (``made_at``, ``made_from``); a same-object
-# post-state names the producing value's own; a value that arrived, was
-# derived from contents that are not current, or that a builtin handed back
-# from its operand names None.  A ``tuple`` names it only where a display
+# post-state names the producing value's own, and so does an object a
+# builtin hands back from its operand (it is that operand's own value,
+# ``_handed_over`` in ``source_call_resolution``); a value that arrived, or
+# was derived from contents that are not current, names None.  A ``tuple``
+# names it only where a display
 # CPython builds at runtime made it (``TupleSugar``); every other tuple names
 # None (a tuple's contents never change, so its ``allocation`` answers
 # identity only).  A ``list``/``dict``/``set`` with None names its object by
