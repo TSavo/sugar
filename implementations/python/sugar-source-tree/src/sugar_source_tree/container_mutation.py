@@ -655,55 +655,95 @@ _BUILTIN_CONSTRUCTORS = frozenset(
 )
 
 
-def builtin_typed(node, scope, depth=0) -> bool:
+def builtin_typed(node, scope, depth=0, *, names=frozenset()) -> bool:
     """Whether ``node`` is a decided builtin value all the way down: every
     object it is or holds has a builtin type, so no dunder a builtin invokes on
-    it is user code."""
+    it is user code.
+
+    A ``Name`` is one when ``names`` holds it (the caller decided the object
+    it denotes is one).  An operator, comparison, conditional, item read or
+    f-string over builtin values is one too: the dunder it dispatches is a
+    builtin's, and what that returns is builtin (``in``/``not in``/``is``/
+    ``is not``/``not`` always give a ``bool``)."""
     from .nodes import (
+        BinOp,
+        BoolOp,
         BuiltinContainerCall,
         BuiltinContainerProjection,
         Call,
+        Compare,
         Constant,
         Dict,
+        IfExp,
+        JoinedStr,
         List,
         Name,
         Set,
+        Slice,
         Starred,
+        Subscript,
         Tuple_,
+        UnaryOp,
     )
 
     if depth > 32:
         return False
+
+    def builtin(child) -> bool:
+        return builtin_typed(child, scope, depth + 1, names=names)
+
     node = _identity(node)
-    if isinstance(node, Constant):
+    if isinstance(node, (Constant, JoinedStr)):
         return True
+    if isinstance(node, Name):
+        return node.id in names
     if isinstance(node, (List, Tuple_, Set)):
-        return all(builtin_typed(e, scope, depth + 1) for e in node.elts)
+        return all(builtin(e) for e in node.elts)
     if isinstance(node, Dict):
-        return all(
-            k is not None and builtin_typed(k, scope, depth + 1)
-            for k in node.keys
-        ) and all(builtin_typed(v, scope, depth + 1) for v in node.values)
-    if isinstance(node, Starred):
-        return builtin_typed(node.value, scope, depth + 1)
-    if isinstance(node, BuiltinContainerProjection):
-        return builtin_typed(node.call, scope, depth + 1)
-    if isinstance(node, BuiltinContainerCall):
-        return builtin_typed(node.receiver, scope, depth + 1) and all(
-            builtin_typed(a, scope, depth + 1) for a in node.args
+        return all(k is not None and builtin(k) for k in node.keys) and all(
+            builtin(v) for v in node.values
         )
+    if isinstance(node, Starred):
+        return builtin(node.value)
+    if isinstance(node, BinOp):
+        return builtin(node.left) and builtin(node.right)
+    if isinstance(node, UnaryOp):
+        return node.op.kind == "Not" or builtin(node.operand)
+    if isinstance(node, BoolOp):
+        return all(builtin(v) for v in node.values)
+    if isinstance(node, Compare):
+        operands = (node.left, *node.comparators)
+        return all(
+            op.kind in ("Is", "IsNot", "In", "NotIn")
+            or (builtin(operands[index]) and builtin(operands[index + 1]))
+            for index, op in enumerate(node.ops)
+        )
+    if isinstance(node, IfExp):
+        return builtin(node.body) and builtin(node.orelse)
+    if isinstance(node, Subscript):
+        return builtin(node.value) and builtin(node.slice_)
+    if isinstance(node, Slice):
+        return all(
+            part is None or builtin(part)
+            for part in (node.lower, node.upper, node.step)
+        )
+    if isinstance(node, BuiltinContainerProjection):
+        return builtin(node.call)
+    if isinstance(node, BuiltinContainerCall):
+        return builtin(node.receiver) and all(builtin(a) for a in node.args)
     if getattr(node, "kind", None) == "OpaqueObjectStateV1":
-        return builtin_typed(node.base, scope, depth + 1)
+        return builtin(node.base)
     if (
         isinstance(node, Call)
         and isinstance(node.func, Name)
         and node.func.id not in scope
+        and node.func.id not in names
         and not node.keywords
     ):
         if node.func.id in _IMMUTABLE_RESULT_BUILTINS:
             return True
         if node.func.id in _BUILTIN_CONSTRUCTORS:
-            return all(builtin_typed(a, scope, depth + 1) for a in node.args)
+            return all(builtin(a) for a in node.args)
     return False
 
 

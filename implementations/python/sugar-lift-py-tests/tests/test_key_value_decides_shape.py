@@ -342,3 +342,48 @@ def test_a_local_list_whose_body_calls_is_unrolled() -> None:
     # Nothing but ``xs`` holds the list: a call in the body cannot reach it.
     body = _body(_escaped("", "box.grow()"))
     assert len(_stores(body, "x")) == 2
+
+
+# ---------------------------------------------------------------------------
+# A hidden call runs code too: an operator or attribute read on a source
+# object dispatches its class's dunder or property (#7757 item 7, the gap
+# #7980 named).
+# ---------------------------------------------------------------------------
+
+
+def _hidden(statement: str) -> str:
+    return (
+        "class C:\n"
+        "    def __init__(self, box):\n"
+        "        self.box = box\n"
+        "    def __add__(self, other):\n"
+        "        self.box.items.append(3)\n"
+        "        return other\n"
+        "    @property\n"
+        "    def size(self):\n"
+        "        self.box.items.append(3)\n"
+        "        return 0\n"
+        "\n"
+        "def f(box, obj: C):\n"
+        "    xs = [1, 2]\n"
+        "    box.items = xs\n"
+        "    for x in xs:\n"
+        f"        {statement}\n"
+        "        r = x\n"
+        "    return 0\n"
+    )
+
+
+def test_an_escaped_list_whose_body_adds_to_a_source_object_is_not_unrolled() -> None:
+    body = _body(_hidden("y = obj + 1"))
+    assert _stores(body, "x") == []
+
+
+def test_an_escaped_list_whose_body_adds_constants_is_unrolled() -> None:
+    body = _body(_hidden("y = 1 + 2"))
+    assert len(_stores(body, "x")) == 2
+
+
+def test_an_escaped_list_whose_body_reads_a_property_is_not_unrolled() -> None:
+    body = _body(_hidden("y = obj.size"))
+    assert _stores(body, "x") == []

@@ -3885,30 +3885,137 @@ def _target_edge(node, field) -> bool:
     return field == "optional_vars" and isinstance(node, WithItem)
 
 
-def _runs_reaching_code(reads, scope) -> bool:
+def _runs_reaching_code(reads, scope, target=None) -> bool:
     """Whether ``reads`` (a loop body, a comprehension's element and
     conditions) may run code that reaches an object through something other
     than a read of one of its names: a call that may run code over its
-    operands (``container_mutation.runs_operand_code``), a store or delete
-    through an attribute or subscript, a ``with`` (its manager's
-    ``__enter__``/``__exit__``), or a suspension (``yield``, ``await``,
-    ``async for``) where other code runs."""
-    from .container_mutation import runs_operand_code
+    operands (``container_mutation.runs_operand_code``) or of a name
+    ``reads`` rebinds, a store or delete through an attribute or subscript,
+    a ``with`` (its manager's ``__enter__``/``__exit__``), a suspension
+    (``yield``, ``await``, ``async for``) where other code runs, a ``match``
+    (its patterns compare, read items and attributes, and check classes), a
+    class body or a decorator, or a ``raise`` of anything but a call (a
+    class it raises is instantiated).
 
-    stack = [(root, False) for root in reads if isinstance(root, Node)]
+    A hidden call runs code too (``_dunder_operands``): an operator, a
+    comparison, a truth test, an attribute or item read, an f-string field,
+    an iteration, an unpacking or a hashed key dispatches a dunder of its
+    operands, and a dunder of a source class -- or a property, or
+    ``__getattr__`` -- is code.  It counts unless every operand is a builtin
+    value all the way down (``container_mutation.builtin_typed``): a
+    constant, a display or operator over builtin values, a builtin call
+    that returns one, an item of the ground list ``target`` iterates, or a
+    name ``scope`` binds to a builtin value; a name ``reads`` rebinds is
+    none of these."""
+    from .container_mutation import _state, builtin_typed, runs_operand_code
+
+    roots = [root for root in reads if isinstance(root, Node)]
+    rebound = frozenset().union(*(root.names_bound_within() for root in roots))
+    items = frozenset(_target_bound_names(target)) if target is not None else ()
+    names = set()
+    if "*" not in rebound:
+        seen = set()
+        for root in roots:
+            for node in root.walk():
+                if not isinstance(node, Name) or node.id in seen:
+                    continue
+                seen.add(node.id)
+                if node.id in rebound:
+                    continue
+                if node.id in items or (
+                    node.id in scope and builtin_typed(_state(scope[node.id]), scope)
+                ):
+                    names.add(node.id)
+    names = frozenset(names)
+
+    stack = [(root, False) for root in roots]
     while stack:
         node, store = stack.pop()
-        if isinstance(node, Call) and runs_operand_code(node, scope):
+        if isinstance(node, Call) and (
+            runs_operand_code(node, scope)
+            or (isinstance(node.func, Name) and node.func.id in rebound)
+        ):
             return True
-        if isinstance(node, (Yield, YieldFrom, Await, With, AsyncWith, AsyncFor)):
+        if isinstance(
+            node,
+            (Yield, YieldFrom, Await, With, AsyncWith, AsyncFor, Match, ClassDef),
+        ):
+            return True
+        if isinstance(node, (FunctionDef, AsyncFunctionDef)) and node.decorators:
+            return True
+        if isinstance(node, Raise) and any(
+            part is not None and not isinstance(part, Call)
+            for part in (node.exc, node.cause)
+        ):
             return True
         if store and isinstance(node, (Attribute, Subscript)):
+            return True
+        if not all(
+            builtin_typed(operand, scope, names=names)
+            for operand in _dunder_operands(node, store)
+        ):
             return True
         unpacks = store and isinstance(node, (Tuple_, List, Starred))
         for field, _index, child in node._child_edges():
             if isinstance(child, Node):
                 stack.append((child, unpacks or _target_edge(node, field)))
     return False
+
+
+def _dunder_operands(node, store) -> tuple:
+    """The operands whose dunders ``node`` dispatches when it runs: an
+    operator's, a comparison's (but ``is``/``is not``), a truth test's, an
+    attribute or item read's receiver and index, an f-string field's value,
+    an iteration's or unpacking's iterable, a hashed key.  A store target
+    reads nothing (an attribute or subscript store is code already)."""
+    if store:
+        return ()
+    if isinstance(node, BinOp):
+        return (node.left, node.right)
+    if isinstance(node, UnaryOp):
+        return (node.operand,)
+    if isinstance(node, BoolOp):
+        return tuple(node.values)
+    if isinstance(node, Compare):
+        operands = (node.left, *node.comparators)
+        return tuple(
+            operand
+            for index, op in enumerate(node.ops)
+            if op.kind not in ("Is", "IsNot")
+            for operand in operands[index : index + 2]
+        )
+    if isinstance(node, Attribute):
+        return (node.value,)
+    if isinstance(node, Subscript):
+        return (node.value, node.slice_)
+    if isinstance(node, FormattedValue):
+        return (node.value,)
+    if isinstance(node, (If, While, IfExp, Assert)):
+        return (node.test,)
+    if isinstance(node, For):
+        return (node.iter,)
+    if isinstance(node, Comprehension):
+        return (node.iter, *node.ifs)
+    if isinstance(node, Assign):
+        unpacked = any(
+            isinstance(target, (Tuple_, List, Starred)) for target in node.targets
+        )
+        return (node.value,) if unpacked else ()
+    if isinstance(node, AugAssign):
+        return (node.target, node.value)
+    if isinstance(node, Starred):
+        return (node.value,)
+    if isinstance(node, Dict):
+        return tuple(
+            item.value if item.key is None else item.key for item in node.items
+        )
+    if isinstance(node, Set):
+        return tuple(node.elts)
+    if isinstance(node, SetComp):
+        return (node.elt,)
+    if isinstance(node, DictComp):
+        return (node.key,)
+    return ()
 
 
 def _list_escapes(loop, reference, ground, scope) -> bool:
@@ -10958,7 +11065,7 @@ class For(Statement):
                 sugar="For.concrete_elements", role="temporal", site=where
             ):
                 elements = (
-                    self._concrete_elements(subst_iter, self.body, scope)
+                    self._concrete_elements(subst_iter, self.body, scope, self.target)
                     if concrete
                     else None
                 )
@@ -11409,7 +11516,7 @@ class For(Statement):
     _UNROLL_FUEL = 128
 
     def _concrete_elements(
-        self, iterable: "Expression", reads=(), scope=None
+        self, iterable: "Expression", reads=(), scope=None, target=None
     ) -> "Optional[list]":
         """The element nodes to unroll over, or ``None`` if `iterable` is not
         concrete. A `List`/`Tuple_` literal is concrete by construction; a
@@ -11424,9 +11531,10 @@ class For(Statement):
         when ``reads`` (the loop body, the comprehension's element and
         conditions) cannot reach it: they read none of its names
         (``_object_read_in``), and either they run no code that could reach
-        it another way (``_runs_reaching_code``) or nothing but its own names
-        holds it (``_list_escapes``).  Python iterates the live list; a list
-        not unrolled stays the live loop."""
+        it another way (``_runs_reaching_code``; ``target`` names the items,
+        whose dunders are a ground list's) or nothing but its own names holds
+        it (``_list_escapes``).  Python iterates the live list; a list not
+        unrolled stays the live loop."""
         if iterable.kind in ("EvaluationRef", "Subscript"):
             ground = _ground_value(iterable)
             if ground is None or ground.kind not in ("List", "Tuple"):
@@ -11434,7 +11542,7 @@ class For(Statement):
             if ground.kind == "List" and (
                 _object_read_in(iterable, reads, scope or {})
                 or (
-                    _runs_reaching_code(reads, scope or {})
+                    _runs_reaching_code(reads, scope or {}, target)
                     and _list_escapes(self, iterable, ground, scope or {})
                 )
             ):
@@ -15925,7 +16033,9 @@ class ListComp(Expression):
         it = new_iter if ic else gen.iter
         if ListComp._calls_shadowed_range(self, it, scope):
             return None
-        elements = For._concrete_elements(self, it, (self.elt, *gen.ifs), scope)
+        elements = For._concrete_elements(
+            self, it, (self.elt, *gen.ifs), scope, gen.target
+        )
         if elements is None:
             return None
         if len(elements) > For._UNROLL_FUEL:
@@ -16479,7 +16589,7 @@ class SetComp(Expression):
         if ListComp._calls_shadowed_range(self, iterable, scope):
             return None
         elements = For._concrete_elements(
-            self, iterable, (self.elt, *gen.ifs), scope
+            self, iterable, (self.elt, *gen.ifs), scope, gen.target
         )
         if elements is None or len(elements) > For._UNROLL_FUEL:
             return None
@@ -16594,7 +16704,7 @@ class DictComp(Expression):
         if ListComp._calls_shadowed_range(self, iterable, scope):
             return None
         elements = For._concrete_elements(
-            self, iterable, (self.key, self.value, *gen.ifs), scope
+            self, iterable, (self.key, self.value, *gen.ifs), scope, gen.target
         )
         if elements is None or len(elements) > For._UNROLL_FUEL:
             return None
