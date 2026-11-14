@@ -305,11 +305,13 @@ class BoolOpSugar(ConstructedTermSugar):
 
     def desugar(self, ctx: object = None) -> ExitSet:
         from sugar_lift_py_tests.floor.named_expression_value import (
+            bind_walrus_binds,
             consume_operands,
+            peel_walrus_binds,
         )
         from sugar_lift_py_tests.outcome.exit_set import factored_operand
 
-        def reduce_from(index: int):
+        def reduce_from(index: int, ctx):
             operand = self.values[index]
 
             # Python returns the final operand; it does not call bool(final).
@@ -320,7 +322,10 @@ class BoolOpSugar(ConstructedTermSugar):
 
             # A non-final operand goes through the one operand door: a walrus
             # in it binds on its stopping face and on every face the later
-            # operands reach, since it ran on both.
+            # operands reach, since it ran on both.  The later operands are
+            # evaluated after it, so they reduce with its binds applied: a
+            # read of its walrus there is a reference to the walrus's key
+            # (``nodes._scope_after``: ``(m := f()) and m.group(1)``).
             return factored_operand(operand.desugar(ctx)).and_then(
                 lambda value: consume_operands(
                     lambda presented: select_boolop_operand(
@@ -328,10 +333,13 @@ class BoolOpSugar(ConstructedTermSugar):
                         op_kind=self.op_kind,
                         site=self.site,
                         index=index,
-                        on_continue=lambda: reduce_from(index + 1),
+                        on_continue=lambda: reduce_from(
+                            index + 1,
+                            bind_walrus_binds(peel_walrus_binds(value)[0], ctx),
+                        ),
                     ),
                     value,
                 )
             )
 
-        return reduce_from(0)
+        return reduce_from(0, ctx)

@@ -978,3 +978,101 @@ def test_a_live_loops_branch_reads_this_items_value() -> None:
         )
     )
     assert returned == TermValue(2)
+
+
+# ---------------------------------------------------------------------------
+# Every sub-expression evaluated before another hands its walrus keys to the
+# later one's substitution scope, in Python's evaluation order
+# (``nodes._scope_after``)
+# ---------------------------------------------------------------------------
+
+
+def _assert_reads_its_walrus(node, rewritten, name: str, count: int) -> None:
+    """Every read of ``name`` under ``node`` is a reference to the key of a
+    walrus of ``name`` in ``rewritten``: never the binding before it."""
+    keys = {w.evaluation for w in _walruses(rewritten) if w.target.id == name}
+    assert keys
+    reads = _references(node, name)
+    assert len(reads) == count, reads
+    for read in reads:
+        assert read.walrus is True
+        assert read.evaluation in keys
+
+
+@pytest.mark.parametrize(
+    ("body", "name", "count"),
+    [
+        # a later operand of the same `and` / `or`
+        ("    m = 0\n    return (m := g()) and m.group(1)\n", "m", 1),
+        ("    m = 0\n    return (m := g()) or h(m) or m\n", "m", 2),
+        # later call arguments, positional and keyword
+        ("    y = 0\n    return h((y := g()), y, k=y)\n", "y", 2),
+        # a later leg of a comparison chain
+        ("    y = 0\n    return 0 < (y := g()) < y\n", "y", 1),
+        # a later arithmetic operand
+        ("    y = 0\n    return (y := g()) + y\n", "y", 1),
+        # a later display element
+        ("    y = 0\n    return [(y := g()), y]\n", "y", 1),
+        # a subscript's index, after its receiver
+        ("    y = 0\n    return (y := g())[h(y)]\n", "y", 1),
+        # an assert's message, after its test
+        ("    m = 0\n    assert (m := g()), m\n", "m", 1),
+        # a with's later items and its body, after its item
+        ("    n = 0\n    with h(n := g()), h(n):\n        use(n)\n", "n", 2),
+        # a match's cases, after its subject
+        (
+            "    s = 0\n"
+            "    match (s := g()):\n"
+            "        case 1:\n"
+            "            use(s)\n"
+            "        case _:\n"
+            "            use(s)\n",
+            "s",
+            2,
+        ),
+        # a case's body, after its guard
+        (
+            "    k = 0\n"
+            "    match g():\n"
+            "        case 1 if (k := h()):\n"
+            "            use(k)\n",
+            "k",
+            1,
+        ),
+    ],
+)
+def test_a_read_evaluated_after_a_walrus_reads_its_key(
+    body: str, name: str, count: int
+) -> None:
+    rewritten = _function("def f(g, h, use):\n" + body).substitute({})
+    _assert_reads_its_walrus(rewritten, rewritten, name, count)
+
+
+def test_a_for_body_and_else_read_the_iterables_walrus_through_its_key() -> None:
+    rewritten = _function(
+        "def f(g, use):\n"
+        "    ys = 0\n"
+        "    for x in (ys := g()):\n"
+        "        use(ys)\n"
+        "    else:\n"
+        "        use(ys)\n"
+    ).substitute({})
+    loop = next(node for node in rewritten.walk() if node.kind == "For")
+    for suite in (loop.body, loop.orelse):
+        (statement,) = suite
+        _assert_reads_its_walrus(statement, rewritten, "ys", 1)
+
+
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        # The later operand reads the walrus, not the `t = 1` before it.
+        ("    t = 1\n    return (t := 5) and t + 1\n", 6),
+        ("    t = 1\n    return (t := 0) or t + 7\n", 7),
+    ],
+)
+def test_a_later_short_circuit_operand_reads_the_value_its_walrus_wrote(
+    body: str, expected: int
+) -> None:
+    returned = _returned_value(_call_outcome("def f():\n" + body + "\nf()\n"))
+    assert returned == TermValue(expected)

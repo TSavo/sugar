@@ -56,7 +56,8 @@ class NamedExpressionValue(FloorValue):
         """``ctx`` with this walrus's bind: the assigned value under the
         evaluation key, never under the name.  Every read of the name after
         the walrus is a reference to the key (``NamedExpr.substitution_binding``;
-        a branch of the test that holds it, ``nodes._scope_after_test``).
+        anything evaluated after the walrus in its statement,
+        ``nodes._scope_after``).
         The one place a walrus writes the temporal; ``extend_scope`` and every
         carrier (``bind_walrus_binds``) apply it.  A walrus substitution never
         keyed has no read that refers to it (its reads were given its value),

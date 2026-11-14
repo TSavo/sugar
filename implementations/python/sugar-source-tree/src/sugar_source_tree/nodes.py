@@ -3640,17 +3640,16 @@ def _holds_evaluation(statements) -> bool:
     )
 
 
-def _arm_walruses(arm, *, deferred: bool = False):
+def _arm_walruses(arm):
     """The keyed walruses (plain name target, ``evaluation`` minted) a
     conditional expression's arm runs when it runs: every one under ``arm``
     except those in a lambda or a generator expression, which run later if
-    at all.  With ``deferred``, a generator expression's walruses too: their
-    references are ``deferred`` (``NamedExpr.substitution_binding``)."""
+    at all."""
     found = []
     stack = [arm]
     while stack:
         node = stack.pop()
-        if node.kind == "Lambda" or (node.kind == "GeneratorExp" and not deferred):
+        if node.kind in ("Lambda", "GeneratorExp"):
             continue
         if (
             node.kind == "NamedExpr"
@@ -3662,17 +3661,70 @@ def _arm_walruses(arm, *, deferred: bool = False):
     return found
 
 
-def _scope_after_test(test, scope):
-    """``scope`` with each keyed walrus in the substituted ``test`` of an
-    ``if`` (an ``elif`` is one), a ``while`` or a conditional expression
-    bound, in evaluation order, to a reference to its evaluation
+def _scope_after(scope, evaluated, substituted):
+    """``scope`` for what Python evaluates after ``evaluated`` (a node, a
+    tuple of them in evaluation order, or None), whose substitution in
+    ``scope`` is ``substituted``: each keyed walrus ``evaluated`` runs bound,
+    in the order its writes happen, to a reference to its evaluation
     (``NamedExpr.substitution_binding``), as the block binds a read after a
-    walrus statement (#7911).  The test runs before either branch, so a
-    branch reads the walrus's key, never the name as it stood before the
-    test: ``if (t := f(v)): return t``.  A walrus in a lambda does not run
-    with the test; one in a generator expression binds its ``deferred``
-    reference.  ``scope`` itself when the test holds none."""
-    for walrus in _arm_walruses(test, deferred=True):
+    walrus statement (#7911).
+
+    The one rule for a walrus inside a statement: every sub-expression
+    evaluated before another hands its walrus keys to the later one's
+    substitution scope, so the later read is the walrus's key, never the
+    name as it stood before the walrus.  An ``if``/``elif``/``while`` or
+    conditional-expression test to its branches (``if (t := f(v)): return
+    t``), a ``for`` iterable to its body and ``else``, a ``with`` item to the
+    later items and the body, a ``match`` subject to its cases and a guard to
+    its case's body, an ``assert`` test to its message, and each operand,
+    argument, element or comparison leg to the ones after it
+    (``Node._substitute_children``: ``(m := f()) and m.group(1)``).
+
+    A walrus in a lambda does not run with ``evaluated``; one in a generator
+    expression binds its ``deferred`` reference.  Only a walrus written in
+    ``evaluated``'s own source counts: a term substitution put in its place
+    (a name's binding) carries the walrus of an earlier statement, already
+    bound or since rebound.  ``scope`` itself when ``evaluated`` holds none."""
+    if evaluated is None:
+        return scope
+    if not isinstance(evaluated, Node):
+        for item, new in zip(tuple(evaluated), tuple(substituted)):
+            if isinstance(item, Node):
+                scope = _scope_after(scope, item, new)
+        return scope
+    if not isinstance(substituted, Node):
+        return scope
+    span = evaluated.span
+    # A walrus is spelled ``:=``: without it in the source nothing below
+    # writes, and the walk is never asked.
+    if evaluated.unit.source.find(":=", span.start, span.end) < 0:
+        return scope
+    written = []
+    seen = set()
+    stack = [(substituted, False)]
+    while stack:
+        node, finished = stack.pop()
+        if finished:
+            # A walrus writes once its value is evaluated: after every
+            # walrus inside it.
+            if (
+                node.kind == "NamedExpr"
+                and isinstance(node.target, Name)
+                and isinstance(getattr(node, "evaluation", None), str)
+                and node.unit is evaluated.unit
+                and span.start <= node.span.start
+                and node.span.end <= span.end
+            ):
+                written.append(node)
+            continue
+        if id(node) in seen or node.kind == "Lambda":
+            continue
+        seen.add(id(node))
+        stack.append((node, True))
+        stack.extend(
+            (child, False) for _field, _index, child in reversed(node.children())
+        )
+    for walrus in written:
         binding = walrus.substitution_binding(scope)
         if binding:
             scope = {**scope, **walrus._binding_entries(binding, scope)}
@@ -5071,15 +5123,38 @@ class Node(Typed):
 
     def _substitute_children(self, scope: BindingMap) -> "Node":
         """The structural recurse a NON-binding compound opts into: substitute
-        every child against the SAME scope; if any changed, rebuild me around
-        them (a shadow node borrowing my span); if none changed, return myself.
-        A node calls this DELIBERATELY — it is never the silent default, because
-        a scope-owner must mask its bound names before it can use it safely."""
+        every child in Python's evaluation order (``_child_fields`` order, a
+        tuple's items in order), each against the scope the children before it
+        leave (``_scope_after``: a walrus in an earlier operand, argument,
+        element or leg is read in a later one through its key); if any
+        changed, rebuild me around them (a shadow node borrowing my span); if
+        none changed, return myself.  A node calls this DELIBERATELY — it is
+        never the silent default, because a scope-owner must mask its bound
+        names before it can use it safely."""
         from .shadow import rewrite
 
         changed: dict[str, object] = {}
         for name in type(self)._child_fields:
-            new, diff = self._substitute_field(getattr(self, name), scope)
+            value = getattr(self, name)
+            if value is None or isinstance(value, Node):
+                new, diff = self._substitute_field(value, scope)
+                scope = _scope_after(scope, value, new)
+            else:
+                items = tuple(value)
+                new_items = []
+                for item in items:
+                    if isinstance(item, Node):
+                        new_item = self._substituted_child(item, scope)
+                        scope = _scope_after(scope, item, new_item)
+                    else:
+                        new_item = item
+                    new_items.append(new_item)
+                diff = any(new is not old for new, old in zip(new_items, items))
+                if diff:
+                    for new_item, old in zip(new_items, items):
+                        if new_item is not old and isinstance(old, Node):
+                            old.discharge_by_substitution()
+                new = tuple(new_items) if diff else value
             if diff:
                 changed[name] = new
         if not changed:
@@ -6462,7 +6537,11 @@ class MatchCase(Node):
         new_guard, d = self._substitute_field(self.guard, inner)
         if d:
             changed["guard"] = new_guard
-        new_body, d = self._substitute_body(self.body, inner)
+        # The guard is evaluated before its case's body: a walrus in it is
+        # read there through its key (``_scope_after``).
+        new_body, d = self._substitute_body(
+            self.body, _scope_after(inner, self.guard, new_guard)
+        )
         if d:
             changed["body"] = new_body
         return self if not changed else rewrite(self, **changed)
@@ -11081,6 +11160,10 @@ class For(Statement):
         with reduction_span(sugar="For.substitute", role="temporal", site=where):
             new_iter, iter_changed = self._substitute_field(self.iter, scope)
             subst_iter = new_iter if iter_changed else self.iter
+            # The iterable is evaluated once, before every item and the
+            # ``else``: a walrus in it is read there through its key
+            # (``_scope_after``), never the name as it stood before the loop.
+            scope = _scope_after(scope, self.iter, subst_iter)
 
             # `else` is unrollable too: the jump-guard means no `break` exists, and
             # with no break the else ALWAYS runs -- it is just more block, spliced
@@ -11740,19 +11823,19 @@ class While(Statement):
         # in a live ``for`` (``_loop_header_bindings``); the test and the
         # ``else`` read names as before.  The body and the ``else`` run after
         # an evaluation of the test: a walrus in it is read through its key
-        # (``_scope_after_test``), never the name as it stood before the test.
+        # (``_scope_after``), never the name as it stood before the test.
         bound = For._stmts_bound_names(self.body)
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
         changed = {}
         new_test, d = self._substitute_field(self.test, bs)
         if d:
             changed["test"] = new_test
-        body_scope = _scope_after_test(
-            new_test, {**bs, **_loop_header_bindings(self, bound, scope)}
+        body_scope = _scope_after(
+            {**bs, **_loop_header_bindings(self, bound, scope)}, self.test, new_test
         )
         for f, field_scope in (
             ("body", body_scope),
-            ("orelse", _scope_after_test(new_test, bs)),
+            ("orelse", _scope_after(bs, self.test, new_test)),
         ):
             new, d = self._substitute_body(getattr(self, f), field_scope)
             if d:
@@ -11891,10 +11974,10 @@ class If(Statement):
         if d:
             changed["test"] = new_test
         # The test runs before either branch: a walrus in it is read in both
-        # through its key (``_scope_after_test``), and a name an arm rebinds
+        # through its key (``_scope_after``), and a name an arm rebinds
         # joins against that reference.  The block binds it after the ``if``
         # from the test itself (``_substitute_body_tracked``).
-        scope = _scope_after_test(new_test, scope)
+        scope = _scope_after(scope, self.test, new_test)
         new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
         if d:
             changed["body"] = new_body
@@ -13352,7 +13435,10 @@ class With(Statement):
             changed["items"] = new_items
         items = new_items if d else self.items
 
-        body_scope = dict(scope)
+        # The item is evaluated before the body (and, nested, before every
+        # later item): a walrus in it is read there through its key
+        # (``_scope_after``), never the name as it stood before the ``with``.
+        body_scope = dict(_scope_after(scope, self.items, items))
         if self.unit.construction_context is not None:
             if len(items) != 1:
                 return self if not changed else rewrite(self, **changed)
@@ -15200,6 +15286,9 @@ class Match(Statement):
 
         new_subject, subj_changed = self._substitute_field(self.subject, scope)
         subject = new_subject if subj_changed else self.subject
+        # The subject is evaluated before every case: a walrus in it is read
+        # there through its key (``_scope_after``).
+        scope = _scope_after(scope, self.subject, subject)
 
         new_cases = []
         cases_changed = False
@@ -15833,7 +15922,7 @@ class IfExp(Expression):
         listed.
 
         The test runs before either arm: a walrus in it (``t if (t := f())
-        else 0``) is read in both through its key (``_scope_after_test``),
+        else 0``) is read in both through its key (``_scope_after``),
         and an arm's walrus of the same name holds that reference's value on
         the other arm."""
         from .shadow import rewrite
@@ -15842,7 +15931,7 @@ class IfExp(Expression):
         new_test, d = self._substitute_field(self.test, scope)
         if d:
             changed["test"] = new_test
-        scope = _scope_after_test(new_test, scope)
+        scope = _scope_after(scope, self.test, new_test)
         for field_name in ("body", "orelse"):
             new, d = self._substitute_field(getattr(self, field_name), scope)
             if d:
@@ -18715,7 +18804,10 @@ class Subscript(Expression):
         from .shadow import rewrite
 
         receiver, receiver_changed = self._substitute_field(self.value, scope)
-        index, index_changed = self._substitute_field(self.slice_, scope)
+        # The receiver is evaluated before the index (``_scope_after``).
+        index, index_changed = self._substitute_field(
+            self.slice_, _scope_after(scope, self.value, receiver)
+        )
         if isinstance(receiver, ObjectPlaceStateV1):
             projected_key = receiver.subscript_key_projection(index)
             if projected_key is not None:
