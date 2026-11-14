@@ -192,10 +192,6 @@ pub struct ProveArgs {
     /// Consensus policy JSON used to evaluate a required empirical witness vector.
     #[arg(long = "consensus-policy", requires = "require_empirically_witnessed")]
     pub consensus_policy: Option<PathBuf>,
-    /// Emit configured prove witnesses. The built-in witness source is this
-    /// prove report; additional sources come from `[[witnesses]]` in config.
-    #[arg(long = "emit-witnesses")]
-    pub emit_witnesses: Option<PathBuf>,
     #[command(flatten)]
     pub out: OutputFlags,
     /// Continue after a discovered component crashes, times out, or returns malformed planning RPC.
@@ -260,7 +256,11 @@ pub struct LiftArgs {
     #[arg(long, conflicts_with_all = ["output", "identify_only", "library_bindings"])]
     pub report: bool,
     /// With --report, print only source/factory summary accounting and keep the lift-plugin response slim.
-    #[arg(long = "report-summary", requires = "report", conflicts_with = "contract")]
+    #[arg(
+        long = "report-summary",
+        requires = "report",
+        conflicts_with = "contract"
+    )]
     pub report_summary: bool,
     /// With --report, print the source walk as ANSI green/red lines with the first effect inline.
     #[arg(long, requires = "report", conflicts_with = "report_summary")]

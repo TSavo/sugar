@@ -329,7 +329,7 @@ or `bin/sugarbin run --host bx --env docker:solver-z3 -- z3 --version`.
 
 | Subcommand | Purpose | Key Flags |
 |---|---|---|
-| `prove` | Run six-stage verifier on proofs in a directory | `--project`, `--z3`, `--with`, `--artifact`, `--proof`, `--policy`, `--emit-witnesses` |
+| `prove` | Run six-stage verifier on the minted `.proof` and `.sugar/imports`; packages nothing | `--project`, `--z3`, `--artifact`, `--proof`, `--policy` |
 | `verify` | End-to-end verify: lift contracts, discharge via solver, mint witness, emit receipt | `--project`, `--z3`, `--with`, `--report` |
 | `mint` | Dispatch configured lift surfaces and write `.proof` envelope | `--project`, `--out`, `--manifest`, `--kit` |
 | `lift` | Dispatch lift surface and write ProofIR JSON (no `.proof` envelope) | `--project`, `--output`, `--kit` |
