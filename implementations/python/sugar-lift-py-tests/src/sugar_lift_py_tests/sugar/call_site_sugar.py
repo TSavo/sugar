@@ -189,15 +189,12 @@ def _builtin_law_answers(sugar, callsite) -> bool:
 
     Each is read from the callee's binding, never its spelling: a builtin
     exception class's construction (``callsite.builtin_exception_class``,
-    ``_applied_builtin_exception_class``), ``type(obj)``'s class coordinate
-    (``callsite.python_type_coordinate``, ``_applied_builtin_type_of``), or a
-    shape CPython documents as never raising over decided operands
-    (``builtin_call_total`` on the bound ``LanguageCallee``).  A builtin
-    binding with none of these answers nothing: binding a name to the
-    builtin namespace is not a law for what that builtin does."""
+    ``_applied_builtin_exception_class``), or a shape CPython documents as
+    never raising (``builtin_call_total`` on the bound ``LanguageCallee``:
+    ``type(obj)``, ``id(obj)``, ``callable(obj)``, ``object()``, ...).  A
+    builtin binding with none of these answers nothing: binding a name to
+    the builtin namespace is not a law for what that builtin does."""
     if callsite.builtin_exception_class is not None:
-        return True
-    if callsite.python_type_coordinate is not None:
         return True
     from sugar_lift_py_tests.source_call_resolution import builtin_call_total
 
