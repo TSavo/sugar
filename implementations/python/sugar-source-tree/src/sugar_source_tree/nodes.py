@@ -14010,7 +14010,24 @@ class If(Statement):
         # through its key (``_scope_after``), and a name an arm rebinds
         # joins against that reference.  The block binds it after the ``if``
         # from the test itself (``_substitute_body_tracked``).
+        #
+        # What the test's calls did to the objects they reach is threaded
+        # here too, before either branch (``container_mutation.havoc_after``
+        # over the test): a branch reads an object as the test's calls left
+        # it, never as it stood before the ``if``.  A name no branch rebinds
+        # leaves the ``if`` in that state; the block's own threading of this
+        # statement leaves the test to it (``_threaded_header``).
+        from .container_mutation import havoc_after
+
+        pre_test = scope
         scope = _scope_after(scope, self.test, new_test)
+        walrus_scope = scope
+        scope = havoc_after(new_test, pre_test, scope)
+        tested = {
+            name: state
+            for name, state in scope.items()
+            if isinstance(name, str) and walrus_scope.get(name, _MISSING) is not state
+        }
         new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
         if d:
             changed["body"] = new_body
@@ -14041,6 +14058,9 @@ class If(Statement):
                 phis.append(self._make_assign(name, joined))
             else:
                 availability[name] = joined
+        for name, state in tested.items():
+            if name not in names:
+                availability[name] = state
         if not phis and not availability:
             return node
         return _Splice((node, *phis), availability)
@@ -16337,23 +16357,34 @@ class Try(Statement):
                 continue
             state = unwrap_binding_state(after)
             kind = getattr(state, "kind", None)
+            # A value the call met decides it (``ReceiverAfterCall`` with
+            # rules): whatever it decides after the call, it decides at a
+            # halt inside it too.  An object a source helper changed whose
+            # state holds at every halt inside the call and nothing the
+            # statement evaluates before the call may halt
+            # (``container_mutation.source_helper_actual_states``,
+            # ``_halts_before``) is that state at the halt, as on the
+            # completed path: what the callee did to the caller's object
+            # before it raised is not rolled back.  Otherwise unknown.
+            decided = kind == "ReceiverAfterCall" and getattr(state, "rules", None)
+            holds = (
+                kind == "SourceCallActualAfter"
+                and getattr(state, "holds_at_halt", False) is True
+            )
+            kept = decided or holds
             if compound:
-                binding[name] = _havoc(statement, name, tags)
-            elif kind in self._MID_STATEMENT_MUTATION_KINDS:
-                # A value the call met decides it (``ReceiverAfterCall`` with
-                # rules): whatever it decides after the call, it decides at
-                # a halt inside it too.  A source helper's actual whose state
-                # holds at every halt inside the call
-                # (``container_mutation.source_helper_actual_states``) is
-                # that state at the halt, as on the completed path: what the
-                # callee did to the caller's object before it raised is not
-                # rolled back.  Otherwise unknown.
-                kept = (
-                    kind == "ReceiverAfterCall" and getattr(state, "rules", None)
-                ) or (
-                    kind == "SourceCallActualAfter"
-                    and getattr(state, "holds_at_halt", False) is True
+                # An ``if`` binds what its test's calls changed before either
+                # branch (``If.substitute``), and a name a branch rebinds
+                # leaves it joined: a name still in such a state after the
+                # ``if`` holds it at every halt inside the statement, as at a
+                # simple statement.  Any other compound statement may halt
+                # after any of its inner stores.
+                binding[name] = (
+                    state
+                    if kept and getattr(statement, "kind", None) == "If"
+                    else _havoc(statement, name, tags)
                 )
+            elif kind in self._MID_STATEMENT_MUTATION_KINDS:
                 binding[name] = state if kept else _havoc(statement, name, tags)
             elif (
                 kind == "PathAfterCall"

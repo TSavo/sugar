@@ -290,6 +290,78 @@ def test_a_handler_reads_what_the_callee_did_to_the_callers_list() -> None:
     assert _returned_value(outcome) == _ONE
 
 
+def test_a_handler_reads_the_callers_list_wherever_the_call_sits() -> None:
+    # The call is an assignment's value, not a statement alone: nothing the
+    # statement evaluates before ``g(acc)`` can halt, so the halt leaving
+    # ``g`` carries ``acc`` as ``g`` left it (``_halts_before``), ``[1]``.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    acc = []\n"
+            "    try:\n"
+            "        y = g(acc)\n"
+            "    except ValueError:\n"
+            "        return acc\n"
+            "def g(a):\n"
+            "    a.append(1)\n"
+            "    raise ValueError()\n"
+        )
+    )
+    assert _returned_value(outcome) == _ONE
+
+
+def test_a_callee_appending_to_a_module_list_is_seen_after_it_completes() -> None:
+    # ``g`` appends to the module's list, which ``f`` reads too: the caller
+    # holds the object the callee reaches (``_module_objects_reached``), so
+    # ``f`` reads it as ``g`` left it, never the ``[]`` the module bound.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    g()\n"
+            "    return L\n"
+            "L = []\n"
+            "def g():\n"
+            "    L.append(1)\n"
+        )
+    )
+    assert _returned_value(outcome) == _ONE
+
+
+def test_a_callee_appending_to_a_module_list_is_seen_after_it_raises() -> None:
+    # The same append, then a raise: the halt leaving ``g`` carries the
+    # module list as the completed arm does.
+    outcome = function_universe_outcome(
+        _function(
+            "def f():\n"
+            "    try:\n"
+            "        g()\n"
+            "    except ValueError:\n"
+            "        return L\n"
+            "L = []\n"
+            "def g():\n"
+            "    L.append(1)\n"
+            "    raise ValueError()\n"
+        )
+    )
+    assert _returned_value(outcome) == _ONE
+
+
+def test_a_module_list_a_callee_may_change_unfollowed_is_not_its_old_value() -> None:
+    # ``g``'s body loops, so it is not followed: the module list it reaches
+    # takes the exposure every operand handed to such a call takes, an
+    # unknown after the call, never the ``[]`` the module bound.
+    returned = _read_after(
+        "def f():\n"
+        "    g()\n"
+        "    return L\n"
+        "L = []\n"
+        "def g():\n"
+        "    for _ in (1,):\n"
+        "        L.append(1)\n"
+    )
+    assert returned != ListValue(())
+
+
 def test_a_callee_local_is_not_carried_beside_the_callers_list() -> None:
     # ``g`` binds a list of its own before it appends to the caller's: the
     # handler reads the caller's ``acc`` after the append, and ``g``'s ``acc``

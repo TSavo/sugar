@@ -69,6 +69,7 @@ def record_statement_value(value, ctx):
     from sugar_lift_py_tests.floor.block_value import BlockValue
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
     from sugar_lift_py_tests.floor.named_expression_value import (
+        caller_stores_of,
         carry_walrus_binds,
         peel_walrus_binds,
     )
@@ -81,19 +82,20 @@ def record_statement_value(value, ctx):
     # (``BlockValue.extend_scope``), and the value it presents is what
     # this statement reads (a call stays a call).
     binds, value = peel_walrus_binds(value)
-    recorded = carry_walrus_binds(binds, project_warning_observation(value) or value)
     # ``super().__init__(...)`` is a constructor call in statement
     # position: it exists for its field stores, not as a value. Leaving
     # the CallSiteValue unreduced dropped AbstractRaises.__init__ stores
     # (``self._fail_reason: str | None = None``). Reducing the body
     # alone is not enough: those stores update a nested temporal and
     # ``__init__`` returns None, so the constructing receiver never
-    # sees them. Splice the receiver-field stores that reach the caller
-    # from the completed body into this statement's record so the outer
-    # constructor block can apply them (``caller_visible_stores``, the
-    # projection a halt leaving the call takes too). Keep the call
-    # coordinate so effect routing still sees the call.
-    #
+    # sees them. The stores that reach the caller ride the call's
+    # completed value (``CallerStoreValue``, the one projection at the
+    # call, ``caller_visible_stores``, that a halt leaving the call takes
+    # too); this statement lays them in its record so the outer
+    # constructor block can apply them. Keep the call coordinate so
+    # effect routing still sees the call.
+    binds, stores = caller_stores_of(binds)
+    recorded = carry_walrus_binds(binds, project_warning_observation(value) or value)
     # A bodyful free-function call (``runtime_dispatch_receiver``
     # absent) is the same kind of statement: it exists for its
     # effect. Leaving ``fail("DID NOT RAISE")`` as an unreduced
@@ -102,39 +104,24 @@ def record_statement_value(value, ctx):
     # other than ``__init__`` keep their receiver and stay nested
     # (``carries_its_stores_to_the_caller``).
     from sugar_lift_py_tests.floor.call_site_value import (
-        caller_visible_stores,
         carries_its_stores_to_the_caller,
     )
 
-    if isinstance(value, CallSiteValue) and carries_its_stores_to_the_caller(value):
-
-        def pack(result):
-            extras = ()
-            if isinstance(result, BlockValue):
-                extras = caller_visible_stores(result.statements)
-            return ExitSet.completed(
-                BlockValue((recorded, *extras), can_fall_through=True)
-            )
-
-        # The Call producer already reduced the body once (its halts left
-        # at the Call); consume that completion, never replay it.
-        retained = value.retained_source_completion_outcome()
-        if retained is not None:
-            return retained.and_then(pack)
-
+    if (
+        isinstance(value, CallSiteValue)
+        and carries_its_stores_to_the_caller(value)
+        and value.retained_source_completion_outcome() is None
+    ):
         # No completion kept: apply the call the one way, through
         # ``producer_outcome`` (#7757 entry 6) -- native operations
         # discharge against the bound actuals and the body's raises are
         # the Call's own.  Each completed face is the Call carrying the
-        # body completion it retained; the statement splices that body.
-        def body_completion(result):
-            if isinstance(result, CallSiteValue) and result.term is value.term:
-                completed = result.retained_source_completion_outcome()
-                if completed is not None:
-                    return completed.completed_value()
-            return result
+        # stores its body made; the statement lays them in its record.
+        def applied(result):
+            _walrus, more = caller_stores_of(peel_walrus_binds(result)[0])
+            return ExitSet.completed(
+                BlockValue((recorded, *stores, *more), can_fall_through=True)
+            )
 
-        return value.producer_outcome(ctx).and_then(
-            lambda result: pack(body_completion(result))
-        )
-    return ExitSet.completed(BlockValue((recorded,), can_fall_through=True))
+        return value.producer_outcome(ctx).and_then(applied)
+    return ExitSet.completed(BlockValue((recorded, *stores), can_fall_through=True))

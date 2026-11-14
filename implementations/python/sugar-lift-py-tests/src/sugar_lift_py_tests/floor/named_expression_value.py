@@ -252,12 +252,58 @@ def peel_walrus_binds(value) -> tuple[tuple["NamedExpressionValue", ...], object
 
 
 def carry_walrus_binds(binds, presented):
-    """``presented`` carrying ``binds`` (``peel_walrus_binds`` order)."""
+    """``presented`` carrying ``binds`` (``peel_walrus_binds`` order), each
+    bind as the kind of write it is (a walrus's, or a callee's store,
+    ``CallerStoreValue``)."""
     for bind in reversed(binds):
-        presented = NamedExpressionValue.carrying(
+        presented = type(bind).carrying(
             bind.name, bind.assigned_value, presented, bind.evaluation, bind.held
         )
     return presented
+
+
+@dataclass(frozen=True)
+class CallerStoreValue(NamedExpressionValue):
+    """A store a callee made on an object its caller sees
+    (``call_site_value.caller_visible_stores``), riding the call's completed
+    value to the caller's statement as a walrus's write rides its value: through
+    every operand door (``consume_operands``), applied where the statement
+    applies its writes (``bind_walrus_binds``).  So the caller sees what the
+    callee did wherever the call sits -- a statement alone, an assignment's
+    value, an argument, a condition -- as a halt leaving the call carries it
+    in its record (``call_site_value.at_the_call``).
+
+    ``assigned_value`` is the store (a ``ReceiverFieldStoreValue``); it binds
+    no name and no key."""
+
+    def bind(self, ctx):
+        if ctx is None:
+            from sugar_lift_py_tests.context import ReduceContext
+
+            ctx = ReduceContext.root(owner="CallerStoreValue")
+        return self.assigned_value.extend_scope(ctx)
+
+    def written(self):
+        return None
+
+
+def carry_caller_stores(stores, presented):
+    """``presented`` carrying each callee store in ``stores``
+    (``CallerStoreValue``), in the order the callee made them."""
+    return carry_walrus_binds(
+        tuple(CallerStoreValue("", store) for store in stores), presented
+    )
+
+
+def caller_stores_of(binds):
+    """``(walrus_binds, stores)``: ``binds`` (``peel_walrus_binds``) parted
+    into a walrus's writes and the callee stores among them
+    (``CallerStoreValue``), each kept in order."""
+    walrus = tuple(bind for bind in binds if not isinstance(bind, CallerStoreValue))
+    stores = tuple(
+        bind.assigned_value for bind in binds if isinstance(bind, CallerStoreValue)
+    )
+    return walrus, stores
 
 
 def bind_walrus_binds(binds, ctx):
