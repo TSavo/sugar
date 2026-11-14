@@ -455,7 +455,7 @@ class IfSugar(Sugar):
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
         from sugar_lift_py_tests.outcome import Completed, Halted
         from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
-        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+        from sugar_lift_py_tests.sugar.function_universe_sugar import face_record
 
         exits = then_exits.guarded(formula, then_face).union(
             else_exits.guarded(not_formula, else_face)
@@ -530,18 +530,18 @@ class IfSugar(Sugar):
             # A halt in either suite stays a halted arm of the if (#7826): no
             # completed record holds a halt.  The condition's own testimony
             # (the branch-result slot's authentication) was established
-            # before either suite ran, so the halted arm's state carries it
-            # ahead of what the suite reached before halting.
-            inner = halt.state
-            if isinstance(inner, _ReducedBlock):
-                state = _replace(
+            # before either suite ran, so the halted arm's record carries it
+            # ahead of what the suite reached before halting. Every suite
+            # halt carries the record its block composition gave it; one
+            # with no record is stopped by name (``face_record``), never
+            # given one made up with no context.
+            inner = face_record(halt, owner="IfSugar.suite", blame=self.site)
+            return ExitSet.halted(
+                halt.effect,
+                state=_replace(
                     inner, entries=(*unconditional_entries, *inner.entries)
-                )
-            elif inner is None:
-                state = _ReducedBlock(tuple(unconditional_entries), True, ())
-            else:
-                state = inner
-            return ExitSet.halted(halt.effect, state=state)
+                ),
+            )
 
         # Every completed arm of both suites continues as the one completed
         # face; ``normalize``'s join merges those continuations into one arm

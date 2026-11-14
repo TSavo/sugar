@@ -1511,7 +1511,10 @@ class GeneratorConstructionV1:
 
     def throw(self, effect: Effect) -> ExitSet:
         require_effect(effect)
-        incoming = ExitSet.halted(effect, state=self)
+        # The thrown exception is raised in this frame, here: its halt
+        # carries the record this frame left (``_left_here``), the frame
+        # inside it.
+        incoming = ExitSet.halted(effect, state=self._left_here())
         if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], _YieldFromIteratorStepV1
         ):
@@ -1524,10 +1527,14 @@ class GeneratorConstructionV1:
             self.steps[self.cursor], NestedCitedOpaqueExitStepV1
         ):
             step = self.steps[self.cursor]
-            incoming = ExitSet.halted(effect, state=replace(self, cursor=self.cursor + 1))
+            past_exit = replace(self, cursor=self.cursor + 1)
+            incoming = ExitSet.halted(effect, state=past_exit._left_here())
+            # A face the exit suppressed completes with the halt's record
+            # (``ExitSet.and_exit_truthiness``); what runs on is the frame
+            # inside it, past the exit step.
             return self._exit_nested_cited_opaque(
                 step, requested="throw", incoming=incoming
-            )
+            ).sequence(lambda record: ExitSet.completed(record.frame))
         if self.cursor < len(self.steps) and isinstance(
             self.steps[self.cursor], FinallyStepV1
         ):
@@ -2618,9 +2625,9 @@ class GeneratorConstructionV1:
                 contract_ref=step.contract_ref,
                 site=step.site,
             )
-            # A generator frame's halt state is its machine's, not a block
-            # record: the enter's halt keeps the frame's (none) here.
-            enter_es = law._enter_exitset(resolved_manager, None)
+            # The enter halts in this frame, here: its halt carries the
+            # record this frame left (``_left_here``).
+            enter_es = law._enter_exitset(resolved_manager, self._left_here())
 
             def continue_enter(enter_value):
                 binding = NestedCitedOpaqueEnteredBindingV1(
@@ -2696,9 +2703,9 @@ class GeneratorConstructionV1:
             contract_ref=step.contract_ref,
             site=step.site,
         )
-        # A generator frame's halt state is its machine's, not a block record:
-        # the exit's halt keeps the frame's (none) here.
-        exit_es = law._exit_exitset(step.manager_value, None)
+        # The exit halts in this frame, at its exit step: its halt carries the
+        # record this frame left there (``_left_here``).
+        exit_es = law._exit_exitset(step.manager_value, self._left_here())
         if incoming is not None:
             return incoming.and_exit_truthiness(exit_es, site=step.site)
         # The body reached the end of this ``with``: its exit runs on that
@@ -2734,8 +2741,9 @@ class GeneratorConstructionV1:
     ):
         """An expression statement whose value is two-faced (may complete or raise).
 
-        A halted face leaves the machine HERE: its pre-halt state is this
-        machine, and an already-written cited-opaque exit folds over it. A
+        A halted face leaves the machine HERE: its pre-halt record is the one
+        this frame left (``_left_here``, this machine inside it), and an
+        already-written cited-opaque exit folds over it. A
         completed face discards the value and the machine advances past the
         statement under that face's guard. Returning the call's own ExitSet
         would hand its value (a call result) to the consumer as if it were the
@@ -2889,8 +2897,8 @@ class GeneratorConstructionV1:
             return outgoing
         if isinstance(outgoing, ExitSet):
             # A halted edge leaves THIS machine at this cursor: whatever
-            # internal state a reduced helper carried, the generator's
-            # pre-halt state is the machine itself.
+            # record a reduced helper carried, the generator's pre-halt
+            # record is the one this frame left (the machine inside it).
             incoming = self._halted_here(outgoing)
         else:
             incoming = ExitSet.completed(outgoing)
@@ -2901,30 +2909,53 @@ class GeneratorConstructionV1:
                 requested="pending cited-opaque exit",
                 incoming=result,
             )
-        # A face the exit SUPPRESSED completes carrying the pre-halt state --
-        # this machine, still poised on the raise. Python continues after the
-        # ``with`` statement, so that face's successor is the machine past the
-        # last exit step, never the raise again. It continues as that machine
-        # beneath itself (``sequence``), keeping its guard, faces and owed.
+        # A face the exit SUPPRESSED completes carrying the pre-halt record --
+        # the one this frame left, this machine inside it, still poised on
+        # the raise. Python continues after the ``with`` statement, so that
+        # face's successor is the machine past the last exit step, never the
+        # raise again. It continues as that machine beneath itself
+        # (``sequence``), keeping its guard, faces and owed.
+        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
         after_with = replace(self, cursor=last + 1)
         return result.sequence(
-            lambda value: ExitSet.completed(after_with if value is self else value)
+            lambda value: ExitSet.completed(
+                after_with
+                if isinstance(value, _ReducedBlock) and value.frame is self
+                else value
+            )
         )
+
+    def _left_here(self):
+        """The record a halt raised in this frame, here, carries.
+
+        The frame is the generator's, not its caller's block: what it bound
+        is its own (``binding_state``), read through the frame. So the record
+        holds no entries of the caller's and carries this machine at this
+        cursor inside it (``halt_record(..., frame=)``) -- never in its
+        place. A cited-opaque exit that suppresses the halt continues that
+        frame; the ``with`` the halt reaches re-seats it in its own record
+        (``GeneratorWithSugar``).
+        """
+        from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
+
+        return halt_record(None, frame=self)
 
     def _halted_here(self, outcome):
         """``outcome`` with every halt leaving the machine HERE.
 
-        A halted edge's pre-halt state is this machine at this cursor,
-        whatever internal state a reduced helper carried. Each halt continues
-        as itself from this state through ``ExitSet.sequence`` (``consume=``),
-        so its guard, faces and ``owed`` ride on; a completed arm continues as
-        itself.
+        A halted edge's pre-halt record is the one this frame left at this
+        cursor (``_left_here``), whatever record a reduced helper carried.
+        Each halt continues as itself from it through ``ExitSet.sequence``
+        (``consume=``), so its guard, faces and ``owed`` ride on; a completed
+        arm continues as itself.
         """
         from sugar_lift_py_tests.outcome import ExitSet
 
+        record = self._left_here()
         return outcome.sequence(
             ExitSet.completed,
-            consume=lambda halt: ExitSet.halted(halt.effect, state=self),
+            consume=lambda halt: ExitSet.halted(halt.effect, state=record),
         )
 
     def _transition_branch(self, step: "IfStepV1", requested: str):

@@ -43,6 +43,15 @@ class _ReducedBlock:
     context: object = dataclass_field(
         default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
     )
+    # The generator frame a halt raised inside a generator's machinery left
+    # (``GeneratorConstructionV1`` at the step it halted on), carried INSIDE
+    # the record the halt carries (``halt_record(..., frame=)``), never in its
+    # place: a cited-opaque ``__exit__`` that suppresses the halt continues
+    # that frame. Like ``context`` it is a lookup aid, never testimony, so it
+    # is out of equality. ``None`` on every record a block reduced.
+    frame: object = dataclass_field(
+        default=None, compare=False, repr=False, metadata={"testimony": "lookup"}
+    )
 
 
 def _extend_receiver_store_scope(value, ctx):
@@ -141,7 +150,7 @@ def _halt_state(state: _ReducedBlock, exit_) -> object:
     return _prefixed(state, exit_.state)
 
 
-def halt_record(ctx) -> _ReducedBlock:
+def halt_record(ctx, *, frame=None) -> _ReducedBlock:
     """The record a halt carries where nothing of its producer ran before
     it: no entries, in ``ctx``, the context it halted in.
 
@@ -152,10 +161,51 @@ def halt_record(ctx) -> _ReducedBlock:
     halts with it (``LoopControlSugar``); so does a compound statement's
     head -- an ``if`` test, a loop's iterable, ``iter``, ``next`` and target
     unpack, a ``while`` test, a ``with`` manager and its enter, a ``match``
-    subject (``halts_recorded``) -- since nothing of the statement ran
-    before it.
+    subject, a ``match`` pattern, equality or guard, a ``class`` statement's
+    bases and body (``halts_recorded``) -- since nothing of the statement
+    ran before it.
+
+    ``frame``: a halt raised inside a generator's machinery carries the
+    generator frame it left inside its record
+    (``GeneratorConstructionV1._left_here``), never in its place.
     """
-    return _ReducedBlock((), False, (), context=ctx)
+    return _ReducedBlock((), False, (), context=ctx, frame=frame)
+
+
+def require_halt_record(state, *, owner: str) -> None:
+    """Stop by name (``SugarNotWritten``) a halt state that is no record.
+
+    THE CHECK every ``Halted`` makes as it is constructed: a halt's state is
+    the record it halted with (``_ReducedBlock``: its entries and the
+    context it halted in), or ``None`` -- an expression's halt, which
+    offers no record of its own because nothing of it ran before it, and
+    which the statement that runs it records (``halts_recorded``, the block
+    composition). Any other state -- a bare context, a generator's machine,
+    a value, any other payload -- is stopped here by name, never carried
+    in place of a record: whatever else a halt must carry lives inside its
+    record (a generator frame: ``halt_record(..., frame=)``).
+    """
+    if state is None or isinstance(state, _ReducedBlock):
+        return
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        owner=owner,
+        blame=owner,
+        observed=(
+            f"a halt whose state is a {type(state).__name__}, not a block's "
+            "record"
+        ),
+        requested=(
+            "the record the halt carries: its entries and the context it "
+            "halted in"
+        ),
+        fix=(
+            "build the record at the producer (halt_record, halts_recorded, "
+            "face_record); carry anything else inside it (a generator frame: "
+            "halt_record(..., frame=)), never in its place"
+        ),
+    )
 
 
 def face_record(face, *, owner: str, blame: object) -> _ReducedBlock:

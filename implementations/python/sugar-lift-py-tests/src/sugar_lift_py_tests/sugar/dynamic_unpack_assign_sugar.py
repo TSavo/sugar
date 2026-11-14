@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
+from typing import ClassVar
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -54,6 +55,10 @@ class DynamicUnpackAssignSugar(Sugar):
     prefix_names: tuple[str, ...] = ()
     suffix_names: tuple[str, ...] = ()
     evaluation: str | None = None
+    # Nothing binds on a halt (the RHS's, or the unpack's: CPython binds
+    # nothing when the unpack raises): its pre-halt record is the block's
+    # prefix.
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):

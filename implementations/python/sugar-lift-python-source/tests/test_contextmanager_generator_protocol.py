@@ -253,6 +253,41 @@ def test_a_second_yield_after_completion_raises_generator_didnt_stop(tmp_path):
     assert _leaves_normally(exits) == []
 
 
+def test_a_generator_exit_halt_carries_the_body_record(tmp_path):
+    """``__exit__`` runs after the body face it closes: the halt it raises
+    (here contextlib's "generator didn't stop") carries the record that face
+    left, never the generator's machine or no record at all (#7757). The
+    generator's frame rides inside that record."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _ReducedBlock,
+        reduce_block_to_exitset,
+    )
+
+    _source_file, with_node = _with(
+        tmp_path,
+        _manager(
+            "from contextlib import contextmanager\n"
+            "@contextmanager\n"
+            "def cm():\n"
+            "    yield 1\n"
+            "    yield 2\n",
+            "acc = []\n        acc.append(1)",
+        ),
+    )
+    sugar = with_node.sugar()
+    assert type(sugar) is GeneratorWithSugar
+    body = reduce_block_to_exitset(sugar.body, None).completed_value()
+    assert isinstance(body, _ReducedBlock) and body.entries
+
+    exits = _faces(sugar)
+
+    refusals = observed_exit_refusals()
+    assert _raised(exits) == [("RuntimeError", refusals.did_not_stop)]
+    for halt in _halts(exits):
+        assert isinstance(halt.state, _ReducedBlock), halt
+        assert halt.state.entries == body.entries
+
+
 def test_a_yield_after_the_caught_throw_raises_didnt_stop_after_throw(tmp_path):
     exits = _exits(
         tmp_path,

@@ -161,13 +161,26 @@ class ClassDefinitionSugar(Sugar):
         # answers with that one outcome, never a second reduction (#7794).  A
         # statement nested in a function runs at each call of that function,
         # against that call's bindings, so it is reduced at each read.
+        #
+        # A halt of a base or of the class body leaves the statement before
+        # any class exists: what the body bound is the class namespace, gone
+        # with it, and nothing of the enclosing block was bound by the
+        # statement. So each read records it where it halted, in the context
+        # the statement is read in (``halt_record``), onto which the block
+        # composition splices what ran before the ``class`` statement; a call
+        # reading the statement re-seats it at the call (``at_the_call``).
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halt_record,
+            halts_recorded,
+        )
+
         if not self._is_module_statement():
-            return self._reduce_statement(ctx)
+            return halts_recorded(self._reduce_statement(ctx), halt_record(ctx))
         reduced = self.__dict__.get("_statement_outcome")
         if reduced is None:
             reduced = self._reduce_statement(ctx)
             object.__setattr__(self, "_statement_outcome", reduced)
-        return reduced
+        return halts_recorded(reduced, halt_record(ctx))
 
     def _is_module_statement(self) -> bool:
         statement = self.class_definition

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field as dataclass_field
+from typing import ClassVar
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -37,6 +38,9 @@ class AttributeStoreEffectSugar(Sugar):
     value: Sugar
     attr: str
     site: object = dataclass_field(compare=False)
+    # Nothing binds before the store's halt (the RHS's, the receiver's, the
+    # store's own face): its pre-halt record is the block's prefix.
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):
@@ -170,6 +174,10 @@ class SubscriptStoreEffectSugar(Sugar):
     index: Sugar
     value: Sugar
     site: object = dataclass_field(compare=False)
+    # Nothing binds before the store's halt (the RHS's, the receiver's, the
+    # index's, the store's own face): its pre-halt record is the block's
+    # prefix.
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):

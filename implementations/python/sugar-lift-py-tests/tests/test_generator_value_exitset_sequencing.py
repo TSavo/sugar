@@ -114,7 +114,7 @@ def _mixed_faces():
     halted_left = Halted(
         left_guard,
         RaiseEffect.for_builtin("LeftError", occurrence="value:halted:left"),
-        state=object(),
+        state=_ReducedBlock((TermValue("left"),), True, ()),
         faces=frozenset({left_face}),
     )
     completed = Completed(
@@ -125,7 +125,7 @@ def _mixed_faces():
     halted_right = Halted(
         right_guard,
         RaiseEffect.for_builtin("RightError", occurrence="value:halted:right"),
-        state=object(),
+        state=_ReducedBlock((TermValue("right"),), True, ()),
         faces=frozenset({right_face}),
     )
     return ExitSet((halted_left, completed, halted_right)), (
@@ -398,7 +398,7 @@ def _carrier(tmp_path, *, mixed: bool = False):
         halted = Halted(
             atomic("carrier:halted", []),
             RaiseEffect.for_builtin("CarrierError", occurrence="carrier:halted"),
-            state=object(),
+            state=_ReducedBlock((TermValue("carrier"),), True, ()),
             faces=frozenset({halted_face}),
         )
         completed_value = TermValue(3)

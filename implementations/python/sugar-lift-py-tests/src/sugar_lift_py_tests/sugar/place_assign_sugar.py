@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import ClassVar
 
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -13,6 +14,9 @@ class PlaceAssignSugar(Sugar):
     selector: object
     value: Sugar
     site: object = field(compare=False)
+    # Nothing binds before a halt of the receiver, the value or the
+    # selector: its pre-halt record is the block's prefix.
+    halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
     def witnesses(cls):

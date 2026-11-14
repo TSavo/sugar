@@ -13,11 +13,23 @@ from sugar_lift_py_tests.outcome.exit_set import (
     Halted,
     false_guard,
 )
-from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
+from sugar_lift_py_tests.floor import TermValue
+from sugar_lift_py_tests.sugar.function_universe_sugar import (
+    _ReducedBlock,
+    reduce_block_to_exitset,
+)
 
 
 def _guard(name: str):
     return atomic(name, [make_var("state")])
+
+
+def _record(*entries):
+    """A block's record: the one shape a halt's state takes."""
+    return _ReducedBlock(tuple(TermValue(entry) for entry in entries), True, ())
+
+
+_STATE = _record("state")
 
 
 def test_single_unconditional_completed_answers_its_completed_value():
@@ -43,11 +55,11 @@ def test_conditional_halt_keeps_halted_and_complementary_completed_exits():
         occurrence="implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:198:0",
     )
 
-    exits = ExitSet.conditional_halt(condition, effect, "state")
+    exits = ExitSet.conditional_halt(condition, effect, _STATE)
 
     assert exits.exits == (
-        Halted(condition, effect, "state"),
-        Completed(not_(condition), "state"),
+        Halted(condition, effect, _STATE),
+        Completed(not_(condition), _STATE),
     )
     assert exits.completed_value() is None
 
@@ -73,13 +85,15 @@ def test_sequencing_maps_only_completed_exits():
         "ValueError",
         occurrence="implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:173:0",
     )
-    exits = ExitSet.conditional_halt(condition, effect, 1)
+    exits = ExitSet.conditional_halt(condition, effect, _record(1))
 
-    sequenced = exits.sequence(lambda value: ExitSet.completed(value + 1))
+    sequenced = exits.sequence(
+        lambda value: ExitSet.completed(_record(*(e.value for e in value.entries), 2))
+    )
 
     assert sequenced.exits == (
-        Halted(condition, effect, 1),
-        Completed(not_(condition), 2),
+        Halted(condition, effect, _record(1)),
+        Completed(not_(condition), _record(1, 2)),
     )
 
 
@@ -158,7 +172,7 @@ def test_and_finally_runs_cleanup_on_every_conditional_exit():
         "ValueError",
         occurrence="implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:99:0",
     )
-    incoming = ExitSet.conditional_halt(condition, effect, "state")
+    incoming = ExitSet.conditional_halt(condition, effect, _STATE)
     seen = []
 
     def cleanup():
@@ -171,7 +185,7 @@ def test_and_finally_runs_cleanup_on_every_conditional_exit():
     assert len(seen) == 1
     assert len(after.exits) == 2
     assert any(isinstance(e, Halted) and e.effect == effect for e in after.exits)
-    assert any(isinstance(e, Completed) and e.value == "state" for e in after.exits)
+    assert any(isinstance(e, Completed) and e.value == _STATE for e in after.exits)
 
 
 # --- resource with: and_exit (typed disposition, ExitSet not callbacks) -----
@@ -253,11 +267,11 @@ def test_and_exit_fans_exitset_across_conditional_faces():
         "ValueError",
         occurrence="implementations/python/sugar-lift-py-tests/tests/test_exit_set.py:29:0",
     )
-    incoming = ExitSet.conditional_halt(condition, effect, "state")
+    incoming = ExitSet.conditional_halt(condition, effect, _STATE)
     exit_es = ExitSet.completed(False)
     after = incoming.and_exit(exit_es, disposition=NeverSuppresses())
     assert any(isinstance(e, Halted) and e.effect == effect for e in after.exits)
-    assert any(isinstance(e, Completed) and e.value == "state" for e in after.exits)
+    assert any(isinstance(e, Completed) and e.value == _STATE for e in after.exits)
 
 
 def test_and_exit_proven_contract_suppresses_only_matching_face():
@@ -270,12 +284,12 @@ def test_and_exit_proven_contract_suppresses_only_matching_face():
         exception_type_mro=mro,
         occurrence="exit_set.py:3:0",
     )
-    incoming = ExitSet.conditional_halt(condition, effect, "state")
+    incoming = ExitSet.conditional_halt(condition, effect, _STATE)
     after = incoming.and_exit(
         ExitSet.completed(True),
         disposition=ExitSuppressionContract.suppresses(("ValueError",)),
     )
-    assert after == ExitSet.completed("state")
+    assert after == ExitSet.completed(_STATE)
 
 
 def test_and_exit_membrane_suppresses_matcher_authority():

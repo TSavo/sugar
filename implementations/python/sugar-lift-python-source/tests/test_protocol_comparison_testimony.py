@@ -48,7 +48,9 @@ def test_native_comparison_exception_testimony_survives_undecided_operands(
     # Operand undecidability must not erase its authenticated type/occurrence.
     effect = native_halt.effect
     if shape == "exit-set":
-        state = object()
+        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+        state = _ReducedBlock((), True, ())
         guard = atomic("native.comparison.raises", ())
         native = ExitSet((Halted(guard, effect, state=state),))
     result = publish_undecided_comparison_edges(left, right, site, op, native)

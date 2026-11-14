@@ -1728,28 +1728,31 @@ def test_a_halt_with_nothing_to_carry_leaves_as_it_is() -> None:
     assert left.state is record
 
 
-@pytest.mark.parametrize("bare", ["none", "context"])
 @pytest.mark.parametrize("entries", [(), (TermValue(0),)])
-def test_a_halt_without_a_record_is_refused_by_name(bare: str, entries) -> None:
+def test_a_halt_without_a_record_is_refused_by_name(entries) -> None:
     from sugar_source_tree.panic import SugarNotWritten
 
     # Every halt carries a record built by its producer (``halt_record``):
-    # a bare halt is refused by name, never given an empty record in its
-    # place, whether or not there is anything to carry beside it.
-    context = (
-        None if bare == "none" else ReduceContext.root(owner="live-loop-bare-halt")
-    )
+    # a halt that offers none is refused by name, never given an empty
+    # record in its place, whether or not there is anything to carry beside
+    # it.
     with pytest.raises(SugarNotWritten) as refused:
-        _recurrence()._left_with(entries, (), halt=_outer_break(context))
+        _recurrence()._left_with(entries, (), halt=_outer_break(None))
     assert refused.value.owner == "LoopRecurrenceSugar.left-with"
 
 
-def test_a_halt_whose_state_is_no_record_is_refused_by_name() -> None:
+@pytest.mark.parametrize(
+    "state", [ReduceContext.root(owner="live-loop-bare-halt"), "payload"]
+)
+def test_a_halt_whose_state_is_no_record_is_refused_by_name(state) -> None:
     from sugar_source_tree.panic import SugarNotWritten
 
-    # Nothing to carry the items' entries beside: refused, never dropped.
-    with pytest.raises(SugarNotWritten):
-        _recurrence()._left_with((TermValue(0),), (), halt=_outer_break("payload"))
+    # A bare context or any other payload is no halt's state at all: the
+    # halted arm is refused by name as it is built (#7757), so it never
+    # reaches the loop to have the items' entries dropped beside it.
+    with pytest.raises(SugarNotWritten) as refused:
+        _outer_break(state)
+    assert refused.value.owner == "Halted"
 
 
 def test_a_halt_leaving_the_else_carries_the_loops_publication() -> None:

@@ -320,10 +320,15 @@ def test_guard_halt_bypasses_both_branches_with_pre_halt_state() -> None:
     face = faces[0]
     assert face.effect.exception_name == "RuntimeError"
     assert face.effect.occurrence.endswith(":7:4")
-    assert face.state is machine
-    assert face.state.cursor == 0
-    assert face.state.instance_coordinate == machine.instance_coordinate
-    assert face.state.steps is machine.steps
+    # The halt carries a record; the frame it left lives inside it.
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    assert isinstance(face.state, _ReducedBlock)
+    frame = face.state.frame
+    assert frame is machine
+    assert frame.cursor == 0
+    assert frame.instance_coordinate == machine.instance_coordinate
+    assert frame.steps is machine.steps
 
 
 def test_nonhalting_guard_twin_executes_only_selected_branch() -> None:
