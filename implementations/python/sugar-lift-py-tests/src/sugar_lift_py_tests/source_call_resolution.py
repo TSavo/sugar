@@ -197,7 +197,9 @@ class UnknownCalleeCallV1:
     ``h()`` with ``h`` unbound, ``y()`` with ``y`` a formal,
     ``random.random()`` whose module was not enrolled, or a callee the export
     door cited off the enrolled population (``call-target-off-population``:
-    stdlib or an unenrolled distribution, whose body was not looked at): no
+    stdlib or an unenrolled distribution, whose body was not looked at), or
+    a builtin over an operand that is not a decided builtin (``len(c)``: its
+    ``__len__`` is not CPython's own, ``builtin_dunder_call``): no
     body, contract or floor testified to what runs, so the call may raise
     anything
     (``NameError`` when the name is unbound, ``TypeError`` when the value is
@@ -245,48 +247,6 @@ class UnknownCalleeCallV1:
             ),
             guard=completes,
             owed=owed,
-        )
-
-
-@dataclass(frozen=True)
-class BuiltinDunderCallV1:
-    """A builtin that invokes an operand's dunder, on an operand whose type is
-    not a decided builtin.
-
-    ``str(c)`` runs ``type(c).__str__``, ``len(c)`` its ``__len__``,
-    ``sum([c])`` its ``__radd__``, ``print(c)`` its ``__str__``, ``sorted(c)``
-    its ``__iter__`` and the items' ``__lt__``. When an operand is not a
-    decided builtin all the way down, that dunder is not CPython's own: it may
-    be user code, or missing (``TypeError``), and may raise anything. So the
-    call completes only under ``python:builtin_dunder_call.completes(
-    python:builtin_dunder_call(name, site))`` and halts with an
-    ``UndeterminedRaiseEffect`` (owner ``BuiltinDunderCall:<name>``) under the
-    complement -- the #7585 law for a body that was not looked at. It never
-    names what the dunder does.
-    """
-
-    builtin_name: str
-
-    def faces(self, callsite, site):
-        from .effect.raise_effect import UndeterminedRaiseEffect
-        from .ir import atomic, ctor, str_const
-        from .occurrence import occurrence_key
-        from .outcome.exit_set import ExitSet
-
-        key = occurrence_key(site)
-        call = ctor(
-            "python:builtin_dunder_call",
-            (str_const(self.builtin_name), str_const(key)),
-        )
-        completes = atomic("python:builtin_dunder_call.completes", [call])
-        return ExitSet.two_faced(
-            _occurrence_result(callsite, site),
-            UndeterminedRaiseEffect(
-                blame=str(site) if site is not None else None,
-                occurrence=key if site is not None else None,
-                producer_node_owner=f"BuiltinDunderCall:{self.builtin_name}",
-            ),
-            guard=completes,
         )
 
 
@@ -701,9 +661,14 @@ def builtin_dunder_call(language_callee, arg_values, keyword_names=()):
 
     ``language_callee`` is the ``LanguageCallee`` the call's callee is bound
     to (its binding, never its spelling: ``len = my_len`` reaches no member).
-    An operand whose type is not a decided builtin may run user code
-    (``BuiltinDunderCallV1``); decided operands may still be refused by value
-    (``BuiltinValueCallV1``) unless ``builtin_call_total`` lists the shape.
+    ``str(c)`` runs ``type(c).__str__``, ``len(c)`` its ``__len__``,
+    ``sum([c])`` its ``__radd__``, ``sorted(c)`` its ``__iter__`` and the
+    items' ``__lt__``.  When an operand is not a decided builtin, that dunder
+    is not CPython's own: whether it exists and what it raises is not decided
+    here, so the call is the one unanswered call (``UnknownCalleeCallV1``:
+    two-faced, owed as ``undecided``/``unanswered``, #7757).  Decided
+    operands may still be refused by value (``BuiltinValueCallV1``, a raise
+    set the language fixes) unless ``builtin_call_total`` lists the shape.
     Each names the builtin its binding's target symbol names."""
     dunder, shallow = _dunder_builtins()
     if language_callee not in dunder:
@@ -714,7 +679,7 @@ def builtin_dunder_call(language_callee, arg_values, keyword_names=()):
     else:
         decided = all(builtin_typed_value(value) for value in arg_values)
     if not decided:
-        return BuiltinDunderCallV1(builtin_name)
+        return UnknownCalleeCallV1(builtin_name)
     if builtin_call_total(language_callee, arg_values, keyword_names):
         return None
     return BuiltinValueCallV1(builtin_name)

@@ -184,15 +184,19 @@ def test_a_builtin_construction_over_an_opaque_operand_may_raise(
 ):
     # #7757: constructing ``set``/``tuple``/``dict`` iterates the operand,
     # whose ``__iter__`` (and members' ``__hash__``) nothing looked at.  The
-    # construction is two-faced; its completed face keeps the coordinate's
-    # ``LanguageCallee`` marker, read by the binding, never the spelling.
-    returns, halts = _split(tmp_path, f"def f(p):\n    return {call}\n")
+    # construction is the one unanswered call, two-faced and owed; its
+    # completed face keeps the coordinate's ``LanguageCallee`` marker and its
+    # operands, read by the binding, never the spelling.
+    returns, owners = _two_faced_and_owed(
+        tmp_path, f"def f(p):\n    return {call}\n"
+    )
     (value,) = returns
     assert type(value) is CallSiteValue
     assert value.language_callee is member
+    assert len(value.arg_values) == 1
     assert value.to_term(owner="test").name == "python:call_result"
     name = call.split("(")[0]
-    assert _owners(halts) == [f"BuiltinDunderCall:{name}"]
+    assert owners == [f"UnknownCallee:{name}"]
 
 
 @pytest.mark.parametrize(
@@ -206,10 +210,18 @@ def test_a_builtin_that_runs_no_operand_code_completes_outright(tmp_path, call):
     assert len(owed_calls(exits)) == 0
 
 
-@pytest.mark.parametrize("call", ["hash(p)", "iter(p)"])
-def test_a_builtin_that_runs_the_operand_dunder_keeps_its_raise(tmp_path, call):
-    _returns, halts = _split(tmp_path, f"def f(p):\n    return {call}\n")
-    assert _owners(halts) == [f"BuiltinDunderCall:{call.split('(')[0]}"]
+@pytest.mark.parametrize("call", ["len(p)", "hash(p)", "iter(p)"])
+def test_a_builtin_over_an_undecided_operand_is_the_one_unanswered_call(
+    tmp_path, call
+):
+    # #7757: ``len(p)`` runs ``type(p).__len__``, which is not CPython's own
+    # when ``p`` is not a decided builtin: what it raises is not decided here.
+    # It is the one unanswered call -- two-faced and owed as ``undecided``
+    # with reason ``unanswered`` -- never a second form that owes nothing.
+    _returns, owners = _two_faced_and_owed(
+        tmp_path, f"def f(p):\n    return {call}\n"
+    )
+    assert owners == [f"UnknownCallee:{call.split('(')[0]}"]
 
 
 @pytest.mark.parametrize(

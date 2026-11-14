@@ -143,10 +143,11 @@ class BuiltinSemanticCallable(FloorValue):
         ``__iter__`` and, for ``set``/``dict``, its members' ``__hash__``/
         ``__eq__``), which may raise; the call completes outright only on a
         shape ``builtin_call_total`` lists.  Otherwise it is the law the
-        frameless builtin call reads (``builtin_dunder_call``: a dunder not
-        CPython's own, or a decided operand CPython may still refuse), else
-        the one unanswered call (``UnknownCalleeCallV1``): two-faced, its
-        completed face this coordinate (#7757: a halt is never dropped).
+        frameless builtin call reads (``builtin_dunder_call``: the one
+        unanswered call for a dunder not CPython's own, or a decided operand
+        CPython may still refuse), else the one unanswered call
+        (``UnknownCalleeCallV1``): two-faced, its completed face this
+        coordinate (#7757: a halt is never dropped).
         """
         from sugar_lift_py_tests.call_symbol import call_symbol
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue

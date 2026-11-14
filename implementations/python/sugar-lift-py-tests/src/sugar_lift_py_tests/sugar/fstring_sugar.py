@@ -135,15 +135,16 @@ class FormattedValueSugar(ConstructedTermSugar):
                 )
             )
             from sugar_lift_py_tests.source_call_resolution import (
-                BuiltinDunderCallV1,
+                UnknownCalleeCallV1,
                 builtin_typed_value,
             )
 
             if not builtin_typed_value(value):
                 # ``f'{c}'`` runs ``type(c).__format__`` (``!s``/``!r``/``!a``
                 # its ``__str__``/``__repr__`` first): not CPython's own when
-                # ``c`` is not a decided builtin, so it may raise.
-                return BuiltinDunderCallV1("format").faces(formatted, self.site)
+                # ``c`` is not a decided builtin, so what it raises is not
+                # decided here -- the one unanswered call, owed (#7757).
+                return UnknownCalleeCallV1("format").faces(formatted, self.site)
             return ExitSet.completed(formatted)
 
         # `f"{expr!r:{spec}}"` evaluates expr then spec, and EITHER can halt or
