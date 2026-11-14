@@ -14,7 +14,10 @@
    ``TypeError``; a check not decided here is two-faced, owing the
    ``undecided`` member.
 4. In a generator expression the frame's first argument is the ``.0``
-   iterator, which fails the instance check: the ``TypeError``.
+   iterator.  Over a builtin iterable (a display, ``range(...)``, ...) it is
+   decided no instance of ``__class__``: the ``TypeError``.  Over anything
+   else it may be one (``__iter__`` returning ``self``): the check is
+   undecided, two-faced and owed.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.floor.builtin_semantic_callable import (
     zero_argument_super,
     zero_argument_super_class_cell,
+    zero_argument_super_generator_iterator_is_builtin,
 )
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Halted
@@ -297,6 +301,59 @@ def test_super_in_a_generator_expression_is_the_type_error() -> None:
     )
 
     assert _raised(outcome) == ["TypeError"]
+
+
+@pytest.mark.parametrize(
+    "iterable",
+    ["(1, 2)", "{1: 2}", "'ab'", "range(2)", "[x for x in [1]]", "zip([1], [2])"],
+)
+def test_a_builtin_iterator_is_decided_no_instance(iterable: str) -> None:
+    source = (
+        "class Base:\n"
+        "    def m(self):\n"
+        "        return [1]\n"
+        "\n"
+        "class Derived(Base):\n"
+        "    def m(self):\n"
+        f"        return list(super().m() for _ in {iterable})\n"
+    )
+    tree, _context, _classes = _parsed(source, "generator_builtin.py")
+
+    assert zero_argument_super_generator_iterator_is_builtin(_super_site(tree))
+
+
+def test_an_iterator_that_may_be_an_instance_leaves_the_check_undecided() -> None:
+    # ``iter(self)`` is ``self`` when ``__iter__`` returns it: CPython's check
+    # passes, so the TypeError is never assumed.
+    source = (
+        "class Base:\n"
+        "    def m(self):\n"
+        "        return [1]\n"
+        "\n"
+        "class Walker(Base):\n"
+        "    def __iter__(self):\n"
+        "        return self\n"
+        "\n"
+        "    def m(self):\n"
+        "        return list(super().m() for _ in self)\n"
+    )
+    tree, context, classes = _parsed(source, "generator_self_iterator.py")
+    site = _super_site(tree)
+    receiver = classes["Walker"].construct_receiver_state_from_block(None, "receiver")
+
+    assert not zero_argument_super_generator_iterator_is_builtin(site)
+    outcome = zero_argument_super(site, _frame(context, classes["Walker"], receiver))
+
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == "BuiltinSuperValue.supercheck"
+    completed = [face for face in outcome.exits if not isinstance(face, Halted)]
+    assert len(completed) == 1
+    assert isinstance(completed[0].value, BuiltinSuperValue)
+    # The ``.0`` iterator is no value here; the enclosing ``self`` is never
+    # read in its place.
+    assert completed[0].value.receiver is None
+    assert outcome.owed_items()
 
 
 def test_super_in_a_generator_outside_any_class_is_the_runtime_error() -> None:

@@ -66,6 +66,10 @@ def _unit_without_typed_tree() -> SourceUnit:
             lambda unit: unit.frame_class_cell(READ),
         ),
         (
+            "SourceUnit.class_namespace_stores",
+            lambda unit: unit.class_namespace_stores(SimpleNamespace()),
+        ),
+        (
             "SourceUnit._module_global_rows",
             lambda unit: unit.module_threaded_names(),
         ),

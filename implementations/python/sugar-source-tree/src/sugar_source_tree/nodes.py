@@ -441,6 +441,72 @@ _IDENTITY_DECORATORS = frozenset(
     {LanguageCallee.TYPING_FINAL, LanguageCallee.ABC_ABSTRACTMETHOD}
 )
 
+# The name each identity decorator writes on the class it returns
+# (``ClassDef._creation_writes``): ``typing.final`` sets ``__final__``,
+# ``abc.abstractmethod`` sets ``__isabstractmethod__``.
+_IDENTITY_DECORATOR_WRITES = {
+    LanguageCallee.TYPING_FINAL: "__final__",
+    LanguageCallee.ABC_ABSTRACTMETHOD: "__isabstractmethod__",
+}
+
+# The names the bare ``@dataclasses.dataclass`` writes on every class it
+# returns (Lib/dataclasses.py ``_process_class``: ``init``, ``repr``, ``eq``
+# and ``match_args`` default true, each through ``_set_new_attribute``,
+# which keeps a name the class already binds; ``_hash_action`` for
+# ``eq=True, frozen=False`` sets ``__hash__`` unless the class wrote its
+# own), whatever its fields.
+_DATACLASS_WRITES = frozenset(
+    {
+        "__init__",
+        "__repr__",
+        "__eq__",
+        "__hash__",
+        "__match_args__",
+        "__dataclass_fields__",
+        "__dataclass_params__",
+    }
+)
+
+# The names of ``_DATACLASS_WRITES`` the decorator never writes over a
+# binding the class body made (``_set_new_attribute``; ``__hash__`` only when
+# the class wrote none): every one but the two it stores with ``setattr``.
+_DATACLASS_KEEPS_BOUND = _DATACLASS_WRITES - {
+    "__dataclass_fields__",
+    "__dataclass_params__",
+}
+
+# The names the bare ``@dataclasses.dataclass`` may write, by the class or
+# the interpreter version: ``__replace__`` (3.13), ``__abstractmethods__``
+# (``abc.update_abstractmethods`` on a class that has it).  A field's
+# default is stored or deleted under its own annotated name, which the
+# body's annotation already leaves undecided (``ClassDef._body_binding``).
+_DATACLASS_MAY_WRITE = frozenset({"__replace__", "__abstractmethods__"})
+
+# The names CPython's type creation may write in a class namespace beyond
+# the class body, by the bases and the interpreter version: the class
+# body's own ``__module__``/``__qualname__`` stores, ``__doc__``, the
+# ``__dict__``/``__weakref__`` descriptors, ``__firstlineno__`` and
+# ``__static_attributes__`` (3.13), ``__annotations__``/``__annotate__``,
+# and the generic-class names ``__orig_bases__``/``__parameters__``/
+# ``__type_params__``.  The one lookup decides none of them
+# (``ClassDef.namespace_binds``).
+_TYPE_CREATION_NAMES = frozenset(
+    {
+        "__module__",
+        "__qualname__",
+        "__doc__",
+        "__dict__",
+        "__weakref__",
+        "__firstlineno__",
+        "__static_attributes__",
+        "__annotations__",
+        "__annotate__",
+        "__orig_bases__",
+        "__parameters__",
+        "__type_params__",
+    }
+)
+
 # The annotation markers whose field ``dataclasses.dataclass`` does not write
 # as a plain ``__init__`` parameter (``ClassDef._dataclass_generated_init_fields``),
 # reached only through an annotation name's binding.
@@ -1328,6 +1394,11 @@ class SourceUnit:
     _module_statement_starts_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
+    # ``(typed module, {class occurrence: names stored or deleted on it})``:
+    # one walk of the typed tree, for ``class_namespace_stores``.
+    _class_namespace_stores_memo: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -1364,6 +1435,7 @@ class SourceUnit:
         object.__setattr__(self, "_module_global_rows_memo", None)
         object.__setattr__(self, "_module_binding_states_memo", None)
         object.__setattr__(self, "_module_statement_starts_memo", None)
+        object.__setattr__(self, "_class_namespace_stores_memo", None)
 
     def _published_enrollment_decisions(
         self, occurrence: SourceOccurrenceIdentityV1
@@ -2104,6 +2176,69 @@ class SourceUnit:
         if name in bound or "*" in bound:
             return False
         return not self._module_reaches_dynamic_global_writer()
+
+    def class_namespace_stores(self, statement: "ClassDef") -> frozenset:
+        """The names stored on, or deleted from, the class object the module
+        ``class`` statement ``statement`` binds, anywhere in this module: an
+        attribute target ``C.name`` (an assignment, augmented or annotated
+        assignment, ``del``, ``for``, ``with ... as``, a comprehension
+        target, an unpack's leaf) and a call of the builtin ``setattr`` /
+        ``delattr`` (by binding) on ``C`` -- the name its second actual
+        spells as a string constant, ``"*"`` (any name) for anything else.
+
+        ``C`` is read by its binding where it stands
+        (``module_definition_at``): a local or parameter of that spelling is
+        not the class.  A store through another reference to the class (an
+        alias, ``cls`` in a classmethod, ``type(self)``) is not seen here.
+        One walk per typed root.
+        """
+        module = self._require_typed_module(
+            "SourceUnit.class_namespace_stores", blame=self.filename
+        )
+        memo = self._class_namespace_stores_memo
+        if memo is None or memo[0] is not module:
+            rows: dict = {}
+            bindings = self.module_direct_bindings or {}
+
+            def class_read(node):
+                """The occurrence of the module class ``node`` reads, or None."""
+                if not isinstance(node, Name):
+                    return None
+                bound = bindings.get(node.id, ())
+                if len(bound) != 1 or not isinstance(bound[0], ClassDef):
+                    return None
+                definition = self.module_definition_at(node.id, node.line_col_span())
+                if not isinstance(definition, ClassDef):
+                    return None
+                return SourceOccurrenceIdentityV1.of(definition)
+
+            for node in module.walk():
+                for field_name in type(node)._bound_target_fields:
+                    value = getattr(node, field_name)
+                    targets = value if isinstance(value, tuple) else (value,)
+                    for leaf in _store_leaves(targets):
+                        if not isinstance(leaf, Attribute):
+                            continue
+                        occurrence = class_read(leaf.value)
+                        if occurrence is not None:
+                            rows.setdefault(occurrence, set()).add(leaf.attr)
+                if not isinstance(node, Call) or not node.args:
+                    continue
+                occurrence = class_read(node.args[0])
+                if occurrence is None or node.language_callee() not in (
+                    LanguageCallee.BUILTIN_SETATTR,
+                    LanguageCallee.BUILTIN_DELATTR,
+                ):
+                    continue
+                spelled = node.args[1] if len(node.args) > 1 else None
+                rows.setdefault(occurrence, set()).add(
+                    spelled.value
+                    if isinstance(spelled, Constant) and isinstance(spelled.value, str)
+                    else "*"
+                )
+            memo = (module, {key: frozenset(names) for key, names in rows.items()})
+            object.__setattr__(self, "_class_namespace_stores_memo", memo)
+        return memo[1].get(SourceOccurrenceIdentityV1.of(statement), frozenset())
 
     def module_threaded_names(self) -> frozenset:
         """The module names a reader outside the module block takes from the
@@ -10272,16 +10407,133 @@ class ClassDef(Statement):
         first = self._read_base(self.bases[0]) if self.bases else None
         return (self,) if first is None else (self, first)
 
-    def body_binds(self, name: str) -> bool:
+    def _body_binding(self, name: str) -> "bool | None":
         """Whether this class statement's body binds ``name`` in the class
         namespace -- a ``def``, an assignment, an import -- read off the
-        unit's CPython class ``symtable``, never off a spelling scan."""
+        unit's CPython class ``symtable``, never off a spelling scan.
+
+        None for an annotated name: an annotation alone (``x: int``) binds
+        nothing in the namespace, and the symtable does not tell it from an
+        annotated assignment (``x: int = 0``)."""
         table = self.unit.class_symtable(self.name, self.line_col_span().start_line)
         try:
             symbol = table.lookup(name)
         except KeyError:
             return False
+        if symbol.is_annotated():
+            return None
         return symbol.is_assigned() or symbol.is_imported() or symbol.is_namespace()
+
+    def _creation_opens_namespace(self) -> bool:
+        """Whether something this statement runs at class creation may write
+        any name in the class namespace: a keyword (a ``metaclass=``, whose
+        ``__new__`` builds the namespace, or an argument of
+        ``__init_subclass__``), or a decorator the one decorator application
+        does not model here -- a source or imported decorator, a decorator
+        factory's result (``@dataclass(frozen=True)``), any builtin but the
+        bare ``dataclasses.dataclass`` and the identity decorators
+        (``_creation_writes``)."""
+        if self.keywords:
+            return True
+        return any(
+            self.unit.language_callee_of(decorator)
+            not in (LanguageCallee.DATACLASSES_DATACLASS, *_IDENTITY_DECORATOR_WRITES)
+            for decorator in self.decorators
+        )
+
+    def _creation_writes(self) -> "tuple[frozenset, frozenset, bool]":
+        """``(writes, may_write, open)``: the names the class value this
+        statement binds holds beyond its body once it is created and its
+        decorators applied (the one decorator application's, innermost
+        first): ``writes`` decided, ``may_write`` not decided either way,
+        ``open`` when any name may be written.
+
+        - Type creation may write ``_TYPE_CREATION_NAMES``.
+        - The bare ``@dataclasses.dataclass`` writes ``_DATACLASS_WRITES`` and
+          may write ``_DATACLASS_MAY_WRITE``, whatever its fields; an identity
+          decorator writes its flag (``_IDENTITY_DECORATOR_WRITES``).
+        - Open: this statement's own keyword or unmodelled decorator
+          (``_creation_opens_namespace``); a base not read (its metaclass and
+          ``__init_subclass__`` are not); a class after this one in its MRO
+          created with a keyword (its metaclass is inherited) or whose
+          namespace may hold ``__init_subclass__`` (``type.__new__`` calls it
+          on every new subclass, and it may store any name on it).
+        """
+        writes: set = set()
+        may_write = set(_TYPE_CREATION_NAMES)
+        open_ = self._creation_opens_namespace()
+        for decorator in self.decorators:
+            member = self.unit.language_callee_of(decorator)
+            if member is LanguageCallee.DATACLASSES_DATACLASS:
+                writes |= _DATACLASS_WRITES
+                may_write |= _DATACLASS_MAY_WRITE
+            elif member in _IDENTITY_DECORATOR_WRITES:
+                writes.add(_IDENTITY_DECORATOR_WRITES[member])
+        order = self.method_resolution_order()
+        if order is None:
+            open_ = True
+        else:
+            for entry in order[1:]:
+                if not isinstance(entry, ClassDef):
+                    continue
+                stored = self.unit.class_namespace_stores(entry)
+                if (
+                    entry.keywords
+                    or entry._creation_opens_namespace()
+                    or entry._body_binding("__init_subclass__") is not False
+                    or "__init_subclass__" in stored
+                    or "*" in stored
+                ):
+                    open_ = True
+                    break
+        return frozenset(writes), frozenset(may_write), open_
+
+    def namespace_binds(self, name: str) -> "bool | None":
+        """Whether the class value this statement binds holds ``name`` in its
+        own namespace (``vars(C)``): the class body's bindings
+        (``_body_binding``) with what its creation and its decorators write
+        (``_creation_writes``), and every store or delete the module makes
+        on the class object (``SourceUnit.class_namespace_stores``).
+
+        True or False when decided; None -- the one unanswered form, never
+        "missing" -- for a name a store or delete of the module names (it
+        may or may not have run before the read), a name the body only
+        annotates, a name creation may write, and every name the body does
+        not bind when creation may write any (``open``).  A class whose
+        ``__eq__`` the body binds and ``__hash__`` it does not holds
+        ``__hash__`` (``None``, set by type creation).
+        """
+        stored = self.unit.class_namespace_stores(self)
+        if name in stored or "*" in stored:
+            return None
+        own = self._body_binding(name)
+        if own is not False:
+            return own
+        writes, may_write, open_ = self._creation_writes()
+        if name in writes:
+            return True
+        if name == "__hash__":
+            equality = self._body_binding("__eq__")
+            if equality is not False:
+                return equality
+        if open_ or name in may_write:
+            return None
+        return False
+
+    def namespace_value_is_body(self, name: str) -> bool:
+        """Whether the value the class holds for ``name`` is the one its body
+        bound: the body binds it (``namespace_binds``) and nothing at class
+        creation (``_creation_writes``; the dataclass names it keeps over a
+        body binding, ``_DATACLASS_KEEPS_BOUND``, aside) or after it may have
+        written it."""
+        if (
+            self.namespace_binds(name) is not True
+            or self._body_binding(name) is not True
+        ):
+            return False
+        writes, may_write, open_ = self._creation_writes()
+        overwritten = name in writes and name not in _DATACLASS_KEEPS_BOUND
+        return not open_ and not overwritten and name not in may_write
 
     def mro_holds(self, statement: "ClassDef") -> "bool | None":
         """Whether the class statement ``statement`` stands in this class's
@@ -10315,12 +10567,16 @@ class ClassDef(Statement):
         nothing is decided.
 
         The order is the one base walk (``method_resolution_order``).  A
-        ``ClassDef`` binds the name when its body does (``body_binds``); a
-        builtin class entry when the interpreter's own class of that name
-        holds it in its ``__dict__`` (``dict`` holds ``__getitem__``, not
-        ``__bool__``; ``object`` holds neither).  ``owner`` is that
-        ``ClassDef`` or builtin class name, or None when no class of the
-        order binds the name.
+        ``ClassDef`` binds the name when the class value it binds holds it
+        -- its body's bindings, what its creation and decorators write, and
+        the module's stores on it (``namespace_binds``); a builtin class
+        entry when the interpreter's own class of that name holds it in its
+        ``__dict__`` (``dict`` holds ``__getitem__``, not ``__bool__``;
+        ``object`` holds neither).  ``owner`` is that ``ClassDef`` or builtin
+        class name, or None when no class of the order binds the name.  A
+        class whose namespace is not decided for the name (an unmodelled
+        decorator, a store to it) makes the lookup undecided: a class after
+        it is never assumed to answer.
 
         When the order is not read, only its head is
         (``method_resolution_head``): a name the head binds is decided;
@@ -10340,7 +10596,10 @@ class ClassDef(Statement):
             order = order[position + 1 :]
         for entry in order:
             if isinstance(entry, ClassDef):
-                if entry.body_binds(name):
+                held = entry.namespace_binds(name)
+                if held is None:
+                    return False, None
+                if held:
                     return True, entry
                 continue
             builtin_class = getattr(_python_builtins, entry, None)

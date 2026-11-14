@@ -607,8 +607,14 @@ def zero_argument_super(site, ctx):
        symtable block (``zero_argument_super_class_cell``), never by a
        ``__class__`` some caller bound;
     3. a generator expression's first argument is its ``.0`` iterator,
-       which is no instance of the class ``__class__`` holds: ``supercheck``
-       raises ``TypeError``;
+       ``iter()`` of its outermost iterable.  When that iterator's type is
+       decided a builtin (``zero_argument_super_generator_iterator_is_builtin``:
+       a display, a comprehension, a string constant, a call of a builtin
+       constructor by binding), it is no instance of the source class
+       ``__class__`` holds: ``supercheck`` raises ``TypeError``.  Otherwise
+       the iterator may be one (a class whose ``__iter__`` returns ``self``),
+       and the check is ``BuiltinSuperValue.constructed``'s undecided form
+       over a receiver not read here;
     4. otherwise ``super(__class__, obj)`` with ``obj`` the frame's first
        formal (``zero_argument_super_receiver``) and ``__class__`` the
        frame's cell, read as the class value the context binds for that
@@ -630,12 +636,17 @@ def zero_argument_super(site, ctx):
         return ground_exceptional_exit(
             exception_name="RuntimeError", site=site, owner=_SUPER_OWNER
         )
-    if decided and zero_argument_super_in_generator_frame(site):
+    in_generator = decided and zero_argument_super_in_generator_frame(site)
+    if in_generator and zero_argument_super_generator_iterator_is_builtin(site):
         return ground_exceptional_exit(
             exception_name="TypeError", site=site, owner=_SUPER_OWNER
         )
     temporal = getattr(ctx, "temporal", None)
     current_class = _class_cell_value(cell, temporal) if decided else None
+    if in_generator and current_class is not None:
+        # The ``.0`` iterator is no value here: ``super_check`` over it is
+        # undecided, never the TypeError assumed.
+        return BuiltinSuperValue.constructed(current_class, None, site)
     receiver = zero_argument_super_receiver(site, temporal)
     if current_class is None or receiver is None:
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
@@ -696,6 +707,76 @@ def zero_argument_super_in_generator_frame(site) -> bool:
     ``TypeError`` (``zero_argument_super``)."""
     _read, formal = _super_frame_first_positional(site)
     return formal is _GENERATOR_ITERATOR_ARGUMENT
+
+
+def zero_argument_super_generator_iterator_is_builtin(site) -> bool:
+    """Whether a zero-argument ``super()`` at ``site`` runs in a generator
+    expression whose ``.0`` -- ``iter()`` of its outermost iterable, taken in
+    the frame around it -- is decided an instance of a builtin type, so
+    never of the source class a ``__class__`` cell holds (no builtin type
+    subclasses a source class, and none rebinds ``__class__``).
+
+    Decided for an outermost iterable that is a list, tuple, dict or set
+    display, a comprehension or generator expression (``iter`` of a
+    generator is itself), a ``str``/``bytes`` constant or f-string, or a call
+    of a builtin whose result is an exact builtin type, by binding
+    (``Call.language_callee``: ``list``, ``tuple``, ``dict``, ``set``,
+    ``frozenset``, ``range``, ``sorted``, ``enumerate``, ``zip``).  Not for
+    anything else -- a name, an attribute, any other call (``str(x)`` may
+    return a ``str`` subclass, ``reversed(x)`` whatever ``x.__reversed__``
+    returns): its iterator may be an instance of ``__class__`` (a class
+    whose ``__iter__`` returns ``self``)."""
+    from sugar_source_tree.nodes import (
+        Call,
+        Constant,
+        Dict,
+        DictComp,
+        GeneratorExp,
+        JoinedStr,
+        LanguageCallee,
+        List,
+        ListComp,
+        Set,
+        SetComp,
+        Tuple_,
+    )
+
+    unit = getattr(site, "unit", None)
+    node = getattr(site, "node", None)
+    if unit is None or node is None:
+        return False
+    frame = unit.frame_holding(node.line_col_span())
+    if not isinstance(frame, GeneratorExp) or not frame.generators:
+        return False
+    iterable = frame.generators[0].iter
+    if isinstance(
+        iterable,
+        (
+            List,
+            Tuple_,
+            Dict,
+            Set,
+            ListComp,
+            SetComp,
+            DictComp,
+            GeneratorExp,
+            JoinedStr,
+        ),
+    ):
+        return True
+    if isinstance(iterable, Constant):
+        return isinstance(iterable.value, (str, bytes))
+    return isinstance(iterable, Call) and iterable.language_callee() in (
+        LanguageCallee.BUILTIN_LIST,
+        LanguageCallee.BUILTIN_TUPLE,
+        LanguageCallee.BUILTIN_DICT,
+        LanguageCallee.BUILTIN_SET,
+        LanguageCallee.BUILTIN_FROZENSET,
+        LanguageCallee.BUILTIN_RANGE,
+        LanguageCallee.BUILTIN_SORTED,
+        LanguageCallee.BUILTIN_ENUMERATE,
+        LanguageCallee.BUILTIN_ZIP,
+    )
 
 
 def zero_argument_super_has_no_arguments(site) -> bool:
