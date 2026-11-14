@@ -14,9 +14,17 @@ Temporal choice 1 (#7661), inventory item 7 (#7757), after #7886 (``x += e``),
 - ``with M() as x`` copied per loop iteration (or per ``finally`` exit path)
   shared one manager / enter-result slot across copies. Each copy's item is now
   keyed with its own evaluation, so its slots are its own.
+- The exit face of such a copy was still the source line's, shared by every
+  copy. It is now keyed per evaluation too, and the derived protocol that
+  describes ``__exit__`` is re-keyed onto that face where the sugar is built.
+- ``with gen() as (a, b)`` with a generator-based manager lowered no store, so
+  ``a``/``b`` were read by spelling afterwards. The store is now lowered as for
+  a class-based manager.
 """
 
 from __future__ import annotations
+
+from types import SimpleNamespace
 
 from sugar_lift_py_tests.context_manager_contract import ENTER_RESULT
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -28,6 +36,13 @@ from sugar_lift_py_tests.temporal.temporal_context import (
     projection_key,
 )
 from sugar_lift_python_source.canonical import blake3_512_of
+from sugar_lift_python_source.manager_protocol_construction import (
+    GeneratorBackedManagerProtocolV1,
+    construct_generator_backed_protocol,
+)
+from sugar_lift_python_source.manager_summary_derivation import (
+    GeneratorBackedLifecycleProtocolV1,
+)
 from sugar_source_tree.nodes import (
     _EVALUATION_OCCURRENCE,
     Assign,
@@ -60,6 +75,12 @@ FOR_MIXED = (
 )
 WITH_ONCE = "def f():\n    with m as x:\n        y = x\n"
 WITH_TUPLE = "def f():\n    with m as (a, b):\n        pass\n    return a\n"
+WITH_IN_LOOP = (
+    "def f():\n"
+    "    for i in [1, 2]:\n"
+    "        with m as x:\n"
+    "            y = x\n"
+)
 
 
 def _function(source: str) -> FunctionDef:
@@ -209,15 +230,115 @@ def test_the_same_source_gives_the_same_with_slots() -> None:
     assert slots() == slots()
 
 
-def test_the_exit_face_stays_the_source_occurrences() -> None:
-    # The manager summary derivation states the protocol's exit over the
-    # source item's face; the sugar's face facts must name the same face.
+def test_each_evaluation_of_a_with_exits_over_its_own_face() -> None:
     source = _node(_function(WITH_ONCE), With)
     source_face = source.items[0]._exit_face_id()
-    assert [node.items[0]._exit_face_id() for node in _copies(source)] == [
-        source_face,
-        source_face,
-    ]
+    assert source_face == source.items[0]._source_exit_face_id()
+    faces = [node.items[0]._exit_face_id() for node in _copies(source)]
+    assert faces[0] != faces[1]
+    assert source_face not in faces
+    # The derivation's face stays the source occurrence's, once per use site.
+    assert {node.items[0]._source_exit_face_id() for node in _copies(source)} == {
+        source_face
+    }
+
+
+def test_a_with_evaluated_once_keeps_its_source_face() -> None:
+    source = _node(_function(WITH_ONCE), With)
+    with_node = source.substitute({})
+    assert with_node.items[0]._exit_face_id() == source.items[0]._exit_face_id()
+
+
+def _withs(node) -> list[With]:
+    return [child for child in node.walk() if isinstance(child, With)]
+
+
+def test_a_with_in_an_unrolled_loop_has_two_exit_faces_and_two_slots() -> None:
+    function = _function(WITH_IN_LOOP)
+    (source,) = _withs(function)
+    copies = _withs(function.substitute({}))
+    assert len(copies) == 2
+    items = [node.items[0] for node in copies]
+    faces = [item._exit_face_id() for item in items]
+    slots = [item._manager_slot_id() for item in items]
+    assert len(set(faces)) == 2
+    assert len(set(slots)) == 2
+    assert source.items[0]._exit_face_id() not in faces
+    assert source.items[0]._manager_slot_id() not in slots
+    # Each copy's parametric exit arguments name that copy's face.
+    for item, face in zip(items, faces, strict=True):
+        assert item._make_exit_type_ref().face_id == face
+        assert item._make_exit_value_ref().face_id == face
+        assert item._make_exit_traceback_ref().face_id == face
+
+
+# ---------------------------------------------------------------------------
+# The protocol that describes __exit__ is keyed over the same face.
+# ---------------------------------------------------------------------------
+
+
+class _FaceProtocol:
+    def __init__(self, exit_face_id: str) -> None:
+        self.exit_face_id = exit_face_id
+
+    def at_exit_face(self, exit_face_id: str) -> "_FaceProtocol":
+        return _FaceProtocol(exit_face_id)
+
+
+def test_a_with_evaluated_once_keeps_its_derived_protocol() -> None:
+    item = _node(_function(WITH_ONCE), With).substitute({}).items[0]
+    protocol = _FaceProtocol(item._source_exit_face_id())
+    assert With._protocol_at_exit_face(protocol, item) is protocol
+
+
+def test_each_evaluation_describes_exit_over_its_own_face() -> None:
+    source = _node(_function(WITH_ONCE), With)
+    protocol = _FaceProtocol(source.items[0]._source_exit_face_id())
+    for node in _copies(source):
+        item = node.items[0]
+        keyed = With._protocol_at_exit_face(protocol, item)
+        assert keyed.exit_face_id == item._exit_face_id()
+    assert protocol.exit_face_id == source.items[0]._exit_face_id()
+
+
+class _Definition:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+    def wire(self) -> dict:
+        return {"definition": self.name}
+
+
+def _generator_protocol():
+    frame = SimpleNamespace(generator_steps=(), frame_cid="generator-frame")
+    protocol = construct_generator_backed_protocol(
+        frame=frame,
+        enter_definition=_Definition("enter"),
+        exit_definition=_Definition("exit"),
+        exit_face_id="face#source",
+        construction_cid="construction",
+    )
+    assert isinstance(protocol, GeneratorBackedManagerProtocolV1)
+    return protocol
+
+
+def test_a_generator_protocol_rekeys_onto_an_evaluations_face() -> None:
+    protocol = _generator_protocol()
+    keyed = protocol.at_exit_face("face#evaluation")
+    assert keyed.exit_face_id == "face#evaluation"
+    assert keyed.protocol_construction_cid != protocol.protocol_construction_cid
+    assert keyed.generator_frame is protocol.generator_frame
+    assert keyed.enter_definition is protocol.enter_definition
+    assert keyed.exit_definition is protocol.exit_definition
+    assert protocol.exit_face_id == "face#source"
+
+
+def test_a_generator_lifecycle_rekeys_its_lifecycle_identity() -> None:
+    lifecycle = GeneratorBackedLifecycleProtocolV1.from_protocol(_generator_protocol())
+    keyed = lifecycle.at_exit_face("face#evaluation")
+    assert isinstance(keyed, GeneratorBackedLifecycleProtocolV1)
+    assert keyed.exit_face_id == "face#evaluation"
+    assert keyed.lifecycle_cid != lifecycle.lifecycle_cid
 
 
 # ---------------------------------------------------------------------------
@@ -250,3 +371,31 @@ def test_a_read_after_a_with_tuple_target_is_its_projection() -> None:
 def test_a_with_tuple_target_without_its_store_binds_nothing() -> None:
     with_node = _node(_function(WITH_TUPLE), With)
     assert with_node.substitution_binding({}) is None
+
+
+def test_a_generator_manager_tuple_target_reads_its_projections(
+    monkeypatch,
+) -> None:
+    # ``with gen() as (a, b)``: the manager's contract is its generator frame.
+    # The store is lowered as for a class-based manager, so after the with
+    # ``a``/``b`` are the store's projections, not their prior state.
+    monkeypatch.setattr(With, "_generator_manager_frame", lambda self, item: object())
+    with_node = _node(_function(WITH_TUPLE), With).substitute({})
+    assert isinstance(with_node, With)
+    item = with_node.items[0]
+    store = with_node.body[0]
+    assert _keyed(store)
+    assert store.value.slot_id == f"{item._manager_slot_id()}#enter_result"
+    binding = with_node.substitution_binding({})
+    assert set(binding) == {"a", "b"}
+    for name in ("a", "b"):
+        assert isinstance(binding[name], EvaluationRef)
+        assert binding[name].evaluation == projection_key(store.evaluation, name)
+
+
+def test_a_generator_manager_store_is_lowered_once(monkeypatch) -> None:
+    monkeypatch.setattr(With, "_generator_manager_frame", lambda self, item: object())
+    with_node = _node(_function(WITH_TUPLE), With)
+    bound = with_node._bind_store_target(with_node.items[0])
+    assert len(bound.body) == len(with_node.body) + 1
+    assert bound._bind_store_target(bound.items[0]) is bound
