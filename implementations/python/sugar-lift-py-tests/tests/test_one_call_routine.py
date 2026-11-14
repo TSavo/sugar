@@ -5,7 +5,8 @@ A call has one form, however it is written: its actuals are bound by
 ``CallSiteValue.producer_outcome``.  A plain call ``f()``, a method call
 ``self.m()``/``obj.m()``, a computed callee ``(lambda n: n)(4)``, ``f(**kw)``
 and ``obj.m(**kw)`` all take that one road, so a body's raise reaches the
-caller the same way from every form.
+caller the same way from every form.  A ``with``'s ``__enter__`` and
+``__exit__`` are method calls too, and take it as well.
 
 Before this change ``f(**kw)`` and ``(lambda ...)(...)`` each bound through
 their own copy of the binder, and the computed call returned its body
@@ -265,4 +266,43 @@ def test_a_key_lambda_whose_body_raises_carries_the_raise_to_the_caller(
     _only_raise(outcome, "ValueError")
     assert _bound_and_applied(bound, applied, "py.call")
     assert _bound_and_applied(bound, applied, "fail")
+    assert _every_applied_body_was_bound_by_the_one_binder(bound, applied)
+
+
+# ---------------------------------------------------------------------------
+# A ``with`` calls its manager's ``__enter__`` and ``__exit__`` through the
+# same routine: bound by ``bind_method_call``, applied by ``producer_outcome``
+# (``manager_protocol_construction._call_protocol_method``), so a raising
+# ``__enter__`` reaches the caller the way a raising ``self.m()`` does.
+# ---------------------------------------------------------------------------
+
+_WITH_MANAGER = """\
+class Resource:
+    def __enter__(self):
+{enter}
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+def test_with():
+    with Resource() as handle:
+        value = handle
+    assert value == 1
+"""
+
+
+def test_a_with_enters_and_exits_through_the_one_routine(monkeypatch) -> None:
+    completes = _WITH_MANAGER.format(enter="        return 1")
+    raises = _WITH_MANAGER.format(enter="        raise ValueError('bad')")
+
+    outcome, bound, applied = _routed(monkeypatch, completes)
+    assert outcome.completed_value() is not None
+    assert _bound_and_applied(bound, applied, "Resource.__enter__")
+    assert _bound_and_applied(bound, applied, "Resource.__exit__")
+    assert _every_applied_body_was_bound_by_the_one_binder(bound, applied)
+
+    outcome, bound, applied = _routed(monkeypatch, raises)
+    _only_raise(outcome, "ValueError")
+    assert _bound_and_applied(bound, applied, "Resource.__enter__")
     assert _every_applied_body_was_bound_by_the_one_binder(bound, applied)
