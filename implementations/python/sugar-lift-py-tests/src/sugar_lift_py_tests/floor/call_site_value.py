@@ -230,6 +230,11 @@ class CallSiteValue(FloorValue):
     off_population_target: str | None = dataclass_field(
         default=None, compare=False, repr=False
     )
+    # The ``LanguageCallee`` the Call node bound this call's callee to (its
+    # binding, never its spelling), carried from ``CallSiteSugar``.
+    language_callee: object | None = dataclass_field(
+        default=None, compare=False, repr=False
+    )
     _retained_source_completion: object | None = dataclass_field(
         default=None, init=False, compare=False, repr=False
     )
@@ -827,8 +832,11 @@ class CallSiteValue(FloorValue):
             # iterations (#5338 / public_api residual after #5574). ``list.append``
             # is the coordinate this door itself mints — chained appends must not
             # re-panic. Content identity stays on term CID (#5569).
+            from sugar_source_tree.nodes import LanguageCallee
+
+            if receiver.language_callee is LanguageCallee.BUILTIN_LIST:
+                return True
             if receiver.target_name in {
-                "builtins.list",
                 "list",
                 "split",
                 "list.append",

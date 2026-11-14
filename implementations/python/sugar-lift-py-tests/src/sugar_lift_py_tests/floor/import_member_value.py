@@ -180,24 +180,28 @@ class ImportMemberValue(FloorValue):
         del ctx
         return self.subscript(operation.index, operation.site)
 
-    #: Authenticated C-floor callables whose meaning is language-owned (plan
-    #: Cut 2). The KEY is the authenticated ``target_symbol`` (``qualified_name``
-    #: here), never the spelling. Recognition hands a decidable call to the
-    #: shared ``BuiltinSemanticCallable`` operation; an undecidable one (symbolic
-    #: operand, or a pattern outside the decided subset) falls through to the
-    #: ordinary import-member runtime-effect boundary -- never a guess.
-    _C_FLOOR_SEMANTIC_OPERATIONS = {
-        "re.search": "python.re.search",
-        "re.match": "python.re.match",
-        "re.fullmatch": "python.re.fullmatch",
-    }
+    def language_callee(self):
+        """The ``LanguageCallee`` this member's authenticated binding names
+        (its receipt's target symbol), never its spelling; else ``None``."""
+        from sugar_source_tree.nodes import LanguageCallee
 
-    #: Authenticated callables the language defines as returning their one
-    #: positional operand: ``typing.final(f)`` tries ``f.__final__ = True``,
-    #: swallows the failure, and returns ``f``.  Keyed on the authenticated
-    #: ``qualified_name``, never the spelling.  The ``__final__`` marker is
-    #: not carried on the returned floor.
-    _RETURNS_ITS_OPERAND = frozenset({"typing.final"})
+        return LanguageCallee.of(self.receipt.target_symbol)
+
+    @staticmethod
+    def c_floor_semantic_operation(language_callee) -> str | None:
+        """The shared ``BuiltinSemanticCallable`` operation of an authenticated
+        C-floor callable whose meaning is language-owned (plan Cut 2), keyed on
+        its ``LanguageCallee``.  Recognition hands a decidable call to that
+        operation; an undecidable one (symbolic operand, or a pattern outside
+        the decided subset) falls through to the ordinary import-member
+        runtime-effect boundary -- never a guess."""
+        from sugar_source_tree.nodes import LanguageCallee
+
+        return {
+            LanguageCallee.RE_SEARCH: "python.re.search",
+            LanguageCallee.RE_MATCH: "python.re.match",
+            LanguageCallee.RE_FULLMATCH: "python.re.fullmatch",
+        }.get(language_callee)
 
     def callable_application_with(self, operation: Any, ctx: object):
         """Call-through-import: a recognized C-floor semantic when the call is
@@ -208,16 +212,23 @@ class ImportMemberValue(FloorValue):
         CallSite. But a small closed set of C-floor callables (``re.search`` and
         friends) have language-owned semantics; when THIS authenticated member
         is one of them and its operands are concrete, decide it here.
+
+        ``typing.final(f)`` tries ``f.__final__ = True``, swallows the failure,
+        and returns ``f``: the call is its one positional operand.  The
+        ``__final__`` marker is not carried on the returned floor.
         """
+        from sugar_source_tree.nodes import LanguageCallee
+
+        language_callee = self.language_callee()
         if (
-            self.qualified_name in self._RETURNS_ITS_OPERAND
+            language_callee is LanguageCallee.TYPING_FINAL
             and not operation.keyword_names
             and len(operation.arguments) == 1
         ):
             from sugar_lift_py_tests.outcome import Complete
 
             return Complete(operation.arguments[0])
-        operation_name = self._C_FLOOR_SEMANTIC_OPERATIONS.get(self.qualified_name)
+        operation_name = self.c_floor_semantic_operation(language_callee)
         if operation_name is not None:
             decided = self._decide_c_floor_semantic(operation_name, operation, ctx)
             if decided is not None:

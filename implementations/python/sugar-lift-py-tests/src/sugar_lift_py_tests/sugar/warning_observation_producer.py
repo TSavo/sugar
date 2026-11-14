@@ -38,8 +38,8 @@ from __future__ import annotations
 #        skip_file_prefixes=())
 # Only the category position is read.  ``stacklevel``/``source`` select the
 # frame a warning is ATTRIBUTED to; they do not decide which warning occurred,
-# so they neither contribute to nor block the observation.
-WARNING_OCCURRENCE_SYMBOL = "warnings.warn"
+# so they neither contribute to nor block the observation.  The call is
+# recognised by ``LanguageCallee.WARNINGS_WARN`` (its binding), never by name.
 WARNING_MESSAGE_PARAMETER_INDEX = 0
 WARNING_CATEGORY_PARAMETER_INDEX = 1
 WARNING_CATEGORY_PARAMETER_NAME = "category"
@@ -55,10 +55,11 @@ def project_warning_observation(value):
     is not an authenticated warning occurrence" -- never "no warning occurred".
     """
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_source_tree.nodes import LanguageCallee
 
     if not isinstance(value, CallSiteValue):
         return None
-    if value.target_name != WARNING_OCCURRENCE_SYMBOL:
+    if value.language_callee is not LanguageCallee.WARNINGS_WARN:
         return None
     return warning_observation_from_operands(
         value.arg_values, value.keyword_names, value.site
