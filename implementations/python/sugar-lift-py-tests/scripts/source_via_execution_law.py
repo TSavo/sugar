@@ -476,7 +476,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             package / "floor",
             package / "gap",
             package / "kit_rpc",
-            package / "lift",
             package / "outcome",
             package / "proofir",
             package / "sugar",

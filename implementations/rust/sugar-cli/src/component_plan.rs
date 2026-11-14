@@ -3057,7 +3057,9 @@ languages = ["Python"]
         // The component's command cannot spawn. Had the planner started it,
         // the spawn failure would be recorded as a diagnostic naming it.
         assert!(
-            plan.diagnostics.iter().all(|d| !d.message.contains("python")),
+            plan.diagnostics
+                .iter()
+                .all(|d| !d.message.contains("python")),
             "a component declaring languages=[python] must not be started for a workspace \
              with no Python evidence: {:?}",
             plan.diagnostics
@@ -3072,7 +3074,9 @@ languages = ["Python"]
         let plan = plan_with_unspawnable_python_component(project.path());
 
         assert!(
-            plan.diagnostics.iter().any(|d| d.message.contains("python")),
+            plan.diagnostics
+                .iter()
+                .any(|d| d.message.contains("python")),
             "a component declaring languages=[python] must be asked about a workspace \
              that holds a .py file: {:?}",
             plan.diagnostics

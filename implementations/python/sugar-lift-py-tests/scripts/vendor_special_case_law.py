@@ -79,7 +79,6 @@ _CONSTRUCTION_LANES = (
     "floor",
     "gap",
     "kit_rpc",
-    "lift",
     "outcome",
     "proofir",
     "sugar",

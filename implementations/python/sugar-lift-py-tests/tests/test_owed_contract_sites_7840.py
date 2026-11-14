@@ -19,9 +19,11 @@ from pathlib import Path
 
 import pytest
 
+from sugar_lift_py_tests.repo_root import python_implementations_root
+
 
 def _python_src_roots() -> list[Path]:
-    root = Path(__file__).resolve().parents[2]
+    root = python_implementations_root()
     return [path / "src" for path in sorted(root.iterdir()) if (path / "src").is_dir()]
 
 

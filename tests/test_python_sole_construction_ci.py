@@ -88,7 +88,7 @@ def test_workflow_is_parallel_matrix_not_serial_monolith() -> None:
     assert "python-test-env-prepare" in workflow
     assert "python-test-wheelhouse" in workflow
     assert "python-test-environment-from-wheelhouse" in workflow
-    process_job = workflow.split("process-floor:")[1].split("static-floors:")[0]
+    process_job = workflow.split("\n  process-floor:")[1].split("\n  static-floors:")[0]
     assert "python-test-environment-from-wheelhouse" in process_job
     assert "uses: ./.github/actions/python-test-environment\n" not in process_job
 
