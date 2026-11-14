@@ -166,10 +166,21 @@ def test_unrolled_loop_appends_one_distinct_unknown_per_iteration(tmp_path):
     assert type(value) is ListValue and len(value.elements) == 2
     first, second = value.elements
     assert first != second
-    iterations = [
-        sorted(set(re.findall(r"@loop\[\d+,\d+\)#(\d)", repr(member.term))))
-        for member in (first, second)
-    ]
+    # Each member names its evaluation by `python:occurrence(<site coordinate
+    # CID>, <path segment>...)` (#7808): its loop segment is its iteration.
+    iterations = []
+    for member in (first, second):
+        occurrence = member.term.args[1]
+        assert occurrence.name == "python:occurrence"
+        iterations.append(
+            sorted(
+                {
+                    match.group(1)
+                    for segment in occurrence.args[1:]
+                    if (match := re.fullmatch(r"loop\[\d+,\d+\)#(\d)", segment.value))
+                }
+            )
+        )
     assert iterations == [["0"], ["1"]]
     # Each iteration's call halts once, at its own occurrence.
     assert len(halts) == 2
