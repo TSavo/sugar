@@ -46,9 +46,15 @@ class WithSourceResourceSugar(Sugar):
 
 
 def _route_manager_faces(resource, ctx: object = None) -> Outcome:
-    """Enter every manager face under its guard; union the exits (8.5)."""
+    """Enter every manager face under its guard; union the exits (8.5).
+
+    The enter runs beneath its manager face and the body beneath its enter
+    face, each composed onto that face by ``ExitSet.sequence``: it takes the
+    face's guard and faces and owes what the face owes. The exit routing
+    carries a body face's debts onto every arm it leaves through.
+    """
     from sugar_lift_py_tests.outcome import outcome_to_exitset
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted, owed_union
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
     from sugar_lift_py_tests.outcome.resource_bindings import (
         EnterResultBinding,
         ExitFaceBinding,
@@ -75,19 +81,14 @@ def _route_manager_faces(resource, ctx: object = None) -> Outcome:
         manager_facts = ManagerBinding(
             resource.manager_slot_id, manager_face.value
         ).to_facts(site=resource.site)
-        enter_outcome = resource.protocol.enter_resource_outcome_for(
-            manager_face.value, ctx
+        enter_es = ExitSet((manager_face,)).sequence(
+            lambda manager: outcome_to_exitset(
+                resource.protocol.enter_resource_outcome_for(manager, ctx)
+            )
         )
-        enter_es = outcome_to_exitset(enter_outcome)
         for enter_face in enter_es.exits:
-            guard = _and(manager_face.guard, enter_face.guard)
-            # The manager and enter faces this path ran through: every arm
-            # leaving it owes what both incurred.
-            owed = owed_union(manager_face.owed, enter_face.owed)
             if isinstance(enter_face, Halted):
-                parts.append(
-                    ExitSet((Halted(guard, enter_face.effect, owed=owed),))
-                )
+                parts.append(ExitSet((enter_face,)))
                 continue
             entered = enter_face.value
             enter_value = _returned_value(entered.enter_value)
@@ -96,7 +97,9 @@ def _route_manager_faces(resource, ctx: object = None) -> Outcome:
                 enter_facts = EnterResultBinding(
                     resource.enter_slot_id, enter_value
                 ).to_facts(site=resource.site)
-            body_es = reduce_block_to_exitset(resource.body, ctx).guarded(guard)
+            body_es = ExitSet((enter_face,)).sequence(
+                lambda _entered: reduce_block_to_exitset(resource.body, ctx)
+            )
             concrete_exit = getattr(resource.protocol, "exit_outcome_for_body", None)
             # Generator protocols have a linear resume: retain their single
             # existing exit reduction instead of resuming per body face.
@@ -162,8 +165,7 @@ def _route_manager_faces(resource, ctx: object = None) -> Outcome:
                     )
                 parts.append(
                     prepend_facts_to_exitset(
-                        _owing(routed, owed),
-                        (*manager_facts, *enter_facts, *face_facts),
+                        routed, (*manager_facts, *enter_facts, *face_facts)
                     )
                 )
     if not parts:
@@ -334,28 +336,6 @@ def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return")
             fix="retain the native exit's actual control outcome",
         )
     return result
-
-
-def _owing(exit_es, owed: tuple):
-    """Every arm of ``exit_es`` also owes ``owed``: the debts of the path into it.
-
-    For a composition written by hand rather than through ``ExitSet.sequence``
-    (the With's manager, enter, body and exit; a fold over operands; a loop's
-    iterations): the prefix's ``owed`` is carried here the way ``sequence``
-    carries it, prefix first and then the arm's own, by ``owed_union``.
-    """
-    from dataclasses import replace
-
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, owed_union
-
-    if not owed:
-        return exit_es
-    return ExitSet(
-        tuple(
-            replace(exit_, owed=owed_union(owed, exit_.owed))
-            for exit_ in exit_es.exits
-        )
-    )
 
 
 def _and(left, right):

@@ -96,7 +96,7 @@ class WithResourceSugar(Sugar):
         # Construction boundary: only ExitSet algebra + binding facts.
         # No sugar-class imports or construction on this path.
         from sugar_lift_py_tests.floor import EnteredManagerStateValue
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted, owed_union
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             ExitFaceBinding,
@@ -110,7 +110,6 @@ class WithResourceSugar(Sugar):
             _ReducedBlock,
             reduce_block_to_exitset,
         )
-        from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
         del ctx
 
@@ -128,26 +127,16 @@ class WithResourceSugar(Sugar):
                     self.manager_slot_id, mgr_exit.value
                 ).to_facts(site=self.site)
 
-            enter_es = sugar_outcome_to_exitset(self.enter.desugar())
+            # The enter runs beneath its manager face and the body beneath its
+            # enter face (``ExitSet.sequence``): each takes the face's guard
+            # and faces and owes what it owes; the exit routing carries a body
+            # face's debts onto every arm it leaves through.
+            enter_es = ExitSet((mgr_exit,)).sequence(
+                lambda _manager: sugar_outcome_to_exitset(self.enter.desugar())
+            )
             for enter_exit in enter_es.exits:
-                face_guard = _and_guards(mgr_exit.guard, enter_exit.guard)
-                # Every arm leaving this path owes what manager and enter
-                # incurred on it.
-                owed = owed_union(mgr_exit.owed, enter_exit.owed)
                 if isinstance(enter_exit, Halted):
-                    parts.append(
-                        ExitSet(
-                            (
-                                Halted(
-                                    face_guard,
-                                    enter_exit.effect,
-                                    enter_exit.state,
-                                    enter_exit.faces,
-                                    owed,
-                                ),
-                            )
-                        )
-                    )
+                    parts.append(ExitSet((enter_exit,)))
                     continue
 
                 entered = EnteredManagerStateValue(
@@ -163,7 +152,9 @@ class WithResourceSugar(Sugar):
                         self.enter_slot_id, entered.enter_value
                     ).to_facts(site=self.site)
 
-                body_es = reduce_block_to_exitset(self.body).guarded(face_guard)
+                body_es = ExitSet((enter_exit,)).sequence(
+                    lambda _entered: reduce_block_to_exitset(self.body)
+                )
 
                 # Parametric exit: materialize once, fan over every body face.
                 exit_es = sugar_outcome_to_exitset(self.exit.desugar())
@@ -209,7 +200,7 @@ class WithResourceSugar(Sugar):
                         )
                         after = face.and_exit(exit_es, disposition=disposition)
                     after = prepend_facts_to_exitset(
-                        _owing(after, owed), (*mgr_facts, *enter_facts, *face_facts)
+                        after, (*mgr_facts, *enter_facts, *face_facts)
                     )
                     parts.append(after)
 
@@ -224,16 +215,3 @@ class WithResourceSugar(Sugar):
 
         # The with's own faces: a halt stays a halted arm (#7826).
         return routed.normalize()
-
-
-def _and_guards(left, right):
-    from sugar_lift_py_tests.ir import and_
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
-
-    if left == true_guard():
-        return right
-    if right == true_guard():
-        return left
-    if left == right:
-        return left
-    return and_([left, right])

@@ -43,42 +43,33 @@ class GeneratorWithSugar(Sugar):
             _ReducedBlock,
             reduce_block_to_exitset,
         )
-        from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
         manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
-        routed = []
-        for manager_exit in manager_es.exits:
-            if isinstance(manager_exit, Halted):
-                routed.append(ExitSet((manager_exit,)))
-                continue
-            machine = manager_exit.value
+        if not manager_es.exits:
+            # No manager face is reachable: the statement completes with an
+            # empty record and its tail is unreachable.
+            return ExitSet.completed(_ReducedBlock((), False, ()))
+
+        def enter(machine):
             if not isinstance(machine, GeneratorConstructionV1):
                 self._loud(
                     "manager did not construct GeneratorConstructionV1",
                     "opaque generator transition",
                 )
-            # Every arm leaving this manager face owes what the manager
-            # expression incurred on it.
-            routed.append(
-                _owing(
-                    self._consume_enter_outcome(machine.resume(), manager_exit, ctx),
-                    manager_exit.owed,
-                )
-            )
+            return self._consume_enter_outcome(machine.resume(), machine, ctx)
 
-        if not routed:
-            # No manager face is reachable: the statement completes with an
-            # empty record and its tail is unreachable.
-            return ExitSet.completed(_ReducedBlock((), False, ()))
-        result = routed[0]
-        for part in routed[1:]:
-            result = result.union(part)
-        # The with's own faces: a halt stays a halted arm (#7826).
-        return result.normalize()
+        # Everything the enter and the body produce runs beneath its manager
+        # face (``ExitSet.sequence``): its guard and faces, and what the
+        # manager expression owes. The with's own faces: a halt stays a halted
+        # arm (#7826).
+        return manager_es.sequence(enter)
 
-    def _consume_enter_outcome(self, entered, manager_exit, ctx):
-        """Route first-resume of a generator manager, including open enter faces."""
-        from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
+    def _consume_enter_outcome(self, entered, machine, ctx):
+        """Route first-resume of a generator manager, including open enter faces.
+
+        A halted step is the enter's own halt; a completed step continues the
+        enter beneath itself (``ExitSet.sequence``).
+        """
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             prepend_facts_to_exitset,
@@ -86,39 +77,17 @@ class GeneratorWithSugar(Sugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
-        from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
         if isinstance(entered, ExitSet):
-            parts = []
-            for face in entered.exits:
-                if isinstance(face, Halted):
-                    parts.append(ExitSet((face,)).guarded(manager_exit.guard))
-                    continue
-                if isinstance(face, Completed):
-                    # The resumed step's completed face: what it owes rides
-                    # onto every arm the rest of the enter produces under it.
-                    parts.append(
-                        _owing(
-                            self._consume_enter_outcome(
-                                face.value, manager_exit, ctx
-                            ).guarded(face.guard),
-                            face.owed,
-                        )
-                    )
-                    continue
-                self._loud(type(face).__name__, "opaque generator transition")
-            if not parts:
-                return ExitSet(())
-            result = parts[0]
-            for part in parts[1:]:
-                result = result.union(part)
-            return result
+            return entered.sequence(
+                lambda value: self._consume_enter_outcome(value, machine, ctx)
+            )
         if isinstance(entered, GeneratorConstructionV1):
             # A step completed and left the machine runnable: run on to the
             # first suspension.
-            return self._consume_enter_outcome(entered.resume(), manager_exit, ctx)
+            return self._consume_enter_outcome(entered.resume(), machine, ctx)
         if isinstance(entered, GeneratorTerminationV1):
-            return self._entry_refusal_exit(manager_exit, entered)
+            return self._entry_refusal_exit(machine, entered)
         if isinstance(entered, GeneratorTransitionGapV1):
             self._loud(entered.observed, "opaque generator transition")
         if not isinstance(entered, YieldEffect):
@@ -133,7 +102,7 @@ class GeneratorWithSugar(Sugar):
         )
         # The generator-backed manager's __exit__ per body exit: an
         # exception is thrown in at the yield, anything else resumes it.
-        body_es = reduce_block_to_exitset(self.body, ctx).guarded(manager_exit.guard)
+        body_es = reduce_block_to_exitset(self.body, ctx)
         exits = []
         for body_exit in body_es.exits:
             exit_es = generator_manager_exit(
@@ -161,36 +130,26 @@ class GeneratorWithSugar(Sugar):
         return prepend_facts_to_exitset(result, facts)
 
     @staticmethod
-    def _entry_refusal_exit(manager_exit, termination: GeneratorTerminationV1):
+    def _entry_refusal_exit(machine, termination: GeneratorTerminationV1):
         """Turn first-resume termination into the authenticated raise ExitSet arm.
 
         Observation lives in ``generator_entry_refusal`` (vendor conversion).
         This consumer only asks for it — no vendor module name here
-        (``generator_construction_law``).
+        (``generator_construction_law``). The manager face's guard, faces and
+        ``owed`` are the composition's (``ExitSet.sequence`` in ``desugar``).
         """
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.generator_entry_refusal import observed_entry_refusal
-        from sugar_lift_py_tests.outcome.exit_set import Halted
 
         refusal = observed_entry_refusal()
-        blame = str(manager_exit.value.instance_coordinate)
+        blame = str(machine.instance_coordinate)
         effect = RaiseEffect.for_builtin(
             refusal.exception_name,
             occurrence=f"generator-entry-refusal:{blame}",
             blame=blame,
             raised_value=refusal.message,
         )
-        return ExitSet(
-            (
-                Halted(
-                    manager_exit.guard,
-                    effect,
-                    termination,
-                    manager_exit.faces,
-                    manager_exit.owed,
-                ),
-            )
-        )
+        return ExitSet.halted(effect, state=termination)
 
     def _loud(self, observed: str, label: str):
         from sugar_source_tree.panic import SugarNotWritten

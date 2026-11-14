@@ -221,7 +221,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted, owed_union
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             prepend_facts_to_exitset,
@@ -233,7 +233,6 @@ class WithOpaqueCitedManagerSugar(Sugar):
             _ReducedBlock,
             reduce_block_to_exitset,
         )
-        from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
         manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
         parts: list = []
@@ -244,30 +243,18 @@ class WithOpaqueCitedManagerSugar(Sugar):
                 parts.append(ExitSet((mgr_exit,)))
                 continue
 
-            enter_es = self._enter_exitset(mgr_exit.value)
+            # The enter runs beneath its manager face and the body beneath its
+            # enter face (``ExitSet.sequence``): each takes the face's guard
+            # and faces and owes what it owes; the exit routing carries a body
+            # face's debts onto every arm it leaves through.
+            enter_es = ExitSet((mgr_exit,)).sequence(self._enter_exitset)
             exit_es = self._exit_exitset(mgr_exit.value)
 
             for enter_exit in enter_es.exits:
-                face_guard = _and_guards(mgr_exit.guard, enter_exit.guard)
-                # Every arm leaving this path owes what the manager expression
-                # and enter incurred on it.
-                owed = owed_union(mgr_exit.owed, enter_exit.owed)
                 if isinstance(enter_exit, Halted):
                     # Enter halted: the body never ran and exit never runs.
                     # Python does not call __exit__ when __enter__ raised.
-                    parts.append(
-                        ExitSet(
-                            (
-                                Halted(
-                                    face_guard,
-                                    enter_exit.effect,
-                                    enter_exit.state,
-                                    enter_exit.faces,
-                                    owed,
-                                ),
-                            )
-                        )
-                    )
+                    parts.append(ExitSet((enter_exit,)))
                     continue
 
                 enter_facts = ()
@@ -276,7 +263,9 @@ class WithOpaqueCitedManagerSugar(Sugar):
                         self.enter_slot_id, enter_exit.value
                     ).to_facts(site=self.site)
 
-                body_es = reduce_block_to_exitset(self.body, ctx).guarded(face_guard)
+                body_es = ExitSet((enter_exit,)).sequence(
+                    lambda _entered: reduce_block_to_exitset(self.body, ctx)
+                )
 
                 for body_exit in body_es.exits:
                     if isinstance(body_exit, Halted) and body_exit.state is None:
@@ -300,9 +289,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
                     after = ExitSet((body_exit,)).and_exit_truthiness(
                         exit_es, site=self.site
                     )
-                    parts.append(
-                        prepend_facts_to_exitset(_owing(after, owed), enter_facts)
-                    )
+                    parts.append(prepend_facts_to_exitset(after, enter_facts))
 
         if not parts:
             routed = ExitSet.completed(
@@ -319,16 +306,3 @@ class WithOpaqueCitedManagerSugar(Sugar):
         # suppressed faces whenever the body always raised and a ``return``
         # followed, and put a halt inside a completed record (#7826).
         return routed.normalize()
-
-
-def _and_guards(left, right):
-    from sugar_lift_py_tests.ir import and_
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
-
-    if left == true_guard():
-        return right
-    if right == true_guard():
-        return left
-    if left == right:
-        return left
-    return and_([left, right])
