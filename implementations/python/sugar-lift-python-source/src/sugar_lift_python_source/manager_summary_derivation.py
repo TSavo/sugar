@@ -6,7 +6,6 @@ from dataclasses import dataclass, replace
 import json
 from typing import Literal
 
-from sugar_lift_py_tests.call_symbol import call_symbol
 from sugar_lift_py_tests.canonicalizer import encode_jcs
 from sugar_lift_py_tests.context_manager_contract import (
     CallParameterV1,
@@ -34,7 +33,6 @@ from sugar_lift_py_tests.context_manager_contract import (
     SourceExitFacesCompletionV1,
     SuppressesModeV1,
     TotalCompletionV1,
-    VariadicKeywordEntryProjectionV1,
     VariadicKeywordV1,
     VariadicPositionalV1,
     semantics_to_value,
@@ -187,6 +185,9 @@ def derive_manager_summary(
 
     # A deferred lookup is not a suppression theorem. Admit only the real
     # source protocol, whose exit will run with each actual With body face.
+    # Nor is it an effect boundary: what an attribute of the exit value
+    # holds is that value's class's business, never read off the attribute's
+    # spelling (#7757). The exit's own return truthiness is the theorem.
     if (
         isinstance(protocol, ConstructedManagerProtocolV1)
         and isinstance(exit_outcome, NativeOperationExitCarrierV1)
@@ -200,14 +201,6 @@ def derive_manager_summary(
             for coordinate in exit_outcome.coordinates
         )
     ):
-        if boundary_door:
-            boundary = _derive_effect_boundary_from_deferred_carrier(
-                exit_outcome, protocol, behavior
-            )
-            if boundary is not None:
-                boundary = _with_construction_faces(boundary, construction_halts)
-                signature = _signature_for_behavior(behavior, boundary)
-                return _sealed_summary(protocol, boundary, signature)
         semantics = ProtocolResourceSemanticsV1(
             EnterResultContractV1(PrimitiveSort("Value")),
             ExitContractV1(ReturnTruthinessDispositionV1()),
@@ -341,22 +334,17 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
     actual_terms = tuple(
         value.to_term(owner=behavior.resolved_object_cid) for value in actuals
     )
+    # The operands are read off the exit's own formula. A call the exit made
+    # but did not reduce (``self.matches(exc_val)``) is that call's undecided
+    # citation: no field or method spelling stands in for its body (#7757).
     expected_index = _formal_index_for_coordinate(
         formula, actual_terms, "python:exit_type"
     )
-    if expected_index is None:
-        expected_index = _formal_index_for_matches_expected(
-            formula, behavior, actual_terms
-        )
     if expected_index is None:
         return None
     message_index = _formal_index_for_coordinate(
         formula, actual_terms, "python:exit_value"
     )
-    if message_index is None:
-        message_index = _formal_index_for_matches_message(
-            formula, behavior, actual_terms
-        )
     absent_effect_halts = tuple(
         face
         for face in exit_set.exits
@@ -369,10 +357,7 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
     )
     halted = tuple(face for face in exit_set.exits if isinstance(face, Halted))
     match_failed_halts = tuple(
-        face
-        for face in halted
-        if _halt_complements_true_return(face, exit_set)
-        or _halt_negates_matches_conjunct_of_true_return(face, exit_set)
+        face for face in halted if _halt_complements_true_return(face, exit_set)
     )
     if any(
         face not in absent_effect_halts and face not in match_failed_halts
@@ -392,322 +377,61 @@ def _derive_effect_boundary(exit_set, protocol, behavior):
         # Sealing SuppressesMode here would invent that the manager does not
         # require an exception.
         return None
-    from sugar_lift_py_tests.floor.none_value import NoneValue
-
-    if message_index is not None:
-        message_pattern = OptionalFormalArgumentProjectionV1(message_index)
-    else:
-        message_pattern = _keyword_entry_cited_by_field(behavior, "match")
-    match_field = _receiver_field_value(behavior, "match")
-    if (
-        message_pattern is None
-        and match_field is not None
-        and not isinstance(match_field, NoneValue)
+    if message_index is None and _exit_decision_reads_exit_value(
+        formula, exit_set, authentications
     ):
-        # A stored non-None match that is not a unique factory formal or
-        # **kwargs entry is an unprojected pattern, not NoMessagePattern.
-        # Seeded match=None still projects as an omitted message.
+        # The exit decides on the raised value, but no factory formal is the
+        # operand it reads: that pattern is unprojected, never
+        # NoMessagePattern. Which receiver field holds a pattern is not read
+        # off the field's spelling (#7757).
         return None
-    if message_pattern is None:
-        supplied = _keyword_supplied_value(behavior, "match")
-        if supplied is not None and not isinstance(supplied, NoneValue):
-            # Factory **kwargs carried a pattern that was not cited. A
-            # stored None after a wiped compile is not match=None.
-            return None
     expects = bool(absent_effect_halts)
     return EffectBoundarySemanticsV1(
         ExpectsModeV1() if expects else SuppressesModeV1(),
         RaiseEffectKindV1(),
         FormalArgumentProjectionV1(expected_index),
-        NoMessagePatternV1() if message_pattern is None else message_pattern,
+        (
+            NoMessagePatternV1()
+            if message_index is None
+            else OptionalFormalArgumentProjectionV1(message_index)
+        ),
         ExceptionInfoBindingV1(),
     )
 
 
-def _derive_effect_boundary_from_deferred_carrier(
-    carrier, protocol, behavior, receiver=None
-):
-    """Derive an effect boundary from a short-circuited deferred message lookup.
+def _exit_decision_reads_exit_value(formula, exit_set, authentications):
+    """True when the exit's decision mentions the raised value at all.
 
-    The identity half is already a completed ``PredicateValue`` — identity is
-    total. The continuing half is a deferred ``effect.message`` lookup that
-    then compares by native ``==``. That comparison is not rewritten into a
-    total ``eq`` formula (payload ``__eq__`` can raise). The message formal is
-    the unique factory actual stored in the receiver field named by the
-    comparison's other operand.
-
-    A source may wrap the comparison as ``field is None or effect.message ==
-    field``. That inner ``or`` is not itself an EffectBoundary; it only records
-    that this face already decided the pattern is present. The outer ``and``
-    remains the identity half. ``==`` still is not treated as a total formula.
+    The suppression formula, every exit face's guard and every authenticated
+    branch guard are read. ``python:exit_value`` anywhere in them means the
+    outcome depends on the raised value, so an exit without a projected
+    message operand cannot be stated as consuming any message.
     """
-    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.floor.string_value import StringValue
-    from sugar_lift_py_tests.outcome import Completed, Halted
-    from sugar_lift_py_tests.sugar.equality_op_sugar import EqualityOpSugar
-
-    if (
-        carrier.demand.operator != "attribute_named"
-        or len(carrier.operands) < 2
-        or not isinstance(carrier.operands[1], StringValue)
-        or carrier.operands[1].value != "message"
-        or not carrier.coordinates
-        or not isinstance(carrier.coordinates[0], ExitValueCoordinate)
-        or carrier.coordinates[0].face_id != protocol.exit_face_id
-        or not carrier.short_circuits
-        or len(carrier.short_circuits) > 2
-    ):
-        return None
-
-    continuing_guard, stopped, _continuing_face, _stopped_face = (
-        carrier.short_circuits[-1]
+    formulas = (
+        formula,
+        *(face.guard for face in exit_set.exits),
+        *(item.observed_guard for item in authentications),
     )
-    if (
-        len(stopped.exits) != 1
-        or not isinstance(stopped.exits[0], Completed)
-        or not isinstance(stopped.exits[0].value, PredicateValue)
-        or stopped.exits[0].value.formula != continuing_guard
-    ):
-        # And returns the identity predicate on the stopping face. Or returns
-        # that predicate under the complementary guard, which is a different
-        # theorem than EffectBoundary's type-and-message conjunction.
-        return None
-
-    actuals = tuple(behavior.formal_actual_values)
-    actual_terms = tuple(
-        value.to_term(owner=behavior.resolved_object_cid) for value in actuals
-    )
-    expected_index = _formal_index_for_coordinate(
-        continuing_guard, actual_terms, "python:exit_type"
-    )
-    if expected_index is None:
-        return None
-
-    equalities = [
-        item
-        for item in _closed_over_continuation_values(carrier)
-        if isinstance(item, EqualityOpSugar)
-    ]
-    if len(equalities) != 1:
-        return None
-    message_index = _message_pattern_formal_index(
-        equalities[0], behavior, actual_terms, receiver=receiver
-    )
-    if message_index == expected_index:
-        return None
-    if message_index is not None:
-        message_pattern = OptionalFormalArgumentProjectionV1(message_index)
-    else:
-        field_name = _message_comparison_receiver_field(equalities[0])
-        message_pattern = (
-            _keyword_entry_cited_by_field(
-                behavior, field_name, receiver=receiver
-            )
-            if field_name
-            else None
-        )
-        if message_pattern is None:
-            return None
-    if len(carrier.short_circuits) == 2:
-        field_name = _message_comparison_receiver_field(equalities[0])
-        field_value = _receiver_field_value(behavior, field_name, receiver=receiver)
-        if not _inner_short_circuit_is_absent_pattern(
-            carrier.short_circuits[0][1], field_value
-        ):
-            return None
-
-    from sugar_lift_py_tests.floor import BranchResultAuthentication
-
-    authentications = [
-        item
-        for obj in _closed_over_continuation_values(carrier)
-        for item in getattr(obj, "entries", ())
-        if isinstance(item, BranchResultAuthentication)
-    ]
-    halted = tuple(
-        face
-        for beside in carrier.composed_beside()
-        for face in beside.resolved
-        if isinstance(face, Halted)
-    )
-    absent_effect_halts = tuple(
-        face
-        for face in halted
-        if any(
-            _authentication_is_no_effect(item, protocol.exit_face_id)
-            and _formula_mentions_branch_slot(face.guard, item.slot.slot_id)
-            for item in authentications
-        )
-    )
-    if any(face not in absent_effect_halts for face in halted):
-        return None
-
-    return EffectBoundarySemanticsV1(
-        ExpectsModeV1() if absent_effect_halts else SuppressesModeV1(),
-        RaiseEffectKindV1(),
-        FormalArgumentProjectionV1(expected_index),
-        message_pattern,
-        ExceptionInfoBindingV1(),
-    )
+    return any(_formula_mentions_ctor(item, "python:exit_value") for item in formulas)
 
 
-def _closed_over_continuation_values(carrier):
-    """The constructed objects a deferred carrier's continuations still hold."""
-    values = []
-    for step in carrier.continuations:
-        closure = getattr(step, "__closure__", None)
-        if not closure:
-            continue
-        values.extend(cell.cell_contents for cell in closure)
-    return values
+def _formula_mentions_ctor(formula, name):
+    from sugar_lift_py_tests.ir import _Atomic, _Connective
 
-
-def _message_comparison_receiver_field(equality):
-    from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
-
-    sides = (equality.left, equality.right)
-    message_sides = [
-        side
-        for side in sides
-        if isinstance(side, AttributeSugar) and side.name == "message"
-    ]
-    other_sides = [side for side in sides if side not in message_sides]
-    if len(message_sides) != 1 or len(other_sides) != 1:
-        return None
-    return _receiver_attribute_name(other_sides[0])
-
-
-def _message_pattern_formal_index(equality, behavior, actual_terms, receiver=None):
-    field_name = _message_comparison_receiver_field(equality)
-    if field_name is None:
-        return None
-    value = _receiver_field_value(behavior, field_name, receiver=receiver)
-    if value is None:
-        return None
-    to_term = getattr(value, "to_term", None)
-    if not callable(to_term):
-        return None
-    term = to_term(owner=behavior.resolved_object_cid)
-    matches = [index for index, actual in enumerate(actual_terms) if actual == term]
-    return matches[0] if len(matches) == 1 else None
-
-
-def _receiver_attribute_name(sugar):
-    from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
-    from sugar_lift_py_tests.sugar.binding_coordinate_ref_sugar import (
-        BindingCoordinateRefSugar,
-    )
-
-    if not isinstance(sugar, AttributeSugar):
-        return None
-    receiver = sugar.receiver
-    if not isinstance(receiver, BindingCoordinateRefSugar):
-        return None
-    if getattr(receiver.coordinate, "projection_path", None) != ("formal", 0):
-        return None
-    return sugar.name
-
-
-def _unconditional_partition_leaf(state):
-    """A one-face true-guard partition is already the constructed receiver.
-
-    Field lookup must not invent a unique field from a multi-face or
-    symbolically-guarded partition: those leaves are still branch-local.
-    """
-    from sugar_lift_py_tests.floor import ObjectValue, ReceiverStatePartitionValue
-    from sugar_lift_py_tests.outcome.exit_set import true_guard
-
-    from .manager_protocol_construction import _completed_receiver_exits
-
-    if not isinstance(state, ReceiverStatePartitionValue):
-        return None
-    completed = [
-        face
-        for face in _completed_receiver_exits(state).exits
-        if isinstance(face, Completed) and isinstance(face.value, ObjectValue)
-    ]
-    if len(completed) != 1:
-        return None
-    if completed[0].guard != true_guard():
-        # The one completed receiver is unconditional where the manager
-        # exists when every other construction face is a typed halt: those
-        # leave the With before anything reads a field.
-        faces = state.constructor_faces()
-        if faces is None or not faces[0]:
-            return None
-    return completed[0].value
-
-
-def _receiver_field_value(behavior, name, receiver=None):
-    state = behavior.receiver_state if receiver is None else receiver
-    fields = getattr(state, "fields", ())
-    if not fields:
-        leaf = _unconditional_partition_leaf(state)
-        fields = getattr(leaf, "fields", ()) if leaf is not None else ()
-    matches = [
-        field.value for field in fields if getattr(field, "name", None) == name
-    ]
-    return matches[0] if len(matches) == 1 else None
-
-
-def _inner_short_circuit_is_absent_pattern(stopped, field_value):
-    """True when the inner ``or`` stopped because ``field is None`` is false.
-
-    A constructed string is disjoint from ``None``, so ``"needle" is None``
-    folds to exact ``False``. A symbolic field emits an ``identity`` formula
-    against ``None``. Other inner guards are not the optional-pattern theorem.
-    """
-    from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_py_tests.floor.predicate_value import PredicateValue
-    from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-        FalseBoolLiteralSugar,
-    )
-
-    if field_value is None:
-        return False
-    if len(stopped.exits) != 1 or not isinstance(stopped.exits[0], Completed):
-        return False
-    value = stopped.exits[0].value
-    if isinstance(value, FalseBoolLiteralSugar):
-        return type(field_value) is not NoneValue
-    if not isinstance(value, PredicateValue):
-        return False
-    formula = value.formula
-    if getattr(formula, "name", None) != "identity":
-        return False
-    operands = getattr(formula, "operands", ())
-    if len(operands) != 2:
-        return False
-    return NoneValue().to_term(owner="") in operands
+    if isinstance(formula, _Connective):
+        return any(_formula_mentions_ctor(item, name) for item in formula.operands)
+    if isinstance(formula, _Atomic):
+        return any(_term_contains_ctor(arg, name) for arg in formula.args)
+    return _term_contains_ctor(formula, name)
 
 
 def _derive_boundary_for_receiver(protocol, behavior, receiver):
     """Derive one EffectBoundary from a single completed constructor face."""
-    from sugar_lift_py_tests.caller_parameter_contract import (
-        NativeOperationExitCarrierV1,
-    )
-    from sugar_lift_py_tests.floor.manager_coordinate import ExitValueCoordinate
-
     specialized = replace(protocol, receiver_state=receiver)
     exit_outcome = specialized.exit_outcome()
-    if (
-        isinstance(exit_outcome, NativeOperationExitCarrierV1)
-        and any(coordinate is not None for coordinate in exit_outcome.coordinates)
-        and all(
-            coordinate is None
-            or (
-                isinstance(coordinate, ExitValueCoordinate)
-                and coordinate.face_id == protocol.exit_face_id
-            )
-            for coordinate in exit_outcome.coordinates
-        )
-    ):
-        return _derive_effect_boundary_from_deferred_carrier(
-            exit_outcome, specialized, behavior, receiver=receiver
-        )
     if not isinstance(exit_outcome, ExitSet):
-        # Any other undischarged native-operation demand is not an exit face.
+        # An undischarged native-operation demand (a deferred attribute
+        # lookup on the exit value included) is not an exit face.
         return None
     return _derive_effect_boundary(exit_outcome, specialized, behavior)
 
@@ -903,175 +627,6 @@ def _exact_bool_literal(value: object) -> bool | None:
     return None
 
 
-def _peel_double_negation(formula):
-    from sugar_lift_py_tests.ir import _Connective
-
-    while (
-        isinstance(formula, _Connective)
-        and formula.kind == "not"
-        and len(formula.operands) == 1
-    ):
-        inner = formula.operands[0]
-        if (
-            isinstance(inner, _Connective)
-            and inner.kind == "not"
-            and len(inner.operands) == 1
-        ):
-            formula = inner.operands[0]
-            continue
-        break
-    return formula
-
-
-def _direct_matches_call_of_exit_value(formula):
-    """``py.truthy(call:*.matches(..., python:exit_value))`` after even nots."""
-    from sugar_lift_py_tests.ir import _Atomic, _Ctor
-
-    formula = _peel_double_negation(formula)
-    if (
-        not isinstance(formula, _Atomic)
-        or formula.name != "py.truthy"
-        or len(formula.args) != 1
-    ):
-        return None
-    call = formula.args[0]
-    if not isinstance(call, _Ctor):
-        return None
-    if call.name != call_symbol("matches") and not call.name.endswith(".matches"):
-        return None
-    if not any(_term_contains_ctor(arg, "python:exit_value") for arg in call.args):
-        return None
-    return call
-
-
-def _matches_call_of_exit_value(formula):
-    """A matches() citation, including the unique matches() conjunct of an ``and``.
-
-    Nested ``if exc_type is None`` / ``if not matches()`` / ``return True``
-    produces ``not (exc_type is None) and matches()`` as the True-return
-    formula. Several distinct matches() calls stay unclassified.
-    """
-    from sugar_lift_py_tests.ir import _Connective
-
-    formula = _peel_double_negation(formula)
-    if isinstance(formula, _Connective) and formula.kind == "and":
-        found = []
-        for operand in formula.operands:
-            call = _matches_call_of_exit_value(operand)
-            if call is not None and call not in found:
-                found.append(call)
-        return found[0] if len(found) == 1 else None
-    return _direct_matches_call_of_exit_value(formula)
-
-
-def _term_contains_term(haystack, needle):
-    if haystack == needle:
-        return True
-    args = getattr(haystack, "args", None) or getattr(haystack, "operands", None)
-    if not args:
-        return False
-    return any(_term_contains_term(arg, needle) for arg in args)
-
-
-def _keyword_supplied_value(behavior, field_name):
-    """The unique ``**kwargs`` value stored under ``field_name``, if any."""
-    from sugar_lift_py_tests.floor.dict_value import DictValue
-    from sugar_lift_py_tests.floor.string_value import StringValue
-
-    if not field_name:
-        return None
-    candidates = []
-    for actual in behavior.formal_actual_values:
-        if type(actual) is not DictValue:
-            continue
-        matching = [
-            value
-            for key, value in actual.entries
-            if type(key) is StringValue and key.value == field_name
-        ]
-        if len(matching) > 1:
-            return None
-        if len(matching) == 1:
-            candidates.append(matching[0])
-    return candidates[0] if len(candidates) == 1 else None
-
-
-def _keyword_entry_cited_by_field(behavior, field_name, receiver=None):
-    """Cite a stored field that arrived as a unique ``**kwargs`` entry.
-
-    Factory ``raises(expected, *args, **kwargs)`` does not name ``match``.
-    The pattern is the unique dict entry whose string key is the field name
-    and whose value is the stored field, or whose term is uniquely contained
-    in the stored field (the unique string argument of ``re.compile(match)``
-    is still that kwargs entry; the compile call is not itself the string).
-    That is a variadic keyword entry, not a named formal and not
-    NoMessagePattern.
-    """
-    from sugar_lift_py_tests.floor.dict_value import DictValue
-    from sugar_lift_py_tests.floor.none_value import NoneValue
-    from sugar_lift_py_tests.floor.string_value import StringValue
-
-    if not field_name:
-        return None
-    field = _receiver_field_value(behavior, field_name, receiver=receiver)
-    if field is None or isinstance(field, NoneValue):
-        return None
-    field_term = field.to_term(owner=behavior.resolved_object_cid)
-    candidates = []
-    for index, actual in enumerate(behavior.formal_actual_values):
-        if type(actual) is not DictValue:
-            continue
-        matching = [
-            key.value
-            for key, value in actual.entries
-            if type(key) is StringValue
-            and key.value == field_name
-            and (
-                value == field
-                or _term_contains_term(
-                    field_term,
-                    value.to_term(owner=behavior.resolved_object_cid),
-                )
-            )
-        ]
-        if len(matching) > 1:
-            return None
-        if len(matching) == 1:
-            candidates.append(
-                VariadicKeywordEntryProjectionV1(index, matching[0])
-            )
-    return candidates[0] if len(candidates) == 1 else None
-
-
-def _formal_index_cited_by_field(behavior, field_name, actual_terms):
-    from sugar_lift_py_tests.floor.none_value import NoneValue
-
-    field = _receiver_field_value(behavior, field_name)
-    if field is None or isinstance(field, NoneValue):
-        return None
-    haystack = field.to_term(owner=behavior.resolved_object_cid)
-    candidates = {
-        index
-        for index, term in enumerate(actual_terms)
-        if _term_contains_term(haystack, term)
-    }
-    return next(iter(candidates)) if len(candidates) == 1 else None
-
-
-def _formal_index_for_matches_expected(formula, behavior, actual_terms):
-    if _matches_call_of_exit_value(formula) is None:
-        return None
-    return _formal_index_cited_by_field(
-        behavior, "expected_exceptions", actual_terms
-    )
-
-
-def _formal_index_for_matches_message(formula, behavior, actual_terms):
-    if _matches_call_of_exit_value(formula) is None:
-        return None
-    return _formal_index_cited_by_field(behavior, "match", actual_terms)
-
-
 def _true_return_guards(exit_set):
     true_guards = []
     for other in exit_set.exits:
@@ -1086,38 +641,6 @@ def _true_return_guards(exit_set):
     return true_guards
 
 
-def _conjuncts(formula):
-    from sugar_lift_py_tests.ir import _Connective
-
-    formula = _peel_double_negation(formula)
-    if isinstance(formula, _Connective) and formula.kind == "and":
-        items = []
-        for operand in formula.operands:
-            items.extend(_conjuncts(operand))
-        return items
-    return [formula]
-
-
-def _matches_conjunct_polarity(formula):
-    """``pos`` if formula is matches(); ``neg`` if it is not matches()."""
-    from sugar_lift_py_tests.ir import _Connective
-
-    formula = _peel_double_negation(formula)
-    if _direct_matches_call_of_exit_value(formula) is not None:
-        return "pos"
-    if (
-        isinstance(formula, _Connective)
-        and formula.kind == "not"
-        and len(formula.operands) == 1
-        and _direct_matches_call_of_exit_value(
-            _peel_double_negation(formula.operands[0])
-        )
-        is not None
-    ):
-        return "neg"
-    return None
-
-
 def _halt_complements_true_return(face, exit_set):
     """True when ``face`` is the complement of the unique ``return True`` arm."""
     from sugar_lift_py_tests.outcome import Halted
@@ -1129,47 +652,6 @@ def _halt_complements_true_return(face, exit_set):
     if len(true_guards) != 1:
         return False
     return face.guard == complement_guard(true_guards[0])
-
-
-def _halt_negates_matches_conjunct_of_true_return(face, exit_set):
-    """True when halt and the unique return-True arm share every conjunct
-    except a matches() / not-matches() pair.
-
-    Nested ``if exc_type is None: fail(); if not matches(): raise; return True``
-    produces halt guard ``not A and not matches()`` and True guard
-    ``not A and matches()``. Those are not global complements
-    (``A or not matches()``), but they are the same partition's match-failed
-    halt.
-    """
-    from sugar_lift_py_tests.outcome import Halted
-
-    if not isinstance(face, Halted):
-        return False
-    true_guards = _true_return_guards(exit_set)
-    if len(true_guards) != 1:
-        return False
-    true_parts = _conjuncts(true_guards[0])
-    halt_parts = _conjuncts(face.guard)
-    if (
-        sum(1 for part in true_parts if _matches_conjunct_polarity(part) == "pos")
-        != 1
-        or sum(1 for part in halt_parts if _matches_conjunct_polarity(part) == "neg")
-        != 1
-    ):
-        return False
-    true_rest = [
-        part for part in true_parts if _matches_conjunct_polarity(part) != "pos"
-    ]
-    halt_rest = [
-        part for part in halt_parts if _matches_conjunct_polarity(part) != "neg"
-    ]
-    unused = list(halt_rest)
-    for item in true_rest:
-        try:
-            unused.remove(item)
-        except ValueError:
-            return False
-    return not unused
 
 
 def _completed_faces_have_bodyless_free_calls(exit_set):
