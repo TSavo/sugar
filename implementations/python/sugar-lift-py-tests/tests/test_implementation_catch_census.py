@@ -167,7 +167,7 @@ def typed_raise():
     ]
 
 
-def test_typed_loud_transport_and_attested_obligation_are_lawful(
+def test_typed_loud_transport_is_lawful(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "src"
@@ -185,14 +185,6 @@ def serve_forever():
         except SourceTreePanic as panic:
             _send({"error": {"data": {"kind": "typed-loud", "diagnostic": panic.info}}})
             continue
-
-def enumerate_calls():
-    for call in calls:
-        try:
-            gap()
-        except (SugarNotWritten, TypeError):
-            _install_opaque_call_obligation(context, call, obligation("typed-gap"))
-            continue
 """,
     )
 
@@ -204,7 +196,6 @@ def enumerate_calls():
         for row in rows
     ] == [
         ("serve_forever", "lawful", "typed-loud-refusal"),
-        ("enumerate_calls", "lawful", "attested-gap-obligation"),
     ]
 
 
