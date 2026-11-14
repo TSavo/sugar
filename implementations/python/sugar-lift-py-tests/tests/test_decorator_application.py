@@ -743,6 +743,136 @@ def test_default():
     assert _raises(lying, "AssertionError") != []
 
 
+def _binds_the_statements_value(source: str) -> None:
+    truthful = _test_function_outcome(source.format(expected=1))
+    assert _raises(truthful, "AssertionError") == []
+    assert truthful.completed_value() is not None, truthful
+    lying = _test_function_outcome(source.format(expected=2))
+    assert _raises(lying, "AssertionError") != []
+
+
+def test_a_decorated_default_is_the_binding_at_its_def_statement() -> None:
+    """``x = 1; @deco def f(a=x); x = 2; f()`` is 1: the statement evaluates
+    the default after the decorator expression and before the decorator
+    applies; the function the decorator returns carries it and the call
+    binds it, never ``x`` read again at the call."""
+    _binds_the_statements_value(
+        """\
+def test_default():
+    x = 1
+
+    def deco(fn):
+        return fn
+
+    @deco
+    def f(a=x):
+        return a
+
+    x = 2
+    assert f() == {expected}
+"""
+    )
+
+
+def test_a_decorated_module_default_is_its_statements_binding() -> None:
+    """The same at module level, called after import: the call reads the
+    value the module run's statement bound, whose function carries the
+    default it evaluated."""
+    _binds_the_statements_value(
+        """\
+x = 1
+
+
+def deco(fn):
+    return fn
+
+
+@deco
+def f(a=x):
+    return a
+
+
+x = 2
+
+
+def test_default():
+    assert f() == {expected}
+"""
+    )
+
+
+def test_a_decorated_default_that_raises_raises_at_the_def_statement() -> None:
+    """Python evaluates a decorated ``def``'s defaults when the statement
+    runs, whether or not the function is ever called."""
+    raising = _test_function_outcome(
+        """\
+def test_default():
+    def deco(fn):
+        return fn
+
+    @deco
+    def f(a=1 // 0):
+        return a
+
+    assert 1 == 1
+"""
+    )
+    assert _raises(raising, "ZeroDivisionError") != []
+
+
+def test_a_staticmethod_default_is_the_binding_at_its_class_statement() -> None:
+    """``@staticmethod def m(a=x)``: the class body runs the ``def``
+    statement, which evaluates the default before the descriptor applies;
+    ``C.m()`` binds that value."""
+    _binds_the_statements_value(
+        """\
+def test_default():
+    x = 1
+
+    class C:
+        @staticmethod
+        def m(a=x):
+            return a
+
+    x = 2
+    assert C.m() == {expected}
+"""
+    )
+
+
+def test_a_classmethod_default_is_the_binding_at_its_class_statement() -> None:
+    _binds_the_statements_value(
+        """\
+def test_default():
+    x = 1
+
+    class C:
+        @classmethod
+        def m(cls, a=x):
+            return a
+
+    x = 2
+    assert C.m() == {expected}
+"""
+    )
+
+
+def test_no_default_expression_is_evaluated_at_a_call() -> None:
+    """The call-time default evaluation is gone: a frame's default is only
+    the read of its key, and every definition's defaults are constructed by
+    the one statement door."""
+    import dataclasses
+
+    import sugar_source_tree.nodes as nodes
+    from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
+
+    assert [field.name for field in dataclasses.fields(DefaultValueSugar)] == [
+        "evaluation",
+        "site",
+    ]
+    assert not hasattr(nodes, "_lambda_default_value_sugar")
+
+
 def test_the_class_statement_evaluates_its_methods_defaults() -> None:
     """The class value carries each method default under the key the
     method's frame reads, and a default that raises raises at the class
@@ -811,38 +941,25 @@ def test_default():
 
 def test_a_default_read_is_the_one_bound_value_for_every_call() -> None:
     """With the statement's key bound, every call binds the same object (a
-    mutable default is shared, as in Python) and the default expression is
-    never evaluated again; unbound, the expression is evaluated."""
-    from dataclasses import dataclass
-
+    mutable default is shared, as in Python); unbound, the call is refused
+    by name: no default expression is ever evaluated at a call."""
     import pytest
 
     from sugar_lift_py_tests.context.reduce_context import ReduceContext
     from sugar_lift_py_tests.floor import TermValue
     from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+    from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
     from sugar_lift_py_tests.sugar.default_value_sugar import DefaultValueSugar
-    from sugar_lift_py_tests.sugar.sugar_base import Sugar
     from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 
-    @dataclass(frozen=True)
-    class _EvaluatedAtTheCall(Sugar):
-        @classmethod
-        def witnesses(cls):
-            return ()
-
-        def desugar(self, ctx=None):
-            raise AssertionError("default evaluated at the call")
-
     key = EVALUATION_PREFIX + "blake3-512:definition-default/f/a"
-    read = DefaultValueSugar(
-        evaluation=key, value=_EvaluatedAtTheCall(), site="site"
-    )
+    read = DefaultValueSugar(evaluation=key, site="site")
     ctx = ReduceContext.root(owner="test")
     value = TermValue(7)
     bound = ScopeRebind(key, value).extend_scope(ctx)
     assert read.desugar(bound).completed_value() is value
     assert read.desugar(bound).completed_value() is value
-    with pytest.raises(AssertionError):
+    with pytest.raises(SourceCallBindingGap, match="default not bound"):
         read.desugar(ctx)
 
 
@@ -1011,7 +1128,7 @@ def test_a_lambda_value_carries_its_defaults_under_the_frames_keys() -> None:
     assert frame.default_sugars[0] is None
     read = frame.default_sugars[1]
     assert isinstance(read, DefaultValueSugar)
-    assert read.value is None
+    assert not hasattr(read, "value")
     ((key, carried),) = value.defaults
     assert key == read.evaluation
     assert carried.to_term(owner="test") is not None
