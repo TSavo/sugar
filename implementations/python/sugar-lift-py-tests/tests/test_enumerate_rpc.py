@@ -896,46 +896,26 @@ def test_universe_scan_lists_function_contract_rows(project: Path) -> None:
     assert result["gaps"] == []
 
 
-def test_full_tree_universe_carries_source_constructed_attribute_sidecars(
+def test_full_tree_universe_rows_come_only_from_the_one_reduction(
     tmp_path: Path,
 ) -> None:
-    """An incomplete body must keep its testimony without becoming complete."""
+    """No second lifter adds rows (#7767): no panicLoci, no classShapes, and no
+    `pre = true` carrier for a body whose reduction is not a set of arms."""
     source = (
         resolve_repo_root()
         / "examples/numpy-attribute-safety-showcase/good/src/numpy_box.py"
     ).read_text(encoding="utf-8")
-    subject = tmp_path / "numpy_box.py"
-    subject.write_text(source, encoding="utf-8")
-
-    from sugar_lift_python_source import lift_source
-
-    source_rows = lift_source(source, subject.name).ir
-    source_shapes = next(
-        row["classShapes"] for row in source_rows if "classShapes" in row
-    )
-    source_loci = next(
-        row["panicLoci"]
-        for row in source_rows
-        if str(row.get("fnName") or "").endswith(".scaled_total")
-    )
-    assert len(source_shapes) == 1
-    assert sum("attributeSafety" in locus for locus in source_loci) == 2
+    (tmp_path / "numpy_box.py").write_text(source, encoding="utf-8")
 
     file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
     result = _enumerate("universe", tmp_path, at=file_memento, seek=False)
-    audits = [node["audit"] for node in result["nodes"]]
-    transported = next(
-        row
-        for row in audits
-        if any("attributeSafety" in locus for locus in row.get("panicLoci", []))
-    )
+    audits = [node["audit"] or {} for node in result["nodes"]]
 
-    assert transported["panicLoci"] == source_loci
-    assert transported["classShapes"] == source_shapes
-    assert "post" not in transported, (
-        "transporting source testimony must not invent completion for the "
-        "temporally incomplete scaled_total body"
-    )
+    for row in audits:
+        assert "panicLoci" not in row, row
+        assert "classShapes" not in row, row
+        provenance = row.get("proofirProvenance") or {}
+        assert provenance.get("nodeClass") != "SourceSidecarCarrier", row
     init = next(row for row in audits if row.get("name") == "__init__")
     assert "post" in init
 

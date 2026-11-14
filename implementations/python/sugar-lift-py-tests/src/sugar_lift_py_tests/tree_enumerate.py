@@ -14,7 +14,6 @@ assertion carries no call site — call_sites and assertions are the same locus,
 
 from __future__ import annotations
 
-import functools
 from pathlib import Path
 from typing import Any, Optional
 
@@ -593,92 +592,6 @@ def function_universe_outcome(fn):
     return sugar.desugar(context)
 
 
-@functools.lru_cache(maxsize=128)
-def _source_sidecars_by_line(source_cid: str, source: str, file_rel: str) -> tuple[
-    tuple[dict[str, Any], ...],
-    tuple[tuple[int, tuple[dict[str, Any], ...]], ...],
-]:
-    """Construct source testimony once through its authoritative door."""
-    del source_cid  # cache identity; source remains the construction input
-    from sugar_lift_python_source import lift_source
-
-    rows = lift_source(source, file_rel).ir
-    class_shapes = tuple(
-        shape
-        for row in rows
-        for shape in row.get("classShapes", [])
-        if isinstance(shape, dict)
-    )
-    by_line = []
-    for row in rows:
-        locus = row.get("locus")
-        line = locus.get("line") if isinstance(locus, dict) else None
-        if not isinstance(line, int):
-            continue
-        panic_loci = tuple(
-            item for item in row.get("panicLoci", []) if isinstance(item, dict)
-        )
-        if panic_loci:
-            by_line.append((line, panic_loci))
-    return class_shapes, tuple(by_line)
-
-
-def _source_sidecars_for_function(fn, file_rel: str):
-    class_shapes, by_line = _source_sidecars_by_line(
-        fn.unit.source_cid, fn.unit.source, file_rel
-    )
-    line = fn.line_col_span().start_line
-    panic_loci = tuple(
-        locus
-        for row_line, row_loci in by_line
-        if row_line == line
-        for locus in row_loci
-    )
-    receiver_classes = {
-        safety.get("receiverClass")
-        for locus in panic_loci
-        if isinstance((safety := locus.get("attributeSafety")), dict)
-        and isinstance(safety.get("receiverClass"), str)
-    }
-    relevant_shapes = tuple(
-        shape for shape in class_shapes if shape.get("className") in receiver_classes
-    )
-    return panic_loci, relevant_shapes
-
-
-def _source_sidecar_carrier(fn, def_memento, panic_loci, class_shapes):
-    """Carry source testimony without claiming an incomplete body reduced."""
-    from sugar_lift_py_tests.floor.universe_mint_projection import claim_formula
-    from sugar_lift_py_tests.ir import atomic
-    from sugar_lift_py_tests.kit_rpc import BodyUniverseDto
-    from sugar_lift_py_tests.proofir.nodes import ConstructionSite, Derived, Provenance
-
-    span = def_memento.span
-    provenance = Provenance(
-        node_class="SourceSidecarCarrier",
-        construction_site=ConstructionSite(
-            path=def_memento.file,
-            line=span.start_line,
-            column=span.start_col,
-        ),
-        warrant=Derived(floor_chain=("sugar_lift_python_source.lift_source",)),
-    )
-    return BodyUniverseDto(
-        name=fn.name,
-        pre=claim_formula(
-            atomic("true", []),
-            formals=(),
-            provenance=provenance,
-            role="pre",
-        ),
-        source_warrants=[def_memento],
-        proofir_provenance=provenance.to_rpc(),
-        kind="contract",
-        panic_loci=list(panic_loci),
-        class_shapes=list(class_shapes),
-    )
-
-
 def reduction_rows(outcome, *, owner, blame, def_memento):
     """THE projection from one reduction to its wire rows (#7766).
 
@@ -757,37 +670,24 @@ def function_contract_rows(fn, file_rel: str):
     over every completed arm, and one row per assertion site (see there). A
     ``Complete`` is the one-arm case and keeps its rows byte-for-byte.
 
-    An outcome that is not a set of arms is unchanged by #7766: a deferred
-    native operation (``NativeOperationExitCarrierV1``, whose arms exist only
-    once a caller discharges it with actuals) or a bare effect emits no
-    contract and still carries its source testimony. The carrier's own
-    formula still meets the scope law (``require_outcome_in_scope``). A
-    SugarNotWritten from an unported body statement propagates (the whole
-    function is a frontier gap).
+    An outcome that is not a set of arms (a deferred native operation,
+    ``NativeOperationExitCarrierV1``, whose arms exist only once a caller
+    discharges it with actuals, or a bare effect) emits no contract: the
+    function is (memento, None). Its carrier's own formula still meets the
+    scope law (``require_outcome_in_scope``). Every row is read off this one
+    reduction; no other lifter adds to it (#7767). A SugarNotWritten from an
+    unported body statement propagates (the whole function is a frontier gap).
     """
-    import dataclasses
-
     from sugar_lift_py_tests.outcome import Complete, ExitSet
 
     def_memento = function_def_memento(fn, file_rel)
-    panic_loci, class_shapes = _source_sidecars_for_function(fn, file_rel)
     outcome = owner_reduction(fn).outcome
     if not isinstance(outcome, (Complete, ExitSet)):
         require_outcome_in_scope(outcome, fn.sugar())
-        if not panic_loci and not class_shapes:
-            return def_memento, None  # an effect with no source testimony
-        return def_memento, [
-            _source_sidecar_carrier(fn, def_memento, panic_loci, class_shapes)
-        ]
-    rows = reduction_rows(
+        return def_memento, None
+    return def_memento, reduction_rows(
         outcome, owner=fn.sugar(), blame=fn.fragment, def_memento=def_memento
     )
-    rows[0] = dataclasses.replace(
-        rows[0],
-        panic_loci=list(panic_loci),
-        class_shapes=list(class_shapes),
-    )
-    return def_memento, rows
 
 
 def call_nodes_in_assert(sf: SourceFile, span: Optional[dict]) -> list:
