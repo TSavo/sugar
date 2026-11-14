@@ -13,7 +13,9 @@ same presence of ``__enter__`` / ``__exit__``, and records what it raised.
 It also cites the two language-owned bases a source MRO may end in --
 ``object`` and ``abc.ABC`` (with its metaclass ``abc.ABCMeta``) -- by reading
 their attribute sets from the running interpreter, so an absence proof never
-invents what they define.
+invents what they define.  A base and a decorator reach a citation by their
+binding (``sugar_source_tree.nodes.LanguageCallee``, read through the one
+import table and the builtin namespace), never by how the source spells them.
 """
 
 from __future__ import annotations
@@ -77,9 +79,14 @@ class CitedLanguageBaseV1:
     """One interpreter-owned class a source MRO may end in, read live."""
 
     runtime: PythonRuntimeIdentity
+    # The binding (``LanguageCallee`` member) this citation answers for.
+    callee: object
     qualified_name: str
     # The class's own MRO, by qualified name, as the interpreter reports it.
     linearization: tuple[str, ...]
+    # The cited bindings after the class on that MRO, matched by the
+    # interpreter's class identity (``abc.ABC`` -> ``object``).
+    tail: tuple[object, ...]
     # Which of ``__enter__`` / ``__exit__`` any class of that MRO defines.
     protocol_names: frozenset[str]
     # Attributes a body-less subclass gains from the base's metaclass and
@@ -95,14 +102,26 @@ def _qualified(cls) -> str:
     return f"{cls.__module__}.{cls.__qualname__}"
 
 
-@lru_cache(maxsize=None)
-def cited_language_base(qualified_name: str) -> CitedLanguageBaseV1 | None:
-    """Cite ``builtins.object`` or ``abc.ABC`` from the running interpreter."""
+def _cited_base_classes() -> dict:
+    """The interpreter class each citable base binding is."""
     import abc
 
-    classes = {"builtins.object": object, "abc.ABC": abc.ABC}
-    cls = classes.get(qualified_name)
+    from sugar_source_tree.nodes import LanguageCallee
+
+    return {LanguageCallee.BUILTIN_OBJECT: object, LanguageCallee.ABC_ABC: abc.ABC}
+
+
+@lru_cache(maxsize=None)
+def cited_language_base(callee) -> CitedLanguageBaseV1 | None:
+    """Cite the base ``callee`` binds (``object`` or ``abc.ABC``) from the
+    running interpreter; ``None`` for any other binding."""
+    classes = _cited_base_classes()
+    cls = classes.get(callee)
     if cls is None:
+        return None
+    by_class = {id(value): member for member, value in classes.items()}
+    tail = tuple(by_class.get(id(base)) for base in cls.__mro__[1:])
+    if None in tail:
         return None
     present = frozenset(
         name for name in PROTOCOL_NAMES for base in cls.__mro__ if name in vars(base)
@@ -117,8 +136,10 @@ def cited_language_base(qualified_name: str) -> CitedLanguageBaseV1 | None:
     )
     return CitedLanguageBaseV1(
         runtime=PythonRuntimeIdentity.current(),
-        qualified_name=qualified_name,
+        callee=callee,
+        qualified_name=_qualified(cls),
         linearization=tuple(_qualified(base) for base in cls.__mro__),
+        tail=tail,
         protocol_names=present,
         subclass_gains=gains,
         metaclass_overrides_call=overrides_call,
@@ -126,21 +147,26 @@ def cited_language_base(qualified_name: str) -> CitedLanguageBaseV1 | None:
 
 
 @lru_cache(maxsize=None)
-def cited_identity_decorator(qualified_name: str) -> bool:
-    """Whether a language-owned method decorator returns its argument unchanged.
+def cited_identity_decorator(callee) -> bool:
+    """Whether the method decorator ``callee`` binds returns its argument
+    unchanged.
 
-    Only ``abc.abstractmethod`` is cited: applying it to a probe function is
-    observed to return that same function, adding ``__isabstractmethod__``
-    only.  A decorator that returned anything else could rebind a name.
+    Only the binding ``abc.abstractmethod`` is cited: applying it to a probe
+    function is observed to return that same function, adding
+    ``__isabstractmethod__`` only.  A decorator that returned anything else
+    could rebind a name.
     """
     import abc
 
-    if qualified_name != "abc.abstractmethod":
+    from sugar_source_tree.nodes import LanguageCallee
+
+    decorator = {LanguageCallee.ABC_ABSTRACTMETHOD: abc.abstractmethod}.get(callee)
+    if decorator is None:
         return False
 
     def probe():  # pragma: no cover - never called
         return None
 
     before = set(vars(probe))
-    result = abc.abstractmethod(probe)
+    result = decorator(probe)
     return result is probe and set(vars(probe)) - before <= {"__isabstractmethod__"}

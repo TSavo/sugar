@@ -13,6 +13,10 @@ requires every class on it to be either
 * a cited language base, ``object`` or ``abc.ABC``, whose attribute sets are
   read from the running interpreter (never transcribed).
 
+A base or a method decorator is recognised by its binding
+(``SourceUnit.language_callee_of``: the one import table, then the builtin
+namespace nothing rebinds), never by its spelling.
+
 Any base that is neither keeps the use a runtime-selected gap.  The defining
 module must also never store ``__enter__``/``__exit__``/``__class__`` as an
 attribute, never call ``setattr``/``delattr`` where it could name them, and
@@ -36,7 +40,6 @@ _FORBIDDEN_STORES = frozenset({*PROTOCOL_NAMES, "__class__"})
 _DYNAMIC_SCOPE_CALLS = frozenset({"exec", "eval", "globals", "locals", "vars"})
 _ATTRIBUTE_WRITERS = frozenset({"setattr", "delattr"})
 _FORBIDDEN_CLASS_NAMES = frozenset({"__new__", "__init_subclass__"})
-_BUILTIN_METHOD_DECORATORS = frozenset({"classmethod", "staticmethod", "property"})
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,7 @@ class _Entry:
 
 def prove_manager_protocol_absence(class_def) -> ManagerProtocolAbsenceV1 | None:
     """The absence proof for ``class_def``'s instances, or None when unproven."""
+    from sugar_source_tree.nodes import LanguageCallee
     from sugar_source_tree.panic import SugarNotWritten
 
     from sugar_lift_py_tests.floor.class_definition_value import c3_tail
@@ -85,7 +89,7 @@ def prove_manager_protocol_absence(class_def) -> ManagerProtocolAbsenceV1 | None
         if entry.cited is not None:
             # A cited base's own MRO is the interpreter's: its tail is the
             # cited classes after it (``abc.ABC`` -> ``object``).
-            tail = tuple(_cited_entry(name, entries) for name in entry.cited.linearization[1:])
+            tail = tuple(_cited_entry(callee, entries) for callee in entry.cited.tail)
         else:
             tail = c3_tail(
                 _direct_bases(entry, entries),
@@ -101,7 +105,7 @@ def prove_manager_protocol_absence(class_def) -> ManagerProtocolAbsenceV1 | None
     except SugarNotWritten:
         return None
     if not any(
-        entry.cited is not None and entry.cited.qualified_name == "builtins.object"
+        entry.cited is not None and entry.cited.callee is LanguageCallee.BUILTIN_OBJECT
         for entry in mro
     ):
         return None
@@ -132,14 +136,18 @@ def prove_manager_protocol_absence(class_def) -> ManagerProtocolAbsenceV1 | None
 
 def _leaves_an_abstract_method(mro) -> bool:
     """Whether the most-derived binding of some ``abc.abstractmethod`` name is
-    itself abstract (instantiation would raise before any ``with``)."""
-    from sugar_source_tree.nodes import AsyncFunctionDef, Attribute, FunctionDef
+    itself abstract (instantiation would raise before any ``with``).
+
+    A method is abstract when a decorator's binding is ``abc.abstractmethod``
+    (``@abc.abstractmethod`` or ``@abstractmethod`` imported from ``abc``)."""
+    from sugar_source_tree.nodes import AsyncFunctionDef, FunctionDef, LanguageCallee
 
     def abstract_names(class_def):
+        unit = class_def.unit
         names = set()
         for statement in class_def.body:
             if isinstance(statement, (FunctionDef, AsyncFunctionDef)) and any(
-                isinstance(d, Attribute) and d.attr == "abstractmethod"
+                unit.language_callee_of(d) is LanguageCallee.ABC_ABSTRACTMETHOD
                 for d in statement.decorators
             ):
                 names.add(statement.name)
@@ -221,12 +229,12 @@ def _entry_name(entry) -> str:
     return f"{entry.class_def.unit.filename}:{entry.class_def.name}"
 
 
-def _cited_entry(qualified_name, entries):
-    key = ("cited", qualified_name)
+def _cited_entry(callee, entries):
+    key = ("cited", callee)
     if key not in entries:
-        cited = cited_language_base(qualified_name)
+        cited = cited_language_base(callee)
         if cited is None:
-            raise _Unproven(qualified_name)
+            raise _Unproven(callee)
         entries[key] = _Entry(key, cited=cited)
     return entries[key]
 
@@ -244,6 +252,8 @@ def _resolve_source_class(class_def, entries):
     key = ("source", id(class_def))
     if key in entries:
         return entries[key]
+    from sugar_source_tree.nodes import LanguageCallee
+
     entry = _Entry(key, class_def=class_def)
     entries[key] = entry
     try:
@@ -258,7 +268,8 @@ def _resolve_source_class(class_def, entries):
                 raise _Unproven("base")
             bases.append(resolved)
         if not bases:
-            bases.append(_cited_entry("builtins.object", entries))
+            # The language's implicit base of a ``class`` statement.
+            bases.append(_cited_entry(LanguageCallee.BUILTIN_OBJECT, entries))
         entry.bases = tuple(bases)
     except _Unproven:
         del entries[key]
@@ -275,41 +286,24 @@ def _precedes(earlier, later) -> bool:
 
 
 def _resolve_base(base, unit, entries, derived):
-    from sugar_source_tree.nodes import Attribute, ClassDef, Import, ImportFrom, Name
+    from sugar_source_tree.nodes import ClassDef, Name
 
-    bindings = unit.module_direct_bindings or {}
-    if isinstance(base, Name):
-        binds = bindings.get(base.id, ())
-        if not binds:
-            if base.id == "object":
-                return _cited_entry("builtins.object", entries)
-            return None
-        if len(binds) != 1:
-            return None
-        (bound,) = binds
-        if isinstance(bound, ClassDef) and bound.name == base.id:
-            if bound.unit is not unit or not _precedes(bound, derived):
-                return None
-            return _resolve_source_class(bound, entries)
-        if isinstance(bound, ImportFrom) and bound.module == "abc" and not bound.level:
-            if any(
-                alias.name == "ABC" and (alias.asname or alias.name) == base.id
-                for alias in bound.names
-            ):
-                return _cited_entry("abc.ABC", entries)
+    # A language base by its binding (``object`` nothing rebinds, ``abc.ABC``
+    # under ``import abc``, ``ABC`` under ``from abc import ABC``); a binding
+    # no citation answers for leaves the base unproven.
+    callee = unit.language_callee_of(base)
+    if callee is not None:
+        return _cited_entry(callee, entries)
+    if not isinstance(base, Name):
         return None
-    if isinstance(base, Attribute) and isinstance(base.value, Name):
-        if base.attr != "ABC":
+    binds = (unit.module_direct_bindings or {}).get(base.id, ())
+    if len(binds) != 1:
+        return None
+    (bound,) = binds
+    if isinstance(bound, ClassDef) and bound.name == base.id:
+        if bound.unit is not unit or not _precedes(bound, derived):
             return None
-        binds = bindings.get(base.value.id, ())
-        if len(binds) != 1 or not isinstance(binds[0], Import):
-            return None
-        if any(
-            alias.name == "abc" and alias.asname in (None, base.value.id)
-            and base.value.id == (alias.asname or alias.name)
-            for alias in binds[0].names
-        ):
-            return _cited_entry("abc.ABC", entries)
+        return _resolve_source_class(bound, entries)
     return None
 
 
@@ -387,28 +381,19 @@ def _unshadowed_builtin(name: str, unit) -> bool:
 
 
 def _decorator_is_cited(decorator, unit) -> bool:
-    from sugar_source_tree.nodes import Attribute, Import, Name
+    """A method decorator is admitted by its binding: a builtin method
+    descriptor constructor (``classmethod``, ``staticmethod``, ``property``)
+    or a cited identity decorator (``abc.abstractmethod``)."""
+    from sugar_source_tree.nodes import LanguageCallee
 
-    if isinstance(decorator, Name):
-        return decorator.id in _BUILTIN_METHOD_DECORATORS and _unshadowed_builtin(
-            decorator.id, unit
-        )
-    if isinstance(decorator, Attribute) and isinstance(decorator.value, Name):
-        binds = (unit.module_direct_bindings or {}).get(decorator.value.id, ())
-        if len(binds) != 1 or not isinstance(binds[0], Import):
-            return False
-        module = next(
-            (
-                alias.name
-                for alias in binds[0].names
-                if (alias.asname or alias.name) == decorator.value.id
-            ),
-            None,
-        )
-        return module is not None and cited_identity_decorator(
-            f"{module}.{decorator.attr}"
-        )
-    return False
+    callee = unit.language_callee_of(decorator)
+    if callee in (
+        LanguageCallee.BUILTIN_CLASSMETHOD,
+        LanguageCallee.BUILTIN_STATICMETHOD,
+        LanguageCallee.BUILTIN_PROPERTY,
+    ):
+        return True
+    return callee is not None and cited_identity_decorator(callee)
 
 
 def _expression_is_inert(expression, unit) -> bool:

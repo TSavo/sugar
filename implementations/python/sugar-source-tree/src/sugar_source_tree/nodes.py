@@ -122,8 +122,14 @@ class LanguageCallee(_enum.Enum):
     call is never read: a module that binds its own ``cast``, ``getattr`` or
     ``super`` reaches no member, and ``from typing import cast as c`` does.
 
-    The node owns the dispatch (``Call.language_callee``); consumers ask the
-    node, never the name.
+    A decorator and a class base are read the same way: ``@abstractmethod``
+    under ``from abc import abstractmethod`` and ``@abc.abstractmethod`` under
+    ``import abc`` reach ``ABC_ABSTRACTMETHOD``; ``object`` nothing rebinds
+    reaches ``BUILTIN_OBJECT``.
+
+    The unit owns the dispatch (``SourceUnit.language_callee_of``, which
+    ``Call.language_callee`` asks for its callee); consumers ask the node,
+    never the name.
     """
 
     # ``typing.cast(typ, val)`` returns ``val`` unchanged
@@ -151,6 +157,18 @@ class LanguageCallee(_enum.Enum):
     # ``pytest.importorskip(name)``: the harness the lifted tests run under
     # skips the test unless ``name`` imports.
     PYTEST_IMPORTORSKIP = "python:pytest.importorskip"
+    # ``object``: the root of every MRO and a ``class`` statement's implicit
+    # base.
+    BUILTIN_OBJECT = "python:builtins.object"
+    # ``abc.ABC``: the helper base whose metaclass is ``abc.ABCMeta``.
+    ABC_ABC = "python:abc.ABC"
+    # ``abc.abstractmethod(f)``: marks ``f`` abstract and returns ``f``.
+    ABC_ABSTRACTMETHOD = "python:abc.abstractmethod"
+    # ``classmethod`` / ``staticmethod`` / ``property``: the builtin method
+    # descriptor constructors.
+    BUILTIN_CLASSMETHOD = "python:builtins.classmethod"
+    BUILTIN_STATICMETHOD = "python:builtins.staticmethod"
+    BUILTIN_PROPERTY = "python:builtins.property"
 
     @classmethod
     def of(cls, target_symbol: Optional[str]) -> Optional["LanguageCallee"]:
@@ -1241,6 +1259,22 @@ class SourceUnit:
         if target is None:
             target = self.builtin_reference_at(name, span)
         return LanguageCallee.of(target)
+
+    def language_callee_of(self, node) -> Optional["LanguageCallee"]:
+        """The language-fixed binding the expression ``node`` reads.
+
+        The one dispatch for a callee, a decorator and a class base alike: a
+        bare name asks how it is bound at its own coordinate (an import
+        reference, or the builtin namespace nothing rebinds); a dotted chain
+        asks the one import reference table for the whole chain
+        (``abc.ABC`` under ``import abc``).  Any other expression, and any
+        binding that is not one of ``LanguageCallee``'s, answers ``None``.
+        """
+        if isinstance(node, Name):
+            return self.language_callee_at(node.id, node.line_col_span())
+        if isinstance(node, Attribute):
+            return LanguageCallee.of(self.import_reference_of(node))
+        return None
 
     def import_value_use_receipt(
         self, span: Tuple[int, int, int, int]
@@ -14151,21 +14185,10 @@ class Call(Expression):
         )
 
     def language_callee(self) -> Optional[LanguageCallee]:
-        """The language-fixed callee this call applies, read from its binding.
-
-        A bare name asks the unit how it is bound at its own coordinate (an
-        import reference, or the builtin namespace nothing rebinds); a dotted
-        callee asks the one import reference table for the whole chain
-        (``typing.cast`` under ``import typing``).  Any other callee, and any
-        binding that is not one of ``LanguageCallee``'s, answers ``None``.
-        """
-        if isinstance(self.func, Name):
-            return self.unit.language_callee_at(
-                self.func.id, self.func.line_col_span()
-            )
-        if isinstance(self.func, Attribute):
-            return LanguageCallee.of(self.unit.import_reference_of(self.func))
-        return None
+        """The language-fixed callee this call applies, read from its binding
+        (``SourceUnit.language_callee_of``: ``typing.cast`` under ``import
+        typing``, ``cast`` under ``from typing import cast``)."""
+        return self.unit.language_callee_of(self.func)
 
     def _discharge_callee_spelling(self) -> None:
         """Answer the roll call for every node of a callee the call absorbed."""
