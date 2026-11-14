@@ -8,7 +8,7 @@ from types import ModuleType
 
 import pytest
 
-from sugar_lift_python_source import bind_rpc, rpc, verify_rpc
+from sugar_lift_python_source import bind_rpc
 from sugar_source_tree.binding_state import ConstructedValueCategoryGap
 
 
@@ -26,7 +26,7 @@ class _CapturedStdout:
         return json.loads(self.buffer.getvalue())
 
 
-RPC_MODULES = (rpc, bind_rpc, verify_rpc)
+RPC_MODULES = (bind_rpc,)
 
 
 def _run_one(

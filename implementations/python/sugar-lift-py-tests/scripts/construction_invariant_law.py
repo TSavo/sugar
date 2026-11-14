@@ -314,9 +314,7 @@ def _ast_test_names(function: ast.AST) -> set[str]:
 
 
 def _second_path_findings(tree: ast.Module, path: str) -> list[Finding]:
-    if path.endswith(
-        ("sugar_source_tree/nodes.py", "sugar_lift_python_source/lifter.py")
-    ):
+    if path.endswith("sugar_source_tree/nodes.py"):
         return []
     findings: list[Finding] = []
     for function in (

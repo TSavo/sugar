@@ -3,9 +3,6 @@
 
 from __future__ import annotations
 
-import json
-import os
-import subprocess
 import sys
 import tomllib
 from pathlib import Path
@@ -26,29 +23,6 @@ from sugar_lift_py_tests import lift_rpc  # noqa: E402
 
 SHOWCASE = ROOT / "examples/numpy-attribute-safety-showcase"
 PARAMETER_LINK_UNITS = "parameter-contract-link-units"
-
-
-def _python_source_response(request: dict) -> dict:
-    env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(PY_SOURCE_SRC), env.get("PYTHONPATH", "")]
-    ).rstrip(os.pathsep)
-    code = """
-import json
-import sys
-from sugar_lift_python_source import rpc
-
-print(json.dumps(rpc.dispatch(json.loads(sys.argv[1]))))
-"""
-    completed = subprocess.run(
-        [sys.executable, "-c", code, json.dumps(request)],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=env,
-    )
-    assert completed.returncode == 0, completed.stderr
-    return json.loads(completed.stdout)
 
 
 def _selected_full_fold_module(suite: str) -> tuple[str, Path]:
@@ -88,8 +62,6 @@ def _enumerate_from_module(module: str, workspace_root: Path) -> dict:
             "options": {},
         },
     }
-    if module == "sugar_lift_python_source":
-        return _python_source_response(request)
     if module == "sugar_lift_py_tests.lift_rpc":
         captured = []
         original_send = lift_rpc._send
@@ -116,21 +88,3 @@ def test_showcase_routes_full_fold_to_parameter_enumeration_owner(
 
     assert "error" not in response, response
     assert isinstance(response["result"]["rows"], list), response
-
-
-def test_python_source_keeps_its_parameter_enumeration_membrane() -> None:
-    response = _python_source_response(
-        {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "sugar.enumerate",
-            "params": {
-                "level": PARAMETER_LINK_UNITS,
-                "workspace_root": str(SHOWCASE / "good/src"),
-                "options": {},
-            },
-        }
-    )
-
-    assert response["error"]["code"] == -32602
-    assert "not served by surface `python-source`" in response["error"]["message"]

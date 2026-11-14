@@ -21,36 +21,12 @@ path = "implementations/rust/sugar-lift-contracts/src"
 path = "implementations/java/sugar-lift-java-tests/src"
 
 [[entrypoints]]
-id = "python-source-rpc"
-status = "production"
-owner = "python source kit"
-path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/rpc.py"
-reason = "Python source kit JSON-RPC entrypoint for lift_source/lift_workspace."
-needles = ["lift_paths", "kit_declaration_result"]
-
-[[entrypoints]]
 id = "python-bind-rpc"
 status = "production"
 owner = "python source kit"
 path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/bind_rpc.py"
 reason = "Python bind RPC emits source binding surfaces for the Python kit."
 needles = ["bind", "jsonrpc"]
-
-[[entrypoints]]
-id = "python-verify-rpc"
-status = "production"
-owner = "python source kit"
-path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/verify_rpc.py"
-reason = "Python verify RPC is the Python-side verifier-facing kit door."
-needles = ["verify", "jsonrpc"]
-
-[[entrypoints]]
-id = "python-source-lifter-core"
-status = "production"
-owner = "python source kit"
-path = "implementations/python/sugar-lift-python-source/src/sugar_lift_python_source/lifter.py"
-reason = "Core Python AST-to-ProofIR lifter implementation behind the RPC door."
-needles = ["def lift_source", "class LiftResult"]
 
 [[entrypoints]]
 id = "python-bind-lifter-core"

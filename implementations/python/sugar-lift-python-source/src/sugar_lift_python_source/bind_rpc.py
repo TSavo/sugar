@@ -9,18 +9,67 @@ from pathlib import Path
 from typing import Any
 
 from .bind_lifter import _iter_python_files, lift_paths
-from .rpc import (
-    ENUMERATE_RPC_METHOD,
-    _degenerate_file_memento,
-    _enumerate_result,
-    _memento_matches,
-    _resolved_under_root,
-)
 from .source_oracle import SourceUnavailable, path_source
 
 VERSION = "0.1.0"
 SURFACE = "python-bind"
 KIT_DECLARATION_RPC_METHOD = "sugar.plugin.kit_declaration"
+# Level protocol: `protocol/specs/2026-07-08-enumeration-protocol.md`.
+ENUMERATE_RPC_METHOD = "sugar.enumerate"
+
+
+def _degenerate_file_memento(
+    rel_path: str, source_cid: str | None = None
+) -> dict[str, Any]:
+    """The file-level locator: a `source-memento` with only `file` and the
+    file's content CID populated. A whole file has no single body span or AST
+    template, so those stay absent. Same shape every other kit seals."""
+    return {
+        "kind": "source-memento",
+        "file": rel_path,
+        "function_name": "",
+        "span": None,
+        "param_names": [],
+        "source_cid": source_cid,
+        "template_cid": None,
+    }
+
+
+def _enumerate_result(
+    msg_id: Any, nodes: list[dict[str, Any]], gaps: list[dict[str, Any]]
+) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": msg_id,
+        "result": {"nodes": nodes, "gaps": gaps},
+    }
+
+
+def _memento_matches(candidate: dict[str, Any], target: dict[str, Any]) -> bool:
+    """Primary-key equality for a file locator: same file, and same content CID
+    when the target pins one. A degenerate (file-only) target matches on file
+    alone."""
+    if candidate.get("file") != target.get("file"):
+        return False
+    target_cid = target.get("source_cid") or target.get("sourceCid")
+    if target_cid and candidate.get("source_cid") != target_cid:
+        return False
+    return True
+
+
+def _resolved_under_root(root: Path, rel: str) -> Path | None:
+    """A forged memento carrying an absolute path (pathlib join discards the
+    root) or a `../` traversal could otherwise enumerate files OUTSIDE the
+    workspace. Require the resolved path to stay under the resolved root."""
+    try:
+        full = (root / rel).resolve()
+    except OSError:
+        return None
+    try:
+        full.relative_to(root)
+    except ValueError:
+        return None
+    return full
 
 
 def initialize_result() -> dict[str, Any]:
