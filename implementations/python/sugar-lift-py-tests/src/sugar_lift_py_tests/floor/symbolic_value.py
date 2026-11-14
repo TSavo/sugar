@@ -536,15 +536,30 @@ class SymbolicValue(FloorValue):
         )
 
     def subscript_with(self, operation, ctx):
-        """``symbolic[k]`` is the one undecided read: both faces, one debt.
+        """``symbolic[k]`` from source answers through :meth:`subscript`.
 
-        The receiver's runtime type and ``__getitem__`` are not decided here,
-        so the read may complete or raise (:meth:`undecided_subscript`).
+        A formal receiver's subscript is decided by its caller's actual at the
+        call: the ``subscript`` carrier, discharged through the one subscript
+        door (as a formal's ``obj[k] += v``, store, delete and attribute read
+        already are).  Any other symbolic receiver is the one undecided read:
+        both faces, one debt (:meth:`undecided_subscript`).
         """
         del ctx
-        return self.undecided_subscript(
-            operation.index, operation.blame, owner="SymbolicValue.subscript"
-        )
+        return self.subscript(operation.index, operation.blame)
+
+    def iter_with(self, operation, ctx):
+        """``iter(symbolic)``: its ``__iter__`` is not decided here, so the
+        call is the one two-faced unanswered outcome
+        (:meth:`undecided_iteration`).  A live ``for`` over a symbolic
+        iterable never submits this operation: it is the loop's recurrence."""
+        del ctx
+        return self.undecided_iteration(operation.blame, owner="SymbolicValue.iter")
+
+    def next_with(self, operation, ctx):
+        """``next(symbolic)``: its ``__next__`` is not decided here, so the
+        call is the one two-faced unanswered outcome (:meth:`undecided_next`)."""
+        del ctx
+        return self.undecided_next(operation.blame, owner="SymbolicValue.next")
 
     def project_sequence_with(self, operation, ctx):
         return operation.project_symbolic(self, ctx)

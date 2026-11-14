@@ -103,36 +103,23 @@ class SubscriptSugar(ConstructedTermSugar):
         )
 
     def _subscript(self, receiver, index, ctx):
-        """One door: prefer ``subscript_with`` (operation) over legacy ``subscript``.
+        """The one subscript door (``discharge_subscript``): prefer
+        ``subscript_with`` (operation) over legacy ``subscript``.
 
         Several floors implement only ``subscript_with`` (DictLiteralValue,
-        TupleLiteralValue, ObjectValue, StringValue, …). Routing
-        solely through ``subscript`` left those as owner=subscript construction
-        panics even though the operation edge was already written. Prefer the
-        operation edge when the receiver overrides it; otherwise fall back to
-        the legacy ``subscript`` / ``subscript_with_occurrence`` path so
-        floors that only implement ``subscript`` keep working.
+        TupleLiteralValue, ObjectValue, StringValue, …); floors that only
+        implement ``subscript`` answer through ``subscript_with_occurrence``.
+        A formal's ``subscript`` carrier discharges through the same door.
         """
-        from sugar_lift_py_tests.floor.floor_value import FloorValue
         from sugar_lift_py_tests.operations.subscript_operation import (
-            SubscriptOperation,
+            discharge_subscript,
         )
 
-        receiver = receiver.project_operation_receiver(
-            ctx, owner="SubscriptSugar receiver"
-        )
-        index = index.project_operation_receiver(ctx, owner="SubscriptSugar index")
-
-        operation = SubscriptOperation(
-            index=index,
+        return discharge_subscript(
+            receiver,
+            index,
+            self.site,
+            ctx,
             owner=type(self).__name__,
-            blame=self.site,
             use_occurrence=self.use_occurrence,
         )
-        # Species that overrode subscript_with own the modern edge.
-        if (
-            isinstance(receiver, FloorValue)
-            and type(receiver).subscript_with is not FloorValue.subscript_with
-        ):
-            return receiver.subscript_with(operation, ctx)
-        return receiver.subscript_with_occurrence(index, self.site, self.use_occurrence)

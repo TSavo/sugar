@@ -23,9 +23,36 @@ def _fn(src):
     return next(SourceFile(path_source(path), construction_context=TreeConstructionContextV1.for_test_without_workspace()).functions())
 
 
+def _universe(fn):
+    """The function's universe.  A formal's subscript (``fs[0]``) is decided
+    by the caller's actual: the body defers as the ``subscript`` carrier, read
+    here at each formal's own symbolic stand-in."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+    from sugar_lift_py_tests.floor import SymbolicValue
+    from sugar_lift_py_tests.ir import make_var
+    from sugar_lift_py_tests.outcome import Completed
+
+    sugar = fn.sugar()
+    outcome = sugar.desugar()
+    if isinstance(outcome, NativeOperationExitCarrierV1):
+        outcome = outcome.discharge(
+            None,
+            {
+                coordinate.coordinate_cid: SymbolicValue(
+                    make_var(coordinate.declared_name)
+                )
+                for coordinate in sugar.formal_coordinates
+            },
+        )
+    (done,) = [arm for arm in outcome.exits if isinstance(arm, Completed)]
+    return done.value
+
+
 def _call_term(src):
     """Project the returned call coordinate without illegal UniverseValue.post."""
-    universe = _fn(src).sugar().desugar().completed_value()
+    universe = _universe(_fn(src))
     for entry in universe.record.statements:
         if type(entry).__name__ == "ReturnValue":
             return entry.value.term
@@ -44,12 +71,7 @@ def test_computed_call_is_the_py_call_coordinate():
 
 
 def test_assert_consumes_the_coordinate():
-    universe = (
-        _fn("def A(fs, x):\n    assert fs[0](x) == x\n    return x\n")
-        .sugar()
-        .desugar()
-        .value
-    )
+    universe = _universe(_fn("def A(fs, x):\n    assert fs[0](x) == x\n    return x\n"))
     # Assert may also sit under a pending contract; walk invs and contributions.
     invs = universe.invs()
     if invs:

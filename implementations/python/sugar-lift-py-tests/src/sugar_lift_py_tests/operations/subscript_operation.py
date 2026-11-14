@@ -89,6 +89,35 @@ class SubscriptOperation:
         )
 
 
+def discharge_subscript(
+    receiver, index, site, ctx, *, owner: str, use_occurrence=None
+) -> ExitSet:
+    """The one door for ``receiver[index]``, under ``ctx``.
+
+    ``SubscriptSugar`` (a source subscript) and the ``subscript`` carrier's
+    projector (a formal's subscript, at the caller's actuals) both answer
+    here, so an actual is asked exactly what the source subscript asks.  A
+    receiver that overrides ``subscript_with`` owns the operation edge; any
+    other answers through ``subscript_with_occurrence`` / ``subscript``.
+    """
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+    receiver = receiver.project_operation_receiver(ctx, owner=f"{owner} receiver")
+    index = index.project_operation_receiver(ctx, owner=f"{owner} index")
+    operation = SubscriptOperation(
+        index=index,
+        owner=owner,
+        blame=site,
+        use_occurrence=use_occurrence,
+    )
+    if (
+        isinstance(receiver, FloorValue)
+        and type(receiver).subscript_with is not FloorValue.subscript_with
+    ):
+        return receiver.subscript_with(operation, ctx)
+    return receiver.subscript_with_occurrence(index, site, use_occurrence)
+
+
 def _unwrap_index(index: Any) -> Any:
     """Sequence indices consume the downstream value of an opaque-op coordinate."""
     from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite

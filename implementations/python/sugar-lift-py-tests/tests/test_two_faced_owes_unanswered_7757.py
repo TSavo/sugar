@@ -159,6 +159,75 @@ def test_a_symbolic_subscript_through_its_operation_owes_its_read() -> None:
     assert faces.completed_value() is None
 
 
+def test_iter_on_an_undecided_value_is_two_faced_and_owes_its_call() -> None:
+    """``iter(symbolic)`` through its operation: the one two-faced form, not
+    a construction gap and not a sole completion."""
+    from sugar_lift_py_tests.operations import IteratorOperation
+
+    operation = IteratorOperation(owner="project_iter", blame=_Site())
+    faces = operation.submit(SymbolicValue(make_var("s")), None)
+    _assert_two_faced_and_owed(faces, "SymbolicValue.iter")
+    (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
+    assert "python:iter.completes" in repr(done.guard)
+    assert "py.iter" in repr(done.value)
+    assert faces.completed_value() is None
+    assert "TypeError" not in repr(faces)
+
+
+def test_next_on_an_undecided_value_is_two_faced_and_owes_its_call() -> None:
+    """``next(symbolic)``: completes with the opaque next value or raises
+    something undetermined; ``StopIteration`` is never named here."""
+    from sugar_lift_py_tests.operations import NextOperation
+
+    operation = NextOperation(owner="project_next", blame=_Site())
+    faces = operation.submit(SymbolicValue(make_var("s")), None)
+    _assert_two_faced_and_owed(faces, "SymbolicValue.next")
+    (done,) = [arm for arm in faces.exits if isinstance(arm, Completed)]
+    assert "python:next.completes" in repr(done.guard)
+    assert "py.next" in repr(done.value)
+    assert faces.completed_value() is None
+    assert "StopIteration" not in repr(faces)
+
+
+def test_the_named_iter_and_next_projectors_answer_the_same_faces() -> None:
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        project_iter,
+        project_next,
+    )
+    from sugar_lift_py_tests.operations import IteratorOperation, NextOperation
+
+    receiver = SymbolicValue(make_var("s"))
+    site = _Site()
+    assert project_iter(receiver, site, None) == IteratorOperation(
+        owner="project_iter", blame=site
+    ).submit(receiver, None)
+    assert project_next(receiver, site, None) == NextOperation(
+        owner="project_next", blame=site
+    ).submit(receiver, None)
+
+
+def test_next_on_an_opaque_operator_result_owes_its_call() -> None:
+    """``next(opaque_op(...))`` used to complete alone with ``call:next``: a
+    dropped halt.  It is the downstream's one two-faced form now."""
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+    from sugar_lift_py_tests.operations import NextOperation
+
+    receiver = OpaqueOpCallsite(callee="itertuples", arg=SymbolicValue(make_var("d")))
+    faces = NextOperation(owner="project_next", blame=_Site()).submit(receiver, None)
+    _assert_two_faced_and_owed(faces, "SymbolicValue.next")
+    assert faces.completed_value() is None
+
+
+def test_a_siteless_iter_or_next_is_the_lifters_gap() -> None:
+    from sugar_source_tree.panic import SugarNotWritten
+
+    receiver = SymbolicValue(make_var("s"))
+    with pytest.raises(SugarNotWritten, match="no source site"):
+        receiver.undecided_iteration(None, owner="t")
+    with pytest.raises(SugarNotWritten, match="no source site"):
+        receiver.undecided_next(None, owner="t")
+
+
 def test_an_undecided_binary_operation_owes_its_dispatch() -> None:
     from sugar_lift_py_tests.floor.floor_value import undecided_binary_faces
 

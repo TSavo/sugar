@@ -5688,8 +5688,12 @@ const REPORT_PYTHON_COORDINATE_CONSTRUCTORS: &[&str] = &[
     "py.generator",
     "py.generators",
     "py.genexp",
+    // FloorValue.undecided_iteration / undecided_next: the opaque iterator
+    // and next value of an undecided receiver (siblings of py.subscript).
+    "py.iter",
     "py.iter_elem",
     "py.listcomp",
+    "py.next",
     "py.none",
     "py.object.identity",
     "py.or",

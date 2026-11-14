@@ -415,3 +415,80 @@ def test_undecided_caller_key_is_the_two_faced_unanswered_read() -> None:
     )
 
     _assert_two_faced_read(exits, "ListValue.subscript")
+
+
+# ---------------------------------------------------------------------------
+# A formal's subscript has one way: the carrier, decided by the caller's actual
+# ---------------------------------------------------------------------------
+
+
+def _subscript_operation(site):
+    from sugar_lift_py_tests.operations.subscript_operation import (
+        SubscriptOperation,
+    )
+
+    return SubscriptOperation(index=TermValue(0), owner="SubscriptSugar", blame=site)
+
+
+def test_a_formal_subscript_through_its_operation_is_the_carrier() -> None:
+    """``SymbolicValue.subscript_with`` (every source ``formal[k]``) mints the
+    same ``subscript`` carrier as ``SymbolicValue.subscript``: the caller's
+    actual decides it, never the callee's undecided read."""
+    carrier, obj_coordinate, _ = _synthetic_carrier()
+    formal = SymbolicValue(make_var("obj"), obj_coordinate)
+
+    outcome = _subscript_operation(carrier.site).submit(formal, None)
+
+    assert isinstance(outcome, NativeOperationExitCarrierV1)
+    assert outcome.demand.operator == "subscript"
+    assert outcome.demand.operand_coordinate_cids == (
+        obj_coordinate.coordinate_cid,
+        None,
+    )
+    direct = formal.subscript(TermValue(0), carrier.site)
+    assert outcome.demand.demand_cid == direct.demand.demand_cid
+
+
+def test_a_source_formal_subscript_reaches_the_carrier() -> None:
+    """``def helper(obj, key): return obj[key]`` from source: the function
+    defers its subscript to the caller (as ``obj[key] += rhs`` already did),
+    instead of answering the undecided read in the callee."""
+    from sugar_source_tree.nodes import FunctionDef
+
+    source = "def helper(obj, key):\n    return obj[key]\n"
+    tree = SourceFile(
+        (source, "formal-subscript-helper.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+
+    outcome = function.sugar().desugar(None)
+
+    assert isinstance(outcome, NativeOperationExitCarrierV1), type(outcome)
+    assert outcome.demand.operator == "subscript"
+
+
+def test_the_carrier_discharges_through_the_one_subscript_door() -> None:
+    """The caller's actual is asked what a source subscript asks it: a floor
+    that owns only the ``subscript_with`` edge answers through that edge (the
+    legacy ``subscript`` projector refused it as a construction gap)."""
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+
+    @dataclass(frozen=True)
+    class _OperationEdgeOnly(FloorValue):
+        def subscript_with(self, operation, ctx):
+            del ctx
+            assert operation.index == TermValue(0)
+            return ExitSet.completed(TermValue(42))
+
+    carrier, obj_coordinate, _ = _synthetic_carrier()
+    formal = SymbolicValue(make_var("obj"), obj_coordinate)
+    pending = _subscript_operation(carrier.site).submit(formal, None)
+
+    exits = pending.discharge(
+        None, {obj_coordinate.coordinate_cid: _OperationEdgeOnly()}
+    )
+
+    assert len(exits.exits) == 1
+    assert isinstance(exits.exits[0], Completed)
+    assert exits.exits[0].value == TermValue(42)
