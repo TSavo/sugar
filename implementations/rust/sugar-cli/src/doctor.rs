@@ -27,13 +27,10 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::ValueEnum;
 use serde_json::{json, Value};
 use sugar_canonicalizer::blake3_512_of;
-use sugar_proof_envelope::proof_filename;
-use sugar_verifier::load_all_proofs::ProofBytes;
 
 use crate::doctor_oracle::{
     OracleHostAdapter, OracleHostEngagement, OracleHostEnv, OracleHostLocatability,
@@ -291,23 +288,11 @@ fn check_metadata(
             "proof.dependency_resolver",
             CheckSeverity::Advisory,
         )
-    } else if name == "dependency-resolver-protocol" {
-        (
-            "proof.dependency_resolver.protocol",
-            "proof.dependency_resolver",
-            CheckSeverity::Advisory,
-        )
     } else if name == "dependency-pool-stable" {
         (
             "proof.dependency_pool.stable",
             "proof.dependency_pool",
             CheckSeverity::Advisory,
-        )
-    } else if name == "dependency-pool-byte-consistent" {
-        (
-            "proof.dependency_pool.byte_consistent",
-            "proof.dependency_pool",
-            CheckSeverity::Hard,
         )
     } else {
         ("doctor.check", "doctor", CheckSeverity::Hard)
@@ -337,19 +322,6 @@ pub fn run_report_with_context(kit_dir: &Path, context: DoctorContext) -> Doctor
 }
 
 #[cfg(test)]
-fn run_report_with_context_and_dependency_resolver<F>(
-    kit_dir: &Path,
-    context: DoctorContext,
-    resolver: F,
-) -> DoctorReport
-where
-    F: FnMut(&Path) -> Result<Vec<ProofBytes>, String>,
-{
-    let checks = run_checks_with_context_and_dependency_resolver(kit_dir, context, resolver);
-    report_from_checks(kit_dir, context.mode, checks)
-}
-
-#[cfg(test)]
 fn run_report_with_context_and_oracle_adapter<A>(
     kit_dir: &Path,
     context: DoctorContext,
@@ -358,12 +330,7 @@ fn run_report_with_context_and_oracle_adapter<A>(
 where
     A: OracleHostAdapter,
 {
-    let checks = run_checks_with_context_and_dependency_resolver_and_oracle_adapter(
-        kit_dir,
-        context,
-        crate::kit_dispatch::dependency_proofs_via_rpc,
-        &adapter,
-    );
+    let checks = run_checks_with_context_and_oracle_adapter(kit_dir, context, &adapter);
     report_from_checks(kit_dir, context.mode, checks)
 }
 
@@ -425,37 +392,15 @@ pub fn run_checks(kit_dir: &Path) -> Vec<Check> {
 }
 
 pub fn run_checks_with_context(kit_dir: &Path, context: DoctorContext) -> Vec<Check> {
-    run_checks_with_context_and_dependency_resolver(
-        kit_dir,
-        context,
-        crate::kit_dispatch::dependency_proofs_via_rpc,
-    )
+    run_checks_with_context_and_oracle_adapter(kit_dir, context, &RustAnalyzerOracleAdapter)
 }
 
-fn run_checks_with_context_and_dependency_resolver<F>(
+fn run_checks_with_context_and_oracle_adapter<A>(
     kit_dir: &Path,
     context: DoctorContext,
-    resolver: F,
-) -> Vec<Check>
-where
-    F: FnMut(&Path) -> Result<Vec<ProofBytes>, String>,
-{
-    run_checks_with_context_and_dependency_resolver_and_oracle_adapter(
-        kit_dir,
-        context,
-        resolver,
-        &RustAnalyzerOracleAdapter,
-    )
-}
-
-fn run_checks_with_context_and_dependency_resolver_and_oracle_adapter<F, A>(
-    kit_dir: &Path,
-    context: DoctorContext,
-    resolver: F,
     oracle_adapter: &A,
 ) -> Vec<Check>
 where
-    F: FnMut(&Path) -> Result<Vec<ProofBytes>, String>,
     A: OracleHostAdapter + ?Sized,
 {
     let mut checks: Vec<Check> = Vec::new();
@@ -715,9 +660,7 @@ where
         }
     }
 
-    checks.extend(run_dependency_proof_checks_with_resolver(
-        kit_dir, context, resolver,
-    ));
+    checks.extend(run_dependency_proof_checks(kit_dir, context));
     checks
 }
 
@@ -983,27 +926,11 @@ struct DependencyProofPool {
     proofs: Vec<DependencyProofFingerprint>,
 }
 
-fn run_dependency_proof_checks_with_resolver<F>(
-    kit_dir: &Path,
-    context: DoctorContext,
-    resolver: F,
-) -> Vec<Check>
-where
-    F: FnMut(&Path) -> Result<Vec<ProofBytes>, String>,
-{
-    run_dependency_proof_checks_with_pass_hook(kit_dir, context, resolver, |_, _| {})
-}
-
-fn run_dependency_proof_checks_with_pass_hook<F, H>(
-    kit_dir: &Path,
-    context: DoctorContext,
-    mut resolver: F,
-    mut pass_hook: H,
-) -> Vec<Check>
-where
-    F: FnMut(&Path) -> Result<Vec<ProofBytes>, String>,
-    H: FnMut(usize, &Path),
-{
+/// The dependency-proof checks. Imports are staged only by mint (item 39 on
+/// #7757): doctor reads the staged `.sugar/imports` set the way mint and prove
+/// read it and asks no kit for dependency proofs. The resolver's configuration
+/// is still inspected (is its binary locatable?), without running it.
+fn run_dependency_proof_checks(kit_dir: &Path, context: DoctorContext) -> Vec<Check> {
     let mut checks = Vec::new();
     let resolver_info = match dependency_resolver_info(kit_dir) {
         Ok(info) => info,
@@ -1064,23 +991,7 @@ where
         "dependency proof resolver is locatable",
         configured_evidence,
     ));
-
-    match context.mode {
-        DoctorMode::Structural => {
-            checks.push(pool_stable_structural_check(kit_dir));
-        }
-        DoctorMode::Strict => {
-            checks.push(strict_dependency_pool_check(kit_dir, &mut resolver));
-        }
-        DoctorMode::ReleaseGate => {
-            checks.push(release_gate_dependency_pool_check(
-                kit_dir,
-                &mut resolver,
-                &mut pass_hook,
-            ));
-        }
-    }
-
+    checks.push(pool_stable_structural_check(kit_dir));
     checks
 }
 
@@ -1154,182 +1065,6 @@ fn pool_stable_structural_check(kit_dir: &Path) -> Check {
     }
 }
 
-fn strict_dependency_pool_check<F>(kit_dir: &Path, resolver: &mut F) -> Check
-where
-    F: FnMut(&Path) -> Result<Vec<ProofBytes>, String>,
-{
-    let pool = match proof_pool_from_imports(kit_dir) {
-        Ok(pool) => pool,
-        Err(error) => {
-            return Check::fail_with_severity(
-                "dependency-pool-stable",
-                CheckSeverity::Hard,
-                format!("could not fingerprint dependency proof pool: {error}"),
-                json!({"error": error}),
-            );
-        }
-    };
-    let staged = match resolver(kit_dir).and_then(proof_pool_from_rpc_proofs) {
-        Ok(staged) => staged,
-        Err(error) => {
-            return Check::fail_with_severity(
-                "dependency-resolver-protocol",
-                CheckSeverity::Hard,
-                format!("dependency proof resolver protocol failed: {error}"),
-                json!({"error": error}),
-            );
-        }
-    };
-    if pool.proofs == staged.proofs {
-        return Check::pass_with_severity(
-            "dependency-pool-stable",
-            CheckSeverity::Hard,
-            "dependency proof pool matches resolver-staged proof set",
-            json!({
-                "pool": proof_pool_evidence(&pool),
-                "staged": proof_pool_evidence(&staged),
-                "proofs": proof_entries_json(&pool.proofs),
-            }),
-        );
-    }
-    Check::fail_with_severity(
-        "dependency-pool-stable",
-        CheckSeverity::Hard,
-        "dependency proof pool differs from resolver-staged proof set",
-        pool_diff_evidence("pool_vs_staged", &pool.proofs, &staged.proofs),
-    )
-}
-
-fn release_gate_dependency_pool_check<F, H>(
-    kit_dir: &Path,
-    resolver: &mut F,
-    pass_hook: &mut H,
-) -> Check
-where
-    F: FnMut(&Path) -> Result<Vec<ProofBytes>, String>,
-    H: FnMut(usize, &Path),
-{
-    let scratch = std::env::temp_dir().join(format!(
-        "sugar-doctor-dep-{}-{}",
-        std::process::id(),
-        SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0)
-    ));
-    let pass1 = scratch.join("pass1");
-    let pass2 = scratch.join("pass2");
-    let pass1_before = match stage_dependency_proof_pass(kit_dir, &pass1, resolver) {
-        Ok(pool) => pool,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&scratch);
-            return Check::fail_with_severity(
-                "dependency-pool-byte-consistent",
-                CheckSeverity::Hard,
-                format!("dependency proof release gate pass 1 failed: {error}"),
-                json!({"error": error, "pass": 1}),
-            );
-        }
-    };
-    pass_hook(1, &pass1);
-    let pass1_after = match proof_pool_from_dir(&pass1) {
-        Ok(pool) => pool,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&scratch);
-            return Check::fail_with_severity(
-                "dependency-pool-byte-consistent",
-                CheckSeverity::Hard,
-                format!("dependency proof release gate pass 1 rescan failed: {error}"),
-                json!({"error": error, "pass": 1}),
-            );
-        }
-    };
-    let pass2_before = match stage_dependency_proof_pass(kit_dir, &pass2, resolver) {
-        Ok(pool) => pool,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&scratch);
-            return Check::fail_with_severity(
-                "dependency-pool-byte-consistent",
-                CheckSeverity::Hard,
-                format!("dependency proof release gate pass 2 failed: {error}"),
-                json!({"error": error, "pass": 2}),
-            );
-        }
-    };
-    pass_hook(2, &pass2);
-    let pass2_after = match proof_pool_from_dir(&pass2) {
-        Ok(pool) => pool,
-        Err(error) => {
-            let _ = fs::remove_dir_all(&scratch);
-            return Check::fail_with_severity(
-                "dependency-pool-byte-consistent",
-                CheckSeverity::Hard,
-                format!("dependency proof release gate pass 2 rescan failed: {error}"),
-                json!({"error": error, "pass": 2}),
-            );
-        }
-    };
-    let _ = fs::remove_dir_all(&scratch);
-
-    if pass1_after.proofs == pass2_after.proofs && pass1_before.proofs == pass1_after.proofs {
-        return Check::pass_with_severity(
-            "dependency-pool-byte-consistent",
-            CheckSeverity::Hard,
-            "dependency proof release gate produced byte-identical proof sets",
-            json!({
-                "proofs": proof_entries_json(&pass1_after.proofs),
-                "pass1": proof_pool_evidence(&pass1_after),
-                "pass2": proof_pool_evidence(&pass2_after),
-            }),
-        );
-    }
-
-    let drift_kind =
-        if pass1_before.proofs != pass1_after.proofs || pass2_before.proofs != pass2_after.proofs {
-            "between_passes_mutation"
-        } else {
-            "resolver_nondeterminism"
-        };
-    Check::fail_with_severity(
-        "dependency-pool-byte-consistent",
-        CheckSeverity::Hard,
-        "dependency proof release gate produced divergent proof bytes",
-        pool_diff_evidence(drift_kind, &pass1_after.proofs, &pass2_after.proofs),
-    )
-}
-
-fn stage_dependency_proof_pass<F>(
-    kit_dir: &Path,
-    dest: &Path,
-    resolver: &mut F,
-) -> Result<DependencyProofPool, String>
-where
-    F: FnMut(&Path) -> Result<Vec<ProofBytes>, String>,
-{
-    fs::create_dir_all(dest).map_err(|e| format!("mkdir {}: {e}", dest.display()))?;
-    let proofs = resolver(kit_dir)?;
-    for proof in proofs {
-        let fingerprint = fingerprint_bytes(proof.label.clone(), &proof.bytes);
-        if proof.expected_cid.as_ref() != fingerprint.derived_cid.as_str() {
-            return Err(format!(
-                "dependency proof CID mismatch: expected {}, derived {}",
-                proof.expected_cid, fingerprint.derived_cid
-            ));
-        }
-        fs::write(
-            dest.join(proof_filename(&fingerprint.derived_cid)),
-            &proof.bytes,
-        )
-        .map_err(|e| {
-            format!(
-                "write staged dependency proof {}: {e}",
-                fingerprint.derived_cid
-            )
-        })?;
-    }
-    proof_pool_from_dir(dest)
-}
-
 fn proof_pool_from_imports(kit_dir: &Path) -> Result<DependencyProofPool, String> {
     proof_pool_from_dir(&kit_dir.join(".sugar/imports"))
 }
@@ -1356,26 +1091,6 @@ fn proof_pool_from_dir(path: &Path) -> Result<DependencyProofPool, String> {
     Ok(DependencyProofPool {
         present: true,
         proofs,
-    })
-}
-
-fn proof_pool_from_rpc_proofs(proofs: Vec<ProofBytes>) -> Result<DependencyProofPool, String> {
-    let mut fingerprints = Vec::new();
-    for proof in proofs {
-        let fingerprint = fingerprint_bytes(proof.label, &proof.bytes);
-        if proof.expected_cid.as_ref() != fingerprint.derived_cid.as_str() {
-            return Err(format!(
-                "dependency proof CID mismatch: expected {}, derived {}",
-                proof.expected_cid, fingerprint.derived_cid
-            ));
-        }
-        fingerprints.push(fingerprint);
-    }
-    fingerprints.sort();
-    fingerprints.dedup();
-    Ok(DependencyProofPool {
-        present: true,
-        proofs: fingerprints,
     })
 }
 
@@ -1411,40 +1126,6 @@ fn proof_entries_json(proofs: &[DependencyProofFingerprint]) -> Value {
             })
             .collect(),
     )
-}
-
-fn pool_diff_evidence(
-    drift_kind: &str,
-    first: &[DependencyProofFingerprint],
-    second: &[DependencyProofFingerprint],
-) -> Value {
-    let first_cids = first
-        .iter()
-        .map(|proof| proof.derived_cid.clone())
-        .collect::<BTreeSet<_>>();
-    let second_cids = second
-        .iter()
-        .map(|proof| proof.derived_cid.clone())
-        .collect::<BTreeSet<_>>();
-    let first_only = first_cids
-        .difference(&second_cids)
-        .cloned()
-        .collect::<Vec<_>>();
-    let second_only = second_cids
-        .difference(&first_cids)
-        .cloned()
-        .collect::<Vec<_>>();
-    let first_byte_hash = first.first().map(|proof| proof.byte_hash.clone());
-    let second_byte_hash = second.first().map(|proof| proof.byte_hash.clone());
-    json!({
-        "driftKind": drift_kind,
-        "first": proof_entries_json(first),
-        "second": proof_entries_json(second),
-        "firstOnlyCids": first_only,
-        "secondOnlyCids": second_only,
-        "firstByteHash": first_byte_hash,
-        "secondByteHash": second_byte_hash,
-    })
 }
 
 /// Query a plugin's `initialize` capabilities and return its declared
@@ -2540,11 +2221,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
         make_executable(&resolver);
         write_dependency_resolver_kit(kit, "\"./dep-resolver\"");
 
-        let checks = run_dependency_proof_checks_with_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::Structural),
-            |_| Ok(Vec::new()),
-        );
+        let checks = run_dependency_proof_checks(kit, DoctorContext::new(DoctorMode::Structural));
 
         let available = check_by_id_from_checks(&checks, "proof.dependency_resolver.available");
         assert_eq!(available.status, CheckStatus::Pass);
@@ -2569,11 +2246,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
         let kit = td.path();
         write_dependency_resolver_kit(kit, "\"./missing-dep-resolver\"");
 
-        let checks = run_dependency_proof_checks_with_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::Structural),
-            |_| Ok(Vec::new()),
-        );
+        let checks = run_dependency_proof_checks(kit, DoctorContext::new(DoctorMode::Structural));
 
         let available = check_by_id_from_checks(&checks, "proof.dependency_resolver.available");
         assert_eq!(available.status, CheckStatus::Warn);
@@ -2591,16 +2264,9 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
         let kit = td.path();
         write_dependency_resolver_kit(kit, "\"./missing-dep-resolver\"");
 
-        let structural = run_dependency_proof_checks_with_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::Structural),
-            |_| Ok(Vec::new()),
-        );
-        let strict = run_dependency_proof_checks_with_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::Strict),
-            |_| Ok(Vec::new()),
-        );
+        let structural =
+            run_dependency_proof_checks(kit, DoctorContext::new(DoctorMode::Structural));
+        let strict = run_dependency_proof_checks(kit, DoctorContext::new(DoctorMode::Strict));
 
         let structural_available =
             check_by_id_from_checks(&structural, "proof.dependency_resolver.available");
@@ -2620,11 +2286,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
         let kit = td.path();
         write_kit(kit, "");
 
-        let checks = run_dependency_proof_checks_with_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::Strict),
-            |_| Ok(Vec::new()),
-        );
+        let checks = run_dependency_proof_checks(kit, DoctorContext::new(DoctorMode::Strict));
 
         let available = check_by_id_from_checks(&checks, "proof.dependency_resolver.available");
         assert_eq!(available.status, CheckStatus::Pass);
@@ -2645,11 +2307,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
         write_kit(kit, "");
         let cid = write_import_proof(kit, b"stable dependency proof");
 
-        let checks = run_dependency_proof_checks_with_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::Structural),
-            |_| Ok(Vec::new()),
-        );
+        let checks = run_dependency_proof_checks(kit, DoctorContext::new(DoctorMode::Structural));
 
         let stable = check_by_id_from_checks(&checks, "proof.dependency_pool.stable");
         assert_eq!(stable.status, CheckStatus::Pass);
@@ -2675,11 +2333,7 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
         )
         .unwrap();
 
-        let checks = run_dependency_proof_checks_with_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::Structural),
-            |_| Ok(Vec::new()),
-        );
+        let checks = run_dependency_proof_checks(kit, DoctorContext::new(DoctorMode::Structural));
 
         let stable = check_by_id_from_checks(&checks, "proof.dependency_pool.stable");
         assert_eq!(stable.status, CheckStatus::Pass);
@@ -2695,200 +2349,30 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
         );
     }
 
+    /// Item 39 on #7757: imports are staged only by mint. Strict and release
+    /// gate read the staged `.sugar/imports` set and never run the configured
+    /// resolver; the resolver here is a binary that cannot answer.
     #[test]
-    fn strict_pool_matching_resolver_staged_set_passes() {
+    fn strict_and_release_gate_read_the_staged_imports_and_ask_no_kit() {
         let td = TempDir::new().unwrap();
         let kit = td.path();
         let resolver = kit.join("dep-resolver");
         make_executable(&resolver);
         write_dependency_resolver_kit(kit, "\"./dep-resolver\"");
-        let bytes = b"stable dependency proof".to_vec();
-        let cid = write_import_proof(kit, &bytes);
+        let cid = write_import_proof(kit, b"staged dependency proof");
 
-        let checks = run_dependency_proof_checks_with_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::Strict),
-            move |_| Ok(vec![proof_bytes("dep", &bytes)]),
-        );
+        for mode in [DoctorMode::Strict, DoctorMode::ReleaseGate] {
+            let checks = run_dependency_proof_checks(kit, DoctorContext::new(mode));
 
-        let stable = check_by_id_from_checks(&checks, "proof.dependency_pool.stable");
-        assert_eq!(stable.status, CheckStatus::Pass);
-        assert_eq!(
-            stable.evidence["proofs"][0]["derivedCid"].as_str(),
-            Some(cid.as_str())
-        );
-    }
-
-    #[test]
-    fn strict_pool_drift_from_resolver_staged_set_fails_with_differing_cids() {
-        let td = TempDir::new().unwrap();
-        let kit = td.path();
-        let resolver = kit.join("dep-resolver");
-        make_executable(&resolver);
-        write_dependency_resolver_kit(kit, "\"./dep-resolver\"");
-        let old_cid = write_import_proof(kit, b"old dependency proof");
-        let new_bytes = b"new dependency proof".to_vec();
-        let new_cid = sugar_canonicalizer::blake3_512_of(&new_bytes);
-
-        let checks = run_dependency_proof_checks_with_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::Strict),
-            move |_| Ok(vec![proof_bytes("dep", &new_bytes)]),
-        );
-
-        let stable = check_by_id_from_checks(&checks, "proof.dependency_pool.stable");
-        assert_eq!(stable.status, CheckStatus::Fail);
-        assert_eq!(stable.severity, CheckSeverity::Hard);
-        let evidence = stable.evidence.to_string();
-        assert!(
-            evidence.contains(&old_cid),
-            "should name pool CID: {evidence}"
-        );
-        assert!(
-            evidence.contains(&new_cid),
-            "should name staged CID: {evidence}"
-        );
-    }
-
-    #[test]
-    fn release_gate_identical_staging_passes_are_byte_consistent() {
-        let td = TempDir::new().unwrap();
-        let kit = td.path();
-        let resolver = kit.join("dep-resolver");
-        make_executable(&resolver);
-        write_dependency_resolver_kit(kit, "\"./dep-resolver\"");
-        let bytes = b"stable dependency proof".to_vec();
-        let cid = sugar_canonicalizer::blake3_512_of(&bytes);
-
-        let checks = run_dependency_proof_checks_with_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::ReleaseGate),
-            move |_| Ok(vec![proof_bytes("dep", &bytes)]),
-        );
-
-        let byte_consistent =
-            check_by_id_from_checks(&checks, "proof.dependency_pool.byte_consistent");
-        assert_eq!(byte_consistent.status, CheckStatus::Pass);
-        assert_eq!(
-            byte_consistent.evidence["proofs"][0]["derivedCid"].as_str(),
-            Some(cid.as_str())
-        );
-    }
-
-    #[test]
-    fn release_gate_nondeterministic_staging_fails_with_byte_hashes() {
-        let td = TempDir::new().unwrap();
-        let kit = td.path();
-        let resolver = kit.join("dep-resolver");
-        make_executable(&resolver);
-        write_dependency_resolver_kit(kit, "\"./dep-resolver\"");
-        let calls = std::cell::Cell::new(0usize);
-        let first_cid = sugar_canonicalizer::blake3_512_of(b"first proof");
-        let second_cid = sugar_canonicalizer::blake3_512_of(b"second proof");
-
-        let checks = run_dependency_proof_checks_with_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::ReleaseGate),
-            |_| {
-                let call = calls.get();
-                calls.set(call + 1);
-                let bytes: &[u8] = if call == 0 {
-                    b"first proof"
-                } else {
-                    b"second proof"
-                };
-                Ok(vec![proof_bytes("dep", bytes)])
-            },
-        );
-
-        let byte_consistent =
-            check_by_id_from_checks(&checks, "proof.dependency_pool.byte_consistent");
-        assert_eq!(byte_consistent.status, CheckStatus::Fail);
-        assert_eq!(byte_consistent.severity, CheckSeverity::Hard);
-        let evidence = byte_consistent.evidence.to_string();
-        assert_eq!(
-            byte_consistent
-                .evidence
-                .get("driftKind")
-                .and_then(Value::as_str),
-            Some("resolver_nondeterminism")
-        );
-        assert!(
-            evidence.contains(&first_cid) && evidence.contains(&second_cid),
-            "release gate should name both diverging proof CIDs: {evidence}"
-        );
-        assert!(
-            evidence.contains("firstByteHash") && evidence.contains("secondByteHash"),
-            "release gate should show both hashes side by side: {evidence}"
-        );
-    }
-
-    #[test]
-    fn release_gate_between_pass_external_mutation_fails_with_distinct_reason() {
-        let td = TempDir::new().unwrap();
-        let kit = td.path();
-        let resolver = kit.join("dep-resolver");
-        make_executable(&resolver);
-        write_dependency_resolver_kit(kit, "\"./dep-resolver\"");
-        let bytes = b"stable dependency proof".to_vec();
-
-        let checks = run_dependency_proof_checks_with_pass_hook(
-            kit,
-            DoctorContext::new(DoctorMode::ReleaseGate),
-            move |_| Ok(vec![proof_bytes("dep", &bytes)]),
-            |pass, scratch| {
-                if pass == 1 {
-                    let mutated = scratch.join("external-mutation.proof");
-                    fs::write(mutated, b"external mutation").unwrap();
-                }
-            },
-        );
-
-        let byte_consistent =
-            check_by_id_from_checks(&checks, "proof.dependency_pool.byte_consistent");
-        assert_eq!(byte_consistent.status, CheckStatus::Fail);
-        assert_eq!(byte_consistent.severity, CheckSeverity::Hard);
-        assert_eq!(
-            byte_consistent
-                .evidence
-                .get("driftKind")
-                .and_then(Value::as_str),
-            Some("between_passes_mutation")
-        );
-    }
-
-    #[test]
-    fn release_gate_dependency_proof_failure_marks_report_not_release_ready() {
-        let td = TempDir::new().unwrap();
-        let kit = td.path();
-        let resolver = kit.join("dep-resolver");
-        make_executable(&resolver);
-        write_dependency_resolver_kit(kit, "\"./dep-resolver\"");
-        let calls = std::cell::Cell::new(0usize);
-
-        let report = run_report_with_context_and_dependency_resolver(
-            kit,
-            DoctorContext::new(DoctorMode::ReleaseGate),
-            |_| {
-                let call = calls.get();
-                calls.set(call + 1);
-                let bytes: &[u8] = if call == 0 {
-                    b"first proof"
-                } else {
-                    b"second proof"
-                };
-                Ok(vec![proof_bytes("dep", bytes)])
-            },
-        );
-
-        assert!(
-            !report.ok,
-            "release-gate dep proof drift should fail report"
-        );
-        assert!(
-            !report.release_ready,
-            "release-gate dep proof drift must block release readiness"
-        );
+            let stable = check_by_id_from_checks(&checks, "proof.dependency_pool.stable");
+            assert_eq!(stable.status, CheckStatus::Pass, "{mode:?}");
+            assert_eq!(
+                stable.evidence["proofs"][0]["derivedCid"].as_str(),
+                Some(cid.as_str()),
+                "{mode:?}"
+            );
+            assert_eq!(checks.len(), 2, "{mode:?}: {checks:#?}");
+        }
     }
 
     #[test]
@@ -3522,16 +3006,6 @@ in the job, not on this crate. Not a live regression guard. Tracked in #1926."]
         fs::create_dir_all(&imports).unwrap();
         fs::write(imports.join(format!("{cid}.proof")), bytes).unwrap();
         cid
-    }
-
-    fn proof_bytes(label: &str, bytes: &[u8]) -> sugar_verifier::load_all_proofs::ProofBytes {
-        sugar_verifier::load_all_proofs::ProofBytes::try_from_parts(
-            label.to_string(),
-            sugar_canonicalizer::blake3_512_of(bytes),
-            bytes.to_vec(),
-            sugar_verifier::Speaker::vendor(label.to_string()),
-        )
-        .expect("test proof CID must parse")
     }
 
     fn check_by_id_from_checks<'a>(checks: &'a [DoctorCheck], id: &str) -> &'a DoctorCheck {

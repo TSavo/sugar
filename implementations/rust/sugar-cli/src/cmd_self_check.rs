@@ -9,13 +9,11 @@ use std::process::{Command, Output, Stdio};
 use clap::Parser;
 use serde::Serialize;
 use serde_json::Value;
-use sugar_canonicalizer::blake3_512_of;
 use sugar_claim_envelope::{
     body_discharge_policy_from_object_with_default, BodyDischargePolicyWarning,
 };
-use sugar_proof_envelope::proof_filename;
 use sugar_proof_envelope::{EffectSiteAnnotation, LoadError, MementoPool};
-use sugar_verifier::load_all_proofs::{self, ProofBytes};
+use sugar_verifier::load_all_proofs;
 use tracing::{error, info, warn};
 
 use crate::floor_runtime_check::{
@@ -282,16 +280,8 @@ fn run_inner(args: &SelfCheckArgs) -> Result<SelfCheckScoreboard, String> {
             "self-check: dependency proof ready"
         );
     }
-    let rpc_dependency_proof_count = stage_rpc_dependency_proofs_to_imports(
-        &target_abs,
-        &imports,
-        crate::kit_dispatch::dependency_proofs_via_rpc,
-    )?;
-    info!(
-        rpc_dependency_proof_count,
-        imports = %imports.display(),
-        "self-check: RPC dependency proofs staged"
-    );
+    // Imports are staged only by mint: the target's mint below stages its own
+    // dependency testimony; self-check fetches nothing over RPC (item 39).
     let imports_snapshot = snapshot_imports_proof_set(&imports)?;
     info!(
         imports = %imports.display(),
@@ -872,38 +862,6 @@ impl Drop for StagedDependencyImportsGuard {
             }
         }
     }
-}
-
-fn stage_rpc_dependency_proofs_to_imports<F>(
-    target_abs: &Path,
-    imports: &Path,
-    resolve: F,
-) -> Result<usize, String>
-where
-    F: FnOnce(&Path) -> Result<Vec<ProofBytes>, String>,
-{
-    let proofs = resolve(target_abs)?;
-    let mut count = 0usize;
-    for proof in proofs {
-        let derived_cid = blake3_512_of(&proof.bytes);
-        if proof.expected_cid.as_ref() != derived_cid.as_str() {
-            return Err(format!(
-                "RPC dependency proof {} CID mismatch: expected {}, derived {}",
-                proof.label, proof.expected_cid, derived_cid
-            ));
-        }
-        let cid = proof.expected_cid;
-        let dest = imports.join(proof_filename(&cid));
-        fs::write(&dest, &proof.bytes).map_err(|e| {
-            format!(
-                "write RPC dependency proof {} to {}: {e}",
-                proof.label,
-                dest.display()
-            )
-        })?;
-        count += 1;
-    }
-    Ok(count)
 }
 
 #[cfg(test)]
@@ -2046,44 +2004,6 @@ mod tests {
         assert!(
             err.contains("removed: [a.proof]"),
             "unexpected error: {err}"
-        );
-    }
-
-    #[test]
-    fn self_check_stages_rpc_dependency_proof_bytes_without_using_source_path() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let imports = dir.path().join("imports");
-        fs::create_dir_all(&imports).expect("create imports");
-        let target = dir.path().join("target");
-        let bytes = b"rpc dependency proof bytes".to_vec();
-        let cid = sugar_canonicalizer::blake3_512_of(&bytes);
-        let source_path_label = dir.path().join("package-internal").join("vendor.proof");
-
-        let count = stage_rpc_dependency_proofs_to_imports(&target, &imports, |_| {
-            Ok(vec![
-                sugar_verifier::load_all_proofs::ProofBytes::try_from_parts(
-                    source_path_label.display().to_string(),
-                    cid.clone(),
-                    bytes.clone(),
-                    sugar_verifier::Speaker::vendor(source_path_label.display().to_string()),
-                )
-                .expect("test proof CID must parse"),
-            ])
-        })
-        .expect("stage rpc dependency proofs");
-
-        assert_eq!(count, 1);
-        // Staged under the colon-free, prefix-retained on-disk name
-        // (Windows-safe); `blake3-512:<hex>` -> `blake3-512_<hex>.proof`.
-        let staged_name = proof_filename(&cid);
-        assert!(!staged_name.contains(':'), "staged name must be colon-free");
-        let staged = imports.join(&staged_name);
-        assert_eq!(fs::read(&staged).expect("read staged proof"), bytes);
-        let snapshot = snapshot_imports_proof_set(&imports).expect("snapshot");
-        assert_eq!(
-            snapshot.path_list(),
-            staged_name,
-            "self-check must stage proof bytes by CID, not by kit source path"
         );
     }
 

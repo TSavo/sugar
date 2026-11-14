@@ -30,7 +30,6 @@ use sugar_plugin_loader::{
     cid::compute_plugin_cid, write_plugin_registry_memento, PluginEnvelope, PluginHeader,
     PluginMemento, PluginMetadata, PluginRegistry, PluginRegistryMemento,
 };
-use sugar_verifier::load_all_proofs::ProofBytes;
 
 use crate::project_config::read_project_config;
 
@@ -257,79 +256,6 @@ fn registry_authorizes_plugin(
         })
 }
 
-/// Ask every configured kit plugin for dependency proof catalogs resolved from
-/// the project's package-manager graph. The substrate stays language-blind:
-/// this function only iterates configured plugin commands and consumes proof
-/// bytes over RPC. The CLI never follows package-system `.proof` paths.
-pub fn dependency_proofs_via_rpc(workspace_root: &Path) -> Result<Vec<ProofBytes>, String> {
-    let registry = run_plugin_registry_for_project(workspace_root)?;
-    let mut commands: BTreeMap<String, ResolvedCommand> = BTreeMap::new();
-    for plugin in registry
-        .plugins
-        .iter()
-        .filter(|plugin| registry_authorizes_plugin(&registry, plugin))
-    {
-        let command = resolved_command_from_manifest(workspace_root, &plugin.parsed);
-        if command.argv.is_empty() {
-            continue;
-        }
-        commands
-            .entry(command_key(&command))
-            .or_insert_with(|| command);
-    }
-
-    // SEAM 4 (`~/.claude/plans/sugar-compiler-liftshift.md`): the RPC spawn
-    // and blob decode that used to live here as `dependency_proofs_for_command`
-    // + `decode_dependency_proof_entry` moved verbatim to
-    // `sugar_compiler::resolve::resolve_testimony` -- the SAME typed core
-    // `Kit::testimony` calls for an already-rendezvous'd kit. This loop
-    // stays here (rather than rendezvous-ing a `Kit` per command) because it
-    // fans out across EVERY configured plugin at once and has no per-plugin
-    // `Dialect` to build a `LiftManifest` from; adding a live handshake
-    // round-trip per command here would be new spawn traffic, flagged for
-    // SEAM 6 rather than added silently.
-    let mut proofs = Vec::new();
-    for command in commands.values() {
-        let resolution = sugar_compiler::resolve::resolve_testimony(
-            &command.plugin_name,
-            &command.argv,
-            command.working_dir.as_deref(),
-            workspace_root,
-        )
-        .map_err(|error| error.to_string())?;
-        for diagnostic in resolution.diagnostics {
-            record_dependency_proof_diagnostic(diagnostic);
-        }
-        match resolution.outcome {
-            sugar_compiler::resolve::TestimonyOutcome::Proofs(mut resolved) => {
-                proofs.append(&mut resolved);
-            }
-            sugar_compiler::resolve::TestimonyOutcome::Unavailable { reason, .. } => {
-                record_dependency_proof_diagnostic(reason);
-            }
-        }
-    }
-    proofs.sort_by(|a, b| {
-        (a.expected_cid.as_str(), a.label.as_str())
-            .cmp(&(b.expected_cid.as_str(), b.label.as_str()))
-    });
-    proofs.dedup_by(|a, b| a.expected_cid == b.expected_cid && a.bytes == b.bytes);
-    Ok(proofs)
-}
-
-fn command_key(command: &ResolvedCommand) -> String {
-    format!("{:?}\u{0}{:?}", command.argv, command.working_dir)
-}
-
-fn record_dependency_proof_diagnostic(message: String) {
-    tracing::warn!("{}", message);
-    KIT_DISPATCH_DIAGNOSTICS
-        .get_or_init(|| Mutex::new(Vec::new()))
-        .lock()
-        .expect("diagnostics lock")
-        .push(message);
-}
-
 fn resolved_command_from_manifest(
     workspace_root: &Path,
     parsed: &ParsedManifest,
@@ -353,11 +279,7 @@ fn resolved_command_from_manifest(
             }
         })
         .or_else(|| Some(workspace_root));
-    ResolvedCommand {
-        plugin_name: parsed.name.clone(),
-        argv,
-        working_dir,
-    }
+    ResolvedCommand { argv, working_dir }
 }
 
 fn absolute_workspace_root(workspace_root: &Path) -> PathBuf {
@@ -403,7 +325,6 @@ impl std::fmt::Display for KitUnavailable {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ResolvedCommand {
-    pub(crate) plugin_name: String,
     pub(crate) argv: Vec<String>,
     pub(crate) working_dir: Option<PathBuf>,
 }
