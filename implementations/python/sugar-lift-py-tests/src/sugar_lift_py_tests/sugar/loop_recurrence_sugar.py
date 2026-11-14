@@ -583,9 +583,15 @@ def _outward_face_partition(outcome, face, *, guarded=False):
     partition = []
     for exit_ in exits.exits:
         if isinstance(exit_, Halted):
-            partition.append(Halted(exit_.guard, exit_.effect, face.state))
+            partition.append(
+                Halted(exit_.guard, exit_.effect, face.state, owed=exit_.owed)
+            )
             continue
         partition.append(
-            Completed(exit_.guard, BlockValue((exit_.value,), can_fall_through=False))
+            Completed(
+                exit_.guard,
+                BlockValue((exit_.value,), can_fall_through=False),
+                owed=exit_.owed,
+            )
         )
     return tuple(partition)

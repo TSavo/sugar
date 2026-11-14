@@ -454,6 +454,32 @@ def _destination_key(exit_: "Exit[T]") -> object:
         return _UNHASHABLE
 
 
+_NO_OWED: tuple = ()
+
+
+def owed_union(*parts: tuple) -> tuple:
+    """Every owed item of every contributor, once, in first-seen order.
+
+    THE RULE FOR ``owed`` AT EVERY ARM REBUILD. An arm owes what any path
+    into it incurred, so a rebuild from one arm keeps that arm's ``owed``, and
+    a rebuild from several (a merge, a sequence, a fan) owes the union. Never
+    an intersection: unlike ``faces``, which is testimony that weakens when
+    arms merge, an owed item is a debt, and a merged arm owes every debt of
+    every arm it stands for. Dropping one is dropping a member of the proof.
+    """
+    nonempty = [part for part in parts if part]
+    if not nonempty:
+        return _NO_OWED
+    if len(nonempty) == 1:
+        return tuple(nonempty[0])
+    merged = list(nonempty[0])
+    for part in nonempty[1:]:
+        for item in part:
+            if item not in merged:
+                merged.append(item)
+    return tuple(merged)
+
+
 @dataclass(frozen=True)
 class Completed(Generic[T]):
     """Control left with this value, under this guard."""
@@ -467,6 +493,14 @@ class Completed(Generic[T]):
     faces: frozenset[PartitionFace] = _dataclass_field(
         default=_NO_FACES, compare=False, repr=False
     )
+    # What this arm OWES (#7825, H4): items the proof must carry as members
+    # because something on a path into this arm left them unanswered (today:
+    # ``unanswered_calls.UnansweredCallV1``). Like ``faces`` it is not part of
+    # what the arm denotes, so it is excluded from compare/hash/repr: it never
+    # decides a merge in ``normalize``, never enters a destination key, never
+    # enters an enrolled CID. Unlike ``faces`` it is carried by UNION at every
+    # rebuild (``owed_union``).
+    owed: tuple = _dataclass_field(default=_NO_OWED, compare=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -479,6 +513,9 @@ class Halted:
     faces: frozenset[PartitionFace] = _dataclass_field(
         default=_NO_FACES, compare=False, repr=False
     )
+    # See ``Completed.owed``: a halted arm owes what the path that reached
+    # the halt incurred, exactly as a completed one does.
+    owed: tuple = _dataclass_field(default=_NO_OWED, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "effect", require_effect(self.effect))
@@ -495,13 +532,67 @@ class ExitSet(Generic[T]):
 
     @classmethod
     def completed(cls, value: T, guard: Formula | None = None) -> "ExitSet[T]":
+        """CONVERSION RULE: ``Complete(v)`` becomes ``ExitSet.completed(v)``.
+
+        One completed arm holding ``v`` under ``guard`` (truth when omitted).
+        ``Complete(v)`` denoted exactly the unguarded case, so the rewrite is
+        one-for-one and passes no guard.
+        """
         return cls((Completed(guard or true_guard(), value),)).normalize()
 
     @classmethod
     def halted(
         cls, effect: Effect, guard: Formula | None = None, state=None
     ) -> "ExitSet[T]":
+        """CONVERSION RULE: ``Incomplete(e)`` becomes ``ExitSet.halted(e)``.
+
+        One halted arm with ``effect`` under ``guard`` (truth when omitted),
+        from ``state``. ``Incomplete(e, (c1, ..., cn))`` becomes
+        ``ExitSet.halted(e, guard=and_([c1, ..., cn]))`` -- the same arm
+        ``outcome_to_exitset`` builds from it. ``Incomplete(e).guarded(c)``
+        becomes ``ExitSet.halted(e).guarded(c)``.
+        """
         return cls((Halted(guard or true_guard(), effect, state),)).normalize()
+
+    def completed_value(self):
+        """The single unconditional completed value, else ``None``.
+
+        CONVERSION RULE: ``isinstance(o, Complete)`` becomes
+        ``o.completed_value() is not None``, and the ``o.value`` it guarded
+        becomes ``o.completed_value()``. Answers a value exactly when the set
+        is ONE completed arm under truth -- the only shape ``collapse`` ever
+        turned into a ``Complete``. A guarded completion, a second arm, or any
+        halt answers ``None``: there is no single success value to hand over,
+        and the caller reasons over the arms instead. ``owed`` does not enter:
+        it is not part of what the arm denotes.
+        """
+        normalized = self.normalize()
+        if len(normalized.exits) != 1:
+            return None
+        exit_ = normalized.exits[0]
+        if isinstance(exit_, Completed) and _is_true(exit_.guard):
+            return exit_.value
+        return None
+
+    def halts(self) -> tuple[Halted, ...]:
+        """The halted arms, in order.
+
+        CONVERSION RULE: ``isinstance(o, Incomplete)`` becomes
+        ``o.halts() == o.exits`` (every arm halts; nothing completes), and the
+        ``o.effect`` it guarded becomes ``h.effect`` for each ``h`` in
+        ``o.halts()``. Where the linear code asked only "can this halt",
+        ``bool(o.halts())`` is the question. A guarded halt keeps its guard on
+        the arm: ``Incomplete.branch_conditions`` is ``h.guard``.
+        """
+        return tuple(exit_ for exit_ in self.exits if isinstance(exit_, Halted))
+
+    def owed_items(self) -> tuple:
+        """Every item any arm owes, once, in first-seen order (``owed_union``).
+
+        The reader of the owed slot: a consumer that packages members reads
+        them off the FINAL set of arms, never off a side channel.
+        """
+        return owed_union(*(exit_.owed for exit_ in self.exits))
 
     @classmethod
     def conditional_halt(cls, guard: Formula, effect: Effect, state: T) -> "ExitSet[T]":
@@ -535,9 +626,11 @@ class ExitSet(Generic[T]):
             combined = _and_guards(guard, exit_.guard)
             faces = exit_.faces if face is None else exit_.faces | {face}
             if isinstance(exit_, Completed):
-                exits.append(Completed(combined, exit_.value, faces))
+                exits.append(Completed(combined, exit_.value, faces, exit_.owed))
             else:
-                exits.append(Halted(combined, exit_.effect, exit_.state, faces))
+                exits.append(
+                    Halted(combined, exit_.effect, exit_.state, faces, exit_.owed)
+                )
         return ExitSet(tuple(exits)).normalize()
 
     def with_partition_face(self, partition_id: str, face: int) -> "ExitSet[T]":
@@ -552,7 +645,9 @@ class ExitSet(Generic[T]):
         for exit_ in self.exits:
             if isinstance(exit_, Completed):
                 stamped = frozenset((*((exit_.partition or frozenset())), face_key))
-                exits.append(Completed(exit_.guard, exit_.value, stamped))
+                exits.append(
+                    Completed(exit_.guard, exit_.value, stamped, exit_.owed)
+                )
             else:
                 exits.append(exit_)
         return ExitSet(tuple(exits))
@@ -668,7 +763,14 @@ class ExitSet(Generic[T]):
         for arm in completed[1:]:
             factored_faces = factored_faces & arm.faces
 
-        factored = Completed(face_guard, chain, factored_faces)
+        # Owed is the opposite: the factored arm stands for every arm, so it
+        # owes every arm's debt.
+        factored = Completed(
+            face_guard,
+            chain,
+            factored_faces,
+            owed_union(*(arm.owed for arm in completed)),
+        )
         exits: list[Exit[T]] = []
         placed = False
         for exit_ in self.exits:
@@ -753,11 +855,14 @@ class ExitSet(Generic[T]):
                 # never mentioned tells you nothing about where the merged arm
                 # lies. For a split they both named, the merged arm lies on one
                 # of their sides, so the sides UNION.
+                # ``owed`` never decides the merge (it is not in the key or the
+                # comparison above); the merged arm owes both contributors'.
                 if same_completed:
                     merged[index] = Completed(
                         _or_guards(prior.guard, exit_.guard),
                         prior.value,
                         _merge_faces(prior.faces, exit_.faces),
+                        owed_union(prior.owed, exit_.owed),
                     )
                     break
                 if same_halted:
@@ -766,6 +871,7 @@ class ExitSet(Generic[T]):
                         prior.effect,
                         prior.state,
                         _merge_faces(prior.faces, exit_.faces),
+                        owed_union(prior.owed, exit_.owed),
                     )
                     break
             else:
@@ -799,15 +905,31 @@ class ExitSet(Generic[T]):
                 guard = _and_guards(exit_.guard, following.guard)
                 # Conjoined guard: both sets of testimony hold of the result.
                 faces = exit_.faces | following.faces
+                # The prefix's debts ride onto every continuation of its path.
+                owed = owed_union(exit_.owed, following.owed)
                 if isinstance(following, Completed):
-                    exits.append(Completed(guard, following.value, faces))
+                    exits.append(Completed(guard, following.value, faces, owed))
                 else:
                     exits.append(
-                        Halted(guard, following.effect, following.state, faces)
+                        Halted(
+                            guard, following.effect, following.state, faces, owed
+                        )
                     )
         return ExitSet(tuple(exits)).normalize()
 
     def and_then(self, step):
+        """Run ``step`` on every completed arm's value; halts bypass it.
+
+        CONVERSION RULE: ``o.and_then(step)`` stays ``o.and_then(step)``. A
+        linear ``Complete(v).and_then(step)`` was ``step(v)`` and
+        ``Incomplete(e).and_then(step)`` was itself; over one arm this is the
+        same, and over many it is that law per arm (``sequence``), with each
+        arm's guard, faces and ``owed`` carried onto what ``step`` produced
+        under it. ``step`` may still answer a linear ``Complete`` /
+        ``Incomplete`` while its callers convert (lifted here through
+        ``outcome_to_exitset``); once it answers ``ExitSet`` only, call
+        ``o.sequence(step)``.
+        """
         return self.sequence(lambda value: outcome_to_exitset(step(value)))
 
     def and_finally(
@@ -843,19 +965,24 @@ class ExitSet(Generic[T]):
             for clean in cleanup_exits:
                 guard = _and_guards(incoming.guard, clean.guard)
                 faces = incoming.faces | clean.faces
+                owed = owed_union(incoming.owed, clean.owed)
                 if isinstance(clean, Halted):
-                    exits.append(Halted(guard, clean.effect, clean.state, faces))
+                    exits.append(
+                        Halted(guard, clean.effect, clean.state, faces, owed)
+                    )
                     continue
                 if restores(clean.value):
                     if isinstance(incoming, Completed):
-                        exits.append(Completed(guard, incoming.value, faces))
+                        exits.append(Completed(guard, incoming.value, faces, owed))
                     else:
                         exits.append(
-                            Halted(guard, incoming.effect, incoming.state, faces)
+                            Halted(
+                                guard, incoming.effect, incoming.state, faces, owed
+                            )
                         )
                 else:
                     # Terminal cleanup completion supersedes (return in finally).
-                    exits.append(Completed(guard, clean.value, faces))
+                    exits.append(Completed(guard, clean.value, faces, owed))
         return ExitSet(tuple(exits)).normalize()
 
     def and_exit(
@@ -890,18 +1017,23 @@ class ExitSet(Generic[T]):
             exit_disposition_effect,
         )
 
-        def _place(target: list, guard, verdict, carried, arm_faces):
+        def _place(target: list, guard, verdict, carried, arm_faces, arm_owed):
             """One outgoing arm per verdict shape. Conserves the incoming arm."""
             if verdict is None:
-                target.append(Completed(guard, carried, arm_faces))
+                target.append(Completed(guard, carried, arm_faces, arm_owed))
             elif isinstance(verdict, ConsumedObservation):
                 # Consumed AND authenticating a slot: the testimony rides the
                 # completed arm it belongs to, never a sibling arm.
                 target.append(
-                    Completed(guard, _carry_facts(carried, verdict.facts), arm_faces)
+                    Completed(
+                        guard,
+                        _carry_facts(carried, verdict.facts),
+                        arm_faces,
+                        arm_owed,
+                    )
                 )
             else:
-                target.append(Halted(guard, verdict, carried, arm_faces))
+                target.append(Halted(guard, verdict, carried, arm_faces, arm_owed))
 
         exit_exits = exit_es.exits
         exits: list[Exit[object]] = []
@@ -909,8 +1041,9 @@ class ExitSet(Generic[T]):
             for ex in exit_exits:
                 guard = _and_guards(incoming.guard, ex.guard)
                 faces = incoming.faces | ex.faces
+                owed = owed_union(incoming.owed, ex.owed)
                 if isinstance(ex, Halted):
-                    exits.append(Halted(guard, ex.effect, ex.state, faces))
+                    exits.append(Halted(guard, ex.effect, ex.state, faces, owed))
                     continue
                 carried = (
                     incoming.value
@@ -954,9 +1087,10 @@ class ExitSet(Generic[T]):
                             sub_verdict,
                             carried,
                             faces | {sub_face},
+                            owed,
                         )
                     continue
-                _place(exits, guard, verdict, carried, faces)
+                _place(exits, guard, verdict, carried, faces, owed)
         return ExitSet(tuple(exits)).normalize()
 
     def and_exit_truthiness(self, exit_es: "ExitSet[object]", *, site: object):
@@ -975,11 +1109,12 @@ class ExitSet(Generic[T]):
             for ex in exit_es.exits:
                 guard = _and_guards(incoming.guard, ex.guard)
                 faces = incoming.faces | ex.faces
+                owed = owed_union(incoming.owed, ex.owed)
                 if isinstance(ex, Halted):
-                    exits.append(Halted(guard, ex.effect, ex.state, faces))
+                    exits.append(Halted(guard, ex.effect, ex.state, faces, owed))
                     continue
                 if isinstance(incoming, Completed):
-                    exits.append(Completed(guard, incoming.value, faces))
+                    exits.append(Completed(guard, incoming.value, faces, owed))
                     continue
                 from sugar_lift_py_tests.floor import TermValue
 
@@ -1003,6 +1138,7 @@ class ExitSet(Generic[T]):
                         _and_guards(guard, truth),
                         incoming.state,
                         faces | {truth_face},
+                        owed,
                     )
                 )
                 exits.append(
@@ -1011,14 +1147,24 @@ class ExitSet(Generic[T]):
                         incoming.effect,
                         incoming.state,
                         faces | {falsity_face},
+                        owed,
                     )
                 )
         return ExitSet(tuple(exits)).normalize()
 
     def collapse(self):
-        """Return the old linear Outcome only for one unconditional exit."""
+        """Return the old linear Outcome only for one unconditional exit.
+
+        An arm that OWES something is never collapsed: ``Complete`` and
+        ``Incomplete`` have no owed slot, so collapsing would drop the debt.
+        It stays the one-arm ``ExitSet`` it is.
+        """
         normalized = self.normalize()
-        if len(normalized.exits) != 1 or not _is_true(normalized.exits[0].guard):
+        if (
+            len(normalized.exits) != 1
+            or not _is_true(normalized.exits[0].guard)
+            or normalized.exits[0].owed
+        ):
             return self if normalized == self else normalized
         exit_ = normalized.exits[0]
         if isinstance(exit_, Completed):
@@ -1151,6 +1297,7 @@ __all__ = [
     "complement_guard",
     "factored_operand",
     "false_guard",
+    "owed_union",
     "sole_completed_outcome",
     "true_guard",
     "outcome_to_exitset",

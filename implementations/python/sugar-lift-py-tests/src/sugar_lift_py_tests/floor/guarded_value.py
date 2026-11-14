@@ -116,9 +116,11 @@ class GuardedValue(FloorValue):
                 for face in es.exits:
                     g = and_formulas([guard, face.guard])
                     if isinstance(face, Halted):
-                        faces.append(Halted(g, face.effect, face.state, face.faces))
+                        faces.append(
+                            Halted(g, face.effect, face.state, face.faces, face.owed)
+                        )
                     else:
-                        faces.append(Completed(g, face.value, face.faces))
+                        faces.append(Completed(g, face.value, face.faces, face.owed))
                 return tuple(faces)
 
             true_es = outcome_to_exitset(true_outcome)

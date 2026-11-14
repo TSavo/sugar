@@ -304,6 +304,7 @@ def reduce_block_to_exitset(
                                 # through -- the same shape of loss
                                 # `ExitSet.guarded` had.
                                 exit_.faces,
+                                exit_.owed,
                             )
                             if isinstance(exit_, Halted)
                             else exit_
@@ -384,6 +385,9 @@ def reduce_block_to_exitset(
             and isinstance(exits.exits[0], Completed)
             and exits.exits[0].guard == true_guard()
             and not exits.exits[0].faces
+            # Handing the value alone to the next statement would drop what
+            # the arm owes; an owing arm sequences like any other.
+            and not exits.exits[0].owed
         ):
             # The straight-line singleton is the only ExitSet face that can
             # become a deferred native-operation carrier without needing a

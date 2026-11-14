@@ -287,13 +287,17 @@ class OffPopulationSourceCallV1:
         from .ir import atomic, ctor, str_const
         from .occurrence import occurrence_key
         from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
-        from .unanswered_calls import record
+        from .unanswered_calls import unanswered_call
 
-        # Not bridged: nothing here answers this call, so it is recorded once
-        # as the proof's `undecided` member (step 8), exactly as
-        # `UnknownCalleeCallV1` records its call -- the one import table's
-        # target symbol when the callee is import-bound, else none (Q5).
-        record(getattr(callsite, "authenticated_target_symbol", None), site)
+        # Not bridged: nothing here answers this call, so both arms OWE it
+        # (#7825, H4), exactly as `UnknownCalleeCallV1`'s arms owe its call --
+        # the one import table's target symbol when the callee is
+        # import-bound, else none (Q5).
+        owed = (
+            unanswered_call(
+                getattr(callsite, "authenticated_target_symbol", None), site
+            ),
+        )
         key = occurrence_key(site)
         call = ctor(
             "python:off_population_call",
@@ -305,7 +309,7 @@ class OffPopulationSourceCallV1:
             result = replace(result, off_population_target=self.target_name)
         return ExitSet(
             (
-                Completed(completes, result),
+                Completed(completes, result, owed=owed),
                 Halted(
                     complement_guard(completes),
                     UndeterminedRaiseEffect(
@@ -314,6 +318,7 @@ class OffPopulationSourceCallV1:
                         producer_node_owner=f"OffPopulationCall:{self.target_name}",
                     ),
                     None,
+                    owed=owed,
                 ),
             )
         ).normalize()
@@ -343,12 +348,18 @@ class UnknownCalleeCallV1:
         from .ir import atomic, ctor, str_const
         from .occurrence import occurrence_key, occurrence_term
         from .outcome.exit_set import Completed, ExitSet, Halted, complement_guard
-        from .unanswered_calls import record
+        from .unanswered_calls import unanswered_call
 
-        # Nothing here answers this call: it is recorded once, as the
-        # proof's `undecided` member (step 8), with the one import table's
-        # target symbol when the callee is import-bound, else none (Q5).
-        record(getattr(callsite, "authenticated_target_symbol", None), site)
+        # Nothing here answers this call: both arms OWE it (#7825, H4), and
+        # the full scan writes it once as the proof's `undecided` member
+        # (step 8), with the one import table's target symbol when the callee
+        # is import-bound, else none (Q5). Both arms, because the call is
+        # incurred whether it completes or raises.
+        owed = (
+            unanswered_call(
+                getattr(callsite, "authenticated_target_symbol", None), site
+            ),
+        )
         key = occurrence_key(site)
         # The call term names its occurrence by coordinate (#7808); `key`
         # stays the raise effect's own occurrence (listed on #7808).
@@ -359,7 +370,7 @@ class UnknownCalleeCallV1:
         completes = atomic("python:unknown_callee_call.completes", [call])
         return ExitSet(
             (
-                Completed(completes, _occurrence_result(callsite, site)),
+                Completed(completes, _occurrence_result(callsite, site), owed=owed),
                 Halted(
                     complement_guard(completes),
                     UndeterminedRaiseEffect(
@@ -368,6 +379,7 @@ class UnknownCalleeCallV1:
                         producer_node_owner=f"UnknownCallee:{self.callee_name}",
                     ),
                     None,
+                    owed=owed,
                 ),
             )
         ).normalize()

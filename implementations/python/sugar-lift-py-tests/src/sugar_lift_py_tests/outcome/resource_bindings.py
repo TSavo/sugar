@@ -197,6 +197,7 @@ def prepend_facts_to_exitset(exits, facts: tuple):
                     exit_.effect,
                     state,
                     exit_.faces,
+                    exit_.owed,
                 )
             )
             continue
@@ -207,6 +208,7 @@ def prepend_facts_to_exitset(exits, facts: tuple):
                     exit_.guard,
                     replace(value, entries=(*facts, *value.entries)),
                     exit_.faces,
+                    exit_.owed,
                 )
             )
         else:
@@ -218,6 +220,7 @@ def prepend_facts_to_exitset(exits, facts: tuple):
                         can_fall_through=True,
                         fall_through=(),
                     ),
+                    owed=exit_.owed,
                 )
             )
     return ExitSet(tuple(out)).normalize()

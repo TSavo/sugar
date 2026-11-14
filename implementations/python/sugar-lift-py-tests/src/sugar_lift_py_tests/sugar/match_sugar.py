@@ -115,6 +115,7 @@ def _halted_face(face, prefix_guard):
                 face.effect,
                 face.state,
                 face.faces,
+                face.owed,
             ),
         )
     )
