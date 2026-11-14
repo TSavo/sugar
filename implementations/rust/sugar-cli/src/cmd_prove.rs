@@ -47,7 +47,10 @@ pub fn run(args: ProveArgs) -> u8 {
             }
         };
     let report = &proven.artifact.report;
-    let report_json = report_fmt::report_to_json(report);
+    let mut report_json = report_fmt::report_to_json(report);
+    for (key, value) in report_fmt::verdict_fields(report) {
+        report_json[key] = value;
+    }
     if args.out.json {
         match serde_json::to_string_pretty(&report_json) {
             Ok(s) => println!("{s}"),
@@ -58,6 +61,9 @@ pub fn run(args: ProveArgs) -> u8 {
         }
     } else {
         report_fmt::print_report_pretty(report, args.out.quiet);
+        if !args.out.quiet {
+            print!("{}", report_fmt::format_verdict_lines(report));
+        }
     }
 
     if !args.out.quiet && proven.has_unresolved_link_surface() {

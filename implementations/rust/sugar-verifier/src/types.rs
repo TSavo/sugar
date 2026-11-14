@@ -266,14 +266,22 @@ pub enum ObligationVerdict {
     /// First-class, loudly-bounded REFUSAL: there is no sound discharger for this
     /// obligation: every capable seat in the dispatched portfolio declined to
     /// interpret it, and the verdict carries that complete per-seat ladder. NOT a
-    /// violation, NOT an undecidable
-    /// gap, NOT a crash: an honest "I decline to decide this, here is why." The
-    /// trichotomy's third arm (exact / loudly-bounded-lossy / REFUSE), so it does
-    /// not redden the gate -- a refusal is an expected, named outcome.
+    /// violation, NOT a crash: an honest "I decline to decide this, here is
+    /// why." It is still not decided, so it is never green (#7848).
     Refused,
 }
 
 impl ObligationVerdict {
+    /// Every verdict, in report order.
+    pub const ALL: [ObligationVerdict; 6] = [
+        Self::Discharged,
+        Self::Unsatisfied,
+        Self::Undecidable,
+        Self::SolverTimeout,
+        Self::Disagreement,
+        Self::Refused,
+    ];
+
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Discharged => "discharged",
@@ -282,6 +290,39 @@ impl ObligationVerdict {
             Self::SolverTimeout => "solver-timeout",
             Self::Disagreement => "disagreement",
             Self::Refused => "refused",
+        }
+    }
+
+    /// Decided: the claim was proved (`discharged`) or refuted
+    /// (`unsatisfied`). Every other verdict leaves it not decided.
+    pub fn is_decided(&self) -> bool {
+        matches!(self, Self::Discharged | Self::Unsatisfied)
+    }
+}
+
+/// What a whole report says: green means decided (`docs/path-forward.md`,
+/// #7848). The one place this rule is written; a CLI face maps it to an
+/// exit code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReportVerdict {
+    /// At least one row, every row `discharged`, nothing owed, no load
+    /// error, no refuted toolchain plan.
+    Green,
+    /// Something was decided false: an `unsatisfied` row or a refuted
+    /// toolchain plan.
+    Refuted,
+    /// Nothing refuted, but not green: a row that is not decided
+    /// (`refused`, `undecidable`, `solver-timeout`, `disagreement`), an owed
+    /// `undecided` member, a load error, or no rows at all.
+    NotDecided,
+}
+
+impl ReportVerdict {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Green => "green",
+            Self::Refuted => "refuted",
+            Self::NotDecided => "not-decided",
         }
     }
 }
@@ -321,8 +362,8 @@ pub struct Report {
     pub discharged: usize,
     pub violations: usize,
     /// Obligations honestly REFUSED (no sound discharger): not discharged (no
-    /// false pass), not a violation (does not redden the gate). The trichotomy's
-    /// third arm, surfaced in the scoreboard so refusals are loud, not hidden.
+    /// false pass), not a violation, and not decided, so never green (#7848).
+    /// The trichotomy's third arm, surfaced so refusals are loud, not hidden.
     pub refused: usize,
     /// `undecided` members in the proven pool: what the proof does not
     /// decide, and why (step 8). Each has its own `undecided:` row with
@@ -332,6 +373,50 @@ pub struct Report {
     pub load_errors: Vec<LoadError>,
     pub call_edges: Vec<ResolvedCallEdge>,
     pub toolchain_plans: Vec<ToolchainPlanReport>,
+}
+
+impl Report {
+    /// Rows counted by status, every status present (zero included).
+    pub fn status_counts(&self) -> Vec<(ObligationVerdict, usize)> {
+        ObligationVerdict::ALL
+            .iter()
+            .map(|status| {
+                (
+                    *status,
+                    self.rows.iter().filter(|row| row.status == *status).count(),
+                )
+            })
+            .collect()
+    }
+
+    /// Green means decided: see [`ReportVerdict`].
+    pub fn verdict(&self) -> ReportVerdict {
+        let toolchain_refuted = self
+            .toolchain_plans
+            .iter()
+            .any(|plan| plan.status == "refuted");
+        if toolchain_refuted
+            || self
+                .rows
+                .iter()
+                .any(|row| row.status == ObligationVerdict::Unsatisfied)
+        {
+            return ReportVerdict::Refuted;
+        }
+        let green = !self.rows.is_empty()
+            && self
+                .rows
+                .iter()
+                .all(|row| row.status == ObligationVerdict::Discharged)
+            && self.violations == 0
+            && self.owed == 0
+            && self.load_errors.is_empty();
+        if green {
+            ReportVerdict::Green
+        } else {
+            ReportVerdict::NotDecided
+        }
+    }
 }
 
 #[cfg(test)]
