@@ -38,7 +38,7 @@ _SOURCE_ROOT = sugar_lift_py_tests_package_root() / "src"
 
 _PRODUCER_FUNCTIONS = (
     "_context_manager_demand_rows",
-    "_call_contract_demand_rows",
+    "_call_use_rows",
     "_preconstruction_demand_rows",
     "provisional_contract_refs_from_demands",
 )

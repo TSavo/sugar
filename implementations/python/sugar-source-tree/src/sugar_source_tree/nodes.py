@@ -14281,6 +14281,7 @@ class Call(Expression):
             site=self.fragment,
             keywords=keywords,
             contract_resolution_gap=gap,
+            import_target_symbol=self.unit.import_reference_of(self.func),
             reference_symbol=self._import_reference_symbol(),
             language_callee=language_callee,
         )

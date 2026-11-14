@@ -112,8 +112,8 @@ def take_d3_residency_observation(source_cid: str) -> Dict[str, Any] | None:
 def _context_manager_demand_rows(root: Path) -> List[Dict[str, Any]]:
     """Enroll typed With occurrences without constructing any Sugar.
 
-    Import authority is joined later from ``_call_contract_demand_rows`` at the
-    identical source coordinate.  This pass owns only the structural fact that
+    Import authority is joined later from ``_call_use_rows`` at the identical
+    source coordinate.  This pass owns only the structural fact that
     a typed WithItem exists; it never reconstructs imports from spellings.
     """
     from sugar_source_tree.tree import SourceTree
@@ -282,7 +282,7 @@ class _PerSourceDemandRows:
         units = self._open().get(source_cid, ())
         assert self._module_identities is not None
         return _join_call_identity_into_with_demands(
-            _call_contract_rows_for_units(self.root, units, self._module_identities),
+            _call_use_rows_for_units(self.root, units, self._module_identities),
             _context_manager_rows_for_paths([path for path, _source, _cid in units]),
         )
 
@@ -486,10 +486,13 @@ def open_source_file_for_construction(
     return source_file
 
 
-def _call_contract_demand_rows(root: Path) -> List[Dict[str, Any]]:
-    """Enroll imported plain calls by their source-authenticated use sites."""
+def _call_use_rows(root: Path) -> List[Dict[str, Any]]:
+    """The lexical pass's imported plain calls, by their authenticated use sites.
+
+    Read only by the With join below; never rows of the demand table.
+    """
     units = _corpus_source_units(root)
-    return _call_contract_rows_for_units(
+    return _call_use_rows_for_units(
         root, units, _module_identities_for_units(root, units)
     )
 
@@ -524,21 +527,17 @@ def _module_identities_for_units(root: Path, units) -> Dict[str, Dict[str, Any]]
     }
 
 
-def _call_contract_rows_for_units(
+def _call_use_rows_for_units(
     root: Path, units, module_identities
 ) -> List[Dict[str, Any]]:
-    """Call demands and exports of exactly these units, against corpus identities."""
-    from sugar_lift_py_tests.import_binding import (
-        authenticated_import_uses,
-        authenticated_module_exports,
-    )
+    """Imported call uses of exactly these units, against corpus identities."""
+    from sugar_lift_py_tests.import_binding import authenticated_import_uses
 
     rows: List[Dict[str, Any]] = []
     for path, source, source_cid in units:
         enrolled, _outcomes = authenticated_import_uses(
             root, path, source, source_cid, module_identities
         )
-        rows.extend(authenticated_module_exports(root, path, source, source_cid))
         rows.extend(enrolled)
     return rows
 
@@ -705,12 +704,12 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
 
 
 def _preconstruction_demand_rows(root: Path) -> List[Dict[str, Any]]:
-    """Join authenticated call identity into With demands without dual ownership.
+    """The With demands, each joined to the authenticated call at its coordinate.
 
     A context-manager expression is constructed under its context-manager
-    contract.  Its call coordinate supplies the authenticated import binding,
-    but must not also enroll an independent function-contract demand for the
-    same use site.
+    contract.  Its call coordinate supplies the authenticated import binding.
+    The table carries With demands only: no call-contract demand or export row
+    is enrolled beside them (nothing reads one).
 
     Each call is one corpus walk (counted by ``preconstruction_walk_count``).
     Only a caller that needs the whole table as an artifact comes here; a
@@ -719,7 +718,7 @@ def _preconstruction_demand_rows(root: Path) -> List[Dict[str, Any]]:
     global _PRECONSTRUCTION_WALK_COUNT
     _PRECONSTRUCTION_WALK_COUNT += 1
     return _join_call_identity_into_with_demands(
-        _call_contract_demand_rows(root), _context_manager_demand_rows(root)
+        _call_use_rows(root), _context_manager_demand_rows(root)
     )
 
 
@@ -730,14 +729,10 @@ def _join_call_identity_into_with_demands(
     from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
 
     calls_by_site = {
-        json.dumps(row["useSite"], sort_keys=True): row
-        for row in call_rows
-        if row.get("kind") == "call-contract-demand"
+        json.dumps(row["useSite"], sort_keys=True): row for row in call_rows
     }
-    cm_sites = set()
     for row in cm_rows:
         site = json.dumps(row["useSite"], sort_keys=True)
-        cm_sites.add(site)
         call = calls_by_site.get(site)
         if call is None:
             row["targetSymbol"] = None
@@ -749,13 +744,7 @@ def _join_call_identity_into_with_demands(
         row["importBinding"] = call["importBinding"]
         row["authenticatedImportUse"] = call["authenticatedImportUse"]
         row["gapKind"] = None
-    remaining_call_rows = [
-        row
-        for row in call_rows
-        if row.get("kind") != "call-contract-demand"
-        or json.dumps(row["useSite"], sort_keys=True) not in cm_sites
-    ]
-    return cm_rows + remaining_call_rows
+    return cm_rows
 
 
 # Passive, process-lifetime context paid for by an enumeration demand. The

@@ -10,7 +10,7 @@ them construct". The demand-table scan CONSTRUCTS.**
 
     mint_prebuilt_demand_table
       -> _preconstruction_demand_rows        lift_rpc.py
-      -> _call_contract_demand_rows          lift_rpc.py
+      -> _call_use_rows                      lift_rpc.py
       -> authenticated_import_uses           import_binding.py
       -> _run_lexical_import_pass            import_binding.py
       -> SourceFile.__new__ -> materialize_module -> _materialize_module_body
