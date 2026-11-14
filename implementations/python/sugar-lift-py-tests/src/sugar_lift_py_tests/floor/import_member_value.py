@@ -80,19 +80,18 @@ class ImportMemberValue(FloorValue):
         )
 
     def to_term(self, *, owner: str):
-        del owner
-        from sugar_lift_py_tests.ir import ctor, str_const
+        """``ref:<target_symbol>``: a closed reference to the vendor's value,
+        in the same family as ``call:<target_symbol>`` (#7837).
 
-        return ctor(
-            "python:import_member",
-            [
-                str_const(self.qualified_name),
-                str_const(self.source_cid),
-                str_const(self.import_binding_cid),
-                str_const(self.use_cid),
-                *[str_const(item) for item in self.exported_member_path],
-            ],
-        )
+        The term names the target and nothing about this occurrence: two reads
+        of ``np.float64`` are one reference. The import binding and use stay on
+        the receipt; the value is the vendor's, so a claim that depends on it
+        stays undecided until the join answers the symbol.
+        """
+        del owner
+        from sugar_lift_py_tests.ir import ctor
+
+        return ctor(f"ref:{self.qualified_name}", [], symbol_kind="coordinate")
 
     def exception_type_identity(self):
         """The same import coordinate the exception authenticator mints."""

@@ -14,8 +14,9 @@ The occurrence recognised here is a ``warnings.warn(...)`` call in STATEMENT
 position.  Three things bound it, all lexical:
 
 * the callee is the closed import-bound coordinate ``warnings.warn`` --
-  ``Call._import_bound_callee_symbol`` refuses a shadowed, parameter or
-  ambiguous head, so a local named ``warnings`` mints nothing;
+  the import reference table (``Call._import_reference_callee``) has no row
+  for a shadowed, parameter or ambiguous head, so a local named ``warnings``
+  mints nothing;
 * the operand positions come from CPython's own fixed ``warnings.warn``
   signature, not from a vendor convention;
 * the category is authenticated by the ordinary exception-class authenticator
