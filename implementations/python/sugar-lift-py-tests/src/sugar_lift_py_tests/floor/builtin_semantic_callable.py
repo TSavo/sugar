@@ -109,8 +109,8 @@ class BuiltinSemanticCallable(FloorValue):
                 fix="construct Python issubclass arity exactly or keep it loud",
             )
         subtype, supertype = operation.arguments
-        subtype = self._resolve_type_operand(subtype, operation.site)
-        supertype = self._resolve_type_operand(supertype, operation.site)
+        subtype = self._resolve_type_operand(subtype, operation.site, 0)
+        supertype = self._resolve_type_operand(supertype, operation.site, 1)
         test = getattr(subtype, "test_python_subtype", None)
         if test is None:
             # No floor testifies what this operand is as a class (a call
@@ -305,39 +305,47 @@ class BuiltinSemanticCallable(FloorValue):
                 fix="construct Python isinstance arity exactly or keep it loud",
             )
         obj, classinfo = operation.arguments
-        classinfo = self._resolve_type_operand(classinfo, operation.site)
+        classinfo = self._resolve_type_operand(classinfo, operation.site, 1)
         return classinfo.test_python_type(obj, operation.site)
 
-    def _resolve_type_operand(self, classinfo, site):
-        """Map a free builtin type name (SymbolicValue Var) to a type coordinate.
+    def _resolve_type_operand(self, classinfo, site, position):
+        """A free name operand read as the builtin class its binding names.
 
-        NameSugar leaves free names as ``SymbolicValue(_Var(name))``. Inside
-        source-visible method bodies those free names are language builtins
-        (``tuple``, ``type``, ``BaseException``), not call formals. Resolve the
-        closed builtin vocabulary to ClassValue / exception floors so
-        ``isinstance(x, tuple)`` and ``isinstance(x, type)`` ground.
+        NameSugar leaves a name no temporal binds as ``SymbolicValue(_Var(
+        name))``.  It is the builtin floor's class (``tuple``, ``type``,
+        ``BaseException``) only when the call's ``position``-th actual is that
+        bare name and its read at its own coordinate falls through to the
+        builtin namespace (``SourceUnit.builtin_reference_at``): the spelling
+        is never looked up, so a name a star import, a rebinding or a
+        parameter may bind stays the free operand it is.
         """
         from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
         from sugar_lift_py_tests.ir import _Var
+        from sugar_source_tree.nodes import Name
 
         if not isinstance(classinfo, SymbolicValue):
             return classinfo
         term = classinfo.term
         if not isinstance(term, _Var):
             return classinfo
-        name = term.name
+        unit = getattr(site, "unit", None)
+        actuals = tuple(getattr(getattr(site, "node", None), "args", None) or ())
+        if unit is None or len(actuals) != 2:
+            return classinfo
+        actual = actuals[position]
+        if not isinstance(actual, Name) or actual.id != term.name:
+            return classinfo
+        target = unit.builtin_reference_at(actual.id, actual.line_col_span())
+        if target is None:
+            return classinfo
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
-            BUILTIN_EXCEPTION_NAMES,
             builtin_name_temporal,
         )
 
-        temporal = builtin_name_temporal()
-        bound = temporal.value_if_bound(name)
-        if bound is not None:
-            return bound
-        # ``type`` is a ClassValue in the builtin temporal; if missing, keep loud.
-        del site
-        return classinfo
+        bound = builtin_name_temporal().value_if_bound(
+            target[len("python:builtins.") :]
+        )
+        return classinfo if bound is None else bound
 
     def _construct_set(self, operation):
         """``set(iterable)`` over decided members: CPython hashes each member

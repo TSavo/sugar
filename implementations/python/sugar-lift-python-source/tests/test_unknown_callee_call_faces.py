@@ -15,6 +15,8 @@ complement.
 
 from __future__ import annotations
 
+import pytest
+
 from sugar_lift_py_tests.floor import TermValue, TupleValue
 from sugar_lift_py_tests.unanswered_calls import owed_calls
 
@@ -131,6 +133,40 @@ def test_a_builtin_name_a_star_import_may_rebind_is_two_faced(tmp_path):
     _returns, owners = _two_faced_and_owed(tmp_path, source)
     assert len(owners) == 1
     assert owners[0].startswith("UnknownCallee:")
+
+
+@pytest.mark.parametrize(
+    "call", ["len([1])", "isinstance(1, int)", "set([1])", "tuple([1])"]
+)
+def test_a_builtin_spelling_a_star_import_may_rebind_gets_no_builtin_semantics(
+    tmp_path, call
+):
+    # #7757: the temporal floor holds ``len``/``isinstance``/``set``/``tuple``
+    # by spelling, but under ``from m import *`` the callee's binding is not
+    # the builtin namespace: the call is the one unanswered call, never the
+    # builtin's completion.
+    source = f"from m import *\ndef f():\n    return {call}\n"
+    _returns, owners = _two_faced_and_owed(tmp_path, source)
+    assert len(owners) == 1
+    assert owners[0].startswith("UnknownCallee:")
+
+
+@pytest.mark.parametrize("call", ["open(p)", "next(p)"])
+def test_a_builtin_the_lifter_does_not_model_is_the_unanswered_call(tmp_path, call):
+    # #7757: a callee bound to the builtin namespace with no law here (no
+    # exception class, no ``type(obj)``, no total shape) runs code nothing
+    # modeled; binding it to the builtin is no reason to drop its raise.
+    source = f"def f(p):\n    return {call}\n"
+    _returns, owners = _two_faced_and_owed(tmp_path, source)
+    (owner,) = owners
+    assert owner.startswith("UnknownCallee:")
+    assert owner.endswith(call.split("(")[0])
+
+
+@pytest.mark.parametrize("call", ["ValueError('x')", "type(p)", "str(1)"])
+def test_a_builtin_a_law_answers_is_not_this_law(tmp_path, call):
+    _returns, halts = _split(tmp_path, f"def f(p):\n    return {call}\n")
+    assert not any(owner.startswith("UnknownCallee:") for owner in _owners(halts))
 
 
 def test_an_if_on_an_unknown_call_keeps_both_suites(tmp_path):

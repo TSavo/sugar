@@ -160,28 +160,52 @@ def _resolved_manager_construction(sugar) -> bool:
     )
 
 
-def _unknown_callee_call(sugar, source_call_frame):
+def _unknown_callee_call(sugar, source_call_frame, callsite):
     """The may-raise testimony for a bodiless call nothing answered.
 
     Reached once every answer has declined: no source frame (so no body the
-    lifter applies) and no builtin binding -- the callee's binding
-    (``_builtin_reference``, the ``LanguageCallee`` the Call node bound) is not
-    the builtin namespace.  Whatever the name is otherwise bound to -- nothing,
-    a value (``len = 5; len(x)``), a class whose constructor frame was not
-    built, any name a star import may rebind (``from m import *; int('x')``)
+    lifter applies) and no builtin law answers the call
+    (``_builtin_law_answers``).  Whatever the name is bound to -- nothing, a
+    value (``len = 5; len(x)``), a class whose constructor frame was not
+    built, any name a star import may rebind (``from m import *; int('x')``),
+    or a builtin the lifter does not model (``open``, ``getattr``, ``next``)
     -- what runs was not looked at, so the call is the one unanswered
     citation, two-faced and owed, never a completion (#7757: a raise is never
     a completion; a halt is never dropped).  A ``with`` item's resolved
     manager keeps its resolution's faces."""
     if source_call_frame is not None:
         return None
-    if sugar.language_callee is not None or sugar._builtin_reference() is not None:
+    if _builtin_law_answers(sugar, callsite):
         return None
     if _resolved_manager_construction(sugar):
         return None
     from sugar_lift_py_tests.source_call_resolution import UnknownCalleeCallV1
 
     return UnknownCalleeCallV1(sugar.spelled_target)
+
+
+def _builtin_law_answers(sugar, callsite) -> bool:
+    """A law the lifter models answers this bodiless builtin-bound call.
+
+    Each is read from the callee's binding, never its spelling: a builtin
+    exception class's construction (``callsite.builtin_exception_class``,
+    ``_applied_builtin_exception_class``), ``type(obj)``'s class coordinate
+    (``callsite.python_type_coordinate``, ``_applied_builtin_type_of``), or a
+    shape CPython documents as never raising over decided operands
+    (``builtin_call_total`` on the bound ``LanguageCallee``).  A builtin
+    binding with none of these answers nothing: binding a name to the
+    builtin namespace is not a law for what that builtin does."""
+    if callsite.builtin_exception_class is not None:
+        return True
+    if callsite.python_type_coordinate is not None:
+        return True
+    from sugar_lift_py_tests.source_call_resolution import builtin_call_total
+
+    return builtin_call_total(
+        sugar.language_callee,
+        callsite.arg_values,
+        getattr(callsite, "keyword_names", ()) or (),
+    )
 
 
 @dataclass(frozen=True)
@@ -526,26 +550,38 @@ class CallSiteSugar(ConstructedTermSugar):
             return None
         return target
 
-    def _applied_builtin_exception_class(self, source_call_frame):
-        """The builtin exception class this call applies, by its binding.
+    def _builtin_floor_value(self):
+        """The builtin floor's value this call's callee is bound to, else None.
 
-        The builtin floor's class under the name the callee's binding
-        (``_builtin_reference``) names, never the call's spelling: a user
-        class or rebinding named ``ValueError`` is not a builtin exception.
+        The value the builtin floor holds under the name the callee's binding
+        (``_builtin_reference``) names, never under the call's spelling: a
+        callee a star import, a module or function rebinding, or a parameter
+        may bind reaches no builtin value, and ``from builtins import len as
+        L`` reaches ``len``'s.
         """
-        if source_call_frame is not None:
-            return None
         target = self._builtin_reference()
         if target is None:
             return None
-        from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
             builtin_name_temporal,
         )
 
-        receiver = builtin_name_temporal().value_if_bound(
+        return builtin_name_temporal().value_if_bound(
             target[len(_BUILTINS_PREFIX) :]
         )
+
+    def _applied_builtin_exception_class(self, source_call_frame):
+        """The builtin exception class this call applies, by its binding.
+
+        The builtin floor's class the callee's binding names
+        (``_builtin_floor_value``), never the call's spelling: a user class or
+        rebinding named ``ValueError`` is not a builtin exception.
+        """
+        if source_call_frame is not None:
+            return None
+        from sugar_lift_py_tests.floor import BuiltinExceptionClassValue
+
+        receiver = self._builtin_floor_value()
         if not isinstance(receiver, BuiltinExceptionClassValue):
             return None
         return receiver
@@ -652,7 +688,16 @@ class CallSiteSugar(ConstructedTermSugar):
                 LambdaCallable,
             )
 
-            receiver = ctx.temporal.value_if_bound(self.target_name)
+            # A builtin's semantics (``len``, ``isinstance``, ``set``,
+            # ``tuple``, ...) apply only when the callee's binding is the
+            # builtin namespace (``_builtin_floor_value``), never because the
+            # temporal floor holds a builtin under the call's spelling: under
+            # ``from m import *`` or ``len = f`` the call is not the builtin's.
+            receiver = self._builtin_floor_value()
+            if not isinstance(receiver, BuiltinSemanticCallable):
+                receiver = ctx.temporal.value_if_bound(self.target_name)
+                if isinstance(receiver, BuiltinSemanticCallable):
+                    receiver = None
             # A name bound to a lambda value (``key(item)`` in a function
             # given ``key=lambda v: ...``) calls that lambda: its own frame,
             # the one binder and the one application.
@@ -850,7 +895,7 @@ class CallSiteSugar(ConstructedTermSugar):
                     if constructed is not None:
                         return constructed
             if unprojected is None:
-                unprojected = _unknown_callee_call(self, source_call_frame)
+                unprojected = _unknown_callee_call(self, source_call_frame, callsite)
             if unprojected is not None:
                 return unprojected.faces(callsite, self.site)
         return callsite.producer_outcome(ctx)
