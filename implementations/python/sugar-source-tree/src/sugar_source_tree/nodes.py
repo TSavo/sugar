@@ -3815,12 +3815,24 @@ def _ground_value(node) -> "Optional[Node]":
 
 def _object_read_in(reference, reads, scope) -> bool:
     """Whether ``reads`` read a name that may reach the object ``reference``
-    denotes: the reference's own name, or any name ``scope`` binds to that
-    object or to an object it was taken from (``container_mutation._identity``,
-    through each subscript receiver).  A loop over a list unrolls through the
+    denotes (``_object_names``).  A loop over a list unrolls through the
     list's key only when its body cannot reach the list: Python iterates the
     live list, so a body that appends to it changes how many items there
     are."""
+    names, _identities = _object_names(reference, scope)
+    return any(
+        node.kind == "Name" and node.id in names
+        for root in reads
+        for node in root.walk()
+    )
+
+
+def _object_names(reference, scope) -> tuple:
+    """``(names, identities)``: the names that may reach the object
+    ``reference`` denotes -- the reference's own name, or any name ``scope``
+    binds to that object or to an object it was taken from -- and those
+    objects (``container_mutation._identity``, through each subscript
+    receiver), the object itself first."""
     from .binding_state import unwrap_binding_state
     from .container_mutation import _identity
 
@@ -3840,11 +3852,189 @@ def _object_read_in(reference, reads, scope) -> bool:
         bound = _identity(unwrap_binding_state(state))
         if any(bound is identity for identity in identities):
             names.add(name)
-    return any(
-        node.kind == "Name" and node.id in names
-        for root in reads
-        for node in root.walk()
+    return names, identities
+
+
+def _target_edge(node, field) -> bool:
+    """Whether ``node``'s ``field`` holds a store or delete target."""
+    if field == "target":
+        return isinstance(
+            node, (Assign, AnnAssign, AugAssign, For, AsyncFor, Comprehension, NamedExpr)
+        )
+    if field == "targets":
+        return isinstance(node, (Assign, Delete))
+    return field == "optional_vars" and isinstance(node, WithItem)
+
+
+def _runs_reaching_code(reads, scope) -> bool:
+    """Whether ``reads`` (a loop body, a comprehension's element and
+    conditions) may run code that reaches an object through something other
+    than a read of one of its names: a call that may run code over its
+    operands (``container_mutation.runs_operand_code``), a store or delete
+    through an attribute or subscript, a ``with`` (its manager's
+    ``__enter__``/``__exit__``), or a suspension (``yield``, ``await``,
+    ``async for``) where other code runs."""
+    from .container_mutation import runs_operand_code
+
+    stack = [(root, False) for root in reads if isinstance(root, Node)]
+    while stack:
+        node, store = stack.pop()
+        if isinstance(node, Call) and runs_operand_code(node, scope):
+            return True
+        if isinstance(node, (Yield, YieldFrom, Await, With, AsyncWith, AsyncFor)):
+            return True
+        if store and isinstance(node, (Attribute, Subscript)):
+            return True
+        unpacks = store and isinstance(node, (Tuple_, List, Starred))
+        for field, _index, child in node._child_edges():
+            if isinstance(child, Node):
+                stack.append((child, unpacks or _target_edge(node, field)))
+    return False
+
+
+def _list_escapes(loop, reference, ground, scope) -> bool:
+    """Whether the list ``reference`` denotes may be reached by code other
+    than a read of one of its names (``_object_names``) while ``loop``
+    iterates it: between its binding and the loop (through the end of any
+    loop enclosing ``loop``, which runs it again) it is stored anywhere but
+    a local name, handed to any call, or unpacked; or a nested scope (a def,
+    lambda, class or generator expression) reads or declares one of its
+    names; or one of its names is declared ``global``/``nonlocal``.  A read
+    of it as a method's receiver, an item store or delete target, a test, a
+    statement or a returned value hands it to nobody; an item read or an
+    iteration over it hands an item, which is the list's only when the list
+    holds nothing but constants.
+
+    Read from the source tree of ``loop``'s unit, in the innermost function
+    that holds ``loop`` (else the module).  A list bound in another unit or
+    another scope, or a unit with no typed module, escapes: nothing decides
+    who else holds it."""
+    names, identities = _object_names(reference, scope)
+    unit = getattr(loop, "unit", None)
+    module = getattr(unit, "typed_module", None)
+    here = getattr(loop, "span", None)
+    spans = [getattr(identity, "span", None) for identity in identities]
+    if module is None or here is None or any(span is None for span in spans):
+        return True
+    source = getattr(unit, "source_cid", None)
+    if any(
+        getattr(getattr(identity, "unit", None), "source_cid", None) != source
+        for identity in identities
+    ):
+        return True
+    owner = module
+    for function in getattr(unit, "function_nodes", None) or ():
+        span = function.span
+        if span.start <= here.start and here.end <= span.end and (
+            owner is module or span.start >= owner.span.start
+        ):
+            owner = function
+    if owner is not module and not all(
+        owner.span.start <= span.start and span.end <= owner.span.end
+        for span in spans
+    ):
+        return True
+    first = min(span.start for span in spans)
+    end = here.start
+    parents: dict = {}
+    uses = []
+    captured: set = set()
+    stack = [owner]
+    while stack:
+        node = stack.pop()
+        span = node.span
+        if node is not owner and isinstance(
+            node, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef, GeneratorExp)
+        ):
+            if any(span.start <= held.start and held.end <= span.end for held in spans):
+                return True
+            for inner in node.walk():
+                if isinstance(inner, Name):
+                    captured.add(inner.id)
+                elif isinstance(inner, (Global, Nonlocal)):
+                    captured.update(inner.names)
+            continue
+        if (
+            isinstance(node, (For, AsyncFor, While, ListComp, SetComp, DictComp))
+            and span.start <= here.start
+            and here.end <= span.end
+            and (span.start, span.end) != (here.start, here.end)
+        ):
+            end = max(end, span.end)
+        if isinstance(node, (Global, Nonlocal)):
+            captured.update(node.names)
+        elif isinstance(node, Name):
+            uses.append(node)
+        for field, _index, child in node._child_edges():
+            if isinstance(child, Node):
+                parents[id(child)] = (node, field)
+                stack.append(child)
+    plain = len(identities) == 1 and all(
+        element.kind == "Constant" for element in ground.elts
     )
+    names = set(names)
+    while True:
+        if names & captured:
+            return True
+        grown: set = set()
+        for use in uses:
+            if use.id not in names or not first <= use.span.start < end:
+                continue
+            bound = _list_use(use, parents, plain)
+            if bound is None:
+                return True
+            grown |= bound - names
+        if not grown:
+            return False
+        names |= grown
+
+
+def _list_use(use, parents, plain) -> "Optional[set]":
+    """``None`` when this read of a name of a list (``_list_escapes``) may
+    hand the list to other code; else the local names it binds the list to
+    (``ys = xs``), empty when it binds none."""
+    node, in_display = use, False
+    while True:
+        parent, field = parents.get(id(node), (None, None))
+        if parent is None:
+            return None
+        if isinstance(parent, (List, Tuple_, Set, Dict, Starred)):
+            node, in_display = parent, True
+            continue
+        if _target_edge(parent, field):
+            return set()
+        if in_display:
+            return None
+        if isinstance(parent, (BoolOp, IfExp)) and field != "test":
+            node = parent
+            continue
+        break
+    if isinstance(parent, Attribute):
+        holder, holder_field = parents.get(id(parent), (None, None))
+        return set() if isinstance(holder, Call) and holder_field == "func" else None
+    if isinstance(parent, Subscript):
+        if field != "value":
+            return None
+        item = parent
+        holder, holder_field = parents.get(id(item), (None, None))
+        while isinstance(holder, (List, Tuple_, Starred)):
+            item = holder
+            holder, holder_field = parents.get(id(item), (None, None))
+        if holder is not None and _target_edge(holder, holder_field):
+            return set()
+        return set() if plain else None
+    if isinstance(parent, (For, AsyncFor, Comprehension)) and field == "iter":
+        return set() if plain else None
+    if isinstance(parent, (Assign, AnnAssign)) and field == "value":
+        targets = parent.targets if isinstance(parent, Assign) else (parent.target,)
+        if all(isinstance(target, Name) for target in targets):
+            return {target.id for target in targets}
+        return None
+    if isinstance(parent, (If, While, IfExp, Assert)) and field == "test":
+        return set()
+    if isinstance(parent, (UnaryOp, Expr, Return)):
+        return set()
+    return None
 
 
 def final_member_coordinate(member_coordinate: str) -> str:
@@ -10949,14 +11139,21 @@ class For(Statement):
         how many items there are, and each item is ``xs[i]``, a read of the
         key, never the display's member.  A list is unrolled this way only
         when ``reads`` (the loop body, the comprehension's element and
-        conditions) cannot reach it (``_object_read_in``): Python iterates
-        the live list."""
+        conditions) cannot reach it: they read none of its names
+        (``_object_read_in``), and either they run no code that could reach
+        it another way (``_runs_reaching_code``) or nothing but its own names
+        holds it (``_list_escapes``).  Python iterates the live list; a list
+        not unrolled stays the live loop."""
         if iterable.kind in ("EvaluationRef", "Subscript"):
             ground = _ground_value(iterable)
             if ground is None or ground.kind not in ("List", "Tuple"):
                 return None
-            if ground.kind == "List" and _object_read_in(
-                iterable, reads, scope or {}
+            if ground.kind == "List" and (
+                _object_read_in(iterable, reads, scope or {})
+                or (
+                    _runs_reaching_code(reads, scope or {})
+                    and _list_escapes(self, iterable, ground, scope or {})
+                )
             ):
                 return None
             return [
