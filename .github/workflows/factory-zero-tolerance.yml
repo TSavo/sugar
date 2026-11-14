@@ -1,5 +1,6 @@
 name: Python sole-construction floors (R>0 red)
 
+# CI runs on main only: PRs merge at once and are tested there (owner rule: merge first, CI on main).
 on:
   push:
     branches: [main]

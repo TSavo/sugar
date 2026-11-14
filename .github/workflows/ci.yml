@@ -41,6 +41,7 @@
 
 name: CI
 
+# CI runs on main only: PRs merge at once and are tested there (owner rule: merge first, CI on main).
 on:
   merge_group:
     types: [checks_requested]
