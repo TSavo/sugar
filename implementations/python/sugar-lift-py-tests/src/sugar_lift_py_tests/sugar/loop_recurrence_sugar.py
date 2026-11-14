@@ -304,6 +304,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         nothing for the names it carries is refused by name
         (``_require_carried``): the names are never read in its place.
         """
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
         from sugar_lift_py_tests.effect.loop_control_effect import LoopControlEffect
         from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
         from sugar_lift_py_tests.floor.block_value import BlockValue
@@ -331,17 +334,17 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 and isinstance(effect, RaiseEffect)
                 and _is_authenticated_stop_iteration(effect)
             ):
-                finished = self._finish_iterator(
-                    runtime, ctx, entries=entries, carried=carried, items=index
+                # Exhaustion is this loop's own control: the loop consumes the
+                # StopIteration and leaves beneath it, under its guard and
+                # faces, owing what the exhausting ``next`` owed.  An ``else``
+                # suite still waiting on its caller's actuals is composed
+                # beneath it too (``sequence`` hands the carrier on).
+                return outcome.sequence(
+                    ExitSet.completed,
+                    consume=lambda _stop: self._finish_iterator(
+                        runtime, ctx, entries=entries, carried=carried, items=index
+                    ),
                 )
-                if isinstance(finished, ExitSet):
-                    # Exhaustion is this loop's own control: the loop consumes
-                    # the StopIteration and leaves beneath it, owing what the
-                    # exhausting ``next`` owed.
-                    return outcome.sequence(
-                        ExitSet.completed, consume=lambda _stop: finished
-                    )
-                return finished
             return outcome
         next_result = outcome.completed_value()
         # A NextResult owing something has no linear place for the debt: it
@@ -378,38 +381,57 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 runtime, iteration_ctx, projections
             )
             body = reduce_block_to_exitset(runtime.body_sugars, iteration_ctx)
-        if not isinstance(body, ExitSet):
-            return body
-        # Each face of this iteration is its own path, and what follows it runs
-        # beneath it (``ExitSet.sequence``): a completed face carries its own
-        # state into the next iteration, this loop's own break/continue is
-        # consumed and continues, any other halt leaves the loop as it is. The
-        # first iteration's faces are never the loop's outcome.
-        # A later item still waiting on its caller's actuals answers its
-        # deferred carrier: ``sequence`` composes it beneath its face, and the
-        # loop hands the composed carrier on to its caller.
-        if len(body.exits) != 1:
-            return body.sequence(
-                lambda state: self._after_iteration_state(
-                    state, next_result, runtime, entries=entries, index=index
-                ),
-                consume=lambda halt: self._after_loop_control(
-                    halt,
-                    next_result,
-                    runtime,
-                    target_bindings,
-                    entries=entries,
-                    index=index,
-                ),
+
+        def after_body(body):
+            # Each face of this iteration is its own path, and what follows it
+            # runs beneath it (``ExitSet.sequence``): a completed face carries
+            # its own state into the next iteration, this loop's own
+            # break/continue is consumed and continues, any other halt leaves
+            # the loop as it is. The first iteration's faces are never the
+            # loop's outcome.
+            # A later item still waiting on its caller's actuals answers its
+            # deferred carrier: ``sequence`` composes it beneath its face, and
+            # the loop hands the composed carrier on to its caller.
+            if len(body.exits) != 1:
+                return body.sequence(
+                    lambda state: self._after_iteration_state(
+                        state, next_result, runtime, entries=entries, index=index
+                    ),
+                    consume=lambda halt: self._after_loop_control(
+                        halt,
+                        next_result,
+                        runtime,
+                        target_bindings,
+                        entries=entries,
+                        index=index,
+                    ),
+                )
+            face = body.exits[0]
+            following = self._after_iteration_face(
+                face,
+                next_result,
+                runtime,
+                target_bindings,
+                entries=entries,
+                index=index,
             )
-        face = body.exits[0]
-        following = self._after_iteration_face(
-            face, next_result, runtime, target_bindings, entries=entries, index=index
-        )
-        if following is None:
-            return body
-        # The one face, whichever kind, continues into ``following``.
-        return body.sequence(lambda _state: following, consume=lambda _halt: following)
+            if following is None:
+                return body
+            # The one face, whichever kind, continues into ``following``.
+            return body.sequence(
+                lambda _state: following, consume=lambda _halt: following
+            )
+
+        if isinstance(body, NativeOperationExitCarrierV1):
+            # This item's body still waits on its caller's actuals: once it
+            # discharges, the loop continues from this item exactly as it does
+            # from a body that reduced to its faces here.
+            return body.after_discharge(
+                lambda projected: after_body(
+                    _require_exit_set(projected, owner="LoopRecurrenceSugar.body")
+                )
+            )
+        return after_body(_require_exit_set(body, owner="LoopRecurrenceSugar.body"))
 
     def _after_iteration_face(
         self, face, next_result, runtime, target_bindings, *, entries, index

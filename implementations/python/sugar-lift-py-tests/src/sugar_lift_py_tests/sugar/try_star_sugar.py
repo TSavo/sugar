@@ -66,6 +66,9 @@ class TryStarSugar(Sugar):
         return ()
 
     def desugar(self, ctx=None):
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
         from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
         from sugar_lift_py_tests.effect_router import (
             regroup_except_star,
@@ -249,29 +252,54 @@ class TryStarSugar(Sugar):
             # first and normalizes the composed set once.
             return ExitSet(tuple(retained))
 
-        result = (
-            body.sequence(after_body, consume=handled)
-            if body.exits
-            else ExitSet.completed(_ReducedBlock((), True, ()))
-        )
-        if self.finalbody:
-            cleanup = reduce_block_to_exitset(self.finalbody, ctx)
-            from sugar_lift_py_tests.floor.return_value import ReturnValue
-            from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
-
-            def restores(value):
-                return not (
-                    isinstance(value, _ReducedBlock)
-                    and (
-                        not value.can_fall_through
-                        or any(isinstance(e, ReturnValue) for e in value.entries)
+        def close(result):
+            """The ``finally`` over every arm the try* composed, then its own
+            faces.  An ``else`` suite still waiting on its caller's actuals
+            (``sequence`` handed its carrier on) is closed once it discharges."""
+            if isinstance(result, NativeOperationExitCarrierV1):
+                return result.after_discharge(
+                    lambda projected: close(
+                        _require_exit_set(projected, owner="TryStarSugar.orelse")
                     )
                 )
+            if self.finalbody:
+                cleanup = reduce_block_to_exitset(self.finalbody, ctx)
+                from sugar_lift_py_tests.floor.return_value import ReturnValue
 
-            result = result.and_finally(lambda: cleanup, cleanup_restores=restores)
-        # The try*'s own faces: a halt stays a halted arm, never an entry of a
-        # completed record (#7826).
-        return result.normalize()
+                def restores(value):
+                    return not (
+                        isinstance(value, _ReducedBlock)
+                        and (
+                            not value.can_fall_through
+                            or any(isinstance(e, ReturnValue) for e in value.entries)
+                        )
+                    )
+
+                result = result.and_finally(lambda: cleanup, cleanup_restores=restores)
+            # The try*'s own faces: a halt stays a halted arm, never an entry of
+            # a completed record (#7826).
+            return result.normalize()
+
+        def route(body):
+            """Route the body's faces: completed arms run the ``else``, the
+            halts the try* owns run the handlers beneath them."""
+            return close(
+                body.sequence(after_body, consume=handled)
+                if body.exits
+                else ExitSet.completed(_ReducedBlock((), True, ()))
+            )
+
+        if isinstance(body, NativeOperationExitCarrierV1):
+            # The body still waits on its caller's actuals: once it discharges,
+            # its faces are routed exactly as a body reduced here is, so every
+            # halt it raises reaches the handlers with its guard, faces and
+            # ``owed``.
+            return body.after_discharge(
+                lambda projected: route(
+                    _require_exit_set(projected, owner="TryStarSugar.body")
+                )
+            )
+        return route(_require_exit_set(body, owner="TryStarSugar.body"))
 
 
 def _is_exceptional_raise(effect) -> bool:
