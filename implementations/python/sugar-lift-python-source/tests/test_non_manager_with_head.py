@@ -101,7 +101,7 @@ def test_a_decorated_async_def_head_is_the_decorator_application(tmp_path):
     source_file = _open(_corpus(tmp_path, source))
     context = source_file.root.unit.construction_context
     assert not context.source_non_manager_heads
-    assert not context.source_manager_provider_calls
+    assert not context.source_call_frames
 
 
 def _class(source, name):

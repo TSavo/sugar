@@ -140,7 +140,7 @@ def test_local_contextmanager_seats_its_own_frame(tmp_path):
         tmp_path, _manager(_SUPPRESSES_VALUE_ERROR, "pass")
     )
     context = source_file.root.unit.construction_context
-    assert len(context.source_manager_provider_calls) == 1
+    assert len(context.source_call_frames) == 1
     assert type(with_node.sugar()) is GeneratorWithSugar
 
 

@@ -185,9 +185,9 @@ def test_pandas_303_both_option_context_managers_construct_through_bindings() ->
     )
 
     seats = sorted(
-        (coordinate.start_line, coordinate.start_col)
-        for coordinate in context.source_manager_provider_calls
-        if coordinate.start_line == 32
+        item._manager_use_site_span()[:2]
+        for item in site.items
+        if site._generator_manager_frame(item) is not None
     )
     assert seats == [(32, 13), (32, 18)]
     frames = sorted(
@@ -263,7 +263,8 @@ def test_same_spelled_names_bound_elsewhere_do_not_authenticate(tmp_path: Path) 
         session=SourceResolutionSession(enrolled_distributions=frozenset()),
     )
 
-    assert context.source_manager_provider_calls == {}
+    assert context.source_call_frames == {}
+    assert all(site._provider_manager_call(item) is None for item in site.items)
     assert _projected_manager_call_uses(tree) == {}
     # No reaching provider Call: construction stays loud at the use coordinate.
     with pytest.raises(LifterRefusal) as caught:
@@ -446,9 +447,11 @@ def test_truthful_local_two_assigned_generators_construct_and_desugar(
     site = next(node for node in tree.nodes() if isinstance(node, With))
     assert [item.context_expr.kind for item in site.items] == ["Name", "Name"]
     seats = sorted(
-        (coordinate.start_col, call.line_col_span().start_line)
-        for coordinate, call in context.source_manager_provider_calls.items()
-        if coordinate.start_line == 5
+        (
+            item._manager_use_site_span()[1],
+            site._provider_manager_call(item).line_col_span().start_line,
+        )
+        for item in site.items
     )
     assert seats == [(9, 3), (16, 4)]
     assert all(site._generator_manager_frame(item) is not None for item in site.items)

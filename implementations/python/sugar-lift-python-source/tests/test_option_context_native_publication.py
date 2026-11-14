@@ -130,7 +130,7 @@ def test_open_produces_no_source_definition(tmp_path: Path):
         session=SourceResolutionSession(enrolled_distributions=frozenset()),
     )
 
-    assert context.source_manager_provider_calls == {}
+    assert context.source_call_frames == {}
     from sugar_source_tree.nodes import With
 
     for node in tree.nodes():
@@ -186,7 +186,7 @@ def test_a_source_decorated_generator_is_never_a_manager_by_its_decorator_body(
         "    with make_resource():\n"
         "        pass\n",
     )
-    assert context.source_manager_provider_calls == {}
+    assert context.source_call_frames == {}
     assert _published_protocol_slots(context) == []
 
 
@@ -249,7 +249,7 @@ def test_lying_twin_spelling_without_binding_publishes_nothing(tmp_path: Path):
         path=path,
         session=SourceResolutionSession(enrolled_distributions=frozenset()),
     )
-    assert context.source_manager_provider_calls == {}
+    assert context.source_call_frames == {}
     assert _published_protocol_slots(context) == []
 
 

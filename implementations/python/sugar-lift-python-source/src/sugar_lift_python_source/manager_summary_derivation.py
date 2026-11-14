@@ -1266,7 +1266,7 @@ class _WithReader:
             )
         ):
             self.read_within(definition)
-            _read_same_module_generator_head(context, coordinate, call, definition)
+            _read_same_module_generator_head(context, call, definition)
         elif type(definition) is FunctionDef:
             _read_same_module_factory_head(
                 context,
@@ -2133,10 +2133,13 @@ def _read_same_module_factory_head(
     )
 
 
-def _read_same_module_generator_head(context, coordinate, call, function_def) -> None:
+def _read_same_module_generator_head(context, call, function_def) -> None:
     """Seat ``with g(...)``'s frame where the call of ``g`` applies it.
 
-    Import receipts never fire for a local callee.  Whether a call of the
+    The With reaches ``call`` itself, from the tree (a direct head, or the
+    file's one projection for a bare Name, ``With._provider_manager_call``);
+    only the frame is seated here.  Import receipts never fire for a local
+    callee.  Whether a call of the
     module generator function ``g`` runs ``g``'s own frame is the one decorator
     application's rule (``call_applies_own_frame``, #7757), never read here
     from a decorator's spelling or body:
@@ -2168,7 +2171,6 @@ def _read_same_module_generator_head(context, coordinate, call, function_def) ->
         # Not a generator: the require door owns it.
         return
     _install_source_call_frame(context, call, frame)
-    context.source_manager_provider_calls[coordinate] = call
 
 
 def _read_builtin_name_head(context, coordinate, call, *, session) -> None:
@@ -2959,25 +2961,18 @@ def _projected_manager_call_uses(source_file, selected_arms=None):
                 )
 
 
-    # Project frames that contain a bare-Name manager — single-item
-    # ``with m:`` and multi-item ``with m, n:`` alike.  The multi-item
-    # shape was the first enrolled reproducer (#6489); a returned resource
-    # assigned once and consumed as a single Name is the same projection,
-    # not a second binding mechanism.  Module-wide substitution is still
-    # avoided: only functions that actually write a bare-Name manager are
-    # projected, so unrelated frames do not demand contracts.
-    for function in source_file.functions():
-        if not any(
-            isinstance(node, With)
-            and any(item.context_expr.kind == "Name" for item in node.items)
-            for node in function.walk()
-        ):
-            continue
-        # No reader has run yet.  A ``with ... as name`` in the frame binds
-        # ``name`` without demanding a row nobody has seated
-        # (``With.substitution_binding``): the projection is substitution as
-        # every caller has it, with no mode of its own.
-        collect(function.substitute({}), projected_names=True)
+    # The frames that contain a bare-Name manager — single-item ``with m:``
+    # and multi-item ``with m, n:`` alike — projected once, on the tree
+    # (``SourceUnit.projected_manager_heads``).  The multi-item shape was the
+    # first enrolled reproducer (#6489); a returned resource assigned once and
+    # consumed as a single Name is the same projection, not a second binding
+    # mechanism.  The same projection answers a bare-Name head's provider
+    # Call at construction (``With._provider_manager_call``).  No reader has
+    # run before it: a ``with ... as name`` in the frame binds ``name``
+    # without demanding a row nobody has seated (``With.substitution_binding``).
+    projected, _providers = source_file.unit.projected_manager_heads()
+    for root in projected:
+        collect(root, projected_names=True)
 
     return uses
 
