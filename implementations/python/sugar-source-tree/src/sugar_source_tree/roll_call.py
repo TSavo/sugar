@@ -6,7 +6,7 @@ second one; it reads the ``CollectingReporter`` that construction fills:
 
 - ``register`` (in the node's constructor) enrolls the node -> ``registered`` is
   the roster (who SHOULD show up);
-- ``present_fact`` / ``present_inert`` (the desugar discharge) -> ``present`` is
+- ``present_fact`` / ``present_inert`` (the construction discharge) -> ``present`` is
   who DID show up;
 - ``report_gap`` (SugarNotWritten) -> ``gaps`` is the loud absent.
 
@@ -152,27 +152,22 @@ def minority_report(source_file) -> MinorityReport:
 
 
 def discharge(source_file) -> MinorityReport:
-    """Run the discharge over the roster: desugar every function (which recurses
-    through its whole subtree). Each node that constructs answers PRESENT through
+    """Run the discharge over the roster: construct every accounting root
+    (``node.sugar()``, step 5), which builds its whole subtree. Nothing here
+    reduces a function body. Each node that constructs answers PRESENT through
     the template; each unwritten node reports ABSENT and stops its subtree. The
-    reporter -- the one interface, threaded through construction -- now holds both
-    sides, so the minority is the true diff of desugared-vs-not."""
+    reporter -- the one interface, threaded through construction -- now holds
+    both sides, so the minority is the true diff of built-vs-refused."""
     from .panic import SugarNotWritten
 
     for _ in source_file.nodes():  # materialize -> register the whole roster
         pass
     # Attempt every accounting root so each records its OWN answer: the module
-    # (top-level), then each function. A written root discharges its subtree
-    # present; an unwritten one (e.g. Module.sugar, still on the frontier)
-    # reports absent -- honestly, by attempt, red until written.
-    from sugar_lift_py_tests.sugar.if_sugar import construct_definition_branch_withs
-
+    # (top-level), then each function. A written root builds its subtree
+    # present; an unwritten one reports absent -- by name.
     for root_node in (source_file.root, *source_file.functions()):
         try:
-            # A definition is accounted by constructing it; nothing here
-            # reduces it, so no branch suite of it is selected. Its deferred
-            # ``with`` statements are constructed with it (#7699).
-            construct_definition_branch_withs(root_node.sugar())
+            root_node.sugar()
         except SugarNotWritten:
             pass  # the gap is on the roll; the report reads it
         except RecursionError:

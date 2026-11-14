@@ -9,15 +9,17 @@
 
 zstandard is not installed in the pinned environment, so ``import_module``
 raises ``ModuleNotFoundError``, the helper returns ``None`` and the suite is
-dead.  Three laws carry that:
+dead.  Two laws carry that:
 
 - ``importlib.import_module(<constant top-level name>)`` halts with
   ``ModuleNotFoundError`` when the pinned interpreter's finders have no such
   module (a present module keeps the two-faced off-population call);
-- a ``with`` in a branch suite constructs when its suite is reduced, so a suite
-  a ground condition never selects never demands its manager contract;
-- a reached ``with`` still constructs only through the require door (a
-  present off-population module's chain is cited, #7742).
+- a ``with`` constructs only through the require door (a present
+  off-population module's chain is cited, #7742).
+
+A ``with`` in a branch suite is built when its ``if`` is built, never when a
+reduction selects the suite (#7757 item 19): construction does not know which
+suite is dead, so it builds both or refuses by name.
 """
 
 from __future__ import annotations
@@ -71,14 +73,6 @@ def test_absence_is_read_from_the_pinned_finders_without_importing():
 def test_absent_module_import_halts_so_its_suite_is_dead(tmp_path: Path) -> None:
     tree, with_node = _imported(
         tmp_path, _RAISE_IMPL.format(name=_ABSENT), "pass", contextlib_enrolled=False
-    )
-    _consumer, rows = _function_rows(tree, with_node)
-    assert rows == [("return", 7)]
-
-
-def test_a_with_in_a_dead_suite_never_demands_its_manager(tmp_path: Path) -> None:
-    tree, with_node = _imported(
-        tmp_path, _IMPL.format(name=_ABSENT), "pass", contextlib_enrolled=False
     )
     _consumer, rows = _function_rows(tree, with_node)
     assert rows == [("return", 7)]

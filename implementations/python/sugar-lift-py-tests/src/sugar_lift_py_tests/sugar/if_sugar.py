@@ -165,84 +165,6 @@ def _arm_evaluations(arms, incoming) -> tuple:
 
 
 @dataclass(frozen=True)
-class BranchSuiteWithV1:
-    """A ``with`` statement of a branch suite, constructed when its suite is.
-
-    A ``with`` constructs only through the require door: its manager's
-    contract must already be derived for its exact coordinate, or
-    construction is refused.  A suite a ground condition never selects is
-    never reduced (``_desugar_condition``), so Python never enters that
-    ``with``; demanding its manager contract while constructing the ``if``
-    turned an unreachable refusal into the whole function's
-    (``pandas.io.common._get_binary_io_classes``: ``with
-    zstd.ZstdDecompressor().stream_reader(b"")`` under ``if zstd is not
-    None`` where ``zstd`` is ``None`` because zstandard is not installed;
-    #7665).  The ``with`` is constructed -- by the same door, with the same
-    refusal -- exactly when its suite is reduced: under a symbolic condition
-    both suites still reduce and a refused ``with`` still refuses.
-    """
-
-    node: object
-
-    def force(self):
-        return self.node.sugar()
-
-
-def construct_definition_branch_withs(root) -> None:
-    """Construct every ``with`` a definition's branch suites carry (#7699).
-
-    ``BranchSuiteWithV1`` defers a ``with`` until its suite is reduced, and a
-    reduction decides which suite is reached.  Accounting a definition
-    (``roll_call.discharge``) constructs it and reduces nothing, so no suite
-    of it is ever selected and a deferred ``with`` was never demanded: the
-    definition answered clean while its ``with`` was never built
-    (``pandas/plotting/_matplotlib/__init__.py:67``, ``with
-    plt.rc_context():`` under ``if ax is None and len(...) > 0``).  A
-    definition's suite is reachable unless a reduction proves it dead, and
-    none was made here, so each deferred ``with`` of the definition is
-    constructed now -- by the same require door, refused by the same named
-    ``With`` refusal when its manager has no contract.
-
-    Only the definition's own sugar tree is walked: a nested definition is
-    its own root, and a callee's suites belong to the call that reduces them.
-    """
-    from dataclasses import fields, is_dataclass
-
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        FunctionUniverseSugar,
-    )
-
-    seen: set[int] = set()
-
-    def visit(value, *, top: bool = False) -> None:
-        if id(value) in seen:
-            return
-        seen.add(id(value))
-        if type(value) is BranchSuiteWithV1:
-            visit(value.force())
-            return
-        if isinstance(value, (tuple, list)):
-            for item in value:
-                visit(item)
-            return
-        if not isinstance(value, Sugar) or not is_dataclass(value):
-            return
-        if isinstance(value, FunctionUniverseSugar) and not top:
-            return
-        for spec in fields(value):
-            visit(getattr(value, spec.name, None))
-
-    visit(root, top=True)
-
-
-def _constructed_suite(body: tuple) -> tuple:
-    return tuple(
-        statement.force() if type(statement) is BranchSuiteWithV1 else statement
-        for statement in body
-    )
-
-
-@dataclass(frozen=True)
 class IfSugar(Sugar):
     """`if <test>: <then> [else: <else>]`, constructed by `If.sugar()` with the
     test's sugar and each branch's statement sugars already built."""
@@ -373,11 +295,7 @@ class IfSugar(Sugar):
 
         if observed_formula in (false_guard(), true_guard()):
             selected = reduce_block_to_exitset(
-                _constructed_suite(
-                    self.then_body
-                    if observed_formula == true_guard()
-                    else self.else_body
-                ),
+                self.then_body if observed_formula == true_guard() else self.else_body,
                 branch_ctx,
             )
             self._ground_branch_result(ctx, observed_formula)
@@ -397,12 +315,8 @@ class IfSugar(Sugar):
                 else (ExitSet(()), selected)
             )
         else:
-            then_exits = reduce_block_to_exitset(
-                _constructed_suite(self.then_body), branch_ctx
-            )
-            else_exits = reduce_block_to_exitset(
-                _constructed_suite(self.else_body), branch_ctx
-            )
+            then_exits = reduce_block_to_exitset(self.then_body, branch_ctx)
+            else_exits = reduce_block_to_exitset(self.else_body, branch_ctx)
 
         # If is union in the exit algebra: each branch is restricted to its
         # polarity, then the partitions normalize together. In particular, a

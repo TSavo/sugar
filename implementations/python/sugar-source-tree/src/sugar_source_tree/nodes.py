@@ -9177,16 +9177,10 @@ class If(Statement):
         new_test, d = self._substitute_field(self.test, scope)
         if d:
             changed["test"] = new_test
-        branch_token = _IN_BRANCH_SUITE.set(True)
-        try:
-            new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
-            if d:
-                changed["body"] = new_body
-            new_orelse, d, else_net = self._substitute_body_tracked(
-                self.orelse, scope
-            )
-        finally:
-            _IN_BRANCH_SUITE.reset(branch_token)
+        new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
+        if d:
+            changed["body"] = new_body
+        new_orelse, d, else_net = self._substitute_body_tracked(self.orelse, scope)
         if d:
             changed["orelse"] = new_orelse
         if retained_slot:
@@ -9350,19 +9344,12 @@ class If(Statement):
             pass
         with reduction_span(sugar="If.test", role="construction", site=where):
             test = self.test.sugar()
-        from sugar_lift_py_tests.sugar.if_sugar import BranchSuiteWithV1
-
-        def _suite_member(statement):
-            # A ``with`` constructs when its suite is reduced: a suite a
-            # ground condition never selects never demands its manager.
-            if isinstance(statement, With):
-                return BranchSuiteWithV1(statement)
-            return statement.sugar()
-
+        # Both suites are built here, every statement of them, ``with``
+        # included: construction is step 5 and never waits on a reduction.
         with reduction_span(sugar="If.then", role="construction", site=where):
-            then_body = tuple(_suite_member(s) for s in self.body)
+            then_body = tuple(s.sugar() for s in self.body)
         with reduction_span(sugar="If.else", role="construction", site=where):
-            else_body = tuple(_suite_member(s) for s in self.orelse)
+            else_body = tuple(s.sugar() for s in self.orelse)
         return IfSugar(
             test=test,
             branch_slot=slot,
@@ -9372,17 +9359,7 @@ class If(Statement):
         )
 
 
-# True while an ``if``'s suites are substituted (#7665).  A ``with`` in a
-# suite constructs when that suite is reduced (``BranchSuiteWithV1``); a suite
-# a ground condition never selects is never reduced.  So while a suite is
-# substituted, a ``with`` whose manager has no seated contract exports no
-# ``as`` binding instead of demanding the contract now: if the suite is dead
-# the ``with`` never runs and binds nothing; if it is reached, its
-# construction is refused by the same require door, loudly, before any
-# reader of the binding is reduced.
 import contextlib as _contextlib_for_projection
-
-_IN_BRANCH_SUITE: AmbientVar = AmbientVar("sugar_in_branch_suite", default=False)
 
 # True while population projects a frame only to collect its manager calls
 # (#7732).  That projection runs BEFORE any reader has seated a contract, so a
@@ -9446,29 +9423,6 @@ class With(Statement):
             self.unit.source_cid, *item._manager_use_site_span()
         )
         return coordinate in refs
-
-    def _manager_contract_seated(self, item: WithItem) -> bool:
-        """Whether the require door would answer for ``item`` (never reports)."""
-        context = self.unit.construction_context
-        from sugar_lift_py_tests.context_manager_resolution import (
-            ContractRefProtocolError,
-            SourceFragmentCoordinateV1,
-            TreeConstructionContextV1,
-        )
-
-        if not isinstance(context, TreeConstructionContextV1):
-            return True  # the door itself reports the missing context
-        start_line, start_col, end_line, end_col = item._manager_use_site_span()
-        coordinate = SourceFragmentCoordinateV1(
-            self.unit.source_cid, start_line, start_col, end_line, end_col
-        )
-        if context.source_derived_contract_refs.get(coordinate) is not None:
-            return True
-        try:
-            context.contract_refs.require(coordinate)
-        except ContractRefProtocolError:
-            return False
-        return True
 
     def _prebound_manager_resolution(self, item: WithItem):
         """Read the sole preconstruction contract resolution for this occurrence."""
@@ -9931,22 +9885,19 @@ class With(Statement):
         cm_b(): body``: the selection is guarded by the owning ``if``'s own
         branch result (the slot it already authenticates), and each arm is
         an ordinary single-manager ``with`` whose use coordinate is that
-        arm's call, where its contract was derived.  Each arm constructs
-        only when its suite reduces (``BranchSuiteWithV1``), so an arm a
-        ground condition never selects never demands its contract.
+        arm's call, where its contract was derived.  Each arm is constructed
+        here, with the statement, or refused by name.
         """
-        from sugar_lift_py_tests.sugar.if_sugar import BranchSuiteWithV1, IfSugar
+        from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 
         if expr.kind != "IfExp":
             from .shadow import rewrite
 
-            return BranchSuiteWithV1(
-                rewrite(
-                    self,
-                    items=(self.items[0]._with_selected_manager_call(expr),),
-                    body=tuple(self.body),
-                )
-            )
+            return rewrite(
+                self,
+                items=(self.items[0]._with_selected_manager_call(expr),),
+                body=tuple(self.body),
+            ).sugar()
         return IfSugar(
             test=expr.test.sugar(),
             branch_slot=BranchResultSlot(expr.test.slot_id),
@@ -10798,11 +10749,6 @@ class With(Statement):
             # SourceTreePanic from the door propagates — no Exception swallow.
             resolved_ref = None
             if self._generator_manager_frame(item) is None:
-                if _IN_BRANCH_SUITE.get() and not self._manager_contract_seated(
-                    item
-                ):
-                    # Constructed (or refused) when its suite is reduced.
-                    return None
                 if (
                     _IN_MANAGER_USE_PROJECTION.get()
                     and not self._manager_contract_populated(item)

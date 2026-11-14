@@ -1,14 +1,13 @@
-"""A definition's branch-suite ``with`` constructs when the definition is accounted (#7699).
+"""A definition's branch-suite ``with`` is built with the definition (#7699, #7757).
 
-#7697 carries a ``with`` of an ``if`` suite as ``BranchSuiteWithV1``, built when
-its suite is reduced.  The census accounts a file through
-``roll_call.discharge``, which constructs every definition and reduces none,
-so no suite was ever selected and the ``with`` was never demanded: a file
-ended ``completed`` with its ``with`` unconstructed
-(``pandas/plotting/_matplotlib/__init__.py:67``).  An undecided guard leaves
-its suite reachable, so the discharge constructs the ``with`` with its
-definition: built when its manager has a contract, refused by the same named
-``With`` refusal when it has none.
+The board accounts a file through ``roll_call.discharge``, which constructs
+every definition (``node.sugar()``, step 5) and reduces none.  An ``if``
+builds both of its suites, every statement of them, when it is constructed:
+a ``with`` in a suite is built when its manager has a contract and refused by
+the same named ``With`` refusal when it has none.  Nothing waits on a
+reduction to build it, so the board counts the tree built or refused by name
+(``pandas/plotting/_matplotlib/__init__.py:67`` once ended ``completed`` with
+its ``with`` unconstructed).
 """
 
 from __future__ import annotations
@@ -66,16 +65,23 @@ def _with_refusals(source_file):
     ]
 
 
-def test_a_reachable_branch_with_without_a_contract_is_refused(tmp_path):
-    # The lying twin: before #7699 this discharge answered clean while the
-    # ``with`` under the undecided ``if c:`` was never constructed.
+def test_constructing_the_definition_refuses_its_branch_with_by_name(tmp_path):
+    # The lying twin: before #7699 this definition answered clean while the
+    # ``with`` under the undecided ``if c:`` was never constructed.  Building
+    # the definition alone builds the ``with``, so it is refused here.
     source_file = _open(tmp_path, _guarded("unknown_manager()"))
     f = next(
         n for n in source_file.nodes() if isinstance(n, FunctionDef) and n.name == "f"
     )
-    f.sugar()  # constructing the definition alone defers the with ...
-    assert _with_refusals(source_file) == []
-    report = discharge(source_file)  # ... accounting it refuses it, by name
+    with pytest.raises(SourceTreePanic, match="CONTEXT MANAGER RESOLUTION GAP"):
+        f.sugar()
+    (refusal,) = _with_refusals(source_file)
+    assert "CONTEXT MANAGER RESOLUTION GAP" in refusal
+
+
+def test_a_reachable_branch_with_without_a_contract_is_refused(tmp_path):
+    source_file = _open(tmp_path, _guarded("unknown_manager()"))
+    report = discharge(source_file)  # the board refuses it, by name
     (refusal,) = _with_refusals(source_file)
     assert "CONTEXT MANAGER RESOLUTION GAP" in refusal
     with_node = next(n for n in source_file.nodes() if isinstance(n, With))
