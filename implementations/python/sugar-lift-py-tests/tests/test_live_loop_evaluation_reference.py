@@ -11,7 +11,12 @@ reduced once per item, so:
 - the body reads a carried name through the loop header's evaluation of it,
   bound per item by the recurrence, instead of the bare name;
 - the value an item hands to the next one (the latch) is the latest of the
-  body's last ``x += e`` evaluation, the header and a write of the name.
+  header and every write of the name in the body, each bound under its own
+  key (``x += e`` its evaluation, an assignment its carried write); the name
+  itself is never written;
+- the ``else`` suite reads a carried name through the same header, bound
+  once more after the last item, and the loop leaves with the latest of the
+  else's writes and that header.
 
 A class body and a module block are threaded by substitution, so their reads
 after ``x += e`` are references too.  (The export prefix, the third reader
@@ -32,6 +37,8 @@ from sugar_lift_py_tests.occurrence import (
     occurrence_path,
 )
 from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.sugar.assign_sugar import AssignSugar
+from sugar_lift_py_tests.sugar.assigned_value import carried_write_key
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
     EvaluationRefSugar,
@@ -57,6 +64,8 @@ from sugar_source_tree.tree import SourceFile
 KEY = EVALUATION_PREFIX + "blake3-512:test-evaluation"
 HEADER = EVALUATION_PREFIX + "blake3-512:test-header"
 LATCH = EVALUATION_PREFIX + "blake3-512:test-latch"
+WRITE = EVALUATION_PREFIX + "blake3-512:test-write"
+ELSE_WRITE = EVALUATION_PREFIX + "blake3-512:test-else-write"
 LOOP = "blake3-512:test-loop"
 
 
@@ -89,7 +98,7 @@ def _recurrence() -> LoopRecurrenceSugar:
 
 
 _RUNTIME = SimpleNamespace(
-    carried_names=("t",), carried_evaluations=((HEADER, LATCH),)
+    carried_names=("t",), carried_evaluations=((HEADER, (LATCH,), ()),)
 )
 
 
@@ -147,7 +156,7 @@ def test_each_item_binds_its_own_header() -> None:
 def test_a_loop_target_has_no_header() -> None:
     recurrence = _recurrence()
     runtime = SimpleNamespace(
-        carried_names=("v",), carried_evaluations=((None, None),)
+        carried_names=("v",), carried_evaluations=((None, (), ()),)
     )
     ctx = ReduceContext.root(owner="live-header")
     with entered(_item(0)):
@@ -163,8 +172,7 @@ def test_the_latch_is_the_items_last_evaluation() -> None:
     ctx = ReduceContext.root(owner="live-latch")
     with entered(_item(0)):
         ctx = recurrence._enter_header(_RUNTIME, ctx, (TermValue(1),))
-        # ``t += e``: the name first, the evaluation last (AugAssignSugar).
-        ctx = ctx.with_temporal(ctx.temporal.bind_value("t", TermValue(3)))
+        # ``t += e`` binds its evaluation only (AugAssignSugar).
         ctx = ctx.with_temporal(
             ctx.temporal.bind_value(evaluation_here(LATCH), TermValue(3))
         )
@@ -180,9 +188,31 @@ def test_an_item_that_rebinds_nothing_hands_on_its_header() -> None:
     assert recurrence._latched(_RUNTIME, ctx, 0) == (TermValue(1),)
 
 
-def test_a_later_write_of_the_name_is_handed_on() -> None:
-    # A binder that is no statement evaluation (an assignment, a nested
-    # loop's publication) writes the name after the evaluation.
+_TWO_WRITES = SimpleNamespace(
+    carried_names=("t",), carried_evaluations=((HEADER, (LATCH, WRITE), ()),)
+)
+
+
+def test_the_write_that_ran_last_is_handed_on() -> None:
+    # ``t += e`` then ``t = e`` (an assignment binds its carried write), or
+    # the assignment then a ``continue`` before the evaluation: whichever
+    # write ran last on the path is what the item hands on.
+    recurrence = _recurrence()
+    ctx = ReduceContext.root(owner="live-latch")
+    with entered(_item(0)):
+        ctx = recurrence._enter_header(_TWO_WRITES, ctx, (TermValue(1),))
+        ctx = ctx.with_temporal(
+            ctx.temporal.bind_value(evaluation_here(LATCH), TermValue(3))
+        )
+        later = ctx.with_temporal(
+            ctx.temporal.bind_value(evaluation_here(WRITE), TermValue(8))
+        )
+    assert recurrence._latched(_TWO_WRITES, later, 0) == (TermValue(8),)
+    assert recurrence._latched(_TWO_WRITES, ctx, 0) == (TermValue(3),)
+
+
+def test_a_write_of_the_name_is_not_read() -> None:
+    # Only a write's key is read: the name holds no value the loop hands on.
     recurrence = _recurrence()
     ctx = ReduceContext.root(owner="live-latch")
     with entered(_item(0)):
@@ -191,7 +221,7 @@ def test_a_later_write_of_the_name_is_handed_on() -> None:
             ctx.temporal.bind_value(evaluation_here(LATCH), TermValue(3))
         )
         ctx = ctx.with_temporal(ctx.temporal.bind_value("t", TermValue(8)))
-    assert recurrence._latched(_RUNTIME, ctx, 0) == (TermValue(8),)
+    assert recurrence._latched(_RUNTIME, ctx, 0) == (TermValue(3),)
 
 
 def test_the_latch_reads_only_its_own_item() -> None:
@@ -199,7 +229,6 @@ def test_the_latch_reads_only_its_own_item() -> None:
     ctx = ReduceContext.root(owner="live-latch")
     with entered(_item(0)):
         ctx = recurrence._enter_header(_RUNTIME, ctx, (TermValue(1),))
-        ctx = ctx.with_temporal(ctx.temporal.bind_value("t", TermValue(3)))
         ctx = ctx.with_temporal(
             ctx.temporal.bind_value(evaluation_here(LATCH), TermValue(3))
         )
@@ -209,6 +238,55 @@ def test_the_latch_reads_only_its_own_item() -> None:
     assert recurrence._latched(_RUNTIME, ctx, 1) == (TermValue(3),)
     with entered(_item(1)):
         assert ctx.temporal.latest(evaluation_here(LATCH)) is None
+
+
+# -- the else: after the last item -------------------------------------------
+
+_ELSE = SimpleNamespace(
+    carried_names=("t",), carried_evaluations=((HEADER, (LATCH,), (ELSE_WRITE,)),)
+)
+
+
+def test_the_else_reads_the_header_bound_after_the_last_item() -> None:
+    recurrence = _recurrence()
+    ctx = ReduceContext.root(owner="live-else")
+    with entered(_item(0)):
+        ctx = recurrence._enter_header(_ELSE, ctx, (TermValue(1),))
+        ctx = ctx.with_temporal(
+            ctx.temporal.bind_value(evaluation_here(LATCH), TermValue(4))
+        )
+    # Exhaustion: the header is bound outside every item, to the latch.
+    ctx = recurrence._enter_header(_ELSE, ctx, recurrence._latched(_ELSE, ctx, 0))
+    ref = EvaluationRefSugar(evaluation=HEADER, name="t", site=None)
+    assert ref.desugar(ctx) == ExitSet.completed(TermValue(4))
+    with entered(_item(0)):
+        assert ref.desugar(ctx) == ExitSet.completed(TermValue(1))
+
+
+def test_the_loop_leaves_with_the_elses_latest_write() -> None:
+    recurrence = _recurrence()
+    ctx = recurrence._enter_header(
+        _ELSE, ReduceContext.root(owner="live-else"), (TermValue(4),)
+    )
+    # An else that writes nothing leaves with what the last item handed on.
+    assert recurrence._after_else(_ELSE, ctx) == (TermValue(4),)
+    # ``t += 10`` in the else binds its evaluation; the name is not read.
+    ctx = ctx.with_temporal(ctx.temporal.bind_value(ELSE_WRITE, TermValue(14)))
+    ctx = ctx.with_temporal(ctx.temporal.bind_value("t", TermValue(99)))
+    assert recurrence._after_else(_ELSE, ctx) == (TermValue(14),)
+
+
+def test_the_body_writes_are_not_the_elses() -> None:
+    # A body write is keyed by its item; after the last item only the
+    # else's writes and the header are read.
+    recurrence = _recurrence()
+    ctx = ReduceContext.root(owner="live-else")
+    with entered(_item(0)):
+        ctx = ctx.with_temporal(
+            ctx.temporal.bind_value(evaluation_here(LATCH), TermValue(7))
+        )
+    ctx = recurrence._enter_header(_ELSE, ctx, (TermValue(4),))
+    assert recurrence._after_else(_ELSE, ctx) == (TermValue(4),)
 
 
 # -- construction ------------------------------------------------------------
@@ -222,10 +300,10 @@ _LIVE = (
 )
 
 
-def _live_runtime():
+def _live_runtime(source: str = _LIVE):
     loop = next(
         statement
-        for statement in _function(_LIVE).sugar().statements
+        for statement in _function(source).sugar().statements
         if type(statement).__name__ == "LoopRecurrenceSugar"
     )
     return loop.construction.loop_runtime
@@ -234,7 +312,7 @@ def _live_runtime():
 def test_a_live_body_reads_a_carried_name_through_the_header() -> None:
     runtime = _live_runtime()
     assert runtime.carried_names == ("t",)
-    [(header, _latch)] = runtime.carried_evaluations
+    [(header, _writes, _else_writes)] = runtime.carried_evaluations
     assert header.startswith(EVALUATION_PREFIX)
     [aug] = runtime.body_sugars
     assert isinstance(aug, AugAssignSugar)
@@ -244,12 +322,56 @@ def test_a_live_body_reads_a_carried_name_through_the_header() -> None:
     assert aug.left.name == "t"
 
 
-def test_the_latch_is_the_bodys_last_augmented_assignment() -> None:
+def test_the_bodys_write_is_its_augmented_assignment() -> None:
     runtime = _live_runtime()
-    [(header, latch)] = runtime.carried_evaluations
+    [(header, writes, else_writes)] = runtime.carried_evaluations
     [aug] = runtime.body_sugars
-    assert latch == aug.evaluation
-    assert latch != header
+    assert writes == (aug.evaluation,)
+    assert aug.evaluation != header
+    assert else_writes == ()
+
+
+def test_an_assignment_in_the_body_is_a_keyed_write() -> None:
+    # ``t = t + v`` binds its carried write of ``t``, never the name.
+    runtime = _live_runtime(
+        "def f(xs):\n"
+        "    t = 0\n"
+        "    for v in xs:\n"
+        "        t = t + v\n"
+        "    return t\n"
+    )
+    [(header, writes, _else_writes)] = runtime.carried_evaluations
+    [assign] = runtime.body_sugars
+    assert isinstance(assign, AssignSugar)
+    assert writes == (carried_write_key(assign.site, "t"),)
+    assert writes[0].startswith(EVALUATION_PREFIX)
+    assert writes[0] != header
+
+
+_LIVE_ELSE = (
+    "def f(xs):\n"
+    "    t = 0\n"
+    "    for v in xs:\n"
+    "        t += v\n"
+    "    else:\n"
+    "        t += 10\n"
+    "    return t\n"
+)
+
+
+def test_the_else_reads_a_carried_name_through_the_header() -> None:
+    runtime = _live_runtime(_LIVE_ELSE)
+    assert runtime.carried_names == ("t",)
+    [(header, writes, else_writes)] = runtime.carried_evaluations
+    [body_aug] = runtime.body_sugars
+    [else_aug] = runtime.else_sugars
+    assert isinstance(else_aug, AugAssignSugar)
+    # ``t += 10`` in the else reads ``t`` through the header, not by spelling.
+    assert isinstance(else_aug.left, EvaluationRefSugar)
+    assert else_aug.left.evaluation == header
+    assert writes == (body_aug.evaluation,)
+    assert else_writes == (else_aug.evaluation,)
+    assert else_aug.evaluation != body_aug.evaluation
 
 
 def test_the_same_source_gives_the_same_header() -> None:

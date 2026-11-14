@@ -64,54 +64,94 @@ class LiveForRuntimeV1:
     initial_value_sugars: tuple[object, ...]
     body_sugars: tuple[object, ...]
     else_sugars: tuple[object, ...]
-    # Per carried name, in ``carried_names`` order: ``(header, latch)``.
-    # ``header`` is the loop header's evaluation key the body reads the name
-    # through (``nodes._loop_header_evaluation_key``), None for a loop target;
-    # ``latch`` is the evaluation key of the body's last top-level binder of
-    # the name when that binder is a statement evaluation (``x += e``), else
-    # None.  Both are construct-time keys; the recurrence qualifies them per
-    # item (``evaluation_here``).
-    carried_evaluations: tuple[tuple[str | None, str | None], ...] = ()
+    # Per carried name, in ``carried_names`` order: ``(header, writes,
+    # else_writes)``.  ``header`` is the loop header's evaluation key the body
+    # and the ``else`` suite read the name through
+    # (``nodes._loop_header_evaluation_key``), None for a loop target;
+    # ``writes`` (``else_writes``) are the keys every write of the name in the
+    # body (in the ``else`` suite) binds its value under (``_carried_writes``).
+    # All are construct-time keys; the recurrence qualifies them where it runs
+    # (``evaluation_here``).
+    carried_evaluations: tuple[
+        tuple[str | None, tuple[str, ...], tuple[str, ...]], ...
+    ] = ()
 
 
-def _latch_evaluations(statements, scope) -> dict[str, str]:
-    """The evaluation key of each name's last top-level binder in a live
-    loop body, for the names whose last such binder is a statement
-    evaluation (``x += e``, an unpack's projection, a walrus: its binding is
-    an ``EvaluationRef``).
+def _carried_writes(statements, names) -> dict[str, tuple[str, ...]]:
+    """The keys each write of a carried name in a live loop's body (or its
+    ``else`` suite) binds the written value under, by name.
 
-    Threaded the way ``_control_guards`` threads the body: a nested loop owns
-    its bindings and is skipped.  A walrus in a statement writes before the
-    statement's own binding does (``y = (x := e)``).  A key here is only
-    where the next item's value is looked for first; the recurrence reads it
-    as the latest of the key, the header and the name, so a binder this walk
-    does not see (a nested loop, an arm of an ``if``) still wins when it
-    wrote last, and a walrus that did not run this item (an untaken arm)
-    left its key unbound in the item.
+    A write binds a key, never the name: ``x += e`` and a walrus their
+    evaluation, an unpack or an alias each target's projection of its
+    evaluation, every assignment (an ``if``'s phi among them) its carried
+    write of the name (``carried_write_key``), and a nested live ``for`` the
+    binding coordinate it publishes the name under.  The recurrence reads the
+    latest of these and the header, so what an item hands on is the write
+    that ran last on the path it took: a ``continue`` or ``break`` mid-body,
+    or a write in one arm of an ``if``, hands on what it wrote.
+
+    Every node under the statements is a write site, at any depth: an arm, a
+    ``try`` (its ``finally`` copy for a halt included), an unrolled loop's
+    copies.  A nested definition or lambda is another frame, and a nested
+    loop is read through its publication, not its body.  A write that did
+    not run on the path (an untaken arm, a walrus after a ``continue``)
+    left its key unbound there.
     """
-    from .nodes import EvaluationRef, For, While
+    from sugar_lift_py_tests.sugar.assigned_value import carried_write_key
+    from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
-    current = dict(scope)
-    latch: dict[str, str | None] = {}
-    for statement in statements:
-        if isinstance(statement, (For, While)):
+    from .nodes import (
+        Assign,
+        AsyncFunctionDef,
+        AugAssign,
+        ClassDef,
+        FunctionDef,
+        Lambda,
+        LoopRecurrenceStatement,
+        Name,
+        NamedExpr,
+        _target_bound_names,
+    )
+
+    writes: dict[str, list[str]] = {name: [] for name in names}
+
+    def write(name, key) -> None:
+        if name in writes and isinstance(key, str) and key not in writes[name]:
+            writes[name].append(key)
+
+    stack = list(reversed(statements))
+    seen: set[int] = set()
+    while stack:
+        node = stack.pop()
+        if id(node) in seen:
             continue
-        for walrus in statement.walk():
-            if walrus.kind != "NamedExpr" or walrus.target.kind != "Name":
-                continue
-            evaluation = getattr(walrus, "evaluation", None)
-            if isinstance(evaluation, str):
-                latch[walrus.target.id] = evaluation
-        binding = statement.substitution_binding(current)
-        if not binding:
+        seen.add(id(node))
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, ClassDef, Lambda)):
             continue
-        for name, state in binding.items():
-            if not isinstance(name, str):
-                continue
-            node = state.state if isinstance(state, BindingEntryV1) else state
-            latch[name] = node.evaluation if isinstance(node, EvaluationRef) else None
-        current.update(binding)
-    return {name: key for name, key in latch.items() if key is not None}
+        if isinstance(node, LoopRecurrenceStatement):
+            runtime = getattr(node.construction, "loop_runtime", None)
+            if runtime is not None:
+                for name, coordinate_cid in zip(
+                    runtime.carried_names, node.binding_coordinate_cids, strict=True
+                ):
+                    write(name, coordinate_cid)
+            continue
+        evaluation = getattr(node, "evaluation", None)
+        if isinstance(node, (AugAssign, NamedExpr)) and isinstance(node.target, Name):
+            write(node.target.id, evaluation)
+        elif isinstance(node, Assign):
+            for target in node.targets:
+                for name in _target_bound_names(target):
+                    if name not in writes:
+                        continue
+                    write(name, carried_write_key(node.fragment, name))
+                    if isinstance(evaluation, str):
+                        write(name, projection_key(evaluation, name))
+        stack.extend(reversed([child for _f, _i, child in node.children()]))
+        halted_finally = getattr(node, "try_finalbody_halted", None)
+        if isinstance(halted_finally, tuple):
+            stack.extend(reversed(halted_finally))
+    return {name: tuple(keys) for name, keys in writes.items()}
 
 
 def _refuse_deferred_carried_writes(loop, carried_names) -> None:
@@ -120,7 +160,7 @@ def _refuse_deferred_carried_writes(loop, carried_names) -> None:
 
     That walrus writes when the generator is consumed, and its write is not
     carried out of the consumer: the value the next item begins with (the
-    latch, ``_latch_evaluations``) and the value the loop publishes would be
+    latch, ``_carried_writes``) and the value the loop publishes would be
     the header's or an earlier write's, while Python's may be the
     generator's.  Undecided, so refused; a read after the generator outside
     a carried name is refused at the read (``EvaluationRefSugar``)."""
@@ -852,7 +892,8 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
 
         pattern = loop.unit.require_target_pattern(loop, loop.target)
         target_names = set(pattern.names)
-        latches = _latch_evaluations(loop.body, scope)
+        writes = _carried_writes(loop.body, carried_names)
+        else_writes = _carried_writes(loop.orelse, carried_names)
 
         def header(name):
             # The loop target is bound per item by the recurrence itself.
@@ -861,7 +902,7 @@ def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectio
             return _loop_header_evaluation_key(loop, name, scope)
 
         carried_evaluations = tuple(
-            (header(name), latches.get(name)) for name in carried_names
+            (header(name), writes[name], else_writes[name]) for name in carried_names
         )
         construction = replace(
             construction,

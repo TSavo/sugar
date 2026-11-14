@@ -139,10 +139,11 @@ def test_a_live_loop_latches_its_walrus() -> None:
     )
     runtime = loop.construction.loop_runtime
     assert runtime.carried_names == ("t",)
-    [(header, latch)] = runtime.carried_evaluations
+    [(header, writes, else_writes)] = runtime.carried_evaluations
     # The item hands on its walrus's write, as it hands on `t += v`'s.
-    assert latch == walrus.evaluation
-    assert latch != header
+    assert writes == (walrus.evaluation,)
+    assert walrus.evaluation != header
+    assert else_writes == ()
 
 
 def test_the_latch_is_the_items_walrus_write() -> None:
@@ -155,7 +156,7 @@ def test_the_latch_is_the_items_walrus_write() -> None:
         site="walrus-latch",
     )
     runtime = SimpleNamespace(
-        carried_names=("t",), carried_evaluations=((HEADER, WALRUS),)
+        carried_names=("t",), carried_evaluations=((HEADER, (WALRUS,), ()),)
     )
     ctx = _root("walrus-latch")
     with entered(loop_iteration_segment(LOOP, 0)):

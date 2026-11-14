@@ -492,17 +492,19 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
     @staticmethod
     def _carried_evaluations(runtime):
-        """``(header, latch)`` per carried name; a runtime that names none
-        carries its names by name alone."""
-        pairs = tuple(getattr(runtime, "carried_evaluations", ()))
-        if len(pairs) != len(runtime.carried_names):
-            return tuple((None, None) for _ in runtime.carried_names)
-        return pairs
+        """``(header, writes, else_writes)`` per carried name; a runtime that
+        names none has no header and no writes for any name."""
+        triples = tuple(getattr(runtime, "carried_evaluations", ()))
+        if len(triples) != len(runtime.carried_names):
+            return tuple((None, (), ()) for _ in runtime.carried_names)
+        return triples
 
     def _enter_header(self, runtime, ctx, carried):
-        """Bind this item's header evaluation of each carried name: the value
-        the item begins with, under the header's key qualified by this item
-        (``evaluation_here``; the caller has entered the item).  The body's
+        """Bind the header evaluation of each carried name: the value an item
+        begins with (``carried``), under the header's key qualified by where
+        it is bound (``evaluation_here``): inside an item (the caller has
+        entered it), that item's header; after the last item, the header the
+        ``else`` suite reads, outside every item.  The body's and the else's
         reads of a carried name are references to it (``For.substitute``)."""
         from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
         from sugar_lift_py_tests.temporal import bind_temporal
@@ -515,7 +517,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 None if temporal is None else temporal.value_if_bound(name)
                 for name in runtime.carried_names
             )
-        for (header, _latch), value in zip(
+        for (header, _writes, _else_writes), value in zip(
             self._carried_evaluations(runtime), carried, strict=True
         ):
             if header is None or value is None:
@@ -531,33 +533,56 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
 
     def _latched(self, runtime, ctx, index):
         """The value of each carried name item ``index`` hands on: the latest
-        of the evaluation of the body's last binder of it (``x += e``, a
-        walrus ``(x := e)``), this item's header, and a write of the name a
-        binder that is no statement evaluation made (an assignment, a nested
-        loop's publication, a dynamic unpack).  Read inside item ``index``,
-        so each key is that item's.  The loop publishes the last item's
-        latch under the name's binding coordinate, which is what a read after
-        the loop reads (a walrus's included: ``_substitute_body_tracked``)."""
+        of every write of it in the body (``x += e``, a walrus ``(x := e)``,
+        an assignment, a nested loop's publication) and this item's header
+        (``_latest_written``).  Read inside item ``index``, so each key is
+        that item's.  The loop publishes the last item's latch under the
+        name's binding coordinate, which is what a read after the loop reads
+        (a walrus's included: ``_substitute_body_tracked``)."""
         from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
-        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
 
         temporal = getattr(ctx, "temporal", None)
         if temporal is None:
             # Nothing to latch from: the next item and the publication read
             # the names, as they did (and refuse there, by name, if unbound).
             return None
-        values = []
         with entered(loop_iteration_segment(self.target_cid, index)):
-            for name, (header, latch) in zip(
-                runtime.carried_names,
-                self._carried_evaluations(runtime),
-                strict=True,
-            ):
-                keys = tuple(
-                    evaluation_here(key) for key in (latch, header) if key is not None
-                )
-                binding = temporal.latest(*keys, name)
-                values.append(None if binding is None else binding.value)
+            return self._latest_written(runtime, temporal, else_suite=False)
+
+    def _after_else(self, runtime, ctx):
+        """The value of each carried name the loop leaves with after its
+        ``else`` suite: the latest of every write of it in the suite and the
+        header the suite read it through (bound by ``_finish_iterator`` to
+        what the last item handed on).  Read where the suite ran, outside
+        every item."""
+        temporal = getattr(ctx, "temporal", None)
+        if temporal is None:
+            raise TypeError("loop recurrence omitted its temporal context")
+        return self._latest_written(runtime, temporal, else_suite=True)
+
+    def _latest_written(self, runtime, temporal, *, else_suite):
+        """Per carried name, the binding bound last of the keys every write of
+        it binds (the body's, or the ``else`` suite's:
+        ``LiveForRuntimeV1.carried_evaluations``) and the header's, qualified
+        by the reduction running now (``evaluation_here``).  A write never
+        binds the name: the latest write is the one that ran last on the path
+        taken, wherever it sits (an arm of an ``if``, before a ``continue``).
+        A loop target has no header: the recurrence binds it per item, under
+        its name."""
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+
+        values = []
+        for name, (header, writes, else_writes) in zip(
+            runtime.carried_names,
+            self._carried_evaluations(runtime),
+            strict=True,
+        ):
+            keys = tuple(
+                evaluation_here(key) for key in (else_writes if else_suite else writes)
+            )
+            start = name if header is None else evaluation_here(header)
+            binding = temporal.latest(*keys, start)
+            values.append(None if binding is None else binding.value)
         return tuple(values)
 
     def _project_iteration_target(self, pattern, value, ctx):
@@ -653,9 +678,13 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             return self._publish_runtime_bindings(
                 runtime, ctx, entries=entries, carried=carried
             )
-        # The else runs once, after every item, and reads and writes names; the
-        # loop leaves with what it left.
-        otherwise = reduce_block_to_exitset(runtime.else_sugars, ctx)
+        # The else runs once, after every item.  It reads each carried name
+        # through the header, bound here, outside every item, to what the last
+        # item handed on (``carried``); the loop leaves with the latest of the
+        # else's writes of each name and that header (``_after_else``).
+        otherwise = reduce_block_to_exitset(
+            runtime.else_sugars, self._enter_header(runtime, ctx, carried)
+        )
         if not isinstance(otherwise, ExitSet) or len(otherwise.exits) != 1:
             return otherwise
         if not isinstance(otherwise.exits[0], Completed):
@@ -667,6 +696,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 runtime,
                 state.context,
                 entries=(*entries, *state.entries),
+                carried=self._after_else(runtime, state.context),
                 fall_through=state.fall_through,
                 can_fall_through=state.can_fall_through,
             )
@@ -682,8 +712,10 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         fall_through=(),
         can_fall_through=True,
     ):
-        """Publish each carried name's value as the loop leaves: ``carried``
-        when the leaving item latched it (``_latched``), else the name."""
+        """Publish each carried name's value as the loop leaves: ``carried``,
+        what the leaving item (``_latched``) or the ``else`` suite
+        (``_after_else``) left it with; without it (an item entered directly,
+        with no values handed to it) the name."""
         from sugar_lift_py_tests.floor.block_value import BlockValue
         from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
 

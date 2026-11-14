@@ -3593,9 +3593,10 @@ def _loop_header_evaluation_key(loop, name: str, scope) -> str:
 
 
 def _loop_header_bindings(loop, names, scope) -> dict:
-    """The body scope's binding of each name ``loop`` carries into its body:
-    a reference to the loop header's evaluation of it (temporal choice 1,
-    #7661), never the bare name looked up by spelling.
+    """The body scope's binding of each name ``loop`` carries into its body
+    (and, for a live ``for``, into its ``else`` suite): a reference to the
+    loop header's evaluation of it (temporal choice 1, #7661), never the bare
+    name looked up by spelling.
 
     A carried name is one the body rebinds that is bound before the loop
     (a ``BindingEntryV1`` in ``scope``: the same test
@@ -9706,7 +9707,10 @@ class For(Statement):
             # evaluation of it, the value the item began with, bound per item
             # by the recurrence (``_loop_header_bindings``).  The loop target is
             # bound per item by the recurrence itself and stays masked.  The
-            # ``else`` runs once, after every item: it reads names as before.
+            # ``else`` runs once, after every item: it reads every name the
+            # loop carries through the same header, which the recurrence binds
+            # once more, outside every item, to the value the last item handed
+            # on.
             with reduction_span(sugar="For.symbolic", role="temporal", site=where):
                 target_names = set(
                     self.unit.require_target_pattern(self, self.target).names
@@ -9721,10 +9725,18 @@ class For(Statement):
                     **bs,
                     **_loop_header_bindings(self, bound - target_names, scope),
                 }
+                else_scope = {
+                    **bs,
+                    **_loop_header_bindings(
+                        self,
+                        (bound | For._stmts_bound_names(self.orelse)) - target_names,
+                        scope,
+                    ),
+                }
                 changed = {}
                 if iter_changed:
                     changed["iter"] = new_iter
-                for f, field_scope in (("body", body_scope), ("orelse", bs)):
+                for f, field_scope in (("body", body_scope), ("orelse", else_scope)):
                     new, d = self._substitute_body(getattr(self, f), field_scope)
                     if d:
                         changed[f] = new
