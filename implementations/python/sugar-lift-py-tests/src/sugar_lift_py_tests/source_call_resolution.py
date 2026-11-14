@@ -124,7 +124,12 @@ def module_value_name(value):
 
 
 def cpython_cited_fold(
-    unprojected, arg_values, keyword_names, site=None, language_callee=None
+    unprojected,
+    arg_values,
+    keyword_names,
+    site=None,
+    language_callee=None,
+    callsite=None,
 ):
     """A stdlib call with no projected body whose result CPython's source decides.
 
@@ -133,8 +138,16 @@ def cpython_cited_fold(
     projected body, never which callee it is.
 
     ``language_callee`` is the ``LanguageCallee`` the Call node bound the
-    callee to; ``importlib.import_module`` and ``operator.index`` are
-    recognised by that member (their binding), never by the callee's name.
+    callee to; ``importlib.import_module``, ``operator.index`` and the
+    dunder-invoking builtins are recognised by that member (their binding),
+    never by the callee's name.
+
+    A dunder-invoking builtin (``builtin_dunder_call``) whose every operand
+    is a ground value is decided by the builtin's own semantics on the
+    pinned interpreter (``_builtin_ground_fold``): ``int('3')`` completes
+    with ``3``, ``int('x')`` is the one ``ValueError`` halt.  ``callsite`` is
+    the call's coordinate, the completed value when the result is not a
+    ground value the floor holds.
 
     ``operator.index(a)`` is ``_operator.index`` (Modules/_operator.c,
     ``_operator_index``: ``return PyNumber_Index(a);``).  In
@@ -153,6 +166,10 @@ def cpython_cited_fold(
         return None
     from sugar_source_tree.nodes import LanguageCallee
 
+    if language_callee in _dunder_builtins()[0]:
+        return _builtin_ground_fold(
+            language_callee, arg_values, keyword_names, site, callsite
+        )
     if language_callee is LanguageCallee.IMPORTLIB_IMPORT_MODULE:
         # ``importlib.import_module(name)`` (Lib/importlib/__init__.py) with
         # a constant top-level absolute name and no ``package``: the pinned
@@ -190,6 +207,171 @@ def cpython_cited_fold(
     return None
 
 
+# A floor value that is not a ground value the host interpreter can be handed.
+_NOT_GROUND = object()
+
+
+def _host_ground(value, depth=0):
+    """The object a ground floor value denotes, else ``_NOT_GROUND``.
+
+    Only values whose every part is a known value: ``int``/``float``
+    (``TermValue``), ``str``, ``bytes``, ``None``, ``True``/``False`` and
+    lists, tuples and dicts of them.  A set is not handed over: iterating a
+    set of strings follows the per-process string hash, so what a builtin
+    reads from it is not the same on every run.  A value known only by its
+    type (a call result, a comprehension, a formal) is not ground."""
+    from .floor.bytes_value import BytesValue
+    from .floor.dict_value import DictValue
+    from .floor.list_value import ListValue
+    from .floor.none_value import NoneValue
+    from .floor.string_value import StringValue
+    from .floor.term_value import TermValue
+    from .floor.tuple_value import TupleValue
+    from .sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from .sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    if depth > 32:
+        return _NOT_GROUND
+    kind = type(value)
+    if kind is TermValue:
+        return value.value if type(value.value) in (int, float) else _NOT_GROUND
+    if kind is StringValue:
+        return value.value if type(value.value) is str else _NOT_GROUND
+    if kind is BytesValue:
+        return value.value if type(value.value) is bytes else _NOT_GROUND
+    if kind is NoneValue:
+        return None
+    if kind is TrueBoolLiteralSugar:
+        return True
+    if kind is FalseBoolLiteralSugar:
+        return False
+    if kind in (ListValue, TupleValue):
+        members = tuple(_host_ground(e, depth + 1) for e in value.elements)
+        if any(member is _NOT_GROUND for member in members):
+            return _NOT_GROUND
+        return list(members) if kind is ListValue else members
+    if kind is DictValue:
+        pairs = tuple(
+            (_host_ground(k, depth + 1), _host_ground(v, depth + 1))
+            for k, v in value.entries
+        )
+        if any(k is _NOT_GROUND or v is _NOT_GROUND for k, v in pairs):
+            return _NOT_GROUND
+        try:
+            return dict(pairs)
+        except TypeError:
+            return _NOT_GROUND
+    return _NOT_GROUND
+
+
+def _ground_floor(raw, site, depth=0):
+    """The floor value for a ground result ``raw``, else None.
+
+    The inverse of ``_host_ground`` over the same values; a non-finite
+    float, a set, an iterator or any other object is not held as a value
+    here."""
+    import math
+
+    from .floor.bytes_value import BytesValue
+    from .floor.dict_value import DictValue
+    from .floor.list_value import ListValue
+    from .floor.none_value import NoneValue
+    from .floor.string_value import StringValue
+    from .floor.term_value import TermValue
+    from .floor.tuple_value import TupleValue
+    from .sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
+    from .sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
+
+    if depth > 32:
+        return None
+    if raw is None:
+        return NoneValue()
+    if raw is True:
+        return TrueBoolLiteralSugar(site=site)
+    if raw is False:
+        return FalseBoolLiteralSugar(site=site)
+    kind = type(raw)
+    if kind is int:
+        return TermValue(raw)
+    if kind is float:
+        return TermValue(raw) if math.isfinite(raw) else None
+    if kind is str:
+        return StringValue(raw)
+    if kind is bytes:
+        return BytesValue(raw)
+    if kind in (list, tuple):
+        members = tuple(_ground_floor(e, site, depth + 1) for e in raw)
+        if any(member is None for member in members):
+            return None
+        return ListValue(members) if kind is list else TupleValue(members)
+    if kind is dict:
+        pairs = tuple(
+            (_ground_floor(k, site, depth + 1), _ground_floor(v, site, depth + 1))
+            for k, v in raw.items()
+        )
+        if any(k is None or v is None for k, v in pairs):
+            return None
+        return DictValue(pairs)
+    return None
+
+
+def _builtin_ground_fold(language_callee, arg_values, keyword_names, site, callsite):
+    """A dunder-invoking builtin over ground operands, decided, or None.
+
+    Every operand is a known value (``_host_ground``), so every dunder the
+    builtin invokes is CPython's own and its outcome is the builtin's
+    semantics on those values: the pinned interpreter's own builtin, bound
+    to the same ``LanguageCallee`` member, applied to them.  A raise is the
+    one ground halt with its builtin exception class (``int('x')``:
+    ``ValueError``); a completion is the result's floor value (``int('3')``:
+    ``3``), or the call's coordinate when the result is not a ground value
+    the floor holds (an iterator, a set, a ``hash``, which follows the
+    per-process string hash).  An operand known only by its type, a keyword
+    actual, or ``print`` (whose effect is output) is not decided here: None,
+    and the call stays the one unanswered call."""
+    import builtins
+
+    from sugar_source_tree.nodes import LanguageCallee
+
+    from .outcome import ExitSet
+    from .temporal.builtin_name_bindings import BUILTIN_EXCEPTION_NAMES
+
+    if keyword_names or site is None:
+        return None
+    if language_callee is LanguageCallee.BUILTIN_PRINT:
+        return None
+    operands = tuple(_host_ground(value) for value in arg_values)
+    if any(operand is _NOT_GROUND for operand in operands):
+        return None
+    builtin_name = language_callee.value.rsplit(".", 1)[1]
+    try:
+        result = getattr(builtins, builtin_name)(*operands)
+    except (MemoryError, RecursionError):
+        return None
+    except Exception as exc:
+        raised = type(exc).__name__
+        if (
+            raised not in BUILTIN_EXCEPTION_NAMES
+            or getattr(builtins, raised, None) is not type(exc)
+        ):
+            return None
+        from .floor.ground_exit import ground_exceptional_exit
+
+        return ground_exceptional_exit(
+            exception_name=raised,
+            site=site,
+            owner=f"cpython_cited_fold:{builtin_name}",
+        )
+    value = None
+    if language_callee is not LanguageCallee.BUILTIN_HASH:
+        value = _ground_floor(result, site)
+    if value is None:
+        value = _occurrence_result(callsite, site)
+    if value is None:
+        return None
+    return ExitSet.completed(value)
+
+
 @dataclass(frozen=True)
 class UnknownCalleeCallV1:
     """A call nothing here answers: not bridged, stated one way.
@@ -199,7 +381,9 @@ class UnknownCalleeCallV1:
     door cited off the enrolled population (``call-target-off-population``:
     stdlib or an unenrolled distribution, whose body was not looked at), or
     a builtin over an operand that is not a decided builtin (``len(c)``: its
-    ``__len__`` is not CPython's own, ``builtin_dunder_call``): no
+    ``__len__`` is not CPython's own, ``builtin_dunder_call``), or over an
+    operand decided by its type but not its value (``int(s)`` with ``s`` a
+    ``str`` nothing here knows): no
     body, contract or floor testified to what runs, so the call may raise
     anything
     (``NameError`` when the name is unbound, ``TypeError`` when the value is
@@ -247,46 +431,6 @@ class UnknownCalleeCallV1:
             ),
             guard=completes,
             owed=owed,
-        )
-
-
-@dataclass(frozen=True)
-class BuiltinValueCallV1:
-    """A builtin over decided builtin operands that CPython may still refuse.
-
-    ``int('x')`` raises ``ValueError``, ``chr(-1)`` ``ValueError``,
-    ``max([])`` ``ValueError``, ``len(5)`` ``TypeError``, ``divmod(1, 0)``
-    ``ZeroDivisionError`` -- every dunder is CPython's own, yet whether the
-    call completes depends on the operands' values, which this call does not
-    evaluate.  So it completes only under ``python:builtin_call.completes(
-    python:builtin_call(name, site))`` and halts with an
-    ``UndeterminedRaiseEffect`` (owner ``BuiltinCall:<name>``) under the
-    complement -- the #7585 law.  Only the shapes ``builtin_call_total``
-    lists, which CPython documents as never raising, complete outright.
-    """
-
-    builtin_name: str
-
-    def faces(self, callsite, site):
-        from .effect.raise_effect import UndeterminedRaiseEffect
-        from .ir import atomic, ctor, str_const
-        from .occurrence import occurrence_key
-        from .outcome.exit_set import ExitSet
-
-        key = occurrence_key(site)
-        call = ctor(
-            "python:builtin_call",
-            (str_const(self.builtin_name), str_const(key)),
-        )
-        completes = atomic("python:builtin_call.completes", [call])
-        return ExitSet.two_faced(
-            _occurrence_result(callsite, site),
-            UndeterminedRaiseEffect(
-                blame=str(site) if site is not None else None,
-                occurrence=key if site is not None else None,
-                producer_node_owner=f"BuiltinCall:{self.builtin_name}",
-            ),
-            guard=completes,
         )
 
 
@@ -667,9 +811,12 @@ def builtin_dunder_call(language_callee, arg_values, keyword_names=()):
     is not CPython's own: whether it exists and what it raises is not decided
     here, so the call is the one unanswered call (``UnknownCalleeCallV1``:
     two-faced, owed as ``undecided``/``unanswered``, #7757).  Decided
-    operands may still be refused by value (``BuiltinValueCallV1``, a raise
-    set the language fixes) unless ``builtin_call_total`` lists the shape.
-    Each names the builtin its binding's target symbol names."""
+    operands complete outright only on a shape ``builtin_call_total`` lists;
+    otherwise CPython may still refuse them by value, so the call is the same
+    one unanswered call, which ``cpython_cited_fold`` decides when every
+    operand is a ground value (``int('3')`` is ``3``, ``int('x')`` the one
+    ``ValueError`` halt) and leaves unanswered when an operand is known only
+    by its type.  Each names the builtin its binding's target symbol names."""
     dunder, shallow = _dunder_builtins()
     if language_callee not in dunder:
         return None
@@ -678,8 +825,6 @@ def builtin_dunder_call(language_callee, arg_values, keyword_names=()):
         decided = all(_builtin_container(value) for value in arg_values)
     else:
         decided = all(builtin_typed_value(value) for value in arg_values)
-    if not decided:
-        return UnknownCalleeCallV1(builtin_name)
-    if builtin_call_total(language_callee, arg_values, keyword_names):
+    if decided and builtin_call_total(language_callee, arg_values, keyword_names):
         return None
-    return BuiltinValueCallV1(builtin_name)
+    return UnknownCalleeCallV1(builtin_name)

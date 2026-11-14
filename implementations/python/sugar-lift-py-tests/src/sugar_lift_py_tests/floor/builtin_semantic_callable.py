@@ -142,11 +142,11 @@ class BuiltinSemanticCallable(FloorValue):
         Constructing ``set``/``tuple``/``dict`` iterates the operand (its
         ``__iter__`` and, for ``set``/``dict``, its members' ``__hash__``/
         ``__eq__``), which may raise; the call completes outright only on a
-        shape ``builtin_call_total`` lists.  Otherwise it is the law the
-        frameless builtin call reads (``builtin_dunder_call``: the one
-        unanswered call for a dunder not CPython's own, or a decided operand
-        CPython may still refuse), else the one unanswered call
-        (``UnknownCalleeCallV1``): two-faced, its completed face this
+        shape ``builtin_call_total`` lists.  Over ground operands the
+        builtin's own semantics decide it (``cpython_cited_fold``:
+        ``tuple(5)`` is the one ``TypeError`` halt).  Otherwise it is the one
+        unanswered call (``builtin_dunder_call``, else
+        ``UnknownCalleeCallV1``): two-faced, its completed face this
         coordinate (#7757: a halt is never dropped).
         """
         from sugar_lift_py_tests.call_symbol import call_symbol
@@ -157,6 +157,7 @@ class BuiltinSemanticCallable(FloorValue):
             UnknownCalleeCallV1,
             builtin_call_total,
             builtin_dunder_call,
+            cpython_cited_fold,
         )
 
         args = operation.arguments
@@ -180,6 +181,16 @@ class BuiltinSemanticCallable(FloorValue):
         unanswered = builtin_dunder_call(language_callee, args, keyword_names)
         if unanswered is None:
             unanswered = UnknownCalleeCallV1(name)
+        folded = cpython_cited_fold(
+            unanswered,
+            args,
+            keyword_names,
+            site=operation.site,
+            language_callee=language_callee,
+            callsite=callsite,
+        )
+        if folded is not None:
+            return folded
         return unanswered.faces(callsite, operation.site)
 
     def _len(self, operation):
