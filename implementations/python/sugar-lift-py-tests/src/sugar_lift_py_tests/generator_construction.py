@@ -1384,7 +1384,12 @@ class GeneratorConstructionV1:
                 "schemaVersion": "1",
                 "allocationCoordinate": allocation_coordinate,
                 "frameCoordinate": frame_coordinate,
-                "bindingState": [repr(item) for item in binding_state],
+                "bindingState": [
+                    _generator_value_testimony(
+                        item, owner="GeneratorConstructionV1.allocate"
+                    )
+                    for item in binding_state
+                ],
                 "formalFloorCoordinateCids": [
                     item.coordinate_cid for item in formal_floor_bindings
                 ],

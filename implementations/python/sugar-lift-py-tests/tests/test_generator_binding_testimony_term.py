@@ -142,6 +142,38 @@ def test_mismatched_supplied_testimony_refuses_before_allocate():
         seal_bound_binding_entry_v1(entry, testimony=lying)
 
 
+class _WiredStub:
+    """A binding-state value whose testimony is its wire, not how it prints."""
+
+    def __init__(self, payload: dict, spelling: str) -> None:
+        self._payload = payload
+        self._spelling = spelling
+
+    def wire(self) -> dict:
+        return dict(self._payload)
+
+    def __repr__(self) -> str:
+        return self._spelling
+
+
+def test_instance_coordinate_reads_binding_testimony_not_repr():
+    """Two states that print alike are two instances; two that testify alike are one."""
+    printed_alike = (
+        _machine((_WiredStub({"n": 1}, "stub"),)),
+        _machine((_WiredStub({"n": 2}, "stub"),)),
+    )
+    assert printed_alike[0].instance_coordinate != printed_alike[1].instance_coordinate
+
+    testified_alike = (
+        _machine((_WiredStub({"n": 1}, "left"),)),
+        _machine((_WiredStub({"n": 1}, "right"),)),
+    )
+    assert (
+        testified_alike[0].instance_coordinate
+        == testified_alike[1].instance_coordinate
+    )
+
+
 def test_primitive_binding_stubs_still_allocate_without_entry_seal():
     """Existing non-entry binding stubs remain valid allocate inputs."""
     machine = _machine(("bound:x",))

@@ -24,7 +24,8 @@ class Sort:
         return isinstance(other, Sort) and self.ir_sort == other.ir_sort
 
     def __hash__(self) -> int:
-        return hash(repr(self.ir_sort))
+        # Hash over the same value equality reads: the IR sort itself.
+        return hash(self.ir_sort)
 
     def is_explicitly_coercible_to(self, other: "Sort") -> bool:
         return self == other

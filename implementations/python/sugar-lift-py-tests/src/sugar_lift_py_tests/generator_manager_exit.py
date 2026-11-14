@@ -140,12 +140,16 @@ def is_exception_effect(effect) -> bool:
 def _is_stop_iteration(effect) -> bool:
     from sugar_lift_py_tests.effect import RaiseEffect
 
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
     if not isinstance(effect, RaiseEffect):
         return False
     if effect.exception_name == "StopIteration":
         return True
-    # A subclass converts too: read the authenticated ancestry, never a name.
-    return any("StopIteration" in repr(term) for term in effect.exception_type_mro or ())
+    # A subclass converts too: read the authenticated ancestry by identity, the
+    # builtins StopIteration coordinate, never by how a term prints.
+    stop_iteration, _ = _builtin_exception_identity("StopIteration")
+    return stop_iteration in (effect.exception_type_mro or ())
 
 
 def _refusal(message: str, *, blame: str, context_effect=None):

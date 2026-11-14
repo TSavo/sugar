@@ -54,6 +54,20 @@ def test_real_literal_term_seals_value_sort_and_exact_occurrence() -> None:
     assert first_term != integer.to_term(owner="integer-sort-twin")
 
 
+def test_real_literal_term_names_its_value_as_its_term_value_does() -> None:
+    """One name per float: the canonical decimal, never the float's repr.
+
+    ``repr(1e-07)`` is ``'1e-07'``; the TermValue the literal desugars to names
+    the same value ``0.0000001``.  The construction term carries that one.
+    """
+    literal = _unary("~1e-07\n", "exponent.py").operand.sugar()
+    assert isinstance(literal, RealLiteralSugar)
+    value_term = literal.to_term(owner="real-exponent").args[1]
+    assert value_term == TermValue(1e-07).to_term(owner="real-exponent")
+    assert value_term.value == "0.0000001"
+    assert value_term.value != repr(1e-07)
+
+
 @dataclass(frozen=True)
 class _PrivateOperand(Sugar):
     site: object
