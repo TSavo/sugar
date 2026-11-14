@@ -82,11 +82,13 @@ class SubscriptSugar(ConstructedTermSugar):
         # complete.
         from sugar_lift_py_tests.floor.named_expression_value import (
             consume_operands,
+            written_by,
         )
 
         # The receiver and the index are operands: a walrus in either
         # (``(xs := ys)[0]``, ``xs[(i := 0)]``) binds once, through the one
-        # operand door.
+        # operand door.  The index is evaluated after the receiver, with its
+        # writes applied (``written_by``: ``(y := g())[h(y)]``).
         def subscript(receiver, index):
             return consume_operands(
                 lambda receiver, index: self._subscript(receiver, index, ctx),
@@ -94,12 +96,10 @@ class SubscriptSugar(ConstructedTermSugar):
                 index,
             )
 
-        receiver_outcome = self.receiver.desugar(ctx)
-        index_outcome = self.index.desugar(ctx)
-        return receiver_outcome.and_then(
-            lambda receiver: index_outcome.and_then(
-                lambda index: subscript(receiver, index)
-            )
+        return self.receiver.desugar(ctx).and_then(
+            lambda receiver: self.index.desugar(
+                written_by(receiver, ctx)
+            ).and_then(lambda index: subscript(receiver, index))
         )
 
     def _subscript(self, receiver, index, ctx):

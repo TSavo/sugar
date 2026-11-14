@@ -189,9 +189,11 @@ class NamedExpressionValue(FloorValue):
 # which peels the binds off them (``peel_walrus_binds``), runs the consumer on
 # the values they present, and carries the binds onto each completed result
 # (``carry_walrus_binds``); the statement applies them to its temporal
-# (``bind_walrus_binds``).  A read after the statement is an ``EvaluationRef``
-# to the walrus's key and resolves through it, never by evaluating the walrus's
-# value again (temporal choice 1, #7661).
+# (``bind_walrus_binds``).  A later operand of the same expression reduces
+# in the context the earlier ones leave (``written_by``, ``reduce_operands``).
+# A read after the walrus is an ``EvaluationRef`` to the walrus's key and
+# resolves through it, never by evaluating the walrus's value again (temporal
+# choice 1, #7661).
 
 
 def peel_walrus_binds(value) -> tuple[tuple["NamedExpressionValue", ...], object]:
@@ -250,8 +252,12 @@ def written_by(operand, ctx):
     completes, so an operand after it reads its write: in ``(y := f(x)) and
     y > 0`` the right operand's ``y`` is the walrus's value.  A consumer that
     evaluates one operand after another (``BinOpSugar``, ``BoolOpSugar``, a
-    comparison, ``ChainedCompareSugar``, ``IfExpSugar``'s arms after its test)
-    hands the later one this context, and the earlier one to the one operand
+    comparison, ``ChainedCompareSugar``, ``IfExpSugar``'s arms after its test,
+    a call's later actuals and the call itself, a subscript's index after its
+    receiver, an f-string's later parts, a live ``for``'s items after its
+    iterable, and every fold of ``reduce_operands``: a display's elements, a
+    slice's bounds, a container call's arguments) hands the later one this
+    context, and the earlier one to the one operand
     door (``consume_operands``) as before.  A read after a walrus in its
     statement is a reference to the walrus's key (``nodes._scope_after``);
     inside a comprehension only this bind holds that key in the member
@@ -264,6 +270,45 @@ def written_by(operand, ctx):
     if not binds or (ctx is not None and not hasattr(ctx, "temporal")):
         return ctx
     return bind_walrus_binds(binds, ctx)
+
+
+def reduce_operands(operands, ctx, *, factored: bool = False):
+    """``operands`` (sugars) reduced left to right, each in the context the
+    ones before it leave (``written_by`` of each in turn), completed as the
+    tuple of their values: ``[(b := 2), b]`` reads ``b`` as 2.  Each value
+    still carries its own binds, for ``consume_operands`` to carry onto the
+    consumer's result.
+
+    The one left-to-right operand fold: a display's elements, a slice's
+    bounds, a container call's arguments.  An omitted operand (``None``: a
+    slice's absent bound) presents ``None`` and carries nothing.  An operand
+    is reduced only on a completed arm of the ones before it: one that halts
+    leaves the later ones unevaluated, as Python does.  ``factored``: each
+    operand presents at most one completed arm (``factored_operand``, #6324),
+    for a fold whose accumulator would otherwise multiply by every
+    partitioning operand."""
+    from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.outcome.exit_set import factored_operand
+
+    def reduce_next(collected, operand):
+        if operand is None:
+            return ExitSet.completed((*collected, None))
+        operand_ctx = ctx
+        for earlier in collected:
+            operand_ctx = written_by(earlier, operand_ctx)
+        outcome = operand.desugar(operand_ctx)
+        if factored:
+            outcome = factored_operand(outcome)
+        return outcome.and_then(
+            lambda value: ExitSet.completed((*collected, value))
+        )
+
+    outcome = ExitSet.completed(())
+    for operand in operands:
+        outcome = outcome.and_then(
+            lambda collected, operand=operand: reduce_next(collected, operand)
+        )
+    return outcome
 
 
 def consume_operands(step, *operands):
@@ -279,7 +324,11 @@ def consume_operands(step, *operands):
     under after the operand ran: a short-circuit's later operand is consumed
     inside its continuing face, so its bind never reaches the stopping face.
     A halted arm leaves the statement and carries nothing.  With no bind
-    among the operands this is ``step(*operands)`` exactly."""
+    among the operands this is ``step(*operands)`` exactly.
+
+    The operands were reduced left to right, each under the state after the
+    ones before it (``written_by``, ``reduce_operands``): a later
+    operand's read of an earlier operand's walrus reads its key."""
     binds: tuple = ()
     presented = []
     for operand in operands:

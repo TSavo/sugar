@@ -29,6 +29,7 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import GuardedFaces, TermValue
 from sugar_lift_py_tests.floor.block_value import BlockValue
+from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.floor.branch_result_coordinate import BranchResultSlot
 from sugar_lift_py_tests.floor.named_expression_value import (
     NamedExpressionValue,
@@ -36,6 +37,7 @@ from sugar_lift_py_tests.floor.named_expression_value import (
     carry_walrus_binds,
     consume_operands,
     peel_walrus_binds,
+    reduce_operands,
 )
 from sugar_lift_py_tests.floor.return_value import ReturnValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
@@ -67,7 +69,13 @@ from sugar_lift_py_tests.sugar.name_sugar import NameSugar
 from sugar_lift_py_tests.sugar.named_expr_sugar import NamedExprSugar
 from sugar_lift_py_tests.temporal.temporal_context import EVALUATION_PREFIX
 from sugar_lift_python_source.canonical import blake3_512_of
-from sugar_source_tree.nodes import Call, EvaluationRef, FunctionDef, Return
+from sugar_source_tree.nodes import (
+    Call,
+    EvaluationRef,
+    FunctionDef,
+    LoopRecurrenceStatement,
+    Return,
+)
 from sugar_source_tree.tree import SourceFile
 
 KEY = EVALUATION_PREFIX + "blake3-512:test-walrus-evaluation"
@@ -1076,3 +1084,113 @@ def test_a_later_short_circuit_operand_reads_the_value_its_walrus_wrote(
 ) -> None:
     returned = _returned_value(_call_outcome("def f():\n" + body + "\nf()\n"))
     assert returned == TermValue(expected)
+
+
+# ---------------------------------------------------------------------------
+# At reduce every operand is evaluated after the ones before it, with their
+# walrus writes applied (``written_by``, ``reduce_operands``)
+# ---------------------------------------------------------------------------
+
+_SUM = "def g(p, q):\n    return p + q\n\n\n"
+
+
+@pytest.mark.parametrize(
+    ("source", "expected"),
+    [
+        # an arithmetic operand after the walrus
+        ("def f():\n    y = 1\n    return (y := 3) + y\n\nf()\n", TermValue(6)),
+        # a subscript's index walrus, read by a later arithmetic operand
+        (
+            "def f():\n    i = 9\n    xs = [5, 6]\n    return xs[(i := 0)] + i\n"
+            "\nf()\n",
+            TermValue(5),
+        ),
+        # a call's later positional and keyword actuals
+        (
+            _SUM + "def f():\n    a = 9\n    return g((a := 1), a)\n\nf()\n",
+            TermValue(2),
+        ),
+        (
+            _SUM + "def f():\n    a = 9\n    return g((a := 1), q=a)\n\nf()\n",
+            TermValue(2),
+        ),
+        # a display's later element
+        (
+            "def f():\n    b = 9\n    return ((b := 2), b)\n\nf()\n",
+            TupleValue((TermValue(2), TermValue(2))),
+        ),
+        (
+            "def f():\n    b = 9\n    return [(b := 2), b]\n\nf()\n",
+            ListValue((TermValue(2), TermValue(2))),
+        ),
+    ],
+)
+def test_a_later_operand_reads_an_earlier_operands_walrus(
+    source: str, expected
+) -> None:
+    assert _returned_value(_call_outcome(source)) == expected
+
+
+def test_the_operand_fold_reduces_each_operand_after_the_ones_before_it() -> None:
+    read = EvaluationRefSugar(evaluation=KEY, name="b", site=None, walrus=True)
+    values = _value(reduce_operands((_walrus_sugar("b", 2), read), _root("fold")))
+    binds, presented = peel_walrus_binds(values[0])
+    assert presented == TermValue(2)
+    assert [bind.evaluation for bind in binds] == [KEY]
+    assert values[1] == TermValue(2)
+
+
+# ---------------------------------------------------------------------------
+# A call's closure cells are read after its arguments; a live loop starts a
+# carried name from its iterable's walrus
+# ---------------------------------------------------------------------------
+
+_CAPTURED_REBOUND_BY_ARGUMENT = (
+    "def f():\n"
+    "    y = 1\n"
+    "    def g(v):\n"
+    "        return y + v\n"
+    "    return g((y := 2))\n"
+)
+
+
+def test_a_call_reads_its_closure_cell_after_its_arguments() -> None:
+    rewritten = _function(_CAPTURED_REBOUND_BY_ARGUMENT).substitute({})
+    walrus = next(w for w in _walruses(rewritten) if w.target.id == "y")
+    ret = rewritten.body[-1]
+    assert isinstance(ret, Return)
+    call = ret.value
+    assert isinstance(call, Call)
+    ((name, cell),) = call.closure_cells
+    assert name == "y"
+    # Not the `y = 1` before the call: the argument's walrus wrote first.
+    _assert_walrus_reference(cell, walrus)
+
+
+def test_a_called_closure_reads_the_arguments_walrus() -> None:
+    returned = _returned_value(
+        _call_outcome(_CAPTURED_REBOUND_BY_ARGUMENT + "\nf()\n")
+    )
+    assert returned == TermValue(4)
+
+
+def test_a_live_loop_starts_a_carried_name_from_its_iterables_walrus() -> None:
+    rewritten = _function(
+        "def f(xs):\n"
+        "    n = 100\n"
+        "    for x in xs[(n := 0):]:\n"
+        "        n = n + x\n"
+        "    return n\n"
+    ).substitute({})
+    (walrus,) = _walruses(rewritten)
+    loop = next(
+        node for node in rewritten.walk() if isinstance(node, LoopRecurrenceStatement)
+    )
+    runtime = loop.construction.loop_runtime
+    initial = dict(
+        zip(runtime.carried_names, runtime.initial_value_sugars, strict=True)
+    )["n"]
+    # The loop starts from the walrus's key, not the `n = 100` before it.
+    assert isinstance(initial, EvaluationRefSugar)
+    assert initial.walrus is True
+    assert initial.evaluation == walrus.evaluation

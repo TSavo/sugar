@@ -18053,10 +18053,22 @@ class Call(Expression):
         nor a lambda (``(lambda: y)()``, or a name bound to one,
         ``rewritten``'s callee through ``of``), and otherwise as
         ``_cells_at_call`` answers: the call then stays refused by name
-        (``CallSiteSugar``, ``ComputedCallSugar``)."""
+        (``CallSiteSugar``, ``ComputedCallSugar``).
+
+        The function runs after the callee and every argument are evaluated,
+        so the cells are read in the scope those leave (``_scope_after``): a
+        walrus in an argument that rebinds a captured name (``g((y :=
+        2))``) is the binding the body reads, through its key.  The callee
+        itself is the one this scope names before the arguments."""
         definition = self._closure_definition(scope, rewritten)
         if definition is None:
             return ()
+        if isinstance(rewritten, Call):
+            scope = _scope_after(
+                scope,
+                (self.func, *self.args, *self.keywords),
+                (rewritten.func, *rewritten.args, *rewritten.keywords),
+            )
         return self._cells_at_call(scope, definition)
 
     def _cells_at_call(self, scope, definition) -> tuple:

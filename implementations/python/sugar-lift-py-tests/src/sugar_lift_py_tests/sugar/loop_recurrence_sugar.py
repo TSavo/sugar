@@ -138,8 +138,20 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             raise LoopWireError("for recurrence omitted its live iterable sugar")
         if iterable_sugar.site.seal().cid != iterable_cid:
             raise LoopWireError("loop recurrence iterable occurrence mismatch")
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            peel_walrus_binds,
+            written_by,
+        )
+
+        # The iterable is evaluated once, before the first item: a walrus in
+        # it has written before the pre-loop values are read and every item
+        # runs (``written_by``).  A carried name it writes starts the loop
+        # from the walrus's key (``construct_live_loop_recurrence``).  The
+        # loop iterates the value the iterable presents.
         return iterable_sugar.desugar(ctx).and_then(
-            lambda iterable: self._desugar_with_iterable(iterable, ctx)
+            lambda iterable: self._desugar_with_iterable(
+                peel_walrus_binds(iterable)[1], written_by(iterable, ctx)
+            )
         )
 
     def _desugar_with_iterable(self, iterable, ctx):

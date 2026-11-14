@@ -99,16 +99,29 @@ class ComputedCallSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        # The callee, then each actual, then the call: each is evaluated with
+        # the walrus writes of the ones before it applied (``written_by``), so
+        # a later actual and the closure cells the call reads see an earlier
+        # actual's walrus.
+        from sugar_lift_py_tests.floor.named_expression_value import written_by
+
         return self.callee.desugar(ctx).and_then(
-            lambda callee: self._collect(callee, self.args, (), ctx)
+            lambda callee: self._collect(
+                callee, self.args, (), written_by(callee, ctx)
+            )
         )
 
     def _collect(self, callee, remaining: tuple, accumulated: tuple, ctx) -> ExitSet:
+        from sugar_lift_py_tests.floor.named_expression_value import written_by
+
         if remaining:
             head, *rest = remaining
             return head.desugar(ctx).and_then(
                 lambda value: self._collect(
-                    callee, tuple(rest), accumulated + (value,), ctx
+                    callee,
+                    tuple(rest),
+                    accumulated + (value,),
+                    written_by(value, ctx),
                 )
             )
         return self._collect_kwargs(callee, self.keywords, (), accumulated, ctx)
@@ -116,6 +129,8 @@ class ComputedCallSugar(ConstructedTermSugar):
     def _collect_kwargs(
         self, callee, remaining: tuple, kw_values: tuple, positional: tuple, ctx
     ) -> ExitSet:
+        from sugar_lift_py_tests.floor.named_expression_value import written_by
+
         if remaining:
             (name, sugar), *rest = remaining
             return sugar.desugar(ctx).and_then(
@@ -124,7 +139,7 @@ class ComputedCallSugar(ConstructedTermSugar):
                     tuple(rest),
                     kw_values + ((name, value),),
                     positional,
-                    ctx,
+                    written_by(value, ctx),
                 )
             )
         from sugar_lift_py_tests.floor.named_expression_value import (

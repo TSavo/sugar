@@ -505,11 +505,18 @@ def _conserve_unique_records(records):
 
 def construct_live_loop_recurrence(loop, scope: BindingMap) -> LiveLoopProjectionV1:
     """Construct, decode, project, then publish a loop's guarded post-state."""
-    from .nodes import For, While
+    from .nodes import For, While, _scope_after
     from .loop_recurrence import project_loop_post_binding
 
     if not isinstance(loop, (For, While)) or loop.owned_loop_target is None:
         raise BindingStateWireGap("live loop producer requires an owned For/While")
+    if isinstance(loop, For):
+        # The iterable is evaluated once, before the first item: a walrus in
+        # it that writes a name the body rebinds is the value the loop starts
+        # from (``for x in (ys := g()): ys = ...``), read through its key, as
+        # the body's header reads it (``For.substitute``).  Never the value
+        # the name had before the statement.
+        scope = _scope_after(scope, loop.iter, loop.iter)
     # A ``for`` rebinds its target on every item: a target bound before the
     # loop is carried, so the loop publishes the value it leaves with (the
     # last item's, or the pre-loop value when there was none), as it does for
