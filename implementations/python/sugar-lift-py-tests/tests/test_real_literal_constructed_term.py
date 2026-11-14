@@ -9,7 +9,7 @@ import pytest
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.no_call_body_attribution import _exceptional_exit_effects
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.real_literal_sugar import RealLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
@@ -64,7 +64,7 @@ class _PrivateOperand(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(TermValue(3.5))
+        return ExitSet.completed(TermValue(3.5))
 
 
 def test_private_operand_cannot_claim_real_literal_construction() -> None:

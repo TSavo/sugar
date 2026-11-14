@@ -20,7 +20,7 @@ from sugar_lift_py_tests.floor import ObjectValue, TermValue
 from sugar_lift_py_tests.floor.class_definition_value import ClassDefinitionValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import ClassDef, FunctionDef
@@ -49,10 +49,10 @@ def _pending_and_receiver():
         if isinstance(node, FunctionDef) and node.name == "helper"
     )
     class_outcome = class_def.sugar().desugar(None)
-    assert isinstance(class_outcome, Complete)
-    assert isinstance(class_outcome.value, ClassDefinitionValue)
-    receiver = class_outcome.value.construct_receiver_state_from_block(
-        None, class_outcome.value.class_definition_cid
+    class_value = class_outcome.completed_value()
+    assert isinstance(class_value, ClassDefinitionValue)
+    receiver = class_value.construct_receiver_state_from_block(
+        None, class_value.class_definition_cid
     )
     pending = helper.sugar().desugar(None)
     assert isinstance(receiver, ObjectValue)
@@ -134,18 +134,18 @@ def test_raw_state_substitutes_are_rejected_at_carrier_enrollment(lie: str) -> N
         substitute = receiver
     else:
         completed = receiver.setattr("other", TermValue(9), pending.site)
-        assert isinstance(completed, Complete)
-        substitute = completed.value
+        substitute = completed.completed_value()
+        assert substitute is not None
 
     with pytest.raises(TypeError, match="reducer-issued testimony"):
-        pending.and_then(lambda value: Complete(value), pre_effect_state=substitute)
+        pending.and_then(lambda value: ExitSet.completed(value), pre_effect_state=substitute)
 
 
 def test_explicit_none_is_rejected_at_carrier_enrollment() -> None:
     pending, _ = _pending_and_receiver()
 
     with pytest.raises(TypeError, match="reducer-issued testimony"):
-        pending.and_then(lambda value: Complete(value), pre_effect_state=None)
+        pending.and_then(lambda value: ExitSet.completed(value), pre_effect_state=None)
 
 
 def test_second_conflicting_state_enrollment_panics() -> None:
@@ -156,7 +156,7 @@ def test_second_conflicting_state_enrollment_panics() -> None:
 
     with pytest.raises(ConstructionPanic, match="second conflicting"):
         pending.and_then(
-            lambda value: Complete(value),
+            lambda value: ExitSet.completed(value),
             pre_effect_state=conflicting,
         )
 
@@ -177,7 +177,7 @@ def test_equal_state_reenrollment_retains_original_testimony() -> None:
     assert equal_state is not state
 
     retained = pending.and_then(
-        lambda value: Complete(value),
+        lambda value: ExitSet.completed(value),
         pre_effect_state=ReducerPreEffectStateV1._from_reducer(equal_state),
     )
 

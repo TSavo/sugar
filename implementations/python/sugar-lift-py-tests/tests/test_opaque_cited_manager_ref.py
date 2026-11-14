@@ -33,7 +33,7 @@ from sugar_lift_py_tests.effect import (
 )
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.with_opaque_cited_manager_sugar import (
     WithOpaqueCitedManagerSugar,
@@ -63,7 +63,7 @@ class ManagerSugar(Sugar):
         return None
 
     def desugar(self, ctx=None):
-        return Complete(
+        return ExitSet.completed(
             SymbolicValue(ctor(f"call:{self.name}", [str_const("ValueError")]))
         )
 
@@ -77,7 +77,7 @@ class RaisingBody(Sugar):
         return None
 
     def desugar(self, ctx=None):
-        return Incomplete(
+        return ExitSet.halted(
             RaiseEffect(
                 exception_type_coordinate=ctor("py.type", [str_const("ValueError")]),
                 occurrence="t.py:11:8",

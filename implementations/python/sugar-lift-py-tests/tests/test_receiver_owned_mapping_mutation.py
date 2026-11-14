@@ -8,7 +8,6 @@ from sugar_lift_py_tests.floor import (
     StringValue,
     TermValue,
 )
-from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.nodes import ClassDef
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -38,14 +37,14 @@ def test_builtin_super_setitem_carries_receiver_transition_and_none_separately()
         blame="site",
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, ReceiverOwnedMutationResult)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), ReceiverOwnedMutationResult)
     assert isinstance(
-        outcome.value.project_operation_receiver(None, owner="test"), NoneValue
+        outcome.completed_value().project_operation_receiver(None, owner="test"), NoneValue
     )
-    assert outcome.value.receiver_before is receiver
-    assert outcome.value.receiver_after.identity == receiver.identity
-    assert outcome.value.receiver_after.entries == (
+    assert outcome.completed_value().receiver_before is receiver
+    assert outcome.completed_value().receiver_after.identity == receiver.identity
+    assert outcome.completed_value().receiver_after.entries == (
         (StringValue("member"), TermValue(7)),
     )
 
@@ -87,7 +86,7 @@ def test_source_setitem_body_projects_updated_receiver_not_none_result():
         ReduceContext.root(owner="caller"),
     )
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, MappingObjectValue)
-    assert outcome.value.identity == receiver.identity
-    assert outcome.value.entries == ((StringValue("member"), TermValue(7)),)
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), MappingObjectValue)
+    assert outcome.completed_value().identity == receiver.identity
+    assert outcome.completed_value().entries == ((StringValue("member"), TermValue(7)),)

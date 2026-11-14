@@ -10,7 +10,7 @@ from sugar_lift_py_tests.floor import (
     StringValue,
     TermValue,
 )
-from sugar_lift_py_tests.outcome import Complete, Completed
+from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar, Sugar
 from sugar_lift_py_tests.sugar.receiver_field_store_state_sugar import (
@@ -43,7 +43,7 @@ class _StoreReceiverField(Sugar):
         return ()
 
     def desugar(self, ctx=None):
-        return Complete(ReceiverFieldStoreValue(self.receiver, "payload", self.value))
+        return ExitSet.completed(ReceiverFieldStoreValue(self.receiver, "payload", self.value))
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,7 @@ class _ReturnAlias(Sugar):
         return ()
 
     def desugar(self, ctx=None):
-        return Complete(ReturnValue(ctx.temporal.value_for(self.name)))
+        return ExitSet.completed(ReturnValue(ctx.temporal.value_for(self.name)))
 
 
 @dataclass(frozen=True)
@@ -78,7 +78,7 @@ class _FixedSugar(ConstructedTermSugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner: str):
         return self.value.to_term(owner=owner)
@@ -150,7 +150,7 @@ def test_class_initializer_universe_seats_its_constructed_receiver() -> None:
 
     outcome = function_universe_outcome(initializer)
 
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None
 
 
 def test_receiver_field_store_rebinds_the_same_receiver_for_the_tail():
@@ -197,7 +197,7 @@ def test_returned_alias_observes_updated_mapping_receiver_identity():
     assert isinstance(returned, MappingObjectValue)
     assert returned.identity == receiver.identity
     assert returned.entries == receiver.entries
-    assert returned.attribute("payload", "test") == Complete(TermValue(17))
+    assert returned.attribute("payload", "test") == ExitSet.completed(TermValue(17))
 
 
 def test_same_class_different_receiver_identity_is_not_rewritten():
@@ -280,11 +280,11 @@ def test_receiver_field_post_state_preserves_mapping_identity_and_entries() -> N
         "site",
     ).desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, MappingObjectValue)
-    assert outcome.value.identity == receiver.identity
-    assert outcome.value.entries == receiver.entries
-    assert outcome.value.attribute("owner", "test") == Complete(TermValue(7))
+    assert outcome.completed_value() is not None
+    assert isinstance(outcome.completed_value(), MappingObjectValue)
+    assert outcome.completed_value().identity == receiver.identity
+    assert outcome.completed_value().entries == receiver.entries
+    assert outcome.completed_value().attribute("owner", "test") == ExitSet.completed(TermValue(7))
 
 
 def test_receiver_field_post_state_preserves_defining_class_authority() -> None:
@@ -297,8 +297,8 @@ def test_receiver_field_post_state_preserves_defining_class_authority() -> None:
         _FixedSugar(receiver), _FixedSugar(TermValue(7)), "owner", "site"
     ).desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert outcome.value.defining_class is defining_class
+    assert outcome.completed_value() is not None
+    assert outcome.completed_value().defining_class is defining_class
 
 
 def test_receiver_field_post_state_does_not_borrow_foreign_class_authority() -> None:

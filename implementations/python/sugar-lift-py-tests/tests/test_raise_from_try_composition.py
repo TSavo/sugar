@@ -27,7 +27,7 @@ from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor import CallSiteValue, NoneValue, StringValue
 from sugar_lift_py_tests.floor.effect_coordinate import ObservedEffectValue
 from sugar_lift_py_tests.ir import ctor
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -45,18 +45,15 @@ def _desugar(source: str, *, name: str = "raise_from_try.py"):
 
 
 def _halt_effect(outcome) -> RaiseEffect:
-    """Project one RaiseEffect from Incomplete or a single-halt ExitSet."""
+    """Project one RaiseEffect from a single-halt ExitSet."""
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 
-    if isinstance(outcome, Incomplete):
-        assert isinstance(outcome.effect, RaiseEffect), type(outcome.effect)
-        return outcome.effect
     if isinstance(outcome, ExitSet):
         halted = [face for face in outcome.exits if isinstance(face, Halted)]
         assert len(halted) == 1, outcome.exits
         assert isinstance(halted[0].effect, RaiseEffect), type(halted[0].effect)
         return halted[0].effect
-    raise AssertionError(f"expected Incomplete|ExitSet halt, got {type(outcome)}")
+    raise AssertionError(f"expected an ExitSet halt, got {type(outcome)}")
 
 
 class Fixed(Sugar):
@@ -260,7 +257,7 @@ def test_from_none_twin_is_not_absent_from_clause():
 def test_halt_while_evaluating_cause_prevents_outer_raise():
     """If the cause expression halts, the outer RaiseEffect is never emitted."""
     outer = _call_exception("RuntimeError", "outer")
-    cause_halt = Incomplete(
+    cause_halt = ExitSet.halted(
         RaiseEffect(
             exception_name="KeyError",
             blame="unit.py:9:4",
@@ -269,7 +266,7 @@ def test_halt_while_evaluating_cause_prevents_outer_raise():
         )
     )
     sugar = RaiseSugar(
-        exception=Fixed(Complete(outer)),
+        exception=Fixed(ExitSet.completed(outer)),
         cause=Fixed(cause_halt),
         exception_name="RuntimeError",
         site=_site(1, 0),
@@ -281,7 +278,7 @@ def test_halt_while_evaluating_cause_prevents_outer_raise():
     assert effect.exception_name == "KeyError"
     assert effect.occurrence == "unit.py:9:4"
     assert effect.exception_name != "RuntimeError"
-    # Outer was constructed as Complete but never wrapped into a raise halt.
+    # Outer was constructed as a completion but never wrapped into a raise halt.
     assert not (
         isinstance(effect.raised_value, CallSiteValue)
         and effect.raised_value.target_name == "RuntimeError"
@@ -294,8 +291,8 @@ def test_successful_cause_then_outer_is_the_compose_twin():
     outer = _call_exception("RuntimeError", "outer")
     cause = _call_exception("KeyError", "inner")
     sugar = RaiseSugar(
-        exception=Fixed(Complete(outer)),
-        cause=Fixed(Complete(cause)),
+        exception=Fixed(ExitSet.completed(outer)),
+        cause=Fixed(ExitSet.completed(cause)),
         exception_name="RuntimeError",
         site=_site(3, 4, filename="compose.py"),
     )
@@ -358,8 +355,8 @@ def test_unit_raise_from_none_matches_try_composition_none_law():
     """Unit RaiseSugar from None agrees with try-composition from None."""
     outer = _call_exception("RuntimeError", "outer")
     sugar = RaiseSugar(
-        exception=Fixed(Complete(outer)),
-        cause=Fixed(Complete(NoneValue())),
+        exception=Fixed(ExitSet.completed(outer)),
+        cause=Fixed(ExitSet.completed(NoneValue())),
         exception_name="RuntimeError",
         site=_site(1, 0),
     )

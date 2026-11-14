@@ -25,17 +25,16 @@ import pytest
 from sugar_lift_py_tests.floor.none_value import NoneValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.ir import str_const
-from sugar_lift_py_tests.outcome import Complete
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.effect import RaiseEffect
 
 SITE = "none-attribute-site"
 
 
 def _coordinate(outcome):
-    assert isinstance(outcome, Complete), outcome
-    assert type(outcome.value) is SymbolicValue
-    term = outcome.value.term
+    value = outcome.completed_value()
+    assert value is not None, outcome
+    assert type(value) is SymbolicValue
+    term = value.term
     assert term.name == "py.getattr"
     return term
 
@@ -115,8 +114,7 @@ def test_the_whole_function_lifts_through_either_source_door(
     fn = next(SourceFile(source, construction_context=context).functions())
     outcome = fn.sugar().desugar(None)
 
-    assert isinstance(outcome, Complete)
-    assert type(outcome.value) is UniverseValue
+    assert type(outcome.completed_value()) is UniverseValue
 
 
 # -- discriminating arm ------------------------------------------------------
@@ -142,9 +140,10 @@ def test_the_sibling_ground_exit_is_not_stolen() -> None:
 
     outcome = NoneValue().subscript(None, _Fragment())
 
-    assert isinstance(outcome, Incomplete)
-    assert type(outcome.effect) is RaiseEffect
-    assert outcome.effect.raised_value.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert type(halt.effect) is RaiseEffect
+    assert halt.effect.raised_value.exception_name == "TypeError"
 
 
 def test_the_arm_invents_no_field_and_no_exit() -> None:
@@ -152,5 +151,4 @@ def test_the_arm_invents_no_field_and_no_exit() -> None:
 
     outcome = NoneValue().attribute("foo", SITE)
 
-    assert isinstance(outcome, Complete)
-    assert type(outcome.value) is SymbolicValue
+    assert type(outcome.completed_value()) is SymbolicValue

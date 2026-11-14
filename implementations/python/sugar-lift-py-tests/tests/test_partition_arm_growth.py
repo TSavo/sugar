@@ -51,12 +51,10 @@ from __future__ import annotations
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.ir import atomic, make_var, not_
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
     ExitSet,
     Halted,
-    factored_operand,
     outcome_to_exitset,
 )
 from sugar_lift_py_tests.sugar.if_exp_sugar import IfExpSugar
@@ -72,8 +70,8 @@ def _partitioning_arm(name: str):
     """An arm that produces a value on one face and halts on the other.
 
     This is the #6319 shape: `(a if c else <halt>)` where the else arm is an
-    unresolvable call or a raise. It is an `ExitSet`, not a `Complete`, which is
-    precisely why `_join_arms` takes the union path.
+    unresolvable call or a raise. It is not one unconditional completed arm,
+    which is precisely why `_join_arms` takes the union path.
     """
     condition = _guard(name)
     return ExitSet(
@@ -97,7 +95,7 @@ def _joined():
     return IfExpSugar._join_arms(
         object.__new__(IfExpSugar),
         test,
-        Complete("then-value"),
+        ExitSet.completed("then-value"),
         _partitioning_arm("else"),
     )
 
@@ -193,20 +191,20 @@ def test_a_partitioning_operand_enters_a_fold_with_one_completed_arm():
     `collection_sugar._reduce_into`, `method_call_sugar._collect`,
     `bool_op_sugar` and `fstring_sugar` are the same k-step fold. The
     accumulator cannot be factored (its completed value is the growing tuple),
-    so the OPERAND is, and `factored_operand` is the one door that does it.
+    so the OPERAND is, and `factor_completed` is the one door that does it.
     """
-    assert _completed_arms(factored_operand(_partitioning_arm("element"))) == 1
+    assert _completed_arms(_partitioning_arm("element").factor_completed()) == 1
 
 
 def test_the_operand_door_does_not_touch_a_plain_outcome():
-    """DISCRIMINATING. A `Complete` operand must pass through as itself.
+    """DISCRIMINATING. A one-completed-arm operand must pass through as itself.
 
     Widening every operand into the exit algebra would satisfy the bound above
     and route ordinary values through a partition they do not have.
     """
-    plain = Complete("value")
+    plain = ExitSet.completed("value")
 
-    assert factored_operand(plain) is plain
+    assert plain.factor_completed() is plain
 
 
 def test_a_partitioning_operand_folded_k_times_does_not_multiply():
@@ -218,12 +216,12 @@ def test_a_partitioning_operand_folded_k_times_does_not_multiply():
     """
     series = []
     for element_count in OPERAND_COUNTS:
-        outcome = Complete(())
+        outcome = ExitSet.completed(())
         for index in range(element_count):
-            got = factored_operand(_partitioning_arm(f"element{index}"))
+            got = _partitioning_arm(f"element{index}").factor_completed()
             outcome = outcome.and_then(
                 lambda collected, _got=got: _got.and_then(
-                    lambda value: Complete((*collected, value))
+                    lambda value: ExitSet.completed((*collected, value))
                 )
             )
         series.append(_completed_arms(outcome))
@@ -231,7 +229,7 @@ def test_a_partitioning_operand_folded_k_times_does_not_multiply():
     assert series == [1] * len(OPERAND_COUNTS), (
         f"completed arms by element count {dict(zip(OPERAND_COUNTS, series))}: a "
         "k-operand fold is multiplying arms again (#6324). Send each operand "
-        "through `factored_operand` before it enters the fold."
+        "through `factor_completed` before it enters the fold."
     )
 
 
@@ -247,12 +245,12 @@ def test_a_fold_conserves_every_halted_arm():
     every element that could halt.
     """
     element_count = 4
-    outcome = Complete(())
+    outcome = ExitSet.completed(())
     for index in range(element_count):
-        got = factored_operand(_partitioning_arm(f"element{index}"))
+        got = _partitioning_arm(f"element{index}").factor_completed()
         outcome = outcome.and_then(
             lambda collected, _got=got: _got.and_then(
-                lambda value: Complete((*collected, value))
+                lambda value: ExitSet.completed((*collected, value))
             )
         )
 
@@ -277,10 +275,13 @@ def test_two_value_conditionals_still_fuse_without_entering_the_exit_algebra():
     destroy that.
     """
     joined = IfExpSugar._join_arms(
-        object.__new__(IfExpSugar), _guard("test"), Complete(1), Complete(2)
+        object.__new__(IfExpSugar),
+        _guard("test"),
+        ExitSet.completed(1),
+        ExitSet.completed(2),
     )
 
-    assert isinstance(joined, Complete)
-    assert isinstance(joined.value, GuardedValue)
-    assert joined.value.when_true == 1
-    assert joined.value.when_false == 2
+    fused = joined.completed_value()
+    assert isinstance(fused, GuardedValue)
+    assert fused.when_true == 1
+    assert fused.when_false == 2

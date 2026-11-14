@@ -2,7 +2,7 @@
 
 from sugar_lift_py_tests.floor.object_value import ObjectField, ObjectValue
 from sugar_lift_py_tests.floor.string_value import StringValue
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.attribute_sugar import AttributeSugar
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
@@ -19,7 +19,7 @@ class _ReceiverSugar(ConstructedTermSugar):
         raise AssertionError("instrument leaf")
 
     def desugar(self, ctx=None):
-        return Complete(self.receiver)
+        return ExitSet.completed(self.receiver)
 
     def to_term(self, *, owner):
         del owner
@@ -49,8 +49,8 @@ def test_named_int_constant_name_uses_object_field_owner() -> None:
     )
     first = AttributeSugar(_ReceiverSugar(receiver), "name", _Site("first"))
     outcome = first.desugar()
-    assert type(outcome) is Complete
-    assert outcome.value == StringValue("SRE_FLAG_ASCII")
+    assert type(outcome) is ExitSet
+    assert outcome.completed_value() == StringValue("SRE_FLAG_ASCII")
     second = AttributeSugar(_ReceiverSugar(receiver), "name", _Site("second"))
     assert first.to_term(owner="test") != second.to_term(owner="test")
 

@@ -19,7 +19,6 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
 from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 from sugar_lift_py_tests.ir import atomic, ctor, make_var
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -27,17 +26,17 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 
 def test_string_attribute_is_py_getattr_coordinate():
     outcome = StringValue("{:.2f}").attribute("format", "site")
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, SymbolicValue)
-    assert outcome.value.term.name == "py.getattr"
+    value = outcome.completed_value()
+    assert isinstance(value, SymbolicValue)
+    assert value.term.name == "py.getattr"
 
 
 def test_predicate_attribute_is_py_getattr_coordinate():
     pred = PredicateValue(atomic("choose", []), "site")
     outcome = pred.attribute("dtype", "site")
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, SymbolicValue)
-    assert outcome.value.term.name == "py.getattr"
+    value = outcome.completed_value()
+    assert isinstance(value, SymbolicValue)
+    assert value.term.name == "py.getattr"
 
 
 def test_dict_key_membership_folds():

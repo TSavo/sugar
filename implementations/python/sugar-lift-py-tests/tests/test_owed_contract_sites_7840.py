@@ -71,7 +71,7 @@ def _link_unit_of_f(source: str):
     ``f``, or ``None`` where that level enrols none (a refusal, or not a
     completed universe)."""
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.tree_enumerate import (
         function_def_memento,
         function_universe_outcome,
@@ -87,11 +87,10 @@ def _link_unit_of_f(source: str):
         outcome = function_universe_outcome(fn)
     except Exception:  # noqa: BLE001 - a refusal enrols no link unit, so owes nothing
         return None
-    if not isinstance(outcome, Complete) or not isinstance(
-        outcome.value, UniverseValue
-    ):
+    value = outcome.completed_value() if isinstance(outcome, ExitSet) else None
+    if not isinstance(value, UniverseValue):
         return None
-    return outcome.value.link_unit_projection(
+    return value.link_unit_projection(
         function_def_memento(fn, "test_witness.py").to_rpc()
     )
 

@@ -25,9 +25,8 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     validate_shared_demand_table,
     _use_site_coordinate,
 )
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_source_tree.panic import SugarNotWritten, UnattributableRefusal
-from sugar_lift_py_tests.outcome import Incomplete
 
 
 def _probe(family: ProducerFamily, evaluator) -> BodyProbe:
@@ -39,7 +38,7 @@ def _probe(family: ProducerFamily, evaluator) -> BodyProbe:
 
 
 def _raise_value():
-    return Incomplete(
+    return ExitSet.halted(
         RaiseEffect(
             exception_type_coordinate=str_const("TypeError"),
             occurrence=AuthenticatedRaiseLocus.of("pandas/example.py:1:4"),
@@ -77,11 +76,11 @@ def test_enrollment_coordinate_refuses_unqualifiable_workspace_root(tmp_path):
 
 
 def _nameless_raise_value():
-    return Incomplete(UndeterminedRaiseEffect())
+    return ExitSet.halted(UndeterminedRaiseEffect())
 
 
 def _call_owned_raise_value():
-    return Incomplete(
+    return ExitSet.halted(
         RaiseEffect(
             exception_type_coordinate=str_const("TypeError"),
             occurrence=AuthenticatedRaiseLocus.of("pandas/example.py:1:4"),
@@ -295,7 +294,7 @@ def test_construction_panic_propagates_instead_of_becoming_attribution() -> None
 
 def test_silent_completion_stays_a_separate_loud_discrepancy() -> None:
     report = attribute_body_probes(
-        (_probe(ProducerFamily.BOOLOP, lambda: Complete(object())),)
+        (_probe(ProducerFamily.BOOLOP, lambda: ExitSet.completed(object())),)
     )
 
     assert report.by_family[ProducerFamily.BOOLOP].enrolled == 1
