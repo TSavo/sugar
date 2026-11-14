@@ -582,17 +582,17 @@ def test_star_against_opaque_iterable_stays_loud(tmp_path: Path) -> None:
     completion.
 
     Post-starred-unpack: ``DynamicUnpackAssignSugar`` constructs for
-    ``a, *rest = xs``; desugar keeps ``SequenceUnpackRuntimeEffect`` as one
-    arm, binding nothing, and completes only under the starred unpack's
+    ``a, *rest = xs``; desugar keeps an undetermined raise as one arm,
+    binding nothing, and completes only under the starred unpack's
     completes atom, ``a`` its first member's projection. Display twins still
     construct via MultiAssignSugar.
     """
-    from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
     outcome = _function_sugar(
         tmp_path, "def f(xs):\n    a, *rest = xs\n    return a\n", "star"
     ).desugar(None)
     (halt,) = outcome.halts()
-    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
     assert outcome.completed_value() is None
     (completed,) = [arm for arm in outcome.exits if arm not in outcome.halts()]
     assert "python:unpack.destructure_starred" in str(completed.guard)

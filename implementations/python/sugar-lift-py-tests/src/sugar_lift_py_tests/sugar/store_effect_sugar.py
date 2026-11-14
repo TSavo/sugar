@@ -41,13 +41,13 @@ class AttributeStoreEffectSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return typed_red_effect_witness(
-            name="attribute_store_runtime_effect",
+            name="attribute_store_undetermined_raise",
             owner_sugar="AttributeStoreEffectSugar",
             source="def A(o, v):\n    o.a = v\n    return v\n",
-            effect_class="AttributeStoreRuntimeEffect",
-            reason_needle="attribute store",
-            blame_needle="attr=a",
-            wrong_reason_needle="attribute store target `.b`",
+            effect_class="UndeterminedRaiseEffect",
+            reason_needle="undetermined exception identity",
+            blame_needle="SourceFragment",
+            wrong_reason_needle="raise AttributeError",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
@@ -71,8 +71,10 @@ class AttributeStoreEffectSugar(Sugar):
         1. Formal receiver → undischarged ``setattr_named`` carrier
         2. Decided runtime type → Floor ``setattr``; a raise is its
            halted arm (halted store, not statement green)
-        3. Undecided non-formal → dual-face ``AttributeStoreRuntimeEffect``
-           (never consumer ``SugarNotWritten``)
+        3. Undecided non-formal → the two faces of the store
+           (``store_faces``: completes with ``AttributeStoreRuntimeEffect``
+           testimony or raises something undetermined; never consumer
+           ``SugarNotWritten``)
         """
         formal_coordinate = getattr(receiver, "formal_coordinate", None)
         if formal_coordinate is not None:

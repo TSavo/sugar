@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import tempfile
 
-from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
+from sugar_lift_py_tests.effect import (
+    AttributeStoreRuntimeEffect,
+    UndeterminedRaiseEffect,
+)
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_python_source.source_oracle import path_source
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -104,6 +107,10 @@ def test_symbolic_attribute_store_in_one_branch_keeps_both_guard_faces():
         if isinstance(halt.effect, AttributeStoreRuntimeEffect)
     ]
     assert len(stores) == 1
-    assert isinstance(stopped.effect, AttributeStoreRuntimeEffect)
-    assert stopped.effect == stores[0].effect, "both faces are the SAME store occurrence"
+    # The halted face raises something undetermined (``store_faces``); both
+    # faces are the SAME store occurrence by the one coordinate their guards
+    # cite (asserted above).
+    assert isinstance(stopped.effect, UndeterminedRaiseEffect)
+    assert stopped.effect.producer_node_owner == "AttributeStoreRuntimeEffect"
+    assert stopped.guard.operands[0] == done.guard
     assert any(type(entry).__name__ == "ReturnValue" for entry in record)

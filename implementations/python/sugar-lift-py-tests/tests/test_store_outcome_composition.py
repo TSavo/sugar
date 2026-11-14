@@ -4,8 +4,8 @@ Python assignment to an attribute or a subscript is NOT transactional and NOT
 infallible:
 
     Store(receiver, selector, value)
-        success -> Completed(updated temporal state)
-        failure -> Halted(store effect, prefix temporal state)
+        success -> Completed(testimony of the store effect)
+        failure -> Halted(undetermined raise, prefix temporal state)
 
 Sequential composition of stores must therefore:
 
@@ -36,7 +36,10 @@ from pathlib import Path
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect
+from sugar_lift_py_tests.effect import (
+    AttributeStoreRuntimeEffect,
+    UndeterminedRaiseEffect,
+)
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -199,7 +202,7 @@ def test_first_store_halt_has_no_second_store_occurrence(tmp_path: Path) -> None
     assert (
         _store_entries(first.state) == []
     ), "the first store's halt arm must contain no store occurrence at all"
-    assert isinstance(first.effect, AttributeStoreRuntimeEffect)
+    assert isinstance(first.effect, UndeterminedRaiseEffect)
 
 
 def test_first_store_halt_has_no_second_store_occurrence_discrimination(
@@ -385,12 +388,15 @@ def test_store_outcome_guards_are_exactly_complementary_discrimination(
 
 
 def test_no_invented_exception_type_on_a_store_halt(tmp_path: Path) -> None:
-    """Success versus halt is runtime-selected. The halt arm must carry the
-    store's own runtime effect, never a fabricated named exception."""
+    """Success versus halt is runtime-selected. The halt arm raises something
+    undetermined (the one two-faced constructor's raise), never a fabricated
+    named exception, and it is the store's own halt."""
     halted, _ = _arms(_exits(tmp_path, SEQUENTIAL, "target"))
 
     for arm in halted:
-        assert isinstance(arm.effect, AttributeStoreRuntimeEffect), type(arm.effect)
+        assert isinstance(arm.effect, UndeterminedRaiseEffect), type(arm.effect)
+        assert arm.effect.exception_type_coordinate is None
+        assert arm.effect.producer_node_owner == "AttributeStoreRuntimeEffect"
 
 
 def test_no_invented_exception_type_on_a_store_halt_discrimination(

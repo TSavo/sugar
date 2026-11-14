@@ -416,7 +416,7 @@ def test_starred_opaque_unpack_stays_loud_not_exact_arity_completion(
     """Face (d): starred pattern retains typed unpack; never exact-arity
     completion.  It completes only under the starred layout's own completes
     atom (``python:unpack.destructure_starred``), never the exact-arity one."""
-    from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+    from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
     path = tmp_path / "star.py"
     path.write_text("def f(xs):\n    a, *rest = xs\n    return a\n")
     fn = next(
@@ -427,7 +427,7 @@ def test_starred_opaque_unpack_stays_loud_not_exact_arity_completion(
     )
     outcome = fn.sugar().desugar(None)
     (halt,) = outcome.halts()
-    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
     assert outcome.completed_value() is None
     (completed,) = [e for e in outcome.exits if isinstance(e, Completed)]
     assert "python:unpack.destructure_starred" in str(completed.guard)

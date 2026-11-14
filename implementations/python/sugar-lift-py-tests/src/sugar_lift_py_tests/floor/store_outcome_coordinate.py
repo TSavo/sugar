@@ -6,8 +6,8 @@ infallible.  ``o.x = p`` can halt at runtime (``__setattr__``/descriptor/
 the EARLIER targets remain assigned.  So a store has exactly two outcomes:
 
     Store(receiver, selector, value)
-        success -> Completed(updated temporal state)
-        failure -> Halted(store effect, prefix temporal state)
+        success -> Completed(testimony of the store effect)
+        failure -> Halted(undetermined raise, prefix temporal state)
 
 Which one happens is RUNTIME-SELECTED.  There is no lift-time evidence naming a
 particular exception type, and inventing one would fabricate a fact.  So the
@@ -44,24 +44,43 @@ def store_faces(effect):
     """The two faces of one store occurrence, built where the store is.
 
     Every store-family producer (attribute and subscript stores, attribute
-    and subscript deletes) answers exactly this: ``Halted(not g)`` with the
-    store's own effect, and ``Completed(g)`` whose value is the red testimony
-    that the runtime answered the store (``RuntimeEffectTestimony``).  It is
-    the ONE spelling of the store law: no linear outcome carries a second
-    meaning that "continues under g and halts under not g" (#7825, H2).
+    and subscript deletes) answers exactly this, through the one two-faced
+    constructor (``ExitSet.two_faced``, #7757 item 13): ``Completed(g)``
+    whose value is the red testimony that the runtime answered the store
+    (``RuntimeEffectTestimony`` of the store's own effect), and
+    ``Halted(not g)`` with the one undetermined-raise effect.  It is the ONE
+    spelling of the store law: no linear outcome carries a second meaning
+    that "continues under g and halts under not g" (#7825, H2).
+
+    The raise is undetermined, not a guarded answer: ``g`` is the opaque
+    store-occurrence coordinate, not a formula over known inputs, and what a
+    store raises is not one known class (``__setattr__`` / ``__setitem__`` /
+    ``__delattr__`` / ``__delitem__`` and descriptors are the runtime's).  So
+    the halt is ``UndeterminedRaiseEffect`` -- the same effect an undecided
+    ``r[k] = v`` already halts with (``undecided_item_mutation_faces``) --
+    and the store owes its ``undecided`` member at the store's own site.
 
     The halted arm has no state of its own: nothing is reached inside an
     expression before its store halts, so the block reducer gives it the
     prefix it already established.
     """
+    from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
     from sugar_lift_py_tests.floor.runtime_effect_testimony import (
         RuntimeEffectTestimony,
     )
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, complement_guard
+    from sugar_lift_py_tests.occurrence import occurrence_key
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-    halted = store_halted_guard(effect)
-    return ExitSet.halted(effect, halted).union(
-        ExitSet.completed(RuntimeEffectTestimony(effect), complement_guard(halted))
+    site = effect.witness.site
+    return ExitSet.two_faced(
+        RuntimeEffectTestimony(effect),
+        UndeterminedRaiseEffect(
+            blame=str(site),
+            occurrence=occurrence_key(site),
+            producer_node_owner=type(effect).__name__,
+        ),
+        guard=store_completed_guard(effect),
+        site=site,
     )
 
 
@@ -118,17 +137,12 @@ def store_outcome_coordinate(effect) -> StoreOutcomeCoordinate:
 
 
 def store_completed_guard(effect):
-    """``g`` -- the store at this occurrence completed."""
+    """``g`` -- the store at this occurrence completed.  Its complement
+    (``complement_guard``, taken by ``ExitSet.two_faced``) is the halted face;
+    ``ExitSet._is_negation`` recognises the pair, so the two arms partition
+    exactly and normalization can merge or kill them the same way it does for
+    a branch result."""
     from sugar_lift_py_tests.sugar.if_sugar import predicate_formula
 
     coordinate = store_outcome_coordinate(effect)
     return predicate_formula(coordinate, coordinate.site)
-
-
-def store_halted_guard(effect):
-    """``not g`` -- the complementary face.  ``ExitSet._is_negation`` recognises
-    the pair, so the two arms partition exactly and normalization can merge or
-    kill them the same way it does for a branch result."""
-    from sugar_lift_py_tests.ir import not_
-
-    return not_(store_completed_guard(effect))

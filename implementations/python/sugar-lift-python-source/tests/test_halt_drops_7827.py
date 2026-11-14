@@ -278,9 +278,15 @@ def test_augassign_lying_half_keeps_a_completed_face(tmp_path: Path) -> None:
 def test_a_chained_target_store_keeps_its_completed_face() -> None:
     """Struck for the linear halt's and_then: the store before the next target is
     sequenced by the block reducer, which keeps both of its faces."""
-    completed, halts = _faces(
-        _function(_STORE.format(line="o.x = a = 1", tail="return a\n"))
-    )
+    outcome = _function(_STORE.format(line="o.x = a = 1", tail="return a\n"))
+    completed, halts = _faces(outcome)
 
     assert completed == 1
-    assert "AttributeStoreRuntimeEffect" in halts
+    # The store's halted face is the one undetermined raise its producer
+    # names (``store_faces``).
+    assert "UndeterminedRaiseEffect" in halts
+    assert any(
+        getattr(face.effect, "producer_node_owner", None)
+        == "AttributeStoreRuntimeEffect"
+        for face in outcome.halts()
+    )

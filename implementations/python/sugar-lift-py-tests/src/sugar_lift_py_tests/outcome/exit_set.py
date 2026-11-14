@@ -563,7 +563,9 @@ class ExitSet(Generic[T]):
         operation whose body was not looked at (an unprojected call, an
         undecided operand's dunder, a formal-selected manager step, an opaque
         attribute or subscript, a native operation its caller left without an
-        actual) completes with ``value`` only under its ``guard`` -- the
+        actual, a store over an undecided receiver, an unpack of a value with
+        no authenticated cardinality) completes with ``value`` only under its
+        ``guard`` -- the
         site-keyed ``...completes`` atom -- and halts with ``raise_effect`` (an
         ``UndeterminedRaiseEffect``) from ``state`` (none unless the producer
         holds the state the operation began from) under

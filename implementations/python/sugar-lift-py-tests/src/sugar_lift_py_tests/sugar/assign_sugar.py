@@ -254,10 +254,10 @@ class DynamicUnpackStoreAssignSugar(Sugar):
             name="dynamic_unpack_store_star",
             owner_sugar="DynamicUnpackStoreAssignSugar",
             source=("def A(o, xs):\n" "    o.x, *rest = xs\n" "    return rest\n"),
-            effect_class="SequenceUnpackRuntimeEffect",
-            reason_needle="sequence unpack",
-            blame_needle="at least 1 members",
-            wrong_reason_needle="unpack demands exactly 3 members",
+            effect_class="UndeterminedRaiseEffect",
+            reason_needle="undetermined exception identity",
+            blame_needle="SourceFragment",
+            wrong_reason_needle="raise ValueError",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
@@ -430,10 +430,10 @@ class UnpackStoreAssignSugar(Sugar):
             name="unpack_attribute_store",
             owner_sugar="UnpackStoreAssignSugar",
             source=("def A(o, p, q):\n" "    o.x, o.y = p, q\n" "    return p\n"),
-            effect_class="AttributeStoreRuntimeEffect",
-            reason_needle="attribute store",
-            blame_needle="attr=x",
-            wrong_reason_needle="attribute store target `.z`",
+            effect_class="UndeterminedRaiseEffect",
+            reason_needle="undetermined exception identity",
+            blame_needle="SourceFragment",
+            wrong_reason_needle="raise AttributeError",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:

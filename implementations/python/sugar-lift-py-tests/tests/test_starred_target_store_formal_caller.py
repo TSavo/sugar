@@ -21,7 +21,7 @@ import pytest
 
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor import ListValue, ObjectValue, TermValue
 from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
@@ -615,12 +615,12 @@ def test_opaque_formal_is_sequence_unpack_effect() -> None:
         and pending.halts() == pending.exits
     ):
         assert all(
-            isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+            isinstance(halt.effect, UndeterminedRaiseEffect)
             for halt in pending.halts()
         )
     elif isinstance(pending, ExitSet):
         assert any(
-            isinstance(getattr(e, "effect", None), SequenceUnpackRuntimeEffect)
+            isinstance(getattr(e, "effect", None), UndeterminedRaiseEffect)
             for e in pending.exits
         )
 

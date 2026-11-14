@@ -61,7 +61,6 @@ from .runtime_effect import (
     runtime_effect_witness,
 )
 from .sequence_repetition_runtime_effect import SequenceRepetitionRuntimeEffect
-from .sequence_unpack_runtime_effect import SequenceUnpackRuntimeEffect
 from .sequence_concatenation_runtime_effect import SequenceConcatenationRuntimeEffect
 from .source_oracle_effect import SourceOracleEffect
 from .starred_positional_runtime_effect import StarredPositionalRuntimeEffect
@@ -132,7 +131,6 @@ __all__ = [
     "runtime_effect_evidence_from_terms",
     "runtime_effect_witness",
     "SequenceRepetitionRuntimeEffect",
-    "SequenceUnpackRuntimeEffect",
     "SequenceConcatenationRuntimeEffect",
     "SourceOracleEffect",
     "StarredPositionalRuntimeEffect",

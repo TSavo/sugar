@@ -30,8 +30,10 @@ authenticated finite members?
   the comprehension destructure already states:
   ``sugar/comprehension_sugar.py::_guard_destructure``; its starred layout
   ``python:unpack.destructure_starred``) each name binds to its position's
-  projection; under the complement the arity demand is the typed
-  ``SequenceUnpackRuntimeEffect`` halt and nothing binds.  Assuming the count
+  projection; under the complement the unpack raises something undetermined
+  (``UndeterminedRaiseEffect``: ``ValueError`` on a count mismatch,
+  ``TypeError`` on a non-iterable, or whatever ``__iter__`` raises) and
+  nothing binds.  Assuming the count
   matched would be one forbidden move; claiming the unpack always fails
   would be the other.  A star binds ``python:unpack.rest`` of the term, never
   an invented tail.
@@ -199,38 +201,23 @@ class SequenceProjectionOperation:
         from sugar_lift_py_tests.operations.positional_unpack_operation import (
             runtime_unpack_faces,
         )
-        from sugar_lift_py_tests.outcome import ExitSet
 
         if self.star_name is None:
-            roster = ", ".join(self.target_names)
-            demand = f"exactly {self.arity} members for targets ({roster})"
             names = self.target_names
             prefix = self.arity
         else:
-            roster = (
-                f"{', '.join(self.prefix_names)}"
-                f"{', ' if self.prefix_names else ''}"
-                f"*{self.star_name}"
-                f"{', ' if self.suffix_names else ''}"
-                f"{', '.join(self.suffix_names)}"
-            )
-            demand = f"at least {self.arity} members for starred targets ({roster})"
             names = (*self.prefix_names, self.star_name, *self.suffix_names)
             prefix = len(self.prefix_names)
-        members, effect, guard = runtime_unpack_faces(
+        return runtime_unpack_faces(
             value,
             prefix=prefix,
             suffix=len(self.suffix_names) if self.star_name is not None else 0,
             has_star=self.star_name is not None,
             owner=self.owner,
             blame=self.blame,
-            demand=demand,
-        )
-        return ExitSet.two_faced(
-            ScopeRebinds(tuple(zip(names, members, strict=True))),
-            effect,
-            guard=guard,
-            site=self.blame,
+            answer=lambda members: ScopeRebinds(
+                tuple(zip(names, members, strict=True))
+            ),
         )
 
     def _arity_mismatch_exit(self, value: Any, members: int, display: str) -> Any:

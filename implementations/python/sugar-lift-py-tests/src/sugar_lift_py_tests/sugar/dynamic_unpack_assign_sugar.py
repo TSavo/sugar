@@ -31,8 +31,9 @@ class DynamicUnpackAssignSugar(Sugar):
     - runtime cardinality (symbolic / object / opaque coordinate): the count
       belongs to ``__iter__`` at runtime, so the unpack has both faces: each
       name binds to its position's projection under the unpack's completes
-      atom, and under its complement the arity demand is a typed
-      ``SequenceUnpackRuntimeEffect`` halt. Nothing binds on that arm, exactly
+      atom, and under its complement the unpack raises something undetermined
+      (``UndeterminedRaiseEffect``, owing its ``undecided`` member through
+      ``ExitSet.two_faced``). Nothing binds on that arm, exactly
       as CPython binds nothing when ``UNPACK_SEQUENCE`` / ``UNPACK_EX`` raises.
       A star binds the term's ``python:unpack.rest``, never an invented tail;
     - anything else: a loud floor construction gap.
@@ -57,13 +58,13 @@ class DynamicUnpackAssignSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return typed_red_effect_witness(
-            name="sequence_unpack_runtime_effect",
+            name="sequence_unpack_undetermined_raise",
             owner_sugar="DynamicUnpackAssignSugar",
             source="def A(o, v):\n    a, b = o\n    return v\n",
-            effect_class="SequenceUnpackRuntimeEffect",
-            reason_needle="sequence unpack",
-            blame_needle="arity=2",
-            wrong_reason_needle="unpack demands exactly 3 members",
+            effect_class="UndeterminedRaiseEffect",
+            reason_needle="undetermined exception identity",
+            blame_needle="SourceFragment",
+            wrong_reason_needle="raise ValueError",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:

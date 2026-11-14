@@ -10,7 +10,11 @@ from dataclasses import replace
 import pytest
 
 from sugar_lift_python_source.source_oracle import path_source
-from sugar_lift_py_tests.effect import AttributeStoreRuntimeEffect, RaiseEffect
+from sugar_lift_py_tests.effect import (
+    AttributeStoreRuntimeEffect,
+    RaiseEffect,
+    UndeterminedRaiseEffect,
+)
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_py_tests.sugar.witnesses import NotVerdictBearing
@@ -175,8 +179,12 @@ def test_symbolic_attribute_store_witnesses_real_receiver_and_value_terms():
 
     assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
-    assert isinstance(halt.effect, AttributeStoreRuntimeEffect)
-    operation = repr(halt.effect.witness.operation)
+    # The halted face raises something undetermined (``store_faces``); the
+    # store's witnessed operation is the coordinate its guard cites.
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
+    assert halt.effect.producer_node_owner == "AttributeStoreRuntimeEffect"
+    operation = repr(halt.guard)
+    assert "python:store_completed" in operation
     assert "symbolic_receiver" in operation
     assert "constructed_value" in operation
     assert "payload" in operation

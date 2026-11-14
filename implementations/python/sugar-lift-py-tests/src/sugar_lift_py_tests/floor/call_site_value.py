@@ -1341,8 +1341,9 @@ class CallSiteValue(FloorValue):
         the callsite floor when the
         body floors, so a callee returning a display makes the arity lift-time
         decidable and the members bind from the values already in hand;
-        otherwise re-dispatch on ``SymbolicValue(self.term)``, which retains
-        the typed ``SequenceUnpackRuntimeEffect`` over the callsite's own term.
+        otherwise re-dispatch on ``SymbolicValue(self.term)``, whose runtime
+        unpack is two-faced over the callsite's own term
+        (``runtime_unpack_faces``).
 
         Neither arm invents a member and neither assumes the count matched --
         which is what ``SequenceProjectionOperation`` requires of a value that

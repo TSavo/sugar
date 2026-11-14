@@ -59,17 +59,17 @@ class NestedDynamicUnpackAssignSugar(Sugar):
     @classmethod
     def witnesses(cls):
         return typed_red_effect_witness(
-            name="nested_sequence_unpack_runtime_effect",
+            name="nested_sequence_unpack_undetermined_raise",
             owner_sugar="NestedDynamicUnpackAssignSugar",
             source=(
                 "def A(mask_info, v):\n"
                 "    (a, b), (c, d) = mask_info\n"
                 "    return v\n"
             ),
-            effect_class="SequenceUnpackRuntimeEffect",
-            reason_needle="sequence unpack",
-            blame_needle="arity=2",
-            wrong_reason_needle="exactly 4 members",
+            effect_class="UndeterminedRaiseEffect",
+            reason_needle="undetermined exception identity",
+            blame_needle="SourceFragment",
+            wrong_reason_needle="raise ValueError",
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:

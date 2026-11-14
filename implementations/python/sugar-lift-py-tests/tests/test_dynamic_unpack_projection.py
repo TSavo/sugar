@@ -9,8 +9,8 @@ paired with a discriminating arm that fails when the law is violated:
    construct different obligations.
 2. The RHS is REDUCED before the unpack; its reduced term is what the
    obligation names. Two different RHS expressions project differently.
-3. Unauthenticated cardinality retains the typed
-   ``SequenceUnpackRuntimeEffect`` as one arm; it never completes with
+3. Unauthenticated cardinality retains an undetermined raise
+   (``UndeterminedRaiseEffect``) as one arm; it never completes with
    invented members, only each position's projection under the unpack's
    completes atom.
 4. Nothing binds on the halted arm -- a later read of a target is not
@@ -31,12 +31,11 @@ arms, it does not claim how many exits the control algebra has.
 
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 import pytest
 
-from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
+from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.floor_value import FloorValue
 from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
@@ -77,29 +76,25 @@ def _outcome(tmp_path: Path, source: str, stem: str):
     return _function_sugar(tmp_path, source, stem).desugar(None)
 
 
-def _unpack_effect(tmp_path: Path, source: str, stem: str):
+def _unpack_halt(tmp_path: Path, source: str, stem: str):
     outcome = _outcome(tmp_path, source, stem)
     # Two faces: the halt, and the completed arm beside it (the unpack never
     # claims it always fails).
     (halt,) = outcome.halts()
     assert len(outcome.halts()) < len(outcome.exits), outcome
-    effect = halt.effect
-    assert isinstance(effect, SequenceUnpackRuntimeEffect), effect
-    return effect
+    assert isinstance(halt.effect, UndeterminedRaiseEffect), halt.effect
+    return halt
 
 
-def _obligation(tmp_path: Path, source: str, stem: str) -> tuple[str, str, str]:
+def _obligation(tmp_path: Path, source: str, stem: str) -> tuple[str, str]:
     """Site-free projection of the retained unpack obligation.
 
-    (effect class, reason without site, the constructed operation term). Any
-    change of arity, of RHS coordinate, or of target roster must move this.
+    (effect class, the halted face's guard: the complement of the unpack's
+    completes atom over its layout term). Any change of arity or of RHS
+    coordinate must move this.
     """
-    effect = _unpack_effect(tmp_path, source, stem)
-    return (
-        type(effect).__name__,
-        re.sub(r" site=.*$", "", effect.reason),
-        str(effect.witness.operation),
-    )
+    halt = _unpack_halt(tmp_path, source, stem)
+    return (type(halt.effect).__name__, str(halt.guard))
 
 
 TWO_TARGETS = "def A(o, v):\n    a, b = o\n    return v\n"
@@ -122,19 +117,25 @@ def test_target_count_is_the_submitted_arity(tmp_path: Path) -> None:
 
     two_obligation = _obligation(tmp_path, TWO_TARGETS, "two")
     three_obligation = _obligation(tmp_path, THREE_TARGETS, "three")
-    assert "exactly 2 members" in two_obligation[1]
-    assert "exactly 3 members" in three_obligation[1]
-    # Discrimination: a different arity is a different obligation term, not the
-    # same term with different prose.
-    assert two_obligation[2] != three_obligation[2]
-    assert two_obligation[2].count("ConstInt") == 1
+    # Discrimination: a different arity is a different obligation term.
+    assert two_obligation[1] != three_obligation[1]
+    assert two_obligation[1].count("ConstInt") == 1
 
 
 def test_target_roster_is_retained(tmp_path: Path) -> None:
-    """The names the unpack must satisfy are named, in order."""
-    reason = _obligation(tmp_path, TWO_TARGETS, "two")[1]
-    assert "targets (a, b)" in reason
-    assert "targets (b, a)" not in reason
+    """The names the unpack binds are bound in order: ``a`` is the first
+    position's projection, and swapping the targets swaps what ``a`` reads."""
+    in_order = "def A(o):\n    a, b = o\n    return a\n"
+    swapped = "def A(o):\n    b, a = o\n    return a\n"
+
+    def completed_record(source: str, stem: str) -> str:
+        outcome = _outcome(tmp_path, source, stem)
+        (completed,) = [arm for arm in outcome.exits if arm not in outcome.halts()]
+        return str(completed.value.record)
+
+    assert completed_record(in_order, "in_order") != completed_record(
+        swapped, "swapped"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -147,8 +148,8 @@ def test_reduced_rhs_is_the_unpacked_term(tmp_path: Path) -> None:
     two = _obligation(tmp_path, TWO_TARGETS, "two")
     # Same arity, same targets, different RHS coordinate: the obligation term
     # must differ, or the unpack is not naming what it unpacks.
-    assert two[1] == same_arity_other_rhs[1]
-    assert two[2] != same_arity_other_rhs[2]
+    assert two[0] == same_arity_other_rhs[0]
+    assert two[1] != same_arity_other_rhs[1]
 
 
 def test_rhs_expression_is_reduced_not_quoted(tmp_path: Path) -> None:
@@ -182,10 +183,13 @@ def test_rhs_expression_is_reduced_not_quoted(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_runtime_cardinality_retains_the_typed_unpack_effect(tmp_path: Path) -> None:
-    effect = _unpack_effect(tmp_path, TWO_TARGETS, "two")
-    assert "no authenticated cardinality" in effect.reason
-    assert "name='python:unpack.destructure'" in str(effect.witness.operation)
+def test_runtime_cardinality_raises_something_undetermined(tmp_path: Path) -> None:
+    """No exception class is invented for the runtime unpack, and the halt is
+    under the complement of the unpack's completes atom over its layout."""
+    halt = _unpack_halt(tmp_path, TWO_TARGETS, "two")
+    assert halt.effect.exception_type_coordinate is None
+    assert "name='python:unpack.completes'" in str(halt.guard)
+    assert "name='python:unpack.destructure'" in str(halt.guard)
 
 
 def test_nothing_binds_on_the_runtime_arm(tmp_path: Path) -> None:
@@ -195,7 +199,7 @@ def test_nothing_binds_on_the_runtime_arm(tmp_path: Path) -> None:
     read_target = "def A(o):\n    a, b = o\n    return a\n"
     outcome = _outcome(tmp_path, read_target, "read_target")
     (halt,) = outcome.halts()
-    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    assert isinstance(halt.effect, UndeterminedRaiseEffect)
     (completed,) = [arm for arm in outcome.exits if arm not in outcome.halts()]
     assert "python:unpack.completes" in str(completed.guard)
     assert "python:unpack.project" in str(completed.value.record)
