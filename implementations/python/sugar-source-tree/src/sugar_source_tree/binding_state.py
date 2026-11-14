@@ -99,6 +99,21 @@ def try_route_site(try_node: Node) -> str:
     return f"try-route:{memento.source_cid}@{memento.start}:{memento.end}#{memento.cid}"
 
 
+def match_route_site(match_node: Node) -> str:
+    """The one address every route slot of a ``match`` hangs off.
+
+    A ``match`` leaves by exactly one route: case ``k`` was selected and its
+    body completed, or no case was selected (the fall-through, every case
+    slot false).  Each case route is a slot ``match-route:<site>:<k>``
+    (``route_slot``), as a ``try``'s handler route is.
+    """
+    memento = match_node.fragment.seal()
+    return (
+        f"match-route:{memento.source_cid}@{memento.start}:{memento.end}"
+        f"#{memento.cid}"
+    )
+
+
 def try_edge_slot(site_id: str, edge: int) -> BranchResultSlot:
     """Body halt edge ``edge``'s slot: true exactly when the exception a
     handler (or ``finally``) received was raised by body statement ``edge``.
@@ -107,11 +122,24 @@ def try_edge_slot(site_id: str, edge: int) -> BranchResultSlot:
     return BranchResultSlot(f"{site_id}:edge:{edge}")
 
 
-def try_route_slot(site_id: str, arm: int) -> BranchResultSlot:
-    """Handler ``arm``'s route slot: true exactly when that handler ran and the
-    try left by its completion.  The reducer confirms it on every routed
-    outcome (``TrySugar``); a decided route grounds it."""
+def route_slot(site_id: str, arm: int) -> BranchResultSlot:
+    """Route ``arm``'s slot of a ``try`` (``try_route_site``: handler ``arm``
+    ran and the try left by its completion) or of a ``match``
+    (``match_route_site``: case ``arm`` was selected and its body completed).
+    The reducer confirms it on every routed outcome (``TrySugar``,
+    ``MatchSugar``); a decided route grounds it."""
     return BranchResultSlot(f"{site_id}:{arm}")
+
+
+def loop_write_slot(post_key: str) -> BranchResultSlot:
+    """The slot of a live loop's write of one name, read after the loop:
+    true exactly when an item of the loop wrote the name, so the loop leaves
+    it with what its items handed on (``post_key``, the loop's post-loop key
+    of the name); false when no item wrote it, so the name keeps the
+    binding it had before the loop (unbound if it had none).  No reducer
+    grounds it: it stays an opaque coordinate, so a read after the loop
+    holds both arms, each under its own guard."""
+    return BranchResultSlot(f"loop-wrote:{post_key}")
 
 
 @dataclass(frozen=True)
