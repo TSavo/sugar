@@ -202,6 +202,9 @@ def evaluate_assignment_values(
     from sugar_lift_py_tests.outcome import ExitSet
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         _ReducedBlock,
+        halt_record,
+        halts_recorded,
+        laid_in_record,
         plain_completed_value,
     )
 
@@ -213,14 +216,21 @@ def evaluate_assignment_values(
         # frame sees (``CallerStoreValue``), already applied to ``active``;
         # they are laid in the statement's record as a statement alone lays
         # them (``record_statement_value``), so a ``return`` and the frame's
-        # exit carry them to its caller (``caller_visible_stores``).
+        # exit carry them to its caller (``caller_visible_stores``).  The
+        # tail's every arm carries them: a completed record of any kind (a
+        # class body's fields too) and a halt after the values were computed
+        # (a store target's), whose record is where it halted -- a halt of
+        # the tail that offers none halted at the tail's head, in ``active``.
         # Every RHS has completed: only now are the targets assigned, each
         # Name target's key bound to its value (left to right, as Python
         # assigns them), and then the store targets (``tail``) run.
         for index, value in enumerate(completed):
             active = _bind_evaluations(active, evaluations, index, value)
         if tail is not None:
-            return _laid_in_record(stores, tail(active, completed))
+            outcome = tail(active, completed)
+            if stores:
+                outcome = halts_recorded(outcome, halt_record(active))
+            return laid_in_record(stores, outcome)
         if bind:
             bound = _bind_carried_writes(active, bind, completed, site)
             if bound is not active:
@@ -229,6 +239,24 @@ def evaluate_assignment_values(
             # Nothing recorded: the statement contributes nothing, as before.
             return ExitSet.completed(BlockValue((), can_fall_through=True))
         return ExitSet.completed(_ReducedBlock(stores, True, (), (), active))
+
+    def recorded(outcome, sugar, active, stores):
+        # The callee stores the RHSs before this one carried (``stores``) ran
+        # before it halted: a walrus-free RHS's halt with no record of its
+        # own halted at its head, in ``active`` (where they are applied), and
+        # is recorded there, as for a walrus bind (``halts_at_operand_head``);
+        # the stores are laid in every halt's record (``laid_in_record``),
+        # never dropped with the block's prefix.  Only the halts: a completed
+        # arm's record is laid with every RHS's stores when the statement
+        # finishes (``finish``).
+        if not stores:
+            return outcome
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halts_at_operand_head,
+        )
+
+        outcome = halts_at_operand_head(outcome, sugar, active)
+        return laid_in_record(stores, outcome, halts_only=True)
 
     def step(index, active, completed=(), stores=()):
         # ``active``: ``ctx`` with the walrus binds the RHSs before this one
@@ -242,7 +270,7 @@ def evaluate_assignment_values(
         # The statement's own evaluation is never answered from the record:
         # a loop re-reducing this statement evaluates its RHS again.
         own_ctx = active if key is None else active.without_assigned_value(key)
-        outcome = sugar.desugar(own_ctx)
+        outcome = recorded(sugar.desugar(own_ctx), sugar, own_ctx, stores)
         if isinstance(outcome, ExitSet) and outcome.halts() == outcome.exits:
             # Every arm halts: no later RHS or target runs.
             return outcome
@@ -292,7 +320,7 @@ def _walrus_bound(active, value):
     A store a callee made on an object this frame sees rides the value the
     same way (``CallerStoreValue``) and is applied with the binds; ``stores``
     are those stores, in order, for the statement's record
-    (``_laid_in_record``)."""
+    (``function_universe_sugar.laid_in_record``)."""
     from sugar_lift_py_tests.floor.named_expression_value import (
         bind_walrus_binds,
         caller_stores_of,
@@ -302,33 +330,6 @@ def _walrus_bound(active, value):
     binds, presented = peel_walrus_binds(value)
     _walrus, stores = caller_stores_of(binds)
     return bind_walrus_binds(binds, active), presented, stores
-
-
-def _laid_in_record(stores, outcome):
-    """``outcome`` with ``stores`` (``_walrus_bound``) first in the record of
-    each completed arm, as a statement alone lays the stores its call carries
-    (``expr_statement_sugar.record_statement_value``): the record is what a
-    ``return`` and the frame's exit hand the caller
-    (``call_site_value.caller_visible_stores``).  ``outcome`` itself when
-    there is none."""
-    if not stores:
-        return outcome
-    from dataclasses import replace
-
-    from sugar_lift_py_tests.floor.block_value import BlockValue
-    from sugar_lift_py_tests.outcome import ExitSet
-    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
-
-    def lay(value):
-        if isinstance(value, _ReducedBlock):
-            return ExitSet.completed(replace(value, entries=(*stores, *value.entries)))
-        if isinstance(value, BlockValue):
-            return ExitSet.completed(
-                replace(value, statements=(*stores, *value.statements))
-            )
-        return ExitSet.completed(value)
-
-    return outcome.and_then(lay)
 
 
 def _binds_live_name(ctx, bind, index) -> bool:

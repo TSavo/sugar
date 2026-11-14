@@ -48,6 +48,7 @@ from sugar_source_tree.nodes import (
     ObservationRef,
     Return,
     With,
+    _Splice,
 )
 from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
 from sugar_source_tree.shadow import rewrite
@@ -92,6 +93,14 @@ def _function(source: str) -> FunctionDef:
 
 def _node(function, kind):
     return next(node for node in function.walk() if isinstance(node, kind))
+
+
+def _with(result):
+    """A ``with`` substituted alone: it publishes what its body left beside
+    it (``With._published``)."""
+    if isinstance(result, _Splice):
+        (result,) = result.statements
+    return result
 
 
 def _keyed(node) -> bool:
@@ -196,7 +205,7 @@ def _copies(with_node: With) -> list[With]:
     """Two evaluations of one with, as two unrolled iterations substitute it
     (``For.substitute`` / ``_iteration_scope``)."""
     return [
-        with_node.substitute({_EVALUATION_OCCURRENCE: (segment,)})
+        _with(with_node.substitute({_EVALUATION_OCCURRENCE: (segment,)}))
         for segment in ("seg#0", "seg#1")
     ]
 
@@ -204,7 +213,7 @@ def _copies(with_node: With) -> list[With]:
 def test_a_with_evaluated_once_keeps_its_source_slots() -> None:
     source = _node(_function(WITH_ONCE), With)
     source_slot = source.items[0]._manager_slot_id()
-    with_node = source.substitute({})
+    with_node = _with(source.substitute({}))
     assert isinstance(with_node, With)
     assert getattr(with_node.items[0], "evaluation", None) is None
     assert with_node.items[0]._manager_slot_id() == source_slot
@@ -253,7 +262,7 @@ def test_each_evaluation_of_a_with_exits_over_its_own_face() -> None:
 
 def test_a_with_evaluated_once_keeps_its_source_face() -> None:
     source = _node(_function(WITH_ONCE), With)
-    with_node = source.substitute({})
+    with_node = _with(source.substitute({}))
     assert with_node.items[0]._exit_face_id() == source.items[0]._exit_face_id()
 
 
@@ -294,7 +303,7 @@ class _FaceProtocol:
 
 
 def test_a_with_evaluated_once_keeps_its_derived_protocol() -> None:
-    item = _node(_function(WITH_ONCE), With).substitute({}).items[0]
+    item = _with(_node(_function(WITH_ONCE), With).substitute({})).items[0]
     protocol = _FaceProtocol(item._source_exit_face_id())
     assert With._protocol_at_exit_face(protocol, item) is protocol
 
@@ -348,7 +357,7 @@ def test_a_generator_manager_tuple_target_reads_its_projections(
     # The store is lowered as for a class-based manager, so after the with
     # ``a``/``b`` are the store's projections, not their prior state.
     monkeypatch.setattr(With, "_generator_manager_frame", lambda self, item: object())
-    with_node = _node(_function(WITH_TUPLE), With).substitute({})
+    with_node = _with(_node(_function(WITH_TUPLE), With).substitute({}))
     assert isinstance(with_node, With)
     item = with_node.items[0]
     store = with_node.body[0]
@@ -367,7 +376,7 @@ def test_an_unseated_tuple_target_lowers_its_store_and_construction_refuses() ->
     # name is bound to it, and ``a``/``b`` read its projections after the
     # with.  Constructing the with asks the door and refuses by name.
     function = _function(WITH_TUPLE_FORMAL)
-    with_node = _node(function, With).substitute({})
+    with_node = _with(_node(function, With).substitute({}))
     assert isinstance(with_node, With)
     item = with_node.items[0]
     store = with_node.body[0]

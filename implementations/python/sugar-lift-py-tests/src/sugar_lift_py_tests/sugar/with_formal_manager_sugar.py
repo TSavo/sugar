@@ -54,8 +54,18 @@ class WithFormalManagerSugar(Sugar):
         # of them is refused by name. A manager, construction or enter halt
         # is at the head of the ``with``: it carries the record of where it
         # halted (``halts_recorded``).
+        # The manager is the ``with``'s header: a walrus bind or callee store
+        # its value carried reaches the body by the one header rule
+        # (``header_applied``), the stores laid in every arm's record.
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            header_applied,
+        )
+
+        headed, manager_out = header_applied(self, "manager", ctx)
+        if headed is not None:
+            return headed
         manager_out = _require_exit_set(
-            self.manager.desugar(ctx), owner="WithFormalManagerSugar.manager"
+            manager_out, owner="WithFormalManagerSugar.manager"
         )
         manager_es = halts_recorded(
             manager_out.sequence(lambda value: _project_manager_receiver(value, ctx)),

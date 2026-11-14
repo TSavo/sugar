@@ -81,8 +81,16 @@ def _route_manager_faces(resource, ctx: object = None) -> ExitSet:
     # source outcome once, preserving exceptional faces before enter. A
     # manager or enter halt is at the head of the ``with``: it carries the
     # record of where it halted (``halts_recorded``).
+    # The manager is the ``with``'s header: a walrus bind or callee store its
+    # value carried reaches the body by the one header rule
+    # (``header_applied``), the stores laid in every arm's record.
+    from sugar_lift_py_tests.sugar.function_universe_sugar import header_applied
+
+    headed, manager_out = header_applied(resource, "manager", ctx)
+    if headed is not None:
+        return headed
     manager_out = _require_exit_set(
-        resource.manager.desugar(ctx), owner="WithSourceResourceSugar.manager"
+        manager_out, owner="WithSourceResourceSugar.manager"
     )
     manager_es = halts_recorded(
         manager_out.sequence(lambda value: _project_manager_receiver(value, ctx)),

@@ -14009,6 +14009,11 @@ class For(Statement):
                     unpacks, bindings = self._iteration_unpacks(
                         elements, bindings, scope
                     )
+                    # The iterable is evaluated before the first item: an
+                    # item's call runs there, whatever the items after it do.
+                    hoisted, unpacks = self._evaluated_before_the_first_item(
+                        elements, unpacks
+                    )
                     if all(b is not None for b in bindings):
                         if self._body_has_owned_loop_control():
                             controlled = self._unroll_concrete_controlled(
@@ -14016,14 +14021,16 @@ class For(Statement):
                             )
                             if controlled is not None:
                                 statements, final_bindings = controlled
-                                return _Splice(statements, final_bindings)
+                                return _Splice(
+                                    (*hoisted, *statements), final_bindings
+                                )
                             # A symbolic guard owns a jump.  It cannot be selected
                             # by concrete unrolling and must remain a real loop
                             # below.
                             elements = None
                     if elements is not None and all(b is not None for b in bindings):
                         target_names = set(target_pattern.names)
-                        unrolled: list = []
+                        unrolled: list = list(hoisted)
                         carried = dict(
                             scope
                         )  # carries loop variables across iterations
@@ -14328,6 +14335,42 @@ class For(Statement):
             unpacks.append(store)
             resolved.append(store.substitution_binding(iteration))
         return tuple(unpacks), resolved
+
+    def _evaluated_before_the_first_item(self, elements, unpacks):
+        """``(hoisted, unpacks)``: Python evaluates the iterable -- every
+        member of its display -- once, before the first item.  An
+        iteration's keyed store of its item (``_iteration_unpacks``) whose
+        element makes a call is moved before the first item, as that
+        iteration's own occurrence copy (``_iteration_copies``): the call's
+        caller-visible effects -- a callee's stores, its halt -- happen
+        there, in order, before the first item's body runs, and an earlier
+        item's ``break``, ``return`` or raise never drops them.  Each item
+        still reads its own key, so moving the store changes no read.
+
+        A store that unpacks a non-display element into several targets
+        after the first item stays at its iteration: its unpack (a
+        ``ValueError`` on the wrong arity) runs as that item is taken, never
+        before an earlier item's body.  ``unpacks`` holds None where the
+        store was moved."""
+        hoisted = []
+        kept = []
+        for index, (element, unpack) in enumerate(
+            zip(elements, unpacks, strict=True)
+        ):
+            movable = (
+                index == 0
+                or self.target.kind == "Name"
+                or element.kind in ("Tuple", "List")
+            )
+            calls = any(
+                node.kind in ("Call", "FormattedValue") for node in element.walk()
+            )
+            if unpack is not None and movable and calls:
+                hoisted.extend(_iteration_copies(self, index, (unpack,)))
+                kept.append(None)
+            else:
+                kept.append(unpack)
+        return tuple(hoisted), tuple(kept)
 
     def _unroll_concrete_controlled(self, bindings, scope, unpacks=None):
         """Exact AST-local execution of bounded jump-bearing loop structure.
@@ -16304,23 +16347,50 @@ class With(Statement):
                 body_scope[item.optional_vars.id] = item._make_observation_ref(
                     enter_slot, ENTER_RESULT
                 )
-            new_body, d = self._substitute_body(self.body, body_scope)
+            new_body, d, body_net = self._substitute_body_tracked(
+                self.body, body_scope
+            )
             if d:
                 changed["body"] = new_body
             # Keyed as the item is: the With's own sugar reads its slots off
             # the keyed item.
-            return self._keyed_evaluation(
-                self if not changed else rewrite(self, **changed), scope
+            return self._published(
+                self._keyed_evaluation(
+                    self if not changed else rewrite(self, **changed), scope
+                ),
+                body_net,
             )
         for item in items:
             if item.optional_vars is not None:
                 for name in self._bound_names_in(item.optional_vars):
                     body_scope.pop(name, None)
 
-        new_body, d = self._substitute_body(self.body, body_scope)
+        new_body, d, body_net = self._substitute_body_tracked(self.body, body_scope)
         if d:
             changed["body"] = new_body
-        return self if not changed else rewrite(self, **changed)
+        return self._published(
+            self if not changed else rewrite(self, **changed), body_net
+        )
+
+    @staticmethod
+    def _published(node, body_net):
+        """``node`` leaving the ``with`` with what its body left: every name
+        the body rebound and every object a store, call or container
+        mutation in it changed is read after the ``with`` as the body left
+        it, as after any block (``Try.substitute``'s completion, an ``if``'s
+        arms) -- never as it stood before the body.  ``node`` itself where
+        the body changed nothing.
+
+        A halt inside the body that the manager does not suppress leaves the
+        ``with`` as a halt; one it suppresses goes on after the ``with`` from
+        the record it halted with (``function_universe_sugar.resumed``), where
+        a store the body never reached is unbound: the read refuses by name
+        (``EvaluationRefSugar._unbound``), never the completed body's value.
+        A halt inside the ``with`` itself reaches an enclosing handler with
+        every name the body changed unknown (``Try._mid_statement_state``)."""
+        if not body_net:
+            return node
+        return _Splice((node,), body_net)
 
     def _effect_boundary_binding(self, item, resolved_ref):
         """(slot_id, projection) the CONTRACT declares for this ``as`` name.
@@ -17239,7 +17309,8 @@ class Try(Statement):
                 # state after the ``if`` holds it at every halt inside the
                 # statement, as at a simple statement.  Any other compound
                 # statement may halt after any of its inner stores (a
-                # ``with`` body's are not threaded out of it).
+                # ``with`` body's, which the ``with`` publishes after it,
+                # ``With._published``).
                 binding[name] = (
                     state
                     if kept and getattr(statement, "kind", None) == "If"

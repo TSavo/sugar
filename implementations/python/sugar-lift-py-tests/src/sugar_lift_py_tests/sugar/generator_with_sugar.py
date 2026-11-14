@@ -64,16 +64,21 @@ class GeneratorWithSugar(Sugar):
             _ReducedBlock,
             halt_record,
             halts_recorded,
+            header_applied,
             reduce_block_to_exitset,
         )
 
+        # The manager is the ``with``'s header: a walrus bind or callee store
+        # its value carried reaches the body by the one header rule
+        # (``header_applied``), the stores laid in every arm's record.
+        headed, manager_out = header_applied(self, "manager", ctx)
+        if headed is not None:
+            return headed
         # The manager is routed face by face: a deferred native-operation
         # carrier is refused by name. A manager halt is at the head of the
         # ``with``: it carries the record of where it halted.
         manager_es = halts_recorded(
-            _require_exit_set(
-                self.manager.desugar(ctx), owner="GeneratorWithSugar.manager"
-            ),
+            _require_exit_set(manager_out, owner="GeneratorWithSugar.manager"),
             halt_record(ctx),
         )
         if not manager_es.exits:

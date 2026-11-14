@@ -72,17 +72,22 @@ class WithEffectBoundarySugar(Sugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             halt_record,
             halts_recorded,
+            header_applied,
             resumed,
         )
 
+        # The manager is the ``with``'s header: a walrus bind or callee store
+        # its value carried reaches the body by the one header rule
+        # (``header_applied``), the stores laid in every arm's record.
+        headed, manager_out = header_applied(self, "manager", ctx)
+        if headed is not None:
+            return headed
         # The manager is routed face by face: a deferred native-operation
         # carrier is refused by name. A manager or constructor halt is at the
         # head of the ``with``: it carries the record of where it halted
         # (``halts_recorded``).
         manager_es = halts_recorded(
-            _require_exit_set(
-                self.manager.desugar(ctx), owner="WithEffectBoundarySugar.manager"
-            ),
+            _require_exit_set(manager_out, owner="WithEffectBoundarySugar.manager"),
             halt_record(ctx),
         )
         construction_halts, construction_guard = self._construction_faces()
