@@ -134,9 +134,13 @@ def _may_change(value, method, pure, sharer) -> bool:
     if sharer:
         return kind is None
     if kind is None:
-        # An ordinary method of a mutating name may change its receiver; an
-        # operand the source does not type keeps its value, as it always has.
-        return method in law.ANY_MUTATING_METHOD or _in_place(method)
+        # A value no floor decides is a builtin container: a method called on
+        # it may change it, whatever the method is spelled -- a source
+        # ``o.set(3)`` as much as ``o.append(3)`` (#7757).  The container
+        # law's method names are read only on a value it decides (below).
+        # An operand the source does not type keeps its value, as it always
+        # has.
+        return bool(method)
     if method and method not in law.MUTATING_METHODS[kind] and not _in_place(method):
         return False
     if pure and builtin_typed_value(value):

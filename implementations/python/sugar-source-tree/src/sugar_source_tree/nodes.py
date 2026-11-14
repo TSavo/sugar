@@ -10469,6 +10469,7 @@ class ClassDef(Statement):
         initializer = self._source_initializer()
         initializer_body = None
         receiver_coordinate_cid = None
+        receiver_formal = None
         if dataclass_fields is not None:
             # ``_init_fn``: one ``__dataclass_self__.f = f`` per field, in
             # field order (the receiver name CPython uses, which no field
@@ -10508,6 +10509,13 @@ class ClassDef(Statement):
             )
             receiver = self._make_constructed_receiver_ref(coordinate.cid)
             receiver_coordinate_cid = coordinate.cid
+            if receiver_param.param_kind in (
+                "positional_only",
+                "positional_or_keyword",
+            ):
+                # The frame local a zero-argument ``super()`` in the body
+                # reads, as the ``def`` declares it.
+                receiver_formal = receiver_param.name
             initializer_scope = {
                 receiver_param.name: BindingEntryV1(
                     coordinate, receiver, None  # unsealed; seal when testified
@@ -10548,6 +10556,7 @@ class ClassDef(Statement):
             site=self.fragment,
             constructed_new_method=constructed_new_method,
             exception_args_coordinate_cid=exception_args_coordinate_cid,
+            receiver_formal=receiver_formal,
         )
 
     def _make_constructed_receiver_ref(self, receiver_coordinate_cid):
