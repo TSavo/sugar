@@ -270,7 +270,16 @@ pub(crate) fn build_prove_outcome_with_options(
     // `.proof` files mint packaged and the imported ones it joins. Prove never
     // starts a lift kit to re-walk the project. Discharge always runs; a dirty
     // link surface reddens `outcome_class` under #3893.
-    let mut proven = sugar_compiler::orchestrate::solve_project(cfg, compilers)
+    //
+    // Ruling 3b on #7766 (inventory item 40): those inputs are read by name
+    // and location -- the minted `.proof` at the root and the staged
+    // `.sugar/imports/*.proof` -- not by walking the root, so prove never
+    // takes its own earlier output (`.sugar/runs/*.proof`) back as input.
+    let mut pool = sugar_verifier::load_all_proofs::run_prove_inputs(project_root);
+    for extra in &cfg.extra_projects {
+        pool.merge(sugar_verifier::load_all_proofs::run(extra));
+    }
+    let mut proven = sugar_compiler::orchestrate::solve_project_with_pool(cfg, compilers, pool)
         .map_err(|error| error.to_string())?;
     proven.artifact = cli_persist_proof_run(project_root, proven.artifact);
     Ok(proven)
@@ -776,7 +785,12 @@ mod tests {
                 "sugar prove reaches back to the lifter through `{forbidden}`"
             );
         }
-        assert!(production.contains("orchestrate::solve_project("));
+        assert!(production.contains("load_all_proofs::run_prove_inputs("));
+        assert!(production.contains("orchestrate::solve_project_with_pool("));
+        assert!(
+            !production.contains("orchestrate::solve_project("),
+            "sugar prove walks the root for .proof files through `solve_project`"
+        );
     }
 
     #[test]

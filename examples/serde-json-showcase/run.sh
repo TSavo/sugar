@@ -109,11 +109,13 @@ run_suite() {
   echo "==================== suite: $suite ===================="
 
   echo "-- mint: lift Rust assertions and cargo-test witness package --"
-  mkdir -p "$dir/.sugar/runs"
-  ( cd "$dir" && SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" mint --out .sugar/runs ) >/dev/null
+  # Mint writes the suite's `.proof` at its root; prove reads it there by name
+  # (step 9, ruling 3b on #7766). `.sugar/runs` holds prove's own receipts,
+  # which prove never reads back.
+  ( cd "$dir" && SUGAR_COMPONENT_PATH="$HERE/.sugar/components" "$SUGAR" mint --out . ) >/dev/null
 
   local have_proof=0
-  for p in "$dir"/.sugar/runs/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
+  for p in "$dir"/blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
   [ "$have_proof" = 1 ] || { echo "FAIL[$suite]: mint produced no .proof"; exit 1; }
 
   echo "-- prove: consistency rows plus witness-package row --"
