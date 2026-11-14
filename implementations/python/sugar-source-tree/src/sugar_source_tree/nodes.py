@@ -6842,12 +6842,12 @@ class Node(Typed):
             new_gens.append(new_gen)
             if index == 0:
                 # The first iterable is evaluated once, before any member: an
-                # object its calls changed is read as they left it in every
-                # condition, later iterable and element
-                # (``container_mutation.thread_header``).
+                # object its calls, or the iteration of its value, changed is
+                # read as they left it in every condition, later iterable and
+                # element (``container_mutation.thread_header``).
                 from .container_mutation import thread_header
 
-                scope = thread_header(new_gen.iter, inner, scope)
+                scope = thread_header(new_gen.iter, inner, scope, operated=True)
             gen_bound = self._bound_names_in(gen.target)
             bound |= gen_bound
             # A later target rebinding a name ends the earlier reference.
@@ -8092,7 +8092,7 @@ class FunctionDef(Statement):
 
     def _captured_bindings(self) -> tuple:
         """``(names, coordinates)``: each enclosing function's local this body
-        reads (CPython's free variables, ``nonlocal`` ones excepted), and the
+        reads or declares ``nonlocal`` (CPython's free variables), and the
         coordinate the frame reads it through.
 
         Python reads such a name from the enclosing frame's cell when the
@@ -8102,16 +8102,20 @@ class FunctionDef(Statement):
         it: a call in the enclosing body carries the binding its own scope
         holds for the name (``Call._closure_cells``) and binds its value under
         the coordinate (``CallSiteSugar._captured_values``).  The name itself
-        is never read.  ``__class__`` (the cell a class body gives a method
-        that uses ``super()``) is the class's, not an enclosing function's
-        local, and is not captured here."""
+        is never read.  A ``nonlocal`` name the body writes is read so too:
+        its writes rebind it in the frame, and the caller reads the cell
+        after the call through the write's key
+        (``container_mutation.source_helper_actual_states``), or as unknown
+        where the call is not followed (``_ambient_targets``).
+        ``__class__`` (the cell a class body gives a method that uses
+        ``super()``) is the class's, not an enclosing function's local, and
+        is not captured here."""
         table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
         names = tuple(
             sorted(
                 symbol.get_name()
                 for symbol in table.get_symbols()
-                if symbol.is_free()
-                and not symbol.is_nonlocal()
+                if (symbol.is_free() or symbol.is_nonlocal())
                 and symbol.get_name() != "__class__"
             )
         )
@@ -8135,13 +8139,13 @@ class FunctionDef(Statement):
 
     def lacks_captured_binding_testimony(self, covered=frozenset()) -> bool:
         """Whether CPython classifies a closure binding we cannot seat: a
-        ``nonlocal`` name (the body writes the enclosing cell), or a free
-        name the call does not bind (``covered``: the captured names a call
-        in the enclosing body carries, ``Call._closure_cells``)."""
+        free or ``nonlocal`` name the call does not bind (``covered``: the
+        captured names a call in the enclosing body carries,
+        ``Call._closure_cells``)."""
         table = self.unit.function_symtable(self.name, self.line_col_span().start_line)
         return any(
-            symbol.is_nonlocal()
-            or (symbol.is_free() and symbol.get_name() not in covered)
+            (symbol.is_free() or symbol.is_nonlocal())
+            and symbol.get_name() not in covered
             for symbol in table.get_symbols()
         )
 
@@ -13645,12 +13649,16 @@ class For(Statement):
             # The iterable is evaluated once, before every item and the
             # ``else``: a walrus in it is read there through its key
             # (``_scope_after``), never the name as it stood before the loop,
-            # and an object its calls changed is read as they left it
+            # and an object its calls, or the iteration of its value
+            # (``__iter__``, ``__next__``), changed is read as they left it
             # (``container_mutation.thread_header``).
             from .container_mutation import thread_header
 
             scope = thread_header(
-                subst_iter, scope, _scope_after(scope, self.iter, subst_iter)
+                subst_iter,
+                scope,
+                _scope_after(scope, self.iter, subst_iter),
+                operated=True,
             )
 
             # `else` is unrollable too: the jump-guard means no `break` exists, and
@@ -14379,6 +14387,7 @@ class While(Statement):
             header_scope,
             _scope_after(header_scope, self.test, new_test),
             repeated=True,
+            operated=True,
         )
         else_header = {**bs, **_loop_header_bindings(self, else_bound, scope)}
         else_scope = thread_header(
@@ -14386,6 +14395,7 @@ class While(Statement):
             else_header,
             _scope_after(else_header, self.test, new_test),
             repeated=True,
+            operated=True,
         )
         for f, field_scope in (
             ("body", body_scope),
@@ -14541,7 +14551,9 @@ class If(Statement):
         # rebinds leaves the ``if`` in that state.
         from .container_mutation import thread_header
 
-        scope = thread_header(new_test, scope, _scope_after(scope, self.test, new_test))
+        scope = thread_header(
+            new_test, scope, _scope_after(scope, self.test, new_test), operated=True
+        )
         new_body, d, then_net = self._substitute_body_tracked(self.body, scope)
         if d:
             changed["body"] = new_body
@@ -17724,7 +17736,10 @@ class Match(Statement):
         from .container_mutation import thread_header
 
         scope = thread_header(
-            subject, scope, _scope_after(scope, self.subject, subject)
+            subject,
+            scope,
+            _scope_after(scope, self.subject, subject),
+            operated=True,
         )
 
         site_id = getattr(self, "match_route_site_id", None)
@@ -20196,9 +20211,12 @@ class Call(Expression):
         call of the function (``_closure_cells``) and for a lambda passed to
         a callee that runs it during the call (``_carry_argument_cells``).
 
-        Empty when a read name is ``nonlocal`` (the body writes the cell), or
-        when a read name has no value binding here (unbound, or bound to a
-        definition or an import).  Empty, too, when this scope's binding of a
+        A ``nonlocal`` name is carried as a read one is: the body reads the
+        cell's binding at the call through its coordinate and writes it in
+        its frame; what the caller reads after the call is the caller's
+        threading (``container_mutation.source_helper_actual_states``).
+        Empty when a read name has no value binding here (unbound, or bound
+        to a definition or an import).  Empty, too, when this scope's binding of a
         read name is not the cell's: a lambda reached in another function (a
         formal specialized to it, ``bind_node_actuals``), or a name a
         comprehension or lambda around this call rebinds

@@ -47,14 +47,17 @@ receiver an active ``__init__`` constructs):
 - **Beyond the operands.** Code a call runs and the caller does not follow
   may reach what the caller holds without being handed it: the module
   objects it reads and the closure cells of its function
-  (``_ambient_targets``).  One rule for every kind of call -- a method, a
-  callable value, an import, a builtin, a source function not followed:
-  each is rebound to its value after the call, unknown when the call runs
-  code (decided at reduce by the values it runs on) and the value is one a
-  call may change; a cell a nested scope declares ``nonlocal`` is unknown
-  whatever it holds.  A source function that is followed carries what it
-  did to each one it names, as it does to its actuals
-  (``source_helper_actual_states``).
+  (``_ambient_targets``).  One rule for every operation that may run code
+  -- a call of any kind (a method, a callable value, an import, a builtin,
+  a source function not followed), an operator, a comparison, a truth
+  test, an item or attribute access, an iteration, an ``await``
+  (``_sites_at``): each is rebound to its value after the operation,
+  unknown when it runs code (decided at reduce by the values it runs on:
+  a builtin value runs none) and the value is one a call may change; a
+  cell a nested scope declares ``nonlocal`` is unknown whatever it holds.
+  A source function that is followed carries what it did to each one it
+  names, as it does to its actuals, and the binding it wrote to each cell
+  it declares ``nonlocal`` (``source_helper_actual_states``).
 
 The same door serves a mutation through a path (``path_mutation_statement``,
 ``path_item_statement``: ``a.b.append(x)``, ``a[i][j] = v``, ``d['k'][0] +=
@@ -698,14 +701,17 @@ def _repeats_header(statement) -> bool:
     return kind == "While"
 
 
-def thread_header(header, pre_scope, scope, *, repeated=False):
+def thread_header(header, pre_scope, scope, *, repeated=False, operated=False):
     """``scope`` with what the calls in ``header`` (one expression, or a
     tuple of them in evaluation order) did to the objects they reach: the one
     rule for an expression a statement evaluates before what follows reads
     those objects (``havoc_after`` over it).  ``pre_scope`` is the scope the
     header was substituted against.  ``repeated``: the header runs again
     before every item of a loop (``_repeats_header``), so its calls take the
-    loop's rule.
+    loop's rule.  ``operated``: the statement then runs dunders of the
+    header's value before what follows (``_operates_header``: a ``for``
+    iterates it, an ``if``/``while`` tests its truth, a ``match`` matches
+    it), which may run code as any operation does (``_Operated``).
 
     A compound statement's substitution threads its header before its body
     (``If``, ``While``, ``For``, ``With``, ``Match``, a comprehension's first
@@ -715,22 +721,36 @@ def thread_header(header, pre_scope, scope, *, repeated=False):
     nodes = header if isinstance(header, tuple) else (header,)
     for node in nodes:
         if node is not None:
-            scope = havoc_after(node, pre_scope, scope, loop=repeated)
+            scope = havoc_after(
+                node, pre_scope, scope, loop=repeated, operated=operated
+            )
     return scope
+
+
+def _operates_header(statement) -> bool:
+    """Whether ``statement`` runs dunders of its header's value
+    (``threaded_header``) before its body: a ``for`` iterates it
+    (``__iter__``, ``__next__``), an ``if`` or ``while`` tests its truth
+    (``__bool__``, ``__len__``), a ``match`` matches it (``__eq__``,
+    ``__match_args__``, ``__getitem__``, ...)."""
+    kind = getattr(statement, "kind", None)
+    if kind == "LoopRecurrenceStatement":
+        return _operates_header(statement.loop)
+    return kind in ("For", "If", "While", "Match")
 
 
 _ABSENT = object()
 
 
 def _calls(statement, bound_refs, *, include_container_calls, threaded=()):
-    """Calls ``statement`` makes now: not inside a nested def, and not inside a
-    value a name was already bound to (that value's calls ran earlier), nor in
-    ``threaded`` (the header the statement threads first, ``threaded_header``).
-    An f-string's replacement field is one: it runs ``format`` on its value
-    (``_call_targets``)."""
+    """The operations ``statement`` runs now that may run code (``_sites_at``:
+    every call, f-string field, operator, comparison, truth test, item or
+    attribute access, iteration and ``await``): not inside a nested def, and
+    not inside a value a name was already bound to (that value's operations
+    ran earlier), nor in ``threaded`` (the header the statement threads
+    first, ``threaded_header``)."""
     from .nodes import (
         AsyncFunctionDef,
-        Call,
         ClassDef,
         FunctionDef,
         Lambda,
@@ -754,8 +774,7 @@ def _calls(statement, bound_refs, *, include_container_calls, threaded=()):
             if current is not statement:
                 continue
             return
-        if isinstance(current, Call) or current.kind == "FormattedValue":
-            yield current
+        yield from _sites_at(current, headers)
         if isinstance(current, PathContainerCall):
             # Its ``fallback`` is this same call, not a second one.
             if include_container_calls:
@@ -768,13 +787,14 @@ def _calls(statement, bound_refs, *, include_container_calls, threaded=()):
                 stack.append(child)
 
 
-def havoc_after(statement, pre_scope, scope, *, loop=None):
+def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
     """Rebind every object ``statement``'s calls may have changed to an unknown.
 
     ``pre_scope`` is the scope the statement was substituted against; the
     statement's calls name objects by the nodes that scope bound.  ``loop``:
     whether the statement may run its calls any number of times (by default,
-    whether it is a loop).
+    whether it is a loop).  ``operated``: ``statement`` is a header whose
+    value its statement operates on (``thread_header``), one operation more.
 
     A compound statement's header (``threaded_header``) is evaluated before
     the rest of it: its calls are threaded first (``thread_header``), and the
@@ -794,7 +814,11 @@ def havoc_after(statement, pre_scope, scope, *, loop=None):
     header = threaded_header(statement)
     if header:
         threaded = thread_header(
-            header, pre_scope, pre_scope, repeated=_repeats_header(statement)
+            header,
+            pre_scope,
+            pre_scope,
+            repeated=_repeats_header(statement),
+            operated=_operates_header(statement),
         )
         moved = {
             name: state
@@ -811,6 +835,18 @@ def havoc_after(statement, pre_scope, scope, *, loop=None):
         for value in pre_scope.values()
         if isinstance(_state(value), Node)
     }
+    held = []
+
+    def holdings():
+        if not held:
+            held.append(_ambient_objects(statement, pre_scope))
+        return held[0]
+
+    def ambient(site):
+        # What the code ``site`` runs may reach beyond its operands
+        # (``_ambient_targets``); the caller's holdings are read once.
+        return _ambient_targets(statement, site, pre_scope, holdings)
+
     if isinstance(statement, ContainerMutationStatement):
         # Each of its calls is threaded (``d.setdefault(k, v).append(x)``
         # makes two); what their operands' own calls (or a call, for an
@@ -827,13 +863,14 @@ def havoc_after(statement, pre_scope, scope, *, loop=None):
                 continue
             # The operation itself, when the receiver's value takes the
             # ordinary call, runs code the caller does not follow: what it
-            # may reach beyond its operands (``_ambient_targets``).
-            targets.extend(_ambient_targets(statement, call, pre_scope))
+            # may reach beyond its operands (``_ambient_targets``).  So does
+            # every operation its receiver and operands run.
+            targets.extend(ambient(call))
             for inner in _calls(
                 call.receiver, bound_refs, include_container_calls=False
             ):
                 targets.extend(_call_targets(inner, pre_scope, bound_refs))
-                targets.extend(_ambient_targets(statement, inner, pre_scope))
+                targets.extend(ambient(inner))
             if _unrooted(call.receiver):
                 rules = ((call.method, False, False),)
                 targets.extend(
@@ -845,6 +882,7 @@ def havoc_after(statement, pre_scope, scope, *, loop=None):
                 )
                 for inner in _calls(arg, bound_refs, include_container_calls=False):
                     targets.extend(_call_targets(inner, pre_scope, bound_refs))
+                    targets.extend(ambient(inner))
         return _rebind(statement, pre_scope, scope, targets)
     # A loop that may run its body any number of times leaves every object a
     # mutation in that body changed unknown (when its value is one a
@@ -854,12 +892,15 @@ def havoc_after(statement, pre_scope, scope, *, loop=None):
         loop = isinstance(statement, (For, While, LoopRecurrenceStatement))
     targets = []
     applied = []
-    for call in _calls(
+    sites = _calls(
         statement,
         bound_refs,
         include_container_calls=loop,
         threaded=header,
-    ):
+    )
+    if operated:
+        sites = (*sites, _Operated(statement))
+    for call in sites:
         helper = (
             None if loop else source_helper_actual_states(call, bound_refs, pre_scope)
         )
@@ -872,12 +913,12 @@ def havoc_after(statement, pre_scope, scope, *, loop=None):
             # one rule wherever the call sits.
             before = _halts_before(statement, call)
             applied.extend(
-                (actual, state, label, holds and not before)
-                for actual, state, label, holds in states
+                (actual, state, label, holds and not before, name)
+                for actual, state, label, holds, name in states
             )
             continue
         if isinstance(call, PathContainerCall):
-            targets.extend(_ambient_targets(statement, call, pre_scope))
+            targets.extend(ambient(call))
             root, _steps = path_steps(call.receiver)
             if root is None:
                 # No steps (``name_mutation_statement``): the receiver is the
@@ -896,11 +937,13 @@ def havoc_after(statement, pre_scope, scope, *, loop=None):
             )
             continue
         targets.extend(_call_targets(call, pre_scope, bound_refs))
-        # A call this statement does not follow -- a source function, a
-        # method, a callable value, an import, a builtin -- may change what
-        # the caller holds beyond its operands: the module objects and the
-        # closure cells its code can reach (``_ambient_targets``).
-        targets.extend(_ambient_targets(statement, call, pre_scope))
+        # An operation this statement does not follow -- a call of a source
+        # function, a method, a callable value, an import, a builtin; an
+        # operator, a truth test, an item or attribute access, an
+        # iteration, an ``await`` -- may change what the caller holds beyond
+        # its operands: the module objects and the closure cells its code
+        # can reach (``_ambient_targets``).
+        targets.extend(ambient(call))
     havocked = _rebind(statement, pre_scope, scope, targets)
     if not applied:
         return havocked
@@ -921,8 +964,12 @@ def _call_targets(call, scope, bound_refs):
     method or of the receiver's binding.
 
     An f-string's replacement field (``f'{v}'``) runs ``format(v, spec)``:
-    the cited pure builtin's rule over what ``v`` reaches."""
-    from .nodes import Attribute, Name
+    the cited pure builtin's rule over what ``v`` reaches.  An ``await``
+    runs the awaitable's code, which may change whatever the awaitable
+    holds: it is handed to that code as an operand is.  Any other operation
+    (``_sites_at``) changes nothing here beyond what it reaches
+    (``_ambient_targets``)."""
+    from .nodes import Attribute, Call, Name
 
     if call.kind == "FormattedValue":
         if builtin_typed(call.value, scope):
@@ -930,6 +977,12 @@ def _call_targets(call, scope, bound_refs):
             return []
         pure = (("", True, False),)
         return [(node, pure, None) for node in _exposed(call.value, bound_refs)]
+    if call.kind == "Await":
+        return [
+            (node, _OPERAND_RULES, None) for node in _exposed(call.value, bound_refs)
+        ]
+    if not isinstance(call, Call):
+        return []
     targets = []
     func = call.func
     if (
@@ -1165,13 +1218,19 @@ def _rebind(statement, pre_scope, scope, targets):
         return scope
     found = {}
     asked = set()
+    named = {}
     for target, rules, explicit in targets:
         # A read and the node it was given are one object: ask once.
-        question = (_object_key(target), rules, id(explicit))
+        key = _object_key(target)
+        question = (key, rules, id(explicit))
         if question in asked:
             continue
         asked.add(question)
-        exact, containing = aliases(scope, target)
+        # The names an object has are its own: asked once however many
+        # operations' values decide it.
+        if key not in named:
+            named[key] = aliases(scope, target)
+        exact, containing = named[key]
         held = explicit
         if held is None:
             if exact and exact[0] in scope:
@@ -2223,10 +2282,13 @@ def _closed_operand(node, *, kinds=_CLOSED_OPERAND_KINDS) -> bool:
 
 
 def source_helper_actual_states(call, bound_refs, scope):
-    """``(havoc_targets, [(object, state, label, holds_at_halt)])`` for a call
-    to a followable source helper, or None when the call is not one (it keeps
-    its havoc, ``havoc_after``).  ``havoc_targets`` are ``_rebind``'s
-    ``(object, rules, subject)``.
+    """``(havoc_targets, [(object, state, label, holds_at_halt, name)])`` for
+    a call to a followable source helper, or None when the call is not one
+    (it keeps its havoc, ``havoc_after``).  ``havoc_targets`` are
+    ``_rebind``'s ``(object, rules, subject)``.  ``name``: the cell the
+    helper declares ``nonlocal`` and rebinds, whose name alone takes
+    ``state`` (the helper's write); None for an object every alias of which
+    takes it.
 
     The objects the helper reaches that its caller holds are followed alike:
     every actual that is a bound object a call may change
@@ -2237,8 +2299,12 @@ def source_helper_actual_states(call, bound_refs, scope):
     reads or declares ``nonlocal`` (``_callee_reach``).  What the helper's
     mutation of one does is the one door's, decided by the object's value at
     reduce (``PathContainerCallSugar``), never by the spelling of its
-    binding; a cell the helper rebinds is unknown after it.  What it may
-    reach and does not follow takes the havoc (``_unfollowed_reach``).
+    binding.  A cell the helper declares ``nonlocal`` and rebinds (``n +=
+    1``, ``n = v``) is the caller's binding: the caller's name reads the
+    helper's write after the call (the key the write's statement binds when
+    the call runs), as the helper's own later reads do; a rebinding no key
+    names is unknown after it.  What it may reach and does not follow takes
+    the havoc (``_unfollowed_reach``).
 
     ``holds_at_halt``: ``state`` is the object's state at every halt inside
     the call too (``_holds_at_every_halt``), so the one state stands on both
@@ -2326,16 +2392,25 @@ def source_helper_actual_states(call, bound_refs, scope):
         )
     for name, actual, label, rebinds in followed:
         state = _state(net[name]) if name in net else actual
+        written = _read_of(net[name]) if rebinds and name in net else None
         if (
-            rebinds
-            and name in net
-            and getattr(_read_of(net[name]), "kind", None) not in _MUTATED_BINDINGS
+            written is not None
+            and getattr(written, "kind", None) not in _MUTATED_BINDINGS
+            and not _same_read(written, actual)
         ):
             # The helper rebound the caller's cell (``n += 1``, ``n = v``):
-            # its write is the caller's binding, which this projection does
-            # not state.  Only a binding the one door's mutation left (never
-            # a write's reference, ``r += x`` included) is a mutation.
-            havoc_targets.append((actual, None, None))
+            # its write is the caller's binding.  A write reads the key the
+            # helper's statement binds when the call runs
+            # (``EvaluationRef``): the caller's name reads that key after
+            # the call, as the helper's own later reads do.  Only the cell's
+            # name is rebound -- another name bound to the object it held
+            # keeps it.  Only a binding the one door's mutation left (never a
+            # write's reference, ``r += x`` included) is a mutation.
+            if getattr(written, "kind", None) != "EvaluationRef":
+                havoc_targets.append((actual, None, None))
+                continue
+            holds = operands_halt_free and _holds_at_every_halt(edges, name, state)
+            states.append((actual, written, label, holds, name))
             continue
         if not _closed_state(state, actual):
             havoc_targets.append((actual, None, None))
@@ -2344,7 +2419,7 @@ def source_helper_actual_states(call, bound_refs, scope):
             # The helper left the object as it was.
             continue
         holds = operands_halt_free and _holds_at_every_halt(edges, name, state)
-        states.append((actual, state, label, holds))
+        states.append((actual, state, label, holds, None))
     return havoc_targets, states
 
 
@@ -2376,8 +2451,8 @@ class _Reach(NamedTuple):
     module: list
     # ``[_Cell]``: the closure cells it, or such a function, reads.
     cells: list
-    # Every call in it, and in every source function it calls by name, is
-    # one of those calls or runs no code (``_runs_no_code``): it reaches
+    # Every operation in it, and in every source function it calls by name,
+    # is one of those calls or runs no code (``_runs_no_code``): it reaches
     # nothing else.
     closed: bool
 
@@ -2535,10 +2610,11 @@ def _closure(definition):
     - ``functions``: each of them, ``definition`` first;
     - ``frees``: ``(reader, name, nonlocal)`` for each enclosing function's
       local one of them reads or declares ``nonlocal`` (``_free_names``);
-    - ``closed``: every other call any of them makes -- a method, a callable
-      value, an import, a class, a builtin, an f-string's ``format`` -- runs
-      no code (``_runs_no_code``), so they reach nothing their bodies do not
-      name.
+    - ``closed``: every other operation any of them runs (``_sites_at``) --
+      a method, a callable value, an import, a class, a builtin, an
+      f-string's ``format``, an operator, a truth test, an item or
+      attribute access, an iteration, an ``await`` -- runs no code
+      (``_runs_no_code``), so they reach nothing their bodies do not name.
 
     Read off the source alone (CPython's symtable, the unit's lexical call
     rows), once per definition."""
@@ -2586,30 +2662,33 @@ def _free_names(definition):
 
 
 def _body_calls(definition):
-    """The calls ``definition``'s body makes (an f-string's replacement
-    field among them: it runs ``format``), not inside a nested ``def``,
-    ``class`` or ``lambda`` (which run when called)."""
-    from .nodes import AsyncFunctionDef, Call, ClassDef, FunctionDef, Lambda, Node
+    """The operations ``definition``'s body runs that may run code
+    (``_sites_at``: its calls, f-string fields, operators, truth tests, item
+    and attribute accesses, iterations, awaits), not inside a nested
+    ``def``, ``class`` or ``lambda`` (which run when called)."""
+    from .nodes import AsyncFunctionDef, ClassDef, FunctionDef, Lambda, Node
 
     stack = list(definition.body)
     while stack:
         current = stack.pop()
         if isinstance(current, (Lambda, FunctionDef, AsyncFunctionDef, ClassDef)):
             continue
-        if isinstance(current, Call) or current.kind == "FormattedValue":
-            yield current
+        yield from _sites_at(current)
         for _name, _index, child in current._child_edges():
             if isinstance(child, Node):
                 stack.append(child)
 
 
 def _runs_no_code(call) -> bool:
-    """A call in a source body that runs no code: a cited pure builtin (by
-    its binding) over constants or a method of a literal
-    (``_is_pure_call``), or an f-string field over a constant."""
-    if call.kind == "FormattedValue":
-        return builtin_typed(call.value, {})
-    return _is_pure_call(call, {})
+    """An operation in a source body that runs no code: a cited pure builtin
+    (by its binding) over constants or a method of a literal
+    (``_is_pure_call``); any other operation over values that are builtin
+    all the way down (``_code_subjects``)."""
+    from .nodes import Call
+
+    if isinstance(call, Call):
+        return _is_pure_call(call, {})
+    return _code_subjects(call, {}) == []
 
 
 def _unfollowed_reach(call, scope, reach, followed):
@@ -2638,36 +2717,54 @@ def _unfollowed_reach(call, scope, reach, followed):
     return targets
 
 
-def _ambient_targets(statement, call, scope):
-    """``_rebind``'s targets for what ``call``, which the caller does not
-    follow, may change of what the caller holds beyond its operands: the
-    module objects and the closure cells the code it runs can reach
-    (``_ambient_objects``).  One rule for every kind of call.
+def _ambient_targets(statement, call, scope, ambient=None):
+    """``_rebind``'s targets for what ``call`` -- an operation the caller
+    does not follow (``_sites_at``) -- may change of what the caller holds
+    beyond its operands: the module objects and the closure cells the code
+    it runs can reach (``ambient``, ``_ambient_objects`` at ``statement``).
+    One rule for every operation that may run code.
 
     - A source function named at the call reaches what its body, and the
       source functions it calls by name, name (``_callee_reach``) when every
-      other call in them runs no code (``_Reach.closed``); otherwise every
-      module object and cell the caller holds.  Each is exposed as an
+      other operation in them runs no code (``_Reach.closed``); otherwise
+      every module object and cell the caller holds.  Each is exposed as an
       operand handed to it is (``_OPERAND_RULES``).
-    - Any other call -- a method on any receiver, a callable value (a bound
-      function, a lambda, a class), an import, a builtin, an f-string's
-      ``format``, the one door's operation -- reaches every one, when it
-      runs code at all: whether it does is decided at reduce by the values
-      of the reads it runs on (``_code_subjects``); where no read decides
-      it, each is exposed as an operand is.
+    - Any other operation -- a method on any receiver, a callable value (a
+      bound function, a lambda, a class), an import, a builtin, an
+      f-string's ``format``, the one door's operation, an operator, a
+      comparison, a truth test, an item or attribute access, an iteration,
+      an ``await`` -- reaches every one, when it runs code at all: whether
+      it does is decided at reduce by the values of the reads it runs on
+      (``_code_subjects``: a builtin value runs none; a source object or an
+      undecided value may); where no read decides it, each is exposed as an
+      operand is.
 
     A cell a nested scope declares ``nonlocal`` may be rebound by such code
-    whatever it holds: it is unknown after the call."""
-    objects, rebound = _ambient_objects(statement, scope)
+    whatever it holds: it is unknown after the call.  ``ambient`` (no
+    arguments) answers what the caller holds, once per statement."""
+    from .nodes import Call
+
+    subjects = reach = None
+    if not isinstance(call, Call):
+        # An operation no source function is named at: its operands' values
+        # decide, asked first (most run over builtin values, and reach
+        # nothing).
+        subjects = _code_subjects(call, scope)
+        if subjects is not None and not subjects:
+            return []
+    objects, rebound = (
+        _ambient_objects(statement, scope) if ambient is None else ambient()
+    )
     if not objects and not rebound:
         return []
-    reach = _callee_reach(call, scope)
+    if isinstance(call, Call):
+        reach = _callee_reach(call, scope)
     if reach is not None and reach.closed:
         objects = [node for _name, node in reach.module]
         objects.extend(cell.node for cell in reach.cells if not cell.nonlocal_)
         rebound = [cell.node for cell in reach.cells if cell.nonlocal_]
         subjects = None
-    else:
+    elif isinstance(call, Call):
         subjects = None if reach is not None else _code_subjects(call, scope)
     if subjects is not None and not subjects:
         # It runs no code: nothing beyond its operands is reached.
@@ -2682,35 +2779,232 @@ def _ambient_targets(statement, call, scope):
     return targets
 
 
-# A read's value runs code a call makes on it when no container law decides
-# it (a source object, a function, a module, an unknown), or it is a
-# container whose members are not builtin all the way down (their dunders).
+# A read's value runs code an operation makes on it when no container law
+# decides it (a source object, a function, a module, an unknown), or it is a
+# container whose members are not builtin all the way down (their dunders:
+# a builtin container's own method reaches its members' ``__eq__``,
+# ``__hash__``, ``__del__``, ...).
 _RUNS_CODE = (("", True, False), ("", False, True))
-# A builtin container's own method that touches no member nor operand: only a
-# value no container law decides runs code.
-_RUNS_OWN_CODE = (("", False, True),)
-_INERT_METHODS = frozenset({"append", "appendleft"})
+
+
+class _Operated(NamedTuple):
+    """A value a statement or a comprehension clause runs dunders of: a
+    ``for`` iterable (``__iter__``, then ``__next__`` before every item), an
+    ``if``/``while``/``assert`` test or a clause's condition (``__bool__``,
+    ``__len__``), a ``match`` subject (``__eq__``, ``__match_args__``, ...)."""
+
+    node: object
+    kind: str = "Operated"
+
+
+# Expressions whose own evaluation runs a dunder of its operands' values:
+# ``a + b``, ``-a``, ``a and b`` (``__bool__``), ``x if t else y``
+# (``__bool__``), ``a == b``/``x in y`` (``__eq__``, ``__contains__``),
+# ``a[k]`` (``__getitem__``/``__setitem__``/``__delitem__``), ``o.x`` (a
+# property, a descriptor, ``__getattr__``, ``__setattr__``), ``await a``
+# (the awaitable's code).
+_OPERATION_KINDS = frozenset(
+    {
+        "BinOp",
+        "UnaryOp",
+        "BoolOp",
+        "IfExp",
+        "Compare",
+        "Subscript",
+        "Attribute",
+        "Await",
+    }
+)
+# Comparisons that run no dunder; and those whose value is a ``bool`` whatever
+# a dunder returns.
+_IDENTITY_OPS = frozenset({"Is", "IsNot"})
+_BOOL_OPS = frozenset({"Is", "IsNot", "In", "NotIn"})
+
+
+def _sites_at(node, headers=()):
+    """The operations ``node``'s own evaluation runs that may run code: a
+    call, an f-string field (it runs ``format``), an operation
+    (``_OPERATION_KINDS``) but an attribute read of an import's member (a
+    module binding, read by its receipt: ``Attribute._construct_sugar``),
+    and each value a statement or a comprehension clause operates on
+    (``_Operated``).  ``headers``: the handles of a header its statement
+    already threaded with its operation (``thread_header``), not counted
+    again -- but a ``for`` iterable, whose ``__next__`` runs before every
+    item."""
+    from .nodes import (
+        Assert,
+        AsyncFor,
+        Call,
+        Comprehension,
+        For,
+        If,
+        While,
+    )
+
+    if isinstance(node, Call) or node.kind == "FormattedValue":
+        yield node
+    elif node.kind in _OPERATION_KINDS and not _import_member(node):
+        yield node
+    if isinstance(node, (For, AsyncFor)):
+        yield _Operated(node.iter)
+    elif isinstance(node, (If, While)) or node.kind == "Match":
+        tested = node.subject if node.kind == "Match" else node.test
+        if not any(_handle(tested) is header for header in headers):
+            yield _Operated(tested)
+    elif isinstance(node, Assert):
+        yield _Operated(node.test)
+    elif isinstance(node, Comprehension):
+        yield _Operated(node.iter)
+        for condition in node.ifs:
+            yield _Operated(condition)
+
+
+def _import_member(node) -> bool:
+    """``node`` is an attribute read the unit's import receipt names a
+    module's member (``import_value_use_receipt``): a module binding read
+    by name, which runs nothing.  Only a dotted read of a name can be one;
+    a unit whose receipts are refused has none (the read is an operation)."""
+    if node.kind != "Attribute":
+        return False
+    root = node.value
+    while getattr(root, "kind", None) == "Attribute":
+        root = root.value
+    if getattr(root, "kind", None) != "Name":
+        return False
+    from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
+
+    from .panic import SugarNotWritten
+
+    span = node.line_col_span()
+    try:
+        receipt = node.unit.import_value_use_receipt(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+    except SugarNotWritten:
+        return False
+    return type(receipt) is AuthenticatedImportUseV1
+
+
+def _site_operands(site):
+    """The operands whose values' dunders the operation ``site`` runs
+    (``_sites_at``)."""
+    kind = site.kind
+    if kind == "Operated":
+        return (site.node,)
+    if kind == "BinOp":
+        return (site.left, site.right)
+    if kind == "UnaryOp":
+        return (site.operand,)
+    if kind == "BoolOp":
+        return tuple(site.values)
+    if kind == "IfExp":
+        return (site.test,)
+    if kind == "Compare":
+        return _compared(site, _IDENTITY_OPS)
+    if kind == "Subscript":
+        return (site.value, site.slice_)
+    if kind in ("Attribute", "Await"):
+        return (site.value,)
+    return ()
+
+
+def _compared(node, skipped):
+    """The operands of the comparison ``node`` some operator not in
+    ``skipped`` compares, each once."""
+    operands = (node.left, *node.comparators)
+    found = []
+    for index, op in enumerate(node.ops):
+        if op.kind in skipped:
+            continue
+        for operand in operands[index : index + 2]:
+            if not any(operand is known for known in found):
+                found.append(operand)
+    return tuple(found)
+
+
+def _result_operands(node):
+    """The operands whose values decide whether ``node``'s value is builtin
+    all the way down -- it is when theirs are (a builtin's dunder returns a
+    builtin, a builtin's member is one, a display of builtins is one, a
+    cited pure builtin over builtins gives one: ``range(n)``) -- or None when
+    no operand does (any other call's result, a lambda, an import)."""
+    from .nodes import Call, Dict, List, Set, Slice, Tuple_
+
+    kind = getattr(node, "kind", None)
+    if isinstance(node, Call):
+        if node.keywords or _builtin_callee(node) not in _cited().pure:
+            return None
+        return tuple(node.args)
+    if kind == "BinOp":
+        return (node.left, node.right)
+    if kind == "UnaryOp":
+        return (node.operand,)
+    if kind == "BoolOp":
+        return tuple(node.values)
+    if kind == "IfExp":
+        return (node.body, node.orelse)
+    if kind == "Compare":
+        return _compared(node, _BOOL_OPS)
+    if kind == "Subscript":
+        return (node.value, node.slice_)
+    if kind == "Attribute":
+        return (node.value,)
+    if isinstance(node, (List, Tuple_, Set)):
+        return tuple(node.elts)
+    if isinstance(node, Dict):
+        return (*(key for key in node.keys if key is not None), *node.values)
+    if isinstance(node, Slice):
+        return tuple(
+            part for part in (node.lower, node.upper, node.step) if part is not None
+        )
+    return None
+
+
+def _operand_subjects(node, scope, depth=0):
+    """``[(read, _RUNS_CODE)]``: the reads whose values decide, at reduce,
+    whether ``node``'s value is builtin all the way down: ``[]`` when it is
+    decided one (``builtin_typed``), the read itself when it is one, the
+    reads of the operands that decide it (``_result_operands``); None when
+    nothing decides it."""
+    from .nodes import Starred
+
+    if isinstance(node, Starred):
+        node = node.value
+    if builtin_typed(node, scope):
+        return []
+    if getattr(node, "kind", None) in _READ_KINDS:
+        return [(node, _RUNS_CODE)]
+    parts = _result_operands(node)
+    if parts is None or depth > 32:
+        return None
+    subjects = []
+    for part in parts:
+        found = _operand_subjects(part, scope, depth + 1)
+        if found is None:
+            return None
+        subjects.extend(found)
+    return subjects
 
 
 def _code_subjects(call, scope):
     """``[(read, rules)]``: the reads whose values decide, at reduce, whether
-    ``call`` runs code (``_RUNS_CODE``): the receiver of a method (the one
-    door's operation included), a callable value, and every operand -- an
-    operand that is a decided builtin all the way down (``builtin_typed``)
-    runs none.  ``[]``: it runs no code (a cited pure builtin over builtin
-    operands, ``_is_pure_call``).  None: no read decides it -- a callee or an
-    operand that is not a read (an import, a class, a source function by its
-    name, a path, a call's result) -- so it may run any."""
-    from .nodes import Attribute, Name, PathContainerCall, Starred
+    the operation ``call`` (``_sites_at``) runs code (``_RUNS_CODE``): the
+    receiver of a method (the one door's operation included, whatever the
+    method), a callable value, and every operand -- an operand that is a
+    decided builtin all the way down (``builtin_typed``) runs none, and an
+    operation's value is one when its operands are (``_operand_subjects``).
+    ``[]``: it runs no code (a cited pure builtin over builtin operands,
+    ``_is_pure_call``; an operation over builtin values).  None: no read
+    decides it -- a callee or an operand that is not a read (an import, a
+    class, a source function by its name, a path, a call's result) -- so it
+    may run any."""
+    from .nodes import Attribute, Call, Name, PathContainerCall
 
     if call.kind == "FormattedValue":
-        operands = ((call.value, _RUNS_CODE),)
+        operands = (call.value,)
     elif isinstance(call, PathContainerCall):
-        inert = call.method in _INERT_METHODS
-        operands = ((call.receiver, _RUNS_OWN_CODE if inert else _RUNS_CODE),)
-        if not inert:
-            operands = (*operands, *((arg, _RUNS_CODE) for arg in call.args))
-    else:
+        operands = (call.receiver, *call.args)
+    elif isinstance(call, Call):
         if _is_pure_call(call, scope):
             return []
         func = call.func
@@ -2725,16 +3019,17 @@ def _code_subjects(call, scope):
             heads = (func,)
         else:
             return None
-        operands = tuple((node, _RUNS_CODE) for node in (*heads, *rest))
+        operands = (*heads, *rest)
+    else:
+        operands = _site_operands(call)
     subjects = []
-    for operand, rules in operands:
-        if isinstance(operand, Starred):
-            operand = operand.value
-        if builtin_typed(operand, scope):
-            continue
-        if getattr(operand, "kind", None) not in _READ_KINDS:
+    for operand in operands:
+        found = _operand_subjects(operand, scope)
+        if found is None:
             return None
-        subjects.append((operand, rules))
+        for read, rules in found:
+            if not any(read is known for known, _rules in subjects):
+                subjects.append((read, rules))
     return subjects
 
 
@@ -2993,13 +3288,27 @@ def _actual_after(site_node, state, label, tags, *, holds_at_halt=False):
 def _apply_actual_states(statement, pre_scope, scope, havocked, applied):
     """Rebind every name bound to an actual's object to its state after the
     helper; a name the havoc already rebound, or the statement itself bound,
-    keeps that binding. A name that merely contains the object is unknown."""
+    keeps that binding. A name that merely contains the object is unknown.
+    A cell the helper rebinds (``name``) is that name alone: the object it
+    held is not changed, and every other name keeps it."""
     from .shadow import occurrence_tags_of
 
     tags = occurrence_tags_of(statement)
     binding = {}
     havoc_names = []
-    for actual, state, label, holds_at_halt in applied:
+    for actual, state, label, holds_at_halt, cell in applied:
+        if cell is not None:
+            if cell in binding or cell in havoc_names:
+                # Two calls of the statement wrote it: which wrote last is
+                # not followed here.
+                binding.pop(cell, None)
+                if cell not in havoc_names:
+                    havoc_names.append(cell)
+            elif _untouched(cell, pre_scope, scope, havocked):
+                binding[cell] = _actual_after(
+                    statement, state, label, tags, holds_at_halt=holds_at_halt
+                )
+            continue
         exact, containing = aliases(scope, actual)
         after = None
         for name in exact:
