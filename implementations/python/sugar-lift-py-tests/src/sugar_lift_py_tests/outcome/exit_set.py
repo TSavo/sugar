@@ -1265,8 +1265,14 @@ def factored_operand(outcome):
     return outcome.factor_completed()
 
 
-def _require_exit_set(outcome) -> ExitSet:
-    """``and_then``'s refusal: a step answered something that is not exits.
+def _require_exit_set(outcome, *, owner: str = "ExitSet.and_then") -> ExitSet:
+    """The one refusal of something that is not exits where exits are needed.
+
+    ``and_then`` refuses a step that answered something else; every position
+    that reads an outcome's arms directly (``.exits``, ``completed_value()``,
+    ``sequence``) and cannot hand a deferred carrier on through the carrier's
+    own ``and_then`` / ``after_discharge`` refuses through here too, under its
+    own ``owner``.
 
     Not a conversion: an ``ExitSet`` is handed back as itself and nothing
     else is ever turned into one. A deferred native-operation carrier is
@@ -1284,7 +1290,7 @@ def _require_exit_set(outcome) -> ExitSet:
     if isinstance(outcome, NativeOperationExitCarrierV1):
 
         construction_panic_gap(
-            owner="ExitSet.and_then",
+            owner=owner,
             blame=outcome.demand.source_node,
             observed=(
                 "undischarged native operation demand: "
@@ -1302,7 +1308,7 @@ def _require_exit_set(outcome) -> ExitSet:
         )
 
     construction_panic_gap(
-        owner="ExitSet.and_then",
+        owner=owner,
         blame=type(outcome).__name__,
         observed=f"{type(outcome).__name__} is not an ExitSet",
         requested="ExitSet",

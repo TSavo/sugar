@@ -92,7 +92,11 @@ def _leaf_matches(effect: RaiseEffect, expected, site) -> bool:
             requested="RaiseEffect leaf with authenticated exception type testimony",
             fix="construct every group leaf through the ordinary exception floor",
         )
-    value = operation(expected, site).completed_value()
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+    value = _require_exit_set(
+        operation(expected, site), owner="GroupedRaiseEffect.partition"
+    ).completed_value()
     if value is None:
         raise SugarNotWritten(
             blame=site,

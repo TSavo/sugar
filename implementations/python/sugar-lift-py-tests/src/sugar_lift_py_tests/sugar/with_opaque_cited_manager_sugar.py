@@ -221,7 +221,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        from sugar_lift_py_tests.outcome.exit_set import Halted
+        from sugar_lift_py_tests.outcome.exit_set import Halted, _require_exit_set
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             prepend_facts_to_exitset,
@@ -231,7 +231,11 @@ class WithOpaqueCitedManagerSugar(Sugar):
             reduce_block_to_exitset,
         )
 
-        manager_es = self.manager.desugar(ctx)
+        # The manager is routed face by face: a deferred native-operation
+        # carrier is refused by name.
+        manager_es = _require_exit_set(
+            self.manager.desugar(ctx), owner="WithOpaqueCitedManagerSugar.manager"
+        )
         parts: list = []
 
         for mgr_exit in manager_es.exits:

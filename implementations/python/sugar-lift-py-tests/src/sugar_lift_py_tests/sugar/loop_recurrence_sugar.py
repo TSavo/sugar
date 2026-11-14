@@ -301,12 +301,18 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from dataclasses import replace
 
         from sugar_lift_py_tests.operations.next_operation import NextOperation
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
 
-        outcome = NextOperation(owner="LoopRecurrenceSugar", blame=self.site).submit(
-            iterator, ctx
+        # The item's ``next`` is read arm by arm (exhaustion, the NextResult):
+        # a deferred native-operation carrier here is refused by name.
+        outcome = _require_exit_set(
+            NextOperation(owner="LoopRecurrenceSugar", blame=self.site).submit(
+                iterator, ctx
+            ),
+            owner="LoopRecurrenceSugar.next",
         )
         if outcome.exits and outcome.halts() == outcome.exits:
             effect = outcome.exits[0].effect
@@ -369,8 +375,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         # state into the next iteration, this loop's own break/continue is
         # consumed and continues, any other halt leaves the loop as it is. The
         # first iteration's faces are never the loop's outcome.
+        # Beneath one of several faces the continuation is sequenced, which
+        # reads its arms: a later item that answered a deferred carrier is
+        # refused by name there.
         def after_halt(halt):
-            return self._after_loop_control(
+            following = self._after_loop_control(
                 halt,
                 next_result,
                 runtime,
@@ -378,11 +387,19 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 entries=entries,
                 index=index,
             )
+            if following is None:
+                return None
+            return _require_exit_set(
+                following, owner="LoopRecurrenceSugar.loop-control"
+            )
 
         if len(body.exits) != 1:
             return body.sequence(
-                lambda state: self._after_iteration_state(
-                    state, next_result, runtime, entries=entries, index=index
+                lambda state: _require_exit_set(
+                    self._after_iteration_state(
+                        state, next_result, runtime, entries=entries, index=index
+                    ),
+                    owner="LoopRecurrenceSugar.iteration",
                 ),
                 consume=after_halt,
             )
@@ -641,6 +658,7 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
             PositionalUnpackOperation,
             UnpackMemberRoster,
         )
+        from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
         from sugar_source_tree.nodes import List, Name, Tuple_
 
         coordinates = {
@@ -661,7 +679,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
                 owner="LoopRecurrenceSugar.target",
                 blame=target.fragment,
             )
-            unpacked = operation.submit(current, ctx)
+            unpacked = _require_exit_set(
+                operation.submit(current, ctx), owner="LoopRecurrenceSugar.target"
+            )
             if unpacked.exits and unpacked.halts() == unpacked.exits:
                 return unpacked
             roster = unpacked.completed_value()
@@ -815,8 +835,11 @@ def _outward_face_partition(outcome, face, *, guarded=False):
     block entry, each halt keeps the face's state."""
     from sugar_lift_py_tests.floor.block_value import BlockValue
     from sugar_lift_py_tests.outcome import Completed, Halted
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
-    exits = outcome
+    # A deferred face is enrolled by its caller through ``after_discharge``;
+    # one that reaches here undischarged is refused by name.
+    exits = _require_exit_set(outcome, owner="LoopRecurrenceSugar.outward_face")
     if guarded:
         exits = exits.guarded(face.guard)
     partition = []

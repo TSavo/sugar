@@ -45,6 +45,7 @@ from sugar_lift_py_tests.floor.branch_result_coordinate import (
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
 from .canonical import cid_of_json
 from .manager_protocol_construction import (
@@ -1650,7 +1651,10 @@ def _signature_for_behavior(behavior, semantics):
         default = NoDefaultV1()
         sort = PrimitiveSort("String" if index == message_index else "Value")
         if default_sugar is not None:
-            outcome = default_sugar.desugar()
+            # A default is read here: a deferred carrier is refused by name.
+            outcome = _require_exit_set(
+                default_sugar.desugar(), owner="ManagerSummary.signature-default"
+            )
             constructed = outcome.completed_value()
             # A signature default has no arm to carry an owed item on: an
             # owing default is not constructed completely here.
@@ -2447,7 +2451,10 @@ def _constructor_application_from_spread(call_sugar, reduce_ctx):
     from sugar_lift_py_tests.outcome.exit_set import true_guard
     from sugar_source_tree.panic import SugarNotWritten
 
-    outcome = call_sugar.desugar(reduce_ctx)
+    outcome = _require_exit_set(
+        call_sugar.desugar(reduce_ctx),
+        owner="_read_same_module_class_head.collect_application",
+    )
     value = outcome.completed_value()
     bound = getattr(value, "bound_source_actuals", None)
     if not isinstance(value, CallSiteValue) or bound is None:
@@ -2584,10 +2591,14 @@ def _receiver_from_constructor_outcome(outcome):
         if isinstance(value, CallSiteValue):
             retained = value.retained_source_completion_outcome()
             if retained is not None:
-                return retained.completed_value()
+                return _require_exit_set(
+                    retained, owner="_receiver_from_constructor_outcome"
+                ).completed_value()
         return value
 
-    exits = outcome
+    # The receiver is read off the call's faces: a deferred carrier is
+    # refused by name.
+    exits = _require_exit_set(outcome, owner="_receiver_from_constructor_outcome")
     completed = exits.completed_value()
     # A bare receiver has no arm to carry an owed item on: an owing face
     # stays a face of the partition, which keeps it.
@@ -2707,7 +2718,12 @@ def _read_same_module_class_head(
 
     target_symbol = f"python:local:{class_def.name}"
     try:
-        class_outcome = class_def.sugar().desugar(reduce_ctx)
+        # The class, the call's actuals and the call's result are each read
+        # here: a deferred native-operation carrier is refused by name.
+        class_outcome = _require_exit_set(
+            class_def.sugar().desugar(reduce_ctx),
+            owner="_read_same_module_class_head",
+        )
         class_value = class_outcome.completed_value()
         if type(class_value) is not ClassDefinitionValue:
             _install_local_derivation_gap(
@@ -2718,7 +2734,10 @@ def _read_same_module_class_head(
                 type(class_outcome).__name__,
             )
             return
-        application = collect_application(call.sugar())
+        application = _require_exit_set(
+            collect_application(call.sugar()),
+            owner="_read_same_module_class_head",
+        )
         application_value = application.completed_value()
         # The manager behavior built from these actuals has no arm to
         # carry an owed item on: an owing application is not constructed.
@@ -3164,7 +3183,9 @@ def _module_returned_by_call(call) -> str | None:
 
     ctx = ReduceContext(temporal=builtin_name_temporal())
     try:
-        exits = call.sugar().desugar(ctx).exits
+        exits = _require_exit_set(
+            call.sugar().desugar(ctx), owner="_module_returned_by_call"
+        ).exits
     except (SugarNotWritten, TypeError):
         return None
     values = []

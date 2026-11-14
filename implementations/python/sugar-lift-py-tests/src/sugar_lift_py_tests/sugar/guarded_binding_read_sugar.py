@@ -68,7 +68,7 @@ def _read_loop_projection(
     exits = ExitSet(())
     for face in state.completed_faces:
         exits = exits.union(
-            read_binding(
+            _read_arm(
                 face.state,
                 read_name=read_name,
                 read_site=read_site,
@@ -81,8 +81,26 @@ def _read_loop_projection(
     return exits.normalize()
 
 
+def _read_arm(state, *, read_name: str, read_site, ctx) -> ExitSet:
+    """One arm of a projection, joined with its peers under its own face.
+
+    A join reads the arm's exits, so a deferred native-operation carrier
+    there (a reaching value whose operation waits on a caller's actual) is
+    refused by name; only a whole read hands a carrier on.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+    return _require_exit_set(
+        read_binding(state, read_name=read_name, read_site=read_site, ctx=ctx),
+        owner="GuardedBindingReadSugar.read_binding",
+    )
+
+
 def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
     if isinstance(state, Sugar):
+        # The whole read: a deferred carrier is handed on as the reaching
+        # value's own desugar answered it, for the reader to compose through
+        # the carrier's ``and_then``.
         return state.desugar(ctx)
     if isinstance(state, UnboundProjection):
         return ExitSet.halted(NameErrorEffect.at(name=read_name, site=read_site))
@@ -98,7 +116,7 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
     guard = branch_result_guard(state.slot, read_site)
     true_face, false_face = _guarded_projection_faces(state)
     return (
-        read_binding(
+        _read_arm(
             state.when_true,
             read_name=read_name,
             read_site=read_site,
@@ -106,7 +124,7 @@ def read_binding(state, *, read_name: str, read_site, ctx) -> ExitSet:
         )
         .guarded(guard, true_face)
         .union(
-            read_binding(
+            _read_arm(
                 state.when_false,
                 read_name=read_name,
                 read_site=read_site,

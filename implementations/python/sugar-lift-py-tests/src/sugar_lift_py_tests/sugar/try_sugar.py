@@ -354,7 +354,13 @@ def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
         )
     if matcher is None:
         return MatchDecided(True)
-    expected = matcher.desugar(ctx).completed_value()
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+    # The handler's matcher is read here, not retained: a deferred carrier is
+    # refused by name.
+    expected = _require_exit_set(
+        matcher.desugar(ctx), owner="TrySugar.handler-matcher"
+    ).completed_value()
     if expected is None:
         raise SugarNotWritten(
             blame=effect.occurrence_id,

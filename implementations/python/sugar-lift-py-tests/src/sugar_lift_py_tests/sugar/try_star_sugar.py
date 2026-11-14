@@ -40,6 +40,19 @@ class _StarFace:
     owed: tuple
 
 
+def _matcher_value(matcher, ctx):
+    """One ``except*`` type operand's completed value, or None.
+
+    The operand is read here, never retained for a caller: a deferred
+    native-operation carrier is refused by name.
+    """
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+    return _require_exit_set(
+        matcher.desugar(ctx), owner="TryStarSugar.handler-matcher"
+    ).completed_value()
+
+
 @dataclass(frozen=True)
 class TryStarSugar(Sugar):
     body: tuple
@@ -116,7 +129,7 @@ class TryStarSugar(Sugar):
                     handler_residual = face.residual
                     matched_parts = []
                     for matcher in matchers:
-                        expected = matcher.desugar(face.state.context).completed_value()
+                        expected = _matcher_value(matcher, face.state.context)
                         if expected is None:
                             raise SugarNotWritten(
                                 blame=self.site,

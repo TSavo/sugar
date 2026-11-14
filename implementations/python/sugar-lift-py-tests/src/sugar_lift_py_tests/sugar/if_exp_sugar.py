@@ -317,9 +317,15 @@ class IfExpSugar(ConstructedTermSugar):
         priors: dict = {}
 
         def prior_value(evaluation, prior):
-            # The read of the name before the expression, once per arm.
+            # The read of the name before the expression, once per arm. Its
+            # value is held inside this arm's value, so a deferred carrier
+            # there is refused by name, never read as no prior value.
             if evaluation not in priors:
-                read = prior.desugar(ctx)
+                from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+                read = _require_exit_set(
+                    prior.desugar(ctx), owner="IfExpSugar._holding"
+                )
                 value = read.completed_value()
                 priors[evaluation] = (
                     None

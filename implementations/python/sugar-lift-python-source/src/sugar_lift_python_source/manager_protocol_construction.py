@@ -21,6 +21,7 @@ from sugar_lift_py_tests.floor.manager_coordinate import (
     ExitValueCoordinate,
 )
 from sugar_lift_py_tests.outcome import Completed
+from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
 from .canonical import cid_of_json
 from .manager_construction import ConstructedManagerBehaviorV1
@@ -76,13 +77,18 @@ class ConstructedManagerProtocolV1:
     def enter_outcome(self, ctx: object = None):
         if isinstance(self.receiver_state, ObjectValue):
             return _apply_protocol_call(self.enter_call, ctx)
+        # Beneath one of several receiver faces the enter is sequenced, which
+        # reads its arms: a deferred carrier there is refused by name.
         return _completed_receiver_exits(self.receiver_state).sequence(
-            lambda receiver: _call_protocol_method(
-                receiver,
-                "__enter__",
-                (),
-                self.exit_face_id,
-                ctx,
+            lambda receiver: _require_exit_set(
+                _call_protocol_method(
+                    receiver,
+                    "__enter__",
+                    (),
+                    self.exit_face_id,
+                    ctx,
+                ),
+                owner="ConstructedManagerProtocolV1.enter_outcome",
             )
         )
 
@@ -108,7 +114,13 @@ class ConstructedManagerProtocolV1:
 
         if isinstance(self.receiver_state, ObjectValue):
             return run_exit(self.receiver_state)
-        return _completed_receiver_exits(self.receiver_state).sequence(run_exit)
+        # Beneath one of several receiver faces the exit is sequenced: only
+        # the one-receiver exit above hands a deferred carrier on.
+        return _completed_receiver_exits(self.receiver_state).sequence(
+            lambda receiver: _require_exit_set(
+                run_exit(receiver), owner="ConstructedManagerProtocolV1.exit_outcome"
+            )
+        )
 
     def enter_resource_outcome(self, ctx: object = None):
         """Run enter once and carry each face's exact receiver into resource exit."""
@@ -461,7 +473,12 @@ def _receiver_state_after_enter(
     from sugar_lift_py_tests.outcome import Completed
     from sugar_source_tree.panic import SugarNotWritten
 
-    exits = enter_outcome.exits
+    # The post-enter receiver is read off the enter's faces: an enter that is
+    # a deferred native-operation carrier is refused by name.
+    exits = _require_exit_set(
+        enter_outcome,
+        owner="ConstructedManagerProtocolV1.receiver_state_after_enter",
+    ).exits
     completed = tuple(face for face in exits if isinstance(face, Completed))
     observed_stores = tuple(
         statement
@@ -536,7 +553,12 @@ def _resource_enter_transitions(receiver: ObjectValue, enter_outcome, *, blame: 
     from sugar_source_tree.panic import SugarNotWritten
 
     projected = []
-    for face in enter_outcome.exits:
+    # Each enter face becomes one resource transition: an enter that is a
+    # deferred native-operation carrier is refused by name.
+    enter_exits = _require_exit_set(
+        enter_outcome, owner="ConstructedManagerProtocolV1.resource_enter_transitions"
+    )
+    for face in enter_exits.exits:
         if isinstance(face, Halted):
             projected.append(face)
             continue
@@ -1061,7 +1083,11 @@ def _floor_enter_value(value: object):
     if isinstance(value, FloorValue):
         return ExitSet.completed(value)
     if isinstance(value, Sugar):
-        outcome = value.desugar()
+        # The yielded value is read here: a deferred carrier is refused by name.
+        outcome = _require_exit_set(
+            value.desugar(),
+            owner="GeneratorBackedManagerProtocolV1.enter_resource_outcome",
+        )
         if outcome.completed_value() is not None:
             return outcome.sequence(_floor_enter_value)
         from sugar_source_tree.panic import SugarNotWritten

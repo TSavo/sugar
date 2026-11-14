@@ -30,7 +30,7 @@ class WithFormalManagerSugar(Sugar):
         return ()
 
     def desugar(self, ctx: object = None) -> ExitSet:
-        from sugar_lift_py_tests.outcome.exit_set import Halted
+        from sugar_lift_py_tests.outcome.exit_set import Halted, _require_exit_set
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             ExitFaceBinding,
@@ -45,7 +45,13 @@ class WithFormalManagerSugar(Sugar):
             _returned_value,
         )
 
-        manager_es = self.manager.desugar(ctx).sequence(
+        # The manager, its enter and its exit are each routed face by face
+        # here: a deferred native-operation carrier at any of them is refused
+        # by name.
+        manager_out = _require_exit_set(
+            self.manager.desugar(ctx), owner="WithFormalManagerSugar.manager"
+        )
+        manager_es = manager_out.sequence(
             lambda value: _project_manager_receiver(value, ctx)
         )
         construct = getattr(self.protocol, "construct_manager", None)
@@ -64,7 +70,10 @@ class WithFormalManagerSugar(Sugar):
             # and faces and owes what it owes; the exit routing carries a body
             # face's debts onto every arm it leaves through.
             enter_es = ExitSet((manager_face,)).sequence(
-                lambda manager: self.protocol.enter_resource_outcome_for(manager, ctx)
+                lambda manager: _require_exit_set(
+                    self.protocol.enter_resource_outcome_for(manager, ctx),
+                    owner="WithFormalManagerSugar.enter",
+                )
             )
             for enter_face in enter_es.exits:
                 if isinstance(enter_face, Halted):
@@ -80,7 +89,10 @@ class WithFormalManagerSugar(Sugar):
                 body_es = ExitSet((enter_face,)).sequence(
                     lambda _entered: reduce_block_to_exitset(self.body, ctx)
                 )
-                exit_es = self.protocol.exit_outcome_for(entered, ctx)
+                exit_es = _require_exit_set(
+                    self.protocol.exit_outcome_for(entered, ctx),
+                    owner="WithFormalManagerSugar.exit",
+                )
                 for body_face in body_es.exits:
                     face_facts = ExitFaceBinding.from_body_exit(
                         self.exit_face_id, body_face
