@@ -39,7 +39,7 @@ from sugar_lift_py_tests.floor import StringValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
 from sugar_lift_py_tests.ir import PrimitiveSort, _Atomic, ctor, make_var
-from sugar_lift_py_tests.outcome import Complete, Completed, Halted
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.outcome.exit_set import ExitSet
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -214,7 +214,7 @@ def _factored_boundary(body: ExitSet, *, pattern=None, observation_slot_id="exci
         keyword_names=(),
     )
     return WithEffectBoundarySugar(
-        manager=Fixed(Complete(manager_value)),
+        manager=Fixed(ExitSet.completed(manager_value)),
         body=(Fixed(body),),
         semantics=None,
         contract_ref=SimpleNamespace(import_signature=ImportSignatureV2(parameters)),

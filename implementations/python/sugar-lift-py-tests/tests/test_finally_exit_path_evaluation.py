@@ -13,7 +13,7 @@ from __future__ import annotations
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import GuardedFaces, TermValue
-from sugar_lift_py_tests.outcome import Complete, ExitSet, true_guard
+from sugar_lift_py_tests.outcome import ExitSet, true_guard
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.if_sugar import _arm_evaluations
@@ -135,4 +135,4 @@ def test_both_paths_reach_one_join_and_each_read_sees_its_value() -> None:
     ).extend_scope(base)
     for key, value in ((on_completion, 12), (on_halt, 11)):
         read = EvaluationRefSugar(evaluation=key, name="x", site=None)
-        assert read.desugar(joined) == Complete(TermValue(value))
+        assert read.desugar(joined) == ExitSet.completed(TermValue(value))

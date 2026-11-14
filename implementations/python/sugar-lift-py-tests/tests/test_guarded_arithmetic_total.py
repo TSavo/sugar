@@ -5,7 +5,7 @@ import pytest
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import GuardedValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import atomic, make_var
-from sugar_lift_py_tests.outcome import Complete, ExitSet
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_source_tree.panic import SugarNotWritten
 
@@ -99,7 +99,7 @@ def test_guarded_bitwise_or_distributes_exact_set_union_to_both_faces() -> None:
         None,
     )
 
-    assert outcome == Complete(
+    assert outcome == ExitSet.completed(
         GuardedValue(
             guard,
             SetValue((TermValue(1), TermValue(3))),

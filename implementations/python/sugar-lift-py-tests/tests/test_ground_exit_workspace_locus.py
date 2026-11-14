@@ -31,9 +31,8 @@ import pytest
 
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-from sugar_lift_py_tests.outcome import Complete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.outcome import Incomplete
 
 CORPUS = """\
 def ground_index():
@@ -96,13 +95,11 @@ def _raise_effects(root: Path) -> dict[str, RaiseEffect]:
     for function in source_file.functions():
         outcome = function.sugar().desugar(None)
         assert isinstance(
-            outcome, Complete
+            outcome, ExitSet
         ), f"{function.name} did not construct: {outcome!r}"
+        # A raise is a halted arm, never a record entry (#7821, #7826).
         raises = [
-            statement
-            for statement in outcome.value.record.statements
-            if isinstance(statement, Incomplete)
-            and isinstance(statement.effect, RaiseEffect)
+            halt for halt in outcome.halts() if isinstance(halt.effect, RaiseEffect)
         ]
         assert len(raises) == 1, (
             f"{function.name} constructed {len(raises)} raise exits, not the "

@@ -223,18 +223,18 @@ def _authenticated_obligation_and_entry():
 
 def test_population_outcomes_require_a_positive_authenticated_exceptional_exit():
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
+    from sugar_lift_py_tests.outcome import ExitSet
 
     obligation, entry = _authenticated_obligation_and_entry()
     positive = classify_fixture_resource_outcome(
         obligation,
         entry,
-        lambda: Incomplete(
+        lambda: ExitSet.halted(
             RaiseEffect.for_builtin("ValueError", blame="site", occurrence="site")
         ),
     )
     absent = classify_fixture_resource_outcome(
-        obligation, entry, lambda: Complete("ordinary completion")
+        obligation, entry, lambda: ExitSet.completed("ordinary completion")
     )
 
     assert positive.outcome is FixtureResourceOutcome.AUTHENTICATED_EXCEPTIONAL_EXIT

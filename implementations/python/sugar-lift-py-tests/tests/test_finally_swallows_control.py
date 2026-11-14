@@ -22,7 +22,6 @@ from __future__ import annotations
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
 from sugar_lift_py_tests.floor.return_value import ReturnValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.tree import SourceFile
@@ -37,18 +36,16 @@ def _desugar(source: str, *, name: str = "finally_control.py"):
 
 
 def _return_values(outcome) -> list:
-    assert isinstance(outcome, Complete), outcome
+    completed = outcome.completed_value()
+    assert completed is not None, outcome
     return [
         s.value.value if hasattr(s.value, "value") else s.value
-        for s in outcome.value.record.statements
+        for s in completed.record.statements
         if isinstance(s, ReturnValue)
     ]
 
 
 def _halt_effect(outcome) -> RaiseEffect:
-    if isinstance(outcome, Incomplete):
-        assert isinstance(outcome.effect, RaiseEffect), type(outcome.effect)
-        return outcome.effect
     if isinstance(outcome, ExitSet):
         halted = [face for face in outcome.exits if isinstance(face, Halted)]
         assert len(halted) == 1, outcome.exits
@@ -133,7 +130,7 @@ def test_finally_return_swallows_try_raise():
         "        return 9\n",
         name="super_ret_raise.py",
     )
-    assert isinstance(outcome, Complete), outcome
+    assert outcome.completed_value() is not None, outcome
     assert _return_values(outcome) == [9]
 
 
@@ -208,11 +205,11 @@ def test_twin_finally_return_must_not_restore_body_raise():
         "        return 9\n",
         name="twin_no_restore_raise.py",
     )
-    assert isinstance(outcome, Complete), outcome
-    assert not isinstance(outcome, Incomplete)
+    assert outcome.completed_value() is not None, outcome
+    assert not outcome.halts()
     assert _return_values(outcome) == [9]
     # Explicitly refuse residual raise as primary.
-    if isinstance(outcome, Incomplete):
+    if outcome.halts():
         raise AssertionError("body raise must not survive finally return")
 
 

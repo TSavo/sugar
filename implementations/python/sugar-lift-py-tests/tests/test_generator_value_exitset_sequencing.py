@@ -1,7 +1,8 @@
 """Test-first law for linear and nonlinear generator value consumers.
 
-Legacy Complete/raw values remain linear: Yield and Return keep their direct
-result shapes.  Only Incomplete/ExitSet outcomes enter the exit algebra;
+One unconditional completed arm and raw values remain linear: Yield and Return
+keep their direct result shapes.  Only halting or multi-arm outcomes enter the
+exit algebra;
 Halted faces bypass consumers and Completed faces alone transition the live
 machine.  Every producer reduction occurs exactly once.
 """
@@ -33,7 +34,7 @@ from sugar_lift_py_tests.generator_construction import (
     YieldStepV1,
 )
 from sugar_lift_py_tests.ir import and_, atomic, ctor, make_var, not_
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import partition
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
@@ -188,7 +189,7 @@ def test_assign_sequences_one_completed_face_and_bypasses_two_halted_faces(
     reductions: list[str] = []
     value = _OutcomeValue(exits, reductions)
     next_reductions: list[str] = []
-    next_value = _OutcomeValue(Complete(TermValue(99)), next_reductions)
+    next_value = _OutcomeValue(ExitSet.completed(TermValue(99)),next_reductions)
     continuation_calls = _install_transition_spy(monkeypatch, "assign")
 
     outcome = _machine(
@@ -286,7 +287,7 @@ def test_synthetic_all_halted_assign_is_unchanged_and_runs_no_continuation(
     reductions: list[str] = []
     continuation_reductions: list[str] = []
     value = _OutcomeValue(ExitSet(arms), reductions)
-    next_value = _OutcomeValue(Complete(TermValue(99)), continuation_reductions)
+    next_value = _OutcomeValue(ExitSet.completed(TermValue(99)),continuation_reductions)
     machine = _machine(
         (
             AssignStepV1("undo", value, "config.py:512"),
@@ -314,7 +315,7 @@ def test_incomplete_value_becomes_one_halted_face_without_advancing(
 ) -> None:
     effect = RaiseEffect.for_builtin("ValueError", occurrence="incomplete:value")
     reductions: list[str] = []
-    value = _OutcomeValue(Incomplete(effect), reductions)
+    value = _OutcomeValue(ExitSet.halted(effect), reductions)
     if consumer == "assign":
         step = AssignStepV1("saved", value, "assign:incomplete")
     elif consumer == "return":
@@ -422,7 +423,7 @@ def _carrier(tmp_path, *, mixed: bool = False):
 
     def existing(value):
         existing_calls.append(value)
-        return Complete(value)
+        return ExitSet.completed(value)
 
     guard = atomic("carrier:existing-guard", [])
     return (
@@ -548,7 +549,7 @@ def test_native_exit_carrier_gap_callback_raises_exact_transition_refusal(
 
 def test_ordinary_complete_yield_retains_direct_yield_effect() -> None:
     reductions: list[str] = []
-    value = _OutcomeValue(Complete(TermValue(7)), reductions)
+    value = _OutcomeValue(ExitSet.completed(TermValue(7)), reductions)
 
     outcome = _machine((YieldStepV1(value),)).resume()
 
@@ -559,7 +560,7 @@ def test_ordinary_complete_yield_retains_direct_yield_effect() -> None:
 
 def test_ordinary_complete_return_retains_direct_termination() -> None:
     reductions: list[str] = []
-    value = _OutcomeValue(Complete(TermValue(7)), reductions)
+    value = _OutcomeValue(ExitSet.completed(TermValue(7)), reductions)
 
     outcome = _machine((ReturnStepV1(value),)).resume()
 

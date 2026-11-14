@@ -33,7 +33,7 @@ from sugar_lift_py_tests.no_call_body_attribution import (
     attribute_body_probes,
     _exceptional_exit_effects,
 )
-from sugar_lift_py_tests.outcome import Complete, Completed, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet, outcome_to_exitset
 from sugar_lift_py_tests.sugar.with_effect_boundary_sugar import WithEffectBoundarySugar
 from sugar_lift_python_source.manager_summary_derivation import (
     populate_source_derived_resource_refs,
@@ -292,7 +292,7 @@ def test_callsite_not_is_not_refused_for_manager_derivation() -> None:
     class _Operand(Sugar):
         def desugar(self, ctx=None):
             del ctx
-            return Complete(
+            return ExitSet.completed(
                 CallSiteValue(
                     "source-constructor",
                     (),
@@ -307,4 +307,4 @@ def test_callsite_not_is_not_refused_for_manager_derivation() -> None:
             return ()
 
     outcome = UnaryOpSugar("Not", _Operand(), _Site()).desugar(None)
-    assert isinstance(outcome, Complete)
+    assert outcome.completed_value() is not None

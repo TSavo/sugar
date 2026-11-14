@@ -35,7 +35,6 @@ from sugar_lift_py_tests.generator_construction import (
     YieldEffect,
     YieldStepV1,
 )
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.binding_coordinate_ref_sugar import (
     BindingCoordinateRefSugar,
@@ -199,8 +198,8 @@ def test_production_positional_bind_actuals_floor_reaches_guard_by_identity() ->
         source_call_frame=frame,
     )
     outcome = sugar.desugar(caller)
-    assert isinstance(outcome, Complete)
-    machine = outcome.value
+    machine = outcome.completed_value()
+    assert machine is not None
     assert isinstance(machine, GeneratorConstructionV1)
     assert len(machine.formal_floor_bindings) == 1
     assert machine.formal_floor_bindings[0].floor_value is true_arg
@@ -244,8 +243,8 @@ def test_production_keyword_and_default_bind_actuals_floor_by_identity() -> None
         source_call_frame=frame,
     )
     outcome = sugar.desugar(ReduceContext.root(owner="production-keyword-guard"))
-    assert isinstance(outcome, Complete)
-    machine = outcome.value
+    machine = outcome.completed_value()
+    assert machine is not None
     assert isinstance(machine, GeneratorConstructionV1)
     assert len(machine.formal_floor_bindings) == 2
     by_cid = {
