@@ -15,8 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field
 
 from sugar_lift_py_tests.effect import GroupedRaiseEffect, RaiseEffect
-from sugar_lift_py_tests.outcome import ExitSet, Halted, Outcome, true_guard
-from sugar_lift_py_tests.outcome.exit_set import owed_union
+from sugar_lift_py_tests.outcome import ExitSet, Outcome, true_guard
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_source_tree.fragment import SourceFragment
 
@@ -51,8 +50,11 @@ class GroupedRaiseSugar(Sugar):
         message_value = plain_completed_value(message)
         if message_value is None:
             return message
-        effects = []
-        owed = ()
+        # The children are constructed in order, then the group raises. Each
+        # child's halt is consumed as a member of the group (``consume=``), so
+        # the composition carries its guard, faces and ``owed`` onto the one
+        # arm that continues: the effects gathered so far.
+        members = ExitSet.completed(())
         for child in self.children:
             outcome = child.desugar(ctx)
             halts = outcome.halts() if isinstance(outcome, ExitSet) else ()
@@ -69,9 +71,16 @@ class GroupedRaiseSugar(Sugar):
                     requested="a constructed raise effect for every group child",
                     fix="keep non-exception group members loud",
                 )
-            effects.append(halts[0].effect)
             # What the child's halt owes, the group's halt owes.
-            owed = owed_union(owed, halts[0].owed)
+            members = members.sequence(
+                lambda effects, outcome=outcome: outcome.sequence(
+                    # Never called: every arm of ``outcome`` halts (above).
+                    ExitSet.completed,
+                    consume=lambda halt, effects=effects: ExitSet.completed(
+                        (*effects, halt.effect)
+                    ),
+                )
+            )
         # Typed door: site is SourceFragment; seal() returns SourceMemento.
         memento = self.site.seal()
         # Full sealed coordinate — segment cid alone collides across files that
@@ -80,12 +89,15 @@ class GroupedRaiseSugar(Sugar):
             f"{memento.file}:{memento.start}:{memento.end}"
             f":{memento.source_cid}:{memento.cid}"
         )
-        effect = GroupedRaiseEffect(
-            self.group_identity,
-            message_value,
-            tuple(effects),
-            occurrence=occurrence,
-            exception_type_coordinate=self.exception_type_coordinate,
-            exception_type_mro=self.exception_type_mro,
+        return members.sequence(
+            lambda effects: ExitSet.halted(
+                GroupedRaiseEffect(
+                    self.group_identity,
+                    message_value,
+                    tuple(effects),
+                    occurrence=occurrence,
+                    exception_type_coordinate=self.exception_type_coordinate,
+                    exception_type_mro=self.exception_type_mro,
+                )
+            )
         )
-        return ExitSet((Halted(true_guard(), effect, owed=owed),)).normalize()

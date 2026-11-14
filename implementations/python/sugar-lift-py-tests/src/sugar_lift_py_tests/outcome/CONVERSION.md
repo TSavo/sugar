@@ -35,9 +35,13 @@ part of what an arm denotes: it is excluded from compare, hash, and repr,
 and it never decides a merge or enters an enrolled CID.
 
 **Every arm rebuild carries it.** A rebuild from one arm passes that arm's
-`owed`. A rebuild from several arms (a merge, a sequence, a fan, a
-factoring) passes `owed_union(a.owed, b.owed, ...)`. Never use the
-intersection. Never drop it. A `Completed(guard, value)` or
+`owed`. A rebuild from several arms carries the union of their debts, and
+outside `exit_set.py` that union is never written by hand (#7825): a step
+and what follows compose through `ExitSet.sequence` (with `consume=` for a
+halt the composition owns), sibling arms that stand for each other merge
+through `ExitSet.union` / `normalize`, and what a set of arms owes together
+is read with `ExitSet.owed_items()`. The union itself (`_owed_union`) is
+private to the exit algebra. Never use the intersection. Never drop it. A `Completed(guard, value)` or
 `Halted(guard, effect, state)` built from an existing arm without its
 `owed` drops a member of the proof. `ExitSet.collapse` keeps an owing arm
 as an arm, because a linear outcome has nowhere to put the debt.

@@ -22,7 +22,6 @@ from sugar_lift_py_tests.outcome.exit_set import (
     ExitSet,
     Halted,
     complement_guard,
-    owed_union,
     true_guard,
 )
 
@@ -94,11 +93,26 @@ def test_an_owing_arm_is_never_collapsed_to_a_linear_outcome() -> None:
     assert ExitSet.completed(TermValue(1)).owed_items() == ()
 
 
-def test_owed_union_keeps_every_debt_once_in_first_seen_order() -> None:
+def test_owed_items_keeps_every_debt_once_in_first_seen_order() -> None:
     first = unanswered_calls.unanswered_call("a", _Site())
     second = unanswered_calls.unanswered_call(None, _Site())
-    assert owed_union((first,), (), (second, first)) == (first, second)
-    assert owed_union((), ()) == ()
+    arms = ExitSet(
+        (
+            Completed(atomic("test:a", []), TermValue(1), owed=(first,)),
+            Completed(atomic("test:b", []), TermValue(2)),
+            Completed(atomic("test:c", []), TermValue(3), owed=(second, first)),
+        )
+    )
+    assert arms.owed_items() == (first, second)
+    assert ExitSet((Completed(true_guard(), TermValue(1)),)).owed_items() == ()
+
+
+def test_owed_union_is_private_to_the_exit_algebra() -> None:
+    """#7825: one composition. Debts are carried by ``sequence`` / ``union``."""
+    from sugar_lift_py_tests.outcome import exit_set
+
+    assert not hasattr(exit_set, "owed_union")
+    assert "owed_union" not in exit_set.__all__
 
 
 def test_an_arm_with_no_debt_owes_nothing() -> None:

@@ -457,7 +457,7 @@ def _destination_key(exit_: "Exit[T]") -> object:
 _NO_OWED: tuple = ()
 
 
-def owed_union(*parts: tuple) -> tuple:
+def _owed_union(*parts: tuple) -> tuple:
     """Every owed item of every contributor, once, in first-seen order.
 
     THE RULE FOR ``owed`` AT EVERY ARM REBUILD. An arm owes what any path
@@ -466,6 +466,12 @@ def owed_union(*parts: tuple) -> tuple:
     an intersection: unlike ``faces``, which is testimony that weakens when
     arms merge, an owed item is a debt, and a merged arm owes every debt of
     every arm it stands for. Dropping one is dropping a member of the proof.
+
+    Private (#7825): only the rebuilds in this module call it. Outside it, a
+    step and what follows compose through ``ExitSet.sequence`` (``consume=``
+    for a halt the composition owns), arms that stand for each other merge
+    through ``ExitSet.union`` / ``normalize``, and the debts of a set of arms
+    are read with ``ExitSet.owed_items``. Nobody else unions debts by hand.
     """
     nonempty = [part for part in parts if part]
     if not nonempty:
@@ -499,7 +505,7 @@ class Completed(Generic[T]):
     # what the arm denotes, so it is excluded from compare/hash/repr: it never
     # decides a merge in ``normalize``, never enters a destination key, never
     # enters an enrolled CID. Unlike ``faces`` it is carried by UNION at every
-    # rebuild (``owed_union``).
+    # rebuild (``_owed_union``).
     owed: tuple = _dataclass_field(default=_NO_OWED, compare=False, repr=False)
 
 
@@ -587,12 +593,14 @@ class ExitSet(Generic[T]):
         return tuple(exit_ for exit_ in self.exits if isinstance(exit_, Halted))
 
     def owed_items(self) -> tuple:
-        """Every item any arm owes, once, in first-seen order (``owed_union``).
+        """Every item any arm owes, once, in first-seen order (``_owed_union``).
 
         The reader of the owed slot: a consumer that packages members reads
-        them off the FINAL set of arms, never off a side channel.
+        them off the FINAL set of arms, never off a side channel. It is also
+        the one join of debts across sibling arms: a caller that needs what a
+        set of arms owes together reads it here, never by unioning by hand.
         """
-        return owed_union(*(exit_.owed for exit_ in self.exits))
+        return _owed_union(*(exit_.owed for exit_ in self.exits))
 
     @classmethod
     def conditional_halt(cls, guard: Formula, effect: Effect, state: T) -> "ExitSet[T]":
@@ -769,7 +777,7 @@ class ExitSet(Generic[T]):
             face_guard,
             chain,
             factored_faces,
-            owed_union(*(arm.owed for arm in completed)),
+            _owed_union(*(arm.owed for arm in completed)),
         )
         exits: list[Exit[T]] = []
         placed = False
@@ -862,7 +870,7 @@ class ExitSet(Generic[T]):
                         _or_guards(prior.guard, exit_.guard),
                         prior.value,
                         _merge_faces(prior.faces, exit_.faces),
-                        owed_union(prior.owed, exit_.owed),
+                        _owed_union(prior.owed, exit_.owed),
                     )
                     break
                 if same_halted:
@@ -871,7 +879,7 @@ class ExitSet(Generic[T]):
                         prior.effect,
                         prior.state,
                         _merge_faces(prior.faces, exit_.faces),
-                        owed_union(prior.owed, exit_.owed),
+                        _owed_union(prior.owed, exit_.owed),
                     )
                     break
             else:
@@ -924,7 +932,7 @@ class ExitSet(Generic[T]):
                 # Conjoined guard: both sets of testimony hold of the result.
                 faces = exit_.faces | following.faces
                 # The prefix's debts ride onto every continuation of its path.
-                owed = owed_union(exit_.owed, following.owed)
+                owed = _owed_union(exit_.owed, following.owed)
                 if isinstance(following, Completed):
                     exits.append(Completed(guard, following.value, faces, owed))
                 else:
@@ -1004,7 +1012,7 @@ class ExitSet(Generic[T]):
             for clean in cleanup_exits:
                 guard = _and_guards(incoming.guard, clean.guard)
                 faces = incoming.faces | clean.faces
-                owed = owed_union(incoming.owed, clean.owed)
+                owed = _owed_union(incoming.owed, clean.owed)
                 if isinstance(clean, Halted):
                     exits.append(
                         Halted(guard, clean.effect, clean.state, faces, owed)
@@ -1080,7 +1088,7 @@ class ExitSet(Generic[T]):
             for ex in exit_exits:
                 guard = _and_guards(incoming.guard, ex.guard)
                 faces = incoming.faces | ex.faces
-                owed = owed_union(incoming.owed, ex.owed)
+                owed = _owed_union(incoming.owed, ex.owed)
                 if isinstance(ex, Halted):
                     exits.append(Halted(guard, ex.effect, ex.state, faces, owed))
                     continue
@@ -1148,7 +1156,7 @@ class ExitSet(Generic[T]):
             for ex in exit_es.exits:
                 guard = _and_guards(incoming.guard, ex.guard)
                 faces = incoming.faces | ex.faces
-                owed = owed_union(incoming.owed, ex.owed)
+                owed = _owed_union(incoming.owed, ex.owed)
                 if isinstance(ex, Halted):
                     exits.append(Halted(guard, ex.effect, ex.state, faces, owed))
                     continue
@@ -1341,7 +1349,6 @@ __all__ = [
     "complement_guard",
     "factored_operand",
     "false_guard",
-    "owed_union",
     "sole_completed_outcome",
     "true_guard",
     "outcome_to_exitset",

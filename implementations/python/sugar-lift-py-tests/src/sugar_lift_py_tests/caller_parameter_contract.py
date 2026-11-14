@@ -964,7 +964,6 @@ class NativeOperationExitCarrierV1:
         from sugar_lift_py_tests.outcome.exit_set import (
             _is_true,
             outcome_to_exitset,
-            owed_union,
         )
 
         def apply_exitset_step(projected, step):
@@ -1083,12 +1082,13 @@ class NativeOperationExitCarrierV1:
                     pre_effect_state=self.pre_effect_state,
                 )
             projected_halt = resolution.project(source_node=self.demand.source_node)
-            # The resolution's halt owes what the projector's halt owed.
-            exits = ExitSet(
-                tuple(
-                    replace(arm, owed=owed_union(arm.owed, sole_halt.owed))
-                    for arm in projected_halt.exits
-                )
+            # The resolution continues beneath the projector's halt, which this
+            # discharge owns and consumes: composed through ``sequence``, the
+            # resolution's arms owe what the projector's halt owed.
+            exits = exits.sequence(
+                # Never called: the one arm of ``exits`` halts (above).
+                ExitSet.completed,
+                consume=lambda _halt: projected_halt,
             )
         elif sole_halt is not None:
             reason = effect_reason(sole_halt.effect)
