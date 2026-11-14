@@ -927,7 +927,17 @@ class CallSiteValue(FloorValue):
                         if dug_base is not None:
                             floor_base = dug_base
                     if isinstance(floor_base, (ListValue, TupleValue)):
-                        projected = floor_base.subscript(index, site)
+                        from sugar_lift_py_tests.operations.subscript_operation import (
+                            discharge_subscript,
+                        )
+
+                        projected = discharge_subscript(
+                            floor_base,
+                            index,
+                            site,
+                            None,
+                            owner="CallSiteValue.append_with subscript",
+                        )
                         if projected.halts() == projected.exits:
                             return None
                         element = complete_value(

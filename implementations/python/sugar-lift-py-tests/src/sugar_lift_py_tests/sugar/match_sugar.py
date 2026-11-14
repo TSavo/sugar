@@ -196,6 +196,19 @@ def _projected(outcome):
     return _require_exit_set(outcome, owner="MatchSugar.pattern")
 
 
+def _each(outcome, step):
+    """``step`` on each completed arm of ``outcome``.  A projection that waits
+    on its caller's actual (a ``subscript`` carrier) enrolls ``step`` to run
+    once it discharges; an ``ExitSet`` sequences it (its halts stand)."""
+    from sugar_lift_py_tests.caller_parameter_contract import (
+        NativeOperationExitCarrierV1,
+    )
+
+    if isinstance(outcome, NativeOperationExitCarrierV1):
+        return outcome.and_then(step)
+    return _projected(outcome).sequence(step)
+
+
 def _then_match(outcome, step):
     """``outcome``'s matched faces continue into ``step()`` (its binds
     prefixed to what that binds); a face that did not match stands."""
@@ -203,9 +216,9 @@ def _then_match(outcome, step):
     def go(matched):
         if not matched.matched:
             return ExitSet.completed(matched)
-        return step().sequence(lambda following: _joined(matched, following))
+        return _each(step(), lambda following: _joined(matched, following))
 
-    return outcome.sequence(go)
+    return _each(outcome, go)
 
 
 def _joined(first, following):
@@ -275,7 +288,7 @@ def _first_match(alternatives, value, site, ctx):
             return ExitSet.completed(matched)
         return _first_match(alternatives[1:], value, site, ctx)
 
-    return first.sequence(otherwise)
+    return _each(first, otherwise)
 
 
 def _decided_kind(value, yes: tuple, no: tuple, what: str, site) -> bool:
@@ -344,14 +357,26 @@ def _sequence_of_length(spec, value, length, site, ctx):
     if not spec.has_star or spec.star_key is None:
         return matched
     return _then_match(
-        matched, lambda: _star_items(value, spec.star_key, start, stop, site)
+        matched, lambda: _star_items(value, spec.star_key, start, stop, site, ctx)
     )
 
 
-def _item(value, index, site):
+def _read(value, key, site, ctx):
+    """``value[key]`` as the pattern reads it: through the one subscript door
+    a source ``value[key]`` takes (``discharge_subscript``), so a parameter in
+    either operand defers to the caller as it does there (the ``subscript``
+    carrier, consumed through ``_each``)."""
+    from sugar_lift_py_tests.operations.subscript_operation import (
+        discharge_subscript,
+    )
+
+    return discharge_subscript(value, key, site, ctx, owner="MatchSugar.pattern")
+
+
+def _item(value, index, site, ctx):
     from sugar_lift_py_tests.floor import TermValue
 
-    return _projected(value.subscript(TermValue(index), site))
+    return _read(value, TermValue(index), site, ctx)
 
 
 def _match_items(value, positions, site, ctx):
@@ -360,23 +385,25 @@ def _match_items(value, positions, site, ctx):
     if not positions:
         return _outcome(True)
     (index, sub), rest = positions[0], positions[1:]
-    first = _item(value, index, site).sequence(
-        lambda item: match_pattern(sub, item, site, ctx)
+    first = _each(
+        _item(value, index, site, ctx),
+        lambda item: match_pattern(sub, item, site, ctx),
     )
     return _then_match(first, lambda: _match_items(value, rest, site, ctx))
 
 
-def _star_items(value, key, start, stop, site, collected=()):
+def _star_items(value, key, start, stop, site, ctx, collected=()):
     """The items ``start`` to ``stop`` of the subject, bound under ``key`` as
     a ``list`` (what a star captures from any sequence)."""
     from sugar_lift_py_tests.floor import ListValue
 
     if start >= stop:
         return _outcome(True, ((key, ListValue(tuple(collected))),))
-    return _item(value, start, site).sequence(
+    return _each(
+        _item(value, start, site, ctx),
         lambda item: _star_items(
-            value, key, start + 1, stop, site, (*collected, item)
-        )
+            value, key, start + 1, stop, site, ctx, (*collected, item)
+        ),
     )
 
 
@@ -418,8 +445,9 @@ def _match_entries(value, entries, site, ctx):
     held = _tested(value.contains(key, site), site)
     first = _then_match(
         held,
-        lambda: _projected(value.subscript(key, site)).sequence(
-            lambda item: match_pattern(sub, item, site, ctx)
+        lambda: _each(
+            _read(value, key, site, ctx),
+            lambda item: match_pattern(sub, item, site, ctx),
         ),
     )
     return _then_match(first, lambda: _match_entries(value, rest, site, ctx))
@@ -989,7 +1017,10 @@ class MatchSugar(Sugar):
             reduce_block_to_exitset,
         )
 
-        tested = match_pattern(case.pattern, subject, self.site, ctx)
+        # The case reads the pattern's faces one by one: a pattern still
+        # waiting on its caller's actual (a projection's carrier) is refused
+        # here by name, never read as no face.
+        tested = _projected(match_pattern(case.pattern, subject, self.site, ctx))
         parts = ExitSet(())
         selections: list = []
         pattern_path = _debt()

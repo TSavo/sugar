@@ -71,18 +71,20 @@ class SliceSugar(ConstructedTermSugar):
             consume_operands,
             reduce_operands,
         )
-        from sugar_lift_py_tests.floor.slice_value import SliceValue
+        from sugar_lift_py_tests.floor.slice_value import construct_slice
 
         outcome = reduce_operands(
             (self.lower, self.upper, self.step), ctx, factored=True
         )
 
         # The bounds are operands: a walrus in one binds once, through the one
-        # operand door (an omitted bound is ``None`` and carries nothing).
+        # operand door (an omitted bound is ``None`` and carries nothing).  The
+        # slice is constructed the one way (``construct_slice``): a parameter
+        # bound defers it to the caller.
         return outcome.and_then(
             lambda values: consume_operands(
-                lambda lower, upper, step: ExitSet.completed(
-                    SliceValue(lower, upper, step)
+                lambda lower, upper, step: construct_slice(
+                    lower, upper, step, self.site
                 ),
                 *values,
             )
