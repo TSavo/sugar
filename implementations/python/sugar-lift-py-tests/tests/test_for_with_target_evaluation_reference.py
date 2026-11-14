@@ -20,11 +20,16 @@ Temporal choice 1 (#7661), inventory item 7 (#7757), after #7886 (``x += e``),
 - ``with gen() as (a, b)`` with a generator-based manager lowered no store, so
   ``a``/``b`` were read by spelling afterwards. The store is now lowered as for
   a class-based manager.
+- ``with M() as (a, b)`` whose manager nobody seated a row for asked the
+  require door during substitution, so it refused before any reader ran. The
+  store is now lowered and the refusal is construction's (#7757 entry 8).
 """
 
 from __future__ import annotations
 
 from types import SimpleNamespace
+
+import pytest
 
 from sugar_lift_py_tests.context_manager_contract import ENTER_RESULT
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -53,6 +58,7 @@ from sugar_source_tree.nodes import (
     Return,
     With,
 )
+from sugar_source_tree.panic import ContextManagerResolutionConstructionGap
 from sugar_source_tree.shadow import rewrite
 from sugar_source_tree.tree import SourceFile
 
@@ -76,6 +82,7 @@ FOR_MIXED = (
 )
 WITH_ONCE = "def f():\n    with m as x:\n        y = x\n"
 WITH_TUPLE = "def f():\n    with m as (a, b):\n        pass\n    return a\n"
+WITH_TUPLE_FORMAL = "def f(m):\n    with m as (a, b):\n        pass\n    return a\n"
 WITH_IN_LOOP = (
     "def f():\n"
     "    for i in [1, 2]:\n"
@@ -401,6 +408,28 @@ def test_a_generator_manager_tuple_target_reads_its_projections(
     for name in ("a", "b"):
         assert isinstance(binding[name], EvaluationRef)
         assert binding[name].evaluation == projection_key(store.evaluation, name)
+
+
+def test_an_unseated_tuple_target_lowers_its_store_and_construction_refuses() -> None:
+    # Nobody seated a row for ``m``.  Substitution does not ask the require
+    # door: the store is lowered onto the enter result, as a simple ``as``
+    # name is bound to it, and ``a``/``b`` read its projections after the
+    # with.  Constructing the with asks the door and refuses by name.
+    function = _function(WITH_TUPLE_FORMAL)
+    with_node = _node(function, With).substitute({})
+    assert isinstance(with_node, With)
+    item = with_node.items[0]
+    store = with_node.body[0]
+    assert _keyed(store)
+    assert store.value.slot_id == f"{item._manager_slot_id()}#enter_result"
+    binding = with_node.substitution_binding({})
+    assert set(binding) == {"a", "b"}
+    for name in ("a", "b"):
+        assert isinstance(binding[name], EvaluationRef)
+        assert binding[name].evaluation == projection_key(store.evaluation, name)
+    with pytest.raises(ContextManagerResolutionConstructionGap) as refused:
+        function.sugar()
+    assert refused.value.owner == "With._construct_sugar"
 
 
 def test_a_generator_manager_store_is_lowered_once(monkeypatch) -> None:

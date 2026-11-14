@@ -11560,10 +11560,16 @@ class With(Statement):
         Nothing about exit routing is special-cased -- the store is simply the
         first thing the body does.
 
-        Restricted to ProtocolResource semantics on purpose. The EffectBoundary
-        contract refuses an as-binding outright (its projection is not
-        authenticated), and that refusal stays total; injecting a store there
-        would route a binding its contract has not admitted.
+        Restricted to ProtocolResource semantics on purpose when a row is
+        seated. The EffectBoundary contract refuses an as-binding outright (its
+        projection is not authenticated), and that refusal stays total;
+        injecting a store there would route a binding its contract has not
+        admitted.
+
+        A row nobody seated is construction's question, not this rewrite's
+        (as for a simple name, ``substitution_binding``): the store is lowered
+        onto the enter result, and ``_construct_sugar`` asks the require door
+        and refuses by name. So substitution never demands a row.
 
         Idempotent: the rewrite only fires on a target this node did not already
         rewrite, detected structurally by the injected store's own value being
@@ -11589,16 +11595,21 @@ class With(Statement):
         # target is lowered the same way: ``a``/``b`` read their projections
         # of that store, never their prior state by spelling.  Its contract
         # is the generator frame, read before any resolution is required.
+        # A seated row is read as the door reads it; an unseated one lowers
+        # the store and leaves the refusal to construction.
         if self._generator_manager_frame(item) is None:
-            resolution = self._prebound_manager_resolution(item)
-            if not isinstance(
-                resolution,
-                (
-                    ContextManagerContractRefV1,
-                    SourceDerivedContextManagerRefV1,
-                    FormalManagerRefV1,
-                ),
-            ) or not isinstance(resolution.semantics, ProtocolResourceSemanticsV1):
+            resolution = self._seated_manager_resolution(item)[1]
+            if resolution is not _UNSEATED_MANAGER_ROW and (
+                not isinstance(
+                    resolution,
+                    (
+                        ContextManagerContractRefV1,
+                        SourceDerivedContextManagerRefV1,
+                        FormalManagerRefV1,
+                    ),
+                )
+                or not isinstance(resolution.semantics, ProtocolResourceSemanticsV1)
+            ):
                 return self
 
         enter_slot = f"{item._manager_slot_id()}#enter_result"
