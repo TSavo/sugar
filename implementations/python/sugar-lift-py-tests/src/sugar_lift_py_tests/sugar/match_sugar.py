@@ -23,6 +23,9 @@ ExitSet law (advisor #6716 rework):
   - a completed pattern / equality / guard face feeds the selection formula
     AND what it owes: every arm past it is sequenced after it (``_after``),
     so its ``owed`` reaches the case body's result and every later arm (#7757)
+  - a match with no catch-all case has a fall-through arm: completed under
+    the negation of every case's selection, owing what every failed
+    equality, pattern and guard owed (#7757)
 
 Value patterns and catch-all / bare capture are owned. Structural patterns
 stay loud at the construction door (nodes.py).
@@ -440,13 +443,22 @@ class MatchSugar(Sugar):
                     earlier.append(or_(tuple(earlier_bits)))
             # body_ctx / guard_ctx discarded here — rollback for next case.
 
-        if not accumulated.exits:
+        from sugar_lift_py_tests.outcome.exit_set import _is_true
+
+        if not any(_is_true(selection) for selection in earlier):
+            # No case is a catch-all: the path where no case matched is real
+            # Python behaviour (execution continues after the match), so it
+            # is an arm (#7757). It is completed under the negation of every
+            # case's selection and owes what every failed equality, pattern
+            # and guard on that path owed.
             from sugar_lift_py_tests.floor.block_value import BlockValue
 
-            return _after(
-                None,
-                running_owed,
-                ExitSet.completed(BlockValue((), can_fall_through=True)),
+            accumulated = accumulated.union(
+                _after(
+                    _not_earlier(earlier),
+                    running_owed,
+                    ExitSet.completed(BlockValue((), can_fall_through=True)),
+                )
             )
         # Shared ExitSet projection — no output-kind membrane on value shape.
         return accumulated.normalize()

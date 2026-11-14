@@ -18,12 +18,13 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests import unanswered_calls
 from sugar_lift_py_tests.context.reduce_context import ReduceContext
-from sugar_lift_py_tests.ir import atomic
+from sugar_lift_py_tests.ir import atomic, not_
 from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.outcome.exit_set import true_guard
 from sugar_lift_py_tests.sugar.int_literal_sugar import IntLiteralSugar
 from sugar_lift_py_tests.sugar.match_sugar import MatchCaseSpec, MatchSugar
 from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
+from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -115,6 +116,68 @@ def test_the_later_case_owes_the_equality_that_ran_before_it() -> None:
     )
     assert len(outcome.exits) >= 2, outcome.exits
     assert all(arm.owed == (_ITEM,) for arm in outcome.exits), outcome.exits
+
+
+def _ret_str(text: str) -> ReturnSugar:
+    return ReturnSugar(StringLiteralSugar(text, site=_Site(col=7)), site=_Site(line=7))
+
+
+def _selected_and_fall_through(outcome: ExitSet):
+    """Split the arms: a ``return`` arm stops, the fall-through arm continues."""
+    selected = [
+        arm
+        for arm in outcome.exits
+        if isinstance(arm, Completed) and not arm.value.can_fall_through
+    ]
+    fall_through = [
+        arm
+        for arm in outcome.exits
+        if isinstance(arm, Completed) and arm.value.can_fall_through
+    ]
+    return selected, fall_through
+
+
+def test_a_match_with_no_catch_all_has_the_fall_through_arm() -> None:
+    """``match x: case 1: return "a"``: no case matched is real behaviour.
+
+    Execution continues after the match, so the match answers both the
+    selected arm and a completed fall-through arm under the negation of the
+    case's selection.
+    """
+    outcome = _match(
+        (),
+        MatchCaseSpec(alternatives=(_int(1),), body=(_ret_str("a"),)),
+    )
+    selected, fall_through = _selected_and_fall_through(outcome)
+    assert len(selected) == 1, outcome.exits
+    assert len(fall_through) == 1, outcome.exits
+    assert fall_through[0].guard == not_(selected[0].guard), outcome.exits
+    assert fall_through[0].owed == ()
+
+
+def test_the_fall_through_arm_owes_what_the_failed_eq_owed() -> None:
+    """The ``__eq__`` ran on the path where no case matched, so that arm owes it."""
+    outcome = _match(
+        (_ITEM,),
+        MatchCaseSpec(alternatives=(_int(1),), body=(_ret_str("a"),)),
+    )
+    selected, fall_through = _selected_and_fall_through(outcome)
+    assert len(selected) == 1, outcome.exits
+    assert len(fall_through) == 1, outcome.exits
+    assert fall_through[0].owed == (_ITEM,), fall_through
+    assert selected[0].owed == (_ITEM,), selected
+
+
+def test_twin_a_catch_all_leaves_no_fall_through_arm() -> None:
+    """``case 1: ... case _: ...``: some case always runs; nothing falls through."""
+    outcome = _match(
+        (_ITEM,),
+        MatchCaseSpec(alternatives=(_int(1),), body=(_ret_str("a"),)),
+        MatchCaseSpec(alternatives=(), body=(_ret_str("b"),)),
+    )
+    selected, fall_through = _selected_and_fall_through(outcome)
+    assert len(selected) == 2, outcome.exits
+    assert fall_through == [], outcome.exits
 
 
 def test_twin_an_eq_owing_nothing_leaves_the_match_owing_nothing() -> None:
