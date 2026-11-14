@@ -86,7 +86,29 @@ def _bind_names(active, bind, completed):
     return active
 
 
-def evaluate_assignment_values(values, ctx, tail=None, bind=()):
+def _bind_evaluations(active, evaluations, index, value):
+    """``active`` with RHS ``index``'s completed ``value`` bound under the key
+    of each aliased name it is assigned to (``evaluations``: ``(key, value
+    index)``, ``Assign.alias_evaluations``), qualified by the live loop item
+    it runs in (``evaluation_here``).  After ``y = x`` every later read of
+    ``y`` is a reference to that key: the value ``x`` held here, never a later
+    rebind of ``x``.  Bound as soon as the RHS completes, as a walrus inside
+    it is (``_walrus_bound``), so a class body's later field reads it too; no
+    RHS of the same statement reads it (substitution threads the binding to
+    the statements after this one)."""
+    from sugar_lift_py_tests.floor.floor_value import FloorValue
+    from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+
+    if not isinstance(value, FloorValue):
+        return active
+    for key, at in evaluations:
+        if at == index:
+            active = ScopeRebind(evaluation_here(key), value).extend_scope(active)
+    return active
+
+
+def evaluate_assignment_values(values, ctx, tail=None, bind=(), evaluations=()):
     """Evaluate ``values`` (RHS sugars, in evaluation order) at the statement.
 
     Returns the statement's outcome: every halt face of every RHS, in order
@@ -97,7 +119,10 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=()):
     ``values`` order, so a target consumes the one evaluation instead of a
     second; its outcome replaces the empty completed block. ``bind`` (without
     ``tail``) names ``(name, value index)`` pairs the completed path rebinds in
-    the temporal.
+    the temporal. ``evaluations`` names ``(key, value index)`` pairs: each
+    RHS's completed value is bound under an aliased name's key as soon as it
+    completes (``_bind_evaluations``), so the completed path and ``tail``
+    carry it.
     """
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_lift_py_tests.floor.block_value import BlockValue
@@ -142,7 +167,9 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=()):
                 # and no later RHS or target runs. It is handed back as-is so
                 # the enclosing block routes it.
                 return outcome
-            evaluated = _walrus_bound(active, plain)
+            evaluated = _bind_evaluations(
+                _walrus_bound(active, plain), evaluations, index, plain
+            )
             if key is not None and _binds_live_name(active, bind, index):
                 # A live loop body rebinds names this RHS may read: a later
                 # read of this RHS must see this evaluation, not re-reduce
@@ -158,13 +185,19 @@ def evaluate_assignment_values(values, ctx, tail=None, bind=()):
             # read keeps substitution (it was never answered from a record).
             return outcome.and_then(
                 lambda value: step(
-                    index + 1, _walrus_bound(active, value), (*completed, value)
+                    index + 1,
+                    _bind_evaluations(
+                        _walrus_bound(active, value), evaluations, index, value
+                    ),
+                    (*completed, value),
                 )
             )
         return outcome.and_then(
             lambda value: step(
                 index + 1,
-                _walrus_bound(active, value).with_assigned_value(key, value),
+                _bind_evaluations(
+                    _walrus_bound(active, value), evaluations, index, value
+                ).with_assigned_value(key, value),
                 (*completed, value),
             )
         )

@@ -48,6 +48,7 @@ from sugar_source_tree.nodes import (
     Assign,
     EvaluationRef,
     FunctionDef,
+    Name,
     ObservationRef,
     Return,
     With,
@@ -96,8 +97,12 @@ def _node(function, kind):
 
 
 def _keyed(node) -> bool:
-    return isinstance(node, Assign) and isinstance(
-        getattr(node, "evaluation", None), str
+    # An iteration's unpack (``a, b = <item>``).  ``x = a`` in the body is
+    # keyed too, as an alias of ``a``'s projection, but it is no unpack.
+    return (
+        isinstance(node, Assign)
+        and isinstance(getattr(node, "evaluation", None), str)
+        and not isinstance(node.targets[0], Name)
     )
 
 

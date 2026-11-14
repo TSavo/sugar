@@ -32,6 +32,9 @@ class AssignSugar(Sugar):
     name: str
     value: object  # the rhs sugar, evaluated at this statement
     site: object = dataclass_field(compare=False)
+    # ``(name, key)``: the name is an alias of an evaluation (``y = x`` after
+    # ``x += e``); its value is bound under ``key`` (``Assign.alias_evaluations``).
+    evaluations: tuple = ()
     # Evaluating the RHS is the statement's only work before it binds.
     halts_at_statement_head: ClassVar[bool] = True
 
@@ -55,8 +58,12 @@ class AssignSugar(Sugar):
             evaluate_assignment_values,
         )
 
+        bind = ((self.name, 0),)
         return evaluate_assignment_values(
-            (self.value,), ctx, bind=((self.name, 0),)
+            (self.value,),
+            ctx,
+            bind=bind,
+            evaluations=_evaluation_indices(self.evaluations, bind),
         )
 
 
@@ -77,6 +84,7 @@ class MultiAssignSugar(Sugar):
 
     bindings: tuple  # tuple of (name, value_sugar) pairs, in target order
     site: object = dataclass_field(compare=False)
+    evaluations: tuple = ()  # (name, key) per aliased name, as AssignSugar's
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -103,7 +111,12 @@ class MultiAssignSugar(Sugar):
             (name, next(i for i, v in enumerate(values) if v is value))
             for name, value in self.bindings
         )
-        return evaluate_assignment_values(values, ctx, bind=bind)
+        return evaluate_assignment_values(
+            values,
+            ctx,
+            bind=bind,
+            evaluations=_evaluation_indices(self.evaluations, bind),
+        )
 
 
 @dataclass(frozen=True)
@@ -114,6 +127,7 @@ class ChainedAssignSugar(Sugar):
     stores: tuple
     value: object
     site: object = dataclass_field(compare=False)
+    evaluations: tuple = ()  # (name, key) per aliased name, as AssignSugar's
 
     @classmethod
     def witnesses(cls):
@@ -131,11 +145,11 @@ class ChainedAssignSugar(Sugar):
             reduce_block_to_exitset,
         )
 
+        bind = tuple((name, 0) for name in _chained_names(self.bindings))
+        evaluations = _evaluation_indices(self.evaluations, bind)
         if not self.stores:
             return evaluate_assignment_values(
-                (self.value,),
-                ctx,
-                bind=tuple((name, 0) for name in _chained_names(self.bindings)),
+                (self.value,), ctx, bind=bind, evaluations=evaluations
             )
 
         def stores(active, completed):
@@ -148,7 +162,9 @@ class ChainedAssignSugar(Sugar):
                 ctx,
             )
 
-        return evaluate_assignment_values((self.value,), ctx, tail=stores)
+        return evaluate_assignment_values(
+            (self.value,), ctx, tail=stores, evaluations=evaluations
+        )
 
 
 @dataclass(frozen=True)
@@ -336,6 +352,7 @@ class UnpackStoreAssignSugar(Sugar):
     bindings: tuple  # (name, value_sugar) — provenance; substitute spent them
     stores: tuple  # AttributeStoreEffectSugar | SubscriptStoreEffectSugar | PlaceAssign
     site: object = dataclass_field(compare=False)
+    evaluations: tuple = ()  # (name, key) per aliased name, as AssignSugar's
 
     @classmethod
     def witnesses(cls):
@@ -389,24 +406,42 @@ class UnpackStoreAssignSugar(Sugar):
                 tuple(leaf(store) for store in self.stores), active, ctx
             )
 
-        return evaluate_assignment_values(
-            values, ctx, tail=stores if self.stores else None
+        bind = tuple(
+            (name, next(i for i, v in enumerate(values) if v is value))
+            for name, value in self.bindings
         )
+        return evaluate_assignment_values(
+            values,
+            ctx,
+            tail=stores if self.stores else None,
+            evaluations=_evaluation_indices(self.evaluations, bind),
+        )
+
+
+def _evaluation_indices(evaluations, bind):
+    """``(key, value index)`` for each aliased name: ``evaluations`` holds
+    ``(name, key)`` (``Assign.alias_evaluations``), ``bind`` the index of the
+    value each name is bound to."""
+    keys = dict(evaluations)
+    return tuple((keys[name], index) for name, index in bind if name in keys)
 
 
 def _reduce_targets(targets, active, ctx):
     """The statement's store targets, after its RHS completed.
 
-    Where the RHS recorded nothing this is the block the
-    statement always reduced to; where it recorded completed values, the
-    targets' exits carry that context on to the next statement.
+    Where the RHS recorded nothing and bound no evaluation this is the block
+    the statement always reduced to; where it recorded completed values or
+    bound an aliased name's evaluation, the targets' exits carry that context
+    on to the next statement.
     """
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
         reduce_body,
     )
 
-    if getattr(active, "assigned_values", ()) == getattr(ctx, "assigned_values", ()):
+    if getattr(active, "assigned_values", ()) == getattr(
+        ctx, "assigned_values", ()
+    ) and (ctx is None or getattr(active, "temporal", None) is ctx.temporal):
         return reduce_body(targets, active)
     return reduce_block_to_exitset(targets, active)
 

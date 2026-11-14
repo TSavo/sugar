@@ -6,7 +6,10 @@ never to the bare name. The statement (or walrus) binds its completed value
 under that coordinate at reduce, and the read answers it: the value is not
 looked up by spelling. After ``a, b = f()`` a read of ``a`` is a reference to
 ``a``'s projection of the statement's coordinate (``projection_key``), bound
-by the unpack at reduce.
+by the unpack at reduce. After ``y = x`` where ``x`` reads an evaluation, a
+read of ``y`` is a reference to ``y``'s projection of the assignment's
+coordinate, bound by the assignment at reduce (``Assign.alias_evaluations``):
+the value ``x`` held at ``y = x``, never ``x`` read again where ``y`` is used.
 
 A comprehension's element and conditions read a target name the same way
 (``member``): the comprehension binds every member, finite or symbolic, under
