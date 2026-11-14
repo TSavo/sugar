@@ -235,6 +235,13 @@ class CallSiteValue(FloorValue):
     language_callee: object | None = dataclass_field(
         default=None, compare=False, repr=False
     )
+    # The closure of the lambda this call applies (``LambdaCallable.closure``):
+    # each final-member coordinate its body reads through an enclosing
+    # comprehension's cell, with what the cell holds.  Bound before the body
+    # reduces, which is after the comprehension is done (#7757 item 7).
+    closure: tuple[tuple[str, FloorValue], ...] = dataclass_field(
+        default=(), compare=False, repr=False
+    )
     _retained_source_completion: object | None = dataclass_field(
         default=None, init=False, compare=False, repr=False
     )
@@ -1442,6 +1449,7 @@ class CallSiteValue(FloorValue):
             self.parameters,
             self.arg_values,
             self.formal_coordinate_cids,
+            self.closure,
         )
         retained = self._retained_source_completion
         if retained is not None:
@@ -1595,6 +1603,7 @@ class CallSiteValue(FloorValue):
             self.parameters,
             self.arg_values,
             self.formal_coordinate_cids,
+            self.closure,
         )
         retained = self._retained_source_completion
         if retained is not None:
@@ -1696,6 +1705,7 @@ class CallSiteValue(FloorValue):
             self.parameters,
             self.arg_values,
             self.formal_coordinate_cids,
+            self.closure,
         )
         if self.lexical_defining_class is not None:
             from sugar_lift_py_tests.temporal import curry_temporal
@@ -1989,9 +1999,20 @@ def _ctx_with_curried_args(
     parameters: tuple[str, ...],
     arg_values: tuple[FloorValue, ...],
     formal_coordinate_cids: tuple[str, ...] = (),
+    closure: tuple[tuple[str, FloorValue], ...] = (),
 ):
     from sugar_lift_py_tests.temporal import curry_temporal
 
+    if closure:
+        # The callee lambda's closure cells (``CallSiteValue.closure``):
+        # coordinates, never names, so no formal masks one.
+        ctx = curry_temporal(
+            ctx,
+            tuple(coordinate for coordinate, _ in closure),
+            tuple(value for _, value in closure),
+            owner="CallSiteValue.force_floor closure cells",
+            blame="<callsite-closure>",
+        )
     result = curry_temporal(
         ctx,
         parameters,

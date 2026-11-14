@@ -560,9 +560,14 @@ class ComprehensionSugar(ConstructedTermSugar):
         member, under each member coordinate's final coordinate
         (``final_member_coordinate``) -- the generator's, and each leaf's
         projection of it for a destructuring target. A lambda the
-        comprehension stores reads these (``_closure_cell_scope``). ``ctx``
-        unchanged when ``last`` does not destructure into the target: the
-        comprehension halts on it, and no stored lambda outlives it.
+        comprehension stores reads these (``_closure_cell_scope``), and so
+        does a lambda an inner comprehension in the element stores: they are
+        bound on the context every member's element, and so every inner
+        comprehension, reduces in. The lambda value carries each binding it
+        reads (``LambdaCallable.closure``), so its body reduces after the
+        comprehension is done. ``ctx`` unchanged when ``last`` does not
+        destructure into the target: the comprehension halts on it, and no
+        stored lambda outlives it.
         """
         from dataclasses import replace
 

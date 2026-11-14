@@ -14,6 +14,13 @@ class LambdaCallable(FloorValue):
     ``to_term`` is an opaque callable identity coordinate containing parameter
     names only.  ``python:lambda`` is an ordinary ctor in ProofIR, not a binder;
     placing the body beneath it would leak formal variables into global scope.
+
+    ``closure`` is each final-member coordinate the body reads through an
+    enclosing comprehension's cell, with what the cell holds once the
+    comprehension is done (#7757 item 7, ``LambdaSugar.closure_coordinates``).
+    The body is reduced after the comprehension, so the call binds these
+    (``CallSiteValue.closure``); ``to_term`` names them, since two lambdas
+    built at one site over different finals are different callables.
     """
 
     parameters: tuple[str, ...]
@@ -25,6 +32,7 @@ class LambdaCallable(FloorValue):
     keyword_only_default_values: tuple[Any | None, ...] = ()
     vararg_parameter: str | None = None
     kwarg_parameter: str | None = None
+    closure: tuple[tuple[str, Any], ...] = ()
 
     @property
     def parameter(self) -> str:
@@ -76,6 +84,13 @@ class LambdaCallable(FloorValue):
                 )
         if self.kwarg_parameter is not None:
             encoded_parameters.append(str_const(f"**{self.kwarg_parameter}"))
+        for coordinate, value in self.closure:
+            encoded_parameters.append(
+                ctor(
+                    "python:lambda_closure_cell",
+                    [str_const(coordinate), value.to_term(owner="LambdaCallable")],
+                )
+            )
         return ctor(
             "python:lambda",
             [str_const(self.construction_identity), *encoded_parameters],
@@ -110,4 +125,5 @@ class LambdaCallable(FloorValue):
             body=frame.body,
             source_call_frame_cid=frame.frame_cid,
             formal_coordinate_cids=tuple(item.cid for item in frame.formal_coordinates),
+            closure=self.closure,
         )

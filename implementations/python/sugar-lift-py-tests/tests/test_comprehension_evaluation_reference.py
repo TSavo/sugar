@@ -326,3 +326,109 @@ def test_a_symbolic_stored_lambda_reads_the_final_member_without_a_panic() -> No
     assert isinstance(final, SymbolicValue)
     assert final != ctx.temporal.value_if_bound(generator.binding_coordinate_cid)
     assert sugar.element.body.desugar(ctx) == ExitSet.completed(final)
+
+
+# #7757 item 7, after #7944: the stored-lambda rule holds for every enclosing
+# comprehension whose result the lambda escapes, and the lambda value carries
+# the final-member bindings its body reads (its closure).
+
+_NESTED = "def f(xs, ys):\n    return [[lambda: x for _ in ys] for x in xs]\n"
+
+
+def _first(node, kind: str):
+    return next(n for n in node.walk() if n.kind == kind)
+
+
+def test_a_lambda_stored_by_an_inner_comprehension_reads_the_outer_final() -> None:
+    comp = _comprehension(_NESTED)
+    outer = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
+    assert comp.elt.kind == "ListComp"
+    read = _first(comp.elt, "Lambda").body
+    assert isinstance(read, EvaluationRef)
+    assert read.member is True
+    assert read.cell is True
+    assert read.evaluation == final_member_coordinate(outer)
+    assert read.evaluation != outer
+
+
+def test_an_inner_comprehension_rebinding_the_name_masks_the_outer_cell() -> None:
+    comp = _comprehension(
+        "def f(xs, ys):\n    return [[lambda: x for x in ys] for x in xs]\n"
+    )
+    inner = comp.elt
+    assert isinstance(inner, ListComp)
+    coordinate = ListComp._generator_binding_coordinate(inner, 0, inner.generators[0])
+    read = _first(inner, "Lambda").body
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == final_member_coordinate(coordinate)
+    outer = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
+    assert read.evaluation != final_member_coordinate(outer)
+
+
+def test_an_inner_result_the_outer_does_not_store_reads_the_current_member() -> None:
+    # The inner list is consumed while the outer runs: its lambda reads the
+    # outer's current member, never the outer's final one.
+    comp = _comprehension(
+        "def f(xs, ys):\n    return [len([lambda: x for _ in ys]) for x in xs]\n"
+    )
+    outer = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
+    read = _first(comp.elt, "Lambda").body
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == outer
+    assert getattr(read, "cell", False) is not True
+
+
+def test_the_lambda_names_the_cells_its_body_reads() -> None:
+    comp = _comprehension(_NESTED)
+    outer = ListComp._generator_binding_coordinate(comp, 0, comp.generators[0])
+    lam = comp.sugar().element.element
+    assert lam.closure_coordinates == (final_member_coordinate(outer),)
+
+
+def test_a_finite_stored_lambda_carries_the_outer_final_in_its_closure() -> None:
+    from sugar_lift_py_tests.floor.call_site_value import _ctx_with_curried_args
+
+    comp = _comprehension(_NESTED)
+    sugar = comp.sugar()
+    generator = sugar.generators[0]
+    cell = final_member_coordinate(generator.binding_coordinate_cid)
+    ctx = sugar._final_member_ctx(
+        generator, TermValue(2), ReduceContext.root(owner="comprehension-closure")
+    )
+    lam = sugar.element.element
+    callable_ = lam.desugar(ctx).completed_value()
+    assert callable_.closure == ((cell, TermValue(2)),)
+    # Outside the comprehension the context binds no final member: the body
+    # alone refuses, and reads 2 through the closure the value carries.
+    after = ReduceContext.root(owner="after-the-comprehension")
+    with pytest.raises(ConstructionPanic):
+        lam.body.desugar(after)
+    called = _ctx_with_curried_args(after, (), (), (), callable_.closure)
+    assert lam.body.desugar(called) == ExitSet.completed(TermValue(2))
+
+
+def test_a_lambda_built_with_no_final_bound_carries_no_closure() -> None:
+    comp = _comprehension(_NESTED)
+    lam = comp.sugar().element.element
+    root = ReduceContext.root(owner="comprehension-closure")
+    assert lam.desugar(root).completed_value().closure == ()
+    assert lam.desugar(None).completed_value().closure == ()
+
+
+def test_a_symbolic_stored_lambda_reads_the_outer_final_member() -> None:
+    comp = _comprehension(_NESTED)
+    sugar = comp.sugar()
+    generator = sugar.generators[0]
+    ctx = sugar._symbolic_final_ctx(
+        generator,
+        SymbolicValue(make_var("xs")),
+        sugar._symbolic_member_ctx(
+            generator, ReduceContext.root(owner="comprehension-closure")
+        ),
+    )
+    cell = final_member_coordinate(generator.binding_coordinate_cid)
+    final = ctx.temporal.value_if_bound(cell)
+    assert isinstance(final, SymbolicValue)
+    lam = sugar.element.element
+    assert lam.body.desugar(ctx) == ExitSet.completed(final)
+    assert lam.desugar(ctx).completed_value().closure == ((cell, final),)

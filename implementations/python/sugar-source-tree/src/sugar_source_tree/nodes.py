@@ -334,9 +334,10 @@ def _explicit_state(name: str, state):
 
 
 _NESTED_COMPREHENSION_TEMPLATE = object()
-# An eager comprehension's closure cells (#7757 item 7): the lambdas it stores
-# unevaluated in what it produces, and, for each name its targets bind, what
-# the cell holds once it is done (``_closure_cell_scope``).
+# The closure cells of the eager comprehensions enclosing a substitution
+# (#7757 item 7), one layer per comprehension, outermost first: the lambdas it
+# stores unevaluated in what it produces, and, for each name its targets bind,
+# what the cell holds once it is done (``_closure_cell_scope``).
 _CLOSURE_CELLS = object()
 
 
@@ -3343,7 +3344,14 @@ def _holds_evaluation(statements) -> bool:
 
 
 def _evaluation_ref(
-    owner, span, evaluation: str, name: str, *, member=False, walrus: bool = False
+    owner,
+    span,
+    evaluation: str,
+    name: str,
+    *,
+    member=False,
+    walrus: bool = False,
+    cell: bool = False,
 ) -> "Node":
     """``EvaluationRef(evaluation, name)`` at ``span``: a read of ``name``
     rewritten to a reference to the evaluation bound under ``evaluation``
@@ -3357,7 +3365,10 @@ def _evaluation_ref(
     reference reads that coordinate only, never the name.  ``walrus`` marks a
     walrus's reference: it resolves through the key only
     (``EvaluationRefSugar``), never the name and never the walrus's value
-    evaluated again."""
+    evaluated again.  ``cell`` marks a member reference to a comprehension's
+    final member (``final_member_coordinate``) in the body of a lambda the
+    comprehension stores: the lambda carries that binding in its closure
+    (``Lambda._construct_sugar``, ``LambdaSugar``)."""
     from .backend import Leaf, materialize
     from .shadow import ShadowNode
 
@@ -3366,6 +3377,8 @@ def _evaluation_ref(
         slots = (*slots, ("member", Leaf(True)))
     if walrus:
         slots = (*slots, ("walrus", Leaf(True)))
+    if cell:
+        slots = (*slots, ("cell", Leaf(True)))
     return materialize(
         owner.unit,
         ShadowNode("EvaluationRef", span, slots),
@@ -3403,13 +3416,16 @@ def _closure_position(node: "Node") -> tuple:
 def _stored_closures(roots) -> frozenset:
     """The lambdas an eager comprehension stores unevaluated in what it
     produces: an element (a dict comprehension's key or value) that is a
-    lambda, or a lambda inside a list, tuple, set or dict display there.
+    lambda, a lambda inside a list, tuple, set or dict display there, or a
+    lambda an eager comprehension there stores in its own result
+    (``[[lambda: x for _ in ys] for x in xs]``): that result is stored in
+    this one, so the lambda escapes both.
 
     Nothing calls such a lambda before the comprehension is done, so it reads
     the comprehension's final member.  A lambda anywhere else (called in
-    place, handed to a call, read by a condition) may be called while the
-    comprehension runs, when the cell holds the current member, and is not
-    one of these."""
+    place, handed to a call, read by a condition, produced by a lazy
+    generator expression) may be called while the comprehension runs, when
+    the cell holds the current member, and is not one of these."""
     found = set()
     pending = list(roots)
     while pending:
@@ -3423,6 +3439,10 @@ def _stored_closures(roots) -> frozenset:
                 if item.key is not None:
                     pending.append(item.key)
                 pending.append(item.value)
+        elif isinstance(node, (ListComp, SetComp)):
+            pending.append(node.elt)
+        elif isinstance(node, DictComp):
+            pending.extend((node.key, node.value))
     return frozenset(found)
 
 
@@ -3434,16 +3454,38 @@ def _closure_cell_scope(scope, roots, cells) -> "BindingMap":
     when the comprehension dissolves, a member reference to the final member
     coordinate (``final_member_coordinate``) when it does not.
 
-    ``Lambda.substitute`` reads the cells in the body of a lambda the
-    comprehension stores (``_stored_closures``), the way a lambda's body reads
-    every other enclosing binding: by substitution.  ``scope`` unchanged when
-    no lambda is stored or no name has a cell."""
+    The cells are one layer on the layers of the comprehensions enclosing
+    this one: a lambda reads, for each comprehension it escapes, that
+    comprehension's cells (``Lambda.substitute``).  ``Lambda.substitute``
+    reads them in the body of a lambda the comprehension stores
+    (``_stored_closures``), the way a lambda's body reads every other
+    enclosing binding: by substitution.  ``scope`` unchanged when no lambda
+    is stored or no name has a cell."""
     if not cells:
         return scope
     stored = _stored_closures(roots)
     if not stored:
         return scope
-    return {**scope, _CLOSURE_CELLS: (stored, dict(cells))}
+    return {
+        **scope,
+        _CLOSURE_CELLS: (*scope.get(_CLOSURE_CELLS, ()), (stored, dict(cells))),
+    }
+
+
+def _mask_closure_cells(scope, names) -> "BindingMap":
+    """``scope`` with ``names`` -- the names a comprehension's targets bind --
+    removed from the cells of every enclosing comprehension: inside it those
+    names are its own, never an enclosing comprehension's cell."""
+    layers = scope.get(_CLOSURE_CELLS)
+    if not layers or not names:
+        return scope
+    return {
+        **scope,
+        _CLOSURE_CELLS: tuple(
+            (stored, {k: v for k, v in cells.items() if k not in names})
+            for stored, cells in layers
+        ),
+    }
 
 
 def _member_closure_scope(owner, inner, roots) -> "BindingMap":
@@ -3461,7 +3503,8 @@ def _member_closure_scope(owner, inner, roots) -> "BindingMap":
 def _final_member_cells(owner, generators, inner) -> dict:
     """Each name ``generators`` bind whose read in ``inner`` is a member
     reference (``ListComp._target_references``), to a member reference to
-    that member's final coordinate (``final_member_coordinate``)."""
+    that member's final coordinate (``final_member_coordinate``), marked
+    ``cell``: the lambda that reads it carries the binding in its closure."""
     names = set()
     for gen in generators:
         names |= owner._bound_names_in(gen.target)
@@ -3478,6 +3521,7 @@ def _final_member_cells(owner, generators, inner) -> dict:
                 final_member_coordinate(reference.evaluation),
                 reference.name,
                 member=True,
+                cell=True,
             )
     return cells
 
@@ -4371,6 +4415,9 @@ class Node(Typed):
                 **{k: v for k, v in scope.items() if k not in bound},
                 **carried,
             }
+        # A name a target binds is this comprehension's own: never an
+        # enclosing comprehension's cell (``_mask_closure_cells``).
+        inner = _mask_closure_cells(inner, bound)
         return (tuple(new_gens) if changed else generators), inner, changed
 
     def _pattern_bound_names(self, pattern) -> set:
@@ -13801,18 +13848,22 @@ class Lambda(Expression):
         after the comprehension, so its body reads each comprehension name
         through the comprehension's cell (``_closure_cell_scope``): what the
         cell holds once the comprehension is done, never the member of the
-        iteration that built the lambda.  The formals' defaults are evaluated
-        when the lambda is built and read the current member."""
+        iteration that built the lambda.  This holds for every enclosing
+        comprehension whose result the lambda escapes, one cell layer each
+        (``[[lambda: x for _ in ys] for x in xs]`` reads the outer's final
+        ``x``); an inner comprehension's cell masks an outer one's.  The
+        formals' defaults are evaluated when the lambda is built and read the
+        current member."""
         from .shadow import rewrite
 
-        cells = scope.get(_CLOSURE_CELLS)
-        if cells is not None:
+        layers = scope.get(_CLOSURE_CELLS)
+        if layers is not None:
             scope = {k: v for k, v in scope.items() if k is not _CLOSURE_CELLS}
         bound = {p.name for p in self.params}
         bs = {k: v for k, v in scope.items() if k not in bound} if bound else scope
-        if cells is not None:
-            stored, held = cells
-            if _closure_position(self) in stored:
+        position = _closure_position(self)
+        for stored, held in layers or ():
+            if position in stored:
                 cell_reads = {
                     name: cell for name, cell in held.items() if name not in bound
                 }
@@ -13928,7 +13979,24 @@ class Lambda(Expression):
             ),
             body_fragment_cid=self.body.fragment.seal().cid,
             site=self.fragment,
+            closure_coordinates=self._closure_coordinates(),
         )
+
+    def _closure_coordinates(self) -> tuple:
+        """The final-member coordinates this lambda's body reads through an
+        enclosing comprehension's cell (``cell`` references,
+        ``_final_member_cells``), in pre-order.  ``LambdaSugar`` carries
+        their bindings in the lambda value, so its body reduces after the
+        comprehension is done."""
+        found = []
+        for node in self.body.walk():
+            if (
+                isinstance(node, EvaluationRef)
+                and getattr(node, "cell", False) is True
+                and node.evaluation not in found
+            ):
+                found.append(node.evaluation)
+        return tuple(found)
 
 
 class IfExp(Expression):
@@ -16749,6 +16817,7 @@ class Name(Expression):
                     bound.name,
                     member=getattr(bound, "member", False) is True,
                     walrus=getattr(bound, "walrus", False) is True,
+                    cell=getattr(bound, "cell", False) is True,
                 )
             return bound
         span = self.line_col_span()
@@ -16896,7 +16965,8 @@ class EvaluationRef(Expression):
     under (``ListComp._target_references``, ``ComprehensionSugar``), marked
     ``member``: it reads that coordinate only.  In the body of a lambda the
     comprehension stores, the read is a member reference to the final
-    member's coordinate (``final_member_coordinate``, ``_closure_cell_scope``).
+    member's coordinate (``final_member_coordinate``, ``_closure_cell_scope``),
+    marked ``cell``: the lambda carries that binding in its closure.
     A walrus's reference is marked
     ``walrus``: it resolves through the key only, and is refused where the
     key was never bound.  In a live loop's body a carried name reads the loop
