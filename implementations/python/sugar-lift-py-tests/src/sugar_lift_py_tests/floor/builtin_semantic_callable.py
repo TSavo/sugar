@@ -81,14 +81,7 @@ class BuiltinSemanticCallable(FloorValue):
             from sugar_lift_py_tests.outcome import ExitSet
 
             current_class = ctx.temporal.value_if_bound("__class__")
-            receiver = next(
-                (
-                    ctx.temporal.value_if_bound(name)
-                    for name in ("self", "metacls", "cls")
-                    if ctx.temporal.value_if_bound(name) is not None
-                ),
-                None,
-            )
+            receiver = zero_argument_super_receiver(operation.site, ctx.temporal)
             if current_class is None or receiver is None:
                 from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
@@ -575,6 +568,41 @@ class BuiltinSemanticCallable(FloorValue):
             tuple(value.to_term(owner=self.operation) for value in operands),
             result.to_term(owner=self.operation),
         )
+
+
+_POSITIONAL_PARAM_KINDS = frozenset({"positional_only", "positional_or_keyword"})
+
+
+def zero_argument_super_receiver(site, temporal):
+    """The receiver a zero-argument ``super()`` at ``site`` binds, or None.
+
+    CPython's rule (``super_init_without_args``, Objects/typeobject.c): the
+    first positional formal of the function whose body holds the call, read
+    as that frame binds it.  The formal is the one the source declares
+    (``SourceUnit.innermost_function_containing``), whatever it is spelled:
+    ``def m(this): super().m()`` reads ``this``, and a ``self`` some
+    enclosing frame binds is never read in its place.  A function with no
+    positional formal (CPython's ``RuntimeError: super(): no arguments``), a
+    call outside any function, or a site with no source unit answers None;
+    so does a formal the frame has not bound (the builtin floor's own
+    binding of the same spelling is not the frame's formal).
+    """
+    from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+        is_builtin_floor_binding,
+    )
+
+    unit = getattr(site, "unit", None)
+    node = getattr(site, "node", None)
+    if unit is None or node is None or temporal is None:
+        return None
+    function = unit.innermost_function_containing(node.line_col_span())
+    params = tuple(getattr(function, "params", None) or ())
+    if not params or params[0].param_kind not in _POSITIONAL_PARAM_KINDS:
+        return None
+    binding = temporal.latest(params[0].name)
+    if binding is None or is_builtin_floor_binding(binding):
+        return None
+    return binding.value
 
 
 @lru_cache(maxsize=1)

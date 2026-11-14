@@ -59,6 +59,13 @@ class ClassConstructorBodySugar(Sugar):
     # call's positional actuals as ``args`` (Objects/exceptions.c), so the
     # instance the call makes carries them.
     exception_args_coordinate_cid: str | None = field(default=None, compare=False)
+    # The initializer's first positional formal as its ``def`` declares it
+    # (``__init__(this, ...)`` declares ``this``): the frame local the fresh
+    # receiver is, which a zero-argument ``super()`` in the body reads
+    # (``builtin_semantic_callable.zero_argument_super_receiver``).  None when
+    # the initializer has no positional formal, or the body is not a source
+    # ``__init__`` (a dataclass's generated stores, a source ``__new__``).
+    receiver_formal: str | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if self.constructed_new_method is None:
@@ -276,7 +283,8 @@ class ClassConstructorBodySugar(Sugar):
         class call that bound this body (``bind_class_call``), else here.  On
         each completed face, an unrun source ``__new__`` is refused by name, the
         fresh receiver is seated at the receiver coordinate with the PEP 3135
-        ``__class__`` cell and ``self``, and ``initialize(value, ctx)`` runs
+        ``__class__`` cell and the initializer's declared receiver formal
+        (``receiver_formal``), and ``initialize(value, ctx)`` runs
         the initializer in that context.  A class with no initializer
         completes with the fresh receiver itself.
 
@@ -304,9 +312,11 @@ class ClassConstructorBodySugar(Sugar):
                 if self.exception_args_coordinate_cid is not None:
                     receiver = self._carrying_exception_args(receiver, ctx)
                 return ExitSet.completed(receiver)
-            # Constructor CallSiteValue formals omit ``self`` — they are the
-            # class-call arguments. Zero-argument ``super()`` still needs the
-            # PEP 3135 ``__class__`` cell and the bound first formal.
+            # Constructor CallSiteValue formals omit the receiver formal — they
+            # are the class-call arguments. Zero-argument ``super()`` still
+            # needs the PEP 3135 ``__class__`` cell and the bound first
+            # formal, under the name the initializer declares it
+            # (``receiver_formal``), never a spelling (#7757).
             # ``ClassDefinitionValue`` already carries both when ``__init__``
             # is invoked as a method; this door is the class call
             # ``RaisesExc(...)`` used by a factory ``return``.
@@ -323,9 +333,11 @@ class ClassConstructorBodySugar(Sugar):
                     value,
                     blame=f"{value.class_name}.__init__",
                 )
-            if temporal.value_if_bound("self") is None:
+            if self.receiver_formal is not None:
+                # The initializer's own frame local: it shadows whatever an
+                # enclosing frame binds under the same name.
                 temporal = temporal.bind_value(
-                    "self",
+                    self.receiver_formal,
                     receiver,
                     blame=(
                         f"{value.class_name}.__init__"
