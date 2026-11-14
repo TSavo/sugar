@@ -285,15 +285,14 @@ def module_end_contexts(unit) -> tuple:
     a function is called after an import that completed.
 
     Empty, so each such read is refused by name, where the run completes on
-    no arm (every arm halts), where it refuses (a construction gap, named
-    where it was raised), and where it is asked for while it runs (a run
-    that reaches, through another module's function, a function reading
-    this module's final binding).  An answer read while another module's
-    run is under way is not kept: it may hold that cycle's refusal.
+    no arm (every arm halts), and where it is asked for while it runs (a
+    run that reaches, through another module's function, a function reading
+    this module's final binding).  Where the run refuses (a construction
+    gap), that refusal is never caught here: it reaches the reader that
+    asked for the module-final values, which is refused by the gap's own
+    name, where it was raised.  An answer read while another module's run
+    is under way is not kept: it may hold that cycle's refusal.
     """
-    from sugar_lift_py_tests.gap.panic import ConstructionPanic
-    from sugar_source_tree.panic import SourceTreePanic
-
     key = id(unit)
     held = _MODULE_END_CONTEXTS.get(key)
     if held is not None and held[0] is unit:
@@ -303,10 +302,7 @@ def module_end_contexts(unit) -> tuple:
     keep = not _MODULE_RUNS_UNDER_WAY
     _MODULE_RUNS_UNDER_WAY.add(key)
     try:
-        try:
-            ends = owner_reduction(None, unit.constructed_module).ends
-        except (SourceTreePanic, ConstructionPanic):
-            ends = ()
+        ends = owner_reduction(None, unit.constructed_module).ends
     finally:
         _MODULE_RUNS_UNDER_WAY.discard(key)
     if keep:

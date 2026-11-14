@@ -1244,9 +1244,11 @@ def with_module_final_globals(ctx, readers, *, site):
     ``x += e``, a call's result, a list), so its value is the module's,
     never a second evaluation of the write here.  A key the completed arms
     bound to different values has no one value, and is not bound.  Where
-    the run completes on no arm or refuses, or no completed arm bound the
-    key, it is not bound: its read is refused by name, naming the key
-    (``EvaluationRefSugar._unbound``).  A global the module body does not
+    the run completes on no arm, or no completed arm bound the key, it is
+    not bound: its read is refused by name, naming the key
+    (``EvaluationRefSugar._unbound``).  Where the run refuses, its refusal
+    is never caught: this frame entry is refused by the run's own gap.  A
+    global the module body does not
     decide was refused by name when the body was constructed.  The name is
     never bound.
 
