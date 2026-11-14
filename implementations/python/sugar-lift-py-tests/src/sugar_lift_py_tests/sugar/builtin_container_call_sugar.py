@@ -405,6 +405,10 @@ class PathContainerCallSugar(ConstructedTermSugar):
     # ``r OP= x``: the operator (``project_inplace``) and its source token.
     operator: object = dataclass_field(default=None, compare=False)
     operator_site: object = dataclass_field(default=None, compare=False)
+    # ``super().__init__(...)``: the frame's receiver formal, whose object the
+    # call runs on -- ``receiver`` is its read here, and the call's
+    # zero-argument ``super()`` reads the formal (``Expr._super_mutation``).
+    frame_receiver: str | None = dataclass_field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -587,6 +591,7 @@ class PathContainerCallSugar(ConstructedTermSugar):
     def _call(self, ctx) -> ExitSet:
         from sugar_lift_py_tests.context import ReduceContext
         from sugar_lift_py_tests.floor import builtin_container_method as law
+        from sugar_lift_py_tests.floor.call_site_value import receiver_after_its_call
         from sugar_lift_py_tests.floor.tuple_value import TupleValue
         from sugar_lift_py_tests.sugar.assigned_value import assigned_key
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -596,9 +601,21 @@ class PathContainerCallSugar(ConstructedTermSugar):
         key = assigned_key(self.receiver)
         unknown = _unknown_after(self.site, self.label)
 
-        def ordinary(call_ctx, post=unknown):
+        def ordinary(call_ctx, post=unknown, receiver=None):
+            # The receiver after an ordinary call the value says may change
+            # it: unknown, unless the call states what it did to it -- a
+            # followed source body whose effects on it are the field stores
+            # it carries, a builtin's own transition of it
+            # (``receiver_after_its_call``, the one projection of a callee's
+            # effects on what its caller sees).
+            def after(result):
+                if receiver is None or post is receiver:
+                    return post
+                stated = receiver_after_its_call(receiver, result)
+                return post if stated is None else stated
+
             return self.fallback.desugar(call_ctx).and_then(
-                lambda result: ExitSet.completed(TupleValue((post, result)))
+                lambda result: ExitSet.completed(TupleValue((after(result), result)))
             )
 
         outcome = self.receiver.desugar(ctx)
@@ -614,6 +631,21 @@ class PathContainerCallSugar(ConstructedTermSugar):
         )
 
         def on_receiver(receiver):
+            if self.frame_receiver is not None:
+                # ``super().__init__(...)``: a call on the frame's receiver
+                # whatever its value, never a container's own method.  Its
+                # zero-argument ``super()`` binds the frame's receiver
+                # formal, which holds the object as this statement read it
+                # (``receiver``), never as the frame first bound it.
+                base = ctx if ctx is not None else ReduceContext.root(
+                    owner="PathContainerCallSugar"
+                )
+                call_ctx = base.with_temporal(
+                    base.temporal.bind_value(self.frame_receiver, receiver)
+                )
+                if key is not None:
+                    call_ctx = call_ctx.with_assigned_value(key, receiver)
+                return ordinary(call_ctx, self._after(receiver), receiver)
             kind = law.container_kind(receiver)
             if kind is not None and self.method in law.MUTATING_METHODS[kind]:
                 # The arguments are operands: a walrus in one binds once,
@@ -654,11 +686,11 @@ class PathContainerCallSugar(ConstructedTermSugar):
                 else receiver
             )
             if key is None:
-                return ordinary(ctx, post)
+                return ordinary(ctx, post, receiver)
             base = ctx if ctx is not None else ReduceContext.root(
                 owner="PathContainerCallSugar"
             )
-            return ordinary(base.with_assigned_value(key, receiver), post)
+            return ordinary(base.with_assigned_value(key, receiver), post, receiver)
 
         return outcome.and_then(on_receiver)
 

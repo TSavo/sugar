@@ -122,6 +122,11 @@ DEFER_DEFINITION_BODY_REFUSAL = object()
 # standing before every statement it threads into, at any depth
 # (``ModuleBindingStatesV1.at``).
 _MODULE_STATEMENT_STATES = object()
+# Set by ``ClassDef._source_visible_body`` while it threads a class call's
+# initializer: the receiver the call runs it on (``_InitializerReceiverV1``),
+# which each of the initializer's own ``return`` statements reads where it
+# stands (``Return.substitute``).
+_INITIALIZER_RECEIVER = object()
 # A module binding the module body does not decide where it is read
 # (``SourceUnit.module_bindings_at``): the reader cites it by name and never
 # reads the name in its place.
@@ -780,17 +785,231 @@ def _explicit_state(name: str, state):
     return _MISSING
 
 
-def _read_where_the_body_ends(owner: "Node", name: str, scope: BindingMap):
-    """The sugar of a read of ``name`` placed after a body's last statement:
-    ``name`` substituted in ``scope``, the scope the body's threading left
-    there (``FunctionDef._substitute_body_to_end``) -- the very node any
-    read of ``name`` at that point is, a store's post-state, a call's
-    exposure (``container_mutation.havoc_after``), an ``if``'s phi.  None
-    when nothing is bound to ``name`` there."""
+@dataclass(frozen=True, eq=False)
+class _InitializerReceiverV1:
+    """The object a class call's initializer runs on, as the initializer's
+    threading reads it (``ClassDef._source_visible_body``).
+
+    ``receiver`` is the ``ConstructedReceiverRef`` the call seats at the
+    receiver formal ``name``: the object itself, by its coordinate, whatever
+    name holds it.  ``rebound``: the body binds ``name`` somewhere
+    (``_binds_name``), so a read of the name may be another object there.
+    ``returns``: the source extents of the initializer's own ``return``
+    statements that read the receiver where they stand
+    (``_returns_read_where_they_stand``).  ``frame``: the source extent of
+    the initializer's ``def`` (none for a dataclass's generated stores),
+    whose own ``super().__init__(...)`` is a call on the receiver
+    (``Expr._super_mutation``)."""
+
+    name: str
+    receiver: object
+    rebound: bool
+    returns: frozenset = frozenset()
+    frame: tuple | None = None
+
+    def reads_at(self, statement) -> bool:
+        span = statement.span
+        return (span.start, span.end) in self.returns
+
+    def runs(self, frame) -> bool:
+        """Whether ``frame`` (the ``def`` a statement runs in) is the
+        initializer's own."""
+        span = getattr(frame, "span", None)
+        return span is not None and (span.start, span.end) == self.frame
+
+
+def _denotes(value, target) -> bool:
+    """Whether the binding ``value`` holds ``target``'s object on every path
+    to it: a state of that object (``container_mutation.same_object``: a
+    store's post-state, the one door's, a call's exposure of it), the root
+    of a path mutation through it, or a join whose every arm does."""
+    from .container_mutation import _identity, _state, same_object
+
+    node = _state(value)
+    for _ in range(64):
+        if not isinstance(node, Node):
+            return False
+        if same_object(node, target):
+            return True
+        if node.kind == "IfExp":
+            return _denotes(node.body, target) and _denotes(node.orelse, target)
+        if node.kind == "PathAfterCall" and getattr(node, "mode", None) == "root":
+            node = _identity(node.root)
+            continue
+        return False
+    return False
+
+
+def _name_read(owner: "Node", name: str, scope: BindingMap):
+    """``name`` substituted in ``scope`` at ``owner``'s site, or None when
+    nothing is bound to it there."""
     read = For._make_name(owner, name).substitute(scope)
-    if isinstance(read, Name):
+    return None if isinstance(read, Name) else read
+
+
+def _receiver_read(owner: "Node", held: _InitializerReceiverV1, scope: BindingMap):
+    """The read of the object ``held.receiver`` in ``scope``: the receiver
+    formal's read where the body never rebinds the formal, or where it
+    still holds the object; else the read of another name that holds it
+    (the first in name order).  None when no name holds it there: the
+    object is read by its identity, never by the formal's spelling
+    (``self = other`` leaves ``self`` another object)."""
+    if not held.rebound or (
+        held.name in scope and _denotes(scope[held.name], held.receiver)
+    ):
+        return _name_read(owner, held.name, scope)
+    for name in sorted(
+        key for key in scope if isinstance(key, str) and key != held.name
+    ):
+        if _denotes(scope[name], held.receiver):
+            return _name_read(owner, name, scope)
+    return None
+
+
+# A right-hand side whose evaluation runs no code: reading it cannot reach
+# any object.
+_INERT_VALUE_KINDS = frozenset({"Name", "Constant", "Tuple", "List"})
+
+
+def _receiver_where_it_was_dropped(
+    owner: "Node", held: _InitializerReceiverV1, final: BindingMap, edges
+):
+    """The receiver's read where the last name holding it was rebound away
+    from it, when nothing could reach it after: ``edges`` are the body's
+    top-level statements with the scope before each
+    (``_substitute_body_tracked``).  The statement that rebinds the last
+    holder must be a plain assignment to names of a value that runs no code
+    and reads no name holding the object, and no later scope may hold the
+    object inside another value.  None otherwise."""
+    from .container_mutation import _contains, _state, aliases
+
+    last = None
+    for index, (statement, pre) in enumerate(edges):
+        read = _receiver_read(owner, held, pre)
+        if read is not None:
+            last = (index, statement, pre, read)
+    if last is None:
         return None
-    return read.sugar()
+    index, statement, pre, read = last
+    if isinstance(statement, Assign):
+        targets, value = statement.targets, statement.value
+    elif isinstance(statement, AnnAssign) and statement.value is not None:
+        targets, value = (statement.target,), statement.value
+    else:
+        return None
+    if not all(isinstance(target, Name) for target in targets):
+        return None
+    for node in value.walk():
+        if node.kind not in _INERT_VALUE_KINDS:
+            return None
+        if isinstance(node, Name) and node.id in pre:
+            bound = pre[node.id]
+            if _denotes(bound, held.receiver) or _contains(
+                _state(bound), held.receiver
+            ):
+                return None
+    for _statement, later in (*edges[index + 1 :], (None, final)):
+        _exact, containing = aliases(later, held.receiver)
+        if containing:
+            return None
+    return read
+
+
+def _read_where_the_body_ends(
+    owner: "Node", held: _InitializerReceiverV1, scope: BindingMap, edges=()
+):
+    """The sugar of the read of the receiver ``held`` names after a body's
+    last statement, in ``scope``, the scope the body's threading left there
+    (``FunctionDef._substitute_body_to_end``): the very node any read of the
+    object at that point is -- a store's post-state, a call's exposure
+    (``container_mutation.havoc_after``), an ``if``'s phi
+    (``_receiver_read``).  Where the body rebound every name that held it,
+    the read where the last of them let it go (``_receiver_where_it_was_dropped``),
+    else the object unknown after the body.  None when the formal is never
+    rebound and nothing is bound to it there."""
+    read = _receiver_read(owner, held, scope)
+    if read is None and held.rebound:
+        read = _receiver_where_it_was_dropped(owner, held, scope, edges)
+        if read is None:
+            from .container_mutation import _havoc
+
+            read = _havoc(owner, held.name, ())
+    return None if read is None else read.sugar()
+
+
+def _binds_name(body, name: str) -> bool:
+    """Whether ``body`` binds ``name`` anywhere in its own scope: a binding
+    site of it (``names_bound_here``; a star import may bind any name) in a
+    statement of the body, not one inside a function, lambda or class
+    nested in it, whose names are their own."""
+    stack: list = list(body)
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, Node):
+            continue
+        bound = node.names_bound_here()
+        if name in bound or "*" in bound:
+            return True
+        if isinstance(node, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+            continue
+        stack.extend(child for _name, _index, child in node._child_edges())
+    return False
+
+
+def _returns_read_where_they_stand(body) -> frozenset:
+    """The source extents of ``body``'s own ``return`` statements -- not one
+    of a function, lambda or class nested in it -- after which the frame
+    runs nothing: not one inside a ``try`` (its ``finally`` and handlers
+    may run after it) or a ``with`` (its ``__exit__`` does), nor one inside
+    a loop, whose body a live loop threads again over its carried state."""
+    spans = set()
+    stack: list = list(body)
+    while stack:
+        node = stack.pop()
+        if not isinstance(node, Node):
+            continue
+        if isinstance(node, Return):
+            spans.add((node.span.start, node.span.end))
+            continue
+        if isinstance(
+            node,
+            (
+                FunctionDef,
+                AsyncFunctionDef,
+                Lambda,
+                ClassDef,
+                Try,
+                TryStar,
+                With,
+                AsyncWith,
+                For,
+                AsyncFor,
+                While,
+            ),
+        ):
+            continue
+        stack.extend(child for _name, _index, child in node._child_edges())
+    return frozenset(spans)
+
+
+def _initializer_return(statement: "Node", value, receiver: "Node") -> "Node":
+    """``statement`` (an initializer's ``return``) carrying the receiver's
+    read where it stands (``InitializerReturn``)."""
+    from .backend import Child, MaybeChild, materialize
+    from .shadow import ShadowNode, _handle_of
+
+    return materialize(
+        statement.unit,
+        ShadowNode(
+            "InitializerReturn",
+            statement.span,
+            (
+                ("value", MaybeChild(None if value is None else _handle_of(value))),
+                ("receiver", Child(_handle_of(receiver))),
+            ),
+        ),
+        statement.reporter,
+    )
 
 
 def _returns_before_the_end(body) -> bool:
@@ -817,6 +1036,211 @@ def _returns_before_the_end(body) -> bool:
         seen.add(nid)
         stack.extend(child for _name, _index, child in node._child_edges())
     return False
+
+
+# Statements a body whose effect on its first formal's object is its field
+# stores may hold (``_first_formal_stated_by_stores``), beside an ``if`` and
+# a ``try`` of such: none of them runs a body of its own at a later point (a
+# loop, a ``with``'s exit, a nested definition) or leaves the frame before
+# its end.
+_STATED_STATEMENT_KINDS = frozenset(
+    {
+        "Expr",
+        "Assign",
+        "AnnAssign",
+        "AugAssign",
+        "Pass",
+        "Raise",
+        "Assert",
+        "Return",
+        "Global",
+        "Nonlocal",
+        "Import",
+        "ImportFrom",
+    }
+)
+# Expressions that run code a call's exposure rule does not see run: a
+# lambda's or a comprehension's body.
+_UNSTATED_EXPRESSION_KINDS = frozenset(
+    {"Lambda", "ListComp", "SetComp", "DictComp", "GeneratorExp"}
+)
+
+
+def _runs_unstated_code(node) -> bool:
+    """Whether ``node`` holds a lambda or a comprehension
+    (``_UNSTATED_EXPRESSION_KINDS``)."""
+    return any(child.kind in _UNSTATED_EXPRESSION_KINDS for child in node.walk())
+
+
+def _super_init_call(node) -> bool:
+    """``node`` is ``super().__init__(...)``: a call of ``__init__`` read off
+    a zero-argument call of the builtin ``super`` (by its binding)."""
+    if (
+        not isinstance(node, Call)
+        or not isinstance(node.func, Attribute)
+        or node.func.attr != "__init__"
+        or not isinstance(node.func.value, Call)
+    ):
+        return False
+    inner = node.func.value
+    return (
+        not inner.args
+        and not inner.keywords
+        and inner.language_callee() is LanguageCallee.BUILTIN_SUPER
+    )
+
+
+def _calls_super(node) -> bool:
+    """Whether ``node`` holds a call of the builtin ``super`` (by its
+    binding), not inside a function, lambda or class nested in it."""
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if not isinstance(current, Node):
+            continue
+        if isinstance(current, (FunctionDef, AsyncFunctionDef, Lambda, ClassDef)):
+            continue
+        if (
+            isinstance(current, Call)
+            and current.language_callee() is LanguageCallee.BUILTIN_SUPER
+        ):
+            return True
+        stack.extend(child for _name, _index, child in current._child_edges())
+    return False
+
+
+def _stores_only_on(statements, name: str, *, top: bool = True) -> bool:
+    """Whether every statement of ``statements`` is a plain one
+    (``_STATED_STATEMENT_KINDS``, an ``if`` or a ``try`` of such) whose only
+    store into an object is ``name.attr = value`` -- a single attribute
+    target on the formal itself -- and which holds no lambda or
+    comprehension.  A ``super()`` is read only as ``super().__init__(...)``
+    alone in a statement of the body itself (``top``), never under an
+    ``if`` or a ``try``: the base initializer runs on the formal's object,
+    and what it did to it is stated by its own call where it stands, in the
+    body's record (``call_site_value.receiver_after_its_call``)."""
+    for statement in statements:
+        if isinstance(statement, If):
+            if _calls_super(statement.test) or _runs_unstated_code(statement.test):
+                return False
+            if not (
+                _stores_only_on(statement.body, name, top=False)
+                and _stores_only_on(statement.orelse, name, top=False)
+            ):
+                return False
+            continue
+        if isinstance(statement, Try):
+            # Each route of a ``try`` is a face of its own, which keeps the
+            # stores made on it (#7757); a handler's type is evaluated code.
+            suites = (
+                statement.body,
+                statement.orelse,
+                statement.finalbody,
+                *(handler.body for handler in statement.handlers),
+            )
+            if any(
+                handler.type_ is not None
+                and (_calls_super(handler.type_) or _runs_unstated_code(handler.type_))
+                for handler in statement.handlers
+            ):
+                return False
+            if not all(_stores_only_on(suite, name, top=False) for suite in suites):
+                return False
+            continue
+        if statement.kind not in _STATED_STATEMENT_KINDS:
+            return False
+        if _runs_unstated_code(statement):
+            return False
+        if top and isinstance(statement, Expr) and _super_init_call(statement.value):
+            if any(_calls_super(arg) for arg in statement.value.args) or any(
+                _calls_super(keyword.value) for keyword in statement.value.keywords
+            ):
+                return False
+            continue
+        if _calls_super(statement):
+            return False
+        if isinstance(statement, Assign):
+            targets = statement.targets
+        elif isinstance(statement, (AnnAssign, AugAssign)):
+            targets = (statement.target,)
+        else:
+            continue
+        for target in targets:
+            if isinstance(target, Name):
+                continue
+            if (
+                not isinstance(statement, AugAssign)
+                and len(targets) == 1
+                and isinstance(target, Attribute)
+                and isinstance(target.value, Name)
+                and target.value.id == name
+            ):
+                continue
+            if (
+                isinstance(statement, Assign)
+                and isinstance(target, (Tuple_, List))
+                and all(isinstance(element, Name) for element in target.elts)
+            ):
+                continue
+            return False
+    return True
+
+
+def _first_formal_stated_by_stores(definition, start: BindingMap, final: BindingMap):
+    """Whether every effect ``definition``'s body has on the object its first
+    formal binds is one of its field stores on that formal (``self.x = v``),
+    each a ``ReceiverFieldStoreValue`` a call carries to its caller
+    (``call_site_value.caller_visible_stores``).  ``start`` is the frame's
+    scope (each formal its coordinate read), ``final`` the scope its
+    threading left after the body (``FunctionDef._substitute_body_to_end``).
+
+    So: a plain ``def`` (no decorator: the first formal is the receiver a
+    method lookup binds) whose first formal is positional; a body of plain
+    statements (``_stores_only_on``) that leaves the frame only at its end;
+    the threading leaves the formal bound to its own read -- no call the one
+    exposure rule lets reach it, no door, no rebinding -- and no other name
+    the body bound holds its object, or a state of it, or holds it inside
+    another value.  A store under a guard the caller is not carried
+    (``caller_visible_stores``); the call's own record decides that
+    (``call_site_value.receiver_after_its_call``)."""
+    from .container_mutation import _contains, _same_read, _state, same_object
+
+    params = definition.params
+    if (
+        type(definition) is not FunctionDef
+        or definition.decorators
+        or not params
+        or params[0].param_kind not in ("positional_only", "positional_or_keyword")
+    ):
+        return False
+    body = definition.body
+    if FunctionDef._owns_yield(body) or _returns_before_the_end(body):
+        return False
+    name = params[0].name
+    if not _stores_only_on(body, name):
+        return False
+    formal = _state(start.get(name))
+    if not isinstance(formal, Node) or name not in final:
+        return False
+    if not _same_read(_state(final[name]), formal):
+        return False
+    references = definition._module_global_references()
+    for other, value in final.items():
+        if not isinstance(other, str) or other == name:
+            continue
+        if start.get(other) is value or references.get(other) is value:
+            continue
+        state = _state(value)
+        if not isinstance(state, Node):
+            continue
+        if same_object(state, formal):
+            # Another name for the object: only its plain read.
+            if not _same_read(state, formal):
+                return False
+            continue
+        if _contains(state, formal):
+            return False
+    return True
 
 
 _NESTED_COMPREHENSION_TEMPLATE = object()
@@ -8337,7 +8761,9 @@ class FunctionDef(Statement):
             SourceVisibleFunctionBodySugar,
         )
 
-        substituted_body, _ = self._substitute_body(self.body, formal_scope)
+        substituted_body, _changed, final = FunctionDef._substitute_body_to_end(
+            self, self.body, formal_scope
+        )
         generator_steps = self._source_visible_generator_steps_from(substituted_body)
         body = SourceVisibleFunctionBodySugar(
             (
@@ -8387,6 +8813,9 @@ class FunctionDef(Statement):
             ),
             captured_names=captured_names,
             captured_coordinates=captured_coordinates,
+            first_formal_stated_by_stores=_first_formal_stated_by_stores(
+                self, formal_scope, final
+            ),
         )
 
     def _captured_bindings(self) -> tuple:
@@ -8448,23 +8877,34 @@ class FunctionDef(Statement):
             for symbol in table.get_symbols()
         )
 
-    def _source_visible_body_and_read(self, scope, name):
-        """The body's sugar, substituted in ``scope``, and the read of
-        ``name`` where the body ends (``_read_where_the_body_ends``).
+    def _source_visible_body_and_read(self, scope, name, receiver):
+        """The body's sugar, substituted in ``scope``, and the read of the
+        object ``receiver`` (seated at the formal ``name``) where the body
+        ends (``_read_where_the_body_ends``).
 
         A class call's initializer is read so (``ClassDef._source_visible_body``):
-        the object the call returns is its receiver as a read of the receiver
-        formal after the body's last statement gives it -- after every store
-        on it and every call the one exposure rule lets reach it -- never its
-        stores collected again.  A generator body runs nothing at the call
-        and reads nothing."""
+        the object the call returns is its receiver as a read of it after the
+        body's last statement gives it -- after every store on it and every
+        call the one exposure rule lets reach it -- never its stores
+        collected again, and never whatever the formal's name is bound to
+        there.  Each ``return`` of the body's own reads it where it stands
+        (``_INITIALIZER_RECEIVER``, ``InitializerReturn``).  A generator
+        body runs nothing at the call and reads nothing."""
         from sugar_lift_py_tests.sugar.source_visible_function_body_sugar import (
             SourceVisibleFunctionBodySugar,
         )
 
-        scope = {**self._captured_scope(), **scope}
+        held = _InitializerReceiverV1(
+            name,
+            receiver,
+            _binds_name(self.body, name),
+            _returns_read_where_they_stand(self.body),
+            (self.span.start, self.span.end),
+        )
+        scope = {**self._captured_scope(), **scope, _INITIALIZER_RECEIVER: held}
+        edges: list = []
         substituted_body, _changed, final = FunctionDef._substitute_body_to_end(
-            self, self.body, scope
+            self, self.body, scope, edge_states=edges
         )
         if self._source_visible_generator_steps_from(substituted_body) is not None:
             return SourceVisibleFunctionBodySugar((), self.fragment), None
@@ -8474,7 +8914,7 @@ class FunctionDef(Statement):
             ),
             self.fragment,
         )
-        return body, _read_where_the_body_ends(self, name, final)
+        return body, _read_where_the_body_ends(self, held, final, edges)
 
     def _source_visible_generator_steps(self, scope):
         substituted_body, _ = self._substitute_body(self.body, scope)
@@ -9422,15 +9862,21 @@ class FunctionDef(Statement):
         )
         return new_items, changed
 
-    def _substitute_body_to_end(self, statements: tuple, scope: BindingMap):
+    def _substitute_body_to_end(
+        self, statements: tuple, scope: BindingMap, *, edge_states: list | None = None
+    ):
         """``_substitute_body``, and the scope standing after the body's last
         statement: ``(new_statements, changed, final_scope)``.  The one
-        threading (``_substitute_body_tracked``); the final scope is the
-        scope it began from with every binding the threading left changed."""
+        threading (``_substitute_body_tracked``, reporting each top-level
+        statement's entry scope into ``edge_states`` when given); the final
+        scope is the scope it began from with every binding the threading
+        left changed."""
         references = self._module_global_references()
         if references:
             scope = {**scope, **references}
-        new_items, changed, net = self._substitute_body_tracked(statements, scope)
+        new_items, changed, net = self._substitute_body_tracked(
+            statements, scope, edge_states=edge_states
+        )
         return new_items, changed, {**scope, **net}
 
     def _module_global_references(self) -> dict:
@@ -11351,10 +11797,9 @@ class ClassDef(Statement):
         # ``__init__`` is no source function and has none.
         cell_class_definition = None
         # The object the class call returns: a read of the receiver where
-        # the initializer ends (``_read_where_the_body_ends``), and whether
-        # a ``return`` leaves the initializer before its end.
+        # the initializer ends (``_read_where_the_body_ends``); a ``return``
+        # carries its own (``InitializerReturn``).
         receiver_at_end = None
-        returns_early = False
         if dataclass_fields is not None:
             # ``_init_fn``: one ``__dataclass_self__.f = f`` per field, in
             # field order (the receiver name CPython uses, which no field
@@ -11387,8 +11832,12 @@ class ClassDef(Statement):
                 tuple(statement.sugar() for statement in substituted_body),
                 self.fragment,
             )
+            # ``_init_fn``'s receiver name is no field's, and nothing in it
+            # rebinds it.
             receiver_at_end = _read_where_the_body_ends(
-                self, receiver_name, {**constructor_scope, **net}
+                self,
+                _InitializerReceiverV1(receiver_name, receiver, False),
+                {**constructor_scope, **net},
             )
         elif initializer is not None:
             receiver_param = initializer.params[0]
@@ -11414,10 +11863,9 @@ class ClassDef(Statement):
             }
             initializer_body, receiver_at_end = (
                 initializer._source_visible_body_and_read(
-                    initializer_scope, receiver_param.name
+                    initializer_scope, receiver_param.name, receiver
                 )
             )
-            returns_early = _returns_before_the_end(initializer.body)
             # The class that wrote the ``__init__`` the call runs: the first
             # ``__init__`` of the MRO (``initializer_entry``), a base's when
             # it is inherited.
@@ -11460,7 +11908,6 @@ class ClassDef(Statement):
             receiver_formal=receiver_formal,
             cell_class_definition=cell_class_definition,
             receiver_at_end=receiver_at_end,
-            returns_early=returns_early,
         )
 
     def _make_constructed_receiver_ref(self, receiver_coordinate_cid):
@@ -11486,8 +11933,21 @@ class Return(Statement):
     _child_fields = ("value",)
 
     def substitute(self, scope):
-        """`return <expr>` binds nothing: recurse into the returned expression."""
-        return self._substitute_children(scope)
+        """`return <expr>` binds nothing: recurse into the returned expression.
+
+        A ``return`` of a class call's initializer (``_INITIALIZER_RECEIVER``)
+        leaves the call with its receiver as it stands here: it carries the
+        read of that object in this scope (``_receiver_read``,
+        ``InitializerReturn``), which the class call returns on the face
+        that leaves by it (``ClassConstructorBodySugar``)."""
+        rewritten = self._substitute_children(scope)
+        held = scope.get(_INITIALIZER_RECEIVER)
+        if not isinstance(held, _InitializerReceiverV1) or not held.reads_at(self):
+            return rewritten
+        receiver = _receiver_read(self, held, scope)
+        if receiver is None:
+            return rewritten
+        return _initializer_return(self, rewritten.value, receiver)
 
     def _construct_sugar(self):
         """Construct the function exit, including Python's real empty return."""
@@ -11495,6 +11955,31 @@ class Return(Statement):
 
         return ReturnSugar(
             value=self.value.sugar() if self.value is not None else None,
+            site=self.fragment,
+        )
+
+
+class InitializerReturn(Return):
+    """A ``return`` of a class call's initializer with the read of the
+    receiver where it stands (``Return.substitute``): the object the class
+    call returns when the initializer leaves by it, which no read after the
+    initializer's last statement gives."""
+
+    receiver: Expression
+    _child_fields = ("value", "receiver")
+
+    def substitute(self, scope):
+        del scope
+        return self
+
+    def _construct_sugar(self):
+        from sugar_lift_py_tests.sugar.class_constructor_body_sugar import (
+            InitializerReturnSugar,
+        )
+
+        return InitializerReturnSugar(
+            value=self.value.sugar() if self.value is not None else None,
+            receiver=self.receiver.sugar(),
             site=self.fragment,
         )
 
@@ -17948,6 +18433,9 @@ class Expr(Statement):
         mutation = self._name_mutation(scope, rewritten.value)
         if mutation is not None:
             return mutation
+        mutation = self._super_mutation(scope, rewritten.value)
+        if mutation is not None:
+            return mutation
         from .container_mutation import path_mutation_statement
 
         mutation = path_mutation_statement(self, scope, call=rewritten.value)
@@ -17982,6 +18470,68 @@ class Expr(Statement):
             method=call.func.attr,
             args=call.args,
             fallback=call,
+        )
+
+    def _super_mutation(self, scope, call):
+        """``super().__init__(...)``: a call whose receiver is the object the
+        frame's receiver formal holds -- the first positional formal of the
+        ``def`` running it, which the zero-argument ``super()`` binds
+        (``builtin_semantic_callable.zero_argument_super_receiver``).  It
+        takes the one door on that formal (``name_mutation_statement``): the
+        base initializer the receiver's MRO selects (``BuiltinSuperValue``)
+        runs on the object as this statement reads it, and the formal and
+        every name bound to the object read it after the call -- what the
+        call states it did to it (``receiver_after_its_call``: a followed
+        source initializer's carried stores, a builtin's transition), else
+        unknown (the one exposure rule).  ``call`` is the statement's call,
+        already substituted against ``scope``.  None for any other
+        statement.
+
+        Only in a class call's initializer (``_INITIALIZER_RECEIVER``),
+        whose stores on the receiver are states of it in the tree
+        (``ReceiverFieldStoreState``) the base initializer would not see:
+        in any other frame the receiver formal is the frame's coordinate,
+        which every store the base initializer carries back advances where
+        the call stands, and a later store of the frame's own is one more
+        such store (``_first_formal_stated_by_stores``)."""
+        held = scope.get(_INITIALIZER_RECEIVER)
+        if not isinstance(held, _InitializerReceiverV1):
+            return None
+        if not _super_init_call(self.value):
+            return None
+        # The frame the zero-argument ``super()`` reads, as its own reduction
+        # reads it (``_super_frame_first_positional``).
+        frame = self.unit.frame_holding(self.line_col_span())
+        if not isinstance(frame, (FunctionDef, AsyncFunctionDef)) or not frame.params:
+            return None
+        formal = frame.params[0]
+        if (
+            not held.runs(frame)
+            or formal.name != held.name
+            or formal.param_kind not in ("positional_only", "positional_or_keyword")
+        ):
+            return None
+        from .container_mutation import name_mutation_statement, reaches
+
+        receiver = _name_read(self, formal.name, scope)
+        if receiver is None or not reaches(receiver, scope):
+            return None
+        # Every operand the call hands on (a ``*`` or ``**`` one's value
+        # included) is exposed to it as an argument of the door.
+        operands = (
+            *(arg.value if isinstance(arg, Starred) else arg for arg in call.args),
+            *(keyword.value for keyword in call.keywords),
+        )
+        return name_mutation_statement(
+            self,
+            scope,
+            site=call,
+            name=formal.name,
+            receiver=receiver,
+            method="__init__",
+            args=operands,
+            fallback=call,
+            frame_receiver=formal.name,
         )
 
     def _setdefault_mutation(self, scope, call):
@@ -22608,6 +23158,7 @@ class PathContainerCall(Expression):
             value_first=value_first,
             operator=operator,
             operator_site=getattr(self, "operator_site", None),
+            frame_receiver=getattr(self, "frame_receiver", None),
         )
 
 

@@ -1551,6 +1551,7 @@ def _container_call(
     value_first=False,
     operator_kind=None,
     operator_site=None,
+    frame_receiver=None,
 ):
     """One mutating operation's ``PathContainerCall``: the call is evaluated
     once and the receiver's value decides it (``PathContainerCallSugar``).
@@ -1558,7 +1559,9 @@ def _container_call(
     ``fallback`` is the ordinary call a method takes on a value the floor
     does not cite; an item store, an item delete and an in-place operator
     have none (their ordinary operation is the floor's own).  ``label``
-    names the unknown its receiver is after an ordinary call."""
+    names the unknown its receiver is after an ordinary call.
+    ``frame_receiver``: the call is ``super().__init__(...)`` on the frame's
+    receiver formal of that name (``Expr._super_mutation``)."""
     from .backend import Child, Children, Leaf, MaybeChild
     from .shadow import _handle_of
 
@@ -1579,6 +1582,8 @@ def _container_call(
             ("operator_kind", Leaf(operator_kind)),
             ("operator_site", Leaf(operator_site)),
         )
+    if frame_receiver is not None:
+        fields = (*fields, ("frame_receiver", Leaf(frame_receiver)))
     return _materialize(site_node, "PathContainerCall", fields, tags)
 
 
@@ -1824,6 +1829,7 @@ def name_mutation_statement(
     operator_kind=None,
     operator_site=None,
     inplace=False,
+    frame_receiver=None,
 ):
     """The one door for a mutating operation on the object a name denotes.
 
@@ -1843,7 +1849,10 @@ def name_mutation_statement(
     mutation, any other value the ordinary operation.  Every name bound to
     the object is rebound to the object after the call (``PathAfterCall``),
     every name that holds it to its value after the call
-    (``ReceiverAfterCall``), which the value decides at reduce."""
+    (``ReceiverAfterCall``), which the value decides at reduce.
+
+    ``frame_receiver``: ``super().__init__(...)``, a call on the frame's
+    receiver formal ``name`` (``Expr._super_mutation``)."""
     from .nodes import Node, _evaluation_ref
     from .shadow import occurrence_tags_of
 
@@ -1859,6 +1868,7 @@ def name_mutation_statement(
         value_first=value_first,
         operator_kind=operator_kind,
         operator_site=operator_site,
+        frame_receiver=frame_receiver,
     )
     # The statement evaluates the call once and binds its pair under its own
     # key; the object after it and the call's value read that key.  ``r +=

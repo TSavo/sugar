@@ -1207,5 +1207,8 @@ def bind_call(
         ),
         bound_source_actuals=bound_source_actuals,
         lexical_defining_class=lexical_defining_class,
+        first_actual_stated_by_stores=(
+            getattr(frame, "first_formal_stated_by_stores", False) is True
+        ),
         **testimony,
     )
