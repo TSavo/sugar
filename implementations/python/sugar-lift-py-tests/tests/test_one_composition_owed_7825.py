@@ -132,8 +132,16 @@ def test_an_if_join_owes_every_completed_suites_debt() -> None:
 # --- except group: each child halt is consumed, then the group raises
 
 
-def test_a_grouped_raise_owes_what_every_child_halt_owed() -> None:
+class _Constructed(_Fixed):
+    """A group member whose construction is handed in."""
+
+    def constructed(self, ctx=None):
+        return self.build(ctx)
+
+
+def test_a_grouped_raise_owes_what_every_member_construction_owed() -> None:
     from sugar_lift_py_tests.effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
     from sugar_lift_py_tests.sugar.grouped_raise_sugar import GroupedRaiseSugar
 
     first = _raise("test:child:a:7825")
@@ -142,18 +150,19 @@ def test_a_grouped_raise_owes_what_every_child_halt_owed() -> None:
         group_identity="test:group:7825",
         message=_Fixed(lambda _ctx: ExitSet.completed("g")),
         children=(
-            _Fixed(
+            _Constructed(
                 lambda _ctx: ExitSet(
-                    (Halted(true_guard(), first, None, owed=("debt:a",)),)
+                    (Completed(true_guard(), first, owed=("debt:a",)),)
                 )
             ),
-            _Fixed(
+            _Constructed(
                 lambda _ctx: ExitSet(
-                    (Halted(true_guard(), second, None, owed=("debt:b",)),)
+                    (Completed(true_guard(), second, owed=("debt:b",)),)
                 )
             ),
         ),
         site=_site(),
+        exception_type_coordinate=_builtin_exception_identity("ExceptionGroup")[0],
     )
     outcome = sugar.desugar(None)
     assert [type(arm) for arm in outcome.exits] == [Halted], outcome.exits

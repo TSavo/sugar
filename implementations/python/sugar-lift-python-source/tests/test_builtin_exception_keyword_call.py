@@ -212,12 +212,18 @@ def test_a_group_member_is_typed_by_its_construction(tmp_path) -> None:
     (leaf,) = group_face.effect.children
     assert isinstance(leaf, RaiseEffect)
     assert leaf.exception_type_coordinate == _exception_identity("FileNotFoundError")
+    assert group_face.effect.exception_type_coordinate == _exception_identity(
+        "ExceptionGroup"
+    )
 
 
 def test_a_group_member_over_a_symbolic_errno_is_undecided(tmp_path) -> None:
     # ``e`` is known only by its type: the member's construction is the one
-    # unanswered call, so the member is undecided (the group owes the call),
-    # and the call's own raise halts before any group exists.
+    # unanswered call, so the member is undecided, and the call's own raise
+    # halts before any group exists.  Whether the undecided member is an
+    # ``Exception`` instance is not decided here, so neither is the group's
+    # class: its construction is the one two-faced unanswered outcome,
+    # owing the construction beside the member's call.
     from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 
     exits = _exits(
@@ -226,10 +232,105 @@ def test_a_group_member_over_a_symbolic_errno_is_undecided(tmp_path) -> None:
     (group_face,) = _group_faces(exits)
     (leaf,) = group_face.effect.children
     assert isinstance(leaf, UndeterminedRaiseEffect)
+    assert group_face.effect.exception_type_coordinate is None
+    assert group_face.effect.exception_type_mro is None
     assert group_face.owed
-    assert len(owed_calls(exits)) == 1
+    assert len(owed_calls(exits)) == 2
     halts = [face.effect for face in exits.exits if isinstance(face, Halted)]
-    assert "UnknownCallee:OSError" in _owners(halts)
+    owners = _owners(halts)
+    assert "UnknownCallee:OSError" in owners
+    assert "ExceptionGroupConstruction:ExceptionGroup" in owners
+
+
+# -- the group's own class: its construction's, by CPython's rule (#7757) ----
+
+
+def _one_halt(exits):
+    (face,) = exits.exits
+    assert isinstance(face, Halted)
+    return face.effect
+
+
+@pytest.mark.parametrize(
+    ("raised", "constructed"),
+    [
+        # ``BaseExceptionGroup`` whose members are all ``Exception``
+        # constructs an ``ExceptionGroup``.
+        ("BaseExceptionGroup('g', [ValueError()])", "ExceptionGroup"),
+        ("BaseExceptionGroup('g', [KeyboardInterrupt()])", "BaseExceptionGroup"),
+        (
+            "BaseExceptionGroup('g', [ValueError(), SystemExit()])",
+            "BaseExceptionGroup",
+        ),
+        ("ExceptionGroup('g', [ValueError(), KeyError('k')])", "ExceptionGroup"),
+        # A nested group is a member like any other: an ``ExceptionGroup`` is
+        # an ``Exception``.
+        (
+            "BaseExceptionGroup('g', [BaseExceptionGroup('i', [ValueError()])])",
+            "ExceptionGroup",
+        ),
+    ],
+)
+def test_a_group_class_is_decided_by_its_members(tmp_path, raised, constructed) -> None:
+    from sugar_lift_py_tests.effect import GroupedRaiseEffect
+
+    effect = _one_halt(_exits(tmp_path, f"def f():\n    raise {raised}\n"))
+    assert isinstance(effect, GroupedRaiseEffect)
+    assert effect.exception_type_coordinate == _exception_identity(constructed)
+    assert effect.exception_type_mro[0] == _exception_identity(constructed)
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [
+        "ExceptionGroup('g', [KeyboardInterrupt()])",
+        "ExceptionGroup('g', [ValueError(), SystemExit()])",
+        "ExceptionGroup('g', [BaseExceptionGroup('i', [KeyboardInterrupt()])])",
+    ],
+)
+def test_an_exception_group_of_a_base_exception_is_the_type_error(
+    tmp_path, raised
+) -> None:
+    # "Cannot nest BaseExceptions in an ExceptionGroup": the construction
+    # raises before any group exists.
+    effect = _one_halt(_exits(tmp_path, f"def f():\n    raise {raised}\n"))
+    assert isinstance(effect, RaiseEffect)
+    assert effect.exception_type_coordinate == _exception_identity("TypeError")
+
+
+@pytest.mark.parametrize(
+    "raised",
+    [
+        # A class named without calling it is not an exception instance:
+        # "Item 0 of second argument (exceptions) is not an exception".
+        "ExceptionGroup('g', [ValueError])",
+        "BaseExceptionGroup('g', (ValueError(), KeyError))",
+        "ExceptionGroup('g', [ValueError(), KeyError])",
+        "BaseExceptionGroup('g', [KeyboardInterrupt])",
+        # The exceptions must be a non-empty sequence.
+        "ExceptionGroup('g', [])",
+    ],
+)
+def test_a_group_of_a_non_instance_or_of_nothing_is_the_value_error(
+    tmp_path, raised
+) -> None:
+    effect = _one_halt(_exits(tmp_path, f"def f():\n    raise {raised}\n"))
+    assert isinstance(effect, RaiseEffect)
+    assert effect.exception_type_coordinate == _exception_identity("ValueError")
+
+
+def test_a_non_instance_member_is_caught_as_the_value_error(tmp_path) -> None:
+    exits = _exits(
+        tmp_path,
+        "def f():\n"
+        "    try:\n"
+        "        raise ExceptionGroup('g', [ValueError])\n"
+        "    except ValueError:\n"
+        "        return 2\n",
+    )
+    (face,) = exits.exits
+    assert isinstance(face, Completed)
+    assert "TermValue(value=2)" in repr(face.value)
 
 
 def test_a_symbolic_actual_to_a_base_exception_law_class_is_stored_as_args(

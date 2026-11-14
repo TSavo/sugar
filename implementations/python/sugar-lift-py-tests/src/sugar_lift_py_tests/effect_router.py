@@ -140,19 +140,30 @@ class GroupedRoutedOutcome:
     matched: object
     residual: object
     bindings: tuple = ()
+    # ``(formula, face)`` per retained leaf type test this split holds under
+    # (``GroupedRaisePartition.conditions``); the caller guards its path.
+    conditions: tuple = ()
 
 
 def route_except_star(effect, expected, *, slot_id=None, site=None):
-    """Partition one grouped raise through the shared ExitSet effect router."""
+    """Partition one grouped raise through the shared ExitSet effect router:
+    one routed outcome per split (``GroupedRaiseEffect.partition``), each
+    with the retained type tests it holds under."""
     from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
 
     if not isinstance(effect, GroupedRaiseEffect):
         return None
-    split = effect.partition(expected, site)
-    bindings = ()
-    if split.matched.children and slot_id is not None:
-        bindings = (EffectBinding(slot_id, "grouped-raise", None, split.matched),)
-    return GroupedRoutedOutcome(split.matched, split.residual, bindings)
+    routed = []
+    for split in effect.partition(expected, site):
+        bindings = ()
+        if split.matched.children and slot_id is not None:
+            bindings = (EffectBinding(slot_id, "grouped-raise", None, split.matched),)
+        routed.append(
+            GroupedRoutedOutcome(
+                split.matched, split.residual, bindings, split.conditions
+            )
+        )
+    return tuple(routed)
 
 
 def regroup_except_star(original, effects) -> GroupedRaiseEffect:

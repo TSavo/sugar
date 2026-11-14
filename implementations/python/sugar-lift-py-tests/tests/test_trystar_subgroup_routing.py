@@ -392,6 +392,32 @@ def test_type_lying_twin_wrong_handler_type_does_not_match():
     assert "RuntimeError" not in names
 
 
+def test_a_retained_except_star_match_is_two_faces_never_a_refusal():
+    """``except* ArrowInvalid`` names an import path: whether a ``ValueError``
+    leaf is one is its defining proof's to state, so the one matcher retains
+    the question.  As ordinary ``except`` routes an undecided match, the
+    handler runs under the retained type test and the group stays raised
+    under its complement -- never refused."""
+    from sugar_lift_py_tests.outcome.exit_set import Completed
+
+    outcome = _desugar(
+        "from pyarrow import ArrowInvalid\n"
+        "def f():\n"
+        "    try:\n"
+        "        raise ExceptionGroup('g', [ValueError('a')])\n"
+        "    except* ArrowInvalid:\n"
+        "        return 1\n",
+        name="retained_star.py",
+    )
+    completed = [face for face in outcome.exits if isinstance(face, Completed)]
+    halted = [face for face in outcome.exits if isinstance(face, Halted)]
+    assert len(completed) == 1 and len(halted) == 1, outcome.exits
+    assert "TermValue(value=1)" in repr(completed[0].value)
+    residual = halted[0].effect
+    assert isinstance(residual, GroupedRaiseEffect)
+    assert [leaf.exception_name for leaf in _leaves(residual)] == ["ValueError"]
+
+
 def test_occurrence_lying_twin_matched_binding_is_not_residual_leaf():
     """Handler cause observation is the matched subgroup, never a residual sibling."""
     effect = _grouped_halt(
