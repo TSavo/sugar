@@ -7713,12 +7713,8 @@ class Node(Typed):
         the substitution, coverage visible in the hierarchy, the capture hazard
         loud rather than silent.
         """
-        where = f"{self.unit.filename}"
-        try:
-            lc = self.line_col_span()
-            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
-        except SourceTreePanic:
-            pass
+        lc = self.line_col_span()
+        where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
         raise SubstituteNotWritten(
             blame=self.fragment,
             owner=f"{type(self).__name__}.substitute",
@@ -8373,12 +8369,8 @@ class Node(Typed):
                 raise row.panic
             return row.value
 
-        where = f"{self.unit.filename}"
-        try:
-            lc = self.line_col_span()
-            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
-        except SourceTreePanic:
-            pass
+        lc = self.line_col_span()
+        where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
         with reduction_span(
             sugar=f"{self.kind}.sugar", role="construction", site=where
         ):
@@ -8509,12 +8501,8 @@ class Node(Typed):
 
         Overrides narrow the return type to their sugar class.
         """
-        where = f"{self.unit.filename}"
-        try:
-            lc = self.line_col_span()
-            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
-        except SourceTreePanic:
-            pass  # an unpositioned kind still panics usefully, by file
+        lc = self.line_col_span()
+        where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
         panic = SugarNotWritten(
             blame=self.fragment,
             owner=f"{type(self).__name__}.sugar",
@@ -15393,12 +15381,8 @@ class For(Statement):
 
         from .shadow import rewrite
 
-        where = f"{self.unit.filename}"
-        try:
-            lc = self.line_col_span()
-            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
-        except SourceTreePanic:
-            pass
+        lc = self.line_col_span()
+        where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
 
         with reduction_span(sugar="For.substitute", role="temporal", site=where):
             new_iter, iter_changed = self._substitute_field(self.iter, scope)
@@ -16560,12 +16544,8 @@ class If(Statement):
                 requested="the branch-result slot authenticated for this exact If.test",
                 fix="carry branch_result_slot(If.test) through If.substitute unchanged",
             )
-        where = f"{self.unit.filename}"
-        try:
-            lc = self.line_col_span()
-            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
-        except SourceTreePanic:
-            pass
+        lc = self.line_col_span()
+        where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
         with reduction_span(sugar="If.test", role="construction", site=where):
             test = self.test.sugar()
         # Both suites are built here, every statement of them, ``with``
@@ -18143,12 +18123,8 @@ class Raise(Statement):
 
     def _construct_sugar(self):
         """Build exception and explicit cause children for the halt effect."""
-        where = f"{self.unit.filename}"
-        try:
-            lc = self.line_col_span()
-            where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
-        except SourceTreePanic:
-            pass
+        lc = self.line_col_span()
+        where = f"{self.unit.filename}:{lc.start_line}:{lc.start_col}"
 
         if self.exc is None:
             from sugar_lift_py_tests.sugar.raise_sugar import RaiseSugar
@@ -23141,6 +23117,8 @@ class Call(Expression):
         is projected at desugar via ``bind_actuals`` once the mapping is a
         constructed DictValue. Star operands leave the frame unbound so
         SpreadCallSugar stays bodyless (no typed vararg projection yet).
+        Actuals the frame does not bind raise ``SourceCallBindingGap`` here,
+        by name.
         """
         starred = any(isinstance(arg, Starred) for arg in self.args)
         context = self._require_construction_context(
@@ -23149,7 +23127,6 @@ class Call(Expression):
         from sugar_lift_py_tests.context_manager_resolution import (
             TreeConstructionContextV1,
         )
-        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
 
         source_call_frame = None
         if (
@@ -23186,17 +23163,14 @@ class Call(Expression):
             # The lexical frame binds every actual there too (``**`` merges a
             # constructed DictValue onto the formals).
             return source_call_frame
-        try:
-            return source_call_frame.bind_node_actuals(
-                tuple(arg for arg in self.args if not isinstance(arg, Starred)),
-                tuple(
-                    (keyword.arg, keyword.value)
-                    for keyword in self.keywords
-                    if keyword.arg is not None
-                ),
-            )
-        except SourceCallBindingGap:
-            return None
+        return source_call_frame.bind_node_actuals(
+            tuple(arg for arg in self.args if not isinstance(arg, Starred)),
+            tuple(
+                (keyword.arg, keyword.value)
+                for keyword in self.keywords
+                if keyword.arg is not None
+            ),
+        )
 
     def _spread_lexical_source_call_frame(self):
         """The ordinary source function a spread call names, if any.

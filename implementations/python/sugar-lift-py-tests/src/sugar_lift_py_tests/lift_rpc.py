@@ -2701,41 +2701,13 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 if level == "relation-membership":
                     # WHO this file's ONE structural walk saw, per relation.
                     # The producer answers; this level only transports the
-                    # answer onto the wire. A refusal here is a gap, never an
-                    # empty membership: a shard that cannot say who it saw
-                    # must not be able to look like a shard that saw nobody.
-                    from sugar_source_tree.panic import LifterRefusal
-
-                    try:
-                        roster = tree_file.unit.relation_membership_roster()
-                    except LifterRefusal:
-                        # Product testimony crosses this level untouched. A
-                        # refusal (a ConstructionPanic or a SourceTreePanic) is
-                        # not "the roster refused"; it leaves by its own name
-                        # and the census already has a loud terminal for it.
-                        raise
-                    except BaseException as refusal:  # noqa: BLE001 -- named gap
-                        if isinstance(
-                            refusal, (KeyboardInterrupt, SystemExit, GeneratorExit)
-                        ):
-                            raise
-                        _send_enumerate_result(
-                            msg_id,
-                            [],
-                            [
-                                {
-                                    "memento": at,
-                                    "reason": (
-                                        "relation-membership roster refused: "
-                                        f"{type(refusal).__name__}: {refusal}"
-                                    ),
-                                }
-                            ],
-                        )
-                        _log_enumeration_demand(
-                            str(level), at, cache="miss", started=demand_started
-                        )
-                        return
+                    # answer onto the wire. A roster that raises leaves by its
+                    # own name (a lifter panic as the typed-loud error,
+                    # anything else as this request's error), never an empty
+                    # membership and never a result row: a shard that cannot
+                    # say who it saw must not be able to look like a shard
+                    # that saw nobody.
+                    roster = tree_file.unit.relation_membership_roster()
                     membership_nodes = []
                     membership_gaps = []
                     for relation in sorted(roster):
