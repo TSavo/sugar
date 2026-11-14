@@ -3944,11 +3944,8 @@ def _as_evaluation_of(node, sugar):
         return sugar
     import copy
 
-    try:
-        stamped = copy.copy(sugar)
-        object.__setattr__(stamped, "_occurrence_tags", tags)
-    except (AttributeError, TypeError):
-        return sugar
+    stamped = copy.copy(sugar)
+    object.__setattr__(stamped, "_occurrence_tags", tags)
     return stamped
 
 
@@ -5278,11 +5275,8 @@ def _at_module_execution_site(node, sugar):
         site = None
     import copy
 
-    try:
-        stamped = copy.copy(sugar)
-        object.__setattr__(stamped, _MODULE_EXECUTION_SITE_STAMP, site)
-    except (AttributeError, TypeError):
-        return sugar
+    stamped = copy.copy(sugar)
+    object.__setattr__(stamped, _MODULE_EXECUTION_SITE_STAMP, site)
     return stamped
 
 
@@ -8483,10 +8477,7 @@ class FunctionDef(Statement):
                     YieldExceptStepV1,
                 )
 
-                try:
-                    handlers = statement._authenticated_handler_specs()
-                except SugarNotWritten:
-                    return absent_step
+                handlers = statement._authenticated_handler_specs()
                 if handlers is None:
                     return absent_step
                 value = statement.body[0].value.value
@@ -8617,10 +8608,7 @@ class FunctionDef(Statement):
                 if isinstance(item, Raise) and not FunctionDef._owns_yield((item,)):
                     # Raise is a step, not a Finally term; refuse pure-term suite.
                     return absent_cleanup
-                try:
-                    sugar = item.sugar()
-                except SugarNotWritten:
-                    return absent_cleanup
+                sugar = item.sugar()
                 if isinstance(sugar, ConstructedTermSugar):
                     terms.append(sugar)
                     continue
@@ -9445,9 +9433,10 @@ class ClassDef(Statement):
             try:
                 body = method.sugar()
                 frame = method.source_visible_call_frame()
-            except (SugarNotWritten, TypeError):
+            except SugarNotWritten:
                 # The class body binds the method; the method body runs only
-                # when called.  Its refusal is deferred to that caller.
+                # when called.  Its refusal is deferred to that caller, which
+                # constructs the body again and meets it by name.
                 return DeferredClassMethodV1(
                     method.name,
                     method.fragment.seal().cid,
@@ -9500,16 +9489,12 @@ class ClassDef(Statement):
         from sugar_lift_py_tests.sugar.default_value_sugar import (
             DefinitionDefaultsSugar,
         )
-        from sugar_source_tree.panic import SugarNotWritten
 
-        try:
-            statement = (
-                _def_statement_sugar(method, read=read)
-                if call_applies_own_frame(method)
-                else _definition_defaults_sugar(method, read=read)
-            )
-        except SugarNotWritten:
-            return ()
+        statement = (
+            _def_statement_sugar(method, read=read)
+            if call_applies_own_frame(method)
+            else _definition_defaults_sugar(method, read=read)
+        )
         if not isinstance(statement, DefinitionDefaultsSugar):
             return ()
         return (
@@ -13878,16 +13863,15 @@ class If(Statement):
         from sugar_lift_py_tests.sugar.if_sugar import IfSugar
 
         try:
-            slot = BranchResultSlot(self.branch_result_slot_id)
+            slot_id = self.branch_result_slot_id
         except AttributeError:
             substituted = self.substitute({})
             if isinstance(substituted, _Splice):
                 substituted = substituted.statements[0]
             return substituted.sugar()
+        slot = BranchResultSlot(slot_id)
         try:
-            authenticated_slot = BranchResultSlot(
-                self.authenticated_branch_result_slot_id
-            )
+            authenticated_slot_id = self.authenticated_branch_result_slot_id
         except AttributeError:
             backend_defect(
                 blame=self.fragment,
@@ -13896,6 +13880,7 @@ class If(Statement):
                 requested="the slot identity authenticated once by If.substitute",
                 fix="carry the authenticated slot through If._rewrite_with_slot",
             )
+        authenticated_slot = BranchResultSlot(authenticated_slot_id)
         if slot != authenticated_slot:
             backend_defect(
                 blame=self.fragment,
@@ -15074,10 +15059,7 @@ class With(Statement):
                 if isinstance(qualified, str) and qualified:
                     class_value = ExceptionClassValue(qualified)
             elif isinstance(node, Name):
-                try:
-                    class_value = self.unit.exception_class_value(node)
-                except SugarNotWritten:
-                    class_value = None
+                class_value = self.unit.exception_class_value(node)
             return AuthenticatedExceptionTypeSugar(
                 sugar, identity, site=node.fragment, class_value=class_value
             )
