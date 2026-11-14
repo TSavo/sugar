@@ -15,6 +15,11 @@ evaluation, except for a name a live loop carries, which the recurrence reads
 through the temporal.  A walrus's write is read through its evaluation too;
 a binding the module body does not decide at the read is cited ``undecided``
 by name, never read by name.
+
+An implicit call (an operator's ``__add__``, a subscript's ``__getitem__``, a
+property getter) is a call site too: its node's sugar is stamped with its
+module execution site, reduces there, and the dunder's frame is read again
+at it (``frame_at_current_module_execution_site``).
 """
 
 from __future__ import annotations
@@ -28,6 +33,9 @@ from sugar_lift_py_tests.context_manager_resolution import TreeConstructionConte
 from sugar_lift_py_tests.floor import TermValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
 from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.source_call_frame import (
+    frame_at_current_module_execution_site,
+)
 from sugar_lift_py_tests.sugar.augassign_sugar import AugAssignSugar
 from sugar_lift_py_tests.sugar.evaluation_ref_sugar import EvaluationRefSugar
 from sugar_lift_py_tests.sugar.return_sugar import ReturnSugar
@@ -38,16 +46,23 @@ from sugar_source_tree.nodes import (
     UNDECIDED_MODULE_BINDING,
     AnnAssign,
     Assign,
+    Attribute,
     AugAssign,
+    BinOp,
     Call,
     ClassDef,
     EvaluationRef,
+    For,
     FunctionDef,
     ListComp,
     Name,
     Return,
+    Subscript,
+    _at_module_execution_site,
     _module_reference_state,
     construct_at_module_execution_site,
+    current_module_execution_site,
+    stamped_module_execution_site,
 )
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -410,6 +425,148 @@ def test_a_comprehension_member_is_undecided_outside_its_comprehension() -> None
     ).values()
     assert getattr(member, "member", False)
     assert _module_reference_state(member) is UNDECIDED_MODULE_BINDING
+
+
+# -- an implicit call the module body runs reads the binding at it ------------
+
+# The dunder (as the class body spells it), the expression that calls it
+# implicitly, the node kind that expression is, and the method's name.
+IMPLICIT_CALLS = {
+    "__add__": (
+        "def __add__(self, o):\n        return x\n",
+        "C() + 0",
+        BinOp,
+        "__add__",
+    ),
+    "__getitem__": (
+        "def __getitem__(self, i):\n        return x\n",
+        "C()[0]",
+        Subscript,
+        "__getitem__",
+    ),
+    "property": (
+        "@property\n    def p(self):\n        return x\n",
+        "C().p",
+        Attribute,
+        "p",
+    ),
+}
+
+
+def _implicit_call_source(name: str) -> str:
+    """``x = 1; class C: <dunder returning x>; y = <implicit call>; x = 2``:
+    called at ``y = ...``, the dunder reads ``x = 1`` (``y == 1``)."""
+    method, expression, _kind, _name = IMPLICIT_CALLS[name]
+    return f"x = 1\nclass C:\n    {method}y = {expression}\nx = 2\n"
+
+
+def _only(tree: SourceFile, kind: type):
+    (node,) = [node for node in tree.nodes() if isinstance(node, kind)]
+    return node
+
+
+@dataclass(frozen=True)
+class _SiteProbe(Sugar):
+    """Records the module execution site its reduction runs under."""
+
+    seen: list
+
+    def desugar(self, ctx=None):
+        del ctx
+        self.seen.append(current_module_execution_site())
+        return ExitSet.completed(TermValue(0))
+
+    @classmethod
+    def witnesses(cls):
+        return ()
+
+
+@pytest.mark.parametrize("name", sorted(IMPLICIT_CALLS))
+def test_an_implicit_call_reads_the_binding_at_its_site(name: str) -> None:
+    _method, _expression, kind, method_name = IMPLICIT_CALLS[name]
+    tree = _source(_implicit_call_source(name))
+    first, second = _assignment_keys(tree, "x")
+    node = _only(tree, kind)
+    site = node.unit.module_execution_site(node)
+    assert site is not None
+    function = _function(tree, method_name)
+    read = construct_at_module_execution_site(site, lambda: _returned(function))
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == first
+    # Called after import, the same body reads the module's final binding.
+    after_import = _returned(function)
+    assert isinstance(after_import, EvaluationRef)
+    assert after_import.evaluation == second
+
+
+@pytest.mark.parametrize("name", sorted(IMPLICIT_CALLS))
+def test_the_implicit_call_records_its_site_on_its_sugar(name: str) -> None:
+    _method, _expression, kind, _name = IMPLICIT_CALLS[name]
+    tree = _source(_implicit_call_source(name))
+    node = _only(tree, kind)
+    site = node.unit.module_execution_site(node)
+    assert site is not None
+    assert stamped_module_execution_site(node.sugar()) == site
+
+
+@pytest.mark.parametrize("name", sorted(IMPLICIT_CALLS))
+def test_the_dunder_frame_is_read_again_at_the_implicit_call(name: str) -> None:
+    _method, _expression, kind, method_name = IMPLICIT_CALLS[name]
+    tree = _source(_implicit_call_source(name))
+    first, second = _assignment_keys(tree, "x")
+    node = _only(tree, kind)
+    site = node.unit.module_execution_site(node)
+    # The method frame the class statement constructs: no call site.
+    frame = _function(tree, method_name).source_visible_call_frame()
+    assert frame.module_execution_site is None
+    assert frame_at_current_module_execution_site(frame) is frame
+    at_call = construct_at_module_execution_site(
+        site, lambda: frame_at_current_module_execution_site(frame)
+    )
+    assert at_call.module_execution_site == site
+    returned = at_call.body.statements[-1]
+    assert isinstance(returned, ReturnSugar)
+    assert isinstance(returned.value, EvaluationRefSugar)
+    assert returned.value.evaluation == first
+    assert returned.value.evaluation != second
+
+
+def test_a_stamped_sugar_reduces_at_its_site() -> None:
+    tree = _source(_implicit_call_source("__add__"))
+    node = _only(tree, BinOp)
+    seen: list = []
+    _at_module_execution_site(node, _SiteProbe(seen)).desugar(None)
+    _SiteProbe(seen).desugar(None)
+    assert seen == [node.unit.module_execution_site(node), None]
+
+
+def test_a_def_statement_is_stamped_with_no_site() -> None:
+    # Its body runs when it is called, at its caller's site.
+    tree = _source("x = 1\nx += 1\nif x:\n    def f():\n        return x\n")
+    function = _function(tree)
+    assert function.unit.module_execution_site(function) is not None
+    stamped = _at_module_execution_site(function, _SiteProbe([]))
+    assert stamped_module_execution_site(stamped) is None
+
+
+def test_a_for_statements_own_call_runs_after_its_body() -> None:
+    tree = _source(
+        "x = 1\nx += 1\ndef g():\n    return (1, 2)\nfor v in g():\n    x += 1\n"
+    )
+    first = _module_evaluations(tree)[0]
+    loop = _only(tree, For)
+    unit = loop.unit
+    # ``__next__`` runs after the body, which rebinds ``x``.
+    own = unit.module_execution_site(loop)
+    assert own.after_body
+    assert unit.module_bindings_at(own, {"x"})["x"] is UNDECIDED_MODULE_BINDING
+    # The iterable's call runs once, before the body.
+    (call,) = _calls(tree, "g")
+    at_call = unit.module_execution_site(call)
+    assert not at_call.after_body
+    read = unit.module_bindings_at(at_call, {"x"})["x"]
+    assert isinstance(read, EvaluationRef)
+    assert read.evaluation == first
 
 
 # -- x += e binds its evaluation, and the name only for a live loop -----------
