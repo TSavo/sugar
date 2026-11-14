@@ -5,9 +5,10 @@ Foundational path (not the lossy linear adapter):
     body -> guarded ExitSet -> handler routing over Halted -> finally over every exit
 
 except-as is tree-rewritten to EffectRef(slot); matching Halted exits emit
-EffectBinding facts. finally runs on every exit:
+EffectBinding facts. finally runs on every exit, continuing from the record
+that exit arrives with:
 
-- cleanup fall-through restores the incoming exit
+- cleanup fall-through restores the incoming exit, re-emitted after it
 - cleanup halt supersedes
 - cleanup terminal completion (return) supersedes
 """
@@ -202,6 +203,7 @@ def _and_finally_with_raise_context(
 ):
     """try/finally over ExitSet, retaining body raise as implicit context.
 
+    The one ``finally`` of a ``try`` and of a ``try*`` (``TryStarSugar``).
     The ``ExitSet.and_finally`` laws (restore / cleanup-halt supersede /
     terminal cleanup supersede), composed through ``ExitSet.sequence``: the
     ``finally`` runs beneath every completed arm (``step``) and beneath every
@@ -214,14 +216,20 @@ def _and_finally_with_raise_context(
     Python's implicit ``__context__`` for a raise in finally after a body
     exception.
 
-    For halted incoming raises, finally runs from the state the raise
-    carries (``resumed``): after every entry the body (or an arm) reached
-    before it raised, in the context it raised in, as a block continues after
-    a statement. It is reduced under ``bind_in_flight_effect`` there so bare
-    re-raise / context-sensitive raises in finally can resolve the authentic
-    body effect when they carry a slot. A raise the ``finally`` lets through
-    leaves with the record the ``finally`` left: Python rolls back neither the
-    body's stores nor the cleanup's.
+    Every arm reaches the ``finally`` with its own state, and the ``finally``
+    continues from it (``resumed``), as a block continues after a statement
+    (``reduce_block_to_exitset``, ``after=``): after every entry the body (or
+    an arm) reached, in the context it reached it in. A completed arm brings
+    its completed record; a halt (raise, ``break``, ``continue``) the record
+    it carries. A raise is reduced under ``bind_in_flight_effect`` there so
+    bare re-raise / context-sensitive raises in finally can resolve the
+    authentic body effect when they carry a slot. Where the ``finally``
+    falls through, the arm's own exit is re-emitted after it, from the record
+    the ``finally`` left (Python rolls back neither the body's stores nor the
+    cleanup's): the completion (``_completion_after``: a ``return`` the body
+    took is still pending, so it follows the ``finally``'s entries), or the
+    halt. A ``finally`` that exits itself supersedes, and a pending
+    ``return`` is discarded with the exit it belonged to.
     """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.in_flight_effect import bind_in_flight_effect
@@ -230,45 +238,60 @@ def _and_finally_with_raise_context(
         resumed,
     )
 
-    # Shared fall-through cleanup (no body exception active): no body halt
-    # edge reached ``finally``.
-    neutral_cleanup = reduce_block_to_exitset(
-        finalbody, _ground_edges(ctx, edge_keys, None)
-    )
-    # Slot for bind/resolve when reducing finally over a body halt.
-    from sugar_lift_py_tests.occurrence import site_coordinate_cid
-
-    finally_slot = f"try-finally-in-flight:{site_coordinate_cid(site)}"
+    def cleanup(statements, state, in_context):
+        """The ``finally``'s arms, continuing after the record ``state``
+        resumes to (``resumed``), reduced in ``in_context`` of that record's
+        context."""
+        record = resumed(state, ctx, owner="TrySugar.finally", blame=site)
+        cleanup_ctx = in_context(record.context)
+        return reduce_block_to_exitset(
+            statements, cleanup_ctx, after=replace(record, context=cleanup_ctx)
+        )
 
     def after_completion(value):
+        # No exception is in flight: no body statement raised.
+        pending, before = _pending_returns(value)
+        cleanup_es = cleanup(
+            finalbody,
+            before,
+            lambda context: _ground_edges(context, edge_keys, None),
+        )
         return _finally_beneath(
-            neutral_cleanup, None, lambda _cleaned: ExitSet.completed(value)
+            cleanup_es,
+            None,
+            lambda cleaned: ExitSet.completed(
+                _completion_after(cleaned, value, pending)
+            ),
         )
 
     def after_halt(halt):
-        if not isinstance(halt.effect, RaiseEffect):
-            return _finally_beneath(
-                neutral_cleanup,
-                halt.effect,
-                lambda _cleaned: ExitSet.halted(halt.effect, state=halt.state),
+        def in_context(context):
+            if not isinstance(halt.effect, RaiseEffect):
+                # A ``break``/``continue`` (any halt that is not a raise):
+                # no exception is in flight, no body statement raised.
+                return _ground_edges(context, edge_keys, None)
+            # Only a body halt that left untouched by every arm says which
+            # body statement raised; a halt an arm raised (or re-raised)
+            # after its own stores leaves the edges undecided.
+            edge_ctx = (
+                _ground_edges(context, edge_keys, halt.effect)
+                if any(halt.effect is effect for effect in body_effects)
+                and not any(halt.effect is effect for effect in arm_effects)
+                else context
             )
-        record = resumed(halt.state, ctx, owner="TrySugar.finally", blame=site)
-        # Only a body halt that left untouched by every arm says which body
-        # statement raised; a halt an arm raised (or re-raised) after its own
-        # stores leaves the edges undecided.
-        edge_ctx = (
-            _ground_edges(record.context, edge_keys, halt.effect)
-            if any(halt.effect is effect for effect in body_effects)
-            and not any(halt.effect is effect for effect in arm_effects)
-            else record.context
-        )
-        finally_ctx = bind_in_flight_effect(
-            edge_ctx, finally_slot, halt.effect, blame=site
-        )
-        cleanup_es = reduce_block_to_exitset(
+            from sugar_lift_py_tests.occurrence import site_coordinate_cid
+
+            return bind_in_flight_effect(
+                edge_ctx,
+                f"try-finally-in-flight:{site_coordinate_cid(site)}",
+                halt.effect,
+                blame=site,
+            )
+
+        cleanup_es = cleanup(
             finalbody if finalbody_halted is None else finalbody_halted,
-            finally_ctx,
-            after=replace(record, context=finally_ctx),
+            halt.state,
+            in_context,
         )
         return _finally_beneath(
             cleanup_es,
@@ -277,6 +300,67 @@ def _and_finally_with_raise_context(
         )
 
     return pre_finally.sequence(after_completion, consume=after_halt)
+
+
+def _pending_returns(value):
+    """``value``'s ``return`` entries, and ``value`` without them.
+
+    A ``return`` the body took (under a guard or not) has not left the
+    function when the ``finally`` runs: its value is evaluated, the exit is
+    pending. The ``finally`` runs from the record without it, and the return
+    is re-emitted after the ``finally``'s entries (``_completion_after``), or
+    discarded with the exit when the ``finally`` exits itself (Python: a
+    ``return`` or raise in ``finally`` replaces the pending return). A
+    ``return`` nested inside another entry's own record stays where it is.
+    A value that is not a block record is handed on whole: ``resumed``
+    refuses it by name."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        _ReducedBlock,
+        _is_return_entry,
+    )
+
+    if not isinstance(value, _ReducedBlock):
+        return (), value
+    pending = tuple(entry for entry in value.entries if _is_return_entry(entry))
+    if not pending:
+        return (), value
+    return pending, replace(
+        value,
+        entries=tuple(
+            entry for entry in value.entries if not _is_return_entry(entry)
+        ),
+    )
+
+
+def _completion_after(cleaned, value, pending):
+    """The completed face ``value`` re-emitted after a ``finally`` that fell
+    through, from the record the ``finally`` left (``cleaned``).
+
+    The pending returns follow the ``finally``'s entries, guarded by every
+    guard the ``finally`` put on what follows it (a ``return`` inside it
+    under a guard supersedes them there). The face's own exit goes back on:
+    a face that returned still cannot fall through, and one that can keeps
+    its fall-through guards and transforms (the tail after the ``try`` rides
+    under every ``return`` the body took), with the ``finally``'s own
+    after them."""
+    returns = pending
+    for transform in reversed(cleaned.transforms):
+        returns = transform(returns)
+    entries = (*cleaned.entries, *returns)
+    if not value.can_fall_through:
+        return replace(
+            cleaned,
+            entries=entries,
+            can_fall_through=False,
+            fall_through=(),
+            transforms=(),
+        )
+    return replace(
+        cleaned,
+        entries=entries,
+        fall_through=(*value.fall_through, *cleaned.fall_through),
+        transforms=(*value.transforms, *cleaned.transforms),
+    )
 
 
 def _finally_beneath(cleanup_es, in_flight, restore):

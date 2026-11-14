@@ -1811,14 +1811,37 @@ class CallSiteValue(FloorValue):
                 return outcome
             outcome = outcome.discharge(ctx, actuals)
         # Each completed arm continues as the Call retaining its value; each
-        # halt continues as the Call's own halt. Both are continuations beneath
-        # the arm, so its guard, faces and ``owed`` ride on.
+        # halt continues as the Call's own halt, in the caller's record at the
+        # call (``at_the_call``), never the callee's. Both are continuations
+        # beneath the arm, so its guard, faces and ``owed`` ride on.
         return outcome.sequence(
             lambda value: ExitSet.completed(retaining(value)),
             consume=lambda halt: ExitSet.halted(
-                call_owned(halt.effect), state=halt.state
+                call_owned(halt.effect), state=at_the_call(ctx)
             ),
         )
+
+
+def at_the_call(ctx):
+    """The state a call's halt carries once it leaves the callee (#7757).
+
+    A halt raised inside a called function reaches its caller at the call:
+    what the callee bound is the callee's frame, gone with it, and a name the
+    callee binds never shadows the caller's. So the halt leaves the callee in
+    the caller's record at the call site: the caller's context there
+    (``ctx``, the context the call was reduced in), with no entries of its
+    own -- the caller's reducer splices every entry the caller made before
+    the call in front (``function_universe_sugar._halt_state``), as it does
+    for any statement's halt. The halt keeps the callee's effect, and its
+    arm keeps what the callee owes (``ExitSet.sequence``).
+
+    Every halt a call publishes takes it, once, where it crosses the call
+    boundary: the body's (``CallSiteValue.project_producer_outcome``) and,
+    for a class call, the class statement's it reads first
+    (``ClassConstructorBodySugar.enter``)."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
+
+    return _ReducedBlock((), True, (), context=ctx)
 
 
 def call_owned(effect):

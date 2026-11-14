@@ -274,19 +274,17 @@ class TryStarSugar(Sugar):
                     )
                 )
             if self.finalbody:
-                cleanup = reduce_block_to_exitset(self.finalbody, ctx)
-                from sugar_lift_py_tests.floor.return_value import ReturnValue
+                # The one ``finally`` (``try_sugar``): it continues from the
+                # state each arm brings it -- a completed record, or the
+                # record a halt carries -- and re-emits that arm's exit after
+                # it unless it exits itself.
+                from sugar_lift_py_tests.sugar.try_sugar import (
+                    _and_finally_with_raise_context,
+                )
 
-                def restores(value):
-                    return not (
-                        isinstance(value, _ReducedBlock)
-                        and (
-                            not value.can_fall_through
-                            or any(isinstance(e, ReturnValue) for e in value.entries)
-                        )
-                    )
-
-                result = result.and_finally(lambda: cleanup, cleanup_restores=restores)
+                result = _and_finally_with_raise_context(
+                    result, self.finalbody, ctx=ctx, site=self.site
+                )
             # The try*'s own faces: a halt stays a halted arm, never an entry of
             # a completed record (#7826).
             return result.normalize()

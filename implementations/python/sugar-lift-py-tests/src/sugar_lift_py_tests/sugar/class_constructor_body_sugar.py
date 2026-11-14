@@ -227,15 +227,20 @@ class ClassConstructorBodySugar(Sugar):
             # A module-level statement is reduced once, and this reads it.
             statement = self.definition.desugar(ctx)
         if at_call:
-            from sugar_lift_py_tests.floor.call_site_value import call_owned
+            from sugar_lift_py_tests.floor.call_site_value import (
+                at_the_call,
+                call_owned,
+            )
             from sugar_lift_py_tests.outcome import Halted
 
+            # The class statement's halt leaves it at the call, in the
+            # caller's record there (``at_the_call``).
             statement = ExitSet(
                 tuple(
                     Halted(
                         exit_.guard,
                         call_owned(exit_.effect),
-                        exit_.state,
+                        at_the_call(ctx),
                         exit_.faces,
                         exit_.owed,
                     )
