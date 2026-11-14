@@ -6,8 +6,11 @@ Independent, test-owned census over the **SourceFile construction door**,
 **product-type privacy**, and **zero-work reporting projection**:
 
 1. **Sole construction owner** — ``Backend.materialize_module`` (and the
-   canonical ``SourceFile.from_path`` / ``__init__`` path) is the only
-   production work entry. Offender classes:
+   canonical intake, the one opener's first stage
+   ``lift_rpc._open_at_seat``, through ``SourceFile.__init__``) is the only
+   production work entry. The intake is named by the caller
+   (``source_file_entry``); this auditor locates it in the production graph
+   from the callable itself, never from a hard-coded name. Offender classes:
 
    - second ``materialize_module`` override / adapter override
    - unauthorized ``SourceFile(...)`` construction outside the owner
@@ -280,28 +283,39 @@ def audit_sourcefile_construction_door(
         contract_reds.append(
             f"R_sourcefile_work_owner_definitions={len(init_symbols)}: expected exactly one"
         )
-    from_path_symbol = next(
+    # The canonical intake is the callable the caller names: the one opener's
+    # first stage. It is located in the production graph by its own source
+    # file and qualified name.
+    intake_file = Path(inspect.getsourcefile(source_file_entry) or "").resolve()
+    intake_qualified = tuple(source_file_entry.__qualname__.split("."))
+    intake_symbol = next(
         (
             symbol
             for symbol in graph.definitions.values()
-            if symbol.path.resolve() == door_file
-            and symbol.name == "from_path"
-            and symbol.lexical == (SourceFile.__name__,)
+            if symbol.path.resolve() == intake_file
+            and symbol.name == intake_qualified[-1]
+            and symbol.lexical == intake_qualified[:-1]
         ),
         None,
     )
-    from_path_edges = tuple(
-        edge for edge in graph.calls if edge.caller == from_path_symbol
+    if intake_symbol is None:
+        contract_reds.append(
+            "R_intake_definition_missing=1: "
+            f"{source_file_entry.__module__}.{source_file_entry.__qualname__} "
+            "is not a production definition"
+        )
+    intake_edges = tuple(
+        edge for edge in graph.calls if edge.caller == intake_symbol
     )
-    from_path_construction_edges = tuple(
+    intake_construction_edges = tuple(
         edge
-        for edge in from_path_edges
+        for edge in intake_edges
         if source_file_symbol is not None and source_file_symbol in edge.targets
     )
-    if len(from_path_construction_edges) != 1:
+    if len(intake_construction_edges) != 1:
         contract_reds.append(
-            "R_from_path_constructor_edges="
-            f"{len(from_path_construction_edges)}: expected exactly one cls(identity) edge"
+            "R_intake_constructor_edges="
+            f"{len(intake_construction_edges)}: expected exactly one SourceFile(identity) edge"
         )
     runtime_owner_types = (Backend, Node, AuditReporter, SourceFragment)
     runtime_owner_locations = {
@@ -314,19 +328,19 @@ def audit_sourcefile_construction_door(
         if symbol.path.resolve() in runtime_owner_locations
         and symbol.lexical
     }
-    forbidden_from_path_edges = tuple(
+    forbidden_intake_edges = tuple(
         edge
-        for edge in from_path_edges
+        for edge in intake_edges
         if set(edge.targets) & runtime_symbols
     )
-    if forbidden_from_path_edges:
+    if forbidden_intake_edges:
         contract_reds.append(
-            f"R_from_path_work_edges={len(forbidden_from_path_edges)}"
+            f"R_intake_work_edges={len(forbidden_intake_edges)}"
         )
 
-    # Observe the canonical from_path entry independently. No backend or
-    # materialization work may occur before its one cls(identity) edge enters
-    # SourceFile.__init__.
+    # Observe the canonical intake independently. No backend or
+    # materialization work may occur before its one SourceFile(identity) edge
+    # enters SourceFile.__init__.
     observed_work: Counter[str] = Counter()
     premature_work: list[str] = []
     observation_path = temporary_root / "entry-observation.py"
@@ -388,7 +402,10 @@ def audit_sourcefile_construction_door(
             )
         observed_reporter = CollectingReporter()
         observed_file = source_file_entry(
-            observation_path, backend_instance, observed_reporter
+            observation_path,
+            root=temporary_root,
+            backend=backend_instance,
+            reporter=observed_reporter,
         )
         construction_snapshot = observed_work.copy()
 
@@ -407,7 +424,7 @@ def audit_sourcefile_construction_door(
         )
     if premature_work:
         contract_reds.append(
-            "R_from_path_premature_work=1: " + ", ".join(premature_work)
+            "R_intake_premature_work=1: " + ", ".join(premature_work)
         )
     if legacy_entry_work:
         contract_reds.append(
@@ -552,7 +569,7 @@ def audit_sourcefile_construction_door(
         symbol
         for symbol in (
             source_file_symbol,
-            from_path_symbol,
+            intake_symbol,
             *init_symbols,
             *backend_door_symbols,
             *projection_symbols,
@@ -611,9 +628,10 @@ def audit_sourcefile_construction_door(
         f"unaudited={len(unaudited)}",
         f"R_duplicate_modules={len(duplicates)}",
         f"R_sourcefile_work_owner_definition_gap={abs(1 - len(init_symbols))}",
-        f"R_from_path_constructor_edge_gap={abs(1 - len(from_path_construction_edges))}",
-        f"R_from_path_work_edges={len(forbidden_from_path_edges)}",
-        f"R_from_path_premature_work={int(bool(premature_work))}",
+        f"R_intake_definition_missing={int(intake_symbol is None)}",
+        f"R_intake_constructor_edge_gap={abs(1 - len(intake_construction_edges))}",
+        f"R_intake_work_edges={len(forbidden_intake_edges)}",
+        f"R_intake_premature_work={int(bool(premature_work))}",
         f"R_legacy_sourcefile_work_events={sum(legacy_entry_work.values())}",
         "R_backend_materialize_event_unmeasured="
         f"{int(not backend_event_measured)}",
@@ -706,7 +724,7 @@ def audit_sourcefile_construction_door(
             )
         )
     canonical_owner_symbols = set(init_symbols)
-    canonical_edge = from_path_construction_edges[0]
+    canonical_edge = intake_construction_edges[0]
     forwarder_edges = tuple(
         edge
         for edge in door_edges
@@ -757,12 +775,12 @@ def audit_sourcefile_construction_door(
         canonical_edge.caller.lexical,
         canonical_edge.caller.name,
     )
-    assert from_path_symbol is not None
+    assert intake_symbol is not None
     source_entry = EvidenceSite(
-        from_path_symbol.path,
-        from_path_symbol.line,
-        from_path_symbol.lexical,
-        from_path_symbol.name,
+        intake_symbol.path,
+        intake_symbol.line,
+        intake_symbol.lexical,
+        intake_symbol.name,
     )
     work = Counter()
     original_seal = SourceFragment.seal
@@ -854,7 +872,15 @@ def audit_sourcefile_construction_door(
         path = temporary_root / filename
         path.write_text(text, encoding="utf-8")
         reporter = Reporter()
-        return source_file_entry(path, backend_instance, reporter), reporter
+        return (
+            source_file_entry(
+                path,
+                root=temporary_root,
+                backend=backend_instance,
+                reporter=reporter,
+            ),
+            reporter,
+        )
 
     first, reporter = construct(
         "VALUE = 1\n"
@@ -1373,7 +1399,7 @@ def audit_sourcefile_construction_door(
             dynamic_calls=tuple(
                 EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.expression)
                 for edge in relevant_dynamic
-                if edge.caller in {from_path_symbol, *init_symbols}
+                if edge.caller in {intake_symbol, *init_symbols}
             ),
             forwarders=forwarders,
             audited_forwarders=audited_forwarders,
@@ -1388,14 +1414,14 @@ def audit_sourcefile_construction_door(
             intake_constructor_edges=(canonical_call,),
             forbidden_intake_work_edges=tuple(
                 EvidenceSite(edge.path, edge.line, edge.caller.lexical, edge.expression)
-                for edge in forbidden_from_path_edges
+                for edge in forbidden_intake_edges
             ),
             discovered_surfaces=(
-                len(from_path_construction_edges) + len(forbidden_from_path_edges)
+                len(intake_construction_edges) + len(forbidden_intake_edges)
             ),
             audited_surfaces=(
-                sum(not edge.dynamic for edge in from_path_construction_edges)
-                + sum(not edge.dynamic for edge in forbidden_from_path_edges)
+                sum(not edge.dynamic for edge in intake_construction_edges)
+                + sum(not edge.dynamic for edge in forbidden_intake_edges)
             ),
         ),
         privacy=PrivacyLeakEvidence(

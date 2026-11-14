@@ -24,7 +24,6 @@ from sugar_source_tree.process_resident_file import (
     clear_process_resident_files,
     prepare_count_for,
 )
-from sugar_source_tree.tree import SourceFile
 
 
 @dataclass(frozen=True)
@@ -158,7 +157,8 @@ def test_d3_residency_observer_distinguishes_real_miss_and_hit(tmp_path):
     }
 
     clear_process_resident_files()
-    SourceFile.from_path(path)  # D2/CM-shaped prior prepare with NULL_REPORTER.
+    # D2-shaped prior open with NULL_REPORTER, through the one opener.
+    lift_rpc.open_source_file_for_construction(path, root=tmp_path)
     assert prepare_count_for(source_cid) == 1
     lift_rpc._roll_call_audit_leaf(
         path,

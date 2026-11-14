@@ -7,7 +7,10 @@ from dataclasses import replace
 import pytest
 
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
+from sugar_lift_py_tests.lift_rpc import (
+    _open_at_seat,
+    open_source_file_for_construction,
+)
 from sugar_lift_py_tests.sugar.call_site_sugar import (
     CallSiteSugar,
     DefinitionOccurrenceAbsentV1,
@@ -359,8 +362,8 @@ def _two_files_one_roll(tmp_path):
     caller_path.write_text("def apply(value):\n    return find_level(value)\n")
 
     collector = CollectingReporter()
-    helper_source = SourceFile.from_path(helper_path, reporter=collector)
-    caller_source = SourceFile.from_path(caller_path, reporter=collector)
+    helper_source = _open_at_seat(helper_path, root=tmp_path, reporter=collector)
+    caller_source = _open_at_seat(caller_path, root=tmp_path, reporter=collector)
     # ONE roll over both units -- `_testimony_root` mints a fresh reporter per
     # source, and two rolls would make the callee legitimately unregistered.
     testimony = ConstructionTestimonyReporterV1(
@@ -494,8 +497,8 @@ def _shadowing_callee_unit(tmp_path):
     caller_path.write_text("def apply(value):\n    return find_level(value)\n")
 
     collector = CollectingReporter()
-    helper_source = SourceFile.from_path(helper_path, reporter=collector)
-    caller_source = SourceFile.from_path(caller_path, reporter=collector)
+    helper_source = _open_at_seat(helper_path, root=tmp_path, reporter=collector)
+    caller_source = _open_at_seat(caller_path, root=tmp_path, reporter=collector)
     testimony = ConstructionTestimonyReporterV1(
         collector, SubstitutionTraceBuilderV1(caller_source.unit.source_cid)
     )
@@ -598,8 +601,8 @@ def _shadowing_allocation_unit(tmp_path):
     caller_path.write_text("def apply(value):\n    raise Boom(value)\n")
 
     collector = CollectingReporter()
-    helper_source = SourceFile.from_path(helper_path, reporter=collector)
-    caller_source = SourceFile.from_path(caller_path, reporter=collector)
+    helper_source = _open_at_seat(helper_path, root=tmp_path, reporter=collector)
+    caller_source = _open_at_seat(caller_path, root=tmp_path, reporter=collector)
     testimony = ConstructionTestimonyReporterV1(
         collector, SubstitutionTraceBuilderV1(caller_source.unit.source_cid)
     )

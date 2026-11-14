@@ -14,7 +14,7 @@ from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_source_tree.nodes import Compare, Name
 from sugar_source_tree.panic import SugarNotWritten
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
 
 def _source(tmp_path: Path, name: str, *, suffix: str = ""):
@@ -25,7 +25,7 @@ def _source(tmp_path: Path, name: str, *, suffix: str = ""):
         "    return key in OPTIONS\n" + suffix,
         encoding="utf-8",
     )
-    tree = SourceFile.from_path(path)
+    tree = _open_at_seat(path, root=tmp_path)
     binding = next(
         node.fragment
         for node in tree.nodes()

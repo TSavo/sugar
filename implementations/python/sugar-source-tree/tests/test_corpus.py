@@ -24,7 +24,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_source_tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 from sugar_source_tree.corpus import records_for_file
 from sugar_source_tree.tree import _default_backend
 
@@ -44,7 +44,7 @@ def _pinned_golden() -> Path:
 
 def _generate() -> list[str]:
     records = records_for_file(
-        SourceFile.from_path(GOLDENS / "quirks.py"), display="quirks.py"
+        _open_at_seat(GOLDENS / "quirks.py", root=GOLDENS), display="quirks.py"
     )
     return [json.dumps(r, sort_keys=True, ensure_ascii=True) for r in records]
 

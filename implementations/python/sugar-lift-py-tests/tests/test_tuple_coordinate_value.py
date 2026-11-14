@@ -30,11 +30,13 @@ from sugar_lift_python_source.canonical import cid_of_json
 
 def _tree(tmp_path: Path, name: str) -> SourceFile:
     from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
     path = tmp_path / name
     path.write_text("result = tuple(item for item in unknown)[1:]\n", encoding="utf-8")
-    return SourceFile.from_path(
+    return _open_at_seat(
         path,
+        root=tmp_path,
         construction_context=TreeConstructionContextV1.for_source_call_construction(),
     )
 

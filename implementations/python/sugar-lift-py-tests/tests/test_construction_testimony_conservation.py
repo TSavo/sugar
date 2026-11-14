@@ -22,7 +22,9 @@ atomic: exactly one discharge per coordinate, and it is the loud absent one.
 
 import os
 import tempfile
+from pathlib import Path
 
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 from sugar_source_tree.backend import materialize
 from sugar_source_tree.binding_state import (
     ConstructionTestimonyReporterV1,
@@ -34,7 +36,6 @@ from sugar_source_tree.panic import (
     SugarNotWritten,
 )
 from sugar_source_tree.reporter import CollectingReporter
-from sugar_source_tree.tree import SourceFile
 
 _SCOPE_CID = "blake3-512:" + "0" * 8
 
@@ -61,7 +62,7 @@ def _testimony_tree(src):
     """One module materialized under a testimony reporter over a collector."""
     path = _module(src)
     collector = CollectingReporter()
-    sf = SourceFile.from_path(path, reporter=collector)
+    sf = _open_at_seat(Path(path), root=Path(path).parent, reporter=collector)
     reporter = ConstructionTestimonyReporterV1(
         collector, SubstitutionTraceBuilderV1(_SCOPE_CID)
     )

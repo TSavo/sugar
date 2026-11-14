@@ -79,10 +79,49 @@ def test_the_contract_reads_the_unit_the_board_door_reads(
         ), table
 
 
+def test_the_contract_opens_each_file_once_per_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Asking the question twice parses and populates each file once."""
+    import sugar_lift_python_source.manager_summary_derivation as derivation
+
+    path = tmp_path / "producer.py"
+    path.write_text(_PRODUCER, encoding="utf-8")
+
+    constructed = []
+    populated = []
+    original_open_at_seat = lift_rpc._open_at_seat
+    original_populate = derivation.populate_source_derived_resource_refs
+
+    def counted_open_at_seat(source_path, **kwargs):
+        if kwargs.get("construction_context") is not None:
+            constructed.append(Path(source_path))
+        return original_open_at_seat(source_path, **kwargs)
+
+    def counted_populate(source_file, **kwargs):
+        populated.append(source_file.unit.filename)
+        return original_populate(source_file, **kwargs)
+
+    monkeypatch.setattr(lift_rpc, "_open_at_seat", counted_open_at_seat)
+    monkeypatch.setattr(
+        derivation, "populate_source_derived_resource_refs", counted_populate
+    )
+
+    first = _typed_minted_native_operator_constants(tmp_path)
+    second = _typed_minted_native_operator_constants(tmp_path)
+
+    assert first == second
+    assert constructed == [path]
+    assert populated == ["producer.py"]
+
+
 def test_the_bare_doors_are_gone() -> None:
     """The extra entry points are deleted, not left beside the opener."""
     from sugar_source_tree.tree import SourceFile, SourceTree
 
     assert not hasattr(SourceFile, "from_module")
+    assert not hasattr(SourceFile, "from_path")
     assert not hasattr(SourceTree, "files")
     assert not hasattr(lift_rpc, "_open_enumerated_file")
+    assert not hasattr(lift_rpc, "_source_file_at_seat")
+    assert not hasattr(lift_rpc, "_source_file_at_own_seat")

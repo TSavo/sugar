@@ -146,8 +146,10 @@ axis "R_construction_side_doors discrimination" \
   python -m pytest --noconftest "$TESTS/tests/test_construction_side_door_law.py" -q
 axis "R_construction_side_doors = 0" python "$SCRIPTS/construction_side_door_law.py"
 
-# The bare construction door. SourceFile.from_path builds a tree with no
-# construction context; constructing through it does not fail, it LIES --
+# The bare construction door. The opener's first stage (_open_at_seat) opened
+# with no construction context -- once spelled SourceFile.from_path, now
+# deleted -- builds a tree with no context; constructing through it does not
+# fail, it LIES --
 # every With paints RuntimeSelectedContextManager regardless of resolvability.
 # Three false frontiers came out of that door and the defence was a comment.
 # The discrimination arm feeds the scanner the actual shape of the probe that

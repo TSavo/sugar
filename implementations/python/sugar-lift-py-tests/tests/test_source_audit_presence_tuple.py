@@ -22,7 +22,6 @@ import pytest
 
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.roll_call import MinorityReport
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 
 
 class _Seat:
@@ -168,7 +167,7 @@ def test_lying_twin_lift_rpc_roll_call_uses_the_one_door(
             self.gaps: list = []
             self.present = list(report.reporter.present)
 
-    # The leaf opens through the CONSTRUCTION door, never `SourceFile.from_path`
+    # The leaf opens through the CONSTRUCTION door, never a context-less open
     # (a context-less tree paints every With RuntimeSelectedContextManager).
     # Stub that door, so this test still exercises the real projection.
     monkeypatch.setattr(
@@ -241,10 +240,13 @@ def test_truthful_twin_neither_present_both_unresolved() -> None:
 
 def test_truthful_twin_roll_call_path_conserves_on_real_source(tmp_path: Path) -> None:
     """Live construction path: totals conserve; unresolved matches report.R."""
-    from sugar_lift_py_tests.lift_rpc import _roll_call_audit_leaf
+    from sugar_lift_py_tests.lift_rpc import (
+        _open_at_seat,
+        _roll_call_audit_leaf,
+        tree_construction_context_for_workspace,
+    )
     from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.roll_call import discharge
-    from sugar_source_tree.tree import SourceFile
 
     path = tmp_path / "m.py"
     path.write_text("def f():\n    return 1\n", encoding="utf-8")
@@ -254,10 +256,11 @@ def test_truthful_twin_roll_call_path_conserves_on_real_source(tmp_path: Path) -
 
     reporter = CollectingReporter()
     report = discharge(
-        SourceFile.from_path(
-            str(path),
+        _open_at_seat(
+            path,
+            root=tmp_path,
             reporter=reporter,
-            construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+            construction_context=tree_construction_context_for_workspace(tmp_path),
         )
     )
     _assert_conserved(audit, report_R=report.R)

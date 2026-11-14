@@ -4,10 +4,10 @@ import pytest
 
 from sugar_lift_py_tests.floor import CallSiteValue, MutableGlobalValue, StringValue
 from sugar_lift_py_tests.ir import _Ctor
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
 from sugar_source_tree.nodes import Name, Subscript
 from sugar_source_tree.panic import SugarNotWritten
-from sugar_source_tree.tree import SourceFile
 
 
 def _identity(name: str):
@@ -22,7 +22,7 @@ def _identity(name: str):
 def _sites(tmp_path, source: str, filename: str):
     path = tmp_path / filename
     path.write_text(source)
-    tree = SourceFile.from_path(filename)
+    tree = _open_at_seat(path, root=tmp_path)
     binding = next(
         node.fragment
         for node in tree.nodes()

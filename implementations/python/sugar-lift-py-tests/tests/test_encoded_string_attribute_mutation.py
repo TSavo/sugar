@@ -2,7 +2,7 @@ import pytest
 
 from sugar_lift_py_tests.floor import EncodedStringValue, TermValue
 from sugar_lift_py_tests.ir import ctor, str_const
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 
 
 def _sites(tmp_path, monkeypatch):
@@ -11,7 +11,7 @@ def _sites(tmp_path, monkeypatch):
         "def f(value, replacement):\n    value.attr = replacement\n    del value.attr\n"
     )
     monkeypatch.chdir(tmp_path)
-    body = next(SourceFile.from_path(path.name).functions()).body
+    body = next(_open_at_seat(path, root=tmp_path).functions()).body
     return body[0].fragment, body[1].fragment
 
 

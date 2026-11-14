@@ -123,9 +123,9 @@ def _context_manager_rows_for_paths(paths, *, root: Path) -> List[Dict[str, Any]
     per-source door below both come through here, so a one-file question and
     a whole-corpus question cannot disagree about a row.
 
-    Each file is read the one way a file is opened (``_source_file_at_seat``),
-    at the seat its own install states, so the row reads the same resident
-    unit the enumerate levels construct. It reads with no construction
+    Each file is opened by the opener's first stage (``_open_at_seat``), at
+    the seat the opener reads, so the row reads the same bytes at the same
+    seat the enumerate levels construct. It opens with no construction
     context: these rows are what the context's table is built from.
     """
     from sugar_lift_py_tests.context_manager_resolution import UNDECIDED_GAP_KIND
@@ -135,7 +135,7 @@ def _context_manager_rows_for_paths(paths, *, root: Path) -> List[Dict[str, Any]
     rows: List[Dict[str, Any]] = []
     for path in paths:
         try:
-            source_file = _source_file_at_own_seat(path, root=Path(root))
+            source_file = _open_at_seat(path, root=Path(root))
         except SourceUnavailable:
             continue
         for node in source_file.nodes():
@@ -388,26 +388,15 @@ def tree_construction_context_for_workspace(
     return TreeConstructionContextV1(refs, workspace_root=str(root))
 
 
-def _source_file_at_seat(
-    path: Path,
-    *,
-    root: Path,
-    source_workspace_root: Path | None = None,
-    reporter=None,
-    construction_context=None,
-):
-    """The one way a file becomes a node tree: its seat, then the resident unit.
+def _locus_root(
+    path: Path, *, root: Path, source_workspace_root: Path | None = None
+) -> Path:
+    """The root a file's seat is stated against: one derivation, for every open.
 
-    Every open on the lift path comes through here: the one opener
-    (``open_source_file_for_construction``) with its construction context, and
-    the two step-3 readers (``_source_file_at_own_seat``: the With rows and the
-    lexical import pass) with none, because their rows are what that context's
-    table is built from. The files are step 2's file list; no dependency module
-    is opened anywhere. ``reporter=None`` leaves a resident file's reporter as
-    it is.
+    ``source_workspace_root`` when the driver carries one; otherwise the
+    install root the file's own distribution records; otherwise ``root``.
     """
-    from sugar_lift_python_source.source_oracle import workspace_path_source
-    from sugar_source_tree.tree import SourceFile
+    from sugar_lift_python_source.source_oracle import install_root_for
 
     # TWO ROOTS, not one. `root` is the WORKSPACE authority: which tree this
     # open belongs to, what `file_rel` resolves against, which walk session and
@@ -420,34 +409,79 @@ def _source_file_at_seat(
     # different spelling of the seat, an address no other checkout resolves,
     # which `require_recorded_seat` refuses by name.
     #
-    # The locus root is DERIVED ONCE, at the driver, from the distribution's own
-    # manifest (`locus_root_for_corpus` -> `install_root_for`) and carried here.
+    # The locus root is DERIVED ONCE, from the distribution's own manifest
+    # (`install_root_for`): by the driver when it carries one, else here.
     # Nothing on this path adds or strips a package prefix at comparison time:
     # there is one spelling, minted once, against the root that states it.
-    locus_root = root if source_workspace_root is None else source_workspace_root
+    if source_workspace_root is not None:
+        return Path(source_workspace_root)
+    install_root = install_root_for(str(path))
+    return Path(root) if install_root is None else Path(install_root)
+
+
+def _read_at_seat(
+    path: Path, *, root: Path, source_workspace_root: Path | None = None
+) -> tuple[str, str, str]:
+    """The file's bytes read at its seat: the oracle's ``(source, seat, CID)``."""
+    from sugar_lift_python_source.source_oracle import workspace_path_source
+
+    locus_root = _locus_root(
+        path, root=root, source_workspace_root=source_workspace_root
+    )
+    return workspace_path_source(str(path), root=str(locus_root))
+
+
+def _open_at_seat(
+    path: Path,
+    *,
+    root: Path,
+    source_workspace_root: Path | None = None,
+    backend=None,
+    reporter=None,
+    construction_context=None,
+    seated: tuple[str, str, str] | None = None,
+):
+    """The opener's first stage: the one open of a file, at its seat.
+
+    A file becomes a node tree here and nowhere else (#7757 item 5): its bytes
+    are read at its seat (``_read_at_seat``) and parsed into the resident unit.
+    ``open_source_file_for_construction`` is this stage under a construction
+    context, then population. The two step-3 readers (the With rows and the
+    lexical import pass) call this stage with no context, because their rows
+    are what that context's table is built from; they read the same seat, the
+    same bytes and the same resident unit the opener does. The files are step
+    2's file list; no dependency module is opened anywhere.
+
+    ``seated`` is the identity the caller already read at this seat (the opener
+    reads once to consult its memo); otherwise it is read here.
+    ``reporter=None`` leaves a resident file's reporter as it is.
+    """
+    from sugar_source_tree.tree import SourceFile
+
+    identity = (
+        seated
+        if seated is not None
+        else _read_at_seat(
+            path, root=root, source_workspace_root=source_workspace_root
+        )
+    )
     return SourceFile(
-        workspace_path_source(str(path), root=str(locus_root)),
+        identity,
+        backend=backend,
         reporter=reporter,
         construction_context=construction_context,
     )
 
 
-def _source_file_at_own_seat(path: Path, *, root: Path):
-    """Step 3's read of one listed file: its seat, with no construction context.
+def _enumerate_contract_refs(root: Path):
+    """The table every ``sugar.enumerate`` level constructs against.
 
-    The two step-3 readers -- the With rows and the lexical import pass -- both
-    read here, because their rows are what the construction context's table is
-    built from. The seat is stated against the install root the file's
-    distribution records, else ``root``: the seat the one opener reads.
+    The Rust prebind's bound refs when installed, otherwise the provisional
+    demand table for ``root`` (process-memoized per root).
     """
-    from sugar_lift_python_source.source_oracle import install_root_for
-
-    install_root = install_root_for(str(path))
-    return _source_file_at_seat(
-        path,
-        root=Path(root),
-        source_workspace_root=None if install_root is None else Path(install_root),
-    )
+    if _BOUND_CONTRACT_REFS is not None:
+        return _BOUND_CONTRACT_REFS
+    return provisional_contract_refs_from_demands(root)
 
 
 def open_source_file_for_construction(
@@ -462,18 +496,19 @@ def open_source_file_for_construction(
 ):
     """THE one way a Python file is opened for construction (#7757 item 5).
 
-    Every unit is seated (``_source_file_at_seat``), carries a construction
-    context, and is populated with source-derived manager refs at exact
-    use-sites. There is no open that skips any of the three, so every reader
-    -- every ``sugar.enumerate`` level, the audit leaf, the console census,
-    the caller-parameter contract, the attribution instruments, the scripts --
+    Two stages, one open. The first stage (``_open_at_seat``) reads the file at
+    its seat and parses it under a construction context; this function then
+    populates the unit with source-derived manager refs at exact use-sites.
+    There is no open that skips either, so every reader -- every
+    ``sugar.enumerate`` level, the audit leaf, the console census, the
+    caller-parameter contract, the attribution instruments, the scripts --
     reads the same tree.
 
-    The context, when the caller names none, is ``enumerate_construction_context``:
-    the Rust prebind's bound refs when installed, otherwise the provisional
-    demand table for ``root``. ``contract_refs`` names a table already derived
-    for this root (a census shares one); ``construction_context`` a frozen
-    context the caller already holds.
+    The context, when the caller names none, is built on
+    ``_enumerate_contract_refs``: the Rust prebind's bound refs when installed,
+    otherwise the provisional demand table for ``root``. ``contract_refs``
+    names a table already derived for this root (a census shares one);
+    ``construction_context`` a frozen context the caller already holds.
 
     ``resolution_session`` owns every source-resolution memo for this open. When
     omitted, this door uses the walk-scoped session for ``root``, whose roster is
@@ -482,9 +517,18 @@ def open_source_file_for_construction(
     one workspace authority (see ``walk_session_for``). Pass an explicit session
     to isolate.
 
+    A file is opened once per authority: the same bytes at the same seat,
+    under the same table (or caller-held context), the same session and the
+    same ``root``, return the unit this door already opened and populated
+    (``process_resident_file.get_opened``), with its reporter rebound and its
+    roll call reseated. A walk that reopens its files --
+    the enumerate levels, the caller-parameter contract asked once per
+    question -- pays the parse and the population once.
+
     A failure while populating source-derived refs propagates to the caller,
     as it does at the ``context-manager-resolutions`` level: a halt is not
-    turned into a file that opened (#7795).
+    turned into a file that opened (#7795). A population that halted is not
+    remembered.
     """
     from sugar_lift_python_source.manager_summary_derivation import (
         populate_source_derived_resource_refs,
@@ -493,38 +537,18 @@ def open_source_file_for_construction(
         project_file_roster,
         walk_session_for,
     )
+    from sugar_source_tree.process_resident_file import (
+        get_opened,
+        remember_opened,
+    )
     from sugar_source_tree.reporter import NULL_REPORTER
+
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
 
     if reporter is None:
         reporter = NULL_REPORTER
-    if construction_context is None:
-        construction_context = (
-            enumerate_construction_context(root)
-            if contract_refs is None
-            else tree_construction_context_for_workspace(
-                root,
-                contract_refs=contract_refs,
-            )
-        )
-    source_file = _source_file_at_seat(
-        path,
-        root=root,
-        source_workspace_root=source_workspace_root,
-        reporter=reporter,
-        construction_context=construction_context,
-    )
-    # THE BINDING LEAK (#7171 class, third costume). `SourceFile.__init__` on a
-    # process-residency HIT rebinds `self.reporter` and nothing else: the shell
-    # was already materialized, so every node in it still carries the FIRST
-    # opener's reporter -- `NULL_REPORTER` whenever that first open was a
-    # dependency resolution. Passing `reporter=` therefore does NOT seat the
-    # tree; it only relabels the file object, and the nodes keep writing into a
-    # channel that owns no registration.
-    #
-    # Seat the roll call onto the existing nodes, the same walk the audit leaf
-    # does. This parses nothing and prepares nothing.
-    if reporter is not NULL_REPORTER:
-        _seat_roll_call_reporter(source_file, reporter)
     # Multi-resolve owner: walk-scoped session when none given so census and
     # same-content re-open share projection memos under one root. Its roster
     # is the files this root lists (step 2), with no extras.
@@ -535,12 +559,58 @@ def open_source_file_for_construction(
             root,
             enrolled_distributions=project_file_roster(root),
         )
+    # The authority this open constructs under: the caller's context, or the
+    # table a context is built on for this root.
+    if construction_context is not None:
+        table = construction_context
+    elif contract_refs is not None:
+        table = contract_refs
+    else:
+        table = _enumerate_contract_refs(root)
+    authority = (table, session)
+    seated = _read_at_seat(
+        path, root=root, source_workspace_root=source_workspace_root
+    )
+    _source, seat, source_cid = seated
+    source_file = get_opened(source_cid, seat, str(root), authority)
+    opened_before = source_file is not None
+    if opened_before:
+        source_file.reporter = reporter
+    else:
+        if construction_context is None:
+            construction_context = TreeConstructionContextV1(
+                table, workspace_root=str(root)
+            )
+        source_file = _open_at_seat(
+            path,
+            root=root,
+            source_workspace_root=source_workspace_root,
+            reporter=reporter,
+            construction_context=construction_context,
+            seated=seated,
+        )
+    # THE BINDING LEAK (#7171 class, third costume). `SourceFile.__init__` on a
+    # process-residency HIT rebinds `self.reporter` and nothing else: the shell
+    # was already materialized, so every node in it still carries the FIRST
+    # opener's reporter -- `NULL_REPORTER` whenever that first open was a
+    # dependency resolution. Passing `reporter=` therefore does NOT seat the
+    # tree; it only relabels the file object, and the nodes keep writing into a
+    # channel that owns no registration. A memo hit is the same case.
+    #
+    # Seat the roll call onto the existing nodes, the same walk the audit leaf
+    # does. This parses nothing and prepares nothing.
+    if reporter is not NULL_REPORTER:
+        _seat_roll_call_reporter(source_file, reporter)
+    if opened_before:
+        # Populated when it was first opened under this authority.
+        return source_file
     populate_source_derived_resource_refs(
         source_file,
         root=root,
         path=path,
         session=session,
     )
+    remember_opened(source_cid, seat, str(root), authority, source_file)
     return source_file
 
 
@@ -1976,12 +2046,10 @@ def enumerate_construction_context(root: Path):
         TreeConstructionContextV1,
     )
 
-    if _BOUND_CONTRACT_REFS is not None:
-        return TreeConstructionContextV1(
-            _BOUND_CONTRACT_REFS,
-            workspace_root=str(root),
-        )
-    return tree_construction_context_for_workspace(root)
+    return TreeConstructionContextV1(
+        _enumerate_contract_refs(root),
+        workspace_root=str(root),
+    )
 
 
 def _roll_call_audit_leaf(
@@ -2008,11 +2076,15 @@ def _roll_call_audit_leaf(
     from sugar_source_tree.process_resident_file import get_resident
 
     reporter = CollectingReporter()
-    resident_before_open = (
-        get_resident(expected_source_cid, str(full_path)) if expected_source_cid is not None else None
-    )
+    resident_before_open = None
     source_file = None
     try:
+        if expected_source_cid is not None:
+            # Observed at the seat the opener reads, the one residency keys.
+            seat = _read_at_seat(
+                full_path, root=root, source_workspace_root=locus_root
+            )[1]
+            resident_before_open = get_resident(expected_source_cid, seat)
         # THE CONSTRUCTION DOOR, never the bare one. `discharge` drives
         # `.sugar()` over the whole tree, so this scope CONSTRUCTS. Opening
         # through the bare path door gave the tree no construction context,

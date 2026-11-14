@@ -261,22 +261,25 @@ def test_roll_call_audit_uses_one_construction_and_one_discharge(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Re-home monolithic-fold and partial-demand laws onto one module roll."""
-    from sugar_source_tree.tree import SourceFile
+    from sugar_lift_py_tests import lift_rpc
     import sugar_source_tree.roll_call as roll_call
 
     calls = {"construction": 0, "discharge": 0}
-    original_from_path = SourceFile.from_path.__func__
+    original_open_at_seat = lift_rpc._open_at_seat
     original_discharge = roll_call.discharge
 
-    def counted_from_path(cls, *args, **kwargs):
-        calls["construction"] += 1
-        return original_from_path(cls, *args, **kwargs)
+    def counted_open_at_seat(*args, **kwargs):
+        # The opener's first stage; the step-3 reads (the With rows, the
+        # lexical import pass) open it with no context and construct nothing.
+        if kwargs.get("construction_context") is not None:
+            calls["construction"] += 1
+        return original_open_at_seat(*args, **kwargs)
 
     def counted_discharge(source_file):
         calls["discharge"] += 1
         return original_discharge(source_file)
 
-    monkeypatch.setattr(SourceFile, "from_path", classmethod(counted_from_path))
+    monkeypatch.setattr(lift_rpc, "_open_at_seat", counted_open_at_seat)
     monkeypatch.setattr(roll_call, "discharge", counted_discharge)
     leaf = _audit_leaf(project)
 

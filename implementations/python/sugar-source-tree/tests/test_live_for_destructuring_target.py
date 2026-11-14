@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import mkdtemp
 
 import pytest
 
@@ -21,18 +21,25 @@ from sugar_source_tree.nodes import (
     TargetPatternConstructionGapV1,
     TargetPatternV1,
 )
-from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_source_tree.tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import (
+    _open_at_seat,
+    tree_construction_context_for_workspace,
+)
 
 
 def _function(source: str) -> FunctionDef:
-    with TemporaryDirectory(dir=Path.cwd()) as directory:
-        path = (
-            Path(directory).relative_to(Path.cwd()) / "live_for_destructuring_target.py"
-        )
-        path.write_text(source)
-        tree = SourceFile.from_path(path, construction_context=TreeConstructionContextV1.for_test_without_workspace())
-        return next(node for node in tree.nodes() if isinstance(node, FunctionDef))
+    # The seat is stated against the file's own directory, which stays on disk
+    # for the tree's lifetime, so the workspace in hand is the one constructed
+    # against -- never the no-workspace claim.
+    directory = Path(mkdtemp())
+    path = directory / "live_for_destructuring_target.py"
+    path.write_text(source)
+    tree = _open_at_seat(
+        path,
+        root=directory,
+        construction_context=tree_construction_context_for_workspace(directory),
+    )
+    return next(node for node in tree.nodes() if isinstance(node, FunctionDef))
 
 
 def _loop_and_runtime(source: str):

@@ -113,13 +113,12 @@ def test_consumer_carries_pre_demand_and_real_audit_open_observations(
     tmp_path: Path, monkeypatch
 ) -> None:
     """D3 observes the real CID-and-seat resident without another prepare."""
-    from sugar_lift_python_source.source_oracle import path_source
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
     from sugar_source_tree.process_resident_file import (
         clear_process_resident_files,
         get_resident,
         prepare_count_for,
     )
-    from sugar_source_tree.tree import SourceFile
 
     src = tmp_path / "pkg/mod.py"
     src.parent.mkdir()
@@ -127,9 +126,10 @@ def test_consumer_carries_pre_demand_and_real_audit_open_observations(
     nodes = [{"memento": {"function_name": "a"}}]
 
     measured_path = src.resolve()
-    _source, source_seat, source_cid = path_source(str(measured_path))
     clear_process_resident_files()
-    SourceFile.from_path(measured_path)
+    # A prior open at the seat the one opener reads.
+    prior = _open_at_seat(measured_path, root=tmp_path)
+    source_seat, source_cid = prior.unit.filename, prior.unit.source_cid
     assert get_resident(source_cid, source_seat) is not None
     assert prepare_count_for(source_cid, source_seat) == 1
 

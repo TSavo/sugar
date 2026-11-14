@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """R_bare_construction_door — construction never enters through the bare door.
 
-``SourceFile.from_path`` builds a tree with **no construction context**. That is
-a legitimate door: a roll-call discharge and a parse-only corpus emit use it
-correctly.
+The bare door is the one opener's first stage opened with **no construction
+context**: ``lift_rpc._open_at_seat(...)`` without ``construction_context=``.
+It used to be spelled ``SourceFile.from_path``, which is deleted (#7757 item
+5); that spelling is still caught if it ever returns. Opening bare is
+legitimate: the step-3 readers (the With rows and the lexical import pass) read
+that way, because their rows are what the context's table is built from.
 
 **CORRECTION — this file used to claim "a demand-table scan ... because none of
 them construct". The demand-table scan CONSTRUCTS.**
@@ -68,15 +71,15 @@ rung of the enforcement ladder. This is the next rung up.
 **THE LAW.** Within one scope, obtaining a ``SourceFile`` from the bare door and
 then driving ``.sugar()`` is an offender. Both halves are required:
 
-* ``SourceFile.from_path`` alone is fine -- that is the door working.
+* the bare door alone is fine -- that is the door working.
 * ``.sugar()`` alone is fine -- the file came from somewhere else.
 * Together in one scope, construction is being driven over a tree that has no
   context to construct against.
 
 Scope granularity is the FUNCTION, never the module. A module-level rule reads
-one layer too shallow and produces a false population: ``lift_rpc`` calls the
-bare door in a demand scan and in a roll-call discharge, and calls ``.sugar()``
-in unrelated functions elsewhere. Those are correct uses, and a law that named
+one layer too shallow and produces a false population: ``lift_rpc`` opens the
+bare door in the With-row demand scan, and calls ``.sugar()`` in unrelated
+functions elsewhere. Those are correct uses, and a law that named
 them would be allowlisted within a week -- which is how a law dies.
 
 The replacement is ``open_source_file_for_construction(path, root=...)``, which
@@ -101,9 +104,35 @@ from typing import Iterable
 
 from sugar_lift_py_tests.repo_root import resolve_repo_root
 
+# The deleted spelling, ``SourceFile.from_path(...)``: always bare.
 BARE_DOOR = "from_path"
 BARE_DOOR_OWNER = "SourceFile"
+# The present spelling: the opener's first stage, bare when it is opened
+# without a construction context.
+FIRST_STAGE = "_open_at_seat"
+FIRST_STAGE_CONTEXT = "construction_context"
 CONSTRUCTION_DRIVER = "sugar"
+
+
+def _is_bare_door(node: ast.Call) -> bool:
+    function = node.func
+    if (
+        isinstance(function, ast.Attribute)
+        and function.attr == BARE_DOOR
+        and isinstance(function.value, ast.Name)
+        and function.value.id == BARE_DOOR_OWNER
+    ):
+        return True
+    name = (
+        function.attr
+        if isinstance(function, ast.Attribute)
+        else function.id
+        if isinstance(function, ast.Name)
+        else None
+    )
+    return name == FIRST_STAGE and not any(
+        keyword.arg == FIRST_STAGE_CONTEXT for keyword in node.keywords
+    )
 
 # ---------------------------------------------------------------------------
 # DELIBERATE OFFENDERS -- an authenticated predicate, written down
@@ -218,18 +247,14 @@ def offenders_in_source(text: str, *, path: str) -> list[Offender]:
         door: list[int] = []
         construction: list[int] = []
         for node in _own_statements(scope):
-            if not isinstance(node, ast.Call) or not isinstance(
-                node.func, ast.Attribute
-            ):
+            if not isinstance(node, ast.Call):
                 continue
-            attribute = node.func
-            if (
-                attribute.attr == BARE_DOOR
-                and isinstance(attribute.value, ast.Name)
-                and attribute.value.id == BARE_DOOR_OWNER
-            ):
+            if _is_bare_door(node):
                 door.append(node.lineno)
-            elif attribute.attr == CONSTRUCTION_DRIVER:
+            elif (
+                isinstance(node.func, ast.Attribute)
+                and node.func.attr == CONSTRUCTION_DRIVER
+            ):
                 construction.append(node.lineno)
         if door and construction:
             found.append(
@@ -379,6 +404,22 @@ def demand_rows(root):
     return rows
 """
 
+PRESENT_BARE_DOOR = """
+def main() -> int:
+    sf = _open_at_seat(path, root=root, reporter=reporter)
+    for fn in sf.functions():
+        fn.sugar()
+    return 0
+"""
+
+FIRST_STAGE_UNDER_CONTEXT = """
+def main() -> int:
+    sf = _open_at_seat(path, root=root, construction_context=context)
+    for fn in sf.functions():
+        fn.sugar()
+    return 0
+"""
+
 CONSTRUCTION_ONLY = """
 def measure(source_file):
     for fn in source_file.functions():
@@ -410,6 +451,9 @@ def self_test() -> int:
     # that produced five withdrawn residual pairs.
     expect("historical panic_probe", HISTORICAL_PROBE, offends=True)
     expect("production door", PRODUCTION_DOOR, offends=False)
+    # The same incident in today's spelling: the first stage, bare.
+    expect("present bare door", PRESENT_BARE_DOOR, offends=True)
+    expect("first stage under context", FIRST_STAGE_UNDER_CONTEXT, offends=False)
     expect("demand scan, no construction", DEMAND_SCAN_ONLY, offends=False)
     expect("construction, no bare door", CONSTRUCTION_ONLY, offends=False)
     # The outer scope opens the door; only the INNER scope constructs. Blaming

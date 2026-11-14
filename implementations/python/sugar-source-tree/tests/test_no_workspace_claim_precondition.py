@@ -78,7 +78,10 @@ import pathlib
 
 CLAIM = "for_test_without_workspace()"
 ROOTED = "workspace_path_source("
-OPENERS = ("SourceFile(", "SourceFile.from_path(")
+# The one opener's first stage takes ``root`` as a REQUIRED keyword, so a call
+# to it always holds a root, exactly as ``workspace_path_source`` does.
+ROOTED_OPENERS = ("_open_at_seat(",)
+OPENERS = ("SourceFile(", *ROOTED_OPENERS)
 
 SUITES = (
     "sugar-source-tree",
@@ -131,11 +134,11 @@ def _offenders() -> list[str]:
                 # not a call site: nothing here constructs.
                 continue
             text = path.read_text(encoding="utf-8", errors="replace")
-            if CLAIM not in text or ROOTED not in text:
+            if CLAIM not in text:
                 continue
             for opener in OPENERS:
                 for call in _calls(text, opener):
-                    if CLAIM in call and ROOTED in call:
+                    if CLAIM in call and (opener in ROOTED_OPENERS or ROOTED in call):
                         line = text[: text.index(call)].count("\n") + 1
                         found.append(f"{suite}/tests/{path.name}:{line}")
     return found
@@ -198,3 +201,15 @@ def test_the_guard_can_actually_fail() -> None:
         for call in _calls(clean, "SourceFile(")
         if CLAIM in call and ROOTED in call
     ], "the matcher flags an absolute-locus caller, which is legitimately exempt"
+
+    first_stage = (
+        "tree = _open_at_seat(\n"
+        "    path,\n"
+        "    root=tmp_path,\n"
+        "    construction_context="
+        "TreeConstructionContextV1.for_test_without_workspace(),\n"
+        ")\n"
+    )
+    assert [
+        call for call in _calls(first_stage, "_open_at_seat(") if CLAIM in call
+    ], "the matcher missed the claim made at the opener's first stage"

@@ -15,9 +15,9 @@ import pytest
 
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import _Ctor, make_var
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
 from sugar_source_tree.nodes import LanguageCallee
-from sugar_source_tree.tree import SourceFile
 
 ROOT = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests" / "floor"
 TARGETS = (
@@ -168,5 +168,5 @@ def _sites(tmp_path):
         "    del xs[0]\n",
         encoding="utf-8",
     )
-    body = next(SourceFile.from_path(path).functions()).body
+    body = next(_open_at_seat(path, root=tmp_path).functions()).body
     return tuple(statement.fragment for statement in body)

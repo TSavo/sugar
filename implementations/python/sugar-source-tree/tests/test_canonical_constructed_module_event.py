@@ -11,12 +11,13 @@ from pathlib import Path
 
 import pytest
 
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 from sugar_source_tree.backend import Backend
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.tree import SourceFile
 
 
-def test_from_path_enters_source_file_constructor_exactly_once(
+def test_the_opener_enters_source_file_constructor_exactly_once(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -31,12 +32,12 @@ def test_from_path_enters_source_file_constructor_exactly_once(
         return original_init(self, identity, *args, **kwargs)
 
     monkeypatch.setattr(SourceFile, "__init__", observe_init)
-    SourceFile.from_path(path)
+    _open_at_seat(path, root=tmp_path)
 
     assert len(captured) == 1
     captured_source, captured_filename, captured_source_cid = captured[0]
     assert captured_source == source
-    assert captured_filename == str(path)
+    assert captured_filename == "canonical-entry.py"
     assert isinstance(captured_source_cid, str) and captured_source_cid
 
 
@@ -73,7 +74,7 @@ def test_canonical_source_file_stores_exactly_one_constructed_product(
 
     monkeypatch.setattr(Backend, "materialize_module", observe_door)
     reporter = CollectingReporter()
-    source_file = SourceFile.from_path(path, reporter=reporter)
+    source_file = _open_at_seat(path, root=tmp_path, reporter=reporter)
 
     assert len(calls) == 1
     assert source_file.constructed_module is calls[0]

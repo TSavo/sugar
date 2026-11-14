@@ -31,7 +31,7 @@ from pathlib import Path
 
 import pytest
 
-from sugar_source_tree import SourceFile
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 from sugar_source_tree.backend import Child, materialize
 from sugar_source_tree.reporter import CollectingReporter
 from sugar_source_tree.shadow import ShadowNode, _handle_of
@@ -45,8 +45,8 @@ def _two_files(tmp_path: Path):
     caller = tmp_path / "caller.py"
     caller.write_text("# " + "pad " * 400 + "\nx = 1\ny = 2\n", encoding="utf-8")
     return (
-        SourceFile.from_path(definer, reporter=CollectingReporter()),
-        SourceFile.from_path(caller, reporter=CollectingReporter()),
+        _open_at_seat(definer, root=tmp_path, reporter=CollectingReporter()),
+        _open_at_seat(caller, root=tmp_path, reporter=CollectingReporter()),
     )
 
 

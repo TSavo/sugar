@@ -19,6 +19,11 @@ Boundary (load-bearing):
     authority or reporter. Seat-bound receipts are minted per demand with the
     caller's root/path; the pass product is not.
 
+The one opener's populated file (``get_opened`` / ``remember_opened``) is
+seat-bound and authority-bound: it is keyed by the workspace root and the
+table/session it was opened under as well as the CID and seat, so it is shared
+only by opens that would have produced the same unit.
+
 Identity is not the key. ``h = h(p)``: the whole-file content CID *is* the key.
 """
 
@@ -66,6 +71,16 @@ _PREPARE_COUNTS: dict[tuple[str, str], int] = {}
 _LEXICAL: collections.OrderedDict[tuple, Any] = collections.OrderedDict()
 _LEXICAL_PREPARE_COUNTS: dict[str, int] = {}
 
+# The one opener's product (``lift_rpc.open_source_file_for_construction``): a
+# file parsed under a construction context and POPULATED. Keyed by content CID
+# and seat, like residency, plus the workspace root and the authority it was
+# opened under (the table or caller-held context, and the resolution session).
+# The authority objects are held in the value, so an ``id`` in the key cannot be
+# reused while its row lives, and a hit is confirmed by identity.
+_OPENED: collections.OrderedDict[tuple, tuple[tuple, Any]] = (
+    collections.OrderedDict()
+)
+
 
 def prepare_count_for(source_cid: str, source_seat: str | None = None) -> int:
     """How many times this CID (optionally seat) paid full SourceFile prepare."""
@@ -89,6 +104,45 @@ def clear_process_resident_files() -> None:
     _PREPARE_COUNTS.clear()
     _LEXICAL.clear()
     _LEXICAL_PREPARE_COUNTS.clear()
+    _OPENED.clear()
+
+
+def _opened_key(
+    source_cid: str, source_seat: str, workspace_root: str, authority: tuple
+) -> tuple:
+    return (source_cid, source_seat, workspace_root, tuple(id(a) for a in authority))
+
+
+def get_opened(
+    source_cid: str, source_seat: str, workspace_root: str, authority: tuple
+) -> Any | None:
+    """The opener's populated file for these bytes, seat, root and authority."""
+    key = _opened_key(source_cid, source_seat, workspace_root, authority)
+    hit = _OPENED.get(key)
+    if hit is None:
+        return None
+    held, source_file = hit
+    if len(held) != len(authority) or not all(
+        a is b for a, b in zip(held, authority)
+    ):
+        return None
+    _OPENED.move_to_end(key)
+    return source_file
+
+
+def remember_opened(
+    source_cid: str,
+    source_seat: str,
+    workspace_root: str,
+    authority: tuple,
+    source_file: Any,
+) -> None:
+    """Record a file the opener opened and populated; bounded like residency."""
+    key = _opened_key(source_cid, source_seat, workspace_root, authority)
+    _OPENED[key] = (tuple(authority), source_file)
+    _OPENED.move_to_end(key)
+    while len(_OPENED) > _resident_limit():
+        _OPENED.popitem(last=False)
 
 
 def _remember(source_cid: str, source_seat: str, ctx: ProcessResidentFileContext) -> None:

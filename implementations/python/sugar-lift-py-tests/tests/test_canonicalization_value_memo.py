@@ -26,7 +26,9 @@ import sys
 import tempfile
 import weakref
 from dataclasses import dataclass
+from pathlib import Path
 
+from sugar_lift_py_tests.lift_rpc import _open_at_seat
 from sugar_source_tree import binding_state as BS
 from sugar_source_tree import construction_cache as CC
 from sugar_source_tree.binding_state import (
@@ -37,7 +39,6 @@ from sugar_source_tree.binding_state import (
 from sugar_source_tree.backend import materialize
 from sugar_source_tree.panic import ConstructedValueTestimonyNotWritten
 from sugar_source_tree.reporter import CollectingReporter
-from sugar_source_tree.tree import SourceFile
 
 _SCOPE_CID = "blake3-512:" + "0" * 8
 
@@ -157,7 +158,7 @@ def test_a_node_is_referenced_by_its_authenticated_construction_shape():
     p = os.path.join(d, "m.py")
     with open(p, "w") as fh:
         fh.write("x = 1\n")
-    sf = SourceFile.from_path(p, reporter=CollectingReporter())
+    sf = _open_at_seat(Path(p), root=Path(d), reporter=CollectingReporter())
     root = sf.root
     one = [n for n in root.walk() if n.kind == "Constant"][0]
     two = [n for n in root.walk() if n.kind == "Constant"][0]
@@ -208,7 +209,7 @@ def test_speed_never_comes_from_skipping_testimony():
     with open(p, "w") as fh:
         fh.write("x = 1\n")
     collector = CollectingReporter()
-    sf = SourceFile.from_path(p, reporter=collector)
+    sf = _open_at_seat(Path(p), root=Path(d), reporter=collector)
     reporter = ConstructionTestimonyReporterV1(
         collector, SubstitutionTraceBuilderV1(_SCOPE_CID)
     )

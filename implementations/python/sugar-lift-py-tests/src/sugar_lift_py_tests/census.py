@@ -82,8 +82,8 @@ def census(root: Path) -> int:
         ):
             nonlocal total_fns, clean_fns, clean_files
             reporter = CollectingReporter()
-            # Production door: never a bare ``SourceFile.from_path``. Without the
-            # construction context every With paints RuntimeSelectedContextManager
+            # Production door: never a bare open (no construction context).
+            # Without the context every With paints RuntimeSelectedContextManager
             # whether or not it resolves.
             try:
                 sf = open_source_file_for_construction(

@@ -180,10 +180,10 @@ def test_bare_bootstrap_would_be_caught_if_it_reached_a_consulting_kind(
     """
     path = tmp_path / "bait.py"
     path.write_text(BAIT)
+    from sugar_lift_py_tests.lift_rpc import _open_at_seat
     from sugar_source_tree.reporter import CollectingReporter
-    from sugar_source_tree.tree import SourceFile
 
-    source = SourceFile.from_path(str(path), reporter=CollectingReporter())
+    source = _open_at_seat(path, root=tmp_path, reporter=CollectingReporter())
     assert source.unit.construction_context is None
 
     def walk(node, seen=None):
