@@ -37,9 +37,6 @@ class ReturnValue(FloorValue):
 
         return GuardedReturn(guards=(formula,), value=self.value)
 
-    def project_callsite_with(self, operation, ctx):
-        return operation.project_return(self, ctx)
-
     def edge_contribution(self, source_contract):
         return self.value.edge_contribution(source_contract)
 

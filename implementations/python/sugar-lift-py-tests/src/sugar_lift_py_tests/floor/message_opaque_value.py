@@ -38,15 +38,7 @@ class MessageOpaqueValue(SymbolicValue):
         del name, site
         return self._opaque()
 
-    def attribute_with(self, operation, ctx):
-        del operation, ctx
-        return self._opaque()
-
     def callable_application_with(self, operation, ctx):
-        del operation, ctx
-        return self._opaque()
-
-    def call_method_with(self, operation, ctx):
         del operation, ctx
         return self._opaque()
 

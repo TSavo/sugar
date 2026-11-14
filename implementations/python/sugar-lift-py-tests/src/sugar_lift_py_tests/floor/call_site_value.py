@@ -1322,63 +1322,8 @@ class CallSiteValue(FloorValue):
             edge["callsite"] = site_coordinate_cid(self.site)
         return (edge,)
 
-    def project_callsite_with(self, operation, ctx):
-        return operation.project_callsite(self, ctx)
-
-    def attribute_with(self, operation: Any, ctx: Any):
-        del ctx
-        from sugar_lift_py_tests.effect import (
-            GetattrRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.outcome import Incomplete
-
-        return Incomplete(
-            GetattrRuntimeEffect(
-                "callsite attribute runtime boundary: "
-                f"`{self.target_name}.{operation.name}` requires executing the "
-                "call result before Python attribute lookup; keep as typed red "
-                "until a narrower vendor-cited floor owns the call result and "
-                f"attribute. blame={operation.blame}",
-                **runtime_effect_evidence("py.getattr", self, operation),
-            )
-        )
-
-    def unary_operator_with(self, operation, ctx):
-        from sugar_lift_py_tests.operations import perform_operation
-
-        # No-recognizer force_floor panics (process-terminal). Do not catch.
-        floor = force_floor(
-            self,
-            ctx,
-            owner=f"{operation.owner} callsite unary operand",
-            project_callsite=False,
-        )
-        return perform_operation(
-            owner=operation.owner,
-            blame=operation.blame,
-            receiver=floor,
-            operation=operation,
-            ctx=ctx,
-        )
-
-    def binary_operator_with(self, operation, ctx):
-        """Binary op on a callsite result (e.g. ``(x + y).substitute(...)``).
-
-        Lift-probe residual: FactoryGap · observed=CallSiteValue ·
-        requested=binary_operator_with. Mechanism: missing floor totalizer
-        (sibling of unary_operator_with) — not a missing AST recognizer.
-
-        Dig the callsite floor when the body projects; undiggable residual
-        re-dispatches on ``SymbolicValue(self.term)`` so BinaryOperatorOperation
-        mints a joinable symbolic op. Never fabricate a concrete fold.
-        """
-        return self._dig_or_symbolic_redispatch(
-            operation, ctx, owner_suffix="callsite binary operand"
-        )
-
     def subscript_with(self, operation, ctx):
-        """Subscript on a callsite result (revealed after binary dig progress).
+        """Subscript on a callsite result.
 
         Dig when the body floors; otherwise retain this callsite's symbolic
         term. The operation owns the submission door -- the deleted central
@@ -1402,9 +1347,9 @@ class CallSiteValue(FloorValue):
     def project_sequence_with(self, operation, ctx):
         """``a, b = f(...)``: unpack of a callsite result.
 
-        Same dig-or-symbolic totalizer as binary_operator_with and
-        subscript_with, and the same route ``OpaqueOpCallsite`` already
-        documents for this exact operation: dig the callsite floor when the
+        Same dig-or-symbolic totalizer as subscript_with, and the same route
+        ``OpaqueOpCallsite`` already documents for this exact operation: dig
+        the callsite floor when the
         body floors, so a callee returning a display makes the arity lift-time
         decidable and the members bind from the values already in hand;
         otherwise re-dispatch on ``SymbolicValue(self.term)``, which retains
@@ -1415,12 +1360,7 @@ class CallSiteValue(FloorValue):
         answers at all. Absence of this arm was the ``project_sequence_with``
         panic on six of the measured rows.
 
-        It dispatches on the dug floor's own port rather than through
-        ``_dig_or_symbolic_redispatch``: that helper -- and
-        ``unary_operator_with`` and ``call_method_with`` beside it -- imports a
-        ``perform_operation`` that does not exist anywhere in this tree, so it
-        raises ``ImportError`` on contact. Routing a measured row through dead
-        code would trade a named gap for an uncounted crash. The opaque arm
+        It dispatches on the dug floor's own port. The opaque arm
         hands the CALLSITE ITSELF to ``project_symbolic``, so the retained
         obligation names ``call:<callee>(...)`` -- the coordinate the unpack
         actually demands members of -- and never a fabricated element.
@@ -1431,79 +1371,6 @@ class CallSiteValue(FloorValue):
         if floor is not None:
             return floor.project_sequence_with(operation, ctx)
         return operation.project_symbolic(self, ctx)
-
-    def _dig_or_symbolic_redispatch(self, operation, ctx, *, owner_suffix: str):
-        from sugar_lift_py_tests.floor.symbolic_value import SymbolicValue
-        from sugar_lift_py_tests.operations import perform_operation
-
-        # Dig when the body floors; opaque residual re-dispatches on the EUF
-        # receiver term (SymbolicValue(self.term)) — honest uninterpreted join,
-        # not a catchable gap / dig-boundary third state.
-        floor = self._dig_floor_or_none(
-            ctx,
-            owner=f"{operation.owner} {owner_suffix}",
-        )
-        receiver: FloorValue = (
-            floor if floor is not None else SymbolicValue(self.result_term())
-        )
-        return perform_operation(
-            owner=operation.owner,
-            blame=operation.blame,
-            receiver=receiver,
-            operation=operation,
-            ctx=ctx,
-        )
-
-    def call_method_with(self, operation: Any, ctx: Any):
-        """Compose a method on a callsite receiver.
-
-        Prefer a dug floor when the body projects (``len(a())`` folds the
-        returned array). When the receiver is opaque (no diggable body / body
-        Incomplete), compose as an honest EUF join
-        ``call:<method>(call:<receiver>(…))`` — same uninterpreted family as
-        ``SymbolicValue.call_method_with`` / ``OpaqueOpCallsite``. Never invent
-        a numeric value; never soft-catch a panic into Incomplete.
-        """
-        from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-        from sugar_lift_py_tests.operations import perform_operation
-        from sugar_lift_py_tests.outcome import Complete
-
-        floor = self._dig_floor_or_none(
-            ctx,
-            owner=f"{operation.owner} callsite method receiver",
-        )
-        if floor is not None:
-            return perform_operation(
-                owner=operation.owner,
-                blame=operation.blame,
-                receiver=floor,
-                operation=operation,
-                ctx=ctx,
-            )
-        # Opaque receiver with a real EUF term: join, do not force_floor-panic.
-        if operation.name == "__len__" and not operation.arguments:
-            return Complete(OpaqueOpCallsite(callee="len", arg=self, computed=None))
-        if not operation.name.startswith("__") and all(
-            isinstance(arg, FloorValue) for arg in operation.arguments
-        ):
-            return Complete(
-                OpaqueOpCallsite(
-                    callee=operation.name,
-                    arg=self,
-                    computed=None,
-                    extra_args=tuple(operation.arguments),
-                )
-            )
-        # Genuinely non-composable (no method coordinate shape) — panic loud.
-        _force_floor_gap(
-            owner=operation.owner,
-            target_name=self.target_name,
-            observed=f"non-composable method `{operation.name}` on opaque callsite",
-            fix=(
-                f"callsite `{self.target_name}.{operation.name}` has no diggable "
-                "floor and no EUF method-join shape; cite a warrant or keep red"
-            ),
-        )
 
     def _dig_floor_or_none(
         self,

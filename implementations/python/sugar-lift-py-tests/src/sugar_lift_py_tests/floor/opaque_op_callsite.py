@@ -164,96 +164,14 @@ class OpaqueOpCallsite(FloorValue):
     def _arithmetic(self, method: str, other: FloorValue, site):
         return getattr(self._downstream(), method)(other, site)
 
-    def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.project_literal(self, ctx)
-
-    def call_method_with(self, operation: Any, ctx: Any) -> Any:
-        # Nested `len(len(x))` → `call:len(call:len(<x>))`. Never delegate to
-        # computed: Python's `len(3)` is a TypeError.
-        if operation.name == "__len__" and not operation.arguments:
-            from sugar_lift_py_tests.outcome import Complete
-
-            return Complete(OpaqueOpCallsite(callee="len", arg=self, computed=None))
-        return self._downstream().call_method_with(operation, ctx)
-
-    def attribute_with(self, operation: Any, ctx: Any) -> Any:
-        """Attr on an opaque coordinate: nest ``call:<attr>(call:<op>(…))``.
-
-        Temporal binds of vendor method results (`x = s.cumsum(); x.shape`)
-        reduce the receiver to OpaqueOpCallsite; AttributeSugar then dispatches
-        here. Mint a nested opaque attribute coordinate (computed=None) — same
-        family as direct ``call:shape(call:cumsum(…))`` — never invent a value.
-        """
-        del ctx
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            OpaqueOpCallsite(
-                callee=operation.name,
-                arg=self,
-                computed=None,
-            )
-        )
-
     def project_sequence_with(self, operation: Any, ctx: Any) -> Any:
         """Tuple-unpack of an opaque coordinate: ``a, b = opaque_call(…)``.
 
-        Same floor totalizer hole as attribute_with — not a missing AST
-        recognizer. SymbolicValue already projects via ``py.unpack(term, i)``;
-        route opaque (or fold-computed) results through ``_downstream()`` so
-        unpack never invents element values.
+        SymbolicValue already projects via ``py.unpack(term, i)``; route
+        opaque (or fold-computed) results through ``_downstream()`` so unpack
+        never invents element values.
         """
         return self._downstream().project_sequence_with(operation, ctx)
-
-    def attribute_assign_with(self, operation: Any, ctx: Any) -> Any:
-        """Attr-assign on opaque vendor result: typed runtime boundary.
-
-        ``x = s.copy(); x.name = \"c\"`` is real mutation of a non-local object
-        identity. Same honest red as SymbolicValue — RuntimeEffect, not a
-        fabricated mutated coordinate and not a construction gap that pretends
-        the floor can invent ``__setattr__`` for call:copy(…).
-        """
-        del ctx
-        from sugar_lift_py_tests.effect import (
-            AttributeStoreRuntimeEffect,
-            runtime_effect_evidence,
-        )
-        from sugar_lift_py_tests.outcome import Incomplete
-
-        return Incomplete(
-            AttributeStoreRuntimeEffect(
-                "attribute assignment runtime boundary: opaque coordinate "
-                f"`{call_symbol(self.callee)}(...)` cannot be mutated as source object "
-                "state. Python attribute assignment can invoke descriptors and "
-                "__setattr__ at runtime; keep as typed red until a narrower "
-                "attribute mutation floor owns this shape. "
-                f"blame={operation.blame}",
-                **runtime_effect_evidence(
-                    "py.setattr", call_symbol(self.callee), operation
-                ),
-            )
-        )
-
-    def add_with(self, operation: Any, ctx: Any) -> Any:
-        """``.add(operand)`` on an opaque coordinate (e.g. ``df.add(noise)``).
-
-        Folded receivers delegate to the computed floor; opaque receivers mint
-        ``call:add(self, operand)`` with ``computed=None`` — never invent a
-        numeric result for a vendor/opaque frame.
-        """
-        if self.computed is not None:
-            return self.computed.add_with(operation, ctx)
-        del ctx
-        from sugar_lift_py_tests.outcome import Complete
-
-        return Complete(
-            OpaqueOpCallsite(
-                callee="add",
-                arg=self,
-                computed=None,
-                extra_args=(operation.operand,),
-            )
-        )
 
     def next_with(self, operation: Any, ctx: Any) -> Any:
         """``next(opaque_iter)`` (e.g. ``next(df.itertuples(...))``).
@@ -273,12 +191,6 @@ class OpaqueOpCallsite(FloorValue):
                 computed=None,
             )
         )
-
-    def format_value_with(self, operation: Any, ctx: Any) -> Any:
-        return self._downstream().format_value_with(operation, ctx)
-
-    def str_with(self, operation: Any, ctx: Any) -> Any:
-        return self._downstream().str_with(operation, ctx)
 
     def subscript_with(self, operation: Any, ctx: Any) -> Any:
         return self._downstream().subscript_with(operation, ctx)
