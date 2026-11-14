@@ -31,7 +31,7 @@ class WithLanguageOwnedResourceSugar(Sugar):
 
     def desugar(self, ctx: object = None) -> Outcome:
         from sugar_lift_py_tests.outcome import outcome_to_exitset
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted, owed_union
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             ExitFaceBinding,
@@ -46,6 +46,7 @@ class WithLanguageOwnedResourceSugar(Sugar):
         )
         from sugar_lift_py_tests.sugar.with_source_resource_sugar import (
             _and,
+            _owing,
             _project_manager_receiver,
             _returned_value,
         )
@@ -70,8 +71,13 @@ class WithLanguageOwnedResourceSugar(Sugar):
             enter_es = outcome_to_exitset(enter_outcome)
             for enter_face in enter_es.exits:
                 guard = _and(manager_face.guard, enter_face.guard)
+                # Every arm leaving this path owes what manager and enter
+                # incurred on it.
+                owed = owed_union(manager_face.owed, enter_face.owed)
                 if isinstance(enter_face, Halted):
-                    parts.append(ExitSet((Halted(guard, enter_face.effect),)))
+                    parts.append(
+                        ExitSet((Halted(guard, enter_face.effect, owed=owed),))
+                    )
                     continue
                 entered = enter_face.value
                 enter_value = _returned_value(entered.enter_value)
@@ -96,7 +102,8 @@ class WithLanguageOwnedResourceSugar(Sugar):
                     )
                     parts.append(
                         prepend_facts_to_exitset(
-                            routed, (*manager_facts, *enter_facts, *face_facts)
+                            _owing(routed, owed),
+                            (*manager_facts, *enter_facts, *face_facts),
                         )
                     )
         if not parts:

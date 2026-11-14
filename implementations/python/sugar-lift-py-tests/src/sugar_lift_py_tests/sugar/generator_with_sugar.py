@@ -43,6 +43,7 @@ class GeneratorWithSugar(Sugar):
             _ReducedBlock,
             reduce_block_to_exitset,
         )
+        from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
         manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
         routed = []
@@ -56,8 +57,13 @@ class GeneratorWithSugar(Sugar):
                     "manager did not construct GeneratorConstructionV1",
                     "opaque generator transition",
                 )
+            # Every arm leaving this manager face owes what the manager
+            # expression incurred on it.
             routed.append(
-                self._consume_enter_outcome(machine.resume(), manager_exit, ctx)
+                _owing(
+                    self._consume_enter_outcome(machine.resume(), manager_exit, ctx),
+                    manager_exit.owed,
+                )
             )
 
         if not routed:
@@ -80,6 +86,7 @@ class GeneratorWithSugar(Sugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             reduce_block_to_exitset,
         )
+        from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
         if isinstance(entered, ExitSet):
             parts = []
@@ -88,10 +95,15 @@ class GeneratorWithSugar(Sugar):
                     parts.append(ExitSet((face,)).guarded(manager_exit.guard))
                     continue
                 if isinstance(face, Completed):
+                    # The resumed step's completed face: what it owes rides
+                    # onto every arm the rest of the enter produces under it.
                     parts.append(
-                        self._consume_enter_outcome(
-                            face.value, manager_exit, ctx
-                        ).guarded(face.guard)
+                        _owing(
+                            self._consume_enter_outcome(
+                                face.value, manager_exit, ctx
+                            ).guarded(face.guard),
+                            face.owed,
+                        )
                     )
                     continue
                 self._loud(type(face).__name__, "opaque generator transition")
@@ -175,6 +187,7 @@ class GeneratorWithSugar(Sugar):
                     effect,
                     termination,
                     manager_exit.faces,
+                    manager_exit.owed,
                 ),
             )
         )
@@ -269,6 +282,7 @@ class GeneratorObjectWithSugar(Sugar):
                     effect,
                     _ReducedBlock((), True, ()),
                     manager_exit.faces,
+                    manager_exit.owed,
                 )
             )
         return ExitSet(tuple(exits)).normalize()
@@ -336,6 +350,7 @@ class NonManagerObjectWithSugar(Sugar):
                     effect,
                     _ReducedBlock((), True, ()),
                     manager_exit.faces,
+                    manager_exit.owed,
                 )
             )
         return ExitSet(tuple(exits)).normalize()

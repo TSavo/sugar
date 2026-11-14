@@ -221,7 +221,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> Outcome:
-        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+        from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted, owed_union
         from sugar_lift_py_tests.outcome.resource_bindings import (
             EnterResultBinding,
             prepend_facts_to_exitset,
@@ -233,6 +233,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
             _ReducedBlock,
             reduce_block_to_exitset,
         )
+        from sugar_lift_py_tests.sugar.with_source_resource_sugar import _owing
 
         manager_es = sugar_outcome_to_exitset(self.manager.desugar(ctx))
         parts: list = []
@@ -248,6 +249,9 @@ class WithOpaqueCitedManagerSugar(Sugar):
 
             for enter_exit in enter_es.exits:
                 face_guard = _and_guards(mgr_exit.guard, enter_exit.guard)
+                # Every arm leaving this path owes what the manager expression
+                # and enter incurred on it.
+                owed = owed_union(mgr_exit.owed, enter_exit.owed)
                 if isinstance(enter_exit, Halted):
                     # Enter halted: the body never ran and exit never runs.
                     # Python does not call __exit__ when __enter__ raised.
@@ -259,6 +263,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
                                     enter_exit.effect,
                                     enter_exit.state,
                                     enter_exit.faces,
+                                    owed,
                                 ),
                             )
                         )
@@ -287,6 +292,7 @@ class WithOpaqueCitedManagerSugar(Sugar):
                                 entries=(), can_fall_through=True, fall_through=()
                             ),
                             body_exit.faces,
+                            body_exit.owed,
                         )
                     # ONE router for both questions. A completed body leaves
                     # completed unless exit halts; a halted body leaves as BOTH
@@ -294,7 +300,9 @@ class WithOpaqueCitedManagerSugar(Sugar):
                     after = ExitSet((body_exit,)).and_exit_truthiness(
                         exit_es, site=self.site
                     )
-                    parts.append(prepend_facts_to_exitset(after, enter_facts))
+                    parts.append(
+                        prepend_facts_to_exitset(_owing(after, owed), enter_facts)
+                    )
 
         if not parts:
             routed = ExitSet.completed(

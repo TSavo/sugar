@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from sugar_lift_py_tests.outcome import Complete, Outcome
+from sugar_lift_py_tests.outcome import ExitSet, Outcome
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 
@@ -139,16 +139,17 @@ class ClassConstructorBodySugar(Sugar):
                 owner="ClassConstructorBodySugar.__new__",
             )
             if self.initializer_body is None:
-                return Complete(
+                return ExitSet.completed(
                     value.construct_receiver_state_from_block(
                         None, self.receiver_coordinate_cid
                     )
                 )
+            from sugar_lift_py_tests.caller_parameter_contract import (
+                NativeOperationExitCarrierV1,
+            )
             from sugar_lift_py_tests.floor import BlockValue
             from sugar_lift_py_tests.floor import EllipsisValue
-            from sugar_lift_py_tests.outcome import Incomplete
-            from sugar_lift_py_tests.outcome import Completed, Halted
-            from sugar_lift_py_tests.outcome.exit_set import ExitSet
+            from sugar_lift_py_tests.outcome import outcome_to_exitset
             from sugar_source_tree.panic import SugarNotWritten
 
             # The outer CallSiteValue.force_floor already curried constructor
@@ -192,63 +193,47 @@ class ClassConstructorBodySugar(Sugar):
                 )
             initializer_ctx = ctx.with_temporal(temporal)
             outcome = self.initializer_body.desugar(initializer_ctx)
-            if isinstance(outcome, Incomplete):
+            if isinstance(outcome, NativeOperationExitCarrierV1):
                 return outcome
-            if isinstance(outcome, ExitSet):
-                projected = []
-                for face in outcome.exits:
-                    if isinstance(face, Halted):
-                        projected.append(face)
-                        continue
-                    assert isinstance(face, Completed)
-                    block = face.value
-                    if not isinstance(block, BlockValue):
-                        block = BlockValue((block,), can_fall_through=True)
-                    returned = project_new_return(value, block)
-                    projected.append(
-                        Completed(
-                            face.guard,
-                            (
-                                returned
-                                if returned is not None
-                                else value.construct_receiver_state_from_block(
-                                    block, self.receiver_coordinate_cid
-                                )
-                            ),
-                            face.faces,
-                        )
+            outcome = outcome_to_exitset(outcome)
+            # One unconditional completed face is the whole initializer; only
+            # then does an ellipsis-only body mean a stub constructor.
+            sole = outcome.completed_value() is not None
+
+            def receiver_of(block):
+                if not isinstance(block, BlockValue):
+                    # Single-entry reduction (rare): wrap as a block of stores.
+                    block = BlockValue((block,), can_fall_through=True)
+                if (
+                    sole
+                    and block.statements
+                    and all(
+                        isinstance(statement, EllipsisValue)
+                        for statement in block.statements
                     )
-                # ``Cls(x)`` is a call: the initializer's halted faces are the
-                # call's halted faces, each completed face its own receiver.
-                # Packing them inside one completed value hid the halts from
-                # the caller (#7756).
-                return ExitSet(tuple(projected)).normalize()
-            if not isinstance(outcome, Complete):
-                return outcome
-            block = outcome.value
-            if not isinstance(block, BlockValue):
-                # Single-entry reduction (rare): wrap as a block of stores.
-                block = BlockValue(
-                    (block,),
-                    can_fall_through=True,
-                )
-            if block.statements and all(
-                isinstance(statement, EllipsisValue) for statement in block.statements
-            ):
-                raise SugarNotWritten(
-                    blame=self.site,
-                    owner="ClassConstructorBodySugar.desugar",
-                    observed="initializer body is EllipsisValue only",
-                    requested="one source-visible runtime initializer implementation",
-                    fix="keep overload-only or stub-only constructors typed loud",
-                )
-            returned = project_new_return(value, block)
-            if returned is not None:
-                return Complete(returned)
-            return Complete(
-                value.construct_receiver_state_from_block(
+                ):
+                    raise SugarNotWritten(
+                        blame=self.site,
+                        owner="ClassConstructorBodySugar.desugar",
+                        observed="initializer body is EllipsisValue only",
+                        requested=(
+                            "one source-visible runtime initializer implementation"
+                        ),
+                        fix="keep overload-only or stub-only constructors typed loud",
+                    )
+                returned = project_new_return(value, block)
+                if returned is not None:
+                    return returned
+                return value.construct_receiver_state_from_block(
                     block, self.receiver_coordinate_cid
                 )
+
+            # ``Cls(x)`` is a call: the initializer's halted faces are the
+            # call's halted faces, each completed face its own receiver, under
+            # its own guard, carrying what it owes. Packing them inside one
+            # completed value hid the halts from the caller (#7756).
+            return outcome.sequence(
+                lambda block: ExitSet.completed(receiver_of(block))
             )
 
         # The class statement's one outcome: a module-level statement is
