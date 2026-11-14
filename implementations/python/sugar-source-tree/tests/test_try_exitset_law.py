@@ -64,9 +64,6 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-import pytest
-
-from sugar_source_tree.panic import SugarNotWritten
 from with_resolution_fixture import source_file_with_preconstruction
 
 
@@ -480,21 +477,24 @@ def test_handler_raise_carries_the_handled_occurrence_as_context():
 
 
 # ---------------------------------------------------------------------------
-# except* separately loud (ordinary try path ≠ except*)
+# except* over a plain raise: the one-member group CPython wraps it in
 # ---------------------------------------------------------------------------
 
 
-def test_except_star_is_separately_loud_on_ordinary_raise():
-    """except* refuses ordinary RaiseEffect — distinct router, stays loud."""
-    with pytest.raises(SugarNotWritten):
-        _fn(
-            "def A(z):\n"
-            "    try:\n"
-            "        raise ValueError\n"
-            "    except* ValueError:\n"
-            "        pass\n"
-            "    return z\n"
-        ).sugar().desugar()
+def test_except_star_handles_a_plain_raise_as_its_one_member_group():
+    """CPython wraps a plain raise in ``ExceptionGroup('', [exc])`` for
+    ``except*`` matching: a matching handler consumes it and the function
+    returns, never a refusal."""
+    outcome = _out(
+        "def A(z):\n"
+        "    try:\n"
+        "        raise ValueError\n"
+        "    except* ValueError:\n"
+        "        pass\n"
+        "    return z\n"
+    )
+    assert outcome.halts() == ()
+    assert outcome.completed_value() is not None
 
 
 def test_ordinary_except_does_not_absorb_grouped_raise_silently():

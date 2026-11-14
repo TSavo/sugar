@@ -17,7 +17,9 @@ Laws (owned here; ExitSet/carrier untouched):
   mutually exclusive alternative faces into one impossible guard).
 - Finally restore preserves residual; finally terminate overrides.
 - Leaf occurrence identities and nested topology survive partition/regroup.
-- Ordinary ``RaiseEffect`` under ``except*`` stays loud (distinct from Try).
+- A plain raise (decided or undetermined) is matched as the one-member group
+  CPython wraps it in; what leaves is the one exception CPython raises: the
+  handler's raise, or the unmatched original itself, never wrapped.
 """
 
 from __future__ import annotations
@@ -48,16 +50,55 @@ class _StarFace:
 
 
 def _matcher_value(matcher, ctx):
-    """One ``except*`` type operand's completed value, or None.
+    """One ``except*`` type operand's completed value (or None), and what
+    its read owes.
 
     The operand is read here, never retained for a caller: a deferred
-    native-operation carrier is refused by name.
+    native-operation carrier is refused by name.  A read that owes (the
+    undecided read of a class only a star import may bind owes the
+    ``undecided`` member) hands its debt back, so the router carries it
+    beneath every face that passed the arm, as ordinary ``except`` does
+    (``TrySugar._effect_match_verdict``).
     """
     from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
 
-    return _require_exit_set(
-        matcher.desugar(ctx), owner="TryStarSugar.handler-matcher"
-    ).completed_value()
+    read = _require_exit_set(matcher.desugar(ctx), owner="TryStarSugar.handler-matcher")
+    return read.completed_value(), read.owed_items()
+
+
+def _wrapped(effect):
+    """The group ``except*`` matches a plain raised exception as.
+
+    CPython's ``_PyEval_ExceptionGroupMatch`` wraps a naked exception in a
+    one-member group (``_PyExc_CreateExceptionGroup("", (exc,))``, which
+    calls ``BaseExceptionGroup``), so the member decides the group's class
+    exactly as ``GroupedRaiseSugar`` decides a constructed group's
+    (``_is_exception``, the one matcher): ``ExceptionGroup`` for an
+    ``Exception``, ``BaseExceptionGroup`` otherwise, undecided (no class)
+    when the member's class is.  An undetermined leaf (an unanswered
+    construction, ``OSError(e, 'x')``) is a member like any other: its
+    matches are retained and split two ways (``GroupedRaiseEffect.partition``),
+    and the debt its construction owes rides on the halt this runs beneath.
+    """
+    from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+    from sugar_lift_py_tests.floor.string_value import StringValue
+    from sugar_lift_py_tests.sugar.grouped_raise_sugar import _is_exception
+
+    occurrence = f"except-star.wrap:{effect.occurrence_id}"
+    exception = _is_exception(effect)
+    identity, mro = None, None
+    if exception is not None:
+        group_class = "ExceptionGroup" if exception else "BaseExceptionGroup"
+        identity, mro = _builtin_exception_identity(group_class)
+    return GroupedRaiseEffect(
+        occurrence,
+        StringValue(""),
+        (effect,),
+        occurrence=occurrence,
+        exception_type_coordinate=identity,
+        exception_type_mro=mro,
+    )
 
 
 @dataclass(frozen=True)
@@ -77,6 +118,10 @@ class TryStarSugar(Sugar):
             NativeOperationExitCarrierV1,
         )
         from sugar_lift_py_tests.effect.grouped_raise_effect import GroupedRaiseEffect
+        from sugar_lift_py_tests.effect.raise_effect import (
+            RaiseEffect,
+            UndeterminedRaiseEffect,
+        )
         from sugar_lift_py_tests.effect_router import (
             regroup_except_star,
             route_except_star,
@@ -92,6 +137,7 @@ class TryStarSugar(Sugar):
             reduce_block_to_exitset,
             resumed,
         )
+        from sugar_lift_py_tests.sugar.try_sugar import _beneath_type_read
         from sugar_source_tree.panic import SugarNotWritten
 
         body = reduce_block_to_exitset(self.body, ctx)
@@ -108,16 +154,27 @@ class TryStarSugar(Sugar):
             Built from the halt's point on: the frontier starts under truth,
             with no faces and owing nothing, and ``sequence`` conjoins the
             body halt's guard, faces and ``owed`` onto every arm answered here.
+
+            A plain raise (a ``RaiseEffect``, or the ``UndeterminedRaiseEffect``
+            of a construction nothing here answered) is matched as the
+            one-member group CPython wraps it in (``_wrapped``); ``naked`` keeps
+            it, since what leaves is then the one exception CPython raises
+            (below), never a group of the residual.
             """
-            if not isinstance(exit_.effect, GroupedRaiseEffect):
+            naked = None
+            if isinstance(exit_.effect, GroupedRaiseEffect):
+                original = exit_.effect
+            elif isinstance(exit_.effect, (RaiseEffect, UndeterminedRaiseEffect)):
+                naked = exit_.effect
+                original = _wrapped(naked)
+            else:
                 raise SugarNotWritten(
                     blame=self.site,
                     owner="TryStarSugar.desugar",
                     observed=type(exit_.effect).__name__,
-                    requested="GroupedRaiseEffect for except* routing",
-                    fix="keep ordinary except and except* distinct",
+                    requested="a raise (plain or grouped) for except* routing",
+                    fix="route this halt kind through except* or let it pass",
                 )
-            original = exit_.effect
             # Frontier: one face per body halt, then each handler branches it.
             # The face begins from the state the halt carries (``resumed``).
             frontier: list[_StarFace] = [
@@ -150,7 +207,9 @@ class TryStarSugar(Sugar):
                     # ordinary ``except`` routes an undecided match.
                     alternatives = [(face.path, face.residual, ())]
                     for matcher in matchers:
-                        expected = _matcher_value(matcher, face.state.context)
+                        expected, read_owes = _matcher_value(
+                            matcher, face.state.context
+                        )
                         if expected is None:
                             raise SugarNotWritten(
                                 blame=self.site,
@@ -161,6 +220,10 @@ class TryStarSugar(Sugar):
                             )
                         split_alternatives = []
                         for path, residual, parts in alternatives:
+                            # Python reads the type whenever the group reaches
+                            # the arm, matched or not: what the read owes rides
+                            # beneath every path that passed it.
+                            path = _beneath_type_read(path, read_owes)
                             routed = route_except_star(
                                 residual,
                                 expected,
@@ -250,11 +313,28 @@ class TryStarSugar(Sugar):
                 effects = list(face.exceptional)
                 if face.residual.children:
                     effects.append(face.residual)
-                if effects:
+                if effects and naked is not None:
+                    # A plain raise was matched as its one-member group, so
+                    # on any path at most one handler ran over it: CPython's
+                    # ``_PyExc_PrepReraiseStar`` raises that one exception as
+                    # it is -- the handler's raise (a bare ``raise`` re-raises
+                    # the wrapping group), or, unmatched, the original
+                    # exception itself, never wrapped.
+                    if len(effects) != 1:
+                        raise SugarNotWritten(
+                            blame=self.site,
+                            owner="TryStarSugar.desugar",
+                            observed=f"{len(effects)} exceptions from a plain raise",
+                            requested="at most one exception from a plain raise",
+                            fix="route a plain raise to at most one handler",
+                        )
+                    raised = face.exceptional[0] if face.exceptional else naked
+                elif effects:
                     # Never None: a face that owes a raise answers it (#7825).
                     # It raises beneath its path, keeping the path's guard,
                     # faces and ``owed``.
                     raised = regroup_except_star(original, effects)
+                if effects:
                     retained.append(
                         face.path.sequence(
                             lambda state, raised=raised: ExitSet.halted(

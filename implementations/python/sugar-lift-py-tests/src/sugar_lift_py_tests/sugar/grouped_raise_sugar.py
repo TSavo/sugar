@@ -86,11 +86,81 @@ class GroupedRaiseSugar(Sugar):
         return self.message.desugar(ctx).and_then(build)
 
     def _group(self, message_value, members, occurrence) -> ExitSet:
-        """What the group constructor does with its members, once each was
+        """What the group constructor does once its arguments were
         constructed: CPython's ``BaseExceptionGroup.__new__``
-        (Objects/exceptions.c), stated by its exact rule, since a member is a
-        constructed exception (a raise effect), never a ground value the
-        cited fold could hand the pinned interpreter.
+        (Objects/exceptions.c) parses them first (``PyArg_ParseTuple(args,
+        "UO")``), so the message's type is read before any member rule
+        (``_message``), then the members decide the group
+        (``_from_members``)."""
+        return self._message(message_value).and_then(
+            lambda message: self._from_members(message, members, occurrence)
+        )
+
+    def _message(self, message_value) -> ExitSet:
+        """The message operand as ``BaseExceptionGroup.__new__`` parses it:
+        format ``U`` admits a ``str`` (or a subclass) and raises
+        ``TypeError`` for anything else.
+
+        Whether the message is a ``str`` is asked of the one ``isinstance``
+        reader (the builtin ``str`` class's ``test_python_type``), never of
+        the value's species here.  A decided ``str`` completes with the
+        message; a decided non-``str`` is the ``TypeError`` halt.  A message
+        whose type that reader retains (``adt.is_python_type(<message>,
+        str)``) is the one two-faced outcome (``ExitSet.two_faced``): it
+        completes with the message under that type test and raises the
+        ``TypeError`` under its complement, both arms owing the read as the
+        ``undecided`` member.  Never a guess either way."""
+        from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+        from sugar_lift_py_tests.floor.predicate_value import PredicateValue
+        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
+            FalseBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
+            TrueBoolLiteralSugar,
+        )
+        from sugar_lift_py_tests.temporal.builtin_name_bindings import (
+            builtin_name_temporal,
+        )
+        from sugar_source_tree.panic import SugarNotWritten
+
+        owner = "GroupedRaiseSugar.constructed"
+
+        def refused():
+            return ground_exceptional_exit(
+                exception_name="TypeError", site=self.site, owner=owner
+            )
+
+        def decide(verdict):
+            if isinstance(verdict, TrueBoolLiteralSugar):
+                return ExitSet.completed(message_value)
+            if isinstance(verdict, FalseBoolLiteralSugar):
+                return refused()
+            if isinstance(verdict, PredicateValue):
+                (type_error,) = refused().halts()
+                return ExitSet.two_faced(
+                    message_value,
+                    type_error.effect,
+                    guard=verdict.formula,
+                    site=self.site,
+                )
+            raise SugarNotWritten(
+                blame=self.site,
+                owner=owner,
+                observed=f"message type test answered {type(verdict).__name__}",
+                requested="a decided bool or a retained type-test predicate",
+                fix="answer isinstance(message, str) through the one reader",
+            )
+
+        str_class = builtin_name_temporal().value_if_bound("str")
+        return str_class.test_python_type(message_value, self.site).and_then(decide)
+
+    def _from_members(self, message_value, members, occurrence) -> ExitSet:
+        """What the group constructor does with its members, once each was
+        constructed and the message parsed: CPython's
+        ``BaseExceptionGroup.__new__`` (Objects/exceptions.c), stated by its
+        exact rule, since a member is a constructed exception (a raise
+        effect), never a ground value the cited fold could hand the pinned
+        interpreter.
 
         - no member: ``ValueError`` (the exceptions must be a non-empty
           sequence);

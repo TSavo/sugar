@@ -69,7 +69,9 @@ class GroupedRaiseEffect:
                     for split in child.partition(expected, site)
                 )
             else:
-                options = _leaf_options(child, expected, site)
+                options = match_options(
+                    child, expected, site, question="try-star.except-identity"
+                )
             splits = [
                 (matched + leaf_matched, residual + leaf_residual, held + leaf_held)
                 for matched, residual, held in splits
@@ -96,18 +98,21 @@ class GroupedRaiseEffect:
         )
 
 
-def _leaf_options(effect, expected, site) -> tuple:
-    """Where ``except* expected`` puts one leaf: ``(matched, residual,
-    conditions)`` per face.
+def match_options(effect, expected, site, *, question: str) -> tuple:
+    """Where a type test by ``expected`` puts one raise effect: ``(matched,
+    residual, conditions)`` per face.
 
-    Asked of the one matcher ``except`` and ``with`` ask
-    (``matches_raise_effect``), over the class the leaf's raise read off the
-    value its construction made (``RaiseSugar._effect``).  A decided verdict
-    is one face.  A retained one (``MatchRetained``) is a genuine two-way
-    split this partition owns, so it mints the pair of faces
-    (``partition``): the leaf matched under the obligation, residual under
-    its complement -- the two-faced outcome ordinary ``except`` routes an
-    undecided match by, never a refusal."""
+    The one reading of a group's type test, shared by ``except*``
+    (``GroupedRaiseEffect.partition``, per leaf) and
+    ``BaseExceptionGroup.split`` (``GroupedExceptionValue.split``, per group
+    and leaf); ``question`` names which split owns the faces.  Asked of the
+    one matcher ``except`` and ``with`` ask (``matches_raise_effect``), over
+    the class the raise read off the value its construction made
+    (``RaiseSugar._effect``).  A decided verdict is one face.  A retained
+    one (``MatchRetained``) is a genuine two-way split the caller owns, so
+    it mints the pair of faces (``partition``): the effect matched under the
+    obligation, residual under its complement -- the two-faced outcome
+    ordinary ``except`` routes an undecided match by, never a refusal."""
     from sugar_lift_py_tests.authenticated_exception_matching import (
         MatchDecided,
         matches_raise_effect,
@@ -119,7 +124,7 @@ def _leaf_options(effect, expected, site) -> tuple:
     if isinstance(verdict, MatchDecided):
         return (((effect,), (), ()),) if verdict.value else (((), (effect,), ()),)
     caught_face, missed_face = partition(
-        ("try-star.except-identity", site, effect.occurrence_id, verdict.obligation)
+        (question, site, effect.occurrence_id, verdict.obligation)
     )
     return (
         ((effect,), (), ((verdict.obligation, caught_face),)),
