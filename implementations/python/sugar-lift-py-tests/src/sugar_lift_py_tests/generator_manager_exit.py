@@ -152,38 +152,45 @@ def _is_stop_iteration(effect) -> bool:
     return stop_iteration in (effect.exception_type_mro or ())
 
 
-def _refusal(message: str, *, blame: str, context_effect=None):
+def _refusal(message: str, *, site, context_effect=None):
+    """``raise RuntimeError(...)`` out of ``__exit__``: it halts at ``site``,
+    the ``with`` whose exit ran (#7766)."""
     from sugar_lift_py_tests.effect import RaiseEffect
 
     refusals = observed_exit_refusals()
+    blame = str(site)
     return RaiseEffect.for_builtin(
         refusals.exception_name,
         occurrence=f"generator-manager-exit:{message}:{blame}",
         blame=blame,
         raised_value=message,
         context_effect=context_effect,
+        site=site,
     )
 
 
-def _pep479(effect, *, blame: str):
-    """A StopIteration leaving a generator frame is RuntimeError (PEP 479)."""
+def _pep479(effect, *, site):
+    """A StopIteration leaving a generator frame is RuntimeError (PEP 479),
+    halting at ``site``, the ``with`` whose exit ran (#7766)."""
     from sugar_lift_py_tests.effect import RaiseEffect
 
     refusals = observed_exit_refusals()
+    blame = str(site)
     return RaiseEffect.for_builtin(
         refusals.stop_iteration_conversion_name,
         occurrence=f"generator-stop-iteration:{blame}",
         blame=blame,
         raised_value=refusals.stop_iteration_conversion,
         context_effect=effect,
+        site=site,
     )
 
 
-def _loud(observed: str, *, blame: str):
+def _loud(observed: str, *, site):
     from sugar_source_tree.panic import SugarNotWritten
 
     raise SugarNotWritten(
-        blame=blame,
+        blame=site,
         owner="generator_manager_exit",
         observed=observed,
         requested="an exhaustive GeneratorConstructionV1 transition at __exit__",
@@ -191,13 +198,16 @@ def _loud(observed: str, *, blame: str):
     )
 
 
-def generator_manager_exit(machine, body_face, *, blame: str):
-    """``_GeneratorContextManager.__exit__`` for one body exit, as an ExitSet."""
+def generator_manager_exit(machine, body_face, *, site):
+    """``_GeneratorContextManager.__exit__`` for one body exit, as an ExitSet.
+
+    ``site`` is the source fragment of the ``with`` whose exit runs: every
+    refusal ``__exit__`` raises halts there (#7766)."""
     from sugar_lift_py_tests.outcome.exit_set import Halted
 
     if isinstance(body_face, Halted) and is_exception_effect(body_face.effect):
-        return _after_throw(machine.throw(body_face.effect), body_face.effect, blame)
-    return _after_next(machine.resume(), blame)
+        return _after_throw(machine.throw(body_face.effect), body_face.effect, site)
+    return _after_next(machine.resume(), site)
 
 
 def _bool_exit(value: bool):
@@ -207,7 +217,7 @@ def _bool_exit(value: bool):
     return ExitSet.completed(TermValue(value))
 
 
-def _after_next(after, blame: str):
+def _after_next(after, site):
     """``next(self.gen)``: finish -> False; yield -> refuse; raise -> propagate."""
     from sugar_lift_py_tests.generator_construction import (
         GeneratorConstructionV1,
@@ -222,19 +232,19 @@ def _after_next(after, blame: str):
     if isinstance(after, GeneratorConstructionV1):
         # A step completed and left the machine runnable (a nested cleanup
         # ran): ``next`` continues to the generator's next suspension.
-        return _after_next(after.resume(), blame)
+        return _after_next(after.resume(), site)
     if isinstance(after, YieldEffect):
         return _after_refused_yield(
-            after.machine, observed_exit_refusals().did_not_stop, blame
+            after.machine, observed_exit_refusals().did_not_stop, site
         )
     if isinstance(after, ExitSet):
-        return _map_exits(after, lambda value: _after_next(value, blame), blame)
+        return _map_exits(after, lambda value: _after_next(value, site), site)
     if isinstance(after, GeneratorTransitionGapV1):
-        _loud(after.observed, blame=blame)
-    _loud(f"post-yield resume returned {type(after).__name__}", blame=blame)
+        _loud(after.observed, site=site)
+    _loud(f"post-yield resume returned {type(after).__name__}", site=site)
 
 
-def _after_throw(after, thrown, blame: str):
+def _after_throw(after, thrown, site):
     """``self.gen.throw(value)``: finish -> True; same exception -> False."""
     from sugar_lift_py_tests.generator_construction import (
         GeneratorConstructionV1,
@@ -248,25 +258,25 @@ def _after_throw(after, thrown, blame: str):
         return _bool_exit(True)
     if isinstance(after, YieldEffect):
         return _after_refused_yield(
-            after.machine, observed_exit_refusals().did_not_stop_after_throw, blame
+            after.machine, observed_exit_refusals().did_not_stop_after_throw, site
         )
     if isinstance(after, ExitSet):
         return _map_exits(
             after,
-            lambda value: _after_throw(value, thrown, blame),
-            blame,
+            lambda value: _after_throw(value, thrown, site),
+            site,
             thrown=thrown,
         )
     if isinstance(after, GeneratorConstructionV1):
         # A throw that left the machine runnable (a handler completed, or a
         # nested cleanup ran): the generator continues to its next suspension.
-        return _after_throw(after.resume(), thrown, blame)
+        return _after_throw(after.resume(), thrown, site)
     if isinstance(after, GeneratorTransitionGapV1):
-        _loud(after.observed, blame=blame)
-    _loud(f"throw returned {type(after).__name__}", blame=blame)
+        _loud(after.observed, site=site)
+    _loud(f"throw returned {type(after).__name__}", site=site)
 
 
-def _after_refused_yield(machine, message: str, blame: str):
+def _after_refused_yield(machine, message: str, site):
     """``raise RuntimeError(...)`` with ``finally: self.gen.close()``."""
     from sugar_lift_py_tests.generator_construction import (
         GeneratorTerminationV1,
@@ -274,21 +284,21 @@ def _after_refused_yield(machine, message: str, blame: str):
     )
     from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-    refusal = _refusal(message, blame=blame)
+    refusal = _refusal(message, site=site)
     closed = machine.close()
     if isinstance(closed, GeneratorTerminationV1):
         return ExitSet.halted(refusal)
     if isinstance(closed, GeneratorTransitionGapV1):
-        _loud(closed.observed, blame=blame)
+        _loud(closed.observed, site=site)
     if not isinstance(closed, ExitSet):
-        _loud(f"close returned {type(closed).__name__}", blame=blame)
+        _loud(f"close returned {type(closed).__name__}", site=site)
     # The RuntimeError leaves beneath each completed close face
     # (``ExitSet.sequence``), keeping its guard, faces and ``owed``. A raise
     # from close() supersedes the RuntimeError in flight: that halt stands.
     return closed.sequence(lambda _closed: ExitSet.halted(refusal))
 
 
-def _map_exits(exit_set, on_completed, blame: str, *, thrown=None):
+def _map_exits(exit_set, on_completed, site, *, thrown=None):
     """Map a machine ExitSet face by face, keeping every guard and face key.
 
     Composed through ``ExitSet.sequence``: ``on_completed`` runs beneath each
@@ -306,7 +316,7 @@ def _map_exits(exit_set, on_completed, blame: str, *, thrown=None):
         if _is_stop_iteration(effect):
             from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-            return ExitSet.halted(_pep479(effect, blame=blame), state=face.state)
+            return ExitSet.halted(_pep479(effect, site=site), state=face.state)
         return None
 
     return exit_set.sequence(on_completed, consume=owned)

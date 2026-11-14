@@ -98,6 +98,9 @@ class FormalSelectedManagerHeadSugar(_sugar_base()):
     # assignment's key.  The call's select step and operands ran there, once;
     # the ``with`` only reads the name.
     bound: object = None
+    # The With item's source fragment, where each step halts (see
+    # ``FormalSelectedManagerProtocol.fragment``).
+    fragment: object = field(default=None, compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -113,7 +116,9 @@ class FormalSelectedManagerHeadSugar(_sugar_base()):
             )
         if not self.operands:
             return ExitSet.completed(value)
-        protocol = FormalSelectedManagerProtocol(self.head, self.site, self.coordinate)
+        protocol = FormalSelectedManagerProtocol(
+            self.head, self.site, self.coordinate, self.fragment
+        )
         outcome = protocol.step_faces("select", None)
         for operand in self.operands:
             outcome = outcome.and_then(
@@ -131,9 +136,16 @@ class FormalSelectedManagerProtocol:
     # The With item's ``SourceFragmentCoordinateV1``, where every step is
     # owed (``step_faces``).  Testimony about the site, not part of the law.
     coordinate: object = field(compare=False)
+    # The With item's source fragment, where every step halts: the site its
+    # ``UndeterminedRaiseEffect`` states, so the halt's panic locus names the
+    # line it left at (#7766).  The derivation that mints this protocol has no
+    # fragment; the ``With`` that builds the sugar seats its item's here.
+    fragment: object = field(default=None, compare=False)
 
     def head_sugar(self):
-        return FormalSelectedManagerHeadSugar(self.head, self.site, self.coordinate)
+        return FormalSelectedManagerHeadSugar(
+            self.head, self.site, self.coordinate, fragment=self.fragment
+        )
 
     def step_completes(self, step: str):
         """The site-keyed atom under which ``step`` completes."""
@@ -167,6 +179,7 @@ class FormalSelectedManagerProtocol:
                 blame=self.site,
                 occurrence=f"{self.site}#{step}",
                 producer_node_owner=f"FormalSelectedManager:{self.head}.{step}",
+                site=self.fragment,
             ),
             guard=self.step_completes(step),
             site=self.coordinate,

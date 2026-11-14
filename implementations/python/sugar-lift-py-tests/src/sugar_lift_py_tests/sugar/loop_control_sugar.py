@@ -32,6 +32,8 @@ class LoopControlSugar(Sugar):
         from sugar_lift_py_tests.sugar.function_universe_sugar import halt_record
 
         return ExitSet.halted(
-            LoopControlEffect(self.action, self.target_cid, self.occurrence_cid),
+            LoopControlEffect(
+                self.action, self.target_cid, self.occurrence_cid, site=self.site
+            ),
             state=halt_record(ctx),
         )

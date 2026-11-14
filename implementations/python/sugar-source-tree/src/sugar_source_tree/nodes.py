@@ -17721,25 +17721,33 @@ class With(Statement):
                     WithFormalManagerSugar,
                 )
 
-                manager_slot = item._manager_slot_id()
-                enter_slot = (
-                    f"{manager_slot}#enter_result" if binds_enter_result else None
-                )
-                head_sugar = getattr(resolved_ref.protocol, "head_sugar", None)
-                manager_head = (
-                    head_sugar() if callable(head_sugar) else item.context_expr.sugar()
-                )
+                from dataclasses import replace
+
                 from sugar_lift_py_tests.floor.formal_selected_manager import (
                     FormalSelectedManagerProtocol,
                 )
 
-                if isinstance(resolved_ref.protocol, FormalSelectedManagerProtocol):
+                manager_slot = item._manager_slot_id()
+                enter_slot = (
+                    f"{manager_slot}#enter_result" if binds_enter_result else None
+                )
+                protocol = resolved_ref.protocol
+                if isinstance(protocol, FormalSelectedManagerProtocol):
+                    # Every step of the selected manager (select, construct,
+                    # ``__enter__``, ``__exit__``) halts at this item: its
+                    # halts state the item's fragment (#7766).
+                    protocol = replace(protocol, fragment=item.fragment)
+                head_sugar = getattr(protocol, "head_sugar", None)
+                manager_head = (
+                    head_sugar() if callable(head_sugar) else item.context_expr.sugar()
+                )
+                if isinstance(protocol, FormalSelectedManagerProtocol):
                     manager_head = self._formal_head_with_operands(
                         manager_head, item.context_expr
                     )
                 return WithFormalManagerSugar(
                     manager=manager_head,
-                    protocol=resolved_ref.protocol,
+                    protocol=protocol,
                     summary=resolved_ref,
                     body=tuple(stmt.sugar() for stmt in self.body),
                     manager_slot_id=manager_slot,

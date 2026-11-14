@@ -79,11 +79,13 @@ def halt_locus(arm, *, formals, def_memento, blame):
     Filled from the reduction: the site, the raised type, and the guard as
     path condition. Read off the arm's own halt record, never off the source.
 
-    * site: the fragment the halt left at. A raise states it on its effect
-      (``site``: the ``raise`` statement, the operation whose two faces it is,
-      the ground exit); a raise built before that carried it states it on the
+    * site: the fragment the halt left at, stated on its effect (``site``: the
+      ``raise`` statement, the operation whose two faces it is, the ground
+      exit, the ``with`` item whose manager step or exit raised, the
+      ``break``/``continue``, the ``warnings.warn`` call, the unmet
+      expectation); a raise built before that carried it states it on the
       exception value it threw. A runtime effect's witness carries the
-      fragment of its boundary, an unmet expectation carries its site.
+      fragment of its boundary.
     * term: the raised type's coordinate for a raise (``None`` when the type is
       undetermined) and the failing operation for a runtime effect.
     * guard: the arm's guard, in the contract's claim form
@@ -93,7 +95,6 @@ def halt_locus(arm, *, formals, def_memento, blame):
     would be indistinguishable, so the halt cannot be stated as its own row.
     """
     from sugar_lift_py_tests.effect import (
-        ExpectationNotMetEffect,
         GroupedRaiseEffect,
         RaiseEffect,
         RuntimeEffect,
@@ -105,22 +106,21 @@ def halt_locus(arm, *, formals, def_memento, blame):
     from sugar_lift_py_tests.kit_rpc import PanicLocusDto
 
     effect = arm.effect
-    fragment = None
     term = None
     if isinstance(effect, RuntimeEffect):
         fragment = _stated_fragment(effect.witness.site)
         term = effect.witness.operation
-    elif isinstance(effect, (RaiseEffect, UndeterminedRaiseEffect)):
+    else:
+        # Every other halt states the fragment on its own ``site``.
         fragment = _stated_fragment(effect)
-        if fragment is None and isinstance(effect.raised_value, ExceptionValue):
-            fragment = _stated_fragment(effect.raised_value.site)
-        term = effect.exception_type_coordinate
-    elif isinstance(effect, GroupedRaiseEffect):
-        fragment = _stated_fragment(effect)
-        if isinstance(effect.exception_type_coordinate, Term):
+        if isinstance(effect, (RaiseEffect, UndeterminedRaiseEffect)):
+            if fragment is None and isinstance(effect.raised_value, ExceptionValue):
+                fragment = _stated_fragment(effect.raised_value.site)
             term = effect.exception_type_coordinate
-    elif isinstance(effect, ExpectationNotMetEffect):
-        fragment = _stated_fragment(effect)
+        elif isinstance(effect, GroupedRaiseEffect) and isinstance(
+            effect.exception_type_coordinate, Term
+        ):
+            term = effect.exception_type_coordinate
     if fragment is None:
         from sugar_source_tree.panic import SugarNotWritten
 

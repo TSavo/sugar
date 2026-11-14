@@ -83,8 +83,7 @@ def effect_occurrence(effect: object) -> str | None:
                                 from the exception type name).
     * ``LoopControlEffect``  -- ``occurrence_cid`` (a CID, not a name).
     * ``CoverageGapEffect``  -- ``boundary``.
-    * ``ExpectationNotMetEffect`` / ``WarningEffect`` -- their own ``site`` /
-      ``blame``.
+    * ``ExpectationNotMetEffect`` / ``WarningEffect`` -- their own ``site``.
 
     ``None`` means the effect states no occurrence. The caller reports that as
     an instrument gap; it must NOT fall back to the enclosing function's line,

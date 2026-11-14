@@ -118,7 +118,7 @@ def warning_observation_from_operands(arg_values, keyword_names, site):
             # cannot discharge a message-pattern obligation.  The boundary keeps
             # message-bearing warning assertions loud on its own side.
             message=None,
-            blame=None if site is None else str(site),
+            site=site,
             category_identity=identity,
         )
     )
