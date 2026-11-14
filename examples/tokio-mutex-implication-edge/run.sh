@@ -102,7 +102,9 @@ print("MISSING")
 PY
 }
 
-witness_verdict() {
+# Step 9: prove decides a witness row from the package body the proof states;
+# a recomputed body carries `resolvedBy` on the row's witness verification.
+witness_body_recomputed() {
   python3 - "$1" <<'PY'
 import json
 import re
@@ -114,10 +116,10 @@ if not match:
     print("MISSING")
     raise SystemExit(0)
 data = json.loads(text[match.start():])
-for witness in data.get("witnessDimension", {}).get("witnesses", []):
-    verdict = witness.get("verdict")
-    if verdict:
-        print(verdict)
+for row in data.get("rows", []):
+    verification = row.get("verification") or {}
+    if verification.get("kind") == "witness" and verification.get("resolvedBy"):
+        print("recomputed")
         raise SystemExit(0)
 print("MISSING")
 PY
@@ -175,15 +177,11 @@ run_suite() {
       exit 1
     fi
 
-    echo "== verify $suite witness =="
-    set +e
-    (cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json) > "$dir/.verify.json"
-    set -e
-    local verify_verdict
-    verify_verdict="$(witness_verdict "$dir/.verify.json")"
-    if [ "$verify_verdict" != "verified" ]; then
-      echo "$suite witness verification expected verified, got $verify_verdict" >&2
-      cat "$dir/.verify.json" >&2
+    local witness_body
+    witness_body="$(witness_body_recomputed "$dir/.prove.json")"
+    if [ "$witness_body" != "recomputed" ]; then
+      echo "$suite witness package body expected recomputed from the proof, got $witness_body" >&2
+      cat "$dir/.prove.json" >&2
       exit 1
     fi
   else

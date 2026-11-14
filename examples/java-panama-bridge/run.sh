@@ -304,7 +304,7 @@ try:
     data = load_receipt(path)
 except Exception:
     print("MISSING"); raise SystemExit(0)
-rows = data.get("rows") or data.get("claims") or []
+rows = data.get("rows") or []
 statuses = []
 for row in rows:
     prop = row.get("property") or row.get("predicate") or ""

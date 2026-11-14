@@ -130,7 +130,7 @@ for index, char in enumerate(text):
         obj, _ = decoder.raw_decode(text[index:])
     except Exception:
         continue
-    if isinstance(obj, dict) and obj.get("kind") == "verification-receipt":
+    if isinstance(obj, dict) and "verdict" in obj and "rows" in obj:
         receipt = obj
         break
 if receipt is not None:
@@ -151,7 +151,7 @@ verify_suite() {
 
   echo "== verify $suite =="
   set +e
-  (cd "$dir" && "$SUGAR" verify --allow-failed-components --project . --json) > "$dir/.verify.raw" 2>&1
+  (cd "$dir" && "$SUGAR" prove --allow-failed-components . --json) > "$dir/.verify.raw" 2>&1
   local code=$?
   set -e
   extract_json_receipt "$dir/.verify.raw" > "$dir/.verify.json"
@@ -163,7 +163,7 @@ import sys
 
 path, raw_path, suite, expected_status, code = sys.argv[1:6]
 receipt = json.load(open(path, encoding="utf-8"))
-rows = receipt.get("claims") or receipt.get("rows") or []
+rows = receipt.get("rows") or []
 raw = open(raw_path, encoding="utf-8").read()
 
 def walk(value):
@@ -238,7 +238,7 @@ if unexpected_failures:
     )
 print(
     f"{suite} seam_status={expected_status} verify_rc={code} "
-    f"ok={receipt.get('ok')} totalClaims={receipt.get('totalClaims')}"
+    f"verdict={receipt.get('verdict')} byStatus={receipt.get('byStatus')}"
 )
 PY
 }

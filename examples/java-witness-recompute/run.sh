@@ -89,14 +89,15 @@ witness = [r.get("status") for r in rows
            if "witness-package" in (r.get("property") or "")]
 if witness != ["discharged"]:
     raise SystemExit(f"FAIL[{suite}]: durable witness statuses {witness}")
-verified = any(
-    w.get("verdict") == "verified"
-    for w in receipt.get("witnessDimension", {}).get("witnesses", [])
+recomputed = any(
+    (r.get("verification") or {}).get("kind") == "witness"
+    and (r.get("verification") or {}).get("resolvedBy")
+    for r in rows
 )
-if not verified:
-    raise SystemExit(f"FAIL[{suite}]: witness dimension did not verify")
+if not recomputed:
+    raise SystemExit(f"FAIL[{suite}]: no witness row was recomputed from the package body in the proof")
 print(f"   durable witness status:    {','.join(witness)}")
-print(f"   durable witness dimension: verified")
+print(f"   durable witness package:   recomputed from the proof")
 PY
 
 echo "== good: PASS =="

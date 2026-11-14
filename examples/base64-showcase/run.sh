@@ -291,19 +291,20 @@ if expect_witness == "DISCHARGE":
 else:
     if witness == ["discharged"] or not witness:
         raise SystemExit(f"FAIL[{suite}]: durable witness statuses {witness}")
-verified = any(
-    w.get("verdict") == "verified"
-    for w in receipt.get("witnessDimension", {}).get("witnesses", [])
+recomputed = any(
+    (r.get("verification") or {}).get("kind") == "witness"
+    and (r.get("verification") or {}).get("resolvedBy")
+    for r in rows
 )
-if not verified:
-    raise SystemExit(f"FAIL[{suite}]: witness dimension did not verify")
+if not recomputed:
+    raise SystemExit(f"FAIL[{suite}]: no witness row was recomputed from the package body in the proof")
 print(f"   durable consistency statuses: {','.join(consistency)}")
 print(f"   encode64 consistency: {','.join(encoder64_rows)}")
 print(f"   encode20 consistency: {','.join(encoder20_rows)}")
 print(f"   pick    consistency: {','.join(pick_rows)}")
 print(f"   classify consistency: {','.join(classify_rows)}")
 print(f"   durable witness statuses: {','.join(witness)}")
-print("   durable witness dimension: verified")
+print("   durable witness package: recomputed from the proof")
 PY
 }
 

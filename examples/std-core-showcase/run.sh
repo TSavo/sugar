@@ -838,11 +838,11 @@ for idx, ch in enumerate(text):
         obj, _ = decoder.raw_decode(text[idx:])
     except Exception:
         continue
-    if isinstance(obj, dict) and obj.get("kind") == "verification-receipt":
+    if isinstance(obj, dict) and isinstance(obj.get("rows"), list) and "verdict" in obj:
         receipt = obj
         break
 if receipt is None:
-    print("verify produced no verification-receipt", file=sys.stderr)
+    print("prove produced no JSON report", file=sys.stderr)
     print(text, file=sys.stderr)
     raise SystemExit(1)
 

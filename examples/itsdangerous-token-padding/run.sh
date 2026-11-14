@@ -1424,7 +1424,7 @@ run_twin() {
   rm -f "$dir"/.prove*.json "$dir"/.verify*.json 2>/dev/null
 
   ( cd "$dir" && showcase_run_with_terminal sugar.mint "$BIN" mint --out . ) >/dev/null || { echo "FAIL: mint ($twin)"; return 1; }
-  ( cd "$dir" && "$BIN" verify --allow-failed-components --project . --json > .verify.json ) || true
+  ( cd "$dir" && "$BIN" prove --allow-failed-components . --json > .verify.json ) || true
   [ -s "$dir/.verify.json" ] || { echo "FAIL: no verify receipt ($twin)"; return 1; }
 
   EXPECT="$expect" TWIN="$twin" python3 - "$dir/.verify.json" <<'PY' || return 1

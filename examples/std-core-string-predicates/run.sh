@@ -218,9 +218,9 @@ def receipt(path):
             obj, _ = decoder.raw_decode(text[idx:])
         except Exception:
             continue
-        if isinstance(obj, dict) and obj.get("kind") == "verification-receipt":
+        if isinstance(obj, dict) and isinstance(obj.get("rows"), list) and "verdict" in obj:
             return obj
-    print(f"no verification-receipt in {path}", file=sys.stderr)
+    print(f"no prove JSON report in {path}", file=sys.stderr)
     print(text, file=sys.stderr)
     raise SystemExit(1)
 
@@ -306,12 +306,12 @@ if all(row.get("status") == "discharged" for row in bad_macro_matches):
         print(json.dumps(row, indent=2), file=sys.stderr)
     raise SystemExit(1)
 
-print(f"GOOD .verify.json ok={good.get('ok')} totalClaims={good.get('totalClaims')} eufRows={len(good_rows)}")
+print(f"GOOD .verify.json verdict={good.get('verdict')} byStatus={good.get('byStatus')} eufRows={len(good_rows)}")
 for label, needle in required.items():
     row = next(row for row in good_rows if needle in (row.get("property") or ""))
     print(f"GOOD {label}: {row.get('status')} {row.get('property')}")
 
-print(f"BAD .verify.json ok={bad.get('ok')} totalClaims={bad.get('totalClaims')} eufRows={len(bad_rows)}")
+print(f"BAD .verify.json verdict={bad.get('verdict')} byStatus={bad.get('byStatus')} eufRows={len(bad_rows)}")
 for row in bad_matches:
     print(f"BAD contains twin: {row.get('status')} {row.get('property')} reason={row.get('reason')}")
 for row in bad_macro_matches:

@@ -93,71 +93,30 @@ next((r.get('status') for r in d.get('rows',[]) if 'witness-package' in (r.get('
 ")"
   echo "   witness-package row status: $status"
 
-  # Package CID pinned on the prove witness-package row. The proof can seat
-  # more than one witness-memento (e.g. a #3750 toolchain-plan-self-attestation
-  # next to the cargo-test package). The suite axis is THIS package CID -- not
-  # witnesses[0] (order is not a contract).
-  local package_cid
-  package_cid="$(pyget "$prove_json" "
-next(( (r.get('property') or '').split('witness-package:')[-1]
-       for r in d.get('rows',[])
-       if 'witness-package' in (r.get('property') or '') ), '')
-")"
-
-  echo "-- verify: rust recomputes the witness CID (oracle untrusted) --"
-  local verify_json="$dir/.verify.json"
-  ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json ) > "$verify_json" 2>/dev/null || true
-  local wverdict
-  # Single expression: json_get evals one expr over `d` (no multi-stmt).
-  wverdict="$(pyget "$verify_json" "
-next((w.get('verdict') for w in (d.get('witnessDimension',{}).get('witnesses') or []) if w.get('witnessCid') == '$package_cid'), next((w.get('verdict') for w in (d.get('witnessDimension',{}).get('witnesses') or []) if any(c in (w.get('checks') or []) for c in ('content-address:package','content-address:recompute'))), 'MISSING'))
+  # Step 9: prove decides the witness-package row from the package body the
+  # proof states; a recomputed body carries `resolvedBy` on the row's witness
+  # verification. No kit and no on-disk witness store is consulted.
+  local resolved_by
+  resolved_by="$(pyget "$prove_json" "
+next((((r.get('verification') or {}).get('resolvedBy') or 'MISSING') for r in d.get('rows',[]) if 'witness-package' in (r.get('property','') or '')), 'MISSING')
 " 2>/dev/null || echo PARSE_ERR)"
-  echo "   witness-dimension verdict: $wverdict (package=$package_cid)"
+  echo "   witness package body recomputed by: $resolved_by"
 
   if [ "$expect" = "DISCHARGE" ]; then
-    # The good suite: prove DISCHARGES the witness package; verify RECOMPUTES it.
+    # The good suite: prove DISCHARGES the witness package from its body.
     if [ "$status" != "discharged" ]; then
       echo "FAIL[$suite]: expected the witness-package to DISCHARGE, got status=$status"
       exit 1
     fi
-    if [ "$wverdict" != "verified" ]; then
-      echo "FAIL[$suite]: expected the witness dimension to be VERIFIED (rust recomputed the bundle cid), got $wverdict"
+    if [ "$resolved_by" = "MISSING" ] || [ "$resolved_by" = "PARSE_ERR" ]; then
+      echo "FAIL[$suite]: expected the witness package body in the proof to be recomputed, got $resolved_by"
       exit 1
     fi
-
-    # RECOMPUTE leg: the verify above resolved via the on-disk witness PACKAGE
-    # file (`content-address:package`). The teeth of "verification is
-    # recomputation" live in the OTHER resolve path: with the package GONE, the
-    # kit oracle must RE-RUN the suite, rebuild the bundle, and hand back bytes
-    # that blake3 to the pinned cid (`content-address:recompute`). Delete the
-    # package and re-verify to exercise it -- this is the path an integrator hits
-    # when they ship the .proof WITHOUT the audit package.
-    echo "-- verify (RECOMPUTE): delete the package, re-run -> rebuild the bundle --"
-    rm -rf "$dir/.sugar/witnesses"
-    local recompute_json="$dir/.verify_recompute.json"
-    ( cd "$dir" && PATH="$BIN_DIR:$PATH" "$SUGAR" prove . --json ) > "$recompute_json" 2>/dev/null || true
-    local rverdict rchecks
-    rverdict="$(pyget "$recompute_json" "
-next((w.get('verdict') for w in (d.get('witnessDimension',{}).get('witnesses') or []) if w.get('witnessCid') == '$package_cid'), next((w.get('verdict') for w in (d.get('witnessDimension',{}).get('witnesses') or []) if any('recompute' in str(c) for c in (w.get('checks') or []))), 'MISSING'))
-" 2>/dev/null || echo PARSE_ERR)"
-    rchecks="$(pyget "$recompute_json" "
-','.join((next((w for w in (d.get('witnessDimension',{}).get('witnesses') or []) if w.get('witnessCid') == '$package_cid'), next((w for w in (d.get('witnessDimension',{}).get('witnesses') or []) if any('recompute' in str(c) for c in (w.get('checks') or []))), {}))).get('checks') or [])
-" 2>/dev/null || echo PARSE_ERR)"
-    echo "   recompute verdict: $rverdict  checks: $rchecks"
-    if [ "$rverdict" != "verified" ]; then
-      echo "FAIL[$suite]: with the package deleted, the oracle must RECOMPUTE the bundle and verify, got $rverdict"
-      exit 1
-    fi
-    case "$rchecks" in
-      *content-address:recompute*) : ;;
-      *) echo "FAIL[$suite]: expected resolution via RECOMPUTE (package deleted), but checks=$rchecks -- the package path was not actually bypassed"; exit 1 ;;
-    esac
-    echo "OK[$suite]: passing suite discharges, the witness CID reproduces via the package AND via re-run recompute."
+    echo "OK[$suite]: passing suite discharges from the package body the proof states."
   else
     # The bad suite: prove REFUSES (a failing test refuses the whole package).
-    # (The verify witness axis still VERIFIES the bad bundle -- the run was honest,
-    #  the bundle reproduces; the REFUSAL is the prove custom-evidence axis, which
-    #  is where the all-passed check lives. That asymmetry is the point.)
+    # (The package body still recomputes -- the run was honest; the REFUSAL is
+    #  the all-passed check on that body. That asymmetry is the point.)
     if [ "$status" = "discharged" ]; then
       echo "FAIL[$suite]: a suite with a FAILING test must NOT discharge, but status=discharged"
       exit 1
