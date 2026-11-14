@@ -21,7 +21,7 @@ from sugar_lift_py_tests.effect.name_error_effect import NameErrorEffect
 from sugar_lift_py_tests.floor import ListValue, TermValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebind, ScopeRebinds
 from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import ExitSet, Halted, outcome_to_exitset
 from sugar_lift_py_tests.sugar.dynamic_unpack_assign_sugar import (
     DynamicUnpackAssignSugar,
 )
@@ -64,7 +64,7 @@ class _FloorSugar(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     @classmethod
     def witnesses(cls):

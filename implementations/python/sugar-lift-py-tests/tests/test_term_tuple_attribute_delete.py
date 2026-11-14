@@ -3,7 +3,7 @@ from dataclasses import dataclass
 import pytest
 
 from sugar_lift_py_tests.floor import TermValue, TupleValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete
+from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.delete_effect_sugar import AttributeDeleteEffectSugar
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.source_oracle import workspace_path_source
@@ -32,7 +32,7 @@ class _Receiver(Sugar):
 
     def desugar(self, ctx=None):
         del ctx
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
 
 @pytest.mark.parametrize(
@@ -44,10 +44,11 @@ def test_term_tuple_attribute_delete_has_exact_owner_occurrence(
 ):
     site = _site(tmp_path)
     outcome = AttributeDeleteEffectSugar(_Receiver(receiver), "attr", site).desugar()
-    assert isinstance(outcome, Incomplete)
-    assert outcome.effect.exception_name == "AttributeError"
-    assert outcome.effect.producer_node_owner == owner
-    assert outcome.effect.occurrence_id == str(site)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert halt.effect.exception_name == "AttributeError"
+    assert halt.effect.producer_node_owner == owner
+    assert halt.effect.occurrence_id == str(site)
 
 
 @pytest.mark.parametrize("receiver", (TermValue(1), TupleValue(())))
@@ -55,4 +56,4 @@ def test_term_tuple_attribute_delete_cannot_fabricate_completion(tmp_path, recei
     outcome = AttributeDeleteEffectSugar(
         _Receiver(receiver), "attr", _site(tmp_path)
     ).desugar()
-    assert not isinstance(outcome, Complete)
+    assert outcome.completed_value() is None

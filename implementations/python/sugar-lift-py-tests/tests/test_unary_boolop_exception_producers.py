@@ -21,9 +21,8 @@ from sugar_lift_py_tests.effect.expectation_not_met_effect import (
 )
 from sugar_lift_py_tests.floor import SymbolicValue, TermValue
 from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.ir import atomic, make_var, not_
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 from sugar_lift_py_tests.sugar.bool_op_sugar import BoolOpSugar
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
@@ -145,29 +144,30 @@ def test_undecided_unary_operand_is_named_refusal(method: str, operator: str) ->
 
 def test_unary_invert_concrete_integer_truthful_twin_folds() -> None:
     outcome = TermValue(3).bitwise_invert(_Site())
-    assert outcome == Complete(TermValue(-4))
+    assert outcome == ExitSet.completed(TermValue(-4))
 
 
 def test_unary_invert_concrete_bool_truthful_twin_folds() -> None:
     outcome = TermValue(True).bitwise_invert(_Site())
-    assert outcome == Complete(TermValue(-2))
+    assert outcome == ExitSet.completed(TermValue(-2))
 
 
 def test_unary_invert_concrete_float_lying_twin_has_typed_effect() -> None:
     outcome = TermValue(3.5).bitwise_invert(_Site())
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 def test_unary_minus_concrete_integer_truthful_twin_folds() -> None:
     outcome = TermValue(5).unary_minus(_Site())
-    assert outcome == Complete(TermValue(-5))
+    assert outcome == ExitSet.completed(TermValue(-5))
 
 
 def test_unary_plus_concrete_integer_truthful_twin_folds() -> None:
     outcome = TermValue(5).unary_plus(_Site())
-    assert outcome == Complete(TermValue(5))
+    assert outcome == ExitSet.completed(TermValue(5))
 
 
 def test_undecided_not_operand_refuses_invented_truth() -> None:
@@ -190,9 +190,7 @@ class _EffectSugar:
         self.effect = effect
 
     def desugar(self, ctx=None):
-        from sugar_lift_py_tests.outcome import Incomplete
-
-        return Incomplete(self.effect)
+        return ExitSet.halted(self.effect)
 
 
 def _boolop(kind: str, left, right, *, temporal=None):
@@ -207,8 +205,8 @@ def test_and_false_short_circuits_rhs_effect_truthful_twin() -> None:
         FalseBoolLiteralSugar(_Site()),
         _EffectSugar(ExpectationNotMetEffect("rhs")),
     )
-    assert result == Complete(result.value)
-    assert isinstance(result.value, FalseBoolLiteralSugar)
+    assert result == ExitSet.completed(result.completed_value())
+    assert isinstance(result.completed_value(), FalseBoolLiteralSugar)
 
 
 def test_or_true_short_circuits_rhs_effect_truthful_twin() -> None:
@@ -217,8 +215,8 @@ def test_or_true_short_circuits_rhs_effect_truthful_twin() -> None:
         TrueBoolLiteralSugar(_Site()),
         _EffectSugar(ExpectationNotMetEffect("rhs")),
     )
-    assert result == Complete(result.value)
-    assert isinstance(result.value, TrueBoolLiteralSugar)
+    assert result == ExitSet.completed(result.completed_value())
+    assert isinstance(result.completed_value(), TrueBoolLiteralSugar)
 
 
 @pytest.mark.parametrize(
@@ -250,7 +248,7 @@ def test_predicate_left_makes_rhs_effect_conditional(kind, rhs_guard) -> None:
 
         def desugar(self, ctx=None):
             del ctx
-            return Complete(PredicateValue(positive, "left"))
+            return ExitSet.completed(PredicateValue(positive, "left"))
 
     outcome = _boolop(
         kind,

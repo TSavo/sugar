@@ -141,11 +141,8 @@ def test_symbolic_left_operand_is_two_faced(method: str, operator: str) -> None:
 
 def test_ground_total_addition_never_acquires_an_exceptional_edge() -> None:
     """Lying twin: source-decided integer addition remains one completion."""
-    from sugar_lift_py_tests.outcome import Complete
-
     outcome = TermValue(1).add(TermValue(2), SITE, None)
-    assert isinstance(outcome, Complete)
-    assert outcome.value == TermValue(3)
+    assert outcome.completed_value() == TermValue(3)
 
 
 def test_swapped_symbolic_operands_are_each_their_own_two_faces() -> None:
@@ -282,11 +279,10 @@ class _FragmentSite:
 
 def _assert_ground_type_error(outcome) -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
-    from sugar_lift_py_tests.outcome import Incomplete
-
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "TypeError"
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "TypeError"
 
 
 @pytest.mark.parametrize(

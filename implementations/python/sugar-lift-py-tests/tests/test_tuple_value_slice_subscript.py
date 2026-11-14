@@ -10,8 +10,6 @@ from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import TermValue, TupleValue
 from sugar_lift_py_tests.effect import RaiseEffect
-from sugar_lift_py_tests.outcome import Incomplete
-from sugar_lift_py_tests.outcome import Complete
 from sugar_source_tree.nodes import Subscript
 from sugar_source_tree.panic import SugarNotWritten
 from sugar_source_tree.tree import SourceFile
@@ -33,9 +31,9 @@ def _desugar(node):
 
 
 def _values(outcome):
-    assert isinstance(outcome, Complete), outcome
-    assert isinstance(outcome.value, TupleValue)
-    return tuple(element.value for element in outcome.value.elements)
+    value = outcome.completed_value()
+    assert isinstance(value, TupleValue), outcome
+    return tuple(element.value for element in value.elements)
 
 
 def test_source_tuple_pandas_stride_slices_preserve_order_and_identity(
@@ -78,11 +76,12 @@ def test_source_tuple_zero_slice_step_is_exact_value_error(
 
     outcome = sugar.desugar(ReduceContext.root(owner="tuple-value-slice"))
 
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, RaiseEffect)
-    assert outcome.effect.exception_name == "ValueError"
-    assert outcome.effect.producer_node_owner == "TupleValue.subscript"
-    assert outcome.effect.occurrence_id == str(site)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, RaiseEffect)
+    assert halt.effect.exception_name == "ValueError"
+    assert halt.effect.producer_node_owner == "TupleValue.subscript"
+    assert halt.effect.occurrence_id == str(site)
 
 
 def test_source_tuple_symbolic_slice_bound_stays_typed_loud(

@@ -36,7 +36,6 @@ from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
 from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.ir import atomic, make_var
 from sugar_lift_py_tests.operations import SequenceProjectionOperation
-from sugar_lift_py_tests.outcome import Complete
 
 GUARD = atomic("py.truthy", [make_var("c")])
 
@@ -63,8 +62,8 @@ def test_guarded_list_face_binds_its_authenticated_members() -> None:
     outcome = _operation("a", "b").submit(
         _guarded(ListValue((TermValue(1), TermValue(2)))), None
     )
-    assert isinstance(outcome, Complete), outcome
-    assert outcome.value == ScopeRebinds(
+    assert outcome.completed_value() is not None, outcome
+    assert outcome.completed_value() == ScopeRebinds(
         (
             ("a", GuardedValue(GUARD, TermValue(1), TermValue(3))),
             ("b", GuardedValue(GUARD, TermValue(2), TermValue(4))),
@@ -95,8 +94,10 @@ def test_direct_submit_binds_from_the_value_s_own_members() -> None:
     answers from the members it holds and does not consult anything else.
     """
     outcome = _operation("a", "b").submit(ListValue((TermValue(7), TermValue(8))), None)
-    assert isinstance(outcome, Complete), outcome
-    assert outcome.value == ScopeRebinds((("a", TermValue(7)), ("b", TermValue(8))))
+    assert outcome.completed_value() is not None, outcome
+    assert outcome.completed_value() == ScopeRebinds(
+        (("a", TermValue(7)), ("b", TermValue(8)))
+    )
 
 
 # ---------------------------------------------------------------------------

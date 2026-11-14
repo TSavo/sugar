@@ -34,7 +34,6 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.floor.warning_observation_value import WarningObservationValue
 from sugar_lift_py_tests.ir import PrimitiveSort, ctor, make_var, str_const
-from sugar_lift_py_tests.outcome import Complete
 from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted, true_guard
 from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -110,8 +109,8 @@ def _boundary(*entries, expected=None):
         )
     )
     return WithEffectBoundarySugar(
-        manager=_Fixed(Complete(manager_value)),
-        body=(_Fixed(Complete(BlockValue(tuple(entries)))),),
+        manager=_Fixed(ExitSet.completed(manager_value)),
+        body=(_Fixed(ExitSet.completed(BlockValue(tuple(entries)))),),
         semantics=SEMANTICS,
         contract_ref=SimpleNamespace(import_signature=signature),
         context_manager_edge=None,
@@ -240,7 +239,7 @@ def _no_warning_from_exitset(body_es):
         )
     )
     return WithEffectBoundarySugar(
-        manager=_Fixed(Complete(manager_value)),
+        manager=_Fixed(ExitSet.completed(manager_value)),
         body=(_Fixed(body_es),),
         semantics=SEMANTICS,
         contract_ref=SimpleNamespace(import_signature=signature),
@@ -413,7 +412,7 @@ def _pattern_boundary(*, semantics, expected, pattern, body):
         )
     )
     return WithEffectBoundarySugar(
-        manager=_Fixed(Complete(manager_value)),
+        manager=_Fixed(ExitSet.completed(manager_value)),
         body=body,
         semantics=semantics,
         contract_ref=SimpleNamespace(import_signature=signature),

@@ -41,9 +41,9 @@ import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.floor import ListValue, TermValue, TupleValue
-from sugar_lift_py_tests.outcome import Complete, Incomplete
 from sugar_lift_py_tests.outcome.exit_set import (
     Completed,
+    ExitSet,
     Halted,
     outcome_to_exitset,
 )
@@ -127,7 +127,7 @@ class _ObservedSugar(Sugar):
     def desugar(self, ctx=None):
         del ctx
         self.log.append(self.label)
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
 
 def _site(tmp_path: Path):
@@ -286,7 +286,7 @@ def test_formal_receiver_stays_undischarged_not_completed(tmp_path: Path) -> Non
     outcome = sugar.desugar(None)
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "setitem"
-    assert not isinstance(outcome, Complete)
+    assert not (isinstance(outcome, ExitSet) and outcome.completed_value() is not None)
     # Missing actuals stay undischarged.
     with pytest.raises(SugarNotWritten, match="caller actual absent"):
         outcome.discharge({})
@@ -312,9 +312,10 @@ def test_unpack_store_leaf_evaluates_value_receiver_key_once_in_python_order(
         bindings=(), stores=(store,), site=_site(tmp_path)
     ).desugar()
     assert log == ["value", "receiver", "key"]
-    assert isinstance(outcome, Complete)
+    value = outcome.completed_value()
+    assert value is not None
     # reduce_body wraps store contributions in a fall-through BlockValue.
-    assert ListValue((TermValue(7),)) in outcome.value.statements
+    assert ListValue((TermValue(7),)) in value.statements
 
 
 def test_ground_name_then_list_store_completes_with_name_bound(tmp_path: Path) -> None:
@@ -408,8 +409,6 @@ def test_starred_opaque_unpack_stays_loud_not_exact_arity_completion(
 ) -> None:
     """Face (d): starred pattern retains typed unpack; never exact-arity completion."""
     from sugar_lift_py_tests.effect import SequenceUnpackRuntimeEffect
-    from sugar_lift_py_tests.outcome import Complete, Incomplete
-
     path = tmp_path / "star.py"
     path.write_text("def f(xs):\n    a, *rest = xs\n    return a\n")
     fn = next(
@@ -419,11 +418,14 @@ def test_starred_opaque_unpack_stays_loud_not_exact_arity_completion(
         ).functions()
     )
     outcome = fn.sugar().desugar(None)
-    assert isinstance(outcome, Incomplete)
-    assert isinstance(outcome.effect, SequenceUnpackRuntimeEffect)
-    assert not isinstance(outcome, Complete)
+    assert outcome.halts() == outcome.exits
+    (halt,) = outcome.halts()
+    assert isinstance(halt.effect, SequenceUnpackRuntimeEffect)
+    assert outcome.completed_value() is None
     with pytest.raises(AssertionError):
-        assert isinstance(outcome, Complete), "opaque starred unpack completed"
+        assert (
+            outcome.completed_value() is not None
+        ), "opaque starred unpack completed"
 
 
 # ---------------------------------------------------------------------------
@@ -464,10 +466,10 @@ def test_lying_completed_face_for_undecided_receiver_is_not_the_law(
     outcome = sugar.desugar(None)
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "setitem"
-    # A lying implementation would return Complete(...). Discriminate: that is
-    # not what construction desugars to today, and must not be asserted green.
+    # A lying implementation would return a sole completion. Discriminate: that
+    # is not what construction desugars to today, and must not be asserted green.
     with pytest.raises(AssertionError):
-        assert isinstance(outcome, Complete)
+        assert isinstance(outcome, ExitSet) and outcome.completed_value() is not None
 
 
 def test_lying_boundary_exception_type_is_not_store_origin(tmp_path: Path) -> None:

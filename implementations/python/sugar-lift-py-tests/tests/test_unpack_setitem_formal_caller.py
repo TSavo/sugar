@@ -48,7 +48,7 @@ from sugar_lift_py_tests.caller_parameter_contract import (
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import ListValue, ReturnValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
-from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import outcome_to_exitset
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_source_tree.nodes import Call, FunctionDef
@@ -138,7 +138,7 @@ def test_helper_alone_is_not_a_completed_face_discrimination() -> None:
     """Bite: undischarged formal unpack must not look like a Completed body."""
     _, pending = _helper()
     with pytest.raises(AssertionError):
-        assert isinstance(pending, Complete)
+        assert isinstance(pending, ExitSet) and pending.completed_value() is not None
     with pytest.raises(AssertionError):
         assert isinstance(pending, Completed)
 
