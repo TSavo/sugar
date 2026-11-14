@@ -13792,19 +13792,11 @@ class Call(Expression):
             for kw in self.keywords
         )
         source_call_frame = None
-        source_call_resolution = None
         recursion_seat = None
 
-        if (
-            isinstance(context, TreeConstructionContextV1)
-            and context.source_call_frames
-        ):
+        if isinstance(context, TreeConstructionContextV1):
             assert coordinate is not None
             source_call_frame = context.source_call_frames.get(coordinate)
-            source_call_resolution = context.source_call_resolutions.get(coordinate)
-        elif isinstance(context, TreeConstructionContextV1):
-            assert coordinate is not None
-            source_call_resolution = context.source_call_resolutions.get(coordinate)
         # Applicability first, relation second.  A non-lexical call is lawfully
         # not enrolled; a stranded enrolled row refuses instead of quietly
         # losing the source frame (#7348 caller 4).
@@ -13845,43 +13837,6 @@ class Call(Expression):
                         f"call-graph-cycle:{cycle.definition.name}"
                         f"@{cycle.definition.line_col_span().start_line}"
                     )
-        if source_call_resolution is not None:
-            from sugar_lift_py_tests.source_call_resolution import (
-                SourceCallPreconstructionGapV1,
-                SourceCallPreconstructionRefV1,
-            )
-
-            if isinstance(source_call_resolution, SourceCallPreconstructionGapV1):
-                return self._not_bridged_call_site(
-                    args=tuple(a.sugar() for a in self.args),
-                    keywords=keyword_sugars,
-                    gap=f"{source_call_resolution.kind}:{source_call_resolution.detail}",
-                    language_callee=language_callee,
-                )
-            if not isinstance(source_call_resolution, SourceCallPreconstructionRefV1):
-                from sugar_source_tree.panic import BackendDefect
-
-                raise BackendDefect(
-                    blame=self.fragment,
-                    owner="Call._construct_sugar",
-                    observed=type(source_call_resolution).__name__,
-                    requested="closed source-call preconstruction result",
-                    fix="emit one typed source-call ref or gap at the exact use site",
-                )
-            if lexical_row is None and (
-                source_call_frame is None
-                or source_call_frame.frame_cid
-                != source_call_resolution.source_call_frame_cid
-            ):
-                from sugar_source_tree.panic import BackendDefect
-
-                raise BackendDefect(
-                    blame=self.fragment,
-                    owner="Call._construct_sugar",
-                    observed="source-call ref/frame mismatch",
-                    requested="byte-identical prebound source frame CID",
-                    fix="re-run authenticated source-call preconstruction",
-                )
         if source_call_frame is not None:
             from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
             from sugar_lift_py_tests.sugar.call_site_sugar import (
@@ -13895,42 +13850,44 @@ class Call(Expression):
                     "spread keyword requires typed variadic projection"
                 )
             bind_args = self.args
-            if source_call_resolution is None:
-                frame_owner = getattr(source_call_frame, "owner", None)
-                class_owner = (
-                    frame_owner.unit.lexical_class_owner_for(frame_owner)
-                    if isinstance(frame_owner, FunctionDef)
-                    else None
-                )
-                if (
-                    isinstance(self.func, Attribute)
-                    and class_owner is not None
-                    and class_owner._method_descriptor_kind(frame_owner)
-                    == "classmethod"
-                    and getattr(source_call_frame, "bound_receiver_class", None)
-                    is None
-                ):
-                    # ExceptionInfo.for_later() supplies the class as cls.
-                    bind_args = (self.func.value,) + tuple(self.args)
-            bound_frame = (
-                source_call_frame
-                if source_call_resolution is not None
-                else source_call_frame.bind_node_actuals(
-                    bind_args,
-                    tuple(
-                        (keyword.arg, keyword.value)
-                        for keyword in self.keywords
-                        if keyword.arg is not None
-                    ),
-                )
+            frame_owner = getattr(source_call_frame, "owner", None)
+            class_owner = (
+                frame_owner.unit.lexical_class_owner_for(frame_owner)
+                if isinstance(frame_owner, FunctionDef)
+                else None
+            )
+            if (
+                isinstance(self.func, Attribute)
+                and class_owner is not None
+                and class_owner._method_descriptor_kind(frame_owner)
+                == "classmethod"
+                and getattr(source_call_frame, "bound_receiver_class", None)
+                is None
+            ):
+                # ExceptionInfo.for_later() supplies the class as cls.
+                bind_args = (self.func.value,) + tuple(self.args)
+            bound_frame = source_call_frame.bind_node_actuals(
+                bind_args,
+                tuple(
+                    (keyword.arg, keyword.value)
+                    for keyword in self.keywords
+                    if keyword.arg is not None
+                ),
             )
             projected_definition = self._project_call_definition_occurrence(
                 bound_frame.owner,
                 coordinate="CallSiteSugar.expected_definition_ref",
             )
             bound_frame = replace(bound_frame, owner=projected_definition)
+            # The call is spelled by its callee, as every other call is; the
+            # frame rides beside it.  It never mints a name of its own.
             return CallSiteSugar(
-                target_name=f"python:resolved-source-call:{bound_frame.frame_cid}",
+                target_name=(
+                    self.func.id
+                    if isinstance(self.func, Name)
+                    else self._spread_callee_name(self.func)
+                ),
+                reference_symbol=self._import_reference_callee(),
                 args=tuple(a.sugar() for a in bind_args),
                 site=self.fragment,
                 call_occurrence=coordinate,
