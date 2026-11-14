@@ -3343,6 +3343,27 @@ def _holds_evaluation(statements) -> bool:
     )
 
 
+def _arm_walruses(arm):
+    """The keyed walruses (plain name target, ``evaluation`` minted) a
+    conditional expression's arm runs when it runs: every one under ``arm``
+    except those in a lambda or a generator expression, which run later if
+    at all."""
+    found = []
+    stack = [arm]
+    while stack:
+        node = stack.pop()
+        if node.kind in ("Lambda", "GeneratorExp"):
+            continue
+        if (
+            node.kind == "NamedExpr"
+            and isinstance(node.target, Name)
+            and isinstance(getattr(node, "evaluation", None), str)
+        ):
+            found.append(node)
+        stack.extend(child for _field, _index, child in reversed(node.children()))
+    return found
+
+
 def _evaluation_ref(
     owner,
     span,
@@ -14006,8 +14027,55 @@ class IfExp(Expression):
     _child_fields = ("body", "test", "orelse")
 
     def substitute(self, scope):
-        """Binds nothing: recurse into children and reassemble."""
-        return self._substitute_children(scope)
+        """Binds nothing: recurse into children and reassemble.
+
+        A walrus in an arm (``a if c else (x := 5)``) runs on its arm only,
+        and a later read of ``x`` is a reference to its key.  On the other arm
+        ``x`` keeps the value it had before the expression, so for each such
+        walrus whose name is bound here the expression carries the read of
+        that name (``walrus_priors``, keyed by ``walrus_prior_keys``); the arm
+        the walrus did not run on holds it under the walrus's key
+        (``IfExpSugar._holding``).  A walrus in a lambda or a generator
+        expression inside an arm does not run with the arm and is not
+        listed."""
+        rewritten = self._substitute_children(scope)
+        keys = []
+        priors = []
+        for arm in (rewritten.body, rewritten.orelse):
+            for walrus in _arm_walruses(arm):
+                if walrus.target.id not in scope:
+                    continue
+                prior = walrus.target.substitute(scope)
+                if prior is walrus.target:
+                    continue
+                keys.append((walrus.evaluation, walrus.target.id))
+                priors.append(prior)
+        if not keys:
+            return rewritten
+        from .backend import Children, Leaf, materialize
+        from .shadow import OccurrenceShadowNode, ShadowNode, occurrence_tags_of
+
+        desc = rewritten.ref.describe()
+        span = desc.raw_span or rewritten.span
+        # A re-substitution replaces the priors it was given.
+        slots = (
+            *(
+                slot
+                for slot in desc.slots
+                if slot[0] not in ("walrus_priors", "walrus_prior_keys")
+            ),
+            ("walrus_priors", Children(tuple(prior.ref for prior in priors))),
+            ("walrus_prior_keys", Leaf(tuple(keys))),
+        )
+        tags = occurrence_tags_of(rewritten)
+        shadow = (
+            OccurrenceShadowNode(desc.kind, span, slots, tags)
+            if tags
+            else ShadowNode(desc.kind, span, slots)
+        )
+        return materialize(
+            rewritten.unit, shadow, rewritten.reporter, rewritten.control_context
+        )
 
     def _construct_sugar(self):
         """`<body> if <test> else <orelse>` constructs IfExpSugar -- the
@@ -14063,6 +14131,13 @@ class IfExp(Expression):
                 BranchResultSlot(self.test.slot_id)
                 if isinstance(self.test, BranchResultRef)
                 else branch_result_slot(self.test)
+            ),
+            walrus_priors=tuple(
+                (evaluation, name, prior.sugar())
+                for (evaluation, name), prior in zip(
+                    getattr(self, "walrus_prior_keys", ()),
+                    getattr(self, "walrus_priors", ()),
+                )
             ),
         )
 

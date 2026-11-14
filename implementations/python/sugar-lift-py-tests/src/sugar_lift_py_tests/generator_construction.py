@@ -691,6 +691,15 @@ def _generator_value_testimony(value: object, *, owner: str) -> dict:
             "fragmentCid": value.fragment_cid,
             "value": _generator_value_testimony(value.value, owner=owner),
         }
+    if isinstance(value, GeneratorWalrusBindingV1):
+        return {
+            "kind": "walrus-binding",
+            "name": value.name,
+            "evaluation": value.evaluation,
+            "value": _generator_value_testimony(
+                value.bind.assigned_value, owner=owner
+            ),
+        }
     if isinstance(value, GeneratorLoopBindingV1):
         payload = {
             "kind": "loop-binding",
@@ -975,6 +984,30 @@ class GeneratorAssignBindingV1:
     # completed value of: a later step whose substituted sugar inlines that
     # RHS answers with this value instead of evaluating the call again.
     rhs_key: object = field(default=None, compare=False, repr=False)
+
+
+@dataclass(frozen=True)
+class GeneratorWalrusBindingV1:
+    """One walrus bind a yielded value carried out of its step.
+
+    ``yield (x := v)``: the walrus completes inside the yield's operand and
+    its bind rides the value (``NamedExpressionValue``).  The step peels it
+    (``peel_walrus_binds``) and records it here, in evaluation order among
+    the frame's other writes; ``_guard_evaluation_context`` applies it with
+    ``NamedExpressionValue.bind``, the one place a walrus writes the temporal,
+    so a later step's read of ``x`` (an ``EvaluationRef`` to the walrus's key)
+    resolves to ``v``.
+    """
+
+    bind: object
+
+    @property
+    def name(self) -> str:
+        return self.bind.name
+
+    @property
+    def evaluation(self) -> str | None:
+        return self.bind.evaluation
 
 
 @dataclass(frozen=True)
@@ -1727,7 +1760,27 @@ class GeneratorConstructionV1:
         )
 
         def transition_yield(resolved_value):
-            return YieldEffect(resolved_value, resume_coordinate, machine)
+            # The yielded value is an operand: a walrus in it (``yield (x :=
+            # v)``) ran before the suspension.  Its binds come off the value
+            # (the one operand door's peel), the yield hands out the value
+            # they present, and the suspended frame records them, so a step
+            # after the resume reads ``x`` from its own state.  Each arm of a
+            # split value carries only its own binds.
+            from sugar_lift_py_tests.floor.named_expression_value import (
+                peel_walrus_binds,
+            )
+
+            binds, presented = peel_walrus_binds(resolved_value)
+            if not binds:
+                return YieldEffect(resolved_value, resume_coordinate, machine)
+            bound = replace(
+                machine,
+                binding_state=(
+                    *machine.binding_state,
+                    *(GeneratorWalrusBindingV1(bind) for bind in binds),
+                ),
+            )
+            return YieldEffect(presented, resume_coordinate, bound)
 
         def continue_yield(resolved_value):
             from sugar_source_tree.panic import SugarNotWritten
@@ -2523,11 +2576,6 @@ class GeneratorConstructionV1:
 
         for binding in self.formal_floor_bindings:
             temporal = temporal.bind_value(binding.coordinate_cid, binding.floor_value)
-        for item in self.binding_state:
-            if isinstance(item, GeneratorAssignBindingV1) and item.value is not None:
-                temporal = temporal.bind_value(item.name, item.value)
-            if isinstance(item, GeneratorLoopBindingV1):
-                temporal = temporal.bind_value(item.coordinate.cid, item.value)
 
         if base is None:
             ctx = ReduceContext.root(
@@ -2535,6 +2583,19 @@ class GeneratorConstructionV1:
             ).with_temporal(temporal)
         else:
             ctx = base.with_temporal(temporal)
+        # The frame's writes, in the order the steps made them.  A walrus a
+        # yielded value carried writes through ``NamedExpressionValue.bind``
+        # (its name and its evaluation key), the same write a statement
+        # applies.
+        for item in self.binding_state:
+            if isinstance(item, GeneratorAssignBindingV1) and item.value is not None:
+                ctx = ctx.with_temporal(ctx.temporal.bind_value(item.name, item.value))
+            if isinstance(item, GeneratorLoopBindingV1):
+                ctx = ctx.with_temporal(
+                    ctx.temporal.bind_value(item.coordinate.cid, item.value)
+                )
+            if isinstance(item, GeneratorWalrusBindingV1):
+                ctx = item.bind.bind(ctx)
         # An assignment step evaluated its RHS once, at the step (#7600): a
         # later step's substituted read of that RHS answers with the value the
         # step completed with, never a second evaluation.

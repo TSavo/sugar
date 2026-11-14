@@ -36,6 +36,11 @@ class IfExpSugar(ConstructedTermSugar):
     orelse: ConstructedTermSugar  # the else-value
     site: object = dataclass_field(compare=False, default=None)
     branch_slot: object = None
+    # ``(evaluation, name, prior)`` for each walrus in an arm whose name was
+    # bound before the expression (``IfExp.substitute``): ``prior`` is the
+    # read of that name there.  An arm the walrus did not run on holds the
+    # name at that value under the walrus's key (``_holding``).
+    walrus_priors: tuple = dataclass_field(compare=False, default=())
 
     def __post_init__(self) -> None:
         # Defense in depth: construction door is IfExp._construct_sugar, which
@@ -97,7 +102,8 @@ class IfExpSugar(ConstructedTermSugar):
         # `and_then` rather than reading `cond.value`.  The test is an operand:
         # a walrus in it (`a if (n := c) else b`) runs before either arm, so
         # through the one operand door its bind rides both arms' values.  An
-        # arm's own walrus rides that arm's value only.
+        # arm's own walrus rides that arm's value only; the other arm holds
+        # the name's earlier value under that walrus's key (``_holding``).
         from sugar_lift_py_tests.floor.named_expression_value import consume_operands
 
         return self.test.desugar(ctx).and_then(
@@ -129,13 +135,13 @@ class IfExpSugar(ConstructedTermSugar):
         # TupleValue rather than a GuardedValue/conditional term that later
         # tuple(genexp) cannot floor.
         if formula == true_guard():
-            return self.body.desugar(ctx)
+            return self._holding(self.body.desugar(ctx), ctx)
         if formula == false_guard():
-            return self.orelse.desugar(ctx)
+            return self._holding(self.orelse.desugar(ctx), ctx)
         not_formula = not_(formula)
 
-        then_out = self.body.desugar(ctx)
-        else_out = self.orelse.desugar(ctx)
+        then_out = self._holding(self.body.desugar(ctx), ctx)
+        else_out = self._holding(self.orelse.desugar(ctx), ctx)
 
         # A deferred native-operation arm is not an ExitSet. Forcing it through
         # outcome_to_exitset panics; BoolOp already keeps that carrier beside
@@ -192,9 +198,22 @@ class IfExpSugar(ConstructedTermSugar):
         # -- so it is kept for the case that can carry it, never widened away.
         # Only plain arms fuse: an arm that owes something keeps its own arm
         # below, so its debt is carried.
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            NamedExpressionValue,
+        )
+        from sugar_lift_py_tests.outcome import Completed
+
         then_value = plain_completed_value(then_out)
         else_value = plain_completed_value(else_out)
-        if then_value is not None and else_value is not None:
+        # An arm carrying a walrus bind keeps its own arm below: fused, the
+        # bind would sit inside the conditional value, where no statement
+        # applies it, and each arm's bind belongs to that arm alone.
+        if (
+            then_value is not None
+            and else_value is not None
+            and not isinstance(then_value, NamedExpressionValue)
+            and not isinstance(else_value, NamedExpressionValue)
+        ):
             return ExitSet.completed(GuardedValue(formula, then_value, else_value))
 
         # AN ARM HALTS OR PARTITIONS. `(a if c else raise)`, `(f() if c else b)`
@@ -249,4 +268,79 @@ class IfExpSugar(ConstructedTermSugar):
         # (normalize may have merged the faces); anything still partitioned
         # stays partitioned. Either way a caller threads it with `and_then`,
         # which is how every partition in the lift is consumed.
+        #
+        # A completed arm that carries a walrus bind stays its own arm, one per
+        # branch, guarded by the test: factoring would fold the arms' values,
+        # and the binds with them, into one guarded value.  The statement
+        # applies each arm's binds on that arm (``consume_operands``).
+        if any(
+            isinstance(arm, Completed) and isinstance(arm.value, NamedExpressionValue)
+            for arm in exits.exits
+        ):
+            return exits
         return exits.factor_completed()
+
+    def _holding(self, outcome, ctx) -> Outcome:
+        """``outcome`` (one arm's), each completed value also carrying, for
+        every walrus in either arm that did not bind on it, the name's value
+        from before the expression under that walrus's key (a held bind).
+
+        Python leaves ``x`` as it was on the arm where ``(x := 5)`` did not
+        run; a later read of ``x`` is a reference to the walrus's key, so on
+        that arm the key holds the earlier value.  A held bind after an
+        earlier bind of the same name in the same evaluation takes that
+        bind's value instead (``peel_walrus_binds``).  A walrus whose name
+        was not bound before the expression is held nowhere: the read there
+        is refused by name, as Python raises.  Without a walrus in the arms
+        this is ``outcome`` itself."""
+        if not self.walrus_priors:
+            return outcome
+        from sugar_lift_py_tests.caller_parameter_contract import (
+            NativeOperationExitCarrierV1,
+        )
+
+        if isinstance(outcome, NativeOperationExitCarrierV1):
+            # A deferred arm is answered on its own face (``short_circuit``);
+            # nothing is held there, so a read after it is refused by name.
+            return outcome
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            NamedExpressionValue,
+            carry_walrus_binds,
+            peel_walrus_binds,
+        )
+        from sugar_lift_py_tests.outcome import outcome_to_exitset
+
+        priors: dict = {}
+
+        def prior_value(evaluation, prior):
+            # The read of the name before the expression, once per arm.
+            if evaluation not in priors:
+                read = outcome_to_exitset(prior.desugar(ctx))
+                value = read.completed_value()
+                priors[evaluation] = (
+                    None
+                    if value is None or read.owed_items()
+                    else peel_walrus_binds(value)[1]
+                )
+            return priors[evaluation]
+
+        def hold(value):
+            binds, presented = peel_walrus_binds(value)
+            ran = {bind.evaluation for bind in binds}
+            held = []
+            for evaluation, name, prior in self.walrus_priors:
+                if evaluation in ran:
+                    continue
+                earlier = prior_value(evaluation, prior)
+                if earlier is None:
+                    continue
+                held.append(
+                    NamedExpressionValue(
+                        name, earlier, evaluation=evaluation, held=True
+                    )
+                )
+            if not held:
+                return ExitSet.completed(value)
+            return ExitSet.completed(carry_walrus_binds((*binds, *held), presented))
+
+        return outcome_to_exitset(outcome).and_then(hold)
