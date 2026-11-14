@@ -40,13 +40,10 @@ def locals_snapshot_shape(unit, line: int, col: int):
         if not isinstance(function, (FunctionDef, AsyncFunctionDef)):
             continue
         for statement in function.body:
-            path = _path_to_call(statement, line, col)
+            path = _path_to_call(unit, statement, line, col)
             if path is None:
                 continue
             if not _same_frame(path):
-                return None
-            call = path[-1]
-            if unit.builtin_reference_at("locals", call.func.line_col_span()) is None:
                 return None
             parameters = _parameters(function)
             return LocalsSnapshotShapeV1(
@@ -57,22 +54,20 @@ def locals_snapshot_shape(unit, line: int, col: int):
     return None
 
 
-def _path_to_call(root, line, col):
-    """Ancestors from ``root`` down to the bare ``locals()`` call at the site."""
-    from .nodes import Call, Name
+def _path_to_call(unit, root, line, col):
+    """Ancestors from ``root`` down to the bare ``locals()`` call at the site:
+    the call whose callee the unit binds to ``builtins.locals``
+    (``SourceUnit.language_callee_of``), never the spelling."""
+    from .nodes import Call, LanguageCallee
 
     stack = [(root, (root,))]
     while stack:
         node, path = stack.pop()
-        if (
-            isinstance(node, Call)
-            and isinstance(node.func, Name)
-            and node.func.id == "locals"
-            and not node.args
-            and not node.keywords
-        ):
+        if isinstance(node, Call) and not node.args and not node.keywords:
             span = node.line_col_span()
-            if (span.start_line, span.start_col) == (line, col):
+            if (span.start_line, span.start_col) == (line, col) and (
+                unit.language_callee_of(node.func) is LanguageCallee.BUILTIN_LOCALS
+            ):
                 return path
         for _name, _index, child in node.children():
             stack.append((child, (*path, child)))

@@ -594,10 +594,12 @@ class CallSiteValue(FloorValue):
         else-arm asks ``len(e) == 1`` of this callsite and panics
         ComparisonOpSugar.Eq (plain ``call:len`` is not a decided int). The
         one-arg builtin never fails and never returns a non-type, so
-        ``isinstance(type(x), type)`` is True. Other callsites keep the
-        reserved tester atom.
+        ``isinstance(type(x), type)`` is True. The builtin is known by its
+        binding, never the spelling: only the call ``bind_call`` cited a
+        ``python_type_coordinate`` for (``CallSiteSugar._applied_builtin_type_of``)
+        is one.  Other callsites keep the reserved tester atom.
         """
-        if self.target_name != "type":
+        if self.python_type_coordinate is None:
             return super().python_isinstance(type_name, type_term, site)
         from sugar_lift_py_tests.floor.class_value import _CLASS_OBJECT_DISJOINT_TYPES
         from sugar_lift_py_tests.floor.python_type_coordinate import (
@@ -623,8 +625,6 @@ class CallSiteValue(FloorValue):
 
     def test_python_type(self, value, site):
         type_coordinate = self.python_type_coordinate
-        if type_coordinate is None and self.target_name == "type":
-            type_coordinate = self.term
         if type_coordinate is None:
             from sugar_lift_py_tests.effect import (
                 CallResultTypeRuntimeEffect,

@@ -195,6 +195,11 @@ class LanguageCallee(_enum.Enum):
     WARNINGS_WARN = "python:warnings.warn"
     # ``list(iterable)``: the builtin list constructor.
     BUILTIN_LIST = "python:builtins.list"
+    # ``range(...)``: the builtin integer range a loop over ground bounds
+    # unrolls.
+    BUILTIN_RANGE = "python:builtins.range"
+    # ``locals()``: the builtin snapshot of the calling frame's locals.
+    BUILTIN_LOCALS = "python:builtins.locals"
     # ``typing.final(f)``: sets ``f.__final__`` if it can and returns ``f``.
     TYPING_FINAL = "python:typing.final"
     # ``re.search`` / ``re.match`` / ``re.fullmatch``: the C-floor matchers.
@@ -12851,9 +12856,9 @@ class For(Statement):
             return elements
         if (
             iterable.kind == "Call"
-            and iterable.func.kind == "Name"
-            and iterable.func.id == "range"
             and not iterable.keywords
+            and self.unit.language_callee_of(iterable.func)
+            is LanguageCallee.BUILTIN_RANGE
         ):
             ints = []
             for arg in iterable.args:
@@ -17820,8 +17825,6 @@ class ListComp(Expression):
             return None
         new_iter, ic = self._substitute_field(gen.iter, scope)
         it = new_iter if ic else gen.iter
-        if ListComp._calls_shadowed_range(self, it, scope):
-            return None
         elements = For._concrete_elements(
             self, it, (self.elt, *gen.ifs), scope, gen.target
         )
@@ -18154,28 +18157,6 @@ class ListComp(Expression):
             )
         )
 
-    def _calls_shadowed_range(self, iterable, scope) -> bool:
-        return (
-            (
-                iterable.kind == "Call"
-                and iterable.func.kind == "Name"
-                and iterable.func.id == "range"
-                and "range" in scope
-            )
-            or (
-                iterable.kind == "Call"
-                and iterable.func.kind == "Name"
-                and iterable.func.id == "range"
-                and "range" in scope.get(_LEXICALLY_BOUND_NAMES, ())
-            )
-            or (
-                iterable.kind == "Call"
-                and iterable.func.kind == "Name"
-                and iterable.func.id == "range"
-                and "range" in self.unit.module_bound_names
-            )
-        )
-
     def _ground_hash_key(self, expression):
         """A Python-equality key for the small ground scalar domain, or None."""
         integer = For._concrete_int(self, expression)
@@ -18422,8 +18403,6 @@ class SetComp(Expression):
             return None
         new_iter, changed = self._substitute_field(gen.iter, scope)
         iterable = new_iter if changed else gen.iter
-        if ListComp._calls_shadowed_range(self, iterable, scope):
-            return None
         elements = For._concrete_elements(
             self, iterable, (self.elt, *gen.ifs), scope, gen.target
         )
@@ -18538,8 +18517,6 @@ class DictComp(Expression):
             return None
         new_iter, changed = self._substitute_field(gen.iter, scope)
         iterable = new_iter if changed else gen.iter
-        if ListComp._calls_shadowed_range(self, iterable, scope):
-            return None
         elements = For._concrete_elements(
             self, iterable, (self.key, self.value, *gen.ifs), scope, gen.target
         )
@@ -19185,11 +19162,11 @@ class Call(Expression):
         which names the snapshot holds is not fixed here and the call stays
         an ordinary call.
         """
-        if not (
-            isinstance(self.func, Name)
-            and self.func.id == "locals"
-            and not self.args
-            and not self.keywords
+        if (
+            self.args
+            or self.keywords
+            or self.unit.language_callee_of(self.func)
+            is not LanguageCallee.BUILTIN_LOCALS
         ):
             return None
         from .binding_state import unwrap_binding_state
