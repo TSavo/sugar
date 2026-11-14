@@ -271,7 +271,15 @@ class ComprehensionSugar(ConstructedTermSugar):
                         "unhandled FiniteProjectionDecisionV1 variant "
                         f"{decision!r}: add a match arm, never a fallthrough"
                     )
-        return self._desugar_filters(generator, 0, (), iterable, index, resolved, ctx)
+        return self._desugar_filters(
+            generator,
+            0,
+            (),
+            iterable,
+            index,
+            resolved,
+            self._symbolic_member_ctx(generator, ctx),
+        )
 
     def _finite_map(self, generator, iterable, ctx):
         from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
@@ -410,12 +418,12 @@ class ComprehensionSugar(ConstructedTermSugar):
         Returns the unpack's own outcome when the member does not destructure
         into the target's leaves.
 
-        A read of a target name in the element or a condition is an
+        A read of a target name in the element or a condition is a member
         ``EvaluationRef`` to the coordinate bound here (temporal choice 1,
         #7661): the generator's coordinate for a name target, each leaf's
-        coordinate for a destructuring one. The source name is still bound,
-        for a read substitution did not rewrite; it is bound first and the
-        coordinate last, so the reference reads the coordinate.
+        coordinate for a destructuring one. The reference reads only the
+        coordinate. The source name is still bound, for a read substitution
+        did not rewrite.
         """
         from dataclasses import replace
 
@@ -457,6 +465,43 @@ class ComprehensionSugar(ConstructedTermSugar):
                 temporal = temporal.bind_value(leaf.source_name, value)
                 temporal = temporal.bind_value(coordinate.cid, value)
         return replace(ctx, temporal=temporal)
+
+    def _symbolic_member_ctx(self, generator, ctx):
+        """``ctx`` with the generator's symbolic member bound before any read
+        of it: the variable the recurrence's lambda binds (``_complete``)
+        under the generator's coordinate, and, for a destructuring target,
+        each leaf's projection of it under the leaf's coordinate. These are
+        the coordinates a member ``EvaluationRef`` reads, bound as
+        ``_member_ctx`` binds a finite member, so the element, the
+        conditions and every later generator read the member and never a
+        name an enclosing statement bound. A context that carries no
+        temporal is returned unchanged: a member read in it panics.
+        """
+        from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.ir import make_var
+        from sugar_lift_py_tests.temporal.context_helpers import bind_temporal
+
+        if ctx is not None and not hasattr(ctx, "temporal"):
+            return ctx
+        element = make_var(generator.binding_coordinate_cid)
+        bindings = [(generator.binding_coordinate_cid, element)]
+        if generator.target.coordinates is not None:
+            bindings.extend(
+                zip(
+                    (coordinate.cid for coordinate in generator.target_coordinates),
+                    _leaf_projections(generator.target, element),
+                    strict=True,
+                )
+            )
+        for coordinate, term in bindings:
+            ctx = bind_temporal(
+                ctx,
+                coordinate,
+                SymbolicValue(term),
+                owner="ComprehensionSugar._symbolic_member_ctx",
+                blame=str(self.site),
+            )
+        return ctx
 
     def _kept_members(self, generator, members, ctx):
         """The members every ``if`` filter keeps, when each verdict is decided.
@@ -650,23 +695,37 @@ def _target_leaves(
     return tuple(leaf for child in target.coordinates for leaf in _target_leaves(child))
 
 
-def _bind_target(target: ComprehensionTargetSugar, element, body):
-    """``body`` with every coordinate this target names replaced by what the
-    symbolic ``element`` binds to it.
+def _leaf_projections(target: ComprehensionTargetSugar, element) -> tuple:
+    """What each leaf of ``target`` reads out of the symbolic ``element``, in
+    ``_target_leaves`` order.
 
-    A leaf binds the element whole. A pattern binds each position to its
+    A leaf reads the element whole. A pattern reads each position's
     projection, recursively -- so a nested pattern reads a projection of a
     projection, exactly as the source nests.
     """
-    from sugar_lift_py_tests.ir import subst_var_in_term
-
     if target.source_name is not None:
-        return subst_var_in_term(body, target.source_name, element)
+        return (element,)
     coordinates = target.coordinates
     assert coordinates is not None
     arity = len(coordinates)
-    for index, child in enumerate(coordinates):
-        body = _bind_target(child, _projection(element, index, arity), body)
+    return tuple(
+        projection
+        for index, child in enumerate(coordinates)
+        for projection in _leaf_projections(child, _projection(element, index, arity))
+    )
+
+
+def _bind_target(target: ComprehensionTargetSugar, element, body):
+    """``body`` with every name this target binds replaced by what the
+    symbolic ``element`` binds to it (``_leaf_projections``): a read
+    substitution did not rewrite to a member reference.
+    """
+    from sugar_lift_py_tests.ir import subst_var_in_term
+
+    for leaf, projection in zip(
+        _target_leaves(target), _leaf_projections(target, element), strict=True
+    ):
+        body = subst_var_in_term(body, leaf.source_name, projection)
     return body
 
 
