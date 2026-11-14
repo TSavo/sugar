@@ -93,7 +93,7 @@ class BranchResultDecision(FloorValue):
     ``read_binding``), so a phi over the slot takes exactly one arm.
 
     A live loop decides each name's write slot (``loop_write_slot``) on the
-    exit it publishes on (``LoopRecurrenceSugar._post_loop_writes``).  Like
+    exit it publishes on (``LoopRecurrenceSugar._publication``).  Like
     a ground ``if`` (``IfSugar._ground_branch_result``) it decides the slot
     in the reduction context and contributes nothing to the record.  The
     decision is this path's own: the context after it gets a new table, so

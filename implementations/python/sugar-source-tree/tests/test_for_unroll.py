@@ -59,29 +59,34 @@ def test_symbolic_assert_only_loop_is_loop_recurrence():
     assert type(sugar.statements[0]).__name__ == "LoopRecurrenceSugar"
 
 
-def test_symbolic_carried_accumulator_is_loop_post_binding():
-    """Live law (replaces py.fold.Add on linear .value.post): ExitSet + post_binding.
+def test_symbolic_carried_accumulator_is_the_recurrences_value():
+    """Live law (replaces py.fold.Add on linear .value.post): ExitSet + recurrence.
 
-    Symbolic carried total is recurrence / loop.post_binding, not a factory
-    fold coordinate on an unconditional completed universe.
+    A symbolic loop publishes what a concrete one does: the carried total is
+    bound under its binding coordinate to the recurrence's value of it, so
+    the read after the loop is ``python:loop.recurrence``, never a term no
+    publication bound.
     """
     from sugar_lift_py_tests.outcome.exit_set import ExitSet, Completed
 
-    outcome = (
-        _fn(
-            "def A(xs):\n    total = 0\n    for x in xs:\n        total = total + x\n    return total\n"
-        )
-        .sugar()
-        .desugar()
+    function = _fn(
+        "def A(xs):\n    total = 0\n    for x in xs:\n        total = total + x\n    return total\n"
     )
+    loop = next(
+        statement
+        for statement in function.sugar().statements
+        if type(statement).__name__ == "LoopRecurrenceSugar"
+    )
+    outcome = function.sugar().desugar()
     assert isinstance(outcome, ExitSet)
     completed = [e for e in outcome.exits if isinstance(e, Completed)]
     assert completed
     post = completed[0].value.post()
-    # out = python:loop.post_binding(loop, total, NormalExhaustion)
+    # out = python:loop.recurrence(loop, total's binding coordinate)
     assert post.name == "="
-    assert post.args[1].name == "python:loop.post_binding"
-    assert post.args[1].args[2].value == "NormalExhaustion"
+    assert post.args[1].name == "python:loop.recurrence"
+    assert post.args[1].args[0].value == loop.target_cid
+    assert post.args[1].args[1].value in loop.binding_coordinate_cids
 
 
 def test_accumulator_referencing_assert_constructs_as_loop_recurrence():

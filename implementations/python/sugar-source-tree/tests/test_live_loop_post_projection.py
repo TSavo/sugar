@@ -29,11 +29,17 @@ def arbitrary(items, stop):
 
     assert type(constructed.statements[1]).__name__ == "LoopRecurrenceSugar"
     recurrence = constructed.statements[1].desugar().completed_value()
-    assert len(recurrence.inv_contribution()) == 1
-    equation = recurrence.inv_contribution()[0]
-    assert equation.name == "="
-    assert equation.args[1].name == "python:loop.step"
-    assert equation.args[1].args[0] == equation.args[0]
+    invs = recurrence.inv_contribution()
+    # One step equation per name the loop writes: ``carried`` under its
+    # binding coordinate, ``renamed`` under its post-loop key; and the
+    # authentication of ``renamed``'s write slot as the guard that some item
+    # wrote it.
+    equations = [inv for inv in invs if getattr(inv, "name", None) == "="]
+    assert len(equations) == 2
+    assert len(invs) == 3
+    for equation in equations:
+        assert equation.args[1].name == "python:loop.step"
+        assert equation.args[1].args[0] == equation.args[0]
     post_read = constructed.statements[2].value
     assert type(post_read).__name__ == "GuardedBindingReadSugar"
     assert type(post_read.state).__name__ == "LoopGuardedProjection"

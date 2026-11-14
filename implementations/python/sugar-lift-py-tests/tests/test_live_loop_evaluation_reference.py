@@ -592,6 +592,93 @@ def test_a_read_before_any_item_wrote_the_name_is_a_name_error() -> None:
     assert halted[0].effect.name == "y"
 
 
+# -- a symbolic loop publishes what a concrete one does (#7757 item 7) ---------
+
+
+def _returned_values(outcome) -> list:
+    """Every value a completed exit of ``outcome`` returns, guarded or not."""
+    from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
+    from sugar_lift_py_tests.floor.return_value import ReturnValue
+
+    values = []
+    for exit_ in outcome.exits:
+        if not isinstance(exit_, Completed):
+            continue
+        record = getattr(exit_.value, "record", exit_.value)
+        values.extend(
+            entry.value
+            for entry in getattr(record, "statements", ())
+            if isinstance(entry, (ReturnValue, GuardedReturn))
+        )
+    return values
+
+
+def _recurrence_value(function, name: str) -> SymbolicValue:
+    """The symbolic loop's value of ``name``: its recurrence head under the
+    key a read after the loop reads it through (its binding coordinate, or
+    its post-loop key)."""
+    loop = next(
+        statement
+        for statement in function.sugar().statements
+        if isinstance(statement, LoopRecurrenceSugar)
+    )
+    runtime = loop.construction.loop_runtime
+    if name in runtime.coordinate_names:
+        key = loop.binding_coordinate_cids[runtime.coordinate_names.index(name)]
+    else:
+        key = runtime.published_evaluations[runtime.published_names.index(name)][0]
+    return SymbolicValue(loop._recurrence_head(key))
+
+
+def test_a_symbolic_loops_accumulator_reads_as_the_recurrences_value() -> None:
+    from sugar_lift_py_tests.effect import NameErrorEffect
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``xs`` is symbolic, so the loop runs as its recurrence.  It publishes
+    # ``total`` as a concrete loop does: the read after the loop is the
+    # recurrence's value of it, never refused for want of a binding.
+    function = _function(
+        "def f(xs):\n"
+        "    total = 0\n"
+        "    for x in xs:\n"
+        "        total += x\n"
+        "    return total\n"
+    )
+    outcome = function_universe_outcome(function)
+    assert _recurrence_value(function, "total") in _returned_values(outcome)
+    assert not [
+        exit_
+        for exit_ in outcome.exits
+        if isinstance(exit_, Halted) and isinstance(exit_.effect, NameErrorEffect)
+    ]
+
+
+def test_a_name_first_bound_in_a_symbolic_loop_is_its_value_or_a_name_error() -> (
+    None
+):
+    from sugar_lift_py_tests.effect import NameErrorEffect
+    from sugar_lift_py_tests.tree_enumerate import function_universe_outcome
+
+    # ``last`` is first bound in the loop: where some item wrote it the read
+    # after the loop is the recurrence's value of it, where none did (``xs``
+    # empty) it is a ``NameError``.  The loop's write slot of ``last`` is
+    # authenticated as the guard that some item wrote it.
+    function = _function(
+        "def f(xs):\n"
+        "    for x in xs:\n"
+        "        last = x\n"
+        "    return last\n"
+    )
+    outcome = function_universe_outcome(function)
+    assert _recurrence_value(function, "last") in _returned_values(outcome)
+    name_errors = [
+        exit_
+        for exit_ in outcome.exits
+        if isinstance(exit_, Halted) and isinstance(exit_.effect, NameErrorEffect)
+    ]
+    assert [exit_.effect.name for exit_ in name_errors] == ["last"]
+
+
 _LIVE_ELSE = (
     "def f(xs):\n"
     "    t = 0\n"
