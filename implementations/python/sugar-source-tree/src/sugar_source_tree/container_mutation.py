@@ -55,6 +55,12 @@ receiver an active ``__init__`` constructs):
   unknown when it runs code (decided at reduce by the values it runs on:
   a builtin value runs none) and the value is one a call may change; a
   cell a nested scope declares ``nonlocal`` is unknown whatever it holds.
+  Code that runs in the frame's own namespace -- ``exec``/``eval`` handed
+  no globals mapping, any operation handed a ``locals()``/``vars()``
+  mapping of it -- reaches every name of the frame too (``_frame_targets``):
+  in a function each object a local is bound to is exposed (no local is
+  rebound: CPython 3.13, PEP 667); at module or class scope each name may
+  be rebound.
   A source function that is followed carries what it did to each one it
   names, as it does to its actuals, and the binding it wrote to each cell
   it declares ``nonlocal`` (``source_helper_actual_states``).
@@ -101,6 +107,12 @@ class _CitedBuiltins(NamedTuple):
     immutable_result: frozenset
     # Builds a builtin container (or iterator) of the operand's items.
     constructors: frozenset
+    # Runs the code it is handed in the calling frame's namespaces when it is
+    # handed no globals mapping (``exec``, ``eval``).
+    frame_code: frozenset
+    # Called bare, returns a mapping of the calling frame's namespace
+    # (``locals()``, ``vars()``).
+    frame_mapping: frozenset
 
 
 @functools.cache
@@ -183,6 +195,8 @@ def _cited() -> _CitedBuiltins:
                 C.BUILTIN_TUPLE,
             }
         ),
+        frame_code=frozenset({C.BUILTIN_EXEC, C.BUILTIN_EVAL}),
+        frame_mapping=frozenset({C.BUILTIN_LOCALS, C.BUILTIN_VARS}),
     )
 
 
@@ -902,8 +916,13 @@ def havoc_after(statement, pre_scope, scope, *, loop=None, operated=False):
     if operated:
         sites = (*sites, _Operated(statement))
     for call in sites:
+        # A call handed the frame's own namespace (``_reaches_the_frame``)
+        # may change through it what no actual names: it is not followed,
+        # and takes the one exposure rule (``_ambient_targets``).
         helper = (
-            None if loop else source_helper_actual_states(call, bound_refs, pre_scope)
+            None
+            if loop or _reaches_the_frame(statement, call)
+            else source_helper_actual_states(call, bound_refs, pre_scope)
         )
         if helper is not None:
             havoc_targets, states = helper
@@ -2749,9 +2768,15 @@ def _ambient_targets(statement, call, scope, ambient=None):
 
     A cell a nested scope declares ``nonlocal`` may be rebound by such code
     whatever it holds: it is unknown after the call.  ``ambient`` (no
-    arguments) answers what the caller holds, once per statement."""
+    arguments) answers what the caller holds, once per statement.
+
+    An operation handed the frame's own namespace reaches every name of the
+    frame as well (``_frame_targets``), whether or not it runs code: a
+    builtin container's own method on a ``locals()`` mapping's member
+    changes the local's object as much as code ``exec`` runs does."""
     from .nodes import Call
 
+    frame = _frame_targets(statement, call, scope)
     subjects = reach = None
     if not isinstance(call, Call):
         # An operation no source function is named at: its operands' values
@@ -2759,12 +2784,12 @@ def _ambient_targets(statement, call, scope, ambient=None):
         # nothing).
         subjects = _code_subjects(call, scope)
         if subjects is not None and not subjects:
-            return []
+            return frame
     objects, rebound = (
         _ambient_objects(statement, scope) if ambient is None else ambient()
     )
     if not objects and not rebound:
-        return []
+        return frame
     if isinstance(call, Call):
         reach = _callee_reach(call, scope)
     if reach is not None and reach.closed:
@@ -2775,8 +2800,9 @@ def _ambient_targets(statement, call, scope, ambient=None):
     elif isinstance(call, Call):
         subjects = None if reach is not None else _code_subjects(call, scope)
     if subjects is not None and not subjects:
-        # It runs no code: nothing beyond its operands is reached.
-        return []
+        # It runs no code: nothing beyond its operands (and the frame's
+        # namespace it is handed) is reached.
+        return frame
     if subjects is None:
         targets = [(node, _OPERAND_RULES, None) for node in objects]
     else:
@@ -2784,7 +2810,153 @@ def _ambient_targets(statement, call, scope, ambient=None):
             (node, rules, subject) for node in objects for subject, rules in subjects
         ]
     targets.extend((node, None, None) for node in rebound)
+    targets.extend(frame)
     return targets
+
+
+def _frame_targets(statement, call, scope):
+    """``_rebind``'s targets for what ``call`` may change through the
+    namespace of the frame ``statement`` runs in, when it is handed that
+    namespace (``_reaches_the_frame``): ``exec``/``eval`` with no globals
+    mapping run their code in it, and a ``locals()``/``vars()`` mapping of it
+    holds every object its names are bound to.
+
+    The interpreter rule followed is CPython 3.13's (PEP 667), the one
+    every CPython 3 frame without a trace function keeps: in a function (an
+    optimized frame: a ``def``, a lambda) ``locals()`` is a snapshot dict of
+    the frame, and ``exec``/``eval`` read and write that snapshot -- never
+    the frame's fast locals or cells.  So no name of the frame is rebound,
+    and every object one is bound to is reachable: each is exposed as an
+    operand is (``_OPERAND_RULES``: a builtin container's contents are
+    unknown after the call, an ``int`` keeps its value; a cited pure builtin
+    handed the mapping leaves a value builtin all the way down unchanged, as
+    ``_call_targets`` says of its operands).  At module or class scope the
+    namespace is the mapping itself: every name it binds may be rebound,
+    unknown after the call whatever it held.  Names are read off CPython's
+    symtable of that frame (``_frame_names``), never spelled."""
+    from .nodes import Call
+
+    if not _reaches_the_frame(statement, call):
+        return []
+    names, optimized = _frame_names(statement)
+    rules = _OPERAND_RULES
+    if isinstance(call, Call) and _builtin_callee(call) in _cited().pure:
+        rules = (("", True, False),)
+    targets = []
+    for name in sorted(names):
+        if name not in scope:
+            continue
+        node = _read_of(scope[name])
+        if node is None or getattr(node, "kind", None) == "Name":
+            continue
+        if not optimized:
+            targets.append((node, None, None))
+        elif _may_be_changed(node):
+            targets.append((node, rules, None))
+    return targets
+
+
+def _reaches_the_frame(statement, call) -> bool:
+    """Whether the operation ``call`` (``_sites_at``) in ``statement`` is
+    handed the namespace of the frame it runs in: a call of a builtin the
+    law cites as running code there (``_cited().frame_code``: ``exec``,
+    ``eval``, by binding) that names no globals mapping
+    (``_runs_in_the_frame``), or an operand that is or holds a bare call of
+    one cited as returning a mapping of it (``_cited().frame_mapping``:
+    ``locals()``, ``vars()``) made in this same frame.
+
+    A unit no read of which reaches any of them (``SourceUnit.
+    _module_reaches_dynamic_global_writer``, by binding) answers at once."""
+    from .nodes import Call, Node, PathContainerCall
+
+    unit = statement.unit
+    if not unit._module_reaches_dynamic_global_writer():
+        return False
+    cited = _cited()
+    if isinstance(call, Call):
+        if _builtin_callee(call) in cited.frame_code and _runs_in_the_frame(call):
+            return True
+        operands = (
+            call.func,
+            *call.args,
+            *(keyword.value for keyword in call.keywords),
+        )
+    elif isinstance(call, PathContainerCall):
+        operands = (call.receiver, *call.args)
+    elif call.kind == "FormattedValue":
+        operands = (call.value,)
+    else:
+        operands = _site_operands(call)
+    frame = None
+    for operand in operands:
+        if not isinstance(operand, Node):
+            continue
+        for node in _walk_values(operand, kept_only=False):
+            if not (
+                isinstance(node, Call)
+                and not node.args
+                and not node.keywords
+                and node.unit is unit
+                and _builtin_callee(node) in cited.frame_mapping
+            ):
+                continue
+            if frame is None:
+                frame = (unit.scope_holding(statement.line_col_span()),)
+            if unit.scope_holding(node.line_col_span()) is frame[0]:
+                return True
+    return False
+
+
+def _runs_in_the_frame(call) -> bool:
+    """Whether an ``exec``/``eval`` ``call`` runs its code in the calling
+    frame's namespaces: its ``globals`` operand (the second, or the keyword)
+    is absent or None, and then its ``locals`` is the frame's too (CPython's
+    ``builtin_exec_impl``).  Only a dict display or comprehension is decided
+    not to be None; any other operand, or a starred one, may be."""
+    from .nodes import Starred
+
+    if any(isinstance(arg, Starred) for arg in call.args) or any(
+        keyword.arg is None for keyword in call.keywords
+    ):
+        return True
+    if len(call.args) > 1:
+        given = call.args[1]
+    else:
+        given = next(
+            (keyword.value for keyword in call.keywords if keyword.arg == "globals"),
+            None,
+        )
+    return given is None or getattr(_identity(given), "kind", None) not in (
+        "Dict",
+        "DictComp",
+    )
+
+
+def _frame_names(statement):
+    """``(names, optimized)``: the names the frame ``statement`` runs in
+    binds -- its locals, parameters and cells, CPython's symtable
+    ``is_local`` -- and whether it is a function's (``scope_holding``: a
+    ``def`` or a lambda body).  A module's or a class body's namespace is
+    the mapping ``exec`` and ``locals()`` hand out, not an optimized frame."""
+    from .nodes import ClassDef
+
+    unit = statement.unit
+    owner = unit.scope_holding(statement.line_col_span())
+    if owner is None:
+        tables, optimized = (unit.module_symtable,), False
+    elif isinstance(owner, ClassDef):
+        tables = (
+            unit.class_symtable(owner.name, owner.line_col_span().start_line),
+        )
+        optimized = False
+    else:
+        tables, optimized = unit._frame_symtables(owner), True
+    names = set()
+    for table in tables:
+        names.update(
+            symbol.get_name() for symbol in table.get_symbols() if symbol.is_local()
+        )
+    return frozenset(names), optimized
 
 
 # A read's value runs code an operation makes on it when no container law
