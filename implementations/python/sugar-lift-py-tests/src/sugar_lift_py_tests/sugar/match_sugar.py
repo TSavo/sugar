@@ -33,8 +33,16 @@ ExitSet law (advisor #6716 rework):
     them for the code after it, as a ``try``'s routed outcome does
     (``try_sugar._route_confirmation``, ``_ground_route_on_faces``)
 
-Value patterns and catch-all / bare capture are owned. Structural patterns
-stay loud at the construction door (nodes.py).
+Value patterns and catch-all / bare capture are value alternatives. Every
+other pattern is structural (``match_pattern``): a selection over the subject
+(its sequence / mapping / class test, its length, its keys, each
+sub-pattern's test of the subject's projection) through the floor's own
+operations, and the per-case capture keys (``Match.substitute``) bound to the
+subject's projections.  A projection's halt (``__getitem__``, ``__len__``, an
+attribute or ``__match_args__`` lookup on a source class) stays an arm; a
+test the floor does not decide on an opaque subject is refused by name
+(``undecided``), never guessed matched or not.  A case's guard is evaluated
+after its captures bind and joins its selection.
 """
 
 from __future__ import annotations
@@ -48,11 +56,17 @@ from sugar_lift_py_tests.sugar.witnesses import _call_return_pair
 
 @dataclass(frozen=True)
 class MatchCaseSpec:
-    """One case: value-pattern alternatives, optional guard, body, capture.
+    """One case: value-pattern alternatives or a structural pattern, optional
+    guard, body, capture.
 
     ``alternatives`` is the tuple of literal sugars the subject may equal --
     ``(1,)`` for `case 1:`, ``(1, 2)`` for `case 1 | 2:`, and the EMPTY tuple
-    for a catch-all (`case _:` or bare capture `case x:`, which always match).
+    for a catch-all (`case _:` or bare capture `case x:`, which always match)
+    and for a structural case.
+
+    ``pattern`` is the structural pattern spec (``match_pattern``) for every
+    other pattern (`case [a, *rest]:`, `case {"k": v}:`, `case Point(x=0):`,
+    `case P as p:`); None for a value-alternatives case.
 
     ``guard`` is the optional `if <expr>` sugar (None when absent).
 
@@ -65,6 +79,495 @@ class MatchCaseSpec:
     body: tuple
     guard: object | None = None  # Sugar | None
     capture_name: str | None = None
+    pattern: object | None = None  # structural pattern spec | None
+
+
+# -- structural patterns ------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ValuePatternSpec:
+    """A value pattern (`1`, `Color.RED`) nested in a structural one: the
+    subject's projection equals the value (``equals``)."""
+
+    value: Sugar
+
+
+@dataclass(frozen=True)
+class SingletonPatternSpec:
+    """`None` / `True` / `False` nested in a structural pattern: the
+    projection is the singleton (``is_identical``)."""
+
+    value: Sugar
+
+
+@dataclass(frozen=True)
+class CapturePatternSpec:
+    """`P as name`, a capture `name`, or the wildcard `_`: ``pattern`` (None
+    for a capture or the wildcard) then the value bound under ``key`` (None
+    for the wildcard)."""
+
+    pattern: object | None
+    key: str | None
+
+
+@dataclass(frozen=True)
+class OrPatternSpec:
+    """`P1 | P2 | ...`: the first alternative that matches."""
+
+    alternatives: tuple
+
+
+@dataclass(frozen=True)
+class SequencePatternSpec:
+    """`[P1, ..., *rest, ..., Pn]`: ``before`` the star, the star (when
+    ``has_star``; its capture ``star_key``, None for `*_`), ``after`` it."""
+
+    before: tuple
+    has_star: bool = False
+    star_key: str | None = None
+    after: tuple = ()
+
+
+@dataclass(frozen=True)
+class MappingPatternSpec:
+    """`{K1: P1, ..., **rest}`: each key's value matches its pattern; the
+    other items bind under ``rest_key`` (None without `**rest`)."""
+
+    keys: tuple
+    patterns: tuple
+    rest_key: str | None = None
+
+
+@dataclass(frozen=True)
+class ClassPatternSpec:
+    """`C(P1, ..., attr=P)`: the subject is an instance of ``cls``; each
+    positional pattern matches the attribute ``__match_args__`` names at its
+    position, each keyword pattern the attribute it names."""
+
+    cls: Sugar
+    positional: tuple
+    keywords: tuple  # ((attr, spec), ...)
+
+
+@dataclass(frozen=True)
+class _Matched:
+    """One completed face of a pattern test: whether the subject matched
+    there, and what its captures bound (``((key, value), ...)``)."""
+
+    matched: bool
+    binds: tuple = ()
+
+
+def _outcome(matched: bool, binds=()):
+    return ExitSet.completed(_Matched(matched, tuple(binds) if matched else ()))
+
+
+def _decide(formula, site):
+    """A test's truth as matched / not-matched faces: one face when the floor
+    decided it, the two faces of its split (minted here, the test owning it)
+    when the formula is symbolic."""
+    from sugar_lift_py_tests.ir import not_
+    from sugar_lift_py_tests.outcome import Completed
+    from sugar_lift_py_tests.outcome.exit_set import _is_false, _is_true, partition
+
+    if _is_true(formula):
+        return _outcome(True)
+    if _is_false(formula):
+        return _outcome(False)
+    yes, no = partition(("MatchPattern", site, formula))
+    return ExitSet(
+        (
+            Completed(formula, _Matched(True), frozenset({yes})),
+            Completed(not_(formula), _Matched(False), frozenset({no})),
+        )
+    ).normalize()
+
+
+def _tested(outcome, site):
+    """A floor test's outcome (``equals``, ``contains``, a type test): each
+    completed truth value decided as matched / not matched; a halt stays."""
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+    return _require_exit_set(outcome, owner="MatchSugar.pattern").sequence(
+        lambda value: _decide(_formula_from_floor_value(value, site), site)
+    )
+
+
+def _projected(outcome):
+    from sugar_lift_py_tests.outcome.exit_set import _require_exit_set
+
+    return _require_exit_set(outcome, owner="MatchSugar.pattern")
+
+
+def _then_match(outcome, step):
+    """``outcome``'s matched faces continue into ``step()`` (its binds
+    prefixed to what that binds); a face that did not match stands."""
+
+    def go(matched):
+        if not matched.matched:
+            return ExitSet.completed(matched)
+        return step().sequence(lambda following: _joined(matched, following))
+
+    return outcome.sequence(go)
+
+
+def _joined(first, following):
+    """``following`` after the matched ``first``: both their binds when it
+    matched too, else the miss."""
+    if not following.matched:
+        return ExitSet.completed(following)
+    return ExitSet.completed(_Matched(True, (*first.binds, *following.binds)))
+
+
+def _undecided(site, observed: str):
+    """A pattern test the floor does not decide on this subject: refused by
+    name, never guessed matched or not."""
+    from sugar_source_tree.panic import SugarNotWritten
+
+    raise SugarNotWritten(
+        owner="MatchSugar.pattern",
+        blame=site,
+        observed=f"undecided {observed}",
+        requested="source testimony deciding the pattern test on this subject",
+        fix=(
+            "decide the subject's runtime type and protocol before the "
+            "pattern tests it; never guess a match or a miss"
+        ),
+    )
+
+
+def match_pattern(spec, value, site, ctx):
+    """Test ``value`` against the structural pattern ``spec``: an ``ExitSet``
+    whose completed faces are ``_Matched`` (the selection is their guards'
+    join where they matched) and whose halts are the projections' halts."""
+    if isinstance(spec, ValuePatternSpec):
+        return _projected(spec.value.desugar(ctx)).sequence(
+            lambda literal: _tested(value.equals(literal, site, ctx), site)
+        )
+    if isinstance(spec, SingletonPatternSpec):
+        return _projected(spec.value.desugar(ctx)).sequence(
+            lambda singleton: _tested(value.is_identical(singleton, site), site)
+        )
+    if isinstance(spec, CapturePatternSpec):
+        inner = (
+            _outcome(True)
+            if spec.pattern is None
+            else match_pattern(spec.pattern, value, site, ctx)
+        )
+        if spec.key is None:
+            return inner
+        return _then_match(inner, lambda: _outcome(True, ((spec.key, value),)))
+    if isinstance(spec, OrPatternSpec):
+        return _first_match(spec.alternatives, value, site, ctx)
+    if isinstance(spec, SequencePatternSpec):
+        return _match_sequence(spec, value, site, ctx)
+    if isinstance(spec, MappingPatternSpec):
+        return _match_mapping(spec, value, site, ctx)
+    if isinstance(spec, ClassPatternSpec):
+        return _match_class(spec, value, site, ctx)
+    raise TypeError(f"match pattern spec not lifted: {type(spec).__name__}")
+
+
+def _first_match(alternatives, value, site, ctx):
+    first = match_pattern(alternatives[0], value, site, ctx)
+    if len(alternatives) == 1:
+        return first
+
+    def otherwise(matched):
+        if matched.matched:
+            return ExitSet.completed(matched)
+        return _first_match(alternatives[1:], value, site, ctx)
+
+    return first.sequence(otherwise)
+
+
+def _decided_kind(value, yes: tuple, no: tuple, what: str, site) -> bool:
+    """Whether the floor decides ``value`` is a ``what`` (a sequence, a
+    mapping, for a pattern): exactly its decided floor types answer."""
+    if type(value) in yes:
+        return True
+    if type(value) in no:
+        return False
+    _undecided(site, f"whether {type(value).__name__} is a {what}")
+
+
+def _scalar_floors() -> tuple:
+    from sugar_lift_py_tests.floor import (
+        BytesValue,
+        NoneValue,
+        SetValue,
+        StringValue,
+        TermValue,
+    )
+
+    return (BytesValue, NoneValue, SetValue, StringValue, TermValue)
+
+
+def _match_sequence(spec, value, site, ctx):
+    """A sequence pattern: the subject is a sequence (never ``str`` /
+    ``bytes``), of the length the pattern takes, and each sub-pattern
+    matches the item at its position; the star binds the items between as a
+    ``list``."""
+    from sugar_lift_py_tests.floor import DictValue, ListValue, TupleValue
+
+    if not _decided_kind(
+        value,
+        (TupleValue, ListValue),
+        (DictValue, *_scalar_floors()),
+        "sequence",
+        site,
+    ):
+        return _outcome(False)
+    return _projected(value.length(site)).sequence(
+        lambda length: _sequence_of_length(
+            spec, value, _ground_length(length, site), site, ctx
+        )
+    )
+
+
+def _ground_length(length, site) -> int:
+    from sugar_lift_py_tests.floor import TermValue
+
+    if type(length) is TermValue and type(length.value) is int:
+        return length.value
+    _undecided(site, f"sequence length {type(length).__name__}")
+
+
+def _sequence_of_length(spec, value, length, site, ctx):
+    fixed = len(spec.before) + len(spec.after)
+    if (length < fixed) if spec.has_star else (length != fixed):
+        return _outcome(False)
+    start = len(spec.before)
+    stop = length - len(spec.after)
+    positions = (
+        *((index, sub) for index, sub in enumerate(spec.before)),
+        *((stop + index, sub) for index, sub in enumerate(spec.after)),
+    )
+    matched = _match_items(value, positions, site, ctx)
+    if not spec.has_star or spec.star_key is None:
+        return matched
+    return _then_match(
+        matched, lambda: _star_items(value, spec.star_key, start, stop, site)
+    )
+
+
+def _item(value, index, site):
+    from sugar_lift_py_tests.floor import TermValue
+
+    return _projected(value.subscript(TermValue(index), site))
+
+
+def _match_items(value, positions, site, ctx):
+    """Each ``(index, spec)``: the item at ``index`` matches ``spec``, in
+    order, stopping at the first that does not."""
+    if not positions:
+        return _outcome(True)
+    (index, sub), rest = positions[0], positions[1:]
+    first = _item(value, index, site).sequence(
+        lambda item: match_pattern(sub, item, site, ctx)
+    )
+    return _then_match(first, lambda: _match_items(value, rest, site, ctx))
+
+
+def _star_items(value, key, start, stop, site, collected=()):
+    """The items ``start`` to ``stop`` of the subject, bound under ``key`` as
+    a ``list`` (what a star captures from any sequence)."""
+    from sugar_lift_py_tests.floor import ListValue
+
+    if start >= stop:
+        return _outcome(True, ((key, ListValue(tuple(collected))),))
+    return _item(value, start, site).sequence(
+        lambda item: _star_items(
+            value, key, start + 1, stop, site, (*collected, item)
+        )
+    )
+
+
+def _match_mapping(spec, value, site, ctx):
+    """A mapping pattern: the subject is a mapping, holds each key, and the
+    value at each key matches its pattern; ``**rest`` binds a ``dict`` of
+    the other items."""
+    from sugar_lift_py_tests.floor import DictValue, ListValue, TupleValue
+
+    if not _decided_kind(
+        value,
+        (DictValue,),
+        (TupleValue, ListValue, *_scalar_floors()),
+        "mapping",
+        site,
+    ):
+        return _outcome(False)
+    return _keys(spec.keys, ctx).sequence(
+        lambda keys: _then_match(
+            _match_entries(value, tuple(zip(keys, spec.patterns)), site, ctx),
+            lambda: _mapping_rest(value, keys, spec.rest_key, site),
+        )
+    )
+
+
+def _keys(sugars, ctx, collected=()):
+    """Each key sugar's value, in order."""
+    if not sugars:
+        return ExitSet.completed(tuple(collected))
+    return _projected(sugars[0].desugar(ctx)).sequence(
+        lambda key: _keys(sugars[1:], ctx, (*collected, key))
+    )
+
+
+def _match_entries(value, entries, site, ctx):
+    if not entries:
+        return _outcome(True)
+    (key, sub), rest = entries[0], entries[1:]
+    held = _tested(value.contains(key, site), site)
+    first = _then_match(
+        held,
+        lambda: _projected(value.subscript(key, site)).sequence(
+            lambda item: match_pattern(sub, item, site, ctx)
+        ),
+    )
+    return _then_match(first, lambda: _match_entries(value, rest, site, ctx))
+
+
+def _mapping_rest(value, keys, rest_key, site):
+    """``**rest``: a ``dict`` of the subject's items whose key is none of the
+    pattern's keys -- each decided distinct from them, or refused."""
+    from sugar_lift_py_tests.floor import DictValue
+    from sugar_lift_py_tests.floor.dict_value import _key_position
+
+    if rest_key is None:
+        return _outcome(True)
+    taken = tuple((key, None) for key in keys)
+    kept = []
+    for key, item in value.entries:
+        found = _key_position(taken, key)
+        if found is None:
+            _undecided(site, f"whether {type(key).__name__} key is a pattern key")
+        if found < 0:
+            kept.append((key, item))
+    return _outcome(True, ((rest_key, DictValue(tuple(kept))),))
+
+
+def _match_class(spec, value, site, ctx):
+    """A class pattern: the subject is an instance of the class, and each
+    sub-pattern matches the attribute it names (``__match_args__`` names
+    the positional ones)."""
+    return _projected(spec.cls.desugar(ctx)).sequence(
+        lambda cls: _then_match(
+            _instance_of(cls, value, site),
+            lambda: _class_members(spec, cls, value, site, ctx),
+        )
+    )
+
+
+def _instance_of(cls, value, site):
+    """``isinstance(value, cls)``: a source class decides an instance it
+    defined (CPython's exact-type test); every other class answers through
+    its own type test (``test_python_type``)."""
+    from sugar_lift_py_tests.floor.class_definition_value import (
+        ClassDefinitionValue,
+    )
+    from sugar_lift_py_tests.floor.object_value import ObjectValue
+
+    if isinstance(cls, ClassDefinitionValue):
+        defining = (
+            getattr(value, "defining_class", None)
+            if isinstance(value, ObjectValue)
+            else None
+        )
+        if getattr(defining, "class_definition_cid", None) == cls.class_definition_cid:
+            return _outcome(True)
+        _undecided(site, f"isinstance({type(value).__name__}, {cls.class_name})")
+    return _tested(cls.test_python_type(value, site), site)
+
+
+def _class_members(spec, cls, value, site, ctx):
+    if not spec.positional:
+        return _match_attributes(value, spec.keywords, site, ctx)
+    return _projected(cls.attribute("__match_args__", site, ctx)).sequence(
+        lambda names: _positional_members(spec, names, value, site, ctx)
+    )
+
+
+def _positional_members(spec, names, value, site, ctx):
+    """``__match_args__`` names the attribute of each positional pattern: a
+    ``tuple`` of ``str`` long enough, naming no attribute twice; else
+    ``TypeError``, as CPython raises."""
+    from sugar_lift_py_tests.floor import StringValue, TupleValue
+    from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
+
+    if type(names) is not TupleValue or not all(
+        type(name) is StringValue for name in names.elements
+    ):
+        _undecided(site, f"__match_args__ {type(names).__name__}")
+    attrs = tuple(name.value for name in names.elements[: len(spec.positional)])
+    taken = (*attrs, *(attr for attr, _sub in spec.keywords))
+    if len(spec.positional) > len(names.elements) or len(set(taken)) != len(taken):
+        return ground_exceptional_exit(
+            exception_name="TypeError", site=site, owner="MatchSugar.pattern"
+        )
+    return _match_attributes(
+        value, (*zip(attrs, spec.positional), *spec.keywords), site, ctx
+    )
+
+
+def _match_attributes(value, members, site, ctx):
+    if not members:
+        return _outcome(True)
+    (attr, sub), rest = members[0], members[1:]
+    first = _projected(value.attribute(attr, site, ctx)).sequence(
+        lambda member: match_pattern(sub, member, site, ctx),
+        consume=lambda halt: _missing_attribute(halt, attr, site),
+    )
+    return _then_match(first, lambda: _match_attributes(value, rest, site, ctx))
+
+
+def _missing_attribute(halt, attr, site):
+    """A class pattern's attribute lookup that raised ``AttributeError``
+    does not match (CPython); any other raise leaves the match.  A raise
+    whose type is not decided against ``AttributeError`` is refused by name."""
+    from sugar_lift_py_tests.effect.raise_effect import (
+        RaiseEffect,
+        UndeterminedRaiseEffect,
+    )
+    from sugar_lift_py_tests.floor.ground_exit import _builtin_exception_identity
+
+    effect = halt.effect
+    if isinstance(effect, RaiseEffect):
+        attribute_error, _ = _builtin_exception_identity("AttributeError")
+        lineage = (
+            effect.exception_type_coordinate,
+            *(effect.exception_type_mro or ()),
+        )
+        if attribute_error in lineage:
+            return _outcome(False)
+        if effect.exception_type_mro is not None:
+            return None
+        _undecided(site, f"whether the raise reading .{attr} is an AttributeError")
+    if isinstance(effect, UndeterminedRaiseEffect):
+        _undecided(site, f"whether the raise reading .{attr} is an AttributeError")
+    return None
+
+
+def _bind_captures(ctx, binds):
+    """The case's context with each capture's value bound under its key,
+    qualified where the match runs (``evaluation_here``)."""
+    if not binds:
+        return ctx
+    from sugar_lift_py_tests.context.reduce_context import ReduceContext
+    from sugar_lift_py_tests.sugar.evaluation_ref_sugar import evaluation_here
+    from sugar_lift_py_tests.temporal.context_helpers import bind_temporal
+
+    bound = ctx if ctx is not None else ReduceContext.root(owner="MatchSugar.capture")
+    for key, value in binds:
+        bound = bind_temporal(
+            bound,
+            evaluation_here(key),
+            value,
+            owner="MatchSugar.capture",
+            blame=f"match capture {key}",
+        )
+    return bound
 
 
 def _not_earlier(earlier: list):
@@ -419,6 +922,15 @@ class MatchSugar(Sugar):
 
             not_prev = _not_earlier(earlier)
 
+            if case.pattern is not None:
+                parts, running, selection = self._structural_case(
+                    arm, case, subject, not_prev, running, ctx
+                )
+                accumulated = accumulated.union(parts)
+                if selection is not None:
+                    earlier.append(selection)
+                continue
+
             # --- pattern match (all exceptional faces restricted by not_prev) ---
             match_formula, pattern_side, pattern_path = (
                 _pattern_match_formula_and_side_exits(
@@ -493,6 +1005,71 @@ class MatchSugar(Sugar):
             )
         # Shared ExitSet projection — no output-kind membrane on value shape.
         return accumulated.normalize()
+
+    def _structural_case(self, arm, case, subject, not_prev, running, ctx):
+        """Case ``arm`` with a structural pattern: ``(parts, running,
+        selection)``.
+
+        The pattern is tested against the subject (``match_pattern``): each
+        halted face (a projection's halt) is an arm under ``not_prev``,
+        after ``running``; each face that matched selects the case under its
+        guard, with its captures bound under their keys (``_bind_captures``)
+        for the guard and the body.  A guard is evaluated there, after the
+        captures, and joins the selection (``_guard_faces_under``).  The
+        returned ``running`` owes what every completed face of the pattern
+        and every guard owed; ``selection`` is the case's selection (None
+        when no face can match)."""
+        from sugar_lift_py_tests.ir import or_
+        from sugar_lift_py_tests.outcome import Completed, Halted
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            reduce_block_to_exitset,
+        )
+
+        tested = match_pattern(case.pattern, subject, self.site, ctx)
+        parts = ExitSet(())
+        selections: list = []
+        pattern_path = _debt()
+        guard_paths = _debt()
+        for face in tested.exits:
+            if isinstance(face, Halted):
+                parts = parts.union(_after(None, running, _halted_face(face, not_prev)))
+                continue
+            if not isinstance(face, Completed):
+                raise NotImplementedError(
+                    f"match pattern face not lifted: {type(face).__name__}"
+                )
+            pattern_path = pattern_path.union(_debt(face.owed))
+            if not face.value.matched:
+                continue
+            reached = _and_parts(not_prev, face.guard)
+            path = _then(running, _debt(face.owed))
+            body_ctx = _bind_captures(ctx, face.value.binds)
+            if case.guard is None:
+                body_exits = self._routed(
+                    arm, reduce_block_to_exitset(case.body, body_ctx)
+                )
+                parts = parts.union(_after(reached, path, body_exits))
+                selections.append(face.guard)
+                continue
+            guard_parts, bits, guard_path = _guard_faces_under(
+                case.guard.desugar(body_ctx),
+                reached,
+                self.site,
+                case.body,
+                body_ctx,
+                face.guard,
+                path,
+                lambda exits, arm=arm: self._routed(arm, exits),
+            )
+            for part in guard_parts:
+                parts = parts.union(part)
+            guard_paths = guard_paths.union(guard_path)
+            selections.extend(bits)
+        running = _then(_then(running, pattern_path), guard_paths)
+        if not selections:
+            return parts, running, None
+        selection = selections[0] if len(selections) == 1 else or_(tuple(selections))
+        return parts, running, selection
 
     def _route_facts(self, arm) -> tuple:
         """What a completed arm of route ``arm`` (case ``arm``, or the

@@ -674,6 +674,45 @@ def test_no_item_wrote_a_name_first_bound_in_the_loop_so_it_is_a_name_error() ->
     assert read.desugar(written) == ExitSet.completed(TermValue(3))
 
 
+# -- a module live while publishes what it writes (#7757 item 7) --------------
+
+
+WHILE_WRITES = (
+    "def g():\n    return 3\n"
+    "def f():\n    return last\n"
+    "n = g()\n"
+    "while n:\n    n -= 1\n    last = n\n"
+)
+
+
+def test_a_name_first_bound_in_a_module_live_while_is_published() -> None:
+    tree = _source(WHILE_WRITES)
+    final = _function(tree).unit.module_bindings_at(None, {"last"})["last"]
+    # ``last`` is the loop's post-loop key (its header's) where an item wrote
+    # it, unbound where none did: never undecided, never the name read.
+    assert isinstance(final, GuardedBinding), final
+    assert final.slot.slot_id.startswith("loop-wrote:")
+    assert isinstance(final.when_true, EvaluationRef)
+    assert final.when_true.name == "last"
+    assert isinstance(final.when_false, UnboundBinding)
+
+
+def test_a_module_live_while_publishes_its_counter() -> None:
+    tree = _source(WHILE_WRITES.replace("return last", "return n"))
+    (prior,) = _assignment_keys(tree, "n")
+    read = _returned(_function(tree))
+    # What the items handed on where an item wrote it, ``n = g()`` where none
+    # did.
+    assert isinstance(read, IfExp), read
+    assert isinstance(read.test, BranchResultRef)
+    assert read.test.slot_id.startswith("loop-wrote:")
+    assert isinstance(read.body, EvaluationRef)
+    assert read.body.name == "n"
+    assert read.body.evaluation != prior
+    assert isinstance(read.orelse, EvaluationRef)
+    assert read.orelse.evaluation == prior
+
+
 DEF_REBINDS ="X = None\ndef X():\n    pass\ndef f():\n    return X\ny = f()\n"
 
 

@@ -9,6 +9,7 @@ the site's own owner. None may fail on a missing attribute (#7825).
 
 from __future__ import annotations
 
+import functools
 from dataclasses import dataclass
 from types import SimpleNamespace
 
@@ -510,6 +511,8 @@ def _iterate_over(monkeypatch, body, carrier):
         _after_loop_control=lambda *_args, **_kwargs: carrier,
         _after_iteration_face=lambda *_args, **_kwargs: carrier,
     )
+    # A for's item and a while's item continue from the body by one door.
+    loop._after_item = functools.partial(LoopRecurrenceSugar._after_item, loop)
     runtime = SimpleNamespace(target_pattern=None, body_sugars=())
     return LoopRecurrenceSugar._advance_iterator(
         loop, None, runtime, None, entries=(), carried=()
