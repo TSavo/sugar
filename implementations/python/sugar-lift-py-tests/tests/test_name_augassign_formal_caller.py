@@ -28,7 +28,6 @@ from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 from sugar_lift_py_tests.sugar.augassign_sugar import (
     AttributeAugAssignSugar,
     AugAssignSugar,
-    SubscriptAugAssignSugar,
     project_augmented,
 )
 from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
@@ -163,7 +162,7 @@ def test_name_augassign_constructs_with_operator_owned_project_inplace() -> None
 def test_discrimination_name_path_is_not_store_target_sugar() -> None:
     _, sugar = _aug_sugar()
     assert not isinstance(sugar, AttributeAugAssignSugar)
-    assert not isinstance(sugar, SubscriptAugAssignSugar)
+    assert sugar.method != "__setitem__"
 
 
 def test_op_site_is_structural_gap_for_name_target() -> None:

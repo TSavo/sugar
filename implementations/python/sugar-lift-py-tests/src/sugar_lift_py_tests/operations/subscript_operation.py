@@ -131,8 +131,10 @@ def discharge_subscript(
 ) -> ExitSet:
     """The one door for ``receiver[index]``, under ``ctx``.
 
-    ``SubscriptSugar`` (a source subscript), ``SubscriptAugAssignSugar``'s
-    read (``obj[k] += v``) and the ``subscript`` carrier's projector (a
+    ``SubscriptSugar`` (a source subscript), the mutation door's
+    read-modify-store (``obj[k] += v``,
+    ``PathContainerCallSugar._read_modify_store``) and the ``subscript``
+    carrier's projector (a
     formal's subscript, at the caller's actuals) all answer here, so an
     actual is asked exactly what the source subscript asks.  A parameter in
     either operand defers to the caller (:func:`defer_formal_subscript`); an

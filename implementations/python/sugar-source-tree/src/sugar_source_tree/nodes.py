@@ -11853,12 +11853,14 @@ class Assign(Statement):
         names that member of ``value``'s object -- one node, carried by every
         read of the name, so a store through it reaches every alias, and the
         object it was read from holds it (``container_mutation._contains``).
-        A starred leaf is given a new list, held by nothing else: its own
-        reference, one node.  A ground value of another shape gives nothing
-        (the unpack raises).  ``of`` decides which object a name denotes,
-        never its value."""
-        from sugar_lift_py_tests.temporal.temporal_context import projection_key
-
+        A starred leaf is given the slice of ``value`` it takes
+        (``For._slice_of``): a new list, one node -- its own path root, so a
+        mutation through it (``m[0].append(x)``) takes the path door -- that
+        holds the members of ``value`` there, whose identity is the
+        undecided identity of every opaque value's members
+        (``container_mutation._read_may_hold``).  A ground value of another
+        shape gives nothing (the unpack raises).  ``of`` decides which object
+        a name denotes, never its value."""
         from .container_mutation import _display_member, _identity
 
         found: dict = {}
@@ -11888,15 +11890,10 @@ class Assign(Statement):
         for index, element in enumerate(elements):
             if isinstance(element, Starred):
                 if isinstance(element.value, Name):
-                    name = element.value.id
+                    after = count - index - 1
                     give(
-                        name,
-                        _evaluation_ref(
-                            self,
-                            element.value.span,
-                            projection_key(evaluation, name),
-                            name,
-                        ),
+                        element.value.id,
+                        For._slice_of(self, value, index, -after if after else None),
                     )
                 continue
             position = index if not stars or index < stars[0] else index - count
@@ -12101,18 +12098,16 @@ class Assign(Statement):
         if mutation is not None:
             return mutation
         inner = call.func.value
-        if (
-            isinstance(inner, Call)
-            and isinstance(inner.func, Attribute)
-            and isinstance(inner.func.value, Name)
-        ):
-            # ``x = d.setdefault(k, v).pop()``: the setdefault and the
+        if isinstance(inner, Call) and isinstance(inner.func, Attribute):
+            # ``x = d.setdefault(k, v).pop()`` (or through a path, ``x =
+            # self.d.setdefault(k, v).pop()``): the setdefault and the
             # mutator are the one door's two operations, ``x`` bound to the
             # mutator's value.
+            holder = inner.func.value
             return setdefault_mutation_statement(
                 self,
                 scope,
-                name=inner.func.value.id,
+                name=holder.id if isinstance(holder, Name) else None,
                 call=substituted,
                 target_name=target.id,
             )
@@ -12909,12 +12904,12 @@ class AugAssign(Statement):
         A plain Name target is the one mutation door's in-place call
         (``container_mutation.name_mutation_statement``): the value the name
         holds at reduce decides it, and the name is bound to the in-place
-        result under this statement's key.  A Subscript target on a name or
-        through a path is that door's read-modify-store (``_item_mutation``).
+        result under this statement's key.  A Subscript target is that door's
+        read-modify-store (``_item_mutation``), whatever its receiver is.
 
-        Attribute and Subscript targets are runtime stores — receivers (and
-        subscript indices) are load expressions and must substitute so formals
-        become ``FormalRefSugar`` (same door as Assign).  The operator
+        An Attribute target is a runtime store -- its receiver is a load
+        expression and must substitute so formals become ``FormalRefSugar``
+        (same door as Assign).  The operator
         occurrence is minted from the **pre-substitute** target/value structure
         and carried as ``operator_site`` so formal declaration spans cannot
         steal it.
@@ -12961,13 +12956,11 @@ class AugAssign(Statement):
             if mutation is not None:
                 return mutation
         if isinstance(self.target, Subscript):
-            mutation = self._item_mutation(scope, pre_sub_operator_site)
-            if mutation is not None:
-                return mutation
+            return self._item_mutation(scope, pre_sub_operator_site)
 
         new_value, value_changed = self._substitute_field(self.value, scope)
         changes = {"value": new_value} if value_changed else {}
-        if isinstance(self.target, (Attribute, Subscript)):
+        if isinstance(self.target, Attribute):
             new_target = _substituted_store_target(self, self.target, scope)
             if new_target is not None:
                 changes["target"] = new_target
@@ -12995,20 +12988,36 @@ class AugAssign(Statement):
         whose stored value is the item's in-place result, a read-modify-store
         evaluated once in Python's order (``PathContainerCallSugar``); every
         name bound to the receiver, or to the path's root, reads its
-        post-state.  None when the receiver is no path from a bound name
-        (the ordinary augmented store)."""
-        from .container_mutation import name_mutation_statement, path_item_statement
+        post-state.  A receiver no bound name reaches (``f()[0] += 1``) is
+        an unnamed temporary: the same read-modify-store, no name rebound
+        (``unrooted_item_statement``)."""
+        from .container_mutation import (
+            name_mutation_statement,
+            path_item_statement,
+            unrooted_item_statement,
+        )
 
         target = self.target
         receiver = target.value.substitute(scope)
         args = (target.slice_.substitute(scope), self.value.substitute(scope))
         if not isinstance(target.value, Name):
-            return path_item_statement(
+            mutation = path_item_statement(
                 self,
                 scope,
                 site=target,
                 receiver=receiver,
                 method="__setitem__",
+                args=args,
+                operator_kind=self.op.kind,
+                operator_site=operator_site,
+            )
+            if mutation is not None:
+                return mutation
+            return unrooted_item_statement(
+                self,
+                scope,
+                site=target,
+                receiver=receiver,
                 args=args,
                 operator_kind=self.op.kind,
                 operator_site=operator_site,
@@ -13094,7 +13103,9 @@ class AugAssign(Statement):
     def _construct_sugar(self):
         """`<target> OP= <value>` — Name: project_inplace owns ScopeRebind.
 
-        Attribute/subscript targets are runtime stores (get → inplace → set).
+        An attribute target is a runtime store (get → inplace → set); a
+        subscript target is the one mutation door's read-modify-store
+        (``_item_mutation``).
         Name targets evaluate left/right once through the same inplace edge
         and rebind the name to that result; halt skips the rebind.
         """
@@ -13128,7 +13139,7 @@ class AugAssign(Statement):
             op_site = getattr(self, "operator_site", None)
             if op_site is None:
                 op_site = self._mint_operator_site_from_structure()
-            # Same substrate as subscript: get → project_inplace → setattr.
+            # get → project_inplace → setattr.
             return AttributeAugAssignSugar(
                 receiver=self.target.value.sugar(),
                 attr=self.target.attr,
@@ -13141,26 +13152,13 @@ class AugAssign(Statement):
                 site=self.fragment,
             )
         if isinstance(self.target, Subscript):
-            from sugar_lift_py_tests.sugar.augassign_sugar import (
-                SubscriptAugAssignSugar,
-            )
-
-            # op_site: carried pre-substitute structure, or mint now if no sub.
+            # Substitution made this the one door's read-modify-store
+            # (``_item_mutation``); a statement never substituted is that
+            # same door against no bindings.
             op_site = getattr(self, "operator_site", None)
             if op_site is None:
                 op_site = self._mint_operator_site_from_structure()
-            # Operator-owned double dispatch — not a caller isinstance ladder.
-            return SubscriptAugAssignSugar(
-                receiver=self.target.value.sugar(),
-                index=self.target.slice_.sugar(),
-                rhs=self.value.sugar(),
-                operator=type(self.op).inplace_operator,
-                operation=self.op.project_inplace,
-                get_site=self.target.fragment,
-                op_site=op_site,
-                set_site=self.fragment,
-                site=self.fragment,
-            )
+            return self._item_mutation({}, op_site).sugar()
         return super()._construct_sugar()
 
 
@@ -13995,6 +13993,37 @@ class For(Statement):
         slots = (
             ("value", Child(_handle_of(iterable))),
             ("slice_", Child(_handle_of(For._int_constant(self, index)))),
+        )
+        return materialize(
+            self.unit, ShadowNode("Subscript", self.span, slots), self.reporter
+        )
+
+    def _slice_of(self, iterable: "Node", lower: int, upper: "Optional[int]") -> "Node":
+        """``<iterable>[lower:upper]``, borrowing this node's span: the new
+        list a starred unpack target takes (``a, *m, z = v`` gives ``m``
+        ``v[1:-1]``), read out of the iterable.  It names which object the
+        starred name denotes and what it holds
+        (``Assign._unpack_member_objects``), never its value: the read is
+        still the unpack's projection."""
+        from .backend import Child, MaybeChild, materialize
+        from .shadow import ShadowNode, _handle_of
+
+        def bound(value):
+            if value is None:
+                return MaybeChild(None)
+            return MaybeChild(_handle_of(For._int_constant(self, value)))
+
+        bounds = (
+            ("lower", bound(lower)),
+            ("upper", bound(upper)),
+            ("step", MaybeChild(None)),
+        )
+        sliced = materialize(
+            self.unit, ShadowNode("Slice", self.span, bounds), self.reporter
+        )
+        slots = (
+            ("value", Child(_handle_of(iterable))),
+            ("slice_", Child(_handle_of(sliced))),
         )
         return materialize(
             self.unit, ShadowNode("Subscript", self.span, slots), self.reporter
@@ -17235,8 +17264,9 @@ class Expr(Statement):
         )
 
     def _setdefault_mutation(self, scope, call):
-        """``d.setdefault(k, v).<mutator>(*args)`` on a name ``d``: the one
-        door's two operations (``container_mutation.
+        """``d.setdefault(k, v).<mutator>(*args)`` on a name ``d`` or through
+        a path (``self.d.setdefault(k, []).append(x)``, ``d[i].setdefault(k,
+        v).pop()``): the one door's two operations (``container_mutation.
         setdefault_mutation_statement``); the values ``d`` and ``d[k]`` hold
         at reduce decide them.  ``call`` is the statement's call, already
         substituted against ``scope``."""
@@ -17246,13 +17276,16 @@ class Expr(Statement):
             or not isinstance(source.func, Attribute)
             or not isinstance(source.func.value, Call)
             or not isinstance(source.func.value.func, Attribute)
-            or not isinstance(source.func.value.func.value, Name)
         ):
             return None
         from .container_mutation import setdefault_mutation_statement
 
+        holder = source.func.value.func.value
         return setdefault_mutation_statement(
-            self, scope, name=source.func.value.func.value.id, call=call
+            self,
+            scope,
+            name=holder.id if isinstance(holder, Name) else None,
+            call=call,
         )
 
     def _construct_sugar(self):
@@ -21784,7 +21817,8 @@ class ReceiverFieldStoreState(Expression):
 class PathContainerCall(Expression):
     """One mutating operation on the object a name denotes, or a path from a
     name reaches (``container_mutation.name_mutation_statement``,
-    ``path_mutation_statement``): the receiver's value at reduce decides it.
+    ``path_mutation_statement``), or a temporary no name holds
+    (``unrooted_item_statement``): the receiver's value at reduce decides it.
 
     ``fallback`` is the ordinary call a method takes on a value the floor
     does not cite; an item store (``value_first``: the stored value is

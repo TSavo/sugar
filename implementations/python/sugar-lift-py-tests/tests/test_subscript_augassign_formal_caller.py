@@ -1,6 +1,9 @@
 """Formal subscript augmented assignment: ``obj[key] += rhs``.
 
-Production path only: tests drive ``SubscriptAugAssignSugar.desugar``.
+Production path only: ``obj[key] += rhs`` is the one mutation door's
+read-modify-store (``PathContainerCallSugar._read_modify_store``, #7757); the
+tests drive that door's ``desugar``.  The ordinary augmented item store it
+replaced (``SubscriptAugAssignSugar``) is deleted.
 """
 
 from __future__ import annotations
@@ -22,9 +25,10 @@ from sugar_lift_py_tests.floor import ListValue, TermValue, TupleValue
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor.list_value import ListValue as ListValueCls
 from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
-from sugar_lift_py_tests.sugar.augassign_sugar import (
-    SubscriptAugAssignSugar,
-    project_augmented,
+from sugar_lift_py_tests.sugar.augassign_sugar import project_augmented
+from sugar_lift_py_tests.sugar.builtin_container_call_sugar import (
+    ContainerMutationStatementSugar,
+    PathContainerCallSugar,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
 from sugar_lift_python_source.canonical import blake3_512_of
@@ -55,10 +59,21 @@ def _helper_definition(
 def _aug_sugar(source: str = "def helper(obj, key, rhs):\n    obj[key] += rhs\n"):
     tree = _tree(source)
     function = next(node for node in tree.nodes() if isinstance(node, FunctionDef))
-    aug = next(node for node in function.body if isinstance(node, AugAssign))
-    sugar = aug.sugar()
-    assert isinstance(sugar, SubscriptAugAssignSugar), type(sugar)
-    return function, sugar
+    # ``obj[key] += rhs`` off the substituted function body is the one
+    # mutation door's statement (#7757); its ``__setitem__`` carries the
+    # operator.
+    stmt = function.sugar().statements[0]
+    assert isinstance(stmt, ContainerMutationStatementSugar), type(stmt)
+    call = stmt.evaluated[0]
+    assert isinstance(call, PathContainerCallSugar), type(call)
+    return function, call
+
+
+def _post(out):
+    """The receiver after the door's read-modify-store: the pair's first."""
+    pair = out.completed_value()
+    assert type(pair) is TupleValue and len(pair.elements) == 2, pair
+    return pair.elements[0]
 
 
 def _post_list(completed: Completed) -> ListValue:
@@ -86,27 +101,41 @@ class _FloorSugar(Sugar):
         return ()
 
 
+class _Projecting:
+    """An operator whose in-place projection is ``project`` (a probe)."""
+
+    inplace_operator = "iadd"
+
+    def __init__(self, project):
+        self._project = project
+
+    def project_inplace(self, left, right, site, ctx):
+        return self._project(left, right, site, ctx)
+
+
 def _production_sites():
-    _, sugar = _aug_sugar()
-    return sugar.get_site, sugar.op_site, sugar.set_site, sugar.site
+    _, call = _aug_sugar()
+    return call.site, call.operator_site
 
 
-def _production_desugar(
-    receiver, index, rhs, *, operator="iadd", projector=project_iadd
-):
-    get_site, op_site, set_site, site = _production_sites()
-    sugar = SubscriptAugAssignSugar(
-        receiver=_FloorSugar(receiver),
-        index=_FloorSugar(index),
-        rhs=_FloorSugar(rhs),
-        operator=operator,
-        operation=projector,
-        get_site=get_site,
-        op_site=op_site,
-        set_site=set_site,
+def _door(receiver_sugar, index_sugar, rhs_sugar, *, operator=None):
+    site, op_site = _production_sites()
+    return PathContainerCallSugar(
+        receiver=receiver_sugar,
+        method="__setitem__",
+        args=(index_sugar, rhs_sugar),
+        fallback=None,
         site=site,
+        operator=Add.instance() if operator is None else operator,
+        operator_site=op_site,
     )
-    return sugar.desugar(None)
+
+
+def _production_desugar(receiver, index, rhs, *, operator=None):
+    call = _door(
+        _FloorSugar(receiver), _FloorSugar(index), _FloorSugar(rhs), operator=operator
+    )
+    return call.desugar(None)
 
 
 # ---------------------------------------------------------------------------
@@ -115,33 +144,33 @@ def _production_desugar(
 
 
 def test_subscript_augassign_constructs_with_operator_owned_project_inplace() -> None:
-    _, sugar = _aug_sugar()
-    assert isinstance(sugar, SubscriptAugAssignSugar)
+    _, call = _aug_sugar()
+    assert call.method == "__setitem__"
     # Operator-owned double dispatch — bound project_inplace, not a kind ladder.
-    assert sugar.operation.__func__ is Add.project_inplace
-    assert sugar.operator == "iadd"
-    assert sugar.operator == Add.inplace_operator
-    assert sugar.get_site is not sugar.op_site
-    assert sugar.op_site is not sugar.set_site
+    assert call.operator.project_inplace.__func__ is Add.project_inplace
+    assert type(call.operator).inplace_operator == "iadd"
+    assert type(call.operator).inplace_operator == Add.inplace_operator
+    assert call.operator_site is not None
+    assert call.operator_site is not call.site
 
 
 def test_op_site_is_structural_gap_not_rhs_or_string_scan() -> None:
-    function, sugar = _aug_sugar("def helper(obj, key, rhs):\n    obj[key] += rhs\n")
+    function, call = _aug_sugar("def helper(obj, key, rhs):\n    obj[key] += rhs\n")
     aug = next(node for node in function.body if isinstance(node, AugAssign))
-    assert sugar.op_site is not aug.value.fragment
+    assert call.operator_site is not aug.value.fragment
     # Carried operator_site gap contains the operator token region.
-    text = sugar.op_site.unit.source[sugar.op_site.span.start : sugar.op_site.span.end]
+    site = call.operator_site
+    text = site.unit.source[site.span.start : site.span.end]
     assert "+=" in text
-    assert sugar.op_site is not sugar.get_site
-    assert sugar.op_site is not sugar.set_site
+    assert call.operator_site is not call.site
 
 
 def test_op_site_ignores_same_spelling_string_in_target() -> None:
     """Lying twin: ``obj['+='] += rhs`` must not use the string literal as op_site."""
     source = "def helper(obj, rhs):\n    obj['+='] += rhs\n"
-    function, sugar = _aug_sugar(source)
+    function, call = _aug_sugar(source)
     aug = next(node for node in function.body if isinstance(node, AugAssign))
-    op_span = sugar.op_site.span
+    op_span = call.operator_site.span
     # Index string constant span must not equal / contain the operator site.
     index_node = aug.target.slice_
     index_span = index_node.span
@@ -151,20 +180,36 @@ def test_op_site_ignores_same_spelling_string_in_target() -> None:
     )
     # Operator site still sits after the full target (including ['+=']).
     assert op_span.start >= aug.target.span.end
-    text = sugar.op_site.unit.source[op_span.start : op_span.end]
+    text = call.operator_site.unit.source[op_span.start : op_span.end]
     assert "+=" in text
 
 
 def test_discrimination_same_spelling_index_is_not_operator_site() -> None:
     """Positive twin: operator gap; lying claim that op_site is the index fails."""
     source = "def helper(obj, rhs):\n    obj['+='] += rhs\n"
-    _, sugar = _aug_sugar(source)
+    _, call = _aug_sugar(source)
     function = next(
         n for n in _tree(source, "twin.py").nodes() if isinstance(n, FunctionDef)
     )
     aug = next(n for n in function.body if isinstance(n, AugAssign))
     with pytest.raises(AssertionError):
-        assert sugar.op_site.span == aug.target.slice_.span
+        assert call.operator_site.span == aug.target.slice_.span
+
+
+def test_an_unsubstituted_statement_is_the_same_door() -> None:
+    """A statement sugared before substitution is the door against no
+    bindings: the same read-modify-store, never a second route."""
+    source = "def helper(obj, key, rhs):\n    obj[key] += rhs\n"
+    function = next(
+        n for n in _tree(source, "raw.py").nodes() if isinstance(n, FunctionDef)
+    )
+    aug = next(n for n in function.body if isinstance(n, AugAssign))
+    stmt = aug.sugar()
+    assert isinstance(stmt, ContainerMutationStatementSugar), type(stmt)
+    call = stmt.evaluated[0]
+    assert isinstance(call, PathContainerCallSugar), type(call)
+    assert call.method == "__setitem__"
+    assert type(call.operator).inplace_operator == "iadd"
 
 
 def test_discrimination_legacy_runtime_effect_is_not_the_formal_path() -> None:
@@ -187,6 +232,14 @@ def test_legacy_augmented_subscript_store_effect_sugar_is_deleted() -> None:
         ):
             offenders.append(str(path))
     assert offenders == [], offenders
+
+
+def test_the_ordinary_augmented_item_store_is_deleted() -> None:
+    """``f()[0] += 1`` took ``SubscriptAugAssignSugar`` beside the door; every
+    augmented item store is the door's read-modify-store now."""
+    import sugar_lift_py_tests.sugar.augassign_sugar as aug_mod
+
+    assert not hasattr(aug_mod, "SubscriptAugAssignSugar")
 
 
 # ---------------------------------------------------------------------------
@@ -277,22 +330,23 @@ def test_production_desugar_list_augassign_completes_with_updated_cell() -> None
         TermValue(10),
     )
     assert out.completed_value() is not None, out
-    assert out.completed_value() == fresh(ListValue, (TermValue(11), TermValue(2)))
+    assert _post(out) == fresh(ListValue, (TermValue(11), TermValue(2)))
 
 
 def test_formal_helper_desugars_without_legacy_incomplete_only() -> None:
     function, outcome = _helper_definition()
     stmt = function.sugar().statements[0]
-    assert isinstance(stmt, SubscriptAugAssignSugar)
-    assert stmt.operation.__func__ is Add.project_inplace
-    assert stmt.operator == "iadd"
+    assert isinstance(stmt, ContainerMutationStatementSugar), type(stmt)
+    call = stmt.evaluated[0]
+    assert isinstance(call, PathContainerCallSugar), type(call)
+    assert call.operator.project_inplace.__func__ is Add.project_inplace
+    assert type(call.operator).inplace_operator == "iadd"
     assert isinstance(outcome, NativeOperationExitCarrierV1)
     assert outcome.demand.operator == "subscript"
 
 
 def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
     box = {"rhs": 0, "set": 0}
-    get_site, op_site, set_site, site = _production_sites()
 
     @dataclass(frozen=True)
     class _RhsProbe(Sugar):
@@ -314,18 +368,12 @@ def test_production_get_halt_blocks_rhs_arithmetic_and_store() -> None:
             box["set"] += 1
             return super().setitem(index, value, site_, ctx)
 
-    sugar = SubscriptAugAssignSugar(
-        receiver=_FloorSugar(_HaltList((TermValue(0),))),
-        index=_FloorSugar(TermValue(4)),
-        rhs=_RhsProbe(),
-        operator="iadd",
-        operation=project_iadd,
-        get_site=get_site,
-        op_site=op_site,
-        set_site=set_site,
-        site=site,
+    call = _door(
+        _FloorSugar(_HaltList((TermValue(0),))),
+        _FloorSugar(TermValue(4)),
+        _RhsProbe(),
     )
-    out = sugar.desugar(None)
+    out = call.desugar(None)
     assert out.halts() == out.exits
     (halt,) = out.halts()
     assert isinstance(halt.effect, RaiseEffect)
@@ -396,7 +444,7 @@ def test_production_receiver_index_evaluated_once_for_get_and_set() -> None:
     assert out.completed_value() is not None
     assert box["get"] == 1
     assert box["set"] == 1
-    assert out.completed_value().elements[0] == TermValue(6)
+    assert _post(out).elements[0] == TermValue(6)
 
 
 def test_discrimination_duplicated_get_is_detected() -> None:
@@ -411,7 +459,6 @@ def test_discrimination_duplicated_get_is_detected() -> None:
 
 def test_production_getitem_before_rhs_order() -> None:
     order: list[str] = []
-    get_site, op_site, set_site, site = _production_sites()
 
     class _OrderList(ListValueCls):
         def __init__(self, elements):
@@ -441,21 +488,16 @@ def test_production_getitem_before_rhs_order() -> None:
         order.append("op")
         return project_iadd(left, right, site_, ctx)
 
-    sugar = SubscriptAugAssignSugar(
-        receiver=_FloorSugar(_OrderList((TermValue(3),))),
-        index=_FloorSugar(TermValue(0)),
-        rhs=_RhsOrder(),
-        operator="iadd",
-        operation=_project_order,
-        get_site=get_site,
-        op_site=op_site,
-        set_site=set_site,
-        site=site,
+    call = _door(
+        _FloorSugar(_OrderList((TermValue(3),))),
+        _FloorSugar(TermValue(0)),
+        _RhsOrder(),
+        operator=_Projecting(_project_order),
     )
-    out = sugar.desugar(None)
+    out = call.desugar(None)
     assert out.completed_value() is not None
     assert order == ["get", "rhs", "op", "set"]
-    assert out.completed_value() == fresh(ListValue, (TermValue(7),))
+    assert _post(out) == fresh(ListValue, (TermValue(7),))
 
 
 def test_discrimination_wrong_order_rhs_before_get() -> None:
@@ -499,9 +541,6 @@ def test_production_projector_default_floor_is_ordinary_binary() -> None:
 def test_production_projector_raw_notimplemented_falls_through_to_binary() -> None:
     """Twin: raw NotImplemented from floor edge → ordinary add."""
     from sugar_lift_py_tests.floor.floor_value import FloorValue
-    from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
-        InplaceBinaryOperatorOperation,
-    )
 
     calls: list[str] = []
 
@@ -575,8 +614,8 @@ def test_formal_operands_mint_iadd_not_ordinary_add() -> None:
     )
     from sugar_lift_py_tests.ir import PrimitiveSort, make_var
 
-    _, sugar = _aug_sugar()
-    site = sugar.op_site
+    _, call = _aug_sugar()
+    site = call.operator_site
     src = site.source_cid
     owner_def = SourceFragmentCoordinateV1(src, 1, 0, 1, 10)
 
@@ -735,7 +774,7 @@ def test_formal_augassign_discharges_an_object_actual_through_the_door() -> None
 
 
 def test_attribute_augassign_is_attribute_path_not_subscript_path() -> None:
-    """Attribute OP= uses AttributeAugAssignSugar — same substrate, distinct sugar."""
+    """Attribute OP= uses AttributeAugAssignSugar; an item target the door."""
     from sugar_lift_py_tests.sugar.augassign_sugar import AttributeAugAssignSugar
 
     tree = _tree("def helper(obj, rhs):\n    obj.field += rhs\n", "attr_aug.py")
@@ -743,4 +782,4 @@ def test_attribute_augassign_is_attribute_path_not_subscript_path() -> None:
     aug = next(node for node in function.body if isinstance(node, AugAssign))
     sugar = aug.sugar()
     assert isinstance(sugar, AttributeAugAssignSugar)
-    assert not isinstance(sugar, SubscriptAugAssignSugar)
+    assert not isinstance(sugar, ContainerMutationStatementSugar)

@@ -1062,3 +1062,217 @@ def test_the_class_call_returns_self_after_a_method_call_on_it(tmp_path):
     returns, _halts = _returns(tmp_path, source)
     assert returns
     assert all(_unknown_after_call(value) for value in returns)
+
+
+# -- The leftovers of #8130 (#7757) -----------------------------------------
+#
+# Two members of one opaque value were taken to be two objects: after ``a, b
+# = g()`` a mutation through ``a`` left ``b`` (and anything holding it) its
+# old value, though ``g`` may return one list twice.  ``f()[0] += 1`` kept the
+# ordinary augmented store beside the door.  A setdefault on a path
+# (``self.d.setdefault(k, []).append(x)``) was an ordinary call.  A starred
+# member (``*m``) was no path root: ``m[0].append(1)`` left ``m`` unknown.
+
+
+def _held_by_the_mutation(read):
+    """``read`` is its value after the call, held (no ``sharer`` rule, which
+    kept a value a builtin container's cited mutation changed)."""
+    return (
+        read.kind == "ReceiverAfterCall"
+        and bool(read.rules)
+        and not any(rule[2] for rule in read.rules)
+    )
+
+
+def test_two_members_of_one_opaque_value_may_be_one_object(tmp_path):
+    # ``pair`` holds ``x`` twice: ``b`` (and its alias ``c``) is ``a``, and
+    # so is ``x``.  The lift kept ``b``, ``c`` and ``x`` at the pre-call
+    # ``['a', 'b']``.  Which object each is, is undecided: the append's
+    # opaque post-state, never the old value.
+    source = (
+        "def f():\n"
+        "    x = 'a b'.split()\n"
+        "    pair = [x] * 2\n"
+        "    a, b = pair\n"
+        "    c = b\n"
+        "    a.append('c')\n"
+        "    return (b, c, x)\n"
+    )
+    stale = fresh(ListValue, _strings("a", "b"))
+    for value in _only_return(tmp_path, source).elements:
+        assert value != stale
+        assert _unknown_after_call(value)
+
+
+def test_a_mutation_through_one_member_holds_every_other_member():
+    # Discriminating: ``b`` and ``outer`` (which holds ``b``) only shared
+    # with ``a`` before (``sharer``: a list's cited append kept them).
+    source = (
+        "def f(g):\n"
+        "    a, b = g()\n"
+        "    outer = [b]\n"
+        "    a.append(1)\n"
+        "    return (b, outer)\n"
+    )
+    reads = _substituted_return_reads(source)
+    assert [read.kind for read in reads] == ["ReceiverAfterCall"] * 2
+    assert all(_held_by_the_mutation(read) for read in reads)
+
+
+def test_a_starred_member_holds_the_other_members():
+    # ``m`` is a new list of ``g()``'s later members, any of which may be
+    # ``a``: it and its alias are the append's post-state.  Before, ``m``
+    # denoted an object nothing related to ``a`` and kept its value.
+    source = (
+        "def f(g):\n"
+        "    a, *m = g()\n"
+        "    alias = m\n"
+        "    a.append(1)\n"
+        "    return (m, alias)\n"
+    )
+    reads = _substituted_return_reads(source)
+    assert [read.kind for read in reads] == ["ReceiverAfterCall"] * 2
+    assert all(_held_by_the_mutation(read) for read in reads)
+
+
+def test_a_starred_member_is_its_own_path_root(tmp_path):
+    # ``m`` is the new list ``[x, 5]``; ``m[0].append`` takes the path door
+    # from it, and ``c``, its alias, reads the root after the call.  Before,
+    # ``m`` was no path root and the call left both unknown.
+    source = (
+        "def f():\n"
+        "    x = 'a b'.split()\n"
+        "    pair = (0, x, 5)\n"
+        "    a, *m = pair\n"
+        "    c = m\n"
+        "    m[0].append('c')\n"
+        "    return (c, m)\n"
+    )
+    after = fresh(ListValue, (fresh(ListValue, _strings("a", "b", "c")), TermValue(5)))
+    assert _only_return(tmp_path, source) == TupleValue((after, after))
+
+
+def _substituted_body(source):
+    """``f``'s body statements after substitution."""
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
+    )
+    from sugar_source_tree.nodes import FunctionDef
+    from sugar_source_tree.tree import SourceFile
+
+    tree = SourceFile(
+        (source, "temporary_fixture.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_source_call_construction(),
+    )
+    function = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "f"
+    )
+    return function.substitute({}).body
+
+
+def test_an_augmented_item_store_on_a_temporary_takes_the_door():
+    from sugar_source_tree.nodes import AugAssign, ContainerMutationStatement
+
+    source = "def f(g):\n    g()[0] += 1\n    return 0\n"
+    body = _substituted_body(source)
+    assert not any(isinstance(statement, AugAssign) for statement in body)
+    (statement,) = [
+        statement
+        for statement in body
+        if isinstance(statement, ContainerMutationStatement)
+    ]
+    assert tuple(statement.names) == ()
+    (call,) = statement.evaluated
+    assert call.method == "__setitem__"
+    assert getattr(call, "operator_kind", None) is not None
+
+
+def test_an_augmented_item_store_on_a_temporary_halts_before_the_store(tmp_path):
+    source = (
+        "def f():\n"
+        "    try:\n"
+        "        [1][3] += 1\n"
+        "    except IndexError:\n"
+        "        return 'caught'\n"
+        "    return 'no'\n"
+    )
+    assert _only_return(tmp_path, source) == StringValue("caught")
+
+
+def test_an_augmented_store_through_an_expression_never_leaves_a_stale_name(
+    tmp_path,
+):
+    # ``(a or b)[0] += 10`` stores on ``a``'s list.  The ordinary augmented
+    # store rebound nothing: ``a`` and its alias read the pre-store ``[1]``.
+    # The store may change every object its receiver reaches; each is its
+    # value after the store, which a list's is unknown.
+    source = (
+        "def f():\n"
+        "    a = [1]\n"
+        "    b = [2]\n"
+        "    alias = a\n"
+        "    (a or b)[0] += 10\n"
+        "    return (a, alias)\n"
+    )
+    for value in _only_return(tmp_path, source).elements:
+        assert value != fresh(ListValue, _ints(1))
+        assert _unknown_after_call(value)
+
+
+def test_a_setdefault_through_a_subscript_path_is_seen_by_every_alias(tmp_path):
+    # Discriminating: the ordinary call left ``e`` reading the pre-call
+    # ``[{}]``.
+    source = (
+        "def f():\n"
+        "    d = [{}]\n"
+        "    e = d\n"
+        "    d[0].setdefault('k', []).append('x')\n"
+        "    return e\n"
+    )
+    assert _only_return(tmp_path, source) == fresh(
+        ListValue,
+        (
+            fresh(
+                DictValue,
+                ((StringValue("k"), fresh(ListValue, _strings("x"))),),
+            ),
+        ),
+    )
+
+
+def test_a_setdefault_through_an_attribute_path_changes_the_held_list(tmp_path):
+    # ``L`` is the object at ``c.d['k']``; the ordinary call left it ``[1]``.
+    source = (
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        self.d = {'k': [1]}\n"
+        "def f():\n"
+        "    c = C()\n"
+        "    L = c.d['k']\n"
+        "    c.d.setdefault('k', []).append(2)\n"
+        "    return (L, c.d['k'])\n"
+    )
+    after = fresh(ListValue, _ints(1, 2))
+    assert _only_return(tmp_path, source) == TupleValue((after, after))
+
+
+def test_a_bound_setdefault_pop_through_a_path_changes_every_alias(tmp_path):
+    source = (
+        "def f():\n"
+        "    L = [1, 2]\n"
+        "    d = [{'x': L}]\n"
+        "    e = d\n"
+        "    x = d[0].setdefault('x', []).pop()\n"
+        "    return (x, L, e)\n"
+    )
+    after = fresh(ListValue, _ints(1))
+    assert _only_return(tmp_path, source) == TupleValue(
+        (
+            TermValue(2),
+            after,
+            fresh(ListValue, (fresh(DictValue, ((StringValue("x"), after),)),)),
+        )
+    )

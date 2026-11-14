@@ -25,7 +25,6 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.outcome import Completed, ExitSet
 from sugar_lift_py_tests.sugar.augassign_sugar import (
     AttributeAugAssignSugar,
-    SubscriptAugAssignSugar,
     project_augmented,
 )
 from sugar_lift_py_tests.sugar.sugar_base import Sugar
@@ -113,7 +112,6 @@ def _production_desugar(receiver, rhs, *, attr="field"):
 def test_attribute_augassign_constructs_attribute_augassign_sugar() -> None:
     _, sugar = _aug_sugar()
     assert isinstance(sugar, AttributeAugAssignSugar)
-    assert not isinstance(sugar, SubscriptAugAssignSugar)
     assert sugar.attr == "field"
     assert sugar.operator == "iadd"
     assert sugar.operation.__func__ is BinaryOperator.project_inplace
