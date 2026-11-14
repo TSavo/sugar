@@ -200,7 +200,46 @@ class ComprehensionSugar(ConstructedTermSugar):
     def desugar(self, ctx: object = None) -> ExitSet:
         if not self.generators:
             raise ValueError("comprehension recurrence requires a generator")
-        return self._desugar_generators(0, (), ctx, writes=(), outer=ctx)
+        return self._desugar_generators(
+            0, (), self._evaluation_ctx(ctx), writes=(), outer=ctx
+        )
+
+    def _evaluation_ctx(self, ctx):
+        """``ctx`` with this evaluation of the comprehension bound, before any
+        member, under each member coordinate's evaluation coordinate
+        (``comprehension_evaluation_coordinate``): one value, made fresh for
+        this evaluation, so two evaluations are never the same one.  Every
+        member, condition and element reduces on it.
+
+        A lambda a walrus lets escape the comprehension carries the evaluation
+        it was made in (``LambdaSugar.evaluation_coordinates``); a call of it
+        reads the member current at the call only while that same evaluation
+        runs, the final member once none runs, and is refused by name while
+        another evaluation runs (``EvaluationRefSugar``).  A context that
+        carries no temporal is returned unchanged."""
+        if ctx is None or not hasattr(ctx, "temporal"):
+            return ctx
+        from sugar_lift_py_tests.floor import SymbolicValue
+        from sugar_lift_py_tests.ir import make_var
+        from sugar_lift_py_tests.temporal.context_helpers import bind_temporal
+        from sugar_source_tree.nodes import comprehension_evaluation_coordinate
+
+        coordinates = tuple(
+            comprehension_evaluation_coordinate(coordinate)
+            for generator in self.generators
+            for coordinate in _member_coordinates(generator)
+        )
+        # Compared by identity at the call: this object is this evaluation.
+        evaluation = SymbolicValue(make_var(coordinates[0]))
+        for coordinate in coordinates:
+            ctx = bind_temporal(
+                ctx,
+                coordinate,
+                evaluation,
+                owner="ComprehensionSugar._evaluation_ctx",
+                blame=str(self.site),
+            )
+        return ctx
 
     def _desugar_generators(self, index, resolved, ctx, *, writes, outer):
         """``writes``: each walrus write a condition made so far, as

@@ -20,6 +20,13 @@ class LambdaSugar(ConstructedTermSugar):
     ``LambdaCallable.closure``), so its body reduces after the comprehension
     is done, when the context no longer binds them.
 
+    ``evaluation_coordinates`` are ``(lambda's coordinate, comprehension's
+    coordinate)`` for each comprehension cell the body reads at the call (a
+    lambda a walrus lets escape, ``Lambda._evaluation_coordinates``): the
+    value carries, under the lambda's coordinate, the evaluation of the
+    comprehension it was made in, so a call compares it with the evaluation
+    running at the call (``EvaluationRefSugar``).
+
     An enclosing function's local the body reads is read through a captured
     coordinate (``Lambda._captured_bindings``) that each call binds from the
     calling scope at the call (``ComputedCallSugar.captured``), never the
@@ -37,6 +44,7 @@ class LambdaSugar(ConstructedTermSugar):
     site: object = dataclass_field(compare=False)
     closure_coordinates: tuple[str, ...] = ()
     captured: tuple = dataclass_field(default=(), compare=False)
+    evaluation_coordinates: tuple[tuple[str, str], ...] = ()
 
     def __post_init__(self) -> None:
         from sugar_source_tree.panic import SugarNotWritten
@@ -129,9 +137,11 @@ class LambdaSugar(ConstructedTermSugar):
 
     def _closure(self, ctx) -> tuple:
         """Each closure coordinate ``ctx`` binds, with the value bound: what
-        the enclosing comprehension's cell holds once it is done.  A
-        coordinate ``ctx`` does not bind is not carried; a later reduction of
-        the body reads it unbound and refuses, as before."""
+        the enclosing comprehension's cell holds once it is done.  Then,
+        under each lambda's evaluation coordinate, the evaluation of the
+        comprehension running where the lambda is made.  A coordinate ``ctx``
+        does not bind is not carried; a later reduction of the body reads it
+        unbound and refuses, as before."""
         temporal = getattr(ctx, "temporal", None)
         if temporal is None:
             return ()
@@ -140,6 +150,10 @@ class LambdaSugar(ConstructedTermSugar):
             value = temporal.value_if_bound(coordinate)
             if value is not None:
                 closure.append((coordinate, value))
+        for carried, running in self.evaluation_coordinates:
+            value = temporal.value_if_bound(running)
+            if value is not None:
+                closure.append((carried, value))
         return tuple(closure)
 
     def to_term(self, *, owner: str):
