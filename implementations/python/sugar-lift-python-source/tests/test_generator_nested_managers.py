@@ -45,7 +45,7 @@ from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
     ReturnStepV1,
 )
-from sugar_lift_py_tests.outcome import Complete, Incomplete, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
 from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.manager_protocol_construction import (
@@ -165,8 +165,8 @@ def test_nested_enter_executes_inner_then_yields_outer(tmp_path: Path) -> None:
     context = _publish(tmp_path, _NESTED_CM)
     protocol = _outer_ref(context).generator_protocol
     outcome = protocol.enter_resource_outcome()
-    assert isinstance(outcome, Complete), type(outcome)
-    entered = outcome.value
+    assert outcome.completed_value() is not None, type(outcome)
+    entered = outcome.completed_value()
     assert isinstance(entered, EnteredGeneratorManagerStateV1)
     # Floor projects string yields as StringValue (or TermValue) — either is fine.
     assert str(getattr(entered.enter_value, "value", entered.enter_value)) == "outer"
@@ -180,7 +180,7 @@ def test_nested_cleanup_runs_before_outer_resume_on_halt(tmp_path: Path) -> None
     """Halted edge: NestedManagerExitStep cleans nested before halt propagates."""
     context = _publish(tmp_path, _NESTED_CM)
     protocol = _outer_ref(context).generator_protocol
-    entered = protocol.enter_resource_outcome().value
+    entered = protocol.enter_resource_outcome().completed_value()
     machine = entered.machine
     assert isinstance(machine.steps[machine.cursor], NestedManagerExitStepV1)
     # Plant a throw at the post-yield suspension (halted body edge).
@@ -324,8 +324,8 @@ def test_planted_nested_manager_step_lifecycle_performance() -> None:
         construction_cid="blake3-512:" + "1" * 128,
     )
     outcome = outer_protocol.enter_resource_outcome()
-    assert isinstance(outcome, Complete)
-    entered = outcome.value
+    assert outcome.completed_value() is not None
+    entered = outcome.completed_value()
     assert entered.enter_value == StringValue("outer")
     assert any(
         isinstance(b, NestedEnteredBindingV1) for b in entered.machine.binding_state

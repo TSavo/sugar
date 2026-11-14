@@ -44,7 +44,7 @@ from sugar_lift_py_tests.floor.branch_result_coordinate import (
     resolve_branch_result_guards as _resolve_branch_result_guards,
 )
 from sugar_lift_py_tests.ir import PrimitiveSort
-from sugar_lift_py_tests.outcome import Complete, Completed, Halted, outcome_to_exitset
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted, outcome_to_exitset
 
 from .canonical import cid_of_json
 from .manager_protocol_construction import (
@@ -1072,7 +1072,7 @@ def _derive_factored_effect_boundary(protocol, behavior):
         boundary = _derive_boundary_for_receiver(protocol, behavior, face.value)
         if not isinstance(boundary, EffectBoundarySemanticsV1):
             return None
-        derived.append(Completed(face.guard, boundary))
+        derived.append(Completed(face.guard, boundary, owed=face.owed))
     none_faces = [
         face
         for face in derived
@@ -1146,7 +1146,6 @@ def _guarded_literal_suppression_formula(exit_set):
         GuardedReturn,
     )
     from sugar_lift_py_tests.ir import and_
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.outcome.exit_set import (
         _and_guards,
         _or_guards,
@@ -1176,7 +1175,8 @@ def _guarded_literal_suppression_formula(exit_set):
             # for it.
             return None
         for statement in block.statements:
-            if isinstance(statement, Incomplete):
+            # An entry that can halt is not a classified result: refuse.
+            if isinstance(statement, ExitSet) and statement.halts():
                 return None
             if isinstance(statement, GuardedReturn):
                 literal = _exact_bool_literal(statement.value)
@@ -1631,13 +1631,14 @@ def _signature_for_behavior(behavior, semantics):
         default = NoDefaultV1()
         sort = PrimitiveSort("String" if index == message_index else "Value")
         if default_sugar is not None:
-            from sugar_lift_py_tests.outcome import Complete
-
-            outcome = default_sugar.desugar()
-            if not isinstance(outcome, Complete):
+            outcome = outcome_to_exitset(default_sugar.desugar())
+            constructed = outcome.completed_value()
+            # A signature default has no arm to carry an owed item on: an
+            # owing default is not constructed completely here.
+            if constructed is None or outcome.owed_items():
                 raise ValueError("source default did not construct completely")
             raw = json.loads(
-                encode_jcs(term_to_value(outcome.value.to_term(owner=name)))
+                encode_jcs(term_to_value(constructed.to_term(owner=name)))
             )
             from sugar_lift_py_tests.context_manager_contract import (
                 ConstructedDefaultV1,
@@ -1671,7 +1672,6 @@ def _signature_to_value(signature):
 
 def _exact_never_suppresses(value: object) -> bool:
     from sugar_lift_py_tests.floor import GuardedReturn
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
         FalseBoolLiteralSugar,
     )
@@ -1679,7 +1679,8 @@ def _exact_never_suppresses(value: object) -> bool:
 
     if isinstance(value, BlockValue):
         if value.can_fall_through and not any(
-            isinstance(entry, (ReturnValue, GuardedReturn, Incomplete))
+            isinstance(entry, (ReturnValue, GuardedReturn))
+            or (isinstance(entry, ExitSet) and entry.halts())
             for entry in value.statements
         ):
             # A source-visible Python function that reaches the end returns
@@ -2401,11 +2402,11 @@ def _constructor_application_from_spread(call_sugar, reduce_ctx):
     """
     from sugar_lift_py_tests.callable_application import CallableApplication
     from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
-    from sugar_lift_py_tests.outcome import Complete
+    from sugar_lift_py_tests.outcome.exit_set import true_guard
     from sugar_source_tree.panic import SugarNotWritten
 
-    outcome = call_sugar.desugar(reduce_ctx)
-    value = getattr(outcome, "value", None)
+    outcome = outcome_to_exitset(call_sugar.desugar(reduce_ctx))
+    value = outcome.completed_value()
     bound = getattr(value, "bound_source_actuals", None)
     if not isinstance(value, CallSiteValue) or bound is None:
         raise SugarNotWritten(
@@ -2440,12 +2441,20 @@ def _constructor_application_from_spread(call_sugar, reduce_ctx):
             continue
         else:
             positional.append(actual)
-    return Complete(
-        CallableApplication(
-            tuple(positional + keyword_values),
-            tuple(keyword_names),
-            call_sugar.site,
-            call_occurrence=getattr(call_sugar, "call_occurrence", None),
+    # The application is read off the call's one completed arm, so it owes
+    # what that arm owed.
+    return ExitSet(
+        (
+            Completed(
+                true_guard(),
+                CallableApplication(
+                    tuple(positional + keyword_values),
+                    tuple(keyword_names),
+                    call_sugar.site,
+                    call_occurrence=getattr(call_sugar, "call_occurrence", None),
+                ),
+                owed=outcome.owed_items(),
+            ),
         )
     )
 
@@ -2528,29 +2537,30 @@ def _receiver_from_constructor_outcome(outcome):
     from dataclasses import replace
 
     from sugar_lift_py_tests.floor import CallSiteValue, ReceiverStatePartitionValue
-    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
 
     def receiver(value):
         if isinstance(value, CallSiteValue):
             retained = value.retained_source_completion_outcome()
             if retained is not None:
-                return retained.value
+                return outcome_to_exitset(retained).completed_value()
         return value
 
-    if isinstance(outcome, Complete):
-        return receiver(outcome.value)
-    if isinstance(outcome, ExitSet):
-        return ReceiverStatePartitionValue(
-            ExitSet(
-                tuple(
-                    replace(exit_, value=receiver(exit_.value))
-                    if isinstance(exit_, Completed)
-                    else exit_
-                    for exit_ in outcome.exits
-                )
+    exits = outcome_to_exitset(outcome)
+    completed = exits.completed_value()
+    # A bare receiver has no arm to carry an owed item on: an owing face
+    # stays a face of the partition, which keeps it.
+    if completed is not None and not exits.owed_items():
+        return receiver(completed)
+    return ReceiverStatePartitionValue(
+        ExitSet(
+            tuple(
+                replace(exit_, value=receiver(exit_.value))
+                if isinstance(exit_, Completed)
+                else exit_
+                for exit_ in exits.exits
             )
         )
-    return getattr(outcome, "value", None)
+    )
 
 
 def _owned_by_class(receiver, class_value) -> bool:
@@ -2585,7 +2595,6 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
         ClassDefinitionValue,
         ReceiverStatePartitionValue,
     )
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_py_tests.temporal import builtin_name_temporal
     from sugar_source_tree.nodes import Call, ClassDef, Name
     from sugar_source_tree.panic import SugarNotWritten
@@ -2640,7 +2649,7 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
 
         def keywords(index, values, names):
             if index == len(call_sugar.keywords):
-                return Complete(
+                return ExitSet.completed(
                     CallableApplication(values, names, call_sugar.site,
                                         call_occurrence=call_sugar.call_occurrence)
                 )
@@ -2668,8 +2677,8 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
         class_def = binds[0]
         target_symbol = f"python:local:{class_def.name}"
         try:
-            class_outcome = class_def.sugar().desugar(reduce_ctx)
-            class_value = getattr(class_outcome, "value", None)
+            class_outcome = outcome_to_exitset(class_def.sugar().desugar(reduce_ctx))
+            class_value = class_outcome.completed_value()
             if type(class_value) is not ClassDefinitionValue:
                 _install_local_derivation_gap(
                     context,
@@ -2679,9 +2688,11 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
                     type(class_outcome).__name__,
                 )
                 continue
-            application = collect_application(call.sugar())
-            application_value = getattr(application, "value", None)
-            if application_value is None:
+            application = outcome_to_exitset(collect_application(call.sugar()))
+            application_value = application.completed_value()
+            # The manager behavior built from these actuals has no arm to
+            # carry an owed item on: an owing application is not constructed.
+            if application_value is None or application.owed_items():
                 _install_local_derivation_gap(
                     context, coordinate, target_symbol,
                     "call-arguments-not-constructed", type(application).__name__
@@ -2690,7 +2701,8 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
             result_outcome = class_value.callable_application_with(
                 application_value, reduce_ctx
             )
-            result = _receiver_from_constructor_outcome(result_outcome)
+            result_exits = outcome_to_exitset(result_outcome)
+            result = _receiver_from_constructor_outcome(result_exits)
             if isinstance(result, ObjectValue):
                 if not _owned_by_class(result, class_value):
                     _install_local_derivation_gap(
@@ -2805,8 +2817,8 @@ def _populate_same_module_class_manager_uses(source_file, context, uses) -> None
                 call,
                 class_def,
                 protocol,
-                construction_total=isinstance(result_outcome, Complete)
-                and isinstance(result_outcome.value, ObjectValue),
+                construction_total=not result_exits.owed_items()
+                and isinstance(result_exits.completed_value(), ObjectValue),
             ):
                 continue
             kind, detail = _gap_kind_and_detail(protocol)

@@ -197,7 +197,6 @@ def test_enter_resource_outcome_runs_pre_yield_assign():
     from sugar_lift_py_tests.context_manager_resolution import (
         SourceFragmentCoordinateV1,
     )
-    from sugar_lift_py_tests.outcome import Complete
     from sugar_lift_python_source.manager_protocol_construction import (
         EnteredGeneratorManagerStateV1,
         construct_generator_backed_protocol,
@@ -219,8 +218,7 @@ def test_enter_resource_outcome_runs_pre_yield_assign():
         construction_cid="blake3-512:" + "c" * 128,
     )
     outcome = protocol.enter_resource_outcome()
-    assert isinstance(outcome, Complete)
-    entered = outcome.value
+    entered = outcome.completed_value()
     assert isinstance(entered, EnteredGeneratorManagerStateV1)
     assert entered.enter_value == TermValue(1)
     assert any(
