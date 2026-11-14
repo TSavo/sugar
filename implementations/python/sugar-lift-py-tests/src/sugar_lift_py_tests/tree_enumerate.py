@@ -249,7 +249,12 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     so a reduction read back from here carries them as the first one did.
     A module's reduction is its body's one run (``ModuleBlockSugar.run``),
     under no module execution site, as an import runs it; it keeps the
-    context each completed arm ended with (``OwnerReduction.ends``).
+    context each completed arm ended with (``OwnerReduction.ends``).  It
+    is the module's run under way (``_MODULE_RUNS_UNDER_WAY``), however it
+    is asked for: the marker is set by this reduction's own row, so it is
+    never ambient to that row, and the row is served after the run, from
+    ``module_end_contexts`` or not, without running the module again.  A
+    row computed inside the run that read the marker still records it.
     """
     from sugar_lift_py_tests import assert_reductions
     from sugar_source_tree.construction_cache import (
@@ -258,7 +263,6 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
         open_row,
         serve,
     )
-    from sugar_source_tree.nodes import construct_at_module_execution_site
 
     node = owner if owner is not None else sf.root
     lc = node.line_col_span()
@@ -275,9 +279,7 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
             if owner is not None:
                 outcome = function_universe_outcome(owner)
             else:
-                outcome, ends = construct_at_module_execution_site(
-                    None, lambda: sf.root.sugar().run(None)
-                )
+                outcome, ends = _module_run(node.unit, sf)
     except BaseException:
         # A refusal is not kept: what the reduction read and said belongs
         # to the computation around it.
@@ -288,6 +290,31 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
     return held
 
 
+# The units whose module run is under way.  Set by the module's own
+# reduction row (``_module_run``), so it is never ambient to that row; it is
+# ambient to every other memo row: an answer computed inside a module's run
+# that read that run as under way (a cycle back to its final bindings, or
+# another module's run reached through it) is served only where it is under
+# way again.
+_MODULE_RUNS_UNDER_WAY: AmbientSet = AmbientSet("module_runs_under_way")
+
+
+def _module_run(unit, sf) -> tuple:
+    """``unit``'s module body run once, under no module execution site, as
+    an import runs it, marked under way while it runs.  Called with the
+    module's reduction row (``owner_reduction``) innermost, so the marker
+    is that row's own act: its reads of it are not its inputs."""
+    from sugar_source_tree.nodes import construct_at_module_execution_site
+
+    _MODULE_RUNS_UNDER_WAY.add(id(unit))
+    try:
+        return construct_at_module_execution_site(
+            None, lambda: sf.root.sugar().run(None)
+        )
+    finally:
+        _MODULE_RUNS_UNDER_WAY.discard(id(unit))
+
+
 # Each unit's module run, remembered through the one door for memo rows
 # (``construction_cache``): the context each completed arm ended with, or
 # the refusal the run raised, re-raised on every hit.  Keyed by the unit's
@@ -295,10 +322,6 @@ def owner_reduction(owner, sf: Optional[SourceFile] = None) -> OwnerReduction:
 # them.
 _MODULE_RUNS: dict = {}
 _MODULE_RUN_UNITS: dict = {}
-# The units whose module run is under way.  Ambient to every memo row: an
-# answer computed while another module's run is under way, that read that
-# run as under way, is served only where it is under way again.
-_MODULE_RUNS_UNDER_WAY: AmbientSet = AmbientSet("module_runs_under_way")
 
 
 def module_end_contexts(unit) -> tuple:
@@ -351,14 +374,12 @@ def module_end_contexts(unit) -> tuple:
         _MODULE_RUNS.clear()
         _MODULE_RUN_UNITS.clear()
     computation = open_row()
-    # Running it is this computation's own act: never ambient to its row.
-    _MODULE_RUNS_UNDER_WAY.add(key)
     try:
-        try:
-            with occurrence_path(()):
-                ends = owner_reduction(None, unit.constructed_module).ends
-        finally:
-            _MODULE_RUNS_UNDER_WAY.discard(key)
+        # The module's reduction marks its own run under way
+        # (``_module_run``): a reduction row served here or computed here
+        # is the one a later ``owner_reduction(None)`` is served.
+        with occurrence_path(()):
+            ends = owner_reduction(None, unit.constructed_module).ends
     except (SourceTreePanic, ConstructionPanic) as panic:
         # The two sanctioned construction gaps, remembered as loudly as an
         # answer and raised on.
