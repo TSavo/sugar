@@ -161,6 +161,12 @@ class EvaluationRefSugar(ConstructedTermSugar):
     # A read of what a store put in a place (``o.x`` after ``o.x = v``, ``d``
     # after ``d[k] = v``): resolves through the key only; ``name`` is a label.
     place: bool = False
+    # A name bound to a lambda, passed to a callee that runs it during the
+    # call (``Call._carry_argument_cells``): ``((name, coordinate cid,
+    # sugar), ...)``, the caller's binding at the call of each enclosing local
+    # the lambda reads.  Read here, where the argument is evaluated, and
+    # carried on the lambda value (``carry_captured_values``).
+    captured: tuple = dataclass_field(default=(), compare=False)
 
     @classmethod
     def witnesses(cls):
@@ -176,6 +182,17 @@ class EvaluationRefSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        if not self.captured:
+            return self._read(ctx)
+        from sugar_lift_py_tests.sugar.call_site_sugar import carry_captured_values
+
+        return self._read(ctx).and_then(
+            lambda value: ExitSet.completed(
+                carry_captured_values(value, self.captured, ctx)
+            )
+        )
+
+    def _read(self, ctx) -> ExitSet:
         temporal = getattr(ctx, "temporal", None) if ctx is not None else None
         if self.member:
             return self._member(temporal)

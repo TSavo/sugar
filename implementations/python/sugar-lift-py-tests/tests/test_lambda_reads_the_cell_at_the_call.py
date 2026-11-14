@@ -12,16 +12,27 @@ that coordinate before the body runs (``ComputedCallSugar.captured``,
 call is not known, is refused by name
 (``LambdaCallable.callable_application_with``).
 
+A lambda passed to a callee that runs it during the call
+(``sorted(xs, key=lambda v: d[v])``, a source ``def apply(g, x): return
+g(x)``) is called while the caller's bindings stand as they were at that
+call: the call carries them onto the lambda value
+(``Call._carry_argument_cells``, ``LambdaCallable.captured``) and its call
+inside the callee binds them.  A callee that may keep the lambda past the call
+(``map``'s iterator, a function that returns it) carries nothing, and the
+lambda's call stays refused by name.
+
 A lambda an eager comprehension stores still reads the comprehension's final
 member (#7944, #7949): that is the comprehension cell's value at the call.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
+from sugar_lift_py_tests.callable_application import CallableApplication
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, LambdaCallable, TermValue
@@ -67,6 +78,36 @@ CALLED_BEFORE_REBIND = (
 )
 # The lambda escapes: whoever calls it, its enclosing binding then is unknown.
 PASSED_ON = "def f():\n    x = 1\n    return lambda v: v + x\n"
+# sorted calls its key during the call and keeps nothing.
+SORTED_KEY = (
+    "def f():\n"
+    "    d = {1: 2, 2: 1}\n"
+    "    return sorted([2, 1], key=lambda v: d[v])\n"
+)
+# map's iterator keeps the lambda and calls it when it is consumed.
+MAPPED = "def f(xs):\n    k = 1\n    return map(lambda v: v + k, xs)\n"
+# A source function that only calls its formal runs the lambda in the call.
+APPLIED = (
+    "def apply(g, x):\n"
+    "    return g(x)\n"
+    "\n"
+    "\n"
+    "def f():\n"
+    "    k = 1\n"
+    "    k = 2\n"
+    "    return apply(lambda v: k, 0)\n"
+)
+# A source function that returns its formal keeps the lambda past the call.
+KEPT = (
+    "def keep(g):\n"
+    "    return g\n"
+    "\n"
+    "\n"
+    "def f():\n"
+    "    k = 1\n"
+    "    h = keep(lambda v: k)\n"
+    "    return h\n"
+)
 # An eager comprehension stores the lambda: the comprehension's final member.
 STORED = "def f(xs, k):\n    return [lambda: x + k for x in xs]\n"
 
@@ -221,7 +262,6 @@ def test_a_lambda_passed_on_refuses_by_name() -> None:
     assert lam._captured_bindings()[0] == ("x",)
     callable_ = lam.sugar().desugar(None).completed_value()
     assert isinstance(callable_, LambdaCallable)
-    from sugar_lift_py_tests.callable_application import CallableApplication
 
     with pytest.raises(SugarNotWritten):
         callable_.callable_application_with(
@@ -269,3 +309,101 @@ def test_a_lambda_called_in_place_reads_the_current_member() -> None:
     assert lam._captured_bindings() == ((), ())
     assert isinstance(lam.body, EvaluationRef)
     assert lam.body.evaluation == coordinate
+
+
+# ---------------------------------------------------------------------------
+# Passed to a callee that runs it during the call: the call carries the
+# binding at it onto the lambda value, and the callee's call of it binds it.
+# ---------------------------------------------------------------------------
+
+
+def _assignments(body, name: str) -> list:
+    return [
+        node
+        for node in body
+        if isinstance(node, Assign) and node.targets[0].id == name
+    ]
+
+
+def _carried(node) -> tuple:
+    return tuple(getattr(node, "carried_cells", None) or ())
+
+
+def test_a_key_lambda_passed_to_sorted_carries_the_binding_at_the_call() -> None:
+    body = _function(SORTED_KEY).substitute({}).body
+    (assign,) = _assignments(body, "d")
+    call = body[-1].value
+    assert isinstance(call, Call)
+    (keyword,) = call.keywords
+    lam = keyword.value
+    assert isinstance(lam, Lambda)
+    assert lam._captured_bindings()[0] == ("d",)
+    ((name, cell),) = _carried(lam)
+    assert name == "d"
+    assert isinstance(cell, EvaluationRef)
+    assert cell.evaluation == projection_key(assign.evaluation, "d")
+    sugar = lam.sugar()
+    ((carried, cid, _value),) = sugar.captured
+    assert carried == "d"
+    assert cid == sugar.source_call_frame.captured_coordinates[0].cid
+
+
+def test_a_carried_lambda_value_decides_where_it_is_called() -> None:
+    (lam,) = _lambdas(_function(PASSED_ON).substitute({}).body)
+    callable_ = lam.sugar().desugar(None).completed_value()
+    names, coordinates = lam._captured_bindings()
+    carried = replace(callable_, captured=((names[0], coordinates[0].cid, TWO),))
+    outcome = carried.callable_application_with(
+        CallableApplication((ONE,), (), "callback-call"), None
+    )
+    value = outcome_to_exitset(outcome).completed_value()
+    assert value is not None
+    found = _returned(outcome) or [_resolved(value)]
+    assert TermValue(3) in found, found
+
+
+def test_a_lambda_passed_to_map_carries_nothing() -> None:
+    body = _function(MAPPED).substitute({}).body
+    call = body[-1].value
+    assert isinstance(call, Call)
+    lam = call.args[0]
+    assert isinstance(lam, Lambda)
+    assert lam._captured_bindings()[0] == ("k",)
+    assert _carried(lam) == ()
+    assert lam.sugar().captured == ()
+
+
+def test_a_source_function_that_calls_the_lambda_gets_the_binding() -> None:
+    body = _function(APPLIED).substitute({}).body
+    rebind = _assignments(body, "k")[-1]
+    call = body[-1].value
+    assert isinstance(call, Call)
+    lam = call.args[0]
+    assert isinstance(lam, Lambda)
+    ((name, cell),) = _carried(lam)
+    assert name == "k"
+    assert cell.evaluation == projection_key(rebind.evaluation, "k")
+
+
+def test_a_lambda_passed_to_a_source_function_that_calls_it_decides(
+    tmp_path: Path,
+) -> None:
+    returned = _returned(_outcome(tmp_path, APPLIED, "applied"))
+    assert TWO in returned, returned
+    assert ONE not in returned, returned
+
+
+def test_a_lambda_a_source_function_keeps_stays_refused() -> None:
+    body = _function(KEPT).substitute({}).body
+    (lam,) = _lambdas(body)
+    assert lam._captured_bindings()[0] == ("k",)
+    assert _carried(lam) == ()
+    sugar = lam.sugar()
+    assert sugar.captured == ()
+    callable_ = sugar.desugar(None).completed_value()
+    assert isinstance(callable_, LambdaCallable)
+    assert callable_.captured == ()
+    with pytest.raises(SugarNotWritten):
+        callable_.callable_application_with(
+            CallableApplication((ONE,), (), "kept-call"), None
+        )

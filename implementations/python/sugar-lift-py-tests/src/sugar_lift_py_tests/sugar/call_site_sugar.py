@@ -873,21 +873,18 @@ def read_captured_values(captured, ctx, *, site) -> tuple:
     call, in the caller's context -- the enclosing scope's binding of the
     name at the point of the call, as Python reads the cell when the
     function runs.  The one reader for a local ``def``'s call
-    (``CallSiteSugar``) and a lambda's (``ComputedCallSugar``).  A read that
+    (``CallSiteSugar``) and a lambda's (``ComputedCallSugar``), and through
+    ``carried_captured_values`` for a lambda passed to a callee that runs it
+    during the call.  A read that
     does not complete with one plain value is refused by name: the callee's
     body never reads the name instead, nor the binding it had where the
     function was made."""
     if not captured:
         return ()
-    from sugar_lift_py_tests.sugar.function_universe_sugar import (
-        plain_completed_value,
-    )
     from sugar_source_tree.panic import SugarNotWritten
 
-    actual_ctx = _actual_reduce_context(ctx)
     values = []
-    for name, cid, sugar in captured:
-        value = plain_completed_value(sugar.desugar(actual_ctx))
+    for name, cid, value in _captured_reads(captured, ctx):
         if value is None:
             raise SugarNotWritten(
                 owner="CallSiteSugar.captured",
@@ -901,6 +898,56 @@ def read_captured_values(captured, ctx, *, site) -> tuple:
             )
         values.append((name, cid, value))
     return tuple(values)
+
+
+def _captured_reads(captured, ctx):
+    """``(name, coordinate cid, value)`` for each carried binding
+    (``captured``), read in order in the caller's context; ``value`` is
+    ``None`` where the read does not complete with one plain value."""
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        plain_completed_value,
+    )
+
+    actual_ctx = _actual_reduce_context(ctx)
+    for name, cid, sugar in captured:
+        yield name, cid, plain_completed_value(sugar.desugar(actual_ctx))
+
+
+def carried_captured_values(captured, ctx) -> tuple:
+    """``((name, coordinate cid, value), ...)``: the caller's binding at a
+    call of each enclosing local a lambda passed to it reads, whose callee
+    runs the lambda during the call (``captured``: ``(name, coordinate cid,
+    sugar)``, ``Call._carry_argument_cells``), read where the argument is
+    evaluated (``LambdaSugar``, ``carry_captured_values``) as
+    ``read_captured_values`` reads a call's.  Empty when a read does not
+    complete with one plain value: the lambda then carries nothing, and its
+    call stays refused by name (``with_captured_values``).  The argument
+    itself is never refused here: the callee may not call it."""
+    if not captured:
+        return ()
+    values = []
+    for name, cid, value in _captured_reads(captured, ctx):
+        if value is None:
+            return ()
+        values.append((name, cid, value))
+    return tuple(values)
+
+
+def carry_captured_values(value, captured, ctx):
+    """``value`` -- what a name bound to a lambda reduced to, passed to a
+    callee that runs it during the call (``Call._carry_argument_cells``) --
+    carrying each enclosing binding the call carries for the lambda's
+    captured names (``carried_captured_values``).  Its call inside the
+    callee binds them (``LambdaCallable.callable_application_with``).  A
+    value that is not a lambda carries nothing: its call is not the
+    lambda's."""
+    from sugar_lift_py_tests.floor import LambdaCallable
+
+    if not captured or not isinstance(value, LambdaCallable):
+        return value
+    from dataclasses import replace
+
+    return replace(value, captured=carried_captured_values(captured, ctx))
 
 
 def with_captured_values(ctx, frame, captured_values, *, site, blame):
@@ -930,8 +977,8 @@ def require_frame_captures(frame, captured_values, *, site) -> None:
     name of ``frame`` (``captured_names``), each under the frame's own
     coordinate for it.  A captured name the call does not carry is a
     function called where its enclosing binding at the call is not known
-    (returned, passed on, stored): it is never read at the binding it had
-    where the function was made."""
+    (returned, stored, or passed to a callee that may keep it past the call):
+    it is never read at the binding it had where the function was made."""
     from sugar_source_tree.panic import SugarNotWritten
 
     coordinates = {
