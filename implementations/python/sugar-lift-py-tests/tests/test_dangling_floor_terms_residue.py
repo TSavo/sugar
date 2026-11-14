@@ -16,6 +16,7 @@ import pytest
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue, TermValue
 from sugar_lift_py_tests.ir import _Ctor, make_var
 from sugar_lift_py_tests.repo_root import sugar_lift_py_tests_package_root
+from sugar_source_tree.nodes import LanguageCallee
 from sugar_source_tree.tree import SourceFile
 
 ROOT = sugar_lift_py_tests_package_root() / "src" / "sugar_lift_py_tests" / "floor"
@@ -151,6 +152,7 @@ def _receiver(kind: str):
         term=make_var("xs"),
         body=None,
         site="list-construction",
+        language_callee=LanguageCallee.BUILTIN_LIST,
     )
 
 

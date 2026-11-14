@@ -698,6 +698,7 @@ class FloorValue:
                 ),
                 body=None,
                 site=site,
+                subscript_coordinate=True,
             )
         )
 

@@ -33,21 +33,29 @@ class BuiltinSemanticCallable(FloorValue):
         )
 
     def callable_application_with(self, operation, ctx):
+        from sugar_source_tree.nodes import LanguageCallee
+
         if self.operation == "python.set.construct":
             floored = self._construct_set(operation)
             if floored is not None:
                 return floored
-            return self._unhandled_construct(operation, "set")
+            return self._unhandled_construct(
+                operation, "set", LanguageCallee.BUILTIN_SET
+            )
         if self.operation == "python.tuple.construct":
             floored = self._construct_tuple(operation)
             if floored is not None:
                 return floored
-            return self._unhandled_construct(operation, "tuple")
+            return self._unhandled_construct(
+                operation, "tuple", LanguageCallee.BUILTIN_TUPLE
+            )
         if self.operation == "python.dict.construct":
             floored = self._construct_dict(operation)
             if floored is not None:
                 return floored
-            return self._unhandled_construct(operation, "dict")
+            return self._unhandled_construct(
+                operation, "dict", LanguageCallee.BUILTIN_DICT
+            )
         if self.operation in (
             "python.re.search",
             "python.re.match",
@@ -122,12 +130,14 @@ class BuiltinSemanticCallable(FloorValue):
             )
         return test(supertype, operation.site)
 
-    def _unhandled_construct(self, operation, name: str):
+    def _unhandled_construct(self, operation, name: str, language_callee):
         """Opaque construct operands stay a dig cue, not a ConstructionPanic.
 
         ``tuple(opaque_genexp)`` must remain a CallSiteValue coordinate so later
         force_floor / field projection can refuse with a stage-keyed residual
-        rather than aborting the whole manager factory membrane.
+        rather than aborting the whole manager factory membrane. The
+        coordinate carries the ``LanguageCallee`` this builtin binding is, so
+        a reader asks the binding, never the spelling ``name`` (#7757).
         """
         from sugar_lift_py_tests.call_symbol import call_symbol
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
@@ -148,6 +158,7 @@ class BuiltinSemanticCallable(FloorValue):
                 ),
                 body=None,
                 site=operation.site,
+                language_callee=language_callee,
             )
         )
 

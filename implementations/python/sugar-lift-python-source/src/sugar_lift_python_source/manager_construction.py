@@ -337,9 +337,13 @@ def _floor_one_tuple_callsite(
     from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
     from sugar_lift_py_tests.floor.tuple_coordinate_value import TupleCoordinateValue
     from sugar_lift_py_tests.floor.tuple_value import TupleValue
+    from sugar_source_tree.nodes import LanguageCallee
 
     arg = None
-    if isinstance(value, CallSiteValue) and value.target_name == "tuple":
+    if (
+        isinstance(value, CallSiteValue)
+        and value.language_callee is LanguageCallee.BUILTIN_TUPLE
+    ):
         if len(value.arg_values) != 1:
             return None
         arg = value.arg_values[0]
