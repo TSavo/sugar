@@ -11634,14 +11634,20 @@ class Assign(Statement):
         gives its name as the object it denotes (``_ground_members``): ``b``
         denotes the new list ``[2, 3]``.  The reads still read the
         projections; the members only decide later shapes (``for y in
-        b``)."""
+        b``).  Where it does not (``a, b = pair``, ``pair`` a call's value
+        or a display of objects), each reference carries the object the
+        unpack gives its name (``_unpack_member_objects``): a mutation
+        through ``a`` is read through every alias of it and every holder of
+        ``pair``."""
         evaluation = getattr(self, "evaluation", None)
         target = self._dynamic_unpack_target()
         if not isinstance(evaluation, str) or target is None:
             return None
         from sugar_lift_py_tests.temporal.temporal_context import projection_key
 
-        members = self._ground_members(target)
+        members = self._ground_members(target) or self._unpack_member_objects(
+            target, self.value, evaluation
+        )
         bindings = {
             name: _evaluation_ref(
                 self,
@@ -11671,6 +11677,78 @@ class Assign(Statement):
         owner = self.unit.require_target_pattern_for_target(target).consumer_occurrence
         members = self.unit.require_target_pattern(owner, target).bindings_for(ground)
         return members or {}
+
+    def _unpack_member_objects(self, target, value, evaluation) -> dict:
+        """Each Name leaf of ``target`` to the object the unpack of ``value``
+        gives it, where no ground display decides it (``_ground_members``).
+
+        A positional leaf is given the object ``value`` holds there: the
+        member of the display ``value`` denotes when it is one of the
+        target's arity (``container_mutation._display_member``), else the
+        item read of ``value`` at that position (``For._item_of``), which
+        names that member of ``value``'s object -- one node, carried by every
+        read of the name, so a store through it reaches every alias, and the
+        object it was read from holds it (``container_mutation._contains``).
+        A starred leaf is given a new list, held by nothing else: its own
+        reference, one node.  A ground value of another shape gives nothing
+        (the unpack raises).  ``of`` decides which object a name denotes,
+        never its value."""
+        from sugar_lift_py_tests.temporal.temporal_context import projection_key
+
+        from .container_mutation import _display_member, _identity
+
+        found: dict = {}
+        elements = target.elts
+        stars = [
+            index
+            for index, element in enumerate(elements)
+            if isinstance(element, Starred)
+        ]
+        if len(stars) > 1:
+            return found
+        count = len(elements)
+        shape = _identity(value)
+        display = None
+        if getattr(shape, "kind", None) in ("List", "Tuple"):
+            fits = (
+                len(shape.elts) >= count - 1 if stars else len(shape.elts) == count
+            )
+            display = shape if fits else None
+        if display is None and _ground_value(value) is not None:
+            return found
+
+        def give(name, node):
+            found.pop(name, None)
+            found[name] = node
+
+        for index, element in enumerate(elements):
+            if isinstance(element, Starred):
+                if isinstance(element.value, Name):
+                    name = element.value.id
+                    give(
+                        name,
+                        _evaluation_ref(
+                            self,
+                            element.value.span,
+                            projection_key(evaluation, name),
+                            name,
+                        ),
+                    )
+                continue
+            position = index if not stars or index < stars[0] else index - count
+            member = (
+                None if display is None else _display_member(display, ("item", position))
+            )
+            if member is None or isinstance(member, Name):
+                member = For._item_of(self, value, position)
+            if isinstance(element, Name):
+                give(element.id, member)
+            elif isinstance(element, (Tuple_, List)) and element.elts:
+                for name, node in self._unpack_member_objects(
+                    element, member, evaluation
+                ).items():
+                    give(name, node)
+        return found
 
     def _name_values(self) -> dict:
         """The value node substitution binds each Name target to: the
@@ -11798,8 +11876,10 @@ class Assign(Statement):
     def _container_mutation(self, scope):
         """``r[k] = v`` on a name (the one door,
         ``container_mutation.name_mutation_statement``), ``a.b[k] = v`` /
-        ``a[i][j] = v`` through a path (``path_item_statement``) or ``x =
-        <path>.<mutator>(...)`` (``path_mutation_statement``).  A chain's or
+        ``a[i][j] = v`` through a path (``path_item_statement``), ``x =
+        <path>.<mutator>(...)`` (``path_mutation_statement``) or ``x =
+        d.setdefault(k, v).<mutator>(...)``
+        (``setdefault_mutation_statement``).  A chain's or
         an unpack's store target is this same single-target store
         (``_store_target_statement``)."""
         if len(self.targets) != 1:
@@ -11845,11 +11925,34 @@ class Assign(Statement):
             or isinstance(call.func.value, Name)
         ):
             return None
-        from .container_mutation import path_mutation_statement
-
-        return path_mutation_statement(
-            self, scope, call=call.substitute(scope), target_name=target.id
+        from .container_mutation import (
+            path_mutation_statement,
+            setdefault_mutation_statement,
         )
+
+        substituted = call.substitute(scope)
+        mutation = path_mutation_statement(
+            self, scope, call=substituted, target_name=target.id
+        )
+        if mutation is not None:
+            return mutation
+        inner = call.func.value
+        if (
+            isinstance(inner, Call)
+            and isinstance(inner.func, Attribute)
+            and isinstance(inner.func.value, Name)
+        ):
+            # ``x = d.setdefault(k, v).pop()``: the setdefault and the
+            # mutator are the one door's two operations, ``x`` bound to the
+            # mutator's value.
+            return setdefault_mutation_statement(
+                self,
+                scope,
+                name=inner.func.value.id,
+                call=substituted,
+                target_name=target.id,
+            )
+        return None
 
     def _name_call_mutation(self, scope):
         """``x = r.<mutator>(...)`` on a name ``r``: the one door
@@ -12641,7 +12744,8 @@ class AugAssign(Statement):
         A plain Name target is the one mutation door's in-place call
         (``container_mutation.name_mutation_statement``): the value the name
         holds at reduce decides it, and the name is bound to the in-place
-        result under this statement's key.
+        result under this statement's key.  A Subscript target on a name or
+        through a path is that door's read-modify-store (``_item_mutation``).
 
         Attribute and Subscript targets are runtime stores — receivers (and
         subscript indices) are load expressions and must substitute so formals
@@ -12691,6 +12795,10 @@ class AugAssign(Statement):
             )
             if mutation is not None:
                 return mutation
+        if isinstance(self.target, Subscript):
+            mutation = self._item_mutation(scope, pre_sub_operator_site)
+            if mutation is not None:
+                return mutation
 
         new_value, value_changed = self._substitute_field(self.value, scope)
         changes = {"value": new_value} if value_changed else {}
@@ -12714,6 +12822,43 @@ class AugAssign(Statement):
                 self.reporter,
             )
         return self if not changes else rewrite(self, **changes)
+
+    def _item_mutation(self, scope, operator_site):
+        """``r[k] OP= v`` on a name (the one door,
+        ``container_mutation.name_mutation_statement``) or ``d['k'][0] OP=
+        v`` through a path (``path_item_statement``): one ``__setitem__``
+        whose stored value is the item's in-place result, a read-modify-store
+        evaluated once in Python's order (``PathContainerCallSugar``); every
+        name bound to the receiver, or to the path's root, reads its
+        post-state.  None when the receiver is no path from a bound name
+        (the ordinary augmented store)."""
+        from .container_mutation import name_mutation_statement, path_item_statement
+
+        target = self.target
+        receiver = target.value.substitute(scope)
+        args = (target.slice_.substitute(scope), self.value.substitute(scope))
+        if not isinstance(target.value, Name):
+            return path_item_statement(
+                self,
+                scope,
+                site=target,
+                receiver=receiver,
+                method="__setitem__",
+                args=args,
+                operator_kind=self.op.kind,
+                operator_site=operator_site,
+            )
+        return name_mutation_statement(
+            self,
+            scope,
+            site=target,
+            name=target.value.id,
+            receiver=receiver,
+            method="__setitem__",
+            args=args,
+            operator_kind=self.op.kind,
+            operator_site=operator_site,
+        )
 
     def _mint_operator_site_from_structure(self):
         """Authenticated operator occurrence: gap between target and RHS spans.

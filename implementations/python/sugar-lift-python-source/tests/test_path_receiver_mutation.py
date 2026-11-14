@@ -636,3 +636,135 @@ def test_unpacked_names_bound_to_containers_are_their_objects(tmp_path):
     assert _only_return(tmp_path, source) == TupleValue(
         (ListValue(_ints(0, 2)), ListValue(_ints(3)))
     )
+
+
+# -- The leftovers of #8119 take the one door (#7757) ------------------------
+#
+# ``d['k'][0] += 1`` was an ordinary augmented store: the root and a name
+# bound to the object the path reaches kept the pre-store value.  ``x =
+# d.setdefault(k, v).pop()`` was an ordinary call.  ``a, b = pair`` (no ground
+# display) bound ``a`` to a reference that denoted no object: every read was
+# its own object, so an alias of ``a`` never saw a mutation through ``a``.
+
+
+def test_an_augmented_item_store_through_a_path_is_seen_by_every_alias(tmp_path):
+    source = (
+        "def f():\n"
+        "    d = {'k': [1, 2]}\n"
+        "    e = d\n"
+        "    a = d['k']\n"
+        "    d['k'][0] += 10\n"
+        "    return (a, e)\n"
+    )
+    after = ListValue(_ints(11, 2))
+    assert _only_return(tmp_path, source) == TupleValue(
+        (after, DictValue(((StringValue("k"), after),)))
+    )
+
+
+def test_an_augmented_item_store_on_a_name_is_seen_through_an_alias(tmp_path):
+    source = (
+        "def f():\n"
+        "    r = 'a b'.split()\n"
+        "    alias = r\n"
+        "    r[0] += 'z'\n"
+        "    return (alias, r)\n"
+    )
+    expected = ListValue(_strings("az", "b"))
+    assert _only_return(tmp_path, source) == TupleValue((expected, expected))
+
+
+def test_an_augmented_list_item_held_by_another_name_is_never_stale(tmp_path):
+    # ``L`` is the list at ``d['k'][0]``; ``+= [2]`` extends it in place.  The
+    # store names ``d['k']``, so ``L`` is unknown after it, never the
+    # pre-store ``[1]``.
+    source = (
+        "def f():\n"
+        "    d = {'k': [[1]]}\n"
+        "    L = d['k'][0]\n"
+        "    d['k'][0] += [2]\n"
+        "    return L\n"
+    )
+    value = _only_return(tmp_path, source)
+    assert value != ListValue(_ints(1))
+    assert _unknown_after_call(value)
+
+
+def test_a_bound_setdefault_pop_changes_the_held_list_and_every_alias(tmp_path):
+    # Discriminating: ``L`` is the object at ``d['x']`` and ``e`` names ``d``;
+    # the ordinary call left both reading the pre-call ``[1, 2]``.
+    source = (
+        "def f():\n"
+        "    L = [1, 2]\n"
+        "    d = {'x': L}\n"
+        "    e = d\n"
+        "    x = d.setdefault('x', []).pop()\n"
+        "    return (x, L, e)\n"
+    )
+    after = ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == TupleValue(
+        (TermValue(2), after, DictValue(((StringValue("x"), after),)))
+    )
+
+
+def test_a_bound_setdefault_pop_on_a_missing_key_pops_the_default(tmp_path):
+    source = (
+        "def f():\n"
+        "    d = {}\n"
+        "    e = d\n"
+        "    x = d.setdefault('k', [5]).pop()\n"
+        "    return (x, e)\n"
+    )
+    assert _only_return(tmp_path, source) == TupleValue(
+        (TermValue(5), DictValue(((StringValue("k"), ListValue(())),)))
+    )
+
+
+def test_a_name_unpacked_from_a_display_of_objects_is_that_object(tmp_path):
+    # ``pair`` holds ``x``'s list (no ground display: ``x`` is a split's
+    # value).  ``a`` is that list: ``c``, ``a``'s alias, and ``x`` read the
+    # append; ``pair``, which holds it, is unknown, never the pre-call value.
+    source = (
+        "def f():\n"
+        "    x = 'a b'.split()\n"
+        "    pair = (x, [9])\n"
+        "    a, b = pair\n"
+        "    c = a\n"
+        "    a.append('c')\n"
+        "    return (c, x, pair)\n"
+    )
+    first, second, third = _only_return(tmp_path, source).elements
+    after = ListValue(_strings("a", "b", "c"))
+    assert first == after
+    assert second == after
+    assert _unknown_after_call(third)
+
+
+def test_names_unpacked_from_a_call_are_its_members_for_the_door():
+    # ``a`` and its alias ``c`` denote one object, the call's first member:
+    # both read the object after the append.  Before, ``c`` kept the pre-call
+    # reference (each read of ``a`` was its own object).
+    source = (
+        "def f(g):\n"
+        "    a, b = g()\n"
+        "    c = a\n"
+        "    a.append(1)\n"
+        "    return (c, a)\n"
+    )
+    reads = _substituted_return_reads(source)
+    assert [read.kind for read in reads] == ["PathAfterCall"] * 2
+
+
+def test_the_value_an_unpacked_member_came_from_holds_it():
+    # ``pair`` holds ``a``'s object: after the append through ``a`` it reads
+    # its value after the call, never the pre-call value.
+    source = (
+        "def f(g):\n"
+        "    pair = g()\n"
+        "    a, b = pair\n"
+        "    alias = a\n"
+        "    a.append(1)\n"
+        "    return (pair, alias)\n"
+    )
+    reads = _substituted_return_reads(source)
+    assert [read.kind for read in reads] == ["ReceiverAfterCall", "PathAfterCall"]

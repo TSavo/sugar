@@ -10,9 +10,10 @@ and a node built by another evaluation is another object.
 
 THE LAW, at a statement that mutates the object a name denotes -- a
 mutating-named method call (``r.append(x)``, ``x = r.pop()``), an item store
-(``r[k] = v``), an item delete (``del r[k]``) or an augmented assignment
-(``r += x``) -- whatever the name was given (a display, ``'a b'.split()``, a
-parameter, a global):
+(``r[k] = v``), an item delete (``del r[k]``), an augmented assignment
+(``r += x``) or an augmented item store (``r[k] += x``, a read-modify-store)
+-- whatever the name was given (a display, ``'a b'.split()``, a parameter, a
+global):
 
 - **One door** (``name_mutation_statement``).  The operation becomes one
   ``PathContainerCall`` with no path steps, evaluated at the statement: its
@@ -41,9 +42,10 @@ parameter, a global):
   unchanged.
 
 The same door serves a mutation through a path (``path_mutation_statement``,
-``path_item_statement``: ``a.b.append(x)``, ``a[i][j] = v``, ``del a.b[k]``)
-and ``d.setdefault(k, v).<mutator>(...)`` (``setdefault_mutation_statement``:
-the setdefault is the name's operation, its value the path's receiver).
+``path_item_statement``: ``a.b.append(x)``, ``a[i][j] = v``, ``d['k'][0] +=
+1``, ``del a.b[k]``) and ``d.setdefault(k, v).<mutator>(...)``, its value
+bound or not (``setdefault_mutation_statement``: the setdefault is the
+name's operation, its value the path's receiver).
 
 Names are only rebound; nothing here decides what a call does.
 """
@@ -331,6 +333,13 @@ def _walk_values(node, *, kept_only=True):
 
 
 def _contains(state, target) -> bool:
+    """Whether the value ``state`` holds ``target``'s object.
+
+    An object read out of another -- ``x = d['k']``, ``a = c.items``, an
+    unpack's member (``a, b = pair``: ``a`` is the object ``pair`` holds
+    first, ``Assign._unpack_member_objects``) -- is held by the object it was
+    read from, and so by every value that is or holds that object: a
+    mutation of ``a`` changes what ``pair`` holds."""
     from .nodes import Name, Node
 
     if not isinstance(state, Node):
@@ -341,7 +350,12 @@ def _contains(state, target) -> bool:
                 return True
         elif same_object(node, target):
             return True
-    return False
+    if isinstance(target, Name):
+        return False
+    root, _steps = path_steps(_identity(target))
+    if root is None:
+        return False
+    return same_object(state, root) or _contains(state, root)
 
 
 def aliases(scope, receiver):
@@ -1258,7 +1272,17 @@ def path_mutation_statement(statement, scope, *, call, target_name=None):
     )
 
 
-def path_item_statement(statement, scope, *, site, receiver, method, args):
+def path_item_statement(
+    statement,
+    scope,
+    *,
+    site,
+    receiver,
+    method,
+    args,
+    operator_kind=None,
+    operator_site=None,
+):
     """The shadow statement for an item store or delete through a path, or
     None when ``receiver`` is no path from a name (an ordinary store).
 
@@ -1266,6 +1290,10 @@ def path_item_statement(statement, scope, *, site, receiver, method, args):
     and the value, the value evaluated first) and ``del a.b[k]``
     (``__delitem__``): the operation on the object the path reaches, through
     the one door (``_mutation_through``), as ``a.b.append(x)`` is.
+    ``d['k'][0] OP= v`` is the same store with ``operator_kind``: a
+    read-modify-store (``PathContainerCallSugar``: the receiver and the key,
+    the item read, ``v``, the in-place operator on the item, the store of
+    its result), so the root and every alias read the store's post-state.
     ``receiver`` (the path, ``site`` the target) and ``args`` are already
     substituted."""
     root_read, steps = path_steps(receiver)
@@ -1281,13 +1309,17 @@ def path_item_statement(statement, scope, *, site, receiver, method, args):
         fallback=None,
         root_read=root_read,
         steps=steps,
-        value_first=method == "__setitem__",
+        value_first=method == "__setitem__" and operator_kind is None,
+        operator_kind=operator_kind,
+        operator_site=operator_site,
     )
 
 
-def setdefault_mutation_statement(statement, scope, *, name, call):
+def setdefault_mutation_statement(statement, scope, *, name, call, target_name=None):
     """The shadow statement for ``d.setdefault(k, v).<mutator>(*args)`` on a
-    name ``d``, or None.
+    name ``d``, or None; with ``target_name``, ``x = d.setdefault(k,
+    v).<mutator>(*args)``, ``x`` bound to the mutator's value (the pair the
+    statement binds for it).
 
     Two operations of the one door, in one statement, in Python's order:
     ``d.setdefault(k, v)`` is the name's own operation (its pair bound under
@@ -1349,6 +1381,7 @@ def setdefault_mutation_statement(statement, scope, *, name, call):
         fallback=rewrite(call, func=rewrite(call.func, value=member)),
         root_read=root_read,
         steps=(("undecided", None),) if key is None else (("item", key),),
+        target_name=target_name,
         evaluation=projection_key(evaluation, f"{method}()"),
         before=((setdefault, evaluation),),
         shape_root=receiver,
@@ -1375,9 +1408,11 @@ def name_mutation_statement(
 
     ``r.append(x)``, ``x = r.pop()`` (``fallback`` the call), ``r[k] = v``
     (``__setitem__``, ``value_first``: Python evaluates ``v`` first),
-    ``del r[k]`` (``__delitem__``) and ``r += x`` (``__iadd__``,
+    ``del r[k]`` (``__delitem__``), ``r += x`` (``__iadd__``,
     ``operator_kind``, ``inplace``; ``target_name`` the name itself, which
-    Python binds to the in-place result), whatever ``name`` was given -- a display,
+    Python binds to the in-place result) and ``r[k] += x`` (``__setitem__``
+    with ``operator_kind``: the read-modify-store of the item, ``args`` the
+    key and ``x``), whatever ``name`` was given -- a display,
     ``'a b'.split()``, a parameter, a global.  ``receiver`` (the read of
     ``name`` at the statement) and ``args`` are already substituted.
 
@@ -1516,11 +1551,14 @@ def _mutation_through(
     evaluation=None,
     before=(),
     shape_root=None,
+    operator_kind=None,
+    operator_site=None,
 ):
     """The path door's statement for ``receiver.<method>(*args)`` on the
     object ``root_read`` reaches through ``steps`` (``site`` the source
     operation, ``fallback`` its ordinary call, None for an item store or
-    delete).
+    delete; ``operator_kind``/``operator_site`` an augmented item store's
+    operator, ``path_item_statement``).
 
     ``before`` are ``(call, key)``: operations the statement evaluates first,
     each pair bound under its key (``d.setdefault(k, v)``, whose value is
@@ -1554,6 +1592,8 @@ def _mutation_through(
         tags,
         label="receiver",
         value_first=value_first,
+        operator_kind=operator_kind,
+        operator_site=operator_site,
     )
     shape = root if shape_root is None else _identity(shape_root)
     member = _static_member(shape, steps)
