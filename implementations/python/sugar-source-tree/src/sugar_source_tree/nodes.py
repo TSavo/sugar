@@ -207,6 +207,10 @@ class LanguageCallee(_enum.Enum):
     BUILTIN_VARS = "python:builtins.vars"
     BUILTIN_EXEC = "python:builtins.exec"
     BUILTIN_EVAL = "python:builtins.eval"
+    # ``setattr(obj, name, value)`` / ``delattr(obj, name)``: the builtins
+    # that store or remove the attribute a run-time string names.
+    BUILTIN_SETATTR = "python:builtins.setattr"
+    BUILTIN_DELATTR = "python:builtins.delattr"
     # The builtin namespace itself: the module ``import builtins`` binds, and
     # the module attribute ``__builtins__`` the interpreter sets to it (or to
     # its ``__dict__``).
@@ -2986,11 +2990,13 @@ class SourceUnit:
     def source_allocation_definition_for_call(self, call: "Call") -> "ClassDef | None":
         """Resolve one source allocation definition at an exact call use-site.
 
-        Spelling is only the lexical lookup key.  Authority is the unique typed
-        module binding plus the use-site's CPython scope classification. A
+        The callee is the binding its read reaches
+        (``module_definition_at``: CPython's scope classification at the read,
+        then the unique module binding), never its spelling.  A
         local/free/nonlocal shadow or competing module binding keeps the
-        allocation definition unauthenticated. Behavior is checked separately;
-        it never participates in identity admission.
+        allocation definition unauthenticated, and a module ``def`` of that
+        name is no allocation.  Behavior is checked separately; it never
+        participates in identity admission.
         """
         if not isinstance(call.func, Name):
             return None
@@ -3002,37 +3008,9 @@ class SourceUnit:
         if module is None:
             return None
         span = call.line_col_span()
-        owner = self.innermost_function_containing(span)
-        if owner is not None:
-            table = self.function_symtable(owner.name, owner.line_col_span().start_line)
-            try:
-                symbol = table.lookup(call.func.id)
-            except KeyError:
-                symbol = None
-            if symbol is not None and (
-                symbol.is_parameter()
-                or symbol.is_local()
-                or symbol.is_free()
-                or symbol.is_nonlocal()
-            ):
-                return None
-
-            # Do NOT resolve "nested" names from function_nodes here.
-            # function_nodes is FunctionDef/AsyncFunctionDef only — never ClassDef.
-            # Returning a FunctionDef as an allocation definition made
-            # source_class_has_authenticated_default_attribute_behavior call
-            # ClassDef._authenticated_new_constructor_shape on a FunctionDef
-            # (recursive Name-calls: def f: f(...) — the enclosing FunctionDef
-            # matched as a "prior nested" same-name definition). That AttributeError
-            # blinded recensus (instrument-defect) and factory_walk auditor-errors
-            # on real pandas (e.g. io/json/_normalize.py recursive normalize).
-            # Nested ClassDef allocation is not enrolled via function_nodes; module
-            # ClassDef bindings below remain the sole allocation door.
-
-        bindings = (self.module_direct_bindings or {}).get(call.func.id, ())
-        if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
+        definition = self.module_definition_at(call.func.id, span)
+        if not isinstance(definition, ClassDef):
             return None
-        definition = bindings[0]
         # Constructing the allocation definition requires constructing its
         # methods. A call occurrence inside that same definition therefore
         # cannot use the definition as already-constructed testimony without a
@@ -3384,9 +3362,9 @@ class SourceUnit:
         Structural authority is the already-materialized typed Module plus the
         unit's CPython ``symtable`` (function scope flags). No second parse.
 
-        Uses the bind-time ``function_nodes`` / ``module_direct_bindings``
-        indexes (same door as ``source_allocation_definition_for_call``) and
-        memoizes by name+span — a full ``module.walk()`` per Raise was ~12ms
+        Reads the binding at the read (the one import table,
+        ``builtin_reference_at``, ``module_definition_at``: the same door as
+        ``source_allocation_definition_for_call``) and memoizes by name+span — a full ``module.walk()`` per Raise was ~12ms
         on pandas asserters and dominated Body.If → Raise exclusive heat.
         """
         from sugar_lift_py_tests.ir import ctor, str_const
@@ -3449,64 +3427,38 @@ class SourceUnit:
     def _compute_exception_type_identity(
         self, node: "Name", span, builtin_names, ctor, str_const
     ):
-        owner = self.innermost_function_containing(span)
-        if owner is not None:
-            table = self.function_symtable(owner.name, owner.line_col_span().start_line)
-            try:
-                symbol = table.lookup(node.id)
-            except KeyError:
-                symbol = None
-            if symbol is not None and (
-                symbol.is_parameter()
-                or symbol.is_local()
-                or symbol.is_free()
-                or symbol.is_nonlocal()
-            ):
-                return None
-
-        bindings = []
-        for statement in (self.module_direct_bindings or {}).get(node.id, ()):
-            kind = statement.kind
-            if kind == "ImportFrom":
-                for alias in statement.names:
-                    if (alias.asname or alias.name) == node.id:
-                        bindings.append(("import", statement.module, alias.name))
-            elif kind == "ClassDef":
-                bindings.append(("class", statement))
-            else:
-                # FunctionDef / AsyncFunctionDef / Assign / AnnAssign / AugAssign /
-                # Import — any non-closed exception-class binding.
-                bindings.append(("other",))
-
+        """The identity of the binding the read ``node`` reaches at ``span``,
+        never of its spelling: the one import table's row (``from builtins
+        import ValueError as VE``), the builtin namespace nothing in the
+        source rebinds (``builtin_reference_at``), or the one module ``class``
+        statement the read reaches (``module_definition_at``).  Any other
+        binding has no identity."""
         from sugar_lift_py_tests.temporal.builtin_name_bindings import (
             canonical_builtin_exception_name,
         )
 
-        if not bindings and node.id in builtin_names:
+        def builtin_identity(name):
             return ctor(
                 "python:exception_type_identity",
                 [
                     str_const("builtins"),
-                    str_const(canonical_builtin_exception_name(node.id)),
+                    str_const(canonical_builtin_exception_name(name)),
                 ],
             )
-        if len(bindings) != 1:
-            return None
-        binding = bindings[0]
-        if (
-            binding[0] == "import"
-            and binding[1] == "builtins"
-            and binding[2] in builtin_names
-        ):
-            return ctor(
-                "python:exception_type_identity",
-                [
-                    str_const("builtins"),
-                    str_const(canonical_builtin_exception_name(binding[2])),
-                ],
-            )
-        if binding[0] == "class":
-            definition = binding[1]
+
+        builtins_prefix = "python:builtins."
+        target = self.import_reference_target(
+            (span.start_line, span.start_col, span.end_line, span.end_col)
+        )
+        if target is None:
+            target = self.builtin_reference_at(node.id, span)
+        if target is not None:
+            if not target.startswith(builtins_prefix):
+                return None
+            member = target[len(builtins_prefix) :]
+            return builtin_identity(member) if member in builtin_names else None
+        definition = self.module_definition_at(node.id, span)
+        if isinstance(definition, ClassDef):
             lc = definition.line_col_span()
             coordinate = (
                 f"{self.source_cid}:{lc.start_line}:{lc.start_col}:"
@@ -10222,10 +10174,11 @@ class ClassDef(Statement):
                 return False
             if unit._builtin_exception_ancestry(identity) is not None:
                 return True
-            bindings = (unit.module_direct_bindings or {}).get(base.id, ())
-            if len(bindings) != 1 or not isinstance(bindings[0], ClassDef):
+            # The class statement the base's read reaches, never a module
+            # binding of its spelling.
+            definition = unit.module_definition_at(base.id, base.line_col_span())
+            if not isinstance(definition, ClassDef):
                 return False
-            (definition,) = bindings
             if id(definition) in visiting:
                 return False
             visiting.add(id(definition))
