@@ -1506,16 +1506,3 @@ def test_module_returned_by_call_carrier_is_refused_by_name():
     with pytest.raises(ConstructionPanic) as excinfo:
         _module_returned_by_call(SimpleNamespace(sugar=lambda: _Answer(carrier)))
     _refused(excinfo, "_module_returned_by_call")
-
-
-# --- sugar_source_tree.nodes ------------------------------------------------
-
-
-def test_assign_constructed_floor_value_carrier_is_refused_by_name():
-    from sugar_source_tree.nodes import Assign
-
-    carrier, _, _ = _carrier()
-    value = SimpleNamespace(sugar=lambda: _Answer(carrier), fragment=None)
-    with pytest.raises(ConstructionPanic) as excinfo:
-        Assign._constructed_floor_value(value)
-    _refused(excinfo, "Assign._constructed_floor_value")

@@ -186,7 +186,7 @@ def test_naming_the_raising_class_without_calling_it_completes() -> None:
 
 # ---------------------------------------------------------------------------
 # The second dropped halt: a class statement reduced with no context
-# (``Assign._constructed_floor_value`` reduces it that way).  An ``__init__``
+# (the deleted ``Assign._constructed_floor_value`` reduced it that way).  An ``__init__``
 # universe reads its class statement through the class call's one
 # constructor, and carries the halt.
 # ---------------------------------------------------------------------------
