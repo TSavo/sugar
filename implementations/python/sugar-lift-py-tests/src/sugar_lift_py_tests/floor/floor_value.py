@@ -661,22 +661,6 @@ class FloorValue:
         )
         construction_panic(info)
 
-    def absolute(self, site):
-        from sugar_lift_py_tests.gap.panic import construction_panic
-        from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-        observed = type(self).__name__
-        info = ConstructionGap(
-            owner="absolute",
-            blame=str(site),
-            observed=observed,
-            requested="stand on the abs floor",
-            fix=f"write more Floor: implement {observed}.absolute",
-            gap_kind=GapKind.FLOOR,
-            gap_locus=GapLocus.CONSTRUCTION,
-        )
-        construction_panic(info)
-
     def py_subscript_coordinate(self, index, site):
         # The legacy symbolic spelling: ctor("py.subscript", [recv, index]).
         # Match symbolic_term.py so coordinates join that vocabulary.

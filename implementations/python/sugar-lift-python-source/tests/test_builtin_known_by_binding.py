@@ -117,17 +117,29 @@ def test_a_rebound_len_is_not_the_dunder_builtin(source):
     assert builtin_dunder_call(call.language_callee(), (TermValue(1),)) is None
 
 
+def _not_ground_sequence():
+    # A member known only by its type: the cited fold does not answer it, so
+    # ``list``'s own shape fold does (#7757).
+    return (TupleValue((SymbolicValue(make_var("o")),)),)
+
+
 def test_list_bound_to_the_builtin_constructs_a_list():
-    call = _call("def f(o):\n    return list()\n", "list")
+    call = _call("def f(o):\n    return list((o,))\n", "list")
     assert call.language_callee() is LanguageCallee.BUILTIN_LIST
-    assert builtin_list_construct(call.language_callee(), ()) is not None
+    constructed = builtin_list_construct(
+        call.language_callee(), _not_ground_sequence()
+    )
+    assert constructed is not None
 
 
 @pytest.mark.parametrize("source", _shadowed("list"))
 def test_a_rebound_list_constructs_nothing(source):
     call = _call(source, "list")
     assert call.language_callee() is None
-    assert builtin_list_construct(call.language_callee(), ()) is None
+    constructed = builtin_list_construct(
+        call.language_callee(), _not_ground_sequence()
+    )
+    assert constructed is None
 
 
 def test_value_error_bound_to_the_builtin_is_the_builtin_exception_class():

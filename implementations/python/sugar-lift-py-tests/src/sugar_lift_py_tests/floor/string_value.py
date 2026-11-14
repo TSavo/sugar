@@ -215,12 +215,13 @@ class StringValue(GuardStableValue):
         return super().greater_equal(other, site, ctx)
 
     def length(self, site):
-        # A string knows its length: the count of characters.
-        del site
-        from sugar_lift_py_tests.floor.term_value import TermValue
-        from sugar_lift_py_tests.outcome import ExitSet
+        """``len`` of this string where a floor asks it of a value (a guarded
+        face): a string is ground, so the cited fold answers it, the one
+        answerer of ``len(<str>)`` (``builtin_ground_fold``)."""
+        from sugar_lift_py_tests.source_call_resolution import builtin_ground_fold
+        from sugar_source_tree.nodes import LanguageCallee
 
-        return ExitSet.completed(TermValue(len(self.value)))
+        return builtin_ground_fold(LanguageCallee.BUILTIN_LEN, (self,), site)
 
     def slice_assign_iterable_with(self, operation, ctx):
         """Project the string's authenticated characters for slice assignment."""
@@ -672,26 +673,38 @@ def _ground_percent_operand(value):
 
 
 def _fold_string_method(receiver: StringValue, operation):
-    """Fold join/strip/split/splitlines (and strip family) or mint an opaque coordinate.
+    """The ``str`` methods the floor answers: decided, or an opaque coordinate.
 
-    ``operation`` carries ``name``, ``arguments`` and ``blame``. Returns an
-    ExitSet when this method is owned, else None so the caller keeps the call
-    loud for unrelated names.
+    ``operation`` carries ``name``, ``arguments`` and ``blame``.  When every
+    argument is ground the one answerer is the pinned interpreter's own
+    ``str`` method (``str_method_cited_fold``): ``'a b'.split()`` is the
+    ``ListValue`` a list display is (so a later ``.append`` answers through
+    the same container law, #7757), ``','.join(['a', 'b'])`` is ``'a,b'``.
+    Otherwise what an argument's shape still decides: an opaque argument of
+    ``strip``/``lstrip``/``rstrip``/``splitlines`` mints the call coordinate,
+    of ``join``/``split`` the coordinate carrying its binding
+    (``LanguageCallee.STR_JOIN``: its result is a ``str``;
+    ``LanguageCallee.STR_SPLIT``: a new ``list``), never the spelling.
+    Returns None for a method or arity nothing here answers, so the caller
+    keeps the call loud.
     """
-    from sugar_lift_py_tests.floor.list_value import ListValue
+    from sugar_lift_py_tests.floor.none_value import NoneValue
     from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-    from sugar_lift_py_tests.floor.term_value import TermValue
     from sugar_lift_py_tests.outcome import ExitSet
+    from sugar_lift_py_tests.source_call_resolution import str_method_cited_fold
+    from sugar_source_tree.nodes import LanguageCallee
 
     name = operation.name
-    args = operation.arguments
-
-    def new_list(parts) -> ExitSet:
-        # ``str.split`` / ``str.splitlines`` return a new ``list``: the
-        # lifter's one floor for a ``builtins.list`` (``ListValue``), so a
-        # later ``.append`` and every other list method answer through the
-        # same door a list display's do (#7757).
-        return ExitSet.completed(ListValue(tuple(StringValue(part) for part in parts)))
+    args = tuple(operation.arguments)
+    # A ``None`` constant read as the ``None`` term is the ``None`` value.
+    decided = str_method_cited_fold(
+        receiver,
+        name,
+        tuple(NoneValue() if _is_none_floor(arg) else arg for arg in args),
+        operation.blame,
+    )
+    if decided is not None:
+        return decided
 
     def opaque_coordinate(language_callee=None) -> ExitSet:
         return ExitSet.completed(
@@ -704,127 +717,17 @@ def _fold_string_method(receiver: StringValue, operation):
             )
         )
 
-    if name in {"strip", "lstrip", "rstrip"}:
-        if len(args) == 0:
-            return ExitSet.completed(StringValue(getattr(receiver.value, name)()))
-        if len(args) == 1:
-            chars = args[0]
-            if isinstance(chars, StringValue):
-                return ExitSet.completed(
-                    StringValue(getattr(receiver.value, name)(chars.value))
-                )
-            # Opaque / symbolic chars: mint call:strip(self, chars), never invent.
-            return opaque_coordinate()
-        return None
-
-    if name in {"startswith", "endswith"} and 1 <= len(args) <= 3:
-        prefix = args[0]
-        if not isinstance(prefix, StringValue):
-            return None
-        bounds = []
-        for value in args[1:]:
-            if not isinstance(value, TermValue) or type(value.value) is not int:
-                return None
-            bounds.append(value.value)
-        result = getattr(receiver.value, name)(prefix.value, *bounds)
-        from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-            FalseBoolLiteralSugar,
-        )
-        from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-            TrueBoolLiteralSugar,
-        )
-
-        return ExitSet.completed(
-            TrueBoolLiteralSugar(site=operation.blame)
-            if result
-            else FalseBoolLiteralSugar(site=operation.blame)
-        )
-
+    # An argument known only by its type: the call coordinate, never an
+    # invented result (``call:strip(self, chars)``, a line split by an opaque
+    # ``keepends``).
+    if name in {"strip", "lstrip", "rstrip", "splitlines"}:
+        return opaque_coordinate() if len(args) == 1 else None
     if name == "join" and len(args) == 1:
-        iterable = args[0]
-        parts = _static_str_parts(iterable)
-        if parts is not None:
-            # Cardinality does not change WHAT a join is: every part is already
-            # a constructed string, so the fold is exact at any length. This arm
-            # used to PANIC above a static cap from the deleted `sugar.for_sugar`
-            # -- the same abolished cap `floor/sequence_repetition.py` names, and
-            # since that module went the panic was an ImportError, not a refusal.
-            return ExitSet.completed(StringValue(receiver.value.join(parts)))
-        # Opaque iterable (vendor columns, symbolic seq): coordinate only,
-        # carrying what it is (``str.join``, whose result is a ``str``).
-        from sugar_source_tree.nodes import LanguageCallee
-
+        # An opaque iterable (vendor columns, a symbolic sequence).
         return opaque_coordinate(LanguageCallee.STR_JOIN)
-
-    if name == "split":
-        # An opaque separator or maxsplit: coordinate only, carrying what it
-        # is (``str.split``, whose result is a new ``list``) so a later
-        # ``.append`` asks the binding, never the spelling (#7757).
-        from sugar_source_tree.nodes import LanguageCallee
-
-        if len(args) == 0:
-            return new_list(receiver.value.split())
-        if len(args) == 1:
-            sep = args[0]
-            if isinstance(sep, StringValue):
-                return new_list(receiver.value.split(sep.value))
-            if _is_none_floor(sep):
-                return new_list(receiver.value.split(None))
-            return opaque_coordinate(LanguageCallee.STR_SPLIT)
-        if len(args) == 2:
-            sep, maxsplit = args
-            if isinstance(maxsplit, TermValue) and type(maxsplit.value) is int:
-                max_n = int(maxsplit.value)
-                if isinstance(sep, StringValue):
-                    return new_list(receiver.value.split(sep.value, max_n))
-                if _is_none_floor(sep):
-                    return new_list(receiver.value.split(None, max_n))
-            return opaque_coordinate(LanguageCallee.STR_SPLIT)
-        return None
-
-    if name == "splitlines":
-        # str.splitlines([keepends]) — fold when keepends is static bool/0/1;
-        # opaque keepends → coordinate only (never invent line breaks).
-        if len(args) == 0:
-            return new_list(receiver.value.splitlines())
-        if len(args) == 1:
-            from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
-                FalseBoolLiteralSugar,
-            )
-            from sugar_lift_py_tests.sugar.true_bool_literal_sugar import (
-                TrueBoolLiteralSugar,
-            )
-
-            keep = args[0]
-            # The bool floor is the literal itself: ``True`` / ``False`` hold
-            # no ``.value``; the type IS the boolean.
-            if type(keep) is TrueBoolLiteralSugar:
-                return new_list(receiver.value.splitlines(True))
-            if type(keep) is FalseBoolLiteralSugar:
-                return new_list(receiver.value.splitlines(False))
-            if isinstance(keep, TermValue) and type(keep.value) is int:
-                return new_list(receiver.value.splitlines(bool(keep.value)))
-            return opaque_coordinate()
-        return None
-
-    return None
-
-
-def _static_str_parts(iterable) -> list[str] | None:
-    """Extract a fully-static list of strings from a join iterable, or None."""
-    from sugar_lift_py_tests.floor.list_value import ListValue
-    from sugar_lift_py_tests.floor.tuple_literal_value import TupleLiteralValue
-
-    if isinstance(iterable, StringValue):
-        # str.join over a string iterates characters.
-        return list(iterable.value)
-    if isinstance(iterable, (ListValue, TupleLiteralValue)):
-        parts: list[str] = []
-        for item in iterable.items:
-            if not isinstance(item, StringValue):
-                return None
-            parts.append(item.value)
-        return parts
+    if name == "split" and 1 <= len(args) <= 2:
+        # An opaque separator or maxsplit.
+        return opaque_coordinate(LanguageCallee.STR_SPLIT)
     return None
 
 

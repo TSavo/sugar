@@ -145,9 +145,11 @@ def cpython_cited_fold(
     A dunder-invoking builtin (``builtin_dunder_call``) whose every operand
     is a ground value is decided by the builtin's own semantics on the
     pinned interpreter (``_builtin_ground_fold``): ``int('3')`` completes
-    with ``3``, ``int('x')`` is the one ``ValueError`` halt.  ``callsite`` is
-    the call's coordinate, the completed value when the result is not a
-    ground value the floor holds.
+    with ``3``, ``int('x')`` is the one ``ValueError`` halt, ``len('ab')`` is
+    ``2`` and ``abs(-2)`` is ``2``.  It is that call's one answerer: no floor
+    value folds a builtin over ground operands by hand (#7757).
+    ``callsite`` is the call's coordinate, the completed value when the
+    result is not a ground value the floor holds.
 
     ``operator.index(a)`` is ``_operator.index`` (Modules/_operator.c,
     ``_operator_index``: ``return PyNumber_Index(a);``).  In
@@ -211,7 +213,7 @@ def cpython_cited_fold(
 _NOT_GROUND = object()
 
 
-def _host_ground(value, depth=0):
+def _host_ground(value, depth=0, visits=None):
     """The object a ground floor value denotes, else ``_NOT_GROUND``.
 
     Only values whose every part is a known value: ``int``/``float``
@@ -219,7 +221,20 @@ def _host_ground(value, depth=0):
     lists, tuples and dicts of them.  A set is not handed over: iterating a
     set of strings follows the per-process string hash, so what a builtin
     reads from it is not the same on every run.  A value known only by its
-    type (a call result, a comprehension, a formal) is not ground."""
+    type (a call result, a comprehension, a formal) is not ground.
+
+    ``visits`` (``id -> (position, object)``), when given, records each
+    object handed over in the order the operands are walked: the order a
+    builtin first meets them (``_ground_floor`` reads a set result's
+    construction order from it)."""
+    raw = _host_object(value, depth, visits)
+    if visits is not None and raw is not _NOT_GROUND and id(raw) not in visits:
+        visits[id(raw)] = (len(visits), raw)
+    return raw
+
+
+def _host_object(value, depth, visits):
+    """``_host_ground`` of one value, its members walked in order."""
     from .floor.bytes_value import BytesValue
     from .floor.dict_value import DictValue
     from .floor.list_value import ListValue
@@ -246,13 +261,13 @@ def _host_ground(value, depth=0):
     if kind is FalseBoolLiteralSugar:
         return False
     if kind in (ListValue, TupleValue):
-        members = tuple(_host_ground(e, depth + 1) for e in value.elements)
+        members = tuple(_host_ground(e, depth + 1, visits) for e in value.elements)
         if any(member is _NOT_GROUND for member in members):
             return _NOT_GROUND
         return list(members) if kind is ListValue else members
     if kind is DictValue:
         pairs = tuple(
-            (_host_ground(k, depth + 1), _host_ground(v, depth + 1))
+            (_host_ground(k, depth + 1, visits), _host_ground(v, depth + 1, visits))
             for k, v in value.entries
         )
         if any(k is _NOT_GROUND or v is _NOT_GROUND for k, v in pairs):
@@ -264,18 +279,31 @@ def _host_ground(value, depth=0):
     return _NOT_GROUND
 
 
-def _ground_floor(raw, site, depth=0):
+def _ground_floor(raw, site, depth=0, visits=None):
     """The floor value for a ground result ``raw``, else None.
 
-    The inverse of ``_host_ground`` over the same values; a non-finite
-    float, a set, an iterator or any other object is not held as a value
-    here."""
+    The inverse of ``_host_ground`` over the same values, and two results
+    the floor holds by what the operands were:
+
+    - a ``set`` whose every member is an object handed over in ``visits``:
+      CPython keeps the first of equal members, the operand's own object,
+      so their order of first appearance in the operands is the set's
+      construction order, the order ``SetValue`` holds (``set([1, 2, 1])``
+      is ``SetValue((1, 2))``).  A member the builtin made (``set('ab')``'s
+      characters) has no such order: not held.
+    - an ``enumerate`` iterator: the ``ListIteratorValue`` of its
+      ``(index, member)`` pairs, consumed here from the fresh iterator.
+
+    A non-finite float, a ``frozenset``, any other iterator or any other
+    object is not held as a value here."""
     import math
 
     from .floor.bytes_value import BytesValue
     from .floor.dict_value import DictValue
+    from .floor.iterator_value import ListIteratorValue
     from .floor.list_value import ListValue
     from .floor.none_value import NoneValue
+    from .floor.set_value import SetValue
     from .floor.string_value import StringValue
     from .floor.term_value import TermValue
     from .floor.tuple_value import TupleValue
@@ -300,19 +328,80 @@ def _ground_floor(raw, site, depth=0):
     if kind is bytes:
         return BytesValue(raw)
     if kind in (list, tuple):
-        members = tuple(_ground_floor(e, site, depth + 1) for e in raw)
+        members = tuple(_ground_floor(e, site, depth + 1, visits) for e in raw)
         if any(member is None for member in members):
             return None
         return ListValue(members) if kind is list else TupleValue(members)
     if kind is dict:
         pairs = tuple(
-            (_ground_floor(k, site, depth + 1), _ground_floor(v, site, depth + 1))
+            (
+                _ground_floor(k, site, depth + 1, visits),
+                _ground_floor(v, site, depth + 1, visits),
+            )
             for k, v in raw.items()
         )
         if any(k is None or v is None for k, v in pairs):
             return None
         return DictValue(pairs)
+    if kind is set and visits is not None:
+        if any(_unvisited(member, visits) for member in raw):
+            return None
+        ordered = sorted(raw, key=lambda member: visits[id(member)][0])
+        members = tuple(_ground_floor(m, site, depth + 1, visits) for m in ordered)
+        if any(member is None for member in members):
+            return None
+        return SetValue(members)
+    if kind is enumerate:
+        members = tuple(_ground_floor(pair, site, depth + 1, visits) for pair in raw)
+        if any(member is None for member in members):
+            return None
+        return ListIteratorValue(members)
     return None
+
+
+def _unvisited(member, visits) -> bool:
+    """``member`` is not an object the operands handed over."""
+    entry = visits.get(id(member))
+    return entry is None or entry[1] is not member
+
+
+def _ground_operands(arg_values, visits=None):
+    """The host objects every operand denotes, else None (one is not ground)."""
+    operands = tuple(_host_ground(value, visits=visits) for value in arg_values)
+    if any(operand is _NOT_GROUND for operand in operands):
+        return None
+    return operands
+
+
+def builtin_ground_call(language_callee, arg_values, keyword_names=()) -> bool:
+    """Whether ``cpython_cited_fold`` is this builtin call's one answerer.
+
+    A dunder-invoking builtin (``_dunder_builtins``, its ``LanguageCallee``
+    member) with no keyword actual whose every operand is a ground value
+    (``_host_ground``): its outcome is the pinned interpreter's own builtin
+    applied to those values, and no floor value folds it by hand.  ``print``
+    is not (its effect is output)."""
+    return _foldable_builtin(language_callee, keyword_names) and (
+        _ground_operands(arg_values) is not None
+    )
+
+
+def _foldable_builtin(language_callee, keyword_names) -> bool:
+    """A dunder-invoking builtin other than ``print``, with no keyword actual."""
+    from sugar_source_tree.nodes import LanguageCallee
+
+    if keyword_names or language_callee is LanguageCallee.BUILTIN_PRINT:
+        return False
+    return language_callee in _dunder_builtins()[0]
+
+
+def builtin_ground_fold(language_callee, arg_values, site, callsite=None):
+    """``builtin(*arg_values)`` over ground operands, decided, or None.
+
+    The one door a floor value asks when it is reached for a builtin over
+    itself (``StringValue.length``: ``len`` of a guarded face): the same
+    fold ``cpython_cited_fold`` answers the call with."""
+    return _builtin_ground_fold(language_callee, arg_values, (), site, callsite)
 
 
 def _builtin_ground_fold(language_callee, arg_values, keyword_names, site, callsite):
@@ -325,51 +414,111 @@ def _builtin_ground_fold(language_callee, arg_values, keyword_names, site, calls
     one ground halt with its builtin exception class (``int('x')``:
     ``ValueError``); a completion is the result's floor value (``int('3')``:
     ``3``), or the call's coordinate when the result is not a ground value
-    the floor holds (an iterator, a set, a ``hash``, which follows the
-    per-process string hash).  An operand known only by its type, a keyword
-    actual, or ``print`` (whose effect is output) is not decided here: None,
-    and the call stays the one unanswered call."""
+    the floor holds (an iterator other than ``enumerate``, a ``frozenset``,
+    a ``hash``, which follows the per-process string hash).  An operand
+    known only by its type, a keyword actual, or ``print`` (whose effect is
+    output) is not decided here (``builtin_ground_call``): None, and the
+    call stays the one unanswered call."""
     import builtins
 
     from sugar_source_tree.nodes import LanguageCallee
 
+    if not _foldable_builtin(language_callee, keyword_names):
+        return None
+    visits: dict = {}
+    operands = _ground_operands(arg_values, visits)
+    if operands is None:
+        return None
+    builtin_name = language_callee.value.rsplit(".", 1)[1]
+    return _host_applied(
+        getattr(builtins, builtin_name),
+        operands,
+        site,
+        owner=f"cpython_cited_fold:{builtin_name}",
+        callsite=callsite,
+        visits=visits,
+        held=language_callee is not LanguageCallee.BUILTIN_HASH,
+    )
+
+
+def _host_applied(function, operands, site, *, owner, callsite, visits, held=True):
+    """``function(*operands)`` on the pinned interpreter, as an outcome, or None.
+
+    A raise is the one ground halt with its builtin exception class (a host
+    exception that is not a builtin one, a ``MemoryError`` or a
+    ``RecursionError`` decides nothing: None).  A completion is the result's
+    floor value when ``held`` and the floor holds it (``_ground_floor``),
+    else the call's coordinate (``callsite``), else None."""
+    import builtins
+
     from .outcome import ExitSet
     from .temporal.builtin_name_bindings import BUILTIN_EXCEPTION_NAMES
 
-    if keyword_names or site is None:
-        return None
-    if language_callee is LanguageCallee.BUILTIN_PRINT:
-        return None
-    operands = tuple(_host_ground(value) for value in arg_values)
-    if any(operand is _NOT_GROUND for operand in operands):
-        return None
-    builtin_name = language_callee.value.rsplit(".", 1)[1]
     try:
-        result = getattr(builtins, builtin_name)(*operands)
+        result = function(*operands)
     except (MemoryError, RecursionError):
         return None
     except Exception as exc:
         raised = type(exc).__name__
         if (
-            raised not in BUILTIN_EXCEPTION_NAMES
+            site is None
+            or raised not in BUILTIN_EXCEPTION_NAMES
             or getattr(builtins, raised, None) is not type(exc)
         ):
             return None
         from .floor.ground_exit import ground_exceptional_exit
 
-        return ground_exceptional_exit(
-            exception_name=raised,
-            site=site,
-            owner=f"cpython_cited_fold:{builtin_name}",
-        )
-    value = None
-    if language_callee is not LanguageCallee.BUILTIN_HASH:
-        value = _ground_floor(result, site)
+        return ground_exceptional_exit(exception_name=raised, site=site, owner=owner)
+    value = _ground_floor(result, site, visits=visits) if held else None
     if value is None:
         value = _occurrence_result(callsite, site)
     if value is None:
         return None
     return ExitSet.completed(value)
+
+
+# The ``str`` methods whose call on a ground receiver the floor answers: each
+# is the pinned interpreter's own ``str`` method (``str_method_cited_fold``).
+_CITED_STR_METHODS = frozenset(
+    {
+        "endswith",
+        "join",
+        "lstrip",
+        "rstrip",
+        "split",
+        "splitlines",
+        "startswith",
+        "strip",
+    }
+)
+
+
+def str_method_cited_fold(receiver, name, arguments, site):
+    """``receiver.<name>(*arguments)`` on a ground ``str``, decided, or None.
+
+    ``receiver`` is a ``StringValue`` (its type is ``str``: the method is
+    ``str``'s own, never a spelling looked up elsewhere).  When it and every
+    argument are ground values (``_host_ground``) the outcome is the pinned
+    interpreter's own ``str`` method applied to them, through the same door
+    a builtin over ground operands is decided by (``_host_applied``):
+    ``'a b'.split()`` is ``['a', 'b']`` (the ``ListValue`` a list display
+    is), ``','.join(['a', 'b'])`` is ``'a,b'``, ``','.join([1])`` the one
+    ``TypeError`` halt.  An argument known only by its type: None, and the
+    method's floor keeps what the argument's shape decides."""
+    if name not in _CITED_STR_METHODS:
+        return None
+    visits: dict = {}
+    operands = _ground_operands((receiver, *arguments), visits)
+    if operands is None or type(operands[0]) is not str:
+        return None
+    return _host_applied(
+        getattr(str, name),
+        operands,
+        site,
+        owner=f"cpython_cited_fold:str.{name}",
+        callsite=None,
+        visits=visits,
+    )
 
 
 @dataclass(frozen=True)
@@ -769,12 +918,15 @@ def builtin_list_construct(language_callee, arg_values, keyword_names=()):
     The callee bound to the builtin ``list`` (``LanguageCallee.BUILTIN_LIST``,
     read from its binding: a rebinding, ``list = f``, reaches no member) with
     no keywords builds a new list
-    of its iterable's members in iteration order: ``list()`` is ``[]``, a
-    tuple or list gives its elements, a dict gives its keys in insertion
-    order, and a finite comprehension gives its projected members.  It never
-    raises for these (``builtin_call_total``).  A set's order depends on
-    hashing, so it is not decided here, and neither is any other operand;
-    those stay the ordinary bodiless call.
+    of its iterable's members in iteration order.  Over a ground operand
+    (``list()``, ``list((1, 2))``) the cited fold answers first
+    (``builtin_dunder_call``, ``cpython_cited_fold``); this is reached only
+    when a member is not ground and the operand's shape decides: a tuple or
+    list gives its elements, a dict gives its keys in insertion order, and a
+    finite comprehension gives its projected members.  It never raises for
+    these (``builtin_call_total``).  A set's order depends on hashing, so it
+    is not decided here, and neither is any other operand; those stay the
+    ordinary bodiless call.
     """
     from sugar_source_tree.nodes import LanguageCallee
 
@@ -786,8 +938,6 @@ def builtin_list_construct(language_callee, arg_values, keyword_names=()):
 
     if language_callee is not LanguageCallee.BUILTIN_LIST or keyword_names:
         return None
-    if not arg_values:
-        return ExitSet.completed(ListValue(()))
     if len(arg_values) != 1:
         return None
     (source,) = arg_values
@@ -810,17 +960,20 @@ def builtin_dunder_call(language_callee, arg_values, keyword_names=()):
     items' ``__lt__``.  When an operand is not a decided builtin, that dunder
     is not CPython's own: whether it exists and what it raises is not decided
     here, so the call is the one unanswered call (``UnknownCalleeCallV1``:
-    two-faced, owed as ``undecided``/``unanswered``, #7757).  Decided
-    operands complete outright only on a shape ``builtin_call_total`` lists;
-    otherwise CPython may still refuse them by value, so the call is the same
-    one unanswered call, which ``cpython_cited_fold`` decides when every
-    operand is a ground value (``int('3')`` is ``3``, ``int('x')`` the one
-    ``ValueError`` halt) and leaves unanswered when an operand is known only
-    by its type.  Each names the builtin its binding's target symbol names."""
+    two-faced, owed as ``undecided``/``unanswered``, #7757).  When every
+    operand is a ground value (``builtin_ground_call``) the call is the same
+    unanswered form whatever its shape, and ``cpython_cited_fold`` -- its
+    one answerer -- decides it (``int('3')`` is ``3``, ``int('x')`` the one
+    ``ValueError`` halt, ``len('ab')`` is ``2``).  Otherwise decided operands
+    complete outright only on a shape ``builtin_call_total`` lists (an
+    operand known only by its type stays unanswered).  Each names the
+    builtin its binding's target symbol names."""
     dunder, shallow = _dunder_builtins()
     if language_callee not in dunder:
         return None
     builtin_name = language_callee.value.rsplit(".", 1)[1]
+    if builtin_ground_call(language_callee, arg_values, keyword_names):
+        return UnknownCalleeCallV1(builtin_name)
     if language_callee in shallow:
         decided = all(_builtin_container(value) for value in arg_values)
     else:
