@@ -219,6 +219,16 @@ class LanguageCallee(_enum.Enum):
     # ``functools.wraps(wrapped)``: a decorator factory whose decorator copies
     # ``wrapped``'s metadata onto the wrapper and returns the wrapper.
     FUNCTOOLS_WRAPS = "python:functools.wraps"
+    # ``functools.lru_cache`` / ``functools.cache``: memoizing wrappers whose
+    # call answers from a cache shared by every call (Lib/functools.py).
+    FUNCTOOLS_LRU_CACHE = "python:functools.lru_cache"
+    FUNCTOOLS_CACHE = "python:functools.cache"
+    # ``contextlib.contextmanager(f)``: a function whose call builds
+    # ``_GeneratorContextManager(f, args, kwds)`` over ``f``'s generator.
+    CONTEXTLIB_CONTEXTMANAGER = "python:contextlib.contextmanager"
+    # ``typing.overload(f)``: returns a dummy that raises
+    # ``NotImplementedError`` when called (Lib/typing.py).
+    TYPING_OVERLOAD = "python:typing.overload"
     # ``dataclasses.dataclass`` / ``dataclasses.field``: the class decorator
     # that writes ``__init__`` from the annotated fields, and its field
     # specifier (Lib/dataclasses.py).
@@ -254,6 +264,13 @@ _METHOD_DESCRIPTOR_KINDS = {
     LanguageCallee.BUILTIN_CLASSMETHOD: "classmethod",
     LanguageCallee.BUILTIN_STATICMETHOD: "staticmethod",
 }
+
+# The builtin decorators whose application returns their argument unchanged:
+# ``typing.final`` sets ``__final__`` and returns ``f``; ``abc.abstractmethod``
+# sets ``__isabstractmethod__`` and returns ``f`` (Lib/typing.py, Lib/abc.py).
+_IDENTITY_DECORATORS = frozenset(
+    {LanguageCallee.TYPING_FINAL, LanguageCallee.ABC_ABSTRACTMETHOD}
+)
 
 
 @dataclass(frozen=True)
@@ -1812,8 +1829,8 @@ class SourceUnit:
           (``module_threaded_names``);
         - for a name whose binding there is not decided
           (``_module_reference_state``: never bound there, a container's
-          mutated state, a ``with`` observation, a decorated definition, a
-          binding the threading did not carry past a statement);
+          mutated state, a ``with`` observation, a binding the threading
+          did not carry past a statement);
         - for a site in a generator's lazily evaluated part;
         - for a name a walrus in the site's own statements binds (it may
           run before or after the read);
@@ -2797,14 +2814,43 @@ class SourceUnit:
                     requested="this SourceUnit's exact typed function definition",
                     fix="repair Backend.materialize_module lexical call testimony",
                 )
-            return definition
+            # A decorated definition binds its name to the decorators'
+            # result: the call is that value's (``DecoratedDefinitionRef``),
+            # never this definition's body (#7757).
+            return definition if _call_applies_own_frame(definition) else None
 
         span = call.line_col_span()
+        definition = self.module_definition_at(call.func.id, span)
+        if not isinstance(
+            definition, (FunctionDef, AsyncFunctionDef)
+        ) or not _call_applies_own_frame(definition):
+            return None
+        definition_span = definition.line_col_span()
+        if (
+            (definition_span.start_line, definition_span.start_col)
+            <= (span.start_line, span.start_col)
+            <= (definition_span.end_line, definition_span.end_col)
+        ):
+            return None
+        return definition
+
+    def module_definition_at(
+        self, name: str, span
+    ) -> "FunctionDef | AsyncFunctionDef | ClassDef | None":
+        """The one ``def``/``class`` statement the module binds ``name`` to, as
+        a read of ``name`` at ``span`` reaches it, or None.
+
+        The name is only a lookup key.  Authority is the unique typed module
+        binding plus CPython's scope classification at the read: a
+        parameter, local, free or nonlocal of the function around the read is
+        not the module's name, and a name the module binds more than once, or
+        by anything but one ``def``/``class``, answers None.
+        """
         owner = self.innermost_function_containing(span)
         if owner is not None:
             table = self.function_symtable(owner.name, owner.line_col_span().start_line)
             try:
-                symbol = table.lookup(call.func.id)
+                symbol = table.lookup(name)
             except KeyError:
                 symbol = None
             if symbol is not None and (
@@ -2814,19 +2860,29 @@ class SourceUnit:
                 or symbol.is_nonlocal()
             ):
                 return None
-
-        bindings = (self.module_direct_bindings or {}).get(call.func.id, ())
+        bindings = (self.module_direct_bindings or {}).get(name, ())
         if len(bindings) != 1 or not isinstance(
-            bindings[0], (FunctionDef, AsyncFunctionDef)
+            bindings[0], (FunctionDef, AsyncFunctionDef, ClassDef)
         ):
             return None
-        definition = bindings[0]
-        definition_span = definition.line_col_span()
-        if (
-            (definition_span.start_line, definition_span.start_col)
-            <= (span.start_line, span.start_col)
-            <= (definition_span.end_line, definition_span.end_col)
-        ):
+        return bindings[0]
+
+    def decorated_definition_for_call(
+        self, call: "Call"
+    ) -> "FunctionDef | AsyncFunctionDef | ClassDef | None":
+        """The decorated module ``def``/``class`` a ``Name`` call reaches, or
+        None.
+
+        Its name is bound to the decorators' result, so the call is a call of
+        that value (``DecoratedDefinitionRef``), never of the definition's
+        own frame (#7757).  A ``contextlib.contextmanager`` generator function
+        is the one decorated definition whose call keeps its frame
+        (``_call_applies_own_frame``).
+        """
+        if not isinstance(call.func, Name):
+            return None
+        definition = self.module_definition_at(call.func.id, call.line_col_span())
+        if definition is None or _call_applies_own_frame(definition):
             return None
         return definition
 
@@ -2953,8 +3009,12 @@ class SourceUnit:
         A class whose body is only methods and simple name assignments, and
         whose bases are the same kind of authenticated local class, may also
         carry the frame so instance reads can see those class fields.
-        Unauthenticated or computed bases stay outside this door.
+        Unauthenticated or computed bases stay outside this door.  A
+        decorated class binds its name to the decorators' result: a call of
+        it calls that value (``DecoratedDefinitionRef``), never this frame.
         """
+        if definition.decorators:
+            return False
         return SourceUnit.source_class_has_authenticated_default_attribute_behavior(
             definition
         ) or SourceUnit.source_class_has_plain_source_body(definition)
@@ -5218,6 +5278,8 @@ def _module_reference_state(state):
     other statements that bind a module name decide it too: an undecorated
     ``def`` or ``class`` binds its definition and ``type X = ...`` its alias
     (the read is the statement's own binding, as a local definition's is),
+    a decorated ``def`` or ``class`` the decorators' result
+    (``DecoratedDefinitionRef``, the one decorator application),
     an ``except ... as`` or ``except* ... as`` handler its effect slot
     (``EffectRef``), and ``del`` (each name of ``del (a, b)``, or the end of
     that handler) unbinds it -- the read is a ``NameError`` halt
@@ -5232,14 +5294,22 @@ def _module_reference_state(state):
     ``NameError`` halt on the unbound one), and so is a live loop's
     publication of a name it carries (``LoopProjectedBinding`` whose faces
     are its ``LoopBindingRef`` coordinates).  Any other state (never bound
-    there, a container's mutated state, a ``with`` observation, a decorated
-    definition, a guarded binding with another arm) is no decided binding:
+    there, a container's mutated state, a ``with`` observation, a guarded
+    binding with another arm) is no decided binding:
     ``UNDECIDED_MODULE_BINDING`` too, never the name read."""
     state = unwrap_binding_state(state)
     if isinstance(state, UnboundBinding):
         return state
     if isinstance(
-        state, (FunctionDef, AsyncFunctionDef, ClassDef, TypeAlias, EffectRef)
+        state,
+        (
+            FunctionDef,
+            AsyncFunctionDef,
+            ClassDef,
+            TypeAlias,
+            EffectRef,
+            DecoratedDefinitionRef,
+        ),
     ):
         return state
     if _decided_arm(state):
@@ -7254,6 +7324,9 @@ class FunctionDef(Statement):
     def substitution_binding(self, scope):
         return _local_definition_binding(self, scope)
 
+    def post_binding_statement(self, binding):
+        return _decorated_statement_binding(self, binding)
+
     @property
     def args(self):
         return _arguments_projection(self.params)
@@ -7417,10 +7490,13 @@ class FunctionDef(Statement):
         )
 
         lexical_rows = self.unit.constructed_module.lexical_call_rows
+        # A decorated definition stays: its statement applies the decorators
+        # and binds the name every call of it reads (#7757).
         filtered_body = tuple(
             statement
             for statement in self.body
-            if all(statement is not row.definition_occurrence for row in lexical_rows)
+            if not _call_applies_own_frame(statement)
+            or all(statement is not row.definition_occurrence for row in lexical_rows)
         )
         substituted_body, _ = self._substitute_body(filtered_body, formal_scope)
         generator_steps = self._source_visible_generator_steps_from(substituted_body)
@@ -8647,6 +8723,15 @@ class FunctionDef(Statement):
         lc = stmt.line_col_span()
         site = f"{stmt.unit.filename}:{lc.start_line} {stmt.kind}"
         with reduction_span(sugar=f"Body.{stmt.kind}", role="construction", site=site):
+            if not _call_applies_own_frame(stmt):
+                # A decorated ``def``/``class`` statement runs its decorators
+                # and binds the name to their result: it reduces as that one
+                # application (``DecoratedDefinitionRef``), with every face of
+                # it the statement's (#7757).
+                value = getattr(stmt, "decorated_value", None)
+                if not isinstance(value, DecoratedDefinitionRef):
+                    value = _decorated_definition_ref(stmt, stmt.span)
+                return value.sugar()
             return stmt.sugar()
 
     def _construct_sugar(self):
@@ -8825,6 +8910,9 @@ class AsyncFunctionDef(Statement):
     def substitution_binding(self, scope):
         return _local_definition_binding(self, scope)
 
+    def post_binding_statement(self, binding):
+        return _decorated_statement_binding(self, binding)
+
     @property
     def args(self):
         return _arguments_projection(self.params)
@@ -8920,6 +9008,9 @@ class ClassDef(Statement):
 
     def substitution_binding(self, scope):
         return _local_definition_binding(self, scope)
+
+    def post_binding_statement(self, binding):
+        return _decorated_statement_binding(self, binding)
 
     def __post_init__(self):
         # A NODE OFF THE ROLL. `Node.__post_init__` is where registration
@@ -9139,6 +9230,11 @@ class ClassDef(Statement):
         if name is not None:
             bindings = (self.unit.module_direct_bindings or {}).get(name, ())
             if len(bindings) == 1 and isinstance(bindings[0], ClassDef):
+                if not _call_applies_own_frame(bindings[0]):
+                    # A decorated base is the decorators' result (#7757).
+                    return _decorated_definition_ref(
+                        bindings[0], base.span
+                    ).sugar()
                 return bindings[0].sugar()
         return base.sugar()
 
@@ -19264,6 +19360,10 @@ class Call(Expression):
                 source_call_frame=source_call_frame,
             )
 
+        decorated = self.unit.decorated_definition_for_call(self)
+        if decorated is not None:
+            return self._decorated_definition_call(decorated)
+
         keyword_sugars = tuple(
             (kw.arg if kw.arg is not None else "**", kw.value.sugar())
             for kw in self.keywords
@@ -19284,6 +19384,14 @@ class Call(Expression):
             )
             else None
         )
+        if lexical_row is not None and not _call_applies_own_frame(
+            lexical_row.definition_occurrence
+        ):
+            # A decorated local definition binds its name to the decorators'
+            # result: the call is that value's (its read is the
+            # ``DecoratedDefinitionRef`` the definition bound), never the
+            # definition's frame (#7757).
+            lexical_row = None
         if lexical_row is not None:
             function_definition = lexical_row.definition_occurrence
             if (
@@ -19434,6 +19542,11 @@ class Call(Expression):
                 )
                 else None
             )
+            if lexical_row is not None and not _call_applies_own_frame(
+                lexical_row.definition_occurrence
+            ):
+                # The decorators' result, not this frame (#7757).
+                lexical_row = None
             if lexical_row is not None:
                 function_definition = lexical_row.definition_occurrence
                 if (
@@ -19652,6 +19765,22 @@ class Call(Expression):
             keywords=keyword_sugars,
             source_call_frame=source_call_frame,
             captured=self._captured_cells(source_call_frame),
+        )
+
+    def _decorated_definition_call(self, definition):
+        """A call of the name a decorated module ``def``/``class`` binds: the
+        call of that statement's value ``d1(d2(<definition>))``
+        (``DecoratedDefinitionRef``), as a call of any computed callee is.
+        The definition's own frame is never this call's (#7757)."""
+        from sugar_lift_py_tests.sugar.computed_call_sugar import ComputedCallSugar
+
+        # The callee's spelling is absorbed into the reference to the value.
+        self.func.discharge_by_substitution()
+        return ComputedCallSugar(
+            callee=_decorated_definition_ref(definition, self.func.span).sugar(),
+            args=tuple(a.sugar() for a in self.args),
+            site=self.fragment,
+            keywords=tuple((kw.arg, kw.value.sugar()) for kw in self.keywords),
         )
 
     def language_callee(self) -> Optional[LanguageCallee]:
@@ -21387,12 +21516,20 @@ class LoopRecurrenceStatement(Statement):
 
 
 class DecoratedDefinitionRef(Expression):
-    """The value a decorated local ``def``/``class`` binds: not constructed.
+    """The value a decorated ``def``/``class`` statement binds its name to.
 
-    ``@d def g(): ...`` binds ``g`` to ``d(<function g>)``, the decorator's
-    result. Decorator application is not constructed here, so a later read
-    refuses by name instead of standing as the bare definition (a wrong
-    value) or as unbound (a false NameError).
+    ``@d1 @d2 def g(): ...`` binds ``g`` to ``d1(d2(<function g>))``: the
+    decorator expressions evaluate in source order where the statement runs,
+    the definition is built, and each decorator is applied to it innermost
+    first (the language reference, "Function definitions").  This node is
+    that value, the one decorator application (#7757,
+    ``DecoratorApplicationSugar``): the statement reduces it, every read of
+    the name is it, and every call of the name calls it.  The bare
+    definition never stands for the name.
+
+    ``definition`` is the statement (a leaf); ``decorator_bindings`` holds,
+    for each decorator, the ``def``/``class`` a bare-name decorator is bound
+    to where the statement runs (the substitution scope), else None.
     """
 
     definition_name: str
@@ -21402,11 +21539,314 @@ class DecoratedDefinitionRef(Expression):
         return self
 
     def _construct_sugar(self):
-        from sugar_lift_py_tests.sugar.decorated_definition_ref_sugar import (
-            DecoratedDefinitionRefSugar,
+        return _decorator_application_sugar(
+            getattr(self, "definition"),
+            getattr(self, "decorator_bindings", ()) or (),
+            self.fragment,
         )
 
-        return DecoratedDefinitionRefSugar(self.definition_name, self.fragment)
+
+def _call_applies_own_frame(definition) -> bool:
+    """Whether a call of the name ``definition`` binds applies the
+    definition's own frame.
+
+    An undecorated ``def`` or ``class`` does; so does a generator function
+    whose one decorator is ``contextlib.contextmanager`` (read through the one
+    builtin door, ``SourceUnit.language_callee_of``): calling it builds
+    ``_GeneratorContextManager(f, args, kwds)``, whose ``gen`` is the
+    generator the frame allocates (``WithSourceResourceSugar``).  Every other
+    decorated definition binds its name to the decorators' result
+    (``DecoratedDefinitionRef``), and a call of it calls that value.
+    Anything that is not a definition applies no decoration.
+    """
+    decorators = getattr(definition, "decorators", None)
+    if not decorators:
+        return True
+    return (
+        len(decorators) == 1
+        and isinstance(definition, FunctionDef)
+        and definition.unit.language_callee_of(decorators[0])
+        is LanguageCallee.CONTEXTLIB_CONTEXTMANAGER
+        and FunctionDef._owns_yield(definition.body)
+    )
+
+
+def _decorated_definition_ref(definition, span, scope=None):
+    """The ``DecoratedDefinitionRef`` for the decorated ``definition`` at
+    ``span``, with each bare-name decorator's ``def``/``class`` binding in
+    ``scope`` (the scope the statement runs in), when there is one."""
+    from .backend import Leaf, materialize
+    from .shadow import ShadowNode
+
+    bindings = []
+    for decorator in definition.decorators:
+        bound = None
+        if scope is not None and isinstance(decorator, Name):
+            state = scope.get(decorator.id, _MISSING)
+            if state is not _MISSING:
+                state = unwrap_binding_state(state)
+                if isinstance(state, (FunctionDef, AsyncFunctionDef, ClassDef)):
+                    bound = state
+        bindings.append(bound)
+    return materialize(
+        definition.unit,
+        ShadowNode(
+            "DecoratedDefinitionRef",
+            span,
+            (
+                ("definition_name", Leaf(definition.name)),
+                ("definition", Leaf(definition)),
+                ("decorator_bindings", Leaf(tuple(bindings))),
+            ),
+        ),
+        definition.reporter,
+    )
+
+
+def _decorated_statement_binding(statement, binding):
+    """``statement`` (a decorated ``def``/``class``) carrying, as its
+    ``decorated_value`` leaf, the ``DecoratedDefinitionRef`` its substitution
+    bound its name to (``_local_definition_binding``): the statement's own
+    reduction is that application (``FunctionDef._sugar_body_statement``)."""
+    if _call_applies_own_frame(statement):
+        return statement
+    bound = (binding or {}).get(statement.name)
+    if bound is None:
+        return statement
+    bound = unwrap_binding_state(bound)
+    if not isinstance(bound, DecoratedDefinitionRef):
+        return statement
+    from .shadow import rewrite_with_leaves
+
+    return rewrite_with_leaves(statement, {"decorated_value": bound})
+
+
+def _decorator_application_sugar(definition, bindings, site):
+    """The one decorator application: ``definition``'s value with each of its
+    decorators applied, innermost first (``DecoratorApplicationSugar``).
+
+    Each decorator is decided from its binding where the statement runs:
+
+    - a builtin the one builtin door names (``SourceUnit.language_callee_of``,
+      ``LanguageCallee``): ``typing.final`` and ``abc.abstractmethod`` return
+      their argument; ``dataclasses.dataclass`` returns the class whose
+      constructor frame is the ``__init__`` it writes
+      (``ClassDef._dataclass_generated_init_fields``); ``functools.wraps(w)``
+      over names returns the wrapper.  Any other builtin
+      (``staticmethod``, ``classmethod`` and ``property`` outside a class
+      body, ``functools.lru_cache``/``cache``, ``typing.overload``, a
+      ``contextlib.contextmanager`` this does not model, a builtin decorator
+      factory) is refused by name;
+    - an imported decorator (the one import table's row,
+      ``SourceUnit.import_reference_of``), or a factory call of one: nothing
+      here answers it, so the application is the ``undecided`` member under
+      that target symbol (reason ``unanswered``), never the bare definition;
+    - a source ``def`` or ``class``: its value, applied through the one call
+      routine (``callable_application_with``: ``enter_source_frame``,
+      ``bind_call``, ``producer_outcome``); a decorated one is its own
+      application first;
+    - any other expression (a factory call, a read): its value, applied the
+      same way, or refused by name where it is not a callable this holds.
+
+    The decorator expressions are constructed where a module statement runs
+    (``SourceUnit.module_execution_site``): the statement's own context, never
+    its caller's.  The definition's value is constructed where it is called.
+    """
+    from sugar_lift_py_tests.sugar.decorator_application_sugar import (
+        DecoratorApplicationSugar,
+    )
+
+    unit = definition.unit
+    key = "decorator-application:" + definition.fragment.seal().cid
+    if _frame_is_under_construction(key):
+        # A decorator (or the definition's own body, constructed for its
+        # value) that reads the name this statement binds: the application
+        # is under construction up the stack.  Refused by name where it
+        # reduces, never unfolded again.
+        return DecoratorApplicationSugar(
+            definition_name=definition.name,
+            decorators=(),
+            definition_frame=None,
+            definition_class=None,
+            refusal=(
+                f"the application of `{definition.name}`'s decorators reads "
+                "its own result"
+            ),
+            site=site,
+        )
+    module_site = (
+        unit.module_execution_site(definition) if unit.module_threaded_names() else None
+    )
+    padded = tuple(bindings)[: len(definition.decorators)]
+    padded = padded + (None,) * (len(definition.decorators) - len(padded))
+
+    def construct_decorators():
+        return tuple(
+            _decorator_step(definition, decorator, bound)
+            for decorator, bound in zip(definition.decorators, padded, strict=True)
+        )
+
+    frame = None
+    class_sugar = None
+    refusal = None
+    _FRAMES_UNDER_CONSTRUCTION.add(key)
+    try:
+        decorators = (
+            construct_decorators()
+            if module_site is None
+            else construct_at_module_execution_site(module_site, construct_decorators)
+        )
+        if isinstance(definition, ClassDef):
+            class_sugar = definition.sugar()
+        elif isinstance(definition, AsyncFunctionDef):
+            refusal = (
+                f"`async def {definition.name}` called through its decorators "
+                "returns a coroutine this does not carry as a value"
+            )
+        else:
+            frame, refusal = _source_function_frame(definition)
+    finally:
+        _FRAMES_UNDER_CONSTRUCTION.discard(key)
+    return DecoratorApplicationSugar(
+        definition_name=definition.name,
+        decorators=decorators,
+        definition_frame=frame,
+        definition_class=class_sugar,
+        refusal=refusal,
+        site=site,
+    )
+
+
+def _source_function_frame(definition):
+    """``(frame, None)``: the call frame of the source ``def`` ``definition``
+    (its typed occurrence's), or ``(None, refusal)`` where it is not one this
+    carries as a value: a generator function (its call allocates a
+    generator), or a definition whose frame is under construction up the
+    stack (a recursion seat)."""
+    identity = SourceOccurrenceIdentityV1.of(definition)
+    original = next(
+        (
+            candidate
+            for candidate in definition.unit.function_nodes
+            if candidate is definition
+            or SourceOccurrenceIdentityV1.of(candidate) == identity
+        ),
+        definition,
+    )
+    try:
+        frame = original.source_visible_call_frame()
+    except SourceCallFrameCycle as cycle:
+        return None, (
+            f"call-graph-cycle:{cycle.definition.name}"
+            f"@{cycle.definition.line_col_span().start_line}"
+        )
+    if frame is None:
+        return None, f"`{definition.name}` has no source call frame"
+    if frame.generator_steps is not None:
+        return None, (
+            f"generator function `{definition.name}` is not carried as a "
+            "callable value"
+        )
+    return frame, None
+
+
+def _decorator_step(definition, decorator, bound):
+    """One decorator of ``definition``, decided from its binding
+    (``_decorator_application_sugar``)."""
+    from sugar_lift_py_tests.sugar.decorator_application_sugar import (
+        DecoratorStepV1,
+    )
+
+    unit = definition.unit
+    site = decorator.fragment
+    spelling = decorator.segment()
+    member = unit.language_callee_of(decorator)
+    if member is not None:
+        _discharge_absorbed(decorator)
+        if member in _IDENTITY_DECORATORS or (
+            member is LanguageCallee.DATACLASSES_DATACLASS
+            and isinstance(definition, ClassDef)
+            and definition._dataclass_generated_init_fields() is not None
+        ):
+            return DecoratorStepV1.identity(site, spelling)
+        return DecoratorStepV1.refused(
+            site,
+            spelling,
+            f"builtin decorator {member.value} has no application modeled for "
+            f"`{definition.name}`",
+        )
+    if isinstance(decorator, Call):
+        factory = unit.language_callee_of(decorator.func)
+        if factory is not None:
+            if (
+                factory is LanguageCallee.FUNCTOOLS_WRAPS
+                and not decorator.keywords
+                and all(isinstance(argument, Name) for argument in decorator.args)
+            ):
+                # ``wraps(w)`` reads names and returns a decorator that copies
+                # ``w``'s metadata onto its argument and returns it.
+                _discharge_absorbed(decorator)
+                return DecoratorStepV1.identity(site, spelling)
+            _discharge_absorbed(decorator)
+            return DecoratorStepV1.refused(
+                site,
+                spelling,
+                f"builtin decorator factory {factory.value} has no application "
+                f"modeled for `{definition.name}`",
+            )
+        symbol = unit.import_reference_of(decorator.func)
+        if symbol is not None:
+            # The factory call is evaluated (an unanswered call of its own);
+            # what it returned is applied by nothing here.
+            return DecoratorStepV1.unanswered(
+                site, spelling, symbol, evaluate=decorator.sugar()
+            )
+        return DecoratorStepV1.apply(site, spelling, callee=decorator.sugar())
+    if isinstance(decorator, (Name, Attribute)):
+        symbol = unit.import_reference_of(decorator)
+        if symbol is not None:
+            _discharge_absorbed(decorator)
+            return DecoratorStepV1.unanswered(site, spelling, symbol)
+    if isinstance(decorator, Name):
+        target = bound
+        if target is None:
+            target = unit.module_definition_at(decorator.id, decorator.line_col_span())
+        if target is not None:
+            _discharge_absorbed(decorator)
+            return _definition_decorator_step(target, site, spelling)
+    return DecoratorStepV1.apply(site, spelling, callee=decorator.sugar())
+
+
+def _definition_decorator_step(target, site, spelling):
+    """A decorator bound to the source ``def``/``class`` ``target``: its value,
+    applied through the one call routine."""
+    from sugar_lift_py_tests.sugar.decorator_application_sugar import (
+        DecoratorStepV1,
+    )
+
+    if not _call_applies_own_frame(target):
+        return DecoratorStepV1.apply(
+            site,
+            spelling,
+            callee=_decorated_definition_ref(target, target.span).sugar(),
+        )
+    if isinstance(target, ClassDef):
+        return DecoratorStepV1.apply(site, spelling, callee=target.sugar())
+    if isinstance(target, AsyncFunctionDef):
+        return DecoratorStepV1.refused(
+            site, spelling, f"`async def {target.name}` returns a coroutine"
+        )
+    frame, refusal = _source_function_frame(target)
+    if refusal is not None:
+        return DecoratorStepV1.refused(site, spelling, refusal)
+    return DecoratorStepV1.apply(site, spelling, frame=frame)
+
+
+def _discharge_absorbed(node) -> None:
+    """Answer the roll call for every node of a decorator expression the
+    application absorbed without constructing it."""
+    for item in node.walk():
+        item.discharge_by_substitution()
 
 
 class ImportBindingRef(Expression):
@@ -21441,26 +21881,19 @@ def _local_definition_binding(definition, scope):
     Only a name the enclosing function holds as a lexical local is threaded,
     and, while a module body is threaded for its readers, a module name one
     of them reads (``_module_threads``); an undecorated definition binds
-    itself, a decorated one binds a loud ``DecoratedDefinitionRef``.
+    itself, a decorated one the decorators' result
+    (``DecoratedDefinitionRef``), its decorators read where the statement
+    runs (``scope``).
     """
     lexical = scope.get(_LEXICALLY_BOUND_NAMES)
     local = isinstance(lexical, frozenset) and definition.name in lexical
     if not (local or _module_threads(scope, definition.name)):
         return None
-    if not definition.decorators:
+    if _call_applies_own_frame(definition):
         return {definition.name: definition}
-    from .backend import Leaf, materialize
-    from .shadow import ShadowNode
-
     return {
-        definition.name: materialize(
-            definition.unit,
-            ShadowNode(
-                "DecoratedDefinitionRef",
-                definition.span,
-                (("definition_name", Leaf(definition.name)),),
-            ),
-            definition.reporter,
+        definition.name: _decorated_definition_ref(
+            definition, definition.span, scope
         )
     }
 

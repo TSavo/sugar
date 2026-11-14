@@ -174,6 +174,15 @@ class ClassDefinitionValue(GuardStableValue):
                 fix="preserve unique method resolution or keep the call loud",
             )
         method = candidates[0]
+        if method.descriptor_kind == "property":
+            # ``Cls.p`` is the property object itself, which is not callable.
+            raise SugarNotWritten(
+                owner=owner,
+                blame=blame,
+                observed=f"{self.class_name}.{name} is a property read off its class",
+                requested="a callable class attribute",
+                fix="read the property off an instance, or keep the call loud",
+            )
         frame = required_frame or method.source_call_frame
         from sugar_lift_py_tests.floor.object_value import bind_call
         from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
@@ -184,9 +193,13 @@ class ClassDefinitionValue(GuardStableValue):
 
         # ``cls.m(...)`` is the call ``m(cls, ...)``: the one binder, applied by
         # the one routine.  The class is ``m``'s lexical ``__class__`` cell.
+        # ``staticmethod.__get__`` returns the bare function (the builtin
+        # descriptor door, ``ClassDef._method_descriptor_kind``): its call
+        # takes no implicit first argument.
+        implicit = () if method.descriptor_kind == "staticmethod" else (self,)
         return bind_call(
             f"{self.class_name}.{name}",
-            (self, *arguments),
+            (*implicit, *arguments),
             keywords,
             frame=frame,
             parameters=frame.parameters,
