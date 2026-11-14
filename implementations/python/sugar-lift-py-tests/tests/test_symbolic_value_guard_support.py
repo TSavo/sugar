@@ -274,12 +274,14 @@ def test_string_plus_join_callsite_is_a_concat_coordinate_not_an_invented_string
     from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
     from sugar_lift_py_tests.floor.string_value import StringValue
     from sugar_lift_py_tests.ir import ctor
+    from sugar_source_tree.nodes import LanguageCallee
 
     join = OpaqueOpCallsite(
         callee="join",
         arg=StringValue(", "),
         computed=None,
         extra_args=(SymbolicValue(make_var("names")),),
+        language_callee=LanguageCallee.STR_JOIN,
     )
     prefix = StringValue("(")
     site = "string-plus-join"
@@ -303,6 +305,45 @@ def test_string_plus_join_callsite_is_a_concat_coordinate_not_an_invented_string
     assert isinstance(wrapped.completed_value(), CallSiteValue)
     assert not isinstance(wrapped.completed_value(), StringValue)
     assert getattr(wrapped.completed_value().term, "name", None) == "call:__add__"
+
+
+def test_str_join_coordinate_is_known_by_its_callee_never_its_spelling() -> None:
+    """The join coordinate the string fold mints carries ``STR_JOIN``; a
+    coordinate merely spelled ``join`` (no decided callee) is not named a
+    string concatenation (#7757)."""
+    from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
+    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
+    from sugar_lift_py_tests.floor.string_value import (
+        StringValue,
+        _fold_string_method,
+    )
+    from sugar_source_tree.nodes import LanguageCallee
+
+    class _Join:
+        name = "join"
+        arguments = (SymbolicValue(make_var("names")),)
+        blame = "fold-join"
+
+    minted = _fold_string_method(StringValue(", "), _Join()).completed_value()
+    assert type(minted) is OpaqueOpCallsite
+    assert minted.language_callee is LanguageCallee.STR_JOIN
+
+    spelled = OpaqueOpCallsite(
+        callee="join",
+        arg=StringValue(", "),
+        computed=None,
+        extra_args=(SymbolicValue(make_var("names")),),
+    )
+    from sugar_source_tree.panic import SugarNotWritten
+
+    try:
+        outcome = StringValue("(").add(spelled, "spelled-join", None)
+    except SugarNotWritten:
+        return  # refused by name: not a string concatenation either
+    assert not any(
+        isinstance(getattr(face, "value", None), CallSiteValue)
+        for face in outcome.exits
+    )
 
 
 def _dual_arm_helper_callsite(*, name_faces: bool):

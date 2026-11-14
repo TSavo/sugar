@@ -31,11 +31,131 @@ Names are only rebound; nothing here decides what a call does.
 
 from __future__ import annotations
 
-from typing import Optional
+import functools
+from typing import NamedTuple, Optional
 
 from .construction_cache import AmbientSet
 
 _DISPLAY_KIND = {"List": "list", "Dict": "dict", "Set": "set"}
+
+
+class _CitedBuiltins(NamedTuple):
+    """The builtins this law cites, as the ``LanguageCallee`` members their
+    binding reaches (CPython "Built-in Functions")."""
+
+    # ``list()``/``dict()``/``set()``: the container each constructor builds.
+    container_kind: dict
+    # Never mutates an argument.
+    pure: frozenset
+    # Pure, and invokes no dunder of its operands: ``isinstance(c, C)`` reads
+    # ``type(c)``; ``id``/``type`` read the object header.
+    no_dunder: frozenset
+    # The result never holds a reference to an argument object.
+    no_reference: frozenset
+    # The result is always a value of an immutable builtin type, whatever the
+    # operand's dunder returns (CPython checks ``__str__``/``__len__``/...
+    # results).
+    immutable_result: frozenset
+    # Builds a builtin container (or iterator) of the operand's items.
+    constructors: frozenset
+
+
+@functools.cache
+def _cited() -> _CitedBuiltins:
+    from .nodes import LanguageCallee as C
+
+    no_reference = frozenset(
+        {
+            C.BUILTIN_ABS,
+            C.BUILTIN_ALL,
+            C.BUILTIN_ANY,
+            C.BUILTIN_BOOL,
+            C.BUILTIN_CHR,
+            C.BUILTIN_DIVMOD,
+            C.BUILTIN_FLOAT,
+            C.BUILTIN_FORMAT,
+            C.BUILTIN_HASH,
+            C.BUILTIN_ID,
+            C.BUILTIN_INT,
+            C.BUILTIN_ISINSTANCE,
+            C.BUILTIN_ISSUBCLASS,
+            C.BUILTIN_LEN,
+            C.BUILTIN_ORD,
+            C.BUILTIN_REPR,
+            C.BUILTIN_ROUND,
+            C.BUILTIN_STR,
+        }
+    )
+    return _CitedBuiltins(
+        container_kind={
+            C.BUILTIN_LIST: "list",
+            C.BUILTIN_DICT: "dict",
+            C.BUILTIN_SET: "set",
+        },
+        pure=no_reference
+        | {
+            C.BUILTIN_DICT,
+            C.BUILTIN_ENUMERATE,
+            C.BUILTIN_FROZENSET,
+            C.BUILTIN_ITER,
+            C.BUILTIN_LIST,
+            C.BUILTIN_MAX,
+            C.BUILTIN_MIN,
+            C.BUILTIN_PRINT,
+            C.BUILTIN_RANGE,
+            C.BUILTIN_REVERSED,
+            C.BUILTIN_SET,
+            C.BUILTIN_SORTED,
+            C.BUILTIN_SUM,
+            C.BUILTIN_TUPLE,
+            C.BUILTIN_TYPE,
+            C.BUILTIN_ZIP,
+        },
+        no_dunder=frozenset(
+            {C.BUILTIN_ID, C.BUILTIN_ISINSTANCE, C.BUILTIN_ISSUBCLASS, C.BUILTIN_TYPE}
+        ),
+        no_reference=no_reference,
+        immutable_result=frozenset(
+            {
+                C.BUILTIN_BOOL,
+                C.BUILTIN_CHR,
+                C.BUILTIN_FORMAT,
+                C.BUILTIN_HASH,
+                C.BUILTIN_ID,
+                C.BUILTIN_ISINSTANCE,
+                C.BUILTIN_ISSUBCLASS,
+                C.BUILTIN_LEN,
+                C.BUILTIN_ORD,
+                C.BUILTIN_REPR,
+                C.BUILTIN_STR,
+            }
+        ),
+        constructors=frozenset(
+            {
+                C.BUILTIN_BYTES,
+                C.BUILTIN_COMPLEX,
+                C.BUILTIN_DICT,
+                C.BUILTIN_FLOAT,
+                C.BUILTIN_FROZENSET,
+                C.BUILTIN_INT,
+                C.BUILTIN_LIST,
+                C.BUILTIN_RANGE,
+                C.BUILTIN_SET,
+                C.BUILTIN_SORTED,
+                C.BUILTIN_TUPLE,
+            }
+        ),
+    )
+
+
+def _builtin_callee(call):
+    """The builtin ``call``'s callee is bound to, or None.
+
+    Read through the unit's one binding lookup (``SourceUnit.
+    language_callee_of``: the builtin namespace a bare name falls through to,
+    or an import of ``builtins``), never the spelling: a parameter, local,
+    module binding or import that rebinds ``len`` reaches no builtin here."""
+    return call.unit.language_callee_of(call.func)
 
 
 def _evaluation(site_node, tags) -> str:
@@ -49,51 +169,6 @@ def _evaluation(site_node, tags) -> str:
     """
     span = site_node.span
     return "/".join((f"[{span.start},{span.end})", *tags))
-
-
-# Builtins whose call never mutates an argument (CPython "Built-in Functions").
-PURE_BUILTINS = frozenset(
-    {
-        "abs",
-        "all",
-        "any",
-        "bool",
-        "chr",
-        "dict",
-        "divmod",
-        "enumerate",
-        "float",
-        "format",
-        "frozenset",
-        "hash",
-        "id",
-        "int",
-        "isinstance",
-        "issubclass",
-        "iter",
-        "len",
-        "list",
-        "max",
-        "min",
-        "ord",
-        "print",
-        "range",
-        "repr",
-        "reversed",
-        "round",
-        "set",
-        "sorted",
-        "str",
-        "sum",
-        "tuple",
-        "type",
-        "zip",
-    }
-)
-
-# Pure builtins that invoke no dunder of their operands: ``isinstance(c, C)``
-# reads ``type(c)``; ``id``/``type``/``callable`` read the object header.
-NO_DUNDER_BUILTINS = frozenset({"callable", "id", "isinstance", "issubclass", "type"})
 
 
 def runs_operand_code(call, scope) -> bool:
@@ -137,17 +212,12 @@ def decided_container_kind(node) -> Optional[str]:
         # ``s = set()``: the call result's identity wrapper over the call.
         return decided_container_kind(node.base)
     if kind == "Call":
-        # ``list()``/``dict()``/``set()`` with the builtin still in scope: a
-        # read of a locally bound name would have substituted to its value.
-        func = node.func
-        if (
-            getattr(func, "kind", None) == "Name"
-            and func.id in ("list", "dict", "set")
-            and not node.keywords
-            and len(node.args) <= 1
-        ):
-            return func.id
-        return None
+        # ``list()``/``dict()``/``set()`` whose callee is bound to the builtin
+        # (``_builtin_callee``): ``from collections import deque as list``
+        # builds no list.
+        if node.keywords or len(node.args) > 1:
+            return None
+        return _cited().container_kind.get(_builtin_callee(node))
     return _DISPLAY_KIND.get(kind)
 
 
@@ -199,43 +269,20 @@ def _is_formal(node) -> bool:
     return getattr(_identity(node), "kind", None) in _FORMAL_KINDS
 
 
-# Builtins whose result never holds a reference to an argument object.
-_NO_REFERENCE_BUILTINS = frozenset(
-    {
-        "abs",
-        "all",
-        "any",
-        "bool",
-        "chr",
-        "divmod",
-        "float",
-        "format",
-        "hash",
-        "id",
-        "int",
-        "isinstance",
-        "issubclass",
-        "len",
-        "ord",
-        "repr",
-        "round",
-        "str",
-    }
-)
-
-
 def _holds_no_reference(node) -> bool:
     """A value built from its operands that cannot be (or hold) one of them:
-    ``len(r)``, ``r[0]`` (the element, read when evaluated), ``r == s``,
-    ``r.copy()``/``r.index(x)`` on a decided container."""
-    from .nodes import Attribute, Call, Compare, Name, Subscript
+    ``len(r)`` (the builtin ``len``, by its binding), ``r[0]`` (the element,
+    read when evaluated), ``r == s``, ``r.copy()``/``r.index(x)`` on a
+    decided container."""
+    from .nodes import Attribute, Call, Compare, Subscript
 
     if isinstance(node, (Compare, Subscript)):
         return True
     if isinstance(node, Call):
+        callee = _builtin_callee(node)
+        if callee is not None:
+            return callee in _cited().no_reference
         func = node.func
-        if isinstance(func, Name):
-            return func.id in _NO_REFERENCE_BUILTINS
         if isinstance(func, Attribute) and decided_container_kind(func.value):
             from sugar_lift_py_tests.floor.builtin_container_method import (
                 MUTATING_METHODS,
@@ -447,19 +494,22 @@ def mutation_statement(
 
 
 def _is_pure_call(call, scope) -> bool:
-    from .nodes import Attribute, Constant, Name
+    from .nodes import Attribute, Constant
 
     func = call.func
     if call.keywords:
         # ``sorted(r, key=f)``: ``f`` runs and may reach the argument.
         return False
-    if isinstance(func, Name):
-        # ``print(c)``/``sum([c])``/``sorted(c)`` run ``c``'s ``__str__``/
-        # ``__radd__``/``__iter__``/``__lt__``: pure only when every operand
-        # is a decided builtin all the way down, so no dunder is user code.
-        if func.id not in PURE_BUILTINS or func.id in scope:
+    callee = _builtin_callee(call)
+    if callee is not None:
+        # A builtin by its binding (``_builtin_callee``): ``print(c)``/
+        # ``sum([c])``/``sorted(c)`` run ``c``'s ``__str__``/``__radd__``/
+        # ``__iter__``/``__lt__``: pure only when every operand is a decided
+        # builtin all the way down, so no dunder is user code.
+        cited = _cited()
+        if callee not in cited.pure:
             return False
-        if func.id in NO_DUNDER_BUILTINS:
+        if callee in cited.no_dunder:
             return True
         return all(builtin_typed(arg, scope) for arg in call.args)
     if isinstance(func, Attribute):
@@ -621,41 +671,6 @@ def _exposed(root, bound_refs):
     return found
 
 
-# Builtins whose result is always a value of an immutable builtin type, whatever
-# the operand's dunder returns (CPython checks ``__str__``/``__len__``/... results).
-_IMMUTABLE_RESULT_BUILTINS = frozenset(
-    {
-        "bool",
-        "chr",
-        "format",
-        "hash",
-        "id",
-        "isinstance",
-        "issubclass",
-        "len",
-        "ord",
-        "repr",
-        "str",
-    }
-)
-# Builtins that build a builtin container (or iterator) of the operand's items.
-_BUILTIN_CONSTRUCTORS = frozenset(
-    {
-        "bytes",
-        "complex",
-        "dict",
-        "float",
-        "frozenset",
-        "int",
-        "list",
-        "range",
-        "set",
-        "sorted",
-        "tuple",
-    }
-)
-
-
 def builtin_typed(node, scope, depth=0, *, names=frozenset()) -> bool:
     """Whether ``node`` is a decided builtin value all the way down: every
     object it is or holds has a builtin type, so no dunder a builtin invokes on
@@ -734,16 +749,13 @@ def builtin_typed(node, scope, depth=0, *, names=frozenset()) -> bool:
         return builtin(node.receiver) and all(builtin(a) for a in node.args)
     if getattr(node, "kind", None) == "OpaqueObjectStateV1":
         return builtin(node.base)
-    if (
-        isinstance(node, Call)
-        and isinstance(node.func, Name)
-        and node.func.id not in scope
-        and node.func.id not in names
-        and not node.keywords
-    ):
-        if node.func.id in _IMMUTABLE_RESULT_BUILTINS:
+    if isinstance(node, Call) and not node.keywords:
+        # A builtin by its binding (``_builtin_callee``), never its spelling.
+        callee = _builtin_callee(node)
+        cited = _cited()
+        if callee in cited.immutable_result:
             return True
-        if node.func.id in _BUILTIN_CONSTRUCTORS:
+        if callee in cited.constructors:
             return all(builtin(a) for a in node.args)
     return False
 
