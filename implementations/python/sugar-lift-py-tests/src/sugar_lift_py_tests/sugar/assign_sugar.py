@@ -87,8 +87,9 @@ class MultiAssignSugar(Sugar):
     bindings: tuple  # tuple of (name, value_sugar) pairs, in target order
     site: object = dataclass_field(compare=False)
     evaluations: tuple = ()  # (name, key) per Name target, as AssignSugar's
-    # No name is bound before a halt; a walrus in a RHS member is, and a
-    # later member's halt carries it (``evaluate_assignment_values``).
+    # No name is bound before a halt (every member is evaluated before any
+    # target is assigned); a walrus in a RHS member is, and a later member's
+    # halt carries it (``evaluate_assignment_values``).
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -255,8 +256,9 @@ class DynamicUnpackStoreAssignSugar(Sugar):
     targets: tuple  # Name|Star|Attribute|Subscript unpack targets, source order
     site: object = dataclass_field(compare=False)
     # A record-less halt is the RHS's or the unpack's, before any target
-    # applies its member; a target's halt carries the record the targets'
-    # block gave it (``_apply_authenticated_roster``).
+    # applies its member (after a walrus in the RHS bound, the unpack's
+    # carries the record of that bind); a target's halt carries the record
+    # the targets' block gave it (``_apply_authenticated_roster``).
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -272,11 +274,35 @@ class DynamicUnpackStoreAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            peel_walrus_binds,
+            written_by,
+        )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            halts_at_operand_head,
+        )
+
         self._require_typed_targets()
         operation, expected_demand_cid = self._operation()
-        return self.value.desugar(ctx).and_then(
-            lambda value: self._unpack(operation, expected_demand_cid, value, ctx)
-        )
+
+        def unpack(value):
+            # A walrus in the right-hand side (``o.x, y = (a := v)``) is
+            # bound before the unpack runs: the unpack and every target run
+            # in the context it wrote, so the targets' block carries it on,
+            # and the unpack's own halt (before any target applies) carries
+            # its record (``halts_at_operand_head``, the unpack running no
+            # walrus).
+            binds, presented = peel_walrus_binds(value)
+            if not binds:
+                return self._unpack(operation, expected_demand_cid, value, ctx)
+            after = written_by(value, ctx)
+            return halts_at_operand_head(
+                self._unpack(operation, expected_demand_cid, presented, after),
+                None,
+                after,
+            )
+
+        return self.value.desugar(ctx).and_then(unpack)
 
     def unpack(self, value, ctx) -> ExitSet:
         """Unpack ``value``, already evaluated, into the targets left to

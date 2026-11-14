@@ -1,16 +1,74 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from contextvars import ContextVar
 from dataclasses import fields, is_dataclass
 import inspect
 from typing import Any, Callable, ClassVar, List, cast
 
-from sugar_lift_py_tests.outcome import ExitSet
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.ir import Term
 from sugar_lift_py_tests.sugar.witnesses import SugarWitnesses
 from sugar_lift_py_tests.sugar_body import SugarBody
 
 _STAMPED_REDUCE: list = []
+
+# ``(sugar, ctx)``: the sugar whose evaluation is running now and the context
+# it was handed (``Sugar.desugar``), or None outside every evaluation.  What a
+# sugar evaluated inside it reads as its evaluator (``_recorded_at_its_head``),
+# and what a consumer's step reads as the context its operands were evaluated
+# from (``named_expression_value.consume_operands``).
+_EVALUATING: ContextVar = ContextVar("sugar_evaluating", default=None)
+
+
+def evaluating():
+    """``(sugar, ctx)``: the sugar whose evaluation is running now and the
+    context it was handed, or None outside every evaluation."""
+    return _EVALUATING.get()
+
+
+def _recorded_at_its_head(sugar, ctx, outcome, evaluator):
+    """``outcome`` -- ``sugar`` evaluated in ``ctx`` by ``evaluator`` -- with
+    every halt that offers no record carrying the record of where ``sugar``
+    was evaluated, where ``sugar`` is an expression that holds no walrus and
+    ``evaluator`` (the sugar that evaluated it) holds one.
+
+    THE ONE expression evaluation every statement's operands go through, so
+    every one of them is held to it: an assignment's right-hand sides, an
+    ``if``/``while`` test, a loop's iterable, a ``match`` subject, a ``with``
+    item, a ``return``/``raise``/``yield`` operand, an ``assert`` test, every
+    operand of every expression.  A walrus binds as its operand completes,
+    before a later operand halts (``if (a := f()) and g():``: ``a`` is bound
+    when ``g()`` raises); the halt's record is built from the binds already
+    made, which the context the later operand was evaluated in holds
+    (``written_by``), and never stood in for by the statement's head, which
+    holds none of them (``function_universe_sugar.halts_at_operand_head``).
+    An expression that holds a walrus records nothing here: its own
+    walrus-free operands recorded theirs, and its step's halt is recorded
+    with its operands' binds (``consume_operands``).  Where the evaluator
+    holds no walrus nothing is bound by it before the halt, and the halt is
+    handed on as it is (a statement records it at its head).  A statement
+    reduced as a statement records its own halts (``_require_recorded_halts``)."""
+    if (
+        evaluator is None
+        or not isinstance(sugar, ConstructedTermSugar)
+        or not isinstance(outcome, ExitSet)
+        or not any(
+            isinstance(exit_, Halted) and exit_.state is None
+            for exit_ in outcome.exits
+        )
+    ):
+        # The common case, read before anything is imported: no halt here
+        # offers no record.
+        return outcome
+    from sugar_lift_py_tests.sugar.function_universe_sugar import (
+        halts_at_operand_head,
+    )
+    from sugar_lift_py_tests.sugar.named_expr_sugar import holds_a_walrus
+
+    if not holds_a_walrus(evaluator[0]):
+        return outcome
+    return halts_at_operand_head(outcome, sugar, ctx)
 
 
 def _reduce_at_stamped_module_execution_site():
@@ -108,9 +166,17 @@ class Sugar(ABC):
             # reduces there: an implicit call it makes (``__add__``,
             # ``__getitem__``, a property getter) reads a module global as
             # the module binds it at that point (#7757 item 7).
-            return _reduce_at_stamped_module_execution_site()(
-                self, lambda: own(self, ctx, *args, **kwargs)
-            )
+            evaluator = _EVALUATING.get()
+            token = _EVALUATING.set((self, ctx))
+            try:
+                outcome = _reduce_at_stamped_module_execution_site()(
+                    self, lambda: own(self, ctx, *args, **kwargs)
+                )
+            finally:
+                _EVALUATING.reset(token)
+            # A halt of an operand carries the walrus binds made before it
+            # (``_recorded_at_its_head``).
+            return _recorded_at_its_head(self, ctx, outcome, evaluator)
 
         desugar._answers_assigned_value = True
         cls.desugar = desugar

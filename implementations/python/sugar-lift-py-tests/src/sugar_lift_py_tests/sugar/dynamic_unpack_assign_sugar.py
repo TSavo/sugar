@@ -55,9 +55,10 @@ class DynamicUnpackAssignSugar(Sugar):
     prefix_names: tuple[str, ...] = ()
     suffix_names: tuple[str, ...] = ()
     evaluation: str | None = None
-    # Nothing binds on a halt (the RHS's, or the unpack's: CPython binds
+    # No target binds on a halt (the RHS's, or the unpack's: CPython binds
     # nothing when the unpack raises): its pre-halt record is the block's
-    # prefix.
+    # prefix, or, after a walrus in the RHS bound, the record of that bind
+    # (``consume_operands``).
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
@@ -73,6 +74,10 @@ class DynamicUnpackAssignSugar(Sugar):
         )
 
     def desugar(self, ctx: object = None) -> ExitSet:
+        from sugar_lift_py_tests.floor.named_expression_value import (
+            consume_operands,
+            written_by,
+        )
         from sugar_lift_py_tests.floor.scope_rebind import bind_unpack_projections
         from sugar_lift_py_tests.operations import SequenceProjectionOperation
 
@@ -91,13 +96,24 @@ class DynamicUnpackAssignSugar(Sugar):
                 prefix_names=self.prefix_names,
                 suffix_names=self.suffix_names,
             )
+
         # Python evaluates the right-hand side before it unpacks anything.
-        if self.evaluation is None:
-            return self.value.desugar(ctx).and_then(
-                lambda value: operation.submit(value, ctx)
-            )
-        return self.value.desugar(ctx).and_then(
-            lambda value: operation.submit(value, ctx).and_then(
-                lambda rebinds: bind_unpack_projections(rebinds, self.evaluation)
-            )
-        )
+        # The unpack consumes it through the one operand door: a walrus in it
+        # (``x, y = (a := v)``) is bound before the unpack runs, so the unpack
+        # reads what it wrote, its halt carries the bind
+        # (``consume_operands``), and its completed face carries it on to the
+        # block.
+        def unpack(value):
+            after = written_by(value, ctx)
+
+            def step(presented):
+                unpacked = operation.submit(presented, after)
+                if self.evaluation is None:
+                    return unpacked
+                return unpacked.and_then(
+                    lambda rebinds: bind_unpack_projections(rebinds, self.evaluation)
+                )
+
+            return consume_operands(step, value)
+
+        return self.value.desugar(ctx).and_then(unpack)

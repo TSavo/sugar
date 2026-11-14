@@ -30,11 +30,18 @@ class AssertSugar(Sugar):
     test: Sugar
     site: object = dataclass_field(compare=False)
     message: object | None = dataclass_field(compare=False, default=None)
+    # Whether the message holds a walrus (``assert c, (m := f())``). The
+    # message is never reduced here, but CPython runs it before it raises
+    # ``AssertionError``, so its walrus is bound when the assert halts:
+    # ``holds_a_walrus`` reads this, and the statement's failure, offering
+    # no record that holds the bind, is refused by name
+    # (``_require_recorded_halts``), never given the prefix that drops it.
+    message_holds_a_walrus: bool = dataclass_field(compare=False, default=False)
     # A simple statement: it evaluates its test, then completes or halts,
-    # binding nothing before its own halt. A halted arm of its test halted at
-    # the head of the statement, so the enclosing block's prefix is its
-    # record (``reduce_block_to_exitset``), as for every expression
-    # statement.
+    # binding nothing before its own halt but what a walrus in its test or
+    # message binds. A halted arm of a walrus-free test halted at the head of
+    # the statement, so the enclosing block's prefix is its record
+    # (``reduce_block_to_exitset``), as for every expression statement.
     halts_at_statement_head: ClassVar[bool] = True
 
     @classmethod
