@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from sugar_lift_py_tests.floor import ListValue, NoneValue, SymbolicValue, TermValue
 
+from frame_fresh import fresh
 from test_builtin_container_mutation import _ints, _only_return, _returns
 
 
@@ -33,7 +34,7 @@ def test_append_then_raise_is_seen_by_the_handler(tmp_path):
         "        return r\n"
         "    return None\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_a_store_through_an_alias_is_seen_by_the_handler(tmp_path):
@@ -48,7 +49,7 @@ def test_a_store_through_an_alias_is_seen_by_the_handler(tmp_path):
         "        return r\n"
         "    return None\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_a_loops_stores_are_seen_by_the_handler(tmp_path):
@@ -63,7 +64,7 @@ def test_a_loops_stores_are_seen_by_the_handler(tmp_path):
         "        return r\n"
         "    return None\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(1, 2))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1, 2))
 
 
 def test_pop_then_raise_is_seen_by_the_handler(tmp_path):
@@ -77,7 +78,7 @@ def test_pop_then_raise_is_seen_by_the_handler(tmp_path):
         "        return r\n"
         "    return None\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_a_cited_call_that_raises_has_not_stored(tmp_path):
@@ -91,7 +92,7 @@ def test_a_cited_call_that_raises_has_not_stored(tmp_path):
         "        return r\n"
         "    return None\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(())
+    assert _only_return(tmp_path, source) == fresh(ListValue, ())
 
 
 def test_finally_after_an_uncaught_raise_sees_the_stores(tmp_path):
@@ -104,7 +105,7 @@ def test_finally_after_an_uncaught_raise_sees_the_stores(tmp_path):
         "    finally:\n"
         "        return r\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_an_opaque_halt_after_a_store_is_seen_by_the_handler(tmp_path):
@@ -120,8 +121,8 @@ def test_an_opaque_halt_after_a_store_is_seen_by_the_handler(tmp_path):
         "    return None\n"
     )
     returns, _halts = _returns(tmp_path, source)
-    assert ListValue(_ints(1)) in returns
-    assert ListValue(()) not in returns
+    assert fresh(ListValue, _ints(1)) in returns
+    assert fresh(ListValue, ()) not in returns
 
 
 def test_each_halt_site_hands_the_handler_its_own_binding(tmp_path):
@@ -158,7 +159,7 @@ def test_a_helper_that_stores_then_raises_hands_the_handler_its_store(tmp_path):
         "        return r\n"
         "    return None\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_a_helper_that_may_raise_before_its_store_leaves_the_actual_unknown(
@@ -182,8 +183,8 @@ def test_a_helper_that_may_raise_before_its_store_leaves_the_actual_unknown(
         "    return None\n"
     )
     value = _only_return(tmp_path, source)
-    assert value != ListValue(())
-    assert value != ListValue(_ints(1))
+    assert value != fresh(ListValue, ())
+    assert value != fresh(ListValue, _ints(1))
     assert type(value) is SymbolicValue
     assert value.term.name == "python:receiver_after_call"
 
@@ -205,7 +206,7 @@ def test_finally_after_an_arm_reraises_never_claims_an_earlier_state(tmp_path):
         "        return r\n"
     )
     value = _only_return(tmp_path, source)
-    assert value not in (ListValue(()), ListValue(_ints(1)))
+    assert value not in (fresh(ListValue, ()), fresh(ListValue, _ints(1)))
 
 
 def test_finally_after_a_caught_raise_sees_the_arms_stores(tmp_path):
@@ -221,4 +222,4 @@ def test_finally_after_a_caught_raise_sees_the_arms_stores(tmp_path):
         "        r.append(3)\n"
         "    return r\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(1, 2, 3))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1, 2, 3))

@@ -185,9 +185,12 @@ class PositionalUnpackOperation:
         else:
             mid_vals = members[pre_n:]
             suffix_vals = ()
+        from sugar_lift_py_tests.floor.object_identity import made_at
+
+        # The starred target is a new list the unpack makes here.
         roster = (
             *prefix_vals,
-            ListValue(tuple(mid_vals)),
+            ListValue(tuple(mid_vals), allocation=made_at(self.blame)),
             *suffix_vals,
         )
         return ExitSet.completed(self.mint_roster(roster))

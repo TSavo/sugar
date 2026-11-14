@@ -22,6 +22,7 @@ import inspect
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     _NATIVE_OPERATION_PROJECTORS,
@@ -146,12 +147,12 @@ def test_mutable_receiver_completes_with_x_and_variadic_store() -> None:
     universe = _completed_universe(
         pending,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(0),
             values_cid: pack,
         },
     )
-    assert _stored_list(universe) == ListValue((pack,))
+    assert _stored_list(universe) == fresh(ListValue, (pack,))
     returned = _returned(universe)
     assert isinstance(returned.value, SymbolicValue)
     assert returned.value.term.name == "p"
@@ -165,7 +166,7 @@ def test_source_caller_packs_remaining_positionals_into_values() -> None:
     face = outcome.exits[0]
     assert isinstance(face, Completed)
     assert face.value.arg_values == (
-        ListValue((TermValue(0),)),
+        fresh(ListValue, (TermValue(0),)),
         TermValue(0),
         TermValue(7),
         TupleValue((TermValue(1), TermValue(2))),
@@ -179,12 +180,12 @@ def test_empty_variadic_store_is_honest_empty_tuple() -> None:
     universe = _completed_universe(
         pending,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(0),
             values_cid: TupleValue(()),
         },
     )
-    assert _stored_list(universe) == ListValue((TupleValue(()),))
+    assert _stored_list(universe) == fresh(ListValue, (TupleValue(()),))
     assert _returned(universe).value.term.name == "p"
 
 
@@ -205,7 +206,7 @@ def test_variadic_store_halt_preserves_earlier_name_binding_state() -> None:
     exits = pending.discharge(
         None,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(5),
             values_cid: TupleValue((TermValue(9),)),
         },
@@ -247,7 +248,7 @@ def test_halt_discrimination_is_not_completed_return_of_x() -> None:
     exits = pending.discharge(
         None,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(5),
             values_cid: TupleValue((TermValue(9),)),
         },
@@ -282,7 +283,7 @@ def test_dropped_variadic_pack_is_undischarged() -> None:
     exits = pending.discharge(
         None,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(0),
         },
     )

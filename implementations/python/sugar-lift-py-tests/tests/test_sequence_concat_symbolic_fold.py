@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.effect.runtime_effect import is_lift_time_decidable
 from sugar_lift_py_tests.floor.comprehension_value import ComprehensionValue
 from sugar_lift_py_tests.floor.list_value import ListValue
@@ -32,7 +33,7 @@ def test_lambda_body_is_not_lift_time_decidable() -> None:
 
 
 def test_list_plus_comprehension_constructs_symbolic_concat() -> None:
-    left = ListValue((TermValue(1),))
+    left = fresh(ListValue, (TermValue(1),))
     right = ComprehensionValue(
         ctor(
             "py.listcomp",

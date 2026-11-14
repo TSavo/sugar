@@ -4,6 +4,7 @@ import pytest
 
 from dataclasses import dataclass, replace
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     NativeOperationResolutionV1,
@@ -906,7 +907,7 @@ def test_setitem_discharges_in_receiver_index_value_order_and_completes():
     exits = carrier.discharge(
         None,
         {
-            receiver.coordinate_cid: ListValue((TermValue(0), TermValue(1))),
+            receiver.coordinate_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
             index.coordinate_cid: TermValue(0),
             value.coordinate_cid: TermValue(9),
         },
@@ -915,7 +916,7 @@ def test_setitem_discharges_in_receiver_index_value_order_and_completes():
     assert len(exits.exits) == 1
     completed = exits.exits[0]
     assert isinstance(completed, Completed)
-    assert completed.value == ListValue((TermValue(9), TermValue(1)))
+    assert completed.value == fresh(ListValue, (TermValue(9), TermValue(1)))
 
 
 def test_setitem_discharges_and_halts_with_named_exception_identity():
@@ -925,7 +926,7 @@ def test_setitem_discharges_and_halts_with_named_exception_identity():
     exits = carrier.discharge(
         None,
         {
-            receiver.coordinate_cid: ListValue((TermValue(0),)),
+            receiver.coordinate_cid: fresh(ListValue, (TermValue(0),)),
             index.coordinate_cid: TermValue(4),
             value.coordinate_cid: TermValue(9),
         },
@@ -998,7 +999,7 @@ def test_source_evaluation_order_rhs_receiver_index_is_independent_of_discharge(
 
     # The store producer's source chain (window 10876): value → receiver → index.
     value = _Probe("value", TermValue(9))
-    receiver = _Probe("receiver", ListValue((TermValue(0),)))
+    receiver = _Probe("receiver", fresh(ListValue, (TermValue(0),)))
     index = _Probe("index", TermValue(0))
     source_outcome = value.desugar().and_then(
         lambda stored: receiver.desugar().and_then(
@@ -1008,7 +1009,7 @@ def test_source_evaluation_order_rhs_receiver_index_is_independent_of_discharge(
         )
     )
     assert order == ["value", "receiver", "index"]
-    assert source_outcome.completed_value() == ListValue((TermValue(9),))
+    assert source_outcome.completed_value() == fresh(ListValue, (TermValue(9),))
 
     # Discharge order is independently receiver, index, value on the table.
     import inspect
@@ -1054,7 +1055,9 @@ def test_lying_swapped_index_and_value_must_fail_to_match_correct_store():
     )
 
     actuals = {
-        receiver.coordinate_cid: ListValue((TermValue(0), TermValue(1), TermValue(2))),
+        receiver.coordinate_cid: fresh(
+            ListValue, (TermValue(0), TermValue(1), TermValue(2))
+        ),
         index.coordinate_cid: TermValue(1),
         value.coordinate_cid: TermValue(99),
     }
@@ -1062,8 +1065,8 @@ def test_lying_swapped_index_and_value_must_fail_to_match_correct_store():
     lying_exits = lying.discharge(None, actuals)
 
     assert isinstance(truthful_exits.exits[0], Completed)
-    assert truthful_exits.exits[0].value == ListValue(
-        (TermValue(0), TermValue(99), TermValue(2))
+    assert truthful_exits.exits[0].value == fresh(
+        ListValue, (TermValue(0), TermValue(99), TermValue(2))
     )
     # The lying order stores at index 99 (the value) — IndexError — or at the
     # wrong cell.  Either way it must not equal the truthful post-state.
@@ -1148,7 +1151,9 @@ def test_symbolic_formal_subscript_discharges_completed_through_projector():
     exits = outcome.discharge(
         None,
         {
-            receiver_coordinate.coordinate_cid: ListValue((TermValue(7), TermValue(8))),
+            receiver_coordinate.coordinate_cid: fresh(
+                ListValue, (TermValue(7), TermValue(8))
+            ),
         },
     )
     assert len(exits.exits) == 1

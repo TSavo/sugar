@@ -382,7 +382,7 @@ class BuiltinSemanticCallable(FloorValue):
         from sugar_lift_py_tests.floor import DictValue, ListValue, SetValue, TupleValue
         from sugar_lift_py_tests.outcome import ExitSet
 
-        from sugar_lift_py_tests.floor.object_identity import contents_stale
+        from sugar_lift_py_tests.floor.object_identity import contents_stale, made_at
 
         if operation.keyword_names or len(operation.arguments) != 1:
             return None
@@ -390,10 +390,18 @@ class BuiltinSemanticCallable(FloorValue):
         if contents_stale(source):
             # Its members are not its contents now: not iterated here.
             return None
+        # A new set made by this call, from current contents.
+        allocation = made_at(operation.site)
         if isinstance(source, DictValue):
-            return ExitSet.completed(SetValue(tuple(key for key, _ in source.entries)))
+            return ExitSet.completed(
+                SetValue(
+                    tuple(key for key, _ in source.entries), allocation=allocation
+                )
+            )
         if isinstance(source, SetValue):
-            return ExitSet.completed(SetValue(tuple(source.elements)))
+            return ExitSet.completed(
+                SetValue(tuple(source.elements), allocation=allocation)
+            )
         if not isinstance(source, (ListValue, TupleValue)):
             return None
         kept = []
@@ -408,7 +416,7 @@ class BuiltinSemanticCallable(FloorValue):
                 return None
             if found < 0:
                 kept.append(member)
-        return ExitSet.completed(SetValue(tuple(kept)))
+        return ExitSet.completed(SetValue(tuple(kept), allocation=allocation))
 
     def _construct_tuple(self, operation):
         """Exact ``tuple(iterable)`` over finite authenticated containers.
@@ -537,7 +545,12 @@ class BuiltinSemanticCallable(FloorValue):
                 values.append(value)
             else:
                 values[found] = value
-        return ExitSet.completed(DictValue(tuple(zip(keys, values))))
+        # A new dict made by this call, from current contents.
+        from sugar_lift_py_tests.floor.object_identity import made_at
+
+        return ExitSet.completed(
+            DictValue(tuple(zip(keys, values)), allocation=made_at(operation.site))
+        )
 
     def test_python_type(self, value, site):
         """Constructor builtins that are also types answer isinstance tests.

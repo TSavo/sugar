@@ -32,6 +32,7 @@ from sugar_lift_py_tests.gap.panic import ConstructionPanic
 from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_source_tree.nodes import FunctionDef
 
+from frame_fresh import fresh
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
 from test_unprojected_method_call_faces import _owners, _split
 
@@ -82,7 +83,7 @@ def test_a_str_actual_selects_the_two_faces(tmp_path):
 
 def test_a_list_actual_selects_the_container_law(tmp_path):
     carrier = _carrier(tmp_path, "def f(y):\n    return y.append(1)\n")
-    completed, halted = _faces(_discharge(carrier, ListValue(())))
+    completed, halted = _faces(_discharge(carrier, fresh(ListValue, ())))
     (universe,) = completed
     (returned,) = universe.record.statements
     assert returned.value == NoneValue()
@@ -93,7 +94,7 @@ def test_a_contents_read_is_two_faced(tmp_path):
     # Whether ``pop`` raises reads the contents, which are not testified at
     # a call reached by binding.
     carrier = _carrier(tmp_path, "def f(y):\n    return y.pop()\n")
-    _completed, halted = _faces(_discharge(carrier, ListValue((TermValue(5),))))
+    _completed, halted = _faces(_discharge(carrier, fresh(ListValue, (TermValue(5),))))
     assert _owners(halted) == ["BuiltinMethodCall:list.pop"]
 
 
@@ -119,7 +120,7 @@ def test_a_helper_append_never_raises_and_applies(tmp_path):
         "    return r\n"
     )
     returns, halts = _split(tmp_path, source)
-    assert returns == [ListValue((TermValue(1),))]
+    assert returns == [fresh(ListValue, (TermValue(1),))]
     assert halts == []
 
 

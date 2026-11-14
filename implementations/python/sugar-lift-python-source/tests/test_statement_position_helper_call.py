@@ -18,6 +18,7 @@ import pytest
 
 from sugar_lift_py_tests.floor import ListValue, TermValue
 
+from frame_fresh import fresh
 from test_builtin_container_mutation import _halt_names, _returns
 
 
@@ -65,4 +66,4 @@ def test_a_list_a_helper_may_mutate_is_never_its_pre_call_contents(tmp_path):
     )
     (value,), halts = _returns(tmp_path, source)
     assert halts == []
-    assert value != ListValue(())
+    assert value != fresh(ListValue, ())

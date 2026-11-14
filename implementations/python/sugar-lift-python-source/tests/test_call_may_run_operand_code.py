@@ -25,6 +25,7 @@ from sugar_lift_py_tests.floor import ListValue, SymbolicValue, TermValue
 
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 
+from frame_fresh import fresh
 from test_builtin_container_mutation import _only_return, _returns
 
 CLS = (
@@ -135,4 +136,4 @@ def test_a_builtin_over_builtin_operands_stays_total(tmp_path, call):
 )
 def test_a_builtin_over_builtin_operands_changes_nothing(tmp_path, call):
     source = CLS + f"def f():\n    c = C()\n    {call}\n    return c.items\n"
-    assert _only_return(tmp_path, source) == ListValue((TermValue(5),))
+    assert _only_return(tmp_path, source) == fresh(ListValue, (TermValue(5),))

@@ -16,6 +16,7 @@ complex field.
 from __future__ import annotations
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
@@ -141,7 +142,7 @@ class _FragmentSite:
         TermValue("1"),
         TermValue(None),
         TermValue(b"1"),
-        ListValue((TermValue(1),)),
+        fresh(ListValue, (TermValue(1),)),
         StringValue("1"),
     ),
 )

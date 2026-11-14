@@ -82,7 +82,8 @@ ANY_MUTATING_METHOD = frozenset().union(*MUTATING_METHODS.values())
 # Cited methods whose exits and result the law decides from the operands
 # alone, never from the receiver's contents.  On a receiver whose contents
 # are not current (``object_identity.contents_current``) only these are
-# applied; the post-state they leave is not current either (``_same_object``).
+# applied; the post-state they leave is not current either (each post-state
+# is the receiver's own object and names the receiver's ``allocation``).
 CONTENTS_FREE_METHODS = {
     "list": frozenset({"append", "extend", "insert", "clear", "reverse"}),
     "dict": frozenset({"__setitem__", "update", "clear"}),
@@ -273,28 +274,9 @@ def apply(kind, method, receiver, args, site, ctx):
     if decided is UNDECIDED:
         return decided
     value = None if cited is None else cited.completed_value()
-    if value is not None:
-        decided = decided.and_then(lambda pair: _with_value(pair, value))
-    return decided.and_then(lambda pair: _same_object(pair, receiver))
-
-
-def _same_object(pair, receiver):
-    """The post-state is the receiver's own object after the call: it keeps
-    the receiver's ``allocation`` (``object_identity``).  The post-state of
-    an object this frame made is current; of one that arrived by binding it
-    is not, since it was computed from contents that were not."""
-    from dataclasses import replace
-
-    from .tuple_value import TupleValue
-    from sugar_lift_py_tests.outcome import ExitSet
-
-    if type(pair) is not TupleValue or len(pair.elements) != 2:
-        return ExitSet.completed(pair)
-    post, result = pair.elements
-    allocation = getattr(receiver, "allocation", None)
-    if type(post) is not type(receiver) or post.allocation == allocation:
-        return ExitSet.completed(pair)
-    return _pair(replace(post, allocation=allocation), result)
+    if value is None:
+        return decided
+    return decided.and_then(lambda pair: _with_value(pair, value))
 
 
 def _with_value(pair, value):
@@ -308,18 +290,22 @@ def _with_value(pair, value):
 
 
 def _list(method, receiver, args, site, owner, ctx):
+    """Each post-state is the receiver's own object after the call: it names
+    the receiver's ``allocation`` (``object_identity``) -- current for an
+    object this frame made, not for one that arrived by binding."""
     from .list_value import ListValue
 
     elements = tuple(receiver.elements)
+    same = receiver.allocation
     if method == "append" and len(args) == 1:
-        return _pair(ListValue((*elements, args[0])), _none())
+        return _pair(ListValue((*elements, args[0]), allocation=same), _none())
     if method in ("extend", "__iadd__") and len(args) == 1:
         if _not_iterable(args[0]):
             return _raise("TypeError", site, owner)
         members = _ordered_members(args[0])
         if members is None:
             return UNDECIDED
-        post = ListValue((*elements, *members))
+        post = ListValue((*elements, *members), allocation=same)
         return _pair(post, post if method == "__iadd__" else _none())
     if method == "insert" and len(args) == 2:
         index = _ground_int(args[0])
@@ -327,7 +313,7 @@ def _list(method, receiver, args, site, owner, ctx):
             return UNDECIDED
         updated = list(elements)
         updated.insert(index, args[1])
-        return _pair(ListValue(tuple(updated)), _none())
+        return _pair(ListValue(tuple(updated), allocation=same), _none())
     if method == "pop" and len(args) <= 1:
         index = -1 if not args else _ground_int(args[0])
         if index is None:
@@ -337,7 +323,9 @@ def _list(method, receiver, args, site, owner, ctx):
             return _raise("IndexError", site, owner)
         position = index if index >= 0 else size + index
         return _pair(
-            ListValue((*elements[:position], *elements[position + 1 :])),
+            ListValue(
+                (*elements[:position], *elements[position + 1 :]), allocation=same
+            ),
             elements[position],
         )
     if method == "remove" and len(args) == 1:
@@ -347,14 +335,17 @@ def _list(method, receiver, args, site, owner, ctx):
         if position < 0:
             return _raise("ValueError", site, owner)
         return _pair(
-            ListValue((*elements[:position], *elements[position + 1 :])), _none()
+            ListValue(
+                (*elements[:position], *elements[position + 1 :]), allocation=same
+            ),
+            _none(),
         )
     if method == "clear" and not args:
-        return _pair(ListValue(()), _none())
+        return _pair(ListValue((), allocation=same), _none())
     if method == "reverse" and not args:
-        return _pair(ListValue(tuple(reversed(elements))), _none())
+        return _pair(ListValue(tuple(reversed(elements)), allocation=same), _none())
     if method == "sort" and not args:
-        return _sorted_list(elements, site, owner)
+        return _sorted_list(elements, same, site, owner)
     if method == "__setitem__" and len(args) == 2:
         return _then_pair(receiver.setitem(args[0], args[1], site, ctx))
     if method == "__delitem__" and len(args) == 1:
@@ -362,8 +353,9 @@ def _list(method, receiver, args, site, owner, ctx):
     return UNDECIDED
 
 
-def _sorted_list(elements, site, owner):
-    """``list.sort()``: a homogeneous ground run sorts; mixed str/int is TypeError."""
+def _sorted_list(elements, allocation, site, owner):
+    """``list.sort()``: a homogeneous ground run sorts; mixed str/int is
+    TypeError.  The post-state is the receiver's object (``allocation``)."""
     from .list_value import ListValue
     from .string_value import StringValue
     from .term_value import TermValue
@@ -379,7 +371,7 @@ def _sorted_list(elements, site, owner):
         return _raise("TypeError", site, owner)
     else:
         return UNDECIDED
-    return _pair(ListValue(tuple(ordered)), _none())
+    return _pair(ListValue(tuple(ordered), allocation=allocation), _none())
 
 
 def _then_pair(outcome):
@@ -405,9 +397,12 @@ def _find_key(entries, key):
 
 
 def _dict(method, receiver, args, site, owner):
+    """Each post-state is the receiver's own object: it names the receiver's
+    ``allocation`` (as ``_list``)."""
     from .dict_value import DictValue
 
     entries = tuple(receiver.entries)
+    same = receiver.allocation
 
     def keyed(key):
         if _unhashable(key):
@@ -422,7 +417,10 @@ def _dict(method, receiver, args, site, owner):
             return _raise("TypeError", site, owner)
         if position is UNDECIDED:
             return UNDECIDED
-        return _pair(DictValue(_stored(entries, position, args[0], args[1])), _none())
+        return _pair(
+            DictValue(_stored(entries, position, args[0], args[1]), allocation=same),
+            _none(),
+        )
     if method == "__delitem__" and len(args) == 1:
         position = keyed(args[0])
         if position == "unhashable":
@@ -431,7 +429,10 @@ def _dict(method, receiver, args, site, owner):
             return UNDECIDED
         if position < 0:
             return _raise("KeyError", site, owner)
-        return _pair(DictValue(entries[:position] + entries[position + 1 :]), _none())
+        return _pair(
+            DictValue(entries[:position] + entries[position + 1 :], allocation=same),
+            _none(),
+        )
     if method == "setdefault" and len(args) in (1, 2):
         default = args[1] if len(args) == 2 else _none()
         position = keyed(args[0])
@@ -441,7 +442,9 @@ def _dict(method, receiver, args, site, owner):
             return UNDECIDED
         if position >= 0:
             return _pair(receiver, entries[position][1])
-        return _pair(DictValue((*entries, (args[0], default))), default)
+        return _pair(
+            DictValue((*entries, (args[0], default)), allocation=same), default
+        )
     if method == "pop" and len(args) in (1, 2):
         position = keyed(args[0])
         if position == "unhashable":
@@ -453,7 +456,7 @@ def _dict(method, receiver, args, site, owner):
                 return _pair(receiver, args[1])
             return _raise("KeyError", site, owner)
         return _pair(
-            DictValue(entries[:position] + entries[position + 1 :]),
+            DictValue(entries[:position] + entries[position + 1 :], allocation=same),
             entries[position][1],
         )
     if method == "popitem" and not args:
@@ -462,9 +465,11 @@ def _dict(method, receiver, args, site, owner):
         from .tuple_value import TupleValue
 
         key, value = entries[-1]
-        return _pair(DictValue(entries[:-1]), TupleValue((key, value)))
+        return _pair(
+            DictValue(entries[:-1], allocation=same), TupleValue((key, value))
+        )
     if method == "clear" and not args:
-        return _pair(DictValue(()), _none())
+        return _pair(DictValue((), allocation=same), _none())
     if method in ("update", "__ior__") and len(args) == 1:
         from .object_identity import contents_stale
 
@@ -481,7 +486,7 @@ def _dict(method, receiver, args, site, owner):
             if position is UNDECIDED:
                 return UNDECIDED
             updated = _stored(updated, position, key, value)
-        post = DictValue(updated)
+        post = DictValue(updated, allocation=same)
         return _pair(post, post if method == "__ior__" else _none())
     return UNDECIDED
 
@@ -495,9 +500,12 @@ def _stored(entries, position, key, value):
 
 
 def _set(method, receiver, args, site, owner):
+    """Each post-state is the receiver's own object: it names the receiver's
+    ``allocation`` (as ``_list``)."""
     from .set_value import SetValue
 
     elements = tuple(receiver.elements)
+    same = receiver.allocation
 
     def member(value):
         if _unhashable(value):
@@ -512,7 +520,11 @@ def _set(method, receiver, args, site, owner):
             return _raise("TypeError", site, owner)
         if position is UNDECIDED:
             return UNDECIDED
-        post = receiver if position >= 0 else SetValue((*elements, args[0]))
+        post = (
+            receiver
+            if position >= 0
+            else SetValue((*elements, args[0]), allocation=same)
+        )
         return _pair(post, _none())
     if method in ("discard", "remove") and len(args) == 1:
         if type(args[0]) is SetValue:
@@ -527,16 +539,19 @@ def _set(method, receiver, args, site, owner):
             if method == "remove":
                 return _raise("KeyError", site, owner)
             return _pair(receiver, _none())
-        return _pair(SetValue(elements[:position] + elements[position + 1 :]), _none())
+        return _pair(
+            SetValue(elements[:position] + elements[position + 1 :], allocation=same),
+            _none(),
+        )
     if method == "pop" and not args:
         if not elements:
             return _raise("KeyError", site, owner)
         if len(elements) == 1:
-            return _pair(SetValue(()), elements[0])
+            return _pair(SetValue((), allocation=same), elements[0])
         # Which member ``pop`` returns is hash order: not decided here.
         return UNDECIDED
     if method == "clear" and not args:
-        return _pair(SetValue(()), _none())
+        return _pair(SetValue((), allocation=same), _none())
     if method in ("update", "__ior__") and len(args) == 1:
         if method == "__ior__" and type(args[0]) is not SetValue:
             # ``s |= x`` takes a set operand; any other is the operator's
@@ -558,6 +573,6 @@ def _set(method, receiver, args, site, owner):
                 return UNDECIDED
             if position < 0:
                 updated = (*updated, candidate)
-        post = SetValue(updated)
+        post = SetValue(updated, allocation=same)
         return _pair(post, post if method == "__ior__" else _none())
     return UNDECIDED

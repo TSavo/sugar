@@ -19,6 +19,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
@@ -199,7 +200,7 @@ def test_ground_star_store_rest_and_field() -> None:
     site = _site()
     receiver = ObjectValue("W", (), (), (), "w0")
     sugar = DynamicUnpackStoreAssignSugar(
-        value=_FloorSugar(ListValue((TermValue(1), TermValue(2), TermValue(3)))),
+        value=_FloorSugar(fresh(ListValue, (TermValue(1), TermValue(2), TermValue(3)))),
         targets=(
             _attr_leaf(receiver, "x", site),
             StarUnpackTarget("rest"),
@@ -209,8 +210,8 @@ def test_ground_star_store_rest_and_field() -> None:
     exits = reduce_block_to_exitset((sugar,), ReduceContext.root(owner="ground_star"))
     assert isinstance(exits.exits[0], Completed)
     state = exits.exits[0].value
-    assert state.context.temporal.value_if_bound("rest") == ListValue(
-        (TermValue(2), TermValue(3))
+    assert state.context.temporal.value_if_bound("rest") == fresh(
+        ListValue, (TermValue(2), TermValue(3))
     )
     objs = [s for s in state.entries if isinstance(s, ObjectValue)]
     assert {f.name: f.value for f in objs[-1].fields}["x"] == TermValue(1)
@@ -235,7 +236,7 @@ def test_interleaved_name_store_name_order() -> None:
 
     receiver = ObjectValue("W", (), (), (), "w1")
     sugar = DynamicUnpackStoreAssignSugar(
-        value=_FloorSugar(ListValue((TermValue(1), TermValue(2), TermValue(3)))),
+        value=_FloorSugar(fresh(ListValue, (TermValue(1), TermValue(2), TermValue(3)))),
         targets=(
             _OrderName("a"),
             _OrderStore(_member_key(), _attr_store(receiver, "x", site)),
@@ -267,7 +268,7 @@ def test_first_store_halt_blocks_later_name() -> None:
 
     receiver = _RefuseSet("W", (), (), (), "refuse")
     sugar = DynamicUnpackStoreAssignSugar(
-        value=_FloorSugar(ListValue((TermValue(1), TermValue(2)))),
+        value=_FloorSugar(fresh(ListValue, (TermValue(1), TermValue(2)))),
         targets=(
             _attr_leaf(receiver, "x", site),
             NameUnpackTarget("name"),
@@ -304,7 +305,7 @@ def test_earlier_name_survives_later_store_halt() -> None:
             )
 
     sugar = DynamicUnpackStoreAssignSugar(
-        value=_FloorSugar(ListValue((TermValue(7), TermValue(8)))),
+        value=_FloorSugar(fresh(ListValue, (TermValue(7), TermValue(8)))),
         targets=(
             NameUnpackTarget("name"),
             _attr_leaf(_RefuseSet("W", (), (), (), "r2"), "x", site),
@@ -324,7 +325,7 @@ def test_rhs_evaluated_once() -> None:
     site = _site()
     box: dict = {}
     sugar = DynamicUnpackStoreAssignSugar(
-        value=_CountingRhs(box, ListValue((TermValue(1), TermValue(2)))),
+        value=_CountingRhs(box, fresh(ListValue, (TermValue(1), TermValue(2)))),
         targets=(
             NameUnpackTarget("a"),
             NameUnpackTarget("b"),
@@ -340,7 +341,7 @@ def test_rhs_evaluated_once() -> None:
 
 def test_discrimination_double_rhs_detected() -> None:
     box: dict = {}
-    rhs = _CountingRhs(box, ListValue((TermValue(1),)))
+    rhs = _CountingRhs(box, fresh(ListValue, (TermValue(1),)))
     rhs.desugar(None)
     rhs.desugar(None)
     assert box["n"] == 2
@@ -380,7 +381,7 @@ def test_exact_arity_valueerror_identity() -> None:
     """Named ValueError with exact type + operation occurrence (not spelling-only)."""
     site = _site("def f(obj, xs):\n    obj.x, obj.y = xs\n")
     sugar = DynamicUnpackStoreAssignSugar(
-        value=_FloorSugar(ListValue((TermValue(1),))),  # need 2
+        value=_FloorSugar(fresh(ListValue, (TermValue(1),))),  # need 2
         targets=(
             _attr_leaf(ObjectValue("W", (), (), (), "w3"), "x", site, 0),
             _attr_leaf(ObjectValue("W", (), (), (), "w4"), "y", site, 1),
@@ -404,7 +405,7 @@ def test_arity_valueerror_wrong_occurrence_is_not_truthful() -> None:
 
     site = _site("def f(obj, xs):\n    obj.x, obj.y = xs\n")
     sugar = DynamicUnpackStoreAssignSugar(
-        value=_FloorSugar(ListValue((TermValue(1),))),
+        value=_FloorSugar(fresh(ListValue, (TermValue(1),))),
         targets=(
             _attr_leaf(ObjectValue("W", (), (), (), "w5"), "x", site, 0),
             _attr_leaf(ObjectValue("W", (), (), (), "w6"), "y", site, 1),
@@ -460,7 +461,7 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
         owner="positional_coord",
         blame=site,
     )
-    roster_out = op.submit(ListValue((TermValue(10), TermValue(20))), None)
+    roster_out = op.submit(fresh(ListValue, (TermValue(10), TermValue(20))), None)
     assert roster_out.completed_value() is not None
     assert isinstance(roster_out.completed_value(), UnpackMemberRoster)
     assert roster_out.completed_value().members[0] == TermValue(10)
@@ -522,7 +523,7 @@ def test_missing_wrong_positional_coordinate_is_loud() -> None:
     # first formal no actual answers.
     for actuals, absent in (
         ({}, "cid:a"),
-        ({"cid:a": ListValue((TermValue(0),))}, "cid:i"),
+        ({"cid:a": fresh(ListValue, (TermValue(0),))}, "cid:i"),
     ):
         out = projected.discharge(None, actuals)
         assert out.completed_value() is None
@@ -550,7 +551,7 @@ def test_successful_roster_carries_authenticated_unpack_occurrence() -> None:
         owner="DynamicUnpackStoreAssignSugar",
         blame=site,
     )
-    out = op.submit(ListValue((TermValue(1), TermValue(2))), None)
+    out = op.submit(fresh(ListValue, (TermValue(1), TermValue(2))), None)
     assert out.completed_value() is not None
     roster = out.completed_value()
     assert isinstance(roster, UnpackMemberRoster)
@@ -570,7 +571,7 @@ def test_successful_roster_carries_authenticated_unpack_occurrence() -> None:
     assert wrong_occurrence.members == roster.members
     assert wrong_occurrence.demand_cid == roster.demand_cid
     sugar = DynamicUnpackStoreAssignSugar(
-        value=_FloorSugar(ListValue((TermValue(1), TermValue(2)))),
+        value=_FloorSugar(fresh(ListValue, (TermValue(1), TermValue(2)))),
         targets=(NameUnpackTarget("a"), NameUnpackTarget("b")),
         site=site,
     )
@@ -674,11 +675,13 @@ def test_positional_roster_has_no_string_keys() -> None:
         owner="test",
         blame=site,
     )
-    out = op.submit(ListValue((TermValue(1), TermValue(2), TermValue(3))), None)
+    out = op.submit(fresh(ListValue, (TermValue(1), TermValue(2), TermValue(3))), None)
     assert out.completed_value() is not None
     assert isinstance(out.completed_value(), UnpackMemberRoster)
     assert out.completed_value().members[0] == TermValue(1)
-    assert out.completed_value().members[1] == ListValue((TermValue(2), TermValue(3)))
+    assert out.completed_value().members[1] == fresh(
+        ListValue, (TermValue(2), TermValue(3))
+    )
     # Roster is positional tuple only — not a name map.
     assert not hasattr(out.completed_value(), "bindings")
     assert out.completed_value().occurrence is site
@@ -705,7 +708,7 @@ def test_positional_ground_exit_panic_propagates_without_reconstruction() -> Non
     )
 
     with pytest.raises(ConstructionPanic) as raised:
-        operation.submit(ListValue((TermValue(1),)), None)
+        operation.submit(fresh(ListValue, (TermValue(1),)), None)
 
     assert raised.value.info.owner == "positional-half-fragment.arity_mismatch"
     assert "locus stating no source fragment" in raised.value.info.observed

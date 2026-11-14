@@ -15,6 +15,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.effect.name_error_effect import NameErrorEffect
@@ -236,7 +237,7 @@ def test_a_starred_projection_is_the_middle_list() -> None:
     )
     value = _value(sugar.desugar(None))
     assert isinstance(value, ScopeRebinds)
-    rest = (projection_key(KEY, "rest"), ListValue((TWO, THREE)))
+    rest = (projection_key(KEY, "rest"), fresh(ListValue, (TWO, THREE)))
     assert rest in value.bindings
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
     CallSiteValue,
@@ -44,7 +45,9 @@ def test_exact_constructed_integer_is_the_only_finite_repetition_path(
 ) -> None:
     element = TermValue(7)
 
-    outcome = sequence_type((element,)).multiply(TermValue(64), "multiply-site", None)
+    outcome = fresh(sequence_type, (element,)).multiply(
+        TermValue(64), "multiply-site", None
+    )
 
     value = outcome.completed_value()
     assert isinstance(value, sequence_type)
@@ -55,7 +58,9 @@ def test_exact_constructed_integer_is_the_only_finite_repetition_path(
 def test_exact_constructed_bool_is_a_valid_repetition_count(sequence_type) -> None:
     element = TermValue(7)
 
-    outcome = sequence_type((element,)).multiply(TermValue(True), "multiply-site", None)
+    outcome = fresh(sequence_type, (element,)).multiply(
+        TermValue(True), "multiply-site", None
+    )
 
     value = outcome.completed_value()
     assert value is not None
@@ -63,7 +68,9 @@ def test_exact_constructed_bool_is_a_valid_repetition_count(sequence_type) -> No
 
 
 def test_list_times_known_ground_float_is_authenticated_type_error(tmp_path) -> None:
-    outcome = ListValue((TermValue(1),)).multiply(TermValue(1.5), _site(tmp_path), None)
+    outcome = fresh(ListValue, (TermValue(1),)).multiply(
+        TermValue(1.5), _site(tmp_path), None
+    )
 
     assert outcome.halts() == outcome.exits
     (halt,) = outcome.halts()
@@ -86,7 +93,7 @@ def test_tuple_times_known_ground_string_is_authenticated_type_error(tmp_path) -
 
 @pytest.mark.parametrize("sequence_type", (ListValue, TupleValue))
 def test_bridge_coordinate_rename_changes_only_multiplier_term(sequence_type) -> None:
-    sequence = sequence_type((TermValue(7),))
+    sequence = fresh(sequence_type, (TermValue(7),))
     first = CallSiteValue("vendor_a.op", (), (), ctor("call:vendor_a.op", []), None)
     renamed = CallSiteValue("vendor_b.op", (), (), ctor("call:vendor_b.op", []), None)
 
@@ -112,7 +119,7 @@ def test_nested_imported_calls_remain_nested_under_sequence_repetition(
         None,
     )
 
-    term = _symbolic_result(sequence_type((TermValue(7),)), outer)
+    term = _symbolic_result(fresh(sequence_type, (TermValue(7),)), outer)
 
     assert term.args[1] == outer.term
     assert isinstance(term.args[1], _Ctor)

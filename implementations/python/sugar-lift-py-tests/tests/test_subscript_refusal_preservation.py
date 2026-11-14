@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import DictValue, FloorValue, StringValue, TermValue
 from sugar_lift_py_tests.ir import atomic, ctor
@@ -93,7 +94,7 @@ def test_partitioned_subscript_truth_keeps_value_and_halt_faces(tmp_path, monkey
             ),
             Completed(
                 guard,
-                DictValue(((StringValue("key"), TermValue(7)),)),
+                fresh(DictValue, ((StringValue("key"), TermValue(7)),)),
             ),
         )
     )

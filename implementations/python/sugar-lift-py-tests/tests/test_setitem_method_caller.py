@@ -27,6 +27,7 @@ setitem, or parameter-name maps — consumer/test only.
 
 from __future__ import annotations
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
@@ -214,7 +215,7 @@ def test_bound_self_does_not_shift_obj_key_value_coordinates() -> None:
     callsite = _method_callsite(source)
     _assert_bound_self_first(callsite)
     # Actuals after self: list, 0, 9 — not self-shifted into obj.
-    assert callsite.arg_values[1] == ListValue((TermValue(0), TermValue(1)))
+    assert callsite.arg_values[1] == fresh(ListValue, (TermValue(0), TermValue(1)))
     assert callsite.arg_values[2] == TermValue(0)
     assert callsite.arg_values[3] == TermValue(9)
     _assert_completed_call(callsite.producer_outcome(None))
@@ -242,7 +243,7 @@ def test_positional_keyword_and_default_method_calls_discharge() -> None:
     for site in sites:
         _assert_bound_self_first(site)
         # After self: obj is the list, key is 0, value is 9 (defaults included).
-        assert site.arg_values[1] == ListValue((TermValue(0),))
+        assert site.arg_values[1] == fresh(ListValue, (TermValue(0),))
         assert site.arg_values[2] == TermValue(0)
         assert site.arg_values[3] == TermValue(9)
         _assert_completed_call(site.producer_outcome(None))
@@ -284,13 +285,15 @@ def test_mutable_method_store_completes() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0), TermValue(1))),
+            obj_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
             key_cid: TermValue(0),
             value_cid: TermValue(9),
         },
     )
     assert isinstance(exits.exits[0], Completed)
-    assert _stored_list(exits.exits[0]) == ListValue((TermValue(9), TermValue(1)))
+    assert _stored_list(exits.exits[0]) == fresh(
+        ListValue, (TermValue(9), TermValue(1))
+    )
     # Holder itself is not a setitem operand here — method self is separate.
     del holder
 
@@ -310,7 +313,7 @@ def test_invalid_index_method_call_halts_with_named_indexerror() -> None:
     site = _method_callsite(METHOD_BODY + "\nHolder().store([0], 4, 9)\n")
     _assert_bound_self_first(site)
     assert site.arg_values[1:] == (
-        ListValue((TermValue(0),)),
+        fresh(ListValue, (TermValue(0),)),
         TermValue(4),
         TermValue(9),
     )
@@ -341,7 +344,7 @@ def test_invalid_index_discharge_shares_reducer_pre_effect_state() -> None:
     exits = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0),)),
+            obj_cid: fresh(ListValue, (TermValue(0),)),
             key_cid: TermValue(4),
             value_cid: TermValue(9),
         },
@@ -407,12 +410,14 @@ def test_off_by_one_binding_twin_fails_against_truthful_store() -> None:
     """
     _holder, pending = _source_holder_receiver()
     obj_cid, key_cid, value_cid = _obj_key_value_cids(pending)
-    base = ListValue((TermValue(0), TermValue(1)))
+    base = fresh(ListValue, (TermValue(0), TermValue(1)))
     truthful = pending.discharge(
         None, {obj_cid: base, key_cid: TermValue(0), value_cid: TermValue(9)}
     )
     assert isinstance(truthful.exits[0], Completed)
-    assert _stored_list(truthful.exits[0]) == ListValue((TermValue(9), TermValue(1)))
+    assert _stored_list(truthful.exits[0]) == fresh(
+        ListValue, (TermValue(9), TermValue(1))
+    )
 
     # Off-by-one: list lands under key, index under value — receiver is still
     # a list so Floor setitem runs, but at the wrong coordinates / value.
@@ -421,14 +426,16 @@ def test_off_by_one_binding_twin_fails_against_truthful_store() -> None:
     lying = pending.discharge(
         None,
         {
-            obj_cid: ListValue((TermValue(0), TermValue(1), TermValue(2))),
+            obj_cid: fresh(ListValue, (TermValue(0), TermValue(1), TermValue(2))),
             key_cid: TermValue(1),  # shifted: was value slot in a self-steal map
             value_cid: TermValue(0),  # shifted index
         },
     )
     lying_face = lying.exits[0]
     if isinstance(lying_face, Completed):
-        assert _stored_list(lying_face) != ListValue((TermValue(9), TermValue(1)))
+        assert _stored_list(lying_face) != fresh(
+            ListValue, (TermValue(9), TermValue(1))
+        )
         # Explicit: not the truthful store-at-0-with-9 face either.
         assert _stored_list(lying_face) != _stored_list(truthful.exits[0])
     else:
@@ -440,7 +447,7 @@ def test_discrimination_truthful_binding_completes_at_obj_slot() -> None:
     site = _method_callsite(METHOD_BODY + "\nHolder().store([0, 1], 0, 9)\n")
     _assert_bound_self_first(site)
     assert site.arg_values[1:] == (
-        ListValue((TermValue(0), TermValue(1))),
+        fresh(ListValue, (TermValue(0), TermValue(1))),
         TermValue(0),
         TermValue(9),
     )

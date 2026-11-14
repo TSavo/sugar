@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, ListValue, ReturnValue, TermValue
@@ -84,8 +85,8 @@ def test_try_store_indexerror_routes_to_handler_without_fabricated_state() -> No
     empty_state = type(testimony.state)((), True, ())
     assert testimony.state is not None
     assert testimony.state is not empty_state
-    assert testimony.state != ListValue((TermValue(0),))
-    assert testimony.state != ListValue((TermValue(9),))
+    assert testimony.state != fresh(ListValue, (TermValue(0),))
+    assert testimony.state != fresh(ListValue, (TermValue(9),))
 
 
 def test_exitset_consumer_observes_authentic_store_occurrence_and_state() -> None:
@@ -102,7 +103,7 @@ def test_exitset_consumer_observes_authentic_store_occurrence_and_state() -> Non
     retained = pending.after_discharge(observe).discharge(
         None,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(4),
             q_cid: TermValue(9),
         },
@@ -128,7 +129,7 @@ def test_exitset_consumer_observes_authentic_store_occurrence_and_state() -> Non
         for exit_ in foreign.discharge(
             None,
             {
-                foreign_a: ListValue((TermValue(0),)),
+                foreign_a: fresh(ListValue, (TermValue(0),)),
                 foreign_i: TermValue(4),
                 foreign_q: TermValue(9),
             },

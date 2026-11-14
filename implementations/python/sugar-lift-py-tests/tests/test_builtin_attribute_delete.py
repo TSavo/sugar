@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.floor import ListValue, NoneValue
 from sugar_lift_py_tests.outcome import ExitSet
@@ -37,7 +38,7 @@ class _Receiver(Sugar):
 
 @pytest.mark.parametrize(
     ("receiver", "owner"),
-    ((ListValue(()), "ListValue.delattr"), (NoneValue(), "NoneValue.delattr")),
+    ((fresh(ListValue, ()), "ListValue.delattr"), (NoneValue(), "NoneValue.delattr")),
 )
 def test_builtin_without_instance_dict_delete_has_exact_owner_occurrence(
     tmp_path, receiver, owner
@@ -51,7 +52,7 @@ def test_builtin_without_instance_dict_delete_has_exact_owner_occurrence(
     assert halt.effect.occurrence_id == str(site)
 
 
-@pytest.mark.parametrize("receiver", (ListValue(()), NoneValue()))
+@pytest.mark.parametrize("receiver", (fresh(ListValue, ()), NoneValue()))
 def test_builtin_without_instance_dict_delete_cannot_fabricate_completion(
     tmp_path, receiver
 ):

@@ -24,6 +24,7 @@ from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
+from frame_fresh import fresh
 from test_builtin_container_mutation import _only_return, _returns
 
 
@@ -100,8 +101,8 @@ def test_a_dict_subscript_finds_the_equal_key(tmp_path, expression):
 
 def test_a_store_under_an_equal_key_keeps_the_stored_key(tmp_path):
     source = 'def f():\n    d = {1: "a"}\n    d[True] = "b"\n    return d\n'
-    assert _only_return(tmp_path, source) == DictValue(
-        ((TermValue(1), StringValue("b")),)
+    assert _only_return(tmp_path, source) == fresh(
+        DictValue, ((TermValue(1), StringValue("b")),)
     )
 
 

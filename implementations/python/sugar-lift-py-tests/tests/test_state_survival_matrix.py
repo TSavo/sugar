@@ -56,6 +56,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
     ReducerPreEffectStateV1,
@@ -140,7 +141,7 @@ def _unpack_store_halt() -> tuple[NativeOperationExitCarrierV1, Halted]:
     exits = pending.discharge(
         None,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(5),
             q_cid: TermValue(9),
         },
@@ -420,7 +421,7 @@ def test_d_unpack_name_binding_survives_later_store_halt() -> None:
     success = pending.discharge(
         None,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(0),
             q_cid: TermValue(9),
         },
@@ -482,7 +483,7 @@ def test_d_free_dual_store_later_halt_retains_prior_store_in_state() -> None:
     assert halted[0].state is not None
     # Prior binding / store survived: list shows first-store write.
     lists = [e for e in halted[0].state.entries if isinstance(e, ListValue)]
-    assert lists == [ListValue((TermValue(2),))]
+    assert lists == [fresh(ListValue, (TermValue(2),))]
     # Not fabricated completion of the return.
     with pytest.raises(AssertionError):
         assert isinstance(halted[0], Completed)

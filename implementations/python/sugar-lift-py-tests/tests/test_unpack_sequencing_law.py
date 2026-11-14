@@ -39,6 +39,7 @@ from pathlib import Path
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.floor import ListValue, TermValue, TupleValue
 from sugar_lift_py_tests.outcome.exit_set import (
@@ -223,7 +224,7 @@ def test_producer_and_consumer_methods_are_the_named_seams() -> None:
     # Reused store lane — not reimplemented here.
     assert hasattr(SubscriptStoreEffectSugar, "desugar")
     assert hasattr(SubscriptStoreEffectSugar, "_store")
-    assert callable(getattr(ListValue((TermValue(0),)), "setitem"))
+    assert callable(getattr(fresh(ListValue, (TermValue(0),)), "setitem"))
     assert callable(getattr(TupleValue((TermValue(0),)), "setitem"))
 
 
@@ -309,7 +310,7 @@ def test_unpack_store_leaf_evaluates_value_receiver_key_once_in_python_order(
     """Store leaf inside unpack reuses the #6599 evaluation order."""
     log: list[str] = []
     store = SubscriptStoreEffectSugar(
-        receiver=_ObservedSugar("receiver", ListValue((TermValue(1),)), log),
+        receiver=_ObservedSugar("receiver", fresh(ListValue, (TermValue(1),)), log),
         index=_ObservedSugar("key", TermValue(0), log),
         value=_ObservedSugar("value", TermValue(7), log),
         site=_site(tmp_path),
@@ -321,7 +322,7 @@ def test_unpack_store_leaf_evaluates_value_receiver_key_once_in_python_order(
     value = outcome.completed_value()
     assert value is not None
     # reduce_body wraps store contributions in a fall-through BlockValue.
-    assert ListValue((TermValue(7),)) in value.statements
+    assert fresh(ListValue, (TermValue(7),)) in value.statements
 
 
 def test_ground_name_then_list_store_completes_with_name_bound(tmp_path: Path) -> None:

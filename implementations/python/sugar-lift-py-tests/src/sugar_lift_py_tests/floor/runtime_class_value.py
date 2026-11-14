@@ -22,7 +22,11 @@ class RuntimeClassValue(ClassValue):
         from sugar_lift_py_tests.outcome import ExitSet
 
         if name == "__dict__":
-            return ExitSet.completed(DictValue(self._namespace_entries()))
+            # The class's namespace as it was when the class was made, not a
+            # fresh object made here: its contents are not current.
+            return ExitSet.completed(
+                DictValue(self._namespace_entries(), allocation=None)
+            )
         if name == "__mro__":
             return ExitSet.completed(TupleValue((self, *self.bases)))
         for key, value in reversed(self._namespace_entries()):

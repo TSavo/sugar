@@ -15,6 +15,7 @@ from dataclasses import replace
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
@@ -171,7 +172,7 @@ def test_a_mapping_pattern_binds_the_value_at_its_key() -> None:
     assert isinstance(pattern, MappingPatternSpec)
     (capture,) = pattern.patterns
     assert isinstance(capture, CapturePatternSpec)
-    subject = DictValue(((StringValue("k"), TermValue(5)),))
+    subject = fresh(DictValue, ((StringValue("k"), TermValue(5)),))
     matched = _matched(match_pattern(pattern, subject, SITE, None))
     assert matched.matched
     assert dict(matched.binds) == {capture.key: TermValue(5)}
@@ -179,7 +180,7 @@ def test_a_mapping_pattern_binds_the_value_at_its_key() -> None:
 
 def test_a_mapping_pattern_misses_a_missing_key_and_a_sequence() -> None:
     pattern = _match(MAPPING).cases[0].pattern
-    missing = DictValue(((StringValue("j"), TermValue(5)),))
+    missing = fresh(DictValue, ((StringValue("j"), TermValue(5)),))
     assert not _matched(match_pattern(pattern, missing, SITE, None)).matched
     assert not _matched(match_pattern(pattern, TupleValue(()), SITE, None)).matched
 

@@ -184,10 +184,16 @@ class SequenceProjectionOperation:
         else:
             mid_vals = members[pre_n:]
             suffix_vals = ()
-        # CPython always binds the starred target to a list, even from a tuple.
+        from sugar_lift_py_tests.floor.object_identity import made_at
+
+        # CPython always binds the starred target to a list, even from a
+        # tuple: a new list the unpack makes here.
         rebinds = (
             *zip(self.prefix_names, prefix_vals, strict=True),
-            (self.star_name, ListValue(tuple(mid_vals))),
+            (
+                self.star_name,
+                ListValue(tuple(mid_vals), allocation=made_at(self.blame)),
+            ),
             *zip(self.suffix_names, suffix_vals, strict=True),
         )
         return ExitSet.completed(ScopeRebinds(rebinds))

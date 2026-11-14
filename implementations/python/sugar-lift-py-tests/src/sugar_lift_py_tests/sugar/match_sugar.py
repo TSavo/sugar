@@ -394,11 +394,17 @@ def _match_items(value, positions, site, ctx):
 
 def _star_items(value, key, start, stop, site, ctx, collected=()):
     """The items ``start`` to ``stop`` of the subject, bound under ``key`` as
-    a ``list`` (what a star captures from any sequence)."""
+    a ``list`` (what a star captures from any sequence): a new list made
+    here, current only when the subject's contents are
+    (``object_identity.made_if_current``)."""
     from sugar_lift_py_tests.floor import ListValue
+    from sugar_lift_py_tests.floor.object_identity import made_if_current
 
     if start >= stop:
-        return _outcome(True, ((key, ListValue(tuple(collected))),))
+        captured = ListValue(
+            tuple(collected), allocation=made_if_current(site, value)
+        )
+        return _outcome(True, ((key, captured),))
     return _each(
         _item(value, start, site, ctx),
         lambda item: _star_items(

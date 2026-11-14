@@ -15,6 +15,7 @@ import pytest
 
 from sugar_lift_py_tests.floor import DictValue, SetValue, StringValue, TermValue
 
+from frame_fresh import fresh
 from test_builtin_container_mutation import _ints, _only_return, _returns
 
 
@@ -44,15 +45,16 @@ def test_a_refused_construction_raises_its_cpython_exception(tmp_path, expressio
 
 def test_equal_set_members_collapse_to_the_first(tmp_path):
     value = _only_return(tmp_path, "def f():\n    return set([1, 2, 1])\n")
-    assert value == SetValue(_ints(1, 2))
+    assert value == fresh(SetValue, _ints(1, 2))
 
 
 def test_a_repeated_dict_key_keeps_its_position_and_takes_the_last_value(tmp_path):
     value = _only_return(
         tmp_path, "def f():\n    return dict([(1, 'a'), (2, 'b'), (1, 'c')])\n"
     )
-    assert value == DictValue(
-        ((TermValue(1), StringValue("c")), (TermValue(2), StringValue("b")))
+    assert value == fresh(
+        DictValue,
+        ((TermValue(1), StringValue("c")), (TermValue(2), StringValue("b"))),
     )
 
 
@@ -67,15 +69,16 @@ def test_an_unhashable_display_member_raises_type_error(tmp_path, expression):
 
 
 def test_equal_set_display_members_collapse(tmp_path):
-    assert _only_return(tmp_path, "def f():\n    return {1, 2, 1}\n") == SetValue(
-        _ints(1, 2)
+    assert _only_return(tmp_path, "def f():\n    return {1, 2, 1}\n") == fresh(
+        SetValue, _ints(1, 2)
     )
 
 
 def test_a_repeated_dict_display_key_takes_the_last_value(tmp_path):
     value = _only_return(tmp_path, "def f():\n    return {1: 'a', 2: 'b', 1: 'c'}\n")
-    assert value == DictValue(
-        ((TermValue(1), StringValue("c")), (TermValue(2), StringValue("b")))
+    assert value == fresh(
+        DictValue,
+        ((TermValue(1), StringValue("c")), (TermValue(2), StringValue("b"))),
     )
 
 

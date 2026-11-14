@@ -25,6 +25,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import GuardedFaces, TermValue
@@ -1122,7 +1123,7 @@ _SUM = "def g(p, q):\n    return p + q\n\n\n"
         ),
         (
             "def f():\n    b = 9\n    return [(b := 2), b]\n\nf()\n",
-            ListValue((TermValue(2), TermValue(2))),
+            fresh(ListValue, (TermValue(2), TermValue(2))),
         ),
     ],
 )
@@ -1221,19 +1222,19 @@ def test_a_read_after_a_live_loop_is_its_iterables_walrus_key() -> None:
         # the loop runs every item and exhausts
         (
             "    for x in (ys := [1, 2]):\n        pass\n",
-            ListValue((TermValue(1), TermValue(2))),
+            fresh(ListValue, (TermValue(1), TermValue(2))),
         ),
         # no item runs: the iterable still ran
-        ("    for x in (ys := []):\n        pass\n", ListValue(())),
+        ("    for x in (ys := []):\n        pass\n", fresh(ListValue, ())),
         # a break leaves the loop
         (
             "    for x in (ys := [1, 2]):\n        break\n",
-            ListValue((TermValue(1), TermValue(2))),
+            fresh(ListValue, (TermValue(1), TermValue(2))),
         ),
         # the else suite runs after the last item
         (
             "    for x in (ys := [1, 2]):\n        pass\n    else:\n        pass\n",
-            ListValue((TermValue(1), TermValue(2))),
+            fresh(ListValue, (TermValue(1), TermValue(2))),
         ),
     ],
 )

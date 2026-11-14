@@ -14,6 +14,7 @@ from sugar_lift_py_tests.floor.predicate_value import PredicateValue
 from sugar_lift_py_tests.sugar.false_bool_literal_sugar import FalseBoolLiteralSugar
 from sugar_lift_py_tests.sugar.true_bool_literal_sugar import TrueBoolLiteralSugar
 
+from frame_fresh import fresh
 from test_builtin_container_mutation import _only_return
 
 
@@ -96,7 +97,7 @@ def test_a_formal_after_its_own_mutation_is_itself(tmp_path):
     from sugar_lift_py_tests.floor import ListValue
 
     source = "def f(a):\n    a.append(1)\n    return a is a\n"
-    exits = _discharge(_carrier(tmp_path, source), ListValue(()))
+    exits = _discharge(_carrier(tmp_path, source), fresh(ListValue, ()))
     (value,) = [payload for kind, payload, _ in _rows(exits) if kind == "return"]
     assert type(value) is PredicateValue
     left, right = value.formula.args

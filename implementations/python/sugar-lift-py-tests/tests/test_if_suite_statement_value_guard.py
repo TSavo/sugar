@@ -24,6 +24,7 @@ both legs.
 from __future__ import annotations
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.floor import (
     BytesValue,
@@ -59,9 +60,9 @@ def _helper_outcome(source: str):
     "value",
     (
         TermValue(1),
-        ListValue((TermValue(1),)),
+        fresh(ListValue, (TermValue(1),)),
         TupleValue((TermValue(1),)),
-        SetValue((TermValue(1),)),
+        fresh(SetValue, (TermValue(1),)),
         NoneValue(),
         BytesValue(b"x"),
     ),
@@ -122,21 +123,26 @@ def _discharged_returns(source: str, actual: int):
 
 def test_a_formal_store_in_an_undecided_suite_discharges() -> None:
     returns = _discharged_returns(_source("r[0] = -x", "x"), 3)
-    values = sorted(repr(value) for _guard, value in returns)
-    assert values == sorted(
-        [repr(ListValue((TermValue(-3),))), repr(ListValue((TermValue(0),)))]
-    )
+    # By value (``allocation`` is provenance, not compared), never by repr.
+    values = [value for _guard, value in returns]
+    expected = [
+        fresh(ListValue, (TermValue(-3),)),
+        fresh(ListValue, (TermValue(0),)),
+    ]
+    assert len(values) == len(expected)
+    assert all(value in values for value in expected)
 
 
 def test_a_formal_append_in_an_undecided_suite_discharges() -> None:
     returns = _discharged_returns(_source("r.append(-x)", "x"), 3)
-    values = sorted(repr(value) for _guard, value in returns)
-    assert values == sorted(
-        [
-            repr(ListValue((TermValue(0), TermValue(-3)))),
-            repr(ListValue((TermValue(0),))),
-        ]
-    )
+    # By value (``allocation`` is provenance, not compared), never by repr.
+    values = [value for _guard, value in returns]
+    expected = [
+        fresh(ListValue, (TermValue(0), TermValue(-3))),
+        fresh(ListValue, (TermValue(0),)),
+    ]
+    assert len(values) == len(expected)
+    assert all(value in values for value in expected)
 
 
 def test_a_formal_expression_statement_in_an_undecided_suite_discharges() -> None:

@@ -22,6 +22,7 @@ import inspect
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.caller_parameter_contract import (
     NativeOperationExitCarrierV1,
@@ -183,7 +184,7 @@ def test_isomorph_mutable_completes_and_invalid_index_halts_with_earlier_state()
     ok = pending.discharge(
         None,
         {
-            codes_cid: ListValue((TermValue(0), TermValue(1))),
+            codes_cid: fresh(ListValue, (TermValue(0), TermValue(1))),
             i_cid: TermValue(0),
             rhs_cid: TermValue(99),
         },
@@ -193,12 +194,12 @@ def test_isomorph_mutable_completes_and_invalid_index_halts_with_earlier_state()
     universe = ok.exits[0].value
     assert isinstance(universe, UniverseValue)
     lists = [s for s in universe.record.statements if isinstance(s, ListValue)]
-    assert lists and lists[0] == ListValue((TermValue(99), TermValue(1)))
+    assert lists and lists[0] == fresh(ListValue, (TermValue(99), TermValue(1)))
 
     bad = pending.discharge(
         None,
         {
-            codes_cid: ListValue((TermValue(0),)),
+            codes_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(5),
             rhs_cid: TermValue(99),
         },
@@ -220,7 +221,7 @@ def test_isomorph_later_halt_discrimination_not_completed() -> None:
     bad = pending.discharge(
         None,
         {
-            codes_cid: ListValue((TermValue(0),)),
+            codes_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(5),
             rhs_cid: TermValue(99),
         },
@@ -247,7 +248,9 @@ def test_isomorph_lying_swapped_index_value_mint_differs() -> None:
         coordinates=(obj_c, value_c, key_c),
     )
     actuals = {
-        obj_c.coordinate_cid: ListValue((TermValue(0), TermValue(1), TermValue(2))),
+        obj_c.coordinate_cid: fresh(
+            ListValue, (TermValue(0), TermValue(1), TermValue(2))
+        ),
         key_c.coordinate_cid: TermValue(1),
         value_c.coordinate_cid: TermValue(99),
     }
@@ -258,7 +261,7 @@ def test_isomorph_lying_swapped_index_value_mint_differs() -> None:
     t_lists = [
         s for s in truthful_face.value.record.statements if isinstance(s, ListValue)
     ]
-    assert t_lists[0] == ListValue((TermValue(0), TermValue(99), TermValue(2)))
+    assert t_lists[0] == fresh(ListValue, (TermValue(0), TermValue(99), TermValue(2)))
     if isinstance(lying_face, Completed) and isinstance(
         lying_face.value, UniverseValue
     ):

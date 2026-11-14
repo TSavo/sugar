@@ -35,6 +35,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+from frame_fresh import fresh
+
 import pytest
 
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
@@ -262,7 +264,7 @@ def test_none_setattr_is_attribute_error_on_store_path(tmp_path):
 
 
 def test_list_read_path_does_not_license_list_setattr(tmp_path):
-    receiver = ListValue((TermValue(1),))
+    receiver = fresh(ListValue, (TermValue(1),))
     outcome = _store(
         receiver, TermValue(7), [], _site(tmp_path), attr="append"
     ).desugar()

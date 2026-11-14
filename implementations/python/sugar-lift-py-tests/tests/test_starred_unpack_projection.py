@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.floor.list_value import ListValue
 from sugar_lift_py_tests.floor.scope_rebind import ScopeRebinds
@@ -93,19 +94,19 @@ def test_tuple_head_star_tail_binds_source_order() -> None:
     assert outcome.completed_value() == ScopeRebinds(
         (
             ("head", TermValue(1)),
-            ("tail", ListValue((TermValue(2), TermValue(3), TermValue(4)))),
+            ("tail", fresh(ListValue, (TermValue(2), TermValue(3), TermValue(4)))),
         )
     )
 
 
 def test_list_head_star_tail_binds_source_order() -> None:
     members = (TermValue(10), TermValue(20), TermValue(30))
-    outcome = _star_op(prefix=("head",)).submit(ListValue(members), None)
+    outcome = _star_op(prefix=("head",)).submit(fresh(ListValue, members), None)
     assert outcome.completed_value() is not None
     assert outcome.completed_value() == ScopeRebinds(
         (
             ("head", TermValue(10)),
-            ("tail", ListValue((TermValue(20), TermValue(30)))),
+            ("tail", fresh(ListValue, (TermValue(20), TermValue(30)))),
         )
     )
 
@@ -119,7 +120,7 @@ def test_head_star_mid_suffix_binds_middle_as_list() -> None:
     assert outcome.completed_value() == ScopeRebinds(
         (
             ("a", TermValue(1)),
-            ("mid", ListValue((TermValue(2), TermValue(3)))),
+            ("mid", fresh(ListValue, (TermValue(2), TermValue(3)))),
             ("b", TermValue(4)),
         )
     )
@@ -129,7 +130,7 @@ def test_empty_tail_is_empty_list_not_none() -> None:
     """``a, *rest = (1,)``: rest is [] — never None, never omitted."""
     outcome = _star_op(prefix=("a",)).submit(TupleValue((TermValue(1),)), None)
     assert outcome.completed_value() is not None
-    assert outcome.completed_value() == ScopeRebinds((("a", TermValue(1)), ("tail", ListValue(()))))
+    assert outcome.completed_value() == ScopeRebinds((("a", TermValue(1)), ("tail", fresh(ListValue, ()))))
 
 
 def test_reversed_tail_lying_twin_fails() -> None:
@@ -140,7 +141,7 @@ def test_reversed_tail_lying_twin_fails() -> None:
     lying = ScopeRebinds(
         (
             ("head", TermValue(1)),
-            ("tail", ListValue((TermValue(4), TermValue(3), TermValue(2)))),
+            ("tail", fresh(ListValue, (TermValue(4), TermValue(3), TermValue(2)))),
         )
     )
     assert truthful != lying
@@ -176,7 +177,7 @@ def test_too_few_members_named_valueerror(tmp_path: Path) -> None:
 def test_too_few_discrimination_is_not_completed_bind(tmp_path: Path) -> None:
     site = _workspace_site(tmp_path)
     op = _star_op(prefix=("a", "b"), star="rest", blame=site)
-    outcome = op.submit(ListValue((TermValue(1),)), None)
+    outcome = op.submit(fresh(ListValue, (TermValue(1),)), None)
     with pytest.raises(AssertionError):
         assert (
             outcome.completed_value() is not None

@@ -20,28 +20,26 @@ changed it since its contents were read.
 
 from __future__ import annotations
 
-# The ``allocation`` of an object made in the frame reading it by a
-# construction that names no source coordinate (a value built with no
-# ``allocation`` given, or at a site with none).  It is current
-# (``contents_current``); two such objects share it, so they are never
-# decided distinct.  Only ``arrived`` (and a post-state or a result computed
-# from a value that is not current) leaves a container with none.
-UNNAMED_CONSTRUCTION = "python:allocation:unnamed"
+# There is no default ``allocation``: every ``list``/``dict``/``set`` value
+# constructor names it (a required keyword).  A fresh object names the
+# source site that made it (``made_at``, ``made_if_current``); a same-object
+# post-state names the producing value's own; a value that arrived, was
+# derived from contents that are not current, or that a builtin handed back
+# from its operand names None.
 
 
-def made_at(site) -> str:
+def made_at(site) -> str | None:
     """The ``allocation`` of an object a construction at ``site`` made.
 
-    The site's source coordinate (``occurrence.site_coordinate_cid``),
-    never its occurrence path: one construction evaluated twice (an unrolled
-    loop, a re-entered body) makes two objects a single site cannot tell
-    apart, so two values made at one site are never decided distinct.
-    ``UNNAMED_CONSTRUCTION`` for a site with no source coordinate."""
-    if not (hasattr(site, "line_col_span") and hasattr(site, "source_cid")):
-        return UNNAMED_CONSTRUCTION
-    from sugar_lift_py_tests.occurrence import site_coordinate_cid
+    The site's source coordinate (``occurrence.named_site_cid``), never its
+    occurrence path: one construction evaluated twice (an unrolled loop, a
+    re-entered body) makes two objects a single site cannot tell apart, so
+    two values made at one site are never decided distinct.  None for a
+    site that names no source coordinate: the construction is not one this
+    frame can name, so its contents are not read (``contents_current``)."""
+    from sugar_lift_py_tests.occurrence import named_site_cid
 
-    return site_coordinate_cid(site)
+    return named_site_cid(site)
 
 
 def contents_current(value) -> bool:

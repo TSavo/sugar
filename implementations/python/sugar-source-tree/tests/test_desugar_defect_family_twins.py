@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.floor.universe_value import UniverseValue
 from sugar_lift_py_tests.outcome import ExitSet
@@ -72,7 +73,7 @@ def _discharged_dict_method(out):
     assert isinstance(out, NativeOperationExitCarrierV1)
     assert out.demand.operator == "method_call"
     receiver, *operands = out.demand.operand_coordinate_cids
-    actuals = {receiver: DictValue(())}
+    actuals = {receiver: fresh(DictValue, ())}
     for index, cid in enumerate(operands):
         if cid is not None:
             actuals[cid] = TermValue(index)

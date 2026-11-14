@@ -21,6 +21,7 @@ from dataclasses import dataclass
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import (
@@ -207,49 +208,55 @@ def test_slice_lower_halt_skips_upper_and_step_desugar() -> None:
 
 def test_list_slice_assignment_replaces_range() -> None:
     site = _site()
-    receiver = ListValue((TermValue(0), TermValue(1), TermValue(2), TermValue(3)))
+    receiver = fresh(
+        ListValue, (TermValue(0), TermValue(1), TermValue(2), TermValue(3))
+    )
     index = SliceValue(TermValue(1), TermValue(3), None)
-    rhs = ListValue((TermValue(9), TermValue(9)))
+    rhs = fresh(ListValue, (TermValue(9), TermValue(9)))
     out = receiver.setitem(index, rhs, site, None)
-    assert out.completed_value() == ListValue(
-        (TermValue(0), TermValue(9), TermValue(9), TermValue(3))
+    assert out.completed_value() == fresh(
+        ListValue, (TermValue(0), TermValue(9), TermValue(9), TermValue(3))
     )
 
 
 def test_list_slice_assignment_can_change_length() -> None:
     site = _site()
-    receiver = ListValue((TermValue(0), TermValue(1), TermValue(2), TermValue(3)))
+    receiver = fresh(
+        ListValue, (TermValue(0), TermValue(1), TermValue(2), TermValue(3))
+    )
     index = SliceValue(TermValue(1), TermValue(3), None)
-    out = receiver.setitem(index, ListValue((TermValue(8),)), site, None)
-    assert out.value == ListValue((TermValue(0), TermValue(8), TermValue(3)))
+    out = receiver.setitem(index, fresh(ListValue, (TermValue(8),)), site, None)
+    assert out.value == fresh(ListValue, (TermValue(0), TermValue(8), TermValue(3)))
 
 
 def test_list_full_slice_replaces_all() -> None:
     site = _site()
-    receiver = ListValue((TermValue(0), TermValue(1)))
+    receiver = fresh(ListValue, (TermValue(0), TermValue(1)))
     out = receiver.setitem(
         SliceValue(None, None, None),
-        ListValue((TermValue(7), TermValue(8))),
+        fresh(ListValue, (TermValue(7), TermValue(8))),
         site,
         None,
     )
-    assert out.value == ListValue((TermValue(7), TermValue(8)))
+    assert out.value == fresh(ListValue, (TermValue(7), TermValue(8)))
 
 
 def test_discrimination_slice_store_is_not_scalar_index_overwrite() -> None:
     site = _site()
-    receiver = ListValue((TermValue(0), TermValue(1), TermValue(2), TermValue(3)))
+    receiver = fresh(
+        ListValue, (TermValue(0), TermValue(1), TermValue(2), TermValue(3))
+    )
     out = receiver.setitem(
         SliceValue(TermValue(1), TermValue(3), None),
-        ListValue((TermValue(9), TermValue(9))),
+        fresh(ListValue, (TermValue(9), TermValue(9))),
         site,
         None,
     )
     assert out.value.elements[1] == TermValue(9)
     with pytest.raises(AssertionError):
         # Lying: scalar setitem at 1 would leave index 2 as TermValue(2).
-        assert out.value == ListValue(
-            (TermValue(0), TermValue(9), TermValue(2), TermValue(3))
+        assert out.value == fresh(
+            ListValue, (TermValue(0), TermValue(9), TermValue(2), TermValue(3))
         )
 
 
@@ -257,11 +264,13 @@ def test_extended_slice_length_mismatch_is_value_error() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
 
     site = _site()
-    receiver = ListValue((TermValue(0), TermValue(1), TermValue(2), TermValue(3)))
+    receiver = fresh(
+        ListValue, (TermValue(0), TermValue(1), TermValue(2), TermValue(3))
+    )
     # ::2 selects two positions; one RHS element → ValueError.
     out = receiver.setitem(
         SliceValue(None, None, TermValue(2)),
-        ListValue((TermValue(1),)),
+        fresh(ListValue, (TermValue(1),)),
         site,
         None,
     )
@@ -276,7 +285,7 @@ def test_non_sequence_rhs_is_type_error() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
 
     site = _site()
-    receiver = ListValue((TermValue(0), TermValue(1), TermValue(2)))
+    receiver = fresh(ListValue, (TermValue(0), TermValue(1), TermValue(2)))
     out = receiver.setitem(
         SliceValue(TermValue(0), TermValue(2), None),
         TermValue(9),
@@ -291,30 +300,32 @@ def test_non_sequence_rhs_is_type_error() -> None:
 
 def test_tuple_rhs_is_accepted_for_slice_store() -> None:
     site = _site()
-    receiver = ListValue((TermValue(0), TermValue(1), TermValue(2)))
+    receiver = fresh(ListValue, (TermValue(0), TermValue(1), TermValue(2)))
     out = receiver.setitem(
         SliceValue(TermValue(0), TermValue(2), None),
         TupleValue((TermValue(8), TermValue(8))),
         site,
         None,
     )
-    assert out.value == ListValue((TermValue(8), TermValue(8), TermValue(2)))
+    assert out.value == fresh(ListValue, (TermValue(8), TermValue(8), TermValue(2)))
 
 
 def test_string_rhs_projects_authenticated_characters() -> None:
     site = _site()
-    out = ListValue((TermValue(0),)).setitem(
+    out = fresh(ListValue, (TermValue(0),)).setitem(
         SliceValue(None, None, None), StringValue("ab"), site, None
     )
-    assert out == ExitSet.completed(ListValue((StringValue("a"), StringValue("b"))))
+    assert out == ExitSet.completed(
+        fresh(ListValue, (StringValue("a"), StringValue("b")))
+    )
 
 
 def test_string_rhs_is_not_one_unsplit_string_or_typeerror() -> None:
     site = _site()
-    out = ListValue((TermValue(0),)).setitem(
+    out = fresh(ListValue, (TermValue(0),)).setitem(
         SliceValue(None, None, None), StringValue("ab"), site, None
     )
-    assert out != ExitSet.completed(ListValue((StringValue("ab"),)))
+    assert out != ExitSet.completed(fresh(ListValue, (StringValue("ab"),)))
     from sugar_lift_py_tests.effect import RaiseEffect
 
     assert not (
@@ -326,18 +337,20 @@ def test_string_rhs_is_not_one_unsplit_string_or_typeerror() -> None:
 
 def test_bytes_rhs_projects_authenticated_integer_bytes() -> None:
     site = _site()
-    out = ListValue((TermValue(0),)).setitem(
+    out = fresh(ListValue, (TermValue(0),)).setitem(
         SliceValue(None, None, None), BytesValue(b"AB"), site, None
     )
-    assert out == ExitSet.completed(ListValue((TermValue(65), TermValue(66))))
+    assert out == ExitSet.completed(fresh(ListValue, (TermValue(65), TermValue(66))))
 
 
 def test_bytes_rhs_is_not_bytes_singletons_or_typeerror() -> None:
     site = _site()
-    out = ListValue((TermValue(0),)).setitem(
+    out = fresh(ListValue, (TermValue(0),)).setitem(
         SliceValue(None, None, None), BytesValue(b"AB"), site, None
     )
-    assert out != ExitSet.completed(ListValue((BytesValue(b"A"), BytesValue(b"B"))))
+    assert out != ExitSet.completed(
+        fresh(ListValue, (BytesValue(b"A"), BytesValue(b"B")))
+    )
     from sugar_lift_py_tests.effect import RaiseEffect
 
     assert not (
@@ -349,24 +362,28 @@ def test_bytes_rhs_is_not_bytes_singletons_or_typeerror() -> None:
 
 def test_dict_rhs_projects_authenticated_insertion_order_keys() -> None:
     site = _site()
-    rhs = DictValue(
-        ((StringValue("a"), TermValue(1)), (StringValue("b"), TermValue(2)))
+    rhs = fresh(
+        DictValue,
+        ((StringValue("a"), TermValue(1)), (StringValue("b"), TermValue(2))),
     )
-    out = ListValue((TermValue(0),)).setitem(
+    out = fresh(ListValue, (TermValue(0),)).setitem(
         SliceValue(None, None, None), rhs, site, None
     )
-    assert out == ExitSet.completed(ListValue((StringValue("a"), StringValue("b"))))
+    assert out == ExitSet.completed(
+        fresh(ListValue, (StringValue("a"), StringValue("b")))
+    )
 
 
 def test_dict_rhs_is_not_values_or_typeerror() -> None:
     site = _site()
-    rhs = DictValue(
-        ((StringValue("a"), TermValue(1)), (StringValue("b"), TermValue(2)))
+    rhs = fresh(
+        DictValue,
+        ((StringValue("a"), TermValue(1)), (StringValue("b"), TermValue(2))),
     )
-    out = ListValue((TermValue(0),)).setitem(
+    out = fresh(ListValue, (TermValue(0),)).setitem(
         SliceValue(None, None, None), rhs, site, None
     )
-    assert out != ExitSet.completed(ListValue((TermValue(1), TermValue(2))))
+    assert out != ExitSet.completed(fresh(ListValue, (TermValue(1), TermValue(2))))
     from sugar_lift_py_tests.effect import RaiseEffect
 
     assert not (
@@ -381,10 +398,11 @@ def test_set_rhs_keeps_unowned_runtime_iteration_order_loud() -> None:
 
     site = _site()
     with pytest.raises(ConstructionPanic) as raised:
-        ListValue((TermValue(0),)).setitem(
+        fresh(ListValue, (TermValue(0),)).setitem(
             SliceValue(None, None, None),
-            SetValue(
-                (StringValue("constructed-first"), StringValue("constructed-second"))
+            fresh(
+                SetValue,
+                (StringValue("constructed-first"), StringValue("constructed-second")),
             ),
             site,
             None,
@@ -400,10 +418,10 @@ def test_set_rhs_does_not_fabricate_construction_order_or_typeerror() -> None:
     site = _site()
     constructed = (StringValue("constructed-first"), StringValue("constructed-second"))
     with pytest.raises(ConstructionPanic):
-        fabricated = ListValue((TermValue(0),)).setitem(
-            SliceValue(None, None, None), SetValue(constructed), site, None
+        fabricated = fresh(ListValue, (TermValue(0),)).setitem(
+            SliceValue(None, None, None), fresh(SetValue, constructed), site, None
         )
-        assert fabricated == ExitSet.completed(ListValue(constructed))
+        assert fabricated == ExitSet.completed(fresh(ListValue, constructed))
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +451,7 @@ def test_production_store_sugar_with_slice_index_completes() -> None:
 
     sugar = SubscriptStoreEffectSugar(
         receiver=_Obs(
-            "receiver", ListValue((TermValue(0), TermValue(1), TermValue(2)))
+            "receiver", fresh(ListValue, (TermValue(0), TermValue(1), TermValue(2)))
         ),
         index=SliceSugar(
             IntLiteralSugar(0, site=site),
@@ -441,14 +459,14 @@ def test_production_store_sugar_with_slice_index_completes() -> None:
             None,
             site,
         ),
-        value=_Obs("value", ListValue((TermValue(9),))),
+        value=_Obs("value", fresh(ListValue, (TermValue(9),))),
         site=site,
     )
     out = sugar.desugar(None)
     # Python order: RHS, receiver, index (slice bounds inside index).
     assert log[0] == "value"
     assert log[1] == "receiver"
-    assert out.completed_value() == ListValue((TermValue(9), TermValue(2)))
+    assert out.completed_value() == fresh(ListValue, (TermValue(9), TermValue(2)))
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +509,9 @@ def test_positional_caller_completes_slice_store() -> None:
         "[0, 1, 2, 3], [9, 9]",
     )
     stored = _stored_list(outcome)
-    assert stored == ListValue((TermValue(0), TermValue(9), TermValue(9), TermValue(3)))
+    assert stored == fresh(
+        ListValue, (TermValue(0), TermValue(9), TermValue(9), TermValue(3))
+    )
 
 
 def test_keyword_caller_completes_slice_store() -> None:
@@ -501,7 +521,7 @@ def test_keyword_caller_completes_slice_store() -> None:
         "obj=[0, 1, 2, 3], value=[8]",
     )
     stored = _stored_list(outcome)
-    assert stored == ListValue((TermValue(0), TermValue(8), TermValue(3)))
+    assert stored == fresh(ListValue, (TermValue(0), TermValue(8), TermValue(3)))
 
 
 def test_default_caller_completes_slice_store() -> None:
@@ -511,7 +531,9 @@ def test_default_caller_completes_slice_store() -> None:
         "[0, 1, 2, 3]",
     )
     stored = _stored_list(outcome)
-    assert stored == ListValue((TermValue(0), TermValue(7), TermValue(7), TermValue(3)))
+    assert stored == fresh(
+        ListValue, (TermValue(0), TermValue(7), TermValue(7), TermValue(3))
+    )
 
 
 def test_full_slice_caller_replaces_entire_list() -> None:
@@ -521,7 +543,7 @@ def test_full_slice_caller_replaces_entire_list() -> None:
         "[0, 1], [5, 6, 7]",
     )
     stored = _stored_list(outcome)
-    assert stored == ListValue((TermValue(5), TermValue(6), TermValue(7)))
+    assert stored == fresh(ListValue, (TermValue(5), TermValue(6), TermValue(7)))
 
 
 def test_discrimination_production_slice_store_is_not_identity() -> None:
@@ -531,7 +553,9 @@ def test_discrimination_production_slice_store_is_not_identity() -> None:
         "[0, 1, 2, 3], [9, 9]",
     )
     stored = _stored_list(outcome)
-    assert stored != ListValue((TermValue(0), TermValue(1), TermValue(2), TermValue(3)))
+    assert stored != fresh(
+        ListValue, (TermValue(0), TermValue(1), TermValue(2), TermValue(3))
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -547,8 +571,8 @@ def test_wrong_coordinate_cannot_discharge_slice_store() -> None:
     _unanswered(
         pending,
         {
-            f"wrong:{obj_c.coordinate_cid}": ListValue((TermValue(0),)),
-            value_c.coordinate_cid: ListValue((TermValue(1),)),
+            f"wrong:{obj_c.coordinate_cid}": fresh(ListValue, (TermValue(0),)),
+            value_c.coordinate_cid: fresh(ListValue, (TermValue(1),)),
         },
     )
 
@@ -571,16 +595,16 @@ def test_production_delete_slice_caller() -> None:
         "[0, 1, 2, 3]",
     )
     stored = _stored_list(outcome)
-    assert stored == ListValue((TermValue(0), TermValue(3)))
+    assert stored == fresh(ListValue, (TermValue(0), TermValue(3)))
 
 
 def test_step_zero_setitem_is_named_valueerror_with_occurrence() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
 
     site = _site()
-    out = ListValue((TermValue(0), TermValue(1))).setitem(
+    out = fresh(ListValue, (TermValue(0), TermValue(1))).setitem(
         SliceValue(None, None, TermValue(0)),
-        ListValue(()),
+        fresh(ListValue, ()),
         site,
         None,
     )
@@ -597,7 +621,7 @@ def test_step_zero_delitem_is_named_valueerror_with_occurrence() -> None:
     from sugar_lift_py_tests.effect import RaiseEffect
 
     site = _site()
-    out = ListValue((TermValue(0), TermValue(1), TermValue(2))).delitem(
+    out = fresh(ListValue, (TermValue(0), TermValue(1), TermValue(2))).delitem(
         SliceValue(None, None, TermValue(0)),
         site,
         None,
@@ -614,10 +638,10 @@ def test_step_zero_delitem_is_named_valueerror_with_occurrence() -> None:
 def test_per_phase_occurrence_identity_setitem_vs_delitem() -> None:
     """Setitem and delitem step-zero exits share type, not occurrence owner."""
     site = _site()
-    set_out = ListValue((TermValue(0),)).setitem(
-        SliceValue(None, None, TermValue(0)), ListValue(()), site, None
+    set_out = fresh(ListValue, (TermValue(0),)).setitem(
+        SliceValue(None, None, TermValue(0)), fresh(ListValue, ()), site, None
     )
-    del_out = ListValue((TermValue(0),)).delitem(
+    del_out = fresh(ListValue, (TermValue(0),)).delitem(
         SliceValue(None, None, TermValue(0)), site, None
     )
     set_e = set_out.effect
@@ -654,7 +678,7 @@ def test_a_caller_completes_a_store_through_a_formal_slice_bound() -> None:
         "[0, 1, 2, 3], 1, [9]",
     )
     stored = _stored_list(outcome)
-    assert stored == ListValue((TermValue(0), TermValue(9), TermValue(3)))
+    assert stored == fresh(ListValue, (TermValue(0), TermValue(9), TermValue(3)))
 
 
 def test_slice_assign_iterable_door_not_getattr_probe() -> None:
@@ -670,7 +694,7 @@ def test_slice_assign_iterable_door_not_getattr_probe() -> None:
     site = _site()
     # Exact list answers members.
     exact = SliceAssignIterableOperation(owner="test", blame=site).submit(
-        ListValue((TermValue(1), TermValue(2))), None
+        fresh(ListValue, (TermValue(1), TermValue(2))), None
     )
     assert exact.completed_value() == (TermValue(1), TermValue(2))
     # Undecided stays a halt (not construction panic, not getattr).

@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field as dataclass_field, replace
 
 from .guard_stable_value import GuardStableValue
-from .object_identity import UNNAMED_CONSTRUCTION
 
 
 @dataclass(frozen=True)
@@ -19,10 +18,9 @@ class DictValue(GuardStableValue):
     # The construction that made this object in the frame reading it, kept
     # by the one door's post-state; None for a value that arrived by binding
     # (``object_identity``: ``made_at``, ``arrived``, ``contents_current``).
-    # A value built without one was made here by a construction it does not
-    # name (``UNNAMED_CONSTRUCTION``).
+    # Required, never defaulted: every construction names it.
     allocation: str | None = dataclass_field(
-        default=UNNAMED_CONSTRUCTION,
+        kw_only=True,
         compare=False,
         metadata={"testimony": "provenance"},
     )

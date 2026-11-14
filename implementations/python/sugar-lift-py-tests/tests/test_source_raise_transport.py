@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
     EffectBoundaryDisposition,
@@ -222,7 +223,7 @@ def test_prior_store_survives_in_pre_effect_state_across_call_boundary() -> None
     assert halted.state is not None, f"{CODEX1}: halt dropped pre-effect state"
     lists = [e for e in halted.state.entries if isinstance(e, ListValue)]
     assert lists == [
-        ListValue((TermValue(9),))
+        fresh(ListValue, (TermValue(9),))
     ], f"{CODEX1}: earlier store not in halt state entries={halted.state.entries!r}"
 
 
@@ -355,7 +356,7 @@ def test_helper_raise_through_with_never_suppresses_preserves_state() -> None:
     assert surviving.effect is halted.effect
     assert surviving.state is halted.state
     lists = [e for e in surviving.state.entries if isinstance(e, ListValue)]
-    assert lists == [ListValue((TermValue(7),))]
+    assert lists == [fresh(ListValue, (TermValue(7),))]
 
 
 def test_helper_raise_through_with_does_not_fabricate_completed_twin() -> None:

@@ -462,8 +462,14 @@ class ComprehensionSugar(ConstructedTermSugar):
                 () if self.kind == "py.generatorexp" else self._carried_out(binds, ctx)
             )
             if self.key is not None:
+                from sugar_lift_py_tests.floor.object_identity import made_at
+
+                # The dict comprehension makes a new dict here.
                 return ExitSet.completed(
-                    carry_walrus_binds(binds, DictValue(tuple(projected)))
+                    carry_walrus_binds(
+                        binds,
+                        DictValue(tuple(projected), allocation=made_at(self.site)),
+                    )
                 )
             if projected:
                 element_term = projected[0].to_term(owner=owner)

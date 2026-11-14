@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.floor import DictValue, TermValue
 from sugar_lift_py_tests.outcome import ExitSet
 from sugar_lift_py_tests.sugar.delete_effect_sugar import AttributeDeleteEffectSugar
@@ -33,7 +34,7 @@ class _Value(Sugar):
 
 def _outcomes(tmp_path):
     store_site, delete_site = _sites(tmp_path)
-    receiver = DictValue(())
+    receiver = fresh(DictValue, ())
     store = AttributeStoreEffectSugar(
         _Value(receiver), _Value(TermValue(7)), "attr", store_site
     ).desugar()

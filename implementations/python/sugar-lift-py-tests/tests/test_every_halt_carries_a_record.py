@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -273,7 +274,7 @@ def _returned_value(outcome):
     return returned.value
 
 
-_ONE = ListValue((TermValue(1),))
+_ONE = fresh(ListValue, (TermValue(1),))
 
 _RAISES = "def g():\n    raise ValueError()\n"
 

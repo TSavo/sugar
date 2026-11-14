@@ -661,9 +661,15 @@ class SourceVisibleCallFrameV1:
                     )
                     for ordinal, actual in enumerate(named.values())
                 )
+                # The ``**kwargs`` dict reaches the callee by binding (a
+                # parameter's actual): it arrived, its contents not current
+                # (``object_identity.arrived``).
                 bound.append(
                     DictValue(
-                        tuple((StringValue(key), value) for key, value in named.items())
+                        tuple(
+                            (StringValue(key), value) for key, value in named.items()
+                        ),
+                        allocation=None,
                     )
                 )
                 named.clear()

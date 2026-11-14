@@ -1,10 +1,11 @@
 import pytest
+from frame_fresh import fresh
 
 
 def _numbers(*values):
     from sugar_lift_py_tests.floor import SetValue, TermValue
 
-    return SetValue(tuple(TermValue(value) for value in values))
+    return fresh(SetValue, tuple(TermValue(value) for value in values))
 
 
 def _values(result):
@@ -34,7 +35,7 @@ def test_symbolic_finite_membership_emits_typed_obligation():
     from sugar_lift_py_tests.ir import _Atomic, make_var
 
     result = (
-        SetValue((TermValue(1),))
+        fresh(SetValue, (TermValue(1),))
         .contains(SymbolicValue(make_var("member")), "site")
         .value
     )
@@ -57,7 +58,7 @@ def test_authenticated_set_constructor_closes_finite_dict_keys():
     from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
 
     receiver = builtin_name_temporal().value_for("set")
-    source = DictValue(((StringValue("kept"), TermValue(1)),))
+    source = fresh(DictValue, ((StringValue("kept"), TermValue(1)),))
 
     result = receiver.callable_application_with(
         CallableApplication((source,), (), "site"), None

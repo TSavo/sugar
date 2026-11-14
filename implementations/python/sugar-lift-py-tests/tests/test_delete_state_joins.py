@@ -39,6 +39,7 @@ MUST NOT TOUCH: production, carrier/ExitSet.
 from __future__ import annotations
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
@@ -141,7 +142,7 @@ def _delitem_keyerror_halt(
     exits = pending.discharge(
         None,
         {
-            obj_cid: DictValue(((StringValue("a"), TermValue(1)),)),
+            obj_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
             key_cid: StringValue("missing"),
         },
     )
@@ -236,7 +237,7 @@ def test_earlier_bindings_survive_delete_halt_in_multi_statement_body() -> None:
     assert halted.state is not None, f"{CODEX1}: multi-statement halt dropped state"
     lists = [e for e in halted.state.entries if isinstance(e, ListValue)]
     assert lists == [
-        ListValue((TermValue(9),))
+        fresh(ListValue, (TermValue(9),))
     ], f"{CODEX1}: earlier store not in halt state entries={halted.state.entries!r}"
     assert halted.state is pending.pre_effect_state.state
 
@@ -251,7 +252,7 @@ def test_discrimination_completed_return_is_not_the_delete_keyerror_halt() -> No
     exits = pending.discharge(
         None,
         {
-            obj_cid: DictValue(((StringValue("a"), TermValue(1)),)),
+            obj_cid: fresh(DictValue, ((StringValue("a"), TermValue(1)),)),
             key_cid: StringValue("a"),
         },
     )

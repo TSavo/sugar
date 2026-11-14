@@ -28,6 +28,7 @@ from sugar_lift_py_tests.floor import (
     TupleValue,
 )
 
+from frame_fresh import fresh
 from test_assignment_evaluates_rhs import _rows
 from test_builtin_container_mutation import _only_return, _returns
 
@@ -53,13 +54,13 @@ def test_an_attribute_receiver_append_is_seen_by_the_attribute_read(tmp_path):
         "    c.items.append(1)\n"
         "    return c.items\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(1))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1))
 
 
 def test_a_subscript_receiver_append_is_seen_through_the_dict(tmp_path):
     source = "def f():\n    d = {'k': []}\n    d['k'].append(1)\n    return d\n"
-    assert _only_return(tmp_path, source) == DictValue(
-        ((StringValue("k"), ListValue(_ints(1))),)
+    assert _only_return(tmp_path, source) == fresh(
+        DictValue, ((StringValue("k"), fresh(ListValue, _ints(1))),)
     )
 
 
@@ -73,12 +74,13 @@ def test_a_name_bound_to_the_same_path_sees_the_append(tmp_path):
     )
     assert _only_return(tmp_path, source) == TupleValue(
         (
-            ListValue(_ints(1)),
-            DictValue(
+            fresh(ListValue, _ints(1)),
+            fresh(
+                DictValue,
                 (
-                    (StringValue("k"), ListValue(_ints(1))),
+                    (StringValue("k"), fresh(ListValue, _ints(1))),
                     (StringValue("j"), TermValue(1)),
-                )
+                ),
             ),
         )
     )
@@ -95,7 +97,7 @@ def test_a_list_held_twice_by_the_root_leaves_the_root_unknown(tmp_path):
     value = _only_return(tmp_path, source)
     first, second = value.elements
     # ``L`` is the node the display holds at 'k': the object itself.
-    assert first == ListValue(_ints(1))
+    assert first == fresh(ListValue, _ints(1))
     # 'j' holds that same object; a one-member update would claim it stayed [].
     assert _unknown_after_call(second)
 
@@ -129,7 +131,12 @@ def test_repeated_calls_through_one_path_thread_one_object(tmp_path):
         "    return (a, c.items, x, c.n)\n"
     )
     assert _only_return(tmp_path, source) == TupleValue(
-        (ListValue(_ints(1)), ListValue(_ints(1)), TermValue(2), TermValue(0))
+        (
+            fresh(ListValue, _ints(1)),
+            fresh(ListValue, _ints(1)),
+            TermValue(2),
+            TermValue(0),
+        )
     )
 
 
@@ -142,7 +149,7 @@ def test_a_nested_list_element_append(tmp_path):
         "    return (s, r)\n"
     )
     assert _only_return(tmp_path, source) == TupleValue(
-        (ListValue(_ints(1)), ListValue((ListValue(_ints(1)),)))
+        (fresh(ListValue, _ints(1)), fresh(ListValue, (fresh(ListValue, _ints(1)),)))
     )
 
 
@@ -167,8 +174,8 @@ def test_an_unrolled_loop_appends_through_the_path(tmp_path):
         "        d['k'].append(i)\n"
         "    return d\n"
     )
-    assert _only_return(tmp_path, source) == DictValue(
-        ((StringValue("k"), ListValue(_ints(0, 1))),)
+    assert _only_return(tmp_path, source) == fresh(
+        DictValue, ((StringValue("k"), fresh(ListValue, _ints(0, 1))),)
     )
 
 
@@ -224,7 +231,7 @@ def test_append_to_a_ground_split_is_read_through_the_name(tmp_path):
         "    parts.append('c')\n"
         "    return parts\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_strings("a", "b", "c"))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _strings("a", "b", "c"))
 
 
 def test_a_ground_split_and_a_display_append_alike(tmp_path):
@@ -237,7 +244,10 @@ def test_a_ground_split_and_a_display_append_alike(tmp_path):
     )
     display = split.replace("'a b'.split()", "['a', 'b']")
     expected = TupleValue(
-        (ListValue(_strings("a", "b", "c")), ListValue(_strings("a", "b", "c")))
+        (
+            fresh(ListValue, _strings("a", "b", "c")),
+            fresh(ListValue, _strings("a", "b", "c")),
+        )
     )
     assert _only_return(tmp_path / "split", split) == expected
     assert _only_return(tmp_path / "display", display) == expected
@@ -251,7 +261,7 @@ def test_a_pop_from_a_ground_split_binds_the_element_and_the_rest(tmp_path):
         "    return (x, parts)\n"
     )
     assert _only_return(tmp_path, source) == TupleValue(
-        (StringValue("b"), ListValue(_strings("a")))
+        (StringValue("b"), fresh(ListValue, _strings("a")))
     )
 
 
@@ -266,7 +276,7 @@ def test_a_value_holding_a_ground_split_is_unknown_after_its_append(tmp_path):
         "    return outer\n"
     )
     value = _only_return(tmp_path, source)
-    assert value != ListValue((ListValue(_strings("a", "b")),))
+    assert value != fresh(ListValue, (fresh(ListValue, _strings("a", "b")),))
     assert _unknown_after_call(value)
 
 
@@ -284,7 +294,7 @@ def test_an_item_store_on_a_ground_split_is_read_through_the_name(tmp_path):
         "    r[0] = 'z'\n"
         "    return r\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_strings("z", "b"))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _strings("z", "b"))
 
 
 def test_an_item_delete_on_a_ground_split_is_read_through_the_name(tmp_path):
@@ -294,7 +304,7 @@ def test_an_item_delete_on_a_ground_split_is_read_through_the_name(tmp_path):
         "    del r[0]\n"
         "    return r\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_strings("b"))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _strings("b"))
 
 
 def test_an_augmented_add_on_a_ground_split_is_read_through_the_name(tmp_path):
@@ -304,7 +314,7 @@ def test_an_augmented_add_on_a_ground_split_is_read_through_the_name(tmp_path):
         "    r += ['c']\n"
         "    return r\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_strings("a", "b", "c"))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _strings("a", "b", "c"))
 
 
 def test_every_mutation_of_a_ground_split_is_seen_through_an_alias(tmp_path):
@@ -320,7 +330,7 @@ def test_every_mutation_of_a_ground_split_is_seen_through_an_alias(tmp_path):
         "    r += ['c']\n"
         "    return (alias, r)\n"
     )
-    expected = ListValue(_strings("z", "c"))
+    expected = fresh(ListValue, _strings("z", "c"))
     assert _only_return(tmp_path, source) == TupleValue((expected, expected))
 
 
@@ -345,10 +355,10 @@ def test_a_parameter_reads_the_post_state_of_its_append(tmp_path):
     from test_formal_method_call_defers import _carrier, _discharge
 
     source = "def f(xs):\n    xs.append(1)\n    return xs\n"
-    exits = _discharge(_carrier(tmp_path, source), ListValue(()))
+    exits = _discharge(_carrier(tmp_path, source), fresh(ListValue, ()))
     returns = [payload for kind, payload, _ in _rows(exits) if kind == "return"]
     assert returns
-    assert ListValue(()) not in returns
+    assert fresh(ListValue, ()) not in returns
     assert all(
         _unknown_after_call(value) and value.term.args[1].value == "xs"
         for value in returns
@@ -371,9 +381,9 @@ def test_a_setdefault_append_inserts_the_default_and_every_alias_sees_it(tmp_pat
         "    d.setdefault('k', []).append('x')\n"
         "    return (e, d['k'])\n"
     )
-    after = ListValue(_strings("x"))
+    after = fresh(ListValue, _strings("x"))
     assert _only_return(tmp_path, source) == TupleValue(
-        (DictValue(((StringValue("k"), after),)), after)
+        (fresh(DictValue, ((StringValue("k"), after),)), after)
     )
 
 
@@ -388,7 +398,7 @@ def test_a_setdefault_append_on_an_existing_key_changes_the_held_list(tmp_path):
         "    d.setdefault('x', [9]).append(2)\n"
         "    return (L, d['x'])\n"
     )
-    after = ListValue(_ints(1, 2))
+    after = fresh(ListValue, _ints(1, 2))
     assert _only_return(tmp_path, source) == TupleValue((after, after))
 
 
@@ -401,8 +411,8 @@ def test_repeated_setdefault_appends_thread_one_dict(tmp_path):
         "    d.setdefault('k', []).append(2)\n"
         "    return e\n"
     )
-    assert _only_return(tmp_path, source) == DictValue(
-        ((StringValue("k"), ListValue(_ints(1, 2))),)
+    assert _only_return(tmp_path, source) == fresh(
+        DictValue, ((StringValue("k"), fresh(ListValue, _ints(1, 2))),)
     )
 
 
@@ -419,7 +429,7 @@ def test_a_setdefault_default_held_by_another_name_is_never_stale(tmp_path):
         "    return L\n"
     )
     value = _only_return(tmp_path, source)
-    assert value != ListValue(())
+    assert value != fresh(ListValue, ())
     assert _unknown_after_call(value)
 
 
@@ -494,7 +504,7 @@ def test_a_source_object_an_opaque_call_reaches_may_have_changed():
     from sugar_lift_py_tests.floor.object_value import ObjectValue
     from sugar_lift_py_tests.sugar.builtin_container_call_sugar import _may_change
 
-    instance = ObjectValue("C", (ObjectField("items", ListValue(_ints(5))),))
+    instance = ObjectValue("C", (ObjectField("items", fresh(ListValue, _ints(5))),))
     # Handed to the call, or the receiver of a method of its own.
     assert _may_change(instance, "", False, False)
     assert _may_change(instance, "add", False, False)
@@ -518,9 +528,9 @@ def test_an_item_store_through_a_subscript_path_is_seen_by_every_alias(tmp_path)
         "    d['k'][0] = 9\n"
         "    return (a, e)\n"
     )
-    after = ListValue(_ints(9, 1))
+    after = fresh(ListValue, _ints(9, 1))
     assert _only_return(tmp_path, source) == TupleValue(
-        (after, DictValue(((StringValue("k"), after),)))
+        (after, fresh(DictValue, ((StringValue("k"), after),)))
     )
 
 
@@ -533,7 +543,12 @@ def test_an_item_store_through_a_nested_list_is_seen_by_the_inner_alias(tmp_path
         "    return (s, r)\n"
     )
     assert _only_return(tmp_path, source) == TupleValue(
-        (ListValue(_ints(5)), ListValue((ListValue(_ints(5)), ListValue(_ints(1)))))
+        (
+            fresh(ListValue, _ints(5)),
+            fresh(
+                ListValue, (fresh(ListValue, _ints(5)), fresh(ListValue, _ints(1)))
+            ),
+        )
     )
 
 
@@ -550,7 +565,7 @@ def test_an_item_store_through_an_attribute_path_is_seen_by_the_alias(tmp_path):
         "    return (a, c.items, c.n)\n"
     )
     assert _only_return(tmp_path, source) == TupleValue(
-        (ListValue(_ints(7)), ListValue(_ints(7)), TermValue(0))
+        (fresh(ListValue, _ints(7)), fresh(ListValue, _ints(7)), TermValue(0))
     )
 
 
@@ -562,9 +577,9 @@ def test_an_item_delete_through_a_path_is_seen_by_the_alias(tmp_path):
         "    del d['k'][0]\n"
         "    return (a, d)\n"
     )
-    after = ListValue(_ints(1))
+    after = fresh(ListValue, _ints(1))
     assert _only_return(tmp_path, source) == TupleValue(
-        (after, DictValue(((StringValue("k"), after),)))
+        (after, fresh(DictValue, ((StringValue("k"), after),)))
     )
 
 
@@ -576,9 +591,9 @@ def test_a_chained_store_through_a_path_is_seen_by_the_alias(tmp_path):
         "    x = d['k'][0] = 5\n"
         "    return (a, d, x)\n"
     )
-    after = ListValue(_ints(5))
+    after = fresh(ListValue, _ints(5))
     assert _only_return(tmp_path, source) == TupleValue(
-        (after, DictValue(((StringValue("k"), after),)), TermValue(5))
+        (after, fresh(DictValue, ((StringValue("k"), after),)), TermValue(5))
     )
 
 
@@ -592,7 +607,7 @@ def test_a_chained_name_binding_is_one_object_for_the_door(tmp_path):
         "    b[0] = 2\n"
         "    return (a, b)\n"
     )
-    after = ListValue(_ints(2))
+    after = fresh(ListValue, _ints(2))
     assert _only_return(tmp_path, source) == TupleValue((after, after))
 
 
@@ -604,7 +619,7 @@ def test_unpacked_store_targets_are_seen_by_the_alias(tmp_path):
         "    r[0], r[1] = 1, 2\n"
         "    return alias\n"
     )
-    assert _only_return(tmp_path, source) == ListValue(_ints(1, 2))
+    assert _only_return(tmp_path, source) == fresh(ListValue, _ints(1, 2))
 
 
 def test_an_unpacked_store_through_a_path_is_seen_by_the_alias(tmp_path):
@@ -615,9 +630,9 @@ def test_an_unpacked_store_through_a_path_is_seen_by_the_alias(tmp_path):
         "    d['k'][0], n = 1, 2\n"
         "    return (a, d, n)\n"
     )
-    after = ListValue(_ints(1))
+    after = fresh(ListValue, _ints(1))
     assert _only_return(tmp_path, source) == TupleValue(
-        (after, DictValue(((StringValue("k"), after),)), TermValue(2))
+        (after, fresh(DictValue, ((StringValue("k"), after),)), TermValue(2))
     )
 
 
@@ -634,7 +649,7 @@ def test_unpacked_names_bound_to_containers_are_their_objects(tmp_path):
         "    return (x, y)\n"
     )
     assert _only_return(tmp_path, source) == TupleValue(
-        (ListValue(_ints(0, 2)), ListValue(_ints(3)))
+        (fresh(ListValue, _ints(0, 2)), fresh(ListValue, _ints(3)))
     )
 
 
@@ -656,9 +671,9 @@ def test_an_augmented_item_store_through_a_path_is_seen_by_every_alias(tmp_path)
         "    d['k'][0] += 10\n"
         "    return (a, e)\n"
     )
-    after = ListValue(_ints(11, 2))
+    after = fresh(ListValue, _ints(11, 2))
     assert _only_return(tmp_path, source) == TupleValue(
-        (after, DictValue(((StringValue("k"), after),)))
+        (after, fresh(DictValue, ((StringValue("k"), after),)))
     )
 
 
@@ -670,7 +685,7 @@ def test_an_augmented_item_store_on_a_name_is_seen_through_an_alias(tmp_path):
         "    r[0] += 'z'\n"
         "    return (alias, r)\n"
     )
-    expected = ListValue(_strings("az", "b"))
+    expected = fresh(ListValue, _strings("az", "b"))
     assert _only_return(tmp_path, source) == TupleValue((expected, expected))
 
 
@@ -686,7 +701,7 @@ def test_an_augmented_list_item_held_by_another_name_is_never_stale(tmp_path):
         "    return L\n"
     )
     value = _only_return(tmp_path, source)
-    assert value != ListValue(_ints(1))
+    assert value != fresh(ListValue, _ints(1))
     assert _unknown_after_call(value)
 
 
@@ -701,9 +716,9 @@ def test_a_bound_setdefault_pop_changes_the_held_list_and_every_alias(tmp_path):
         "    x = d.setdefault('x', []).pop()\n"
         "    return (x, L, e)\n"
     )
-    after = ListValue(_ints(1))
+    after = fresh(ListValue, _ints(1))
     assert _only_return(tmp_path, source) == TupleValue(
-        (TermValue(2), after, DictValue(((StringValue("x"), after),)))
+        (TermValue(2), after, fresh(DictValue, ((StringValue("x"), after),)))
     )
 
 
@@ -716,7 +731,10 @@ def test_a_bound_setdefault_pop_on_a_missing_key_pops_the_default(tmp_path):
         "    return (x, e)\n"
     )
     assert _only_return(tmp_path, source) == TupleValue(
-        (TermValue(5), DictValue(((StringValue("k"), ListValue(())),)))
+        (
+            TermValue(5),
+            fresh(DictValue, ((StringValue("k"), fresh(ListValue, ())),)),
+        )
     )
 
 
@@ -734,7 +752,7 @@ def test_a_name_unpacked_from_a_display_of_objects_is_that_object(tmp_path):
         "    return (c, x, pair)\n"
     )
     first, second, third = _only_return(tmp_path, source).elements
-    after = ListValue(_strings("a", "b", "c"))
+    after = fresh(ListValue, _strings("a", "b", "c"))
     assert first == after
     assert second == after
     assert _unknown_after_call(third)

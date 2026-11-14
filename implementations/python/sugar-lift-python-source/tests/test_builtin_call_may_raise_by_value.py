@@ -22,6 +22,7 @@ import pytest
 
 from sugar_lift_py_tests.floor import ListValue, StringValue, TermValue
 
+from frame_fresh import fresh
 from test_builtin_container_mutation import _returns
 from test_unknown_callee_call_faces import _two_faced_and_owed
 
@@ -140,7 +141,7 @@ def test_print_of_builtins_completes(tmp_path):
 _ONE_FOLD = [
     ("len('ab')", TermValue(2)),
     ("abs(-2)", TermValue(2)),
-    ("'a b'.split()", ListValue((StringValue("a"), StringValue("b")))),
+    ("'a b'.split()", fresh(ListValue, (StringValue("a"), StringValue("b")))),
     ("','.join(['a', 'b'])", StringValue("a,b")),
 ]
 
@@ -233,7 +234,11 @@ def test_get_of_a_missing_key_of_a_ground_dict_is_none(tmp_path, monkeypatch):
         ("[1, 2, 1].count(1)", TermValue(2), "list.count"),
         ("(1, 2).index(2)", TermValue(1), "tuple.index"),
         ("{'a': 1}.get('a')", TermValue(1), "dict.get"),
-        ("[1, 2].copy()", ListValue((TermValue(1), TermValue(2))), "list.copy"),
+        (
+            "[1, 2].copy()",
+            fresh(ListValue, (TermValue(1), TermValue(2))),
+            "list.copy",
+        ),
     ],
 )
 def test_a_reading_method_of_a_ground_container_is_answered_by_the_one_fold(
@@ -273,9 +278,6 @@ def test_contents_not_current_at_the_call_are_not_folded():
     assert not cited_container_method(arrived(made), "index")
     unmade = ListValue((TermValue(1),), allocation=None)
     assert not cited_container_method(unmade, "index")
-    # A value built with no allocation given was made here by a construction
-    # it does not name: current.
-    assert cited_container_method(ListValue((TermValue(1),)), "index")
     assert not cited_container_method(made, "pop")
     assert cited_container_method(TupleValue((TermValue(1),)), "index")
     assert not cited_container_method(TupleValue((made,)), "index")
@@ -430,16 +432,16 @@ def test_a_stale_member_is_never_equal_by_its_contents():
     from sugar_lift_py_tests.floor.membership import member_equal
 
     made, stale = _made_and_arrived()
-    assert member_equal(made, ListValue((TermValue(1), TermValue(2)))) is True
-    assert member_equal(stale, ListValue((TermValue(1), TermValue(2)))) is None
+    assert member_equal(made, fresh(ListValue, (TermValue(1), TermValue(2)))) is True
+    assert member_equal(stale, fresh(ListValue, (TermValue(1), TermValue(2)))) is None
 
 
 def test_a_concatenation_of_current_lists_is_current_and_of_a_stale_one_is_not():
     from sugar_lift_py_tests.floor.object_identity import contents_current
 
     made, stale = _made_and_arrived()
-    fresh = made.add(made, "add-site", None).completed_value()
-    assert contents_current(fresh)
+    joined = made.add(made, "add-site", None).completed_value()
+    assert contents_current(joined)
     assert not contents_current(stale.add(made, "add-site", None).completed_value())
 
 
@@ -521,7 +523,7 @@ def test_a_list_a_generator_yielded_is_not_current_when_it_resumes():
         for binding in yielded.machine.binding_state
         if isinstance(binding, GeneratorAssignBindingV1) and binding.name == "xs"
     ]
-    assert held.value == ListValue((TermValue(1),))
+    assert held.value == fresh(ListValue, (TermValue(1),))
     assert not contents_current(held.value)
 
 
@@ -645,7 +647,7 @@ def test_a_stale_list_on_the_right_of_a_slice_assignment_has_no_members():
     whole = SliceValue(None, None, None)
     _undecided_mutation(target.setitem(whole, stale, "slice-site", None))
     stored = target.setitem(whole, made, "slice-site", None).completed_value()
-    assert stored == ListValue((TermValue(1), TermValue(2)))
+    assert stored == fresh(ListValue, (TermValue(1), TermValue(2)))
 
 
 def test_a_store_or_delete_outside_the_door_never_reads_stale_contents():
@@ -750,8 +752,51 @@ def test_a_list_a_generators_walrus_yielded_is_not_current_when_it_resumes():
         for binding in yielded.machine.binding_state
         if isinstance(binding, GeneratorWalrusBindingV1) and binding.name == "xs"
     ]
-    assert held.bind.assigned_value == ListValue((TermValue(1),))
+    assert held.bind.assigned_value == fresh(ListValue, (TermValue(1),))
     assert not contents_current(held.bind.assigned_value)
+
+
+# No default ``allocation`` (#7757, after #8117): a default that said
+# "current" was a guess.  Every construction names it.
+
+
+@pytest.mark.parametrize("kind", ["ListValue", "DictValue", "SetValue"])
+def test_a_container_built_without_an_allocation_is_refused(kind):
+    from sugar_lift_py_tests import floor
+
+    with pytest.raises(TypeError):
+        getattr(floor, kind)(())
+
+
+def test_a_site_that_names_no_coordinate_makes_no_current_object():
+    from sugar_lift_py_tests.floor import object_identity
+
+    assert not hasattr(object_identity, "UNNAMED_CONSTRUCTION")
+    assert object_identity.made_at(None) is None
+    assert object_identity.made_if_current(None) is None
+    assert object_identity.made_at("add-site") == "add-site"
+
+
+def test_the_doors_post_state_names_its_receivers_allocation():
+    from sugar_lift_py_tests.floor import builtin_container_method as law
+
+    made, stale = _made_and_arrived()
+    for receiver in (made, stale):
+        for method, args in (("append", (TermValue(3),)), ("clear", ())):
+            pair = law.apply("list", method, receiver, args, "door", None)
+            post, _result = pair.completed_value().elements
+            assert post.allocation == receiver.allocation
+
+
+def test_a_dict_subclass_instances_dict_state_is_not_current():
+    # Whether an instance's ``dict`` base state is its state now is not
+    # decided (an instance's currency is not tracked): never read as fresh.
+    from sugar_lift_py_tests.floor.mapping_object_value import MappingObjectValue
+    from sugar_lift_py_tests.floor.object_identity import contents_current
+
+    state = MappingObjectValue.__new__(MappingObjectValue)
+    object.__setattr__(state, "entries", ((StringValue("k"), TermValue(1)),))
+    assert not contents_current(state._builtin_dict())
 
 
 def test_a_str_method_over_an_opaque_argument_keeps_its_marker():

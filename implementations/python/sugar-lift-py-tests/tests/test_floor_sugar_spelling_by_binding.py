@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.context import ReduceContext
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
 from sugar_lift_py_tests.floor import CallSiteValue, SymbolicValue
@@ -50,7 +51,7 @@ def test_undecided_operand_keeps_its_value() -> None:
 def test_decided_list_reads_the_container_law_by_method() -> None:
     # The floor decided the receiver is a builtin ``list``: only then does the
     # method name choose the container rule.
-    receiver = ListValue((TermValue(1),))
+    receiver = fresh(ListValue, (TermValue(1),))
 
     assert _may_change(receiver, "append", False, False)
     assert not _may_change(receiver, "count", False, False)

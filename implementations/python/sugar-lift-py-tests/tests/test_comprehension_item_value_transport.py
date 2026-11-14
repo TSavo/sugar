@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
+from frame_fresh import fresh
 
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.context import ReduceContext
@@ -50,8 +51,12 @@ def test_swapped_finite_members_preserve_each_object_identity() -> None:
         "def build(items):\n    return [item for item in items]\n"
     )
 
-    forward = comprehension.desugar(_context_with_items(ListValue((first, second))))
-    swapped = comprehension.desugar(_context_with_items(ListValue((second, first))))
+    forward = comprehension.desugar(
+        _context_with_items(fresh(ListValue, (first, second)))
+    )
+    swapped = comprehension.desugar(
+        _context_with_items(fresh(ListValue, (second, first)))
+    )
 
     assert forward.completed_value() is not None
     assert swapped.completed_value() is not None
@@ -76,7 +81,9 @@ def test_filtered_out_member_never_reaches_element_binding() -> None:
         "def build(items):\n    return [item for item in items if item.keep]\n"
     )
 
-    outcome = comprehension.desugar(_context_with_items(ListValue((first, second))))
+    outcome = comprehension.desugar(
+        _context_with_items(fresh(ListValue, (first, second)))
+    )
 
     assert outcome.completed_value() is not None
     assert outcome.completed_value().finite_elements == (second,)
@@ -86,15 +93,19 @@ def test_filtered_out_member_never_reaches_element_binding() -> None:
 
 def test_halted_constructor_arm_is_absent_from_finite_items() -> None:
     first, second = _objects()
-    first = replace(first, fields=(ObjectField("values", ListValue((TermValue(7),))),))
+    first = replace(
+        first, fields=(ObjectField("values", fresh(ListValue, (TermValue(7),))),)
+    )
     second = replace(
-        second, fields=(ObjectField("values", ListValue((TermValue(9),))),)
+        second, fields=(ObjectField("values", fresh(ListValue, (TermValue(9),))),)
     )
     comprehension = _source_list_comprehension(
         "def build(items):\n    return [item.values[4] for item in items]\n"
     )
 
-    outcome = comprehension.desugar(_context_with_items(ListValue((first, second))))
+    outcome = comprehension.desugar(
+        _context_with_items(fresh(ListValue, (first, second)))
+    )
 
     assert len(outcome.exits) == 1 and outcome.halts() == outcome.exits
     assert isinstance(outcome.halts()[0].effect, RaiseEffect)

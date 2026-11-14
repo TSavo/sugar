@@ -15,6 +15,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.caller_parameter_contract import NativeOperationExitCarrierV1
 from sugar_lift_py_tests.context_manager_contract import (
     AuthenticatedRaiseMatcher,
@@ -95,7 +96,7 @@ def _unpack_store_halt() -> tuple[NativeOperationExitCarrierV1, Halted]:
     exits = pending.discharge(
         None,
         {
-            a_cid: ListValue((TermValue(0),)),
+            a_cid: fresh(ListValue, (TermValue(0),)),
             i_cid: TermValue(5),
             q_cid: TermValue(9),
         },

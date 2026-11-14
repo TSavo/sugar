@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_py_tests.floor.bytes_value import BytesValue
 from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
 from sugar_lift_py_tests.floor.complex_value import ComplexValue
@@ -169,7 +170,7 @@ def test_a_named_exception_type_is_never_invented_for_the_halt() -> None:
         # pandas/core/ops/missing.py, tests/io/pytables/test_select.py
         (_predicate(), _callsite(), "bitwise_and", "&"),
         # pandas/core/strings/accessor.py
-        (SetValue((TermValue(1),)), _callsite(), "subtract", "-"),
+        (fresh(SetValue, (TermValue(1),)), _callsite(), "subtract", "-"),
         # pandas/io/stata.py, tests/io/json/test_ujson.py
         (BytesValue(b"x"), _symbolic(), "multiply", "*"),
         (BytesValue(b"x"), _symbolic(), "add", "+"),
@@ -286,11 +287,11 @@ def _assert_ground_type_error(outcome) -> None:
     (
         # Two DECIDED types are a ground question, not an unknown:
         # `list + predicate` is Python's TypeError — an authenticated halt.
-        (ListValue((TermValue(1),)), _predicate(), "add"),
+        (fresh(ListValue, (TermValue(1),)), _predicate(), "add"),
         # Predicate does not own addition; still loud construction (not TypeError).
         (_predicate(), TermValue(1), "add"),
         (_predicate(), StringValue("x"), "add"),
-        (_comprehension(), SetValue((TermValue(1),)), "subtract"),
+        (_comprehension(), fresh(SetValue, (TermValue(1),)), "subtract"),
     ),
 )
 def test_two_decided_operands_do_not_invent_coordinates(left, right, method) -> None:
@@ -447,7 +448,7 @@ def test_the_law_never_converts_a_panic_into_two_faces() -> None:
     with pytest.raises(ConstructionPanic):
         BytesValue(b"x").add(_predicate(), SITE, None)
     _assert_ground_type_error(
-        ListValue((TermValue(1),)).add(_predicate(), _FragmentSite(), None)
+        fresh(ListValue, (TermValue(1),)).add(_predicate(), _FragmentSite(), None)
     )
 
 
@@ -473,8 +474,8 @@ def test_undecided_values_testify_to_their_own_category(undecided) -> None:
         StringValue("x"),
         BytesValue(b"x"),
         NoneValue(),
-        ListValue(()),
-        SetValue(()),
+        fresh(ListValue, ()),
+        fresh(SetValue, ()),
         ComplexValue(0.0, 1.0),
     ),
 )

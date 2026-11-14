@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from frame_fresh import fresh
 from sugar_lift_python_source.canonical import blake3_512_of
 from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
@@ -309,7 +310,7 @@ def test_source_decided_int_mod_list_emits_type_error() -> None:
     operation = type(node.sugar())(
         "Mod",
         _ValueSugar(TermValue(2)),
-        _ValueSugar(ListValue(())),
+        _ValueSugar(fresh(ListValue, ())),
         node.fragment,
     )
     outcome = operation.desugar(None)
@@ -344,7 +345,7 @@ def test_source_decided_list_plus_int_emits_type_error() -> None:
 
     operation = type(node.sugar())(
         "Add",
-        _ValueSugar(ListValue((TermValue(1),))),
+        _ValueSugar(fresh(ListValue, (TermValue(1),))),
         _ValueSugar(TermValue(0)),
         node.fragment,
     )

@@ -22,12 +22,14 @@ import pytest
 
 from sugar_lift_py_tests.floor import ListValue, StringValue, TermValue
 
+from frame_fresh import fresh
 from test_builtin_container_mutation import _halt_names, _only_return, _returns
 
 
 def _list(*values):
-    return ListValue(
-        tuple(StringValue(v) if isinstance(v, str) else TermValue(v) for v in values)
+    return fresh(
+        ListValue,
+        tuple(StringValue(v) if isinstance(v, str) else TermValue(v) for v in values),
     )
 
 
