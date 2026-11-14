@@ -176,17 +176,9 @@ class ImportMemberValue(FloorValue):
     def contains(self, item, site):
         return self.undecided_contains(item, site, owner="ImportMemberValue.contains")
 
-    def attribute_with(self, operation: Any, ctx: object):
-        del ctx
-        return self.attribute(operation.name, operation.site)
-
     def subscript_with(self, operation: Any, ctx: object):
         del ctx
         return self.subscript(operation.index, operation.site)
-
-    def contains_with(self, operation: Any, ctx: object):
-        del ctx
-        return self.contains(operation.item, operation.site)
 
     #: Authenticated C-floor callables whose meaning is language-owned (plan
     #: Cut 2). The KEY is the authenticated ``target_symbol`` (``qualified_name``
@@ -281,15 +273,6 @@ class ImportMemberValue(FloorValue):
             # be a real defect, not an undecided -- do not swallow it.
             raise
 
-    def call_method_with(self, operation: Any, ctx: object):
-        del ctx
-        return _import_member_runtime_effect(
-            self,
-            site=operation.site,
-            shape=f"{self.qualified_name}.{operation.name}(...)",
-            replacement="ImportMemberMethodCallEffect",
-        )
-
     def iter_with(self, operation: Any, ctx: object):
         del ctx
         return _import_member_runtime_effect(
@@ -297,15 +280,6 @@ class ImportMemberValue(FloorValue):
             site=operation.site,
             shape=f"iter({self.qualified_name})",
             replacement="ImportMemberIterEffect",
-        )
-
-    def binary_operator_with(self, operation: Any, ctx: object):
-        del ctx
-        return _import_member_runtime_effect(
-            self,
-            site=operation.site,
-            shape=f"{self.qualified_name} {operation.operator} ...",
-            replacement="ImportMemberBinaryEffect",
         )
 
     def equals(self, other, site):

@@ -47,15 +47,6 @@ class Bv32Value(FloorValue):
         del owner
         return self.term
 
-    def project_callsite_with(self, operation, ctx):
-        return operation.project_literal(self, ctx)
-
-    def str_with(self, operation, ctx):
-        return operation.str_bv32(self, ctx)
-
-    def bitwise_with(self, operation, ctx):
-        return operation.bitwise_bv32(self, ctx)
-
     def bitwise_and(self, other, site):
         return self._binary_bitwise(other, site, "bv32.and")
 

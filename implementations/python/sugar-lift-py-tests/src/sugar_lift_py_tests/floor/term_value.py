@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from .guard_stable_value import GuardStableValue
 
@@ -66,9 +65,6 @@ class TermValue(GuardStableValue):
             if matches
             else FalseBoolLiteralSugar(site=site)
         )
-
-    def add_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.add_term(self, ctx)
 
     def truth(self, site):
         # Python-faithful: nonzero is True. bool(nan) is True and nan != 0 IS
@@ -749,94 +745,3 @@ class TermValue(GuardStableValue):
         from sugar_lift_py_tests.ir import num
 
         return num(int(self.value))
-
-    def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.project_literal(self, ctx)
-
-    def call_method_with(self, operation: Any, ctx: Any) -> Any:
-        del ctx
-        if operation.name == "__format__" and len(operation.arguments) == 1:
-            from sugar_lift_py_tests.floor.string_value import StringValue
-            from sugar_lift_py_tests.outcome import Complete
-
-            spec = operation.arguments[0]
-            if isinstance(spec, StringValue):
-                return Complete(StringValue(format(self.value, spec.value)))
-        if operation.name == "__int__" and not operation.arguments:
-            from sugar_lift_py_tests.outcome import Complete
-
-            return Complete(TermValue(int(self.value)))
-        if operation.name == "__hash__" and not operation.arguments:
-            from sugar_lift_py_tests.outcome import Complete
-
-            # Non-folding pure builtin: marker only → call:hash, no companion.
-            # Never fabricate Python's hash() of a number.
-            return Complete(self)
-        if operation.name == "__repr__" and not operation.arguments:
-            from sugar_lift_py_tests.floor.string_value import StringValue
-            from sugar_lift_py_tests.outcome import Complete
-
-            return Complete(StringValue(repr(self.value)))
-        if operation.name == "__bytes__" and not operation.arguments:
-            from sugar_lift_py_tests.effect import (
-                BytesConversionRuntimeEffect,
-                runtime_effect_evidence,
-            )
-            from sugar_lift_py_tests.outcome import Incomplete
-
-            # int/float have no __bytes__; keep typed red (don't fabricate).
-            return Incomplete(
-                BytesConversionRuntimeEffect(
-                    "numeric bytes conversion runtime boundary: "
-                    f"TermValue.__bytes__ is not defined for {type(self.value).__name__}; "
-                    f"blame={operation.blame}",
-                    **runtime_effect_evidence(
-                        "py.bytes", type(self.value).__name__, operation
-                    ),
-                )
-            )
-        _call_method_gap(
-            owner=operation.owner,
-            blame=operation.blame,
-            observed=f"TermValue.{operation.name}",
-            requested="numeric builtin method floor",
-            fix=f"add TermValue method floor for `{operation.name}`",
-        )
-
-    def str_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.str_term(self, ctx)
-
-    def format_value_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.format_term(self, ctx)
-
-    def bitwise_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.bitwise_term(self, ctx)
-
-    def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.binary_term(self, ctx)
-
-    def unary_operator_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.unary_term(self, ctx)
-
-
-def _call_method_gap(
-    *,
-    owner: str,
-    blame: str,
-    observed: str,
-    requested: str,
-    fix: str,
-):
-    from sugar_lift_py_tests.gap.panic import construction_panic
-    from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-    info = ConstructionGap(
-        owner=owner,
-        blame=blame,
-        observed=observed,
-        requested=requested,
-        fix=fix,
-        gap_kind=GapKind.FLOOR,
-        gap_locus=GapLocus.CONSTRUCTION,
-    )
-    construction_panic(info)

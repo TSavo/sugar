@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from sugar_lift_py_tests.effect import (
-    DictMethodRuntimeEffect,
     KeyErrorRuntimeEffect,
     runtime_effect_evidence,
 )
@@ -15,7 +14,6 @@ from sugar_lift_py_tests.ir import (
     _Ctor,
     Term,
     ctor,
-    eq,
 )
 
 from .floor_value import FloorValue
@@ -65,18 +63,6 @@ class DictLiteralValue(FloorValue):
             [ctor("python:dict_entry", [key, value]) for key, value in self.entries],
         )
 
-    def call_method_with(self, operation: Any, ctx: object) -> Any:
-        del ctx
-        if operation.name == "__len__" and not operation.arguments:
-            from sugar_lift_py_tests.outcome import Complete
-
-            # Bare folded count; BuiltinCallSugar wrap re-attaches call:len.
-            return Complete(TermValue(len(self.entries)))
-        return _call_method_effect(
-            site=operation,
-            observed=f"DictLiteralValue.{operation.name}",
-        )
-
     def subscript_with(self, operation: Any, ctx: object) -> Any:
         from sugar_lift_py_tests.floor.call_site_value import force_floor
         from sugar_lift_py_tests.outcome import Complete
@@ -94,29 +80,6 @@ class DictLiteralValue(FloorValue):
             site=operation,
             observed="DictLiteralValue[missing-key]",
         )
-
-    def project_callsite_with(self, operation: Any, ctx: object):
-        del ctx
-        return eq(operation.call_term(), self.to_term(owner=operation.owner))
-
-
-def _call_method_effect(
-    *,
-    site,
-    observed: str,
-):
-    from sugar_lift_py_tests.outcome import Incomplete
-
-    return Incomplete(
-        DictMethodRuntimeEffect(
-            "dict builtin method runtime boundary: "
-            f"{observed} has no reduced floor semantics in this tranche. "
-            "Python dictionary method results can expose runtime view/mutation "
-            "semantics; keep as typed red until a narrower vendor-cited "
-            f"reduction owns the shape. blame={site}",
-            **runtime_effect_evidence("py.call_method", observed, site),
-        )
-    )
 
 
 def _subscript_effect(

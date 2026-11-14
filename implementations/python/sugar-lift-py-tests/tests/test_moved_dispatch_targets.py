@@ -241,7 +241,7 @@ def test_the_deleted_block_sugar_is_not_quietly_back() -> None:
 class _RecordingOperation:
     """One operation, submitting itself exactly as the rebuilt layer does."""
 
-    method_name = "unary_operator_with"
+    method_name = "subscript_with"
 
     def __init__(self) -> None:
         self.submitted_to: list[object] = []
@@ -257,7 +257,7 @@ def test_a_block_redispatches_its_single_exit_by_submitting_the_operation():
     exit_value = TermValue(7)
     operation = _RecordingOperation()
 
-    outcome = BlockValue((exit_value,)).unary_operator_with(operation, None)
+    outcome = BlockValue((exit_value,)).subscript_with(operation, None)
 
     assert isinstance(outcome, Complete)
     # Exact cardinality: submitted once, to the single exit -- not to the block.
@@ -283,46 +283,32 @@ def test_the_deleted_dispatcher_and_its_operations_are_not_quietly_back() -> Non
     assert hasattr(SequenceProjectionOperation, "submit")
 
 
-# -- BinaryOperatorOperation("+") -> SymbolicValue.add ----------------------
+# -- operation methods typed against deleted operation modules: DEAD, deleted --
+#
+# Each `*_with` method below took an operation class whose module was deleted
+# with the operations layer, and nothing submitted that operation any more.
+# The floor surface declares only operations that exist.
 
 
-class _AddOperation:
-    method_name = "add_with"
+def test_the_deleted_operation_methods_are_not_quietly_back() -> None:
+    from sugar_lift_py_tests.floor import FLOOR_OPERATION_METHOD_NAMES, ObjectValue
 
-    def __init__(self, operand) -> None:
-        self.operand = operand
-        self.owner = "test"
-        self.blame = "add-site"
-
-
-def test_symbolic_add_of_a_numeric_operand_is_the_joinable_plus_term() -> None:
-    receiver = SymbolicValue(make_var("z"))
-
-    outcome = receiver.add_with(_AddOperation(TermValue(1)), None)
-
-    assert isinstance(outcome, Complete)
-    term = outcome.value.term
-    assert isinstance(term, _Ctor)
-    assert term.name == "+"
-    assert len(term.args) == 2
-    # Identical to `z + 1` through the ordinary addition floor -- the whole
-    # point of routing `z.add(1)` through the operator, per the arm's docstring.
-    assert outcome == receiver.add(TermValue(1), "add-site")
-
-
-def test_symbolic_add_of_an_opaque_operand_still_mints_the_call_coordinate():
-    """Discriminating face: not everything becomes `+`; the vendor arm survives."""
-    from sugar_lift_py_tests.floor.opaque_op_callsite import OpaqueOpCallsite
-
-    receiver = SymbolicValue(make_var("z"))
-    operand = ArrayLiteral((TermValue(1),))
-
-    outcome = receiver.add_with(_AddOperation(operand), None)
-
-    assert isinstance(outcome, Complete)
-    assert isinstance(outcome.value, OpaqueOpCallsite)
-    assert outcome.value.callee == "add"
-    assert outcome.value.computed is None
+    deleted = (
+        "add_with",
+        "attribute_with",
+        "binary_operator_with",
+        "call_method_with",
+        "contains_with",
+        "map_with",
+        "project_callsite_with",
+        "str_with",
+        "unary_operator_with",
+    )
+    for name in deleted:
+        assert name not in FLOOR_OPERATION_METHOD_NAMES, name
+        assert not hasattr(FloorValue, name), name
+        assert not hasattr(ObjectValue, name), name
+        assert not hasattr(SymbolicValue, name), name
 
 
 # -- sugar.install_source_dig.ContextualizedDigBody: DEAD, deleted ----------

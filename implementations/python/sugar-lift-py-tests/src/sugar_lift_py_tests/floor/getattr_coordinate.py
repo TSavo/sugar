@@ -11,8 +11,8 @@ The coordinate is not a claim that the attribute EXISTS. It is an opaque
 function symbol over the receiver's own term and the attribute's name -- the
 same position ``SymbolicValue`` and ``CallSiteValue`` already occupy. Nothing
 is invented: no method body, no field value, no sentinel. A call through the
-coordinate is still owned by ``call_method_with``, which folds only where the
-call site is known.
+coordinate is still owned by the receiver's method-call door
+(``call_named_method``), which folds only where the call site is known.
 """
 
 from __future__ import annotations

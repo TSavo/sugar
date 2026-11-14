@@ -448,8 +448,8 @@ completed floors, or emits ProofIR meaning directly has crossed out of
 recognition and stolen another hierarchy's authority.
 
 Floor classes are dispatch authority. A completed value answers operations by
-method dispatch through the floor surface: `receiver.map_with(...)`,
-`receiver.contains_with(...)`, `receiver.project_callsite_with(...)`, and the
+method dispatch through the floor surface: `receiver.subscript_with(...)`,
+`receiver.iter_with(...)`, `receiver.project_sequence_with(...)`, and the
 rest. A missing arm is a floor construction gap with owner, blame, observed
 shape, requested method, and fix. It is not permission for callers to grow a
 kind ladder, `matches!` probe, side registry, or stringly status table. Callers

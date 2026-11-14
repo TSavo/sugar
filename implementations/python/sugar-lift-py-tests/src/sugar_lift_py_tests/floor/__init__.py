@@ -37,7 +37,6 @@ from .exception_value import ExceptionValue
 from .exception_class_value import ExceptionClassValue
 from .local_exception_class_value import LocalExceptionClassValue
 from .floor_dispatch_surface import (
-    BinaryOperatorFloor,
     FLOOR_OPERATION_METHOD_NAMES,
     FloorDispatchSurface,
     require_floor_dispatch_surface,
@@ -175,7 +174,6 @@ __all__ = [
     "ArrayLiteral",
     "AsyncFunctionCallable",
     "BASE_CONSTRUCTION_GAP_METHOD_NAMES",
-    "BinaryOperatorFloor",
     "BlockValue",
     "NamedExpressionValue",
     "NativeCallableValue",

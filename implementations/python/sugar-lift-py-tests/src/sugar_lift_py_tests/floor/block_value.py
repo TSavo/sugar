@@ -64,36 +64,13 @@ class BlockValue(FloorValue):
                 ctx = entry.extend_scope(ctx)
         return ctx
 
-    def guard_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.guard_block(self, ctx)
-
-    def route_raises_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.route_block_raises(self, ctx)
-
-    def merge_finally_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.merge_finally_block(self, ctx)
-
-    def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.project_block(self, ctx)
-
-    def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
-        """Binary op on a dug function-body block (revealed after CallSiteValue).
+    def subscript_with(self, operation: Any, ctx: Any) -> Any:
+        """Subscript on a dug function-body block.
 
         Single-exit blocks re-dispatch on the exit floor (unwrap ReturnValue);
         multi-exit / fall-through stays typed RuntimeEffect. Never invent a
-        merged numeric result across branches.
+        merged result across branches.
         """
-        return self._redispatch_operator(operation, ctx, kind="binary")
-
-    def unary_operator_with(self, operation: Any, ctx: Any) -> Any:
-        """Unary op on a dug function-body block (revealed with binary path).
-
-        Same single-exit redispatch as binary_operator_with.
-        """
-        return self._redispatch_operator(operation, ctx, kind="unary")
-
-    def subscript_with(self, operation: Any, ctx: Any) -> Any:
-        """Subscript on a dug function-body block (revealed after binary dig)."""
         return self._redispatch_operator(operation, ctx, kind="subscript")
 
     def _redispatch_operator(self, operation: Any, ctx: Any, *, kind: str) -> Any:

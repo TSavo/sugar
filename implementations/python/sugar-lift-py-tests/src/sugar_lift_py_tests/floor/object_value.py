@@ -11,45 +11,13 @@ from .object_method_value import ObjectMethodValue
 
 if TYPE_CHECKING:
     from sugar_lift_py_tests.context import ReduceContext
-    from sugar_lift_py_tests.operations.attribute_delete_operation import (
-        AttributeDeleteOperation,
-    )
-    from sugar_lift_py_tests.operations.attribute_lookup_operation import (
-        AttributeLookupOperation,
-    )
-    from sugar_lift_py_tests.operations.attribute_mutation_operation import (
-        AttributeMutationOperation,
-    )
-    from sugar_lift_py_tests.operations.async_context_manager_operation import (
-        AsyncContextManagerOperation,
-    )
-    from sugar_lift_py_tests.operations.async_iterator_operation import (
-        AsyncIteratorOperation,
-        AsyncNextOperation,
-    )
-    from sugar_lift_py_tests.operations.await_operation import AwaitOperation
-    from sugar_lift_py_tests.operations.context_manager_operation import (
-        ContextManagerOperation,
-    )
-    from sugar_lift_py_tests.operations.delitem_operation import DelItemOperation
-    from sugar_lift_py_tests.operations.descriptor_operation import DescriptorOperation
-    from sugar_lift_py_tests.operations.dict_missing_operation import (
-        DictMissingOperation,
-    )
     from sugar_lift_py_tests.operations.inplace_binary_operator_operation import (
         InplaceBinaryOperatorOperation,
     )
     from sugar_lift_py_tests.operations.iterator_operation import IteratorOperation
-    from sugar_lift_py_tests.operations.method_call_operation import (
-        MethodCallOperation,
-    )
     from sugar_lift_py_tests.operations.next_operation import NextOperation
     from sugar_lift_py_tests.operations.sequence_projection_operation import (
         SequenceProjectionOperation,
-    )
-    from sugar_lift_py_tests.operations.setitem_operation import SetItemOperation
-    from sugar_lift_py_tests.operations.str_coercion_operation import (
-        StrCoercionOperation,
     )
     from sugar_lift_py_tests.operations.subscript_operation import SubscriptOperation
     from sugar_lift_py_tests.outcome import Outcome
@@ -275,11 +243,6 @@ class ObjectValue(FloorValue):
             owner="MatrixMultiplyOpSugar",
             blame=str(site),
         )
-
-    def attribute_with(
-        self, operation: AttributeLookupOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.attribute_object(self, ctx)
 
     def to_term(self, *, owner: str):
         del owner
@@ -536,59 +499,6 @@ class ObjectValue(FloorValue):
         )
         return tuple(sorted(names))
 
-    def attribute_assign_with(
-        self, operation: AttributeMutationOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.assign_object(self, ctx)
-
-    def attribute_delete_with(
-        self, operation: AttributeDeleteOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.delete_object(self, ctx)
-
-    def call_method_with(
-        self, operation: MethodCallOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return self.call_method_value(
-            operation.name,
-            operation.arguments,
-            owner=operation.owner,
-            blame=operation.blame,
-            ctx=ctx,
-        )
-
-    def descriptor_with(
-        self, operation: DescriptorOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.descriptor_object(self, ctx)
-
-    def context_manager_with(
-        self, operation: ContextManagerOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.context_object(self, ctx)
-
-    def async_context_manager_with(
-        self,
-        operation: AsyncContextManagerOperation,
-        ctx: ReduceContext | None,
-    ) -> Outcome:
-        return operation.async_context_object(self, ctx)
-
-    def await_with(
-        self, operation: AwaitOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.await_object(self, ctx)
-
-    def async_iter_with(
-        self, operation: AsyncIteratorOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.async_iter_object(self, ctx)
-
-    def async_next_with(
-        self, operation: AsyncNextOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.async_next_object(self, ctx)
-
     def iter_with(
         self, operation: IteratorOperation, ctx: ReduceContext | None
     ) -> Outcome:
@@ -614,26 +524,6 @@ class ObjectValue(FloorValue):
         self, operation: SubscriptOperation, ctx: ReduceContext | None
     ) -> Outcome:
         return operation.subscript_object(self, ctx)
-
-    def setitem_with(
-        self, operation: SetItemOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.setitem_object(self, ctx)
-
-    def delitem_with(
-        self, operation: DelItemOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.delitem_object(self, ctx)
-
-    def missing_with(
-        self, operation: DictMissingOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.missing_object(self, ctx)
-
-    def str_with(
-        self, operation: StrCoercionOperation, ctx: ReduceContext | None
-    ) -> Outcome:
-        return operation.str_object(self, ctx)
 
     def project_sequence_with(
         self, operation: SequenceProjectionOperation, ctx: ReduceContext | None

@@ -60,6 +60,3 @@ class EncodedStringValue(FloorValue):
             site=site,
             owner="EncodedStringValue.delattr",
         )
-
-    def binary_operator_with(self, operation, ctx):
-        return operation.binary_encoded_string(self, ctx)

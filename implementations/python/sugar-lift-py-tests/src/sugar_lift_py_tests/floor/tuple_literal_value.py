@@ -55,64 +55,8 @@ class TupleLiteralValue(FloorValue):
 
         return ctor("tuple", [item.to_term(owner=owner) for item in self.items])
 
-    def binary_operator_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.binary_tuple(self, ctx)
-
-    def contains_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.contains_tuple(self, ctx)
-
-    def call_method_with(self, operation: Any, ctx: Any) -> Any:
-        del ctx
-        if operation.name == "__len__" and not operation.arguments:
-            from sugar_lift_py_tests.floor.term_value import TermValue
-            from sugar_lift_py_tests.outcome import Complete
-
-            # Bare folded count; BuiltinCallSugar wrap re-attaches call:len.
-            return Complete(TermValue(len(self.items)))
-        if operation.name == "__hash__" and not operation.arguments:
-            from sugar_lift_py_tests.outcome import Complete
-
-            # Non-folding pure builtin: marker only → call:hash, no companion.
-            return Complete(self)
-        _call_method_gap(
-            owner=operation.owner,
-            blame=operation.blame,
-            observed=f"TupleLiteralValue.{operation.name}",
-            requested="tuple builtin method floor",
-            fix=f"add TupleLiteralValue method floor for `{operation.name}`",
-        )
-
-    def materialize_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.materialize_tuple(self, ctx)
-
     def project_sequence_with(self, operation: Any, ctx: Any) -> Any:
         return operation.project_tuple(self, ctx)
 
-    def project_callsite_with(self, operation: Any, ctx: Any) -> Any:
-        return operation.project_literal(self, ctx)
-
     def subscript_with(self, operation: Any, ctx: Any) -> Any:
         return operation.subscript_tuple(self, ctx)
-
-
-def _call_method_gap(
-    *,
-    owner: str,
-    blame: str,
-    observed: str,
-    requested: str,
-    fix: str,
-):
-    from sugar_lift_py_tests.gap.panic import construction_panic
-    from sugar_lift_py_tests.gap.info import ConstructionGap, GapKind, GapLocus
-
-    info = ConstructionGap(
-        owner=owner,
-        blame=blame,
-        observed=observed,
-        requested=requested,
-        fix=fix,
-        gap_kind=GapKind.FLOOR,
-        gap_locus=GapLocus.CONSTRUCTION,
-    )
-    construction_panic(info)

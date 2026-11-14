@@ -62,15 +62,6 @@ class GroupedExceptionValue(FloorValue):
             return Complete(GroupedExceptionSplitMethod(self, site))
         return super().attribute(name, site)
 
-    def call_method_with(self, operation, ctx):
-        if operation.name == "split":
-            return self.split(
-                operation.arguments,
-                operation.keyword_names,
-                getattr(operation, "blame", None) or self.site,
-            )
-        return super().call_method_with(operation, ctx)
-
     def call_method_value(
         self, name, arguments, *, owner, blame, ctx=None, keywords=(), required_frame=None
     ):
