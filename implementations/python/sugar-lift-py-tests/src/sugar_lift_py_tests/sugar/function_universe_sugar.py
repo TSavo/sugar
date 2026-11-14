@@ -150,7 +150,7 @@ def _is_return_entry(entry) -> bool:
     return isinstance(entry, (GuardedReturn, ReturnValue))
 
 
-def _prior_return_face(state, ctx) -> tuple:
+def _prior_return_face(state, ctx) -> "ExitSet | None":
     """The completed exit an earlier guarded ``return`` already took.
 
     After ``if c: return v`` the block goes on only under the fall-through
@@ -159,11 +159,14 @@ def _prior_return_face(state, ctx) -> tuple:
     and that completed exit, with its tail unreachable, must stay beside the
     later statement's faces.  Dropping it made ``if c: return 7`` followed by
     ``raise`` claim the function always raised.
+
+    ``None`` when no earlier ``return`` fired; otherwise the one completed
+    arm (``ExitSet.completed``) that joins the later statement's faces.
     """
     if not state.fall_through or not any(
         _is_return_entry(entry) for entry in state.entries
     ):
-        return ()
+        return None
     from sugar_lift_py_tests.ir import and_
     from sugar_lift_py_tests.outcome.exit_set import complement_guard
 
@@ -172,11 +175,9 @@ def _prior_return_face(state, ctx) -> tuple:
         if len(state.fall_through) == 1
         else and_(list(state.fall_through))
     )
-    return (
-        Completed(
-            complement_guard(continuation),
-            _ReducedBlock(state.entries, False, (), state.transforms, ctx),
-        ),
+    return ExitSet.completed(
+        _ReducedBlock(state.entries, False, (), state.transforms, ctx),
+        complement_guard(continuation),
     )
 
 
@@ -315,7 +316,7 @@ def reduce_block_to_exitset(
                 # the halt, so its pre-halt state is this block's prefix.
                 halted = ExitSet.halted(effect, state=state)
                 returned = _prior_return_face(state, active_ctx)
-                if returned:
+                if returned is not None:
                     # Reached only where no earlier ``return`` fired.
                     from sugar_lift_py_tests.ir import and_
 
@@ -324,9 +325,7 @@ def reduce_block_to_exitset(
                         if len(state.fall_through) == 1
                         else and_(list(state.fall_through))
                     )
-                    return ExitSet(
-                        (*halted.guarded(continuation).exits, *returned)
-                    ).normalize()
+                    return halted.guarded(continuation).union(returned)
                 return halted
 
             returned = _prior_return_face(state, active_ctx)
@@ -350,35 +349,25 @@ def reduce_block_to_exitset(
             # would report an empty temporal state and every earlier store
             # would read as rolled back (Python never rolls back a store).
             head_halt = getattr(statement, "halts_at_statement_head", False)
-            outcome = ExitSet(
-                tuple(
-                    (
-                        Halted(
-                            exit_.guard,
-                            exit_.effect,
-                            # A simple statement binds nothing before its
-                            # own halt (an expression halt, a store's
-                            # halted face): a stateless arm halted at its
-                            # head, where the prefix is the whole record --
-                            # the same state the plain halt above gives.
-                            state
-                            if head_halt and exit_.state is None
-                            else _halt_state(state, exit_),
-                            # This rebuild used to state three fields, so it
-                            # dropped the arm's partition testimony on the way
-                            # through -- the same shape of loss
-                            # `ExitSet.guarded` had.
-                            exit_.faces,
-                            exit_.owed,
-                        )
-                        if isinstance(exit_, Halted)
-                        else exit_
-                    )
-                    for exit_ in outcome.exits
+
+            def spliced(halt):
+                # The halt leaves from the prefix spliced onto its own state;
+                # ``sequence`` keeps its guard, faces and ``owed``. A simple
+                # statement binds nothing before its own halt (an expression
+                # halt, a store's halted face): a stateless arm halted at its
+                # head, where the prefix is the whole record -- the same state
+                # the plain halt above gives.
+                return ExitSet.halted(
+                    halt.effect,
+                    state=(
+                        state
+                        if head_halt and halt.state is None
+                        else _halt_state(state, halt)
+                    ),
                 )
-            )
-            composed = outcome.sequence(project)
-            if returned:
+
+            composed = outcome.sequence(project, consume=spliced)
+            if returned is not None:
                 return _beside_prior_returns(composed, returned)
             return composed
 
@@ -424,7 +413,7 @@ def reduce_block_to_exitset(
     return exits
 
 
-def _beside_prior_returns(composed, returned: tuple):
+def _beside_prior_returns(composed, returned: ExitSet):
     """``composed`` with the faces of every earlier ``return`` beside it.
 
     ``composed`` is what ``ExitSet.sequence`` answered for a statement. A
@@ -441,7 +430,7 @@ def _beside_prior_returns(composed, returned: tuple):
         exits = _require_exit_set(
             continued, owner="reduce_block_to_exitset.prior-returns"
         )
-        return ExitSet((*exits.exits, *returned)).normalize()
+        return exits.union(returned)
 
     if isinstance(composed, NativeOperationExitCarrierV1):
         return composed.after_discharge(beside)

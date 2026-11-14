@@ -220,7 +220,6 @@ def _and_finally_with_raise_context(
     """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
     from sugar_lift_py_tests.in_flight_effect import bind_in_flight_effect
-    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
@@ -236,11 +235,7 @@ def _and_finally_with_raise_context(
     finally_slot = f"try-finally-in-flight:{site_coordinate_cid(site)}"
 
     def after_completion(value):
-        return _finally_beneath(
-            neutral_cleanup,
-            None,
-            lambda clean: Completed(clean.guard, value, clean.faces, clean.owed),
-        )
+        return _finally_beneath(neutral_cleanup, None, ExitSet.completed(value))
 
     def after_halt(halt):
         if isinstance(halt.effect, RaiseEffect):
@@ -263,11 +258,7 @@ def _and_finally_with_raise_context(
         else:
             cleanup_es = neutral_cleanup
         return _finally_beneath(
-            cleanup_es,
-            halt.effect,
-            lambda clean: Halted(
-                clean.guard, halt.effect, halt.state, clean.faces, clean.owed
-            ),
+            cleanup_es, halt.effect, ExitSet.halted(halt.effect, state=halt.state)
         )
 
     return pre_finally.sequence(after_completion, consume=after_halt)
@@ -276,37 +267,37 @@ def _and_finally_with_raise_context(
 def _finally_beneath(cleanup_es, in_flight, restored):
     """The ``finally``'s arms as the continuation beneath one incoming arm.
 
-    Each cleanup arm keeps its own guard, faces and ``owed``; ``sequence``
-    conjoins the incoming arm's onto them. A cleanup halt supersedes (with the
-    in-flight body raise as its implicit context), a restoring completion
-    hands back the incoming destination (``restored``), and a terminal
-    completion (return in finally) supersedes with its own value.
+    Composed through ``ExitSet.sequence``: what follows each cleanup arm runs
+    beneath it, so it keeps that arm's guard, faces and ``owed``, and the
+    outer ``sequence`` conjoins the incoming arm's onto them. A restoring
+    completion is followed by the incoming destination (``restored``, the
+    incoming arm's own value or halt), a terminal completion (return in
+    finally) supersedes with its own value, and a cleanup halt supersedes
+    (``consume=``, with the in-flight body raise as its implicit context).
     """
     from sugar_lift_py_tests.effect.raise_effect import RaiseEffect
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet, Halted
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-    arms: list = []
-    for clean in cleanup_es.exits:
-        if isinstance(clean, Halted):
-            effect = clean.effect
-            # Supersede: cleanup halt wins; retain body raise as context.
-            if (
-                isinstance(effect, RaiseEffect)
-                and effect.context_effect is None
-                and isinstance(in_flight, RaiseEffect)
-                and effect is not in_flight
-            ):
-                effect = replace(effect, context_effect=in_flight)
-                clean = replace(clean, effect=effect)
-            arms.append(clean)
-        elif _finally_restores(clean.value):
-            arms.append(restored(clean))
-        else:
-            arms.append(clean)
-    # Not normalized here: ``sequence`` conjoins the incoming guard first and
-    # normalizes the composed set once, so merged guards keep the shape the
-    # composition gives them.
-    return ExitSet(tuple(arms))
+    def after_cleanup(value):
+        if _finally_restores(value):
+            return restored
+        return ExitSet.completed(value)
+
+    def supersede(clean):
+        effect = clean.effect
+        # Supersede: cleanup halt wins; retain body raise as context.
+        if (
+            isinstance(effect, RaiseEffect)
+            and effect.context_effect is None
+            and isinstance(in_flight, RaiseEffect)
+            and effect is not in_flight
+        ):
+            return ExitSet.halted(
+                replace(effect, context_effect=in_flight), state=clean.state
+            )
+        return None
+
+    return cleanup_es.sequence(after_cleanup, consume=supersede)
 
 
 def _effect_match_verdict(effect, matcher, ctx=None, *, site=None):
@@ -423,7 +414,6 @@ def _ground_route_on_faces(exits, route_site, handler_count, arm, site):
     ground table -- so no other route's face sees it."""
     from dataclasses import replace
 
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet
     from sugar_lift_py_tests.sugar.false_bool_literal_sugar import (
         FalseBoolLiteralSugar,
     )
@@ -441,27 +431,20 @@ def _ground_route_on_faces(exits, route_site, handler_count, arm, site):
         )
         for index in range(handler_count)
     }
-    out = []
-    for exit_ in exits.exits:
-        state = getattr(exit_, "value", None)
+
+    def decide(state):
+        # The face continues as itself with the route decided in its record;
+        # ``sequence`` keeps its guard, faces and ``owed``. Halts bypass.
         context = getattr(state, "context", None)
         table = getattr(context, "ground_branch_results", None)
-        if (
-            isinstance(exit_, Completed)
-            and isinstance(state, _ReducedBlock)
-            and isinstance(table, dict)
-        ):
-            exit_ = replace(
-                exit_,
-                value=replace(
-                    state,
-                    context=replace(
-                        context, ground_branch_results={**table, **decided}
-                    ),
-                ),
+        if isinstance(state, _ReducedBlock) and isinstance(table, dict):
+            state = replace(
+                state,
+                context=replace(context, ground_branch_results={**table, **decided}),
             )
-        out.append(exit_)
-    return ExitSet(tuple(out))
+        return ExitSet.completed(state)
+
+    return exits.sequence(decide)
 
 
 def _ground_decided_route(routed, route_site, handler_count, ctx, site):
@@ -688,31 +671,22 @@ def _route_one_halt(
 
 
 def _prepend_facts(exits, facts: tuple):
-    """Attach EffectBinding facts to every completed exit's entry list."""
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    """Attach EffectBinding facts to every completed exit's entry list.
+
+    Each completed face continues as its record with the facts before its
+    entries, composed through ``ExitSet.sequence``: the face's guard,
+    partition testimony and ``owed`` ride on unchanged. Halts bypass."""
     from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
-    out = []
-    for exit_ in exits.exits:
-        if isinstance(exit_, Halted):
-            out.append(exit_)
-            continue
-        state = exit_.value
-        # ``replace`` keeps the arm's partition testimony; rebuilding
-        # ``Completed`` from guard and value alone dropped it.
+    def prepended(state):
         if isinstance(state, _ReducedBlock):
-            out.append(
-                replace(exit_, value=replace(state, entries=(*facts, *state.entries)))
+            return ExitSet.completed(replace(state, entries=(*facts, *state.entries)))
+        return ExitSet.completed(
+            _ReducedBlock(
+                entries=(*facts, state) if state is not None else facts,
+                can_fall_through=True,
+                fall_through=(),
             )
-        else:
-            out.append(
-                replace(
-                    exit_,
-                    value=_ReducedBlock(
-                        entries=(*facts, state) if state is not None else facts,
-                        can_fall_through=True,
-                        fall_through=(),
-                    ),
-                )
-            )
-    return ExitSet(tuple(out)).normalize()
+        )
+
+    return exits.sequence(prepended)

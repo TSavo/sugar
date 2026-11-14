@@ -412,11 +412,7 @@ class IfSugar(Sugar):
 
         from sugar_lift_py_tests.floor.guarded_faces import GuardedFaces
         from sugar_lift_py_tests.outcome import Completed, Halted
-        from sugar_lift_py_tests.outcome.exit_set import (
-            _or_guards,
-            false_guard,
-            true_guard,
-        )
+        from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
         from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
         exits = then_exits.guarded(formula, then_face).union(
@@ -433,41 +429,12 @@ class IfSugar(Sugar):
             else (authentication,)
         )
 
-        # A halt in either suite stays a halted arm of the if (#7826): no
-        # completed record holds a halt.  The condition's own testimony (the
-        # branch-result slot's authentication) was established before either
-        # suite ran, so the halted arm's state carries it ahead of what the
-        # suite reached before halting.
-        halted = []
         entries = []
-        completed_guard = None
-        # The one completed arm stands for every completed arm of both suites
-        # (a join of siblings, not a sequence), so it owes all of their debts:
-        # read through the one join of debts, ``ExitSet.owed_items``.
-        completed_owed = ExitSet(
-            tuple(exit_ for exit_ in exits.exits if isinstance(exit_, Completed))
-        ).owed_items()
         for exit_ in exits.exits:
-            if isinstance(exit_, Halted):
-                inner = exit_.state
-                if isinstance(inner, _ReducedBlock):
-                    state = _replace(
-                        inner, entries=(*unconditional_entries, *inner.entries)
-                    )
-                elif inner is None:
-                    state = _ReducedBlock(tuple(unconditional_entries), True, ())
-                else:
-                    state = inner
-                halted.append(
-                    Halted(exit_.guard, exit_.effect, state, exit_.faces, exit_.owed)
+            if isinstance(exit_, Completed):
+                entries.extend(
+                    entry.guarded(exit_.guard) for entry in exit_.value.entries
                 )
-                continue
-            entries.extend(entry.guarded(exit_.guard) for entry in exit_.value.entries)
-            completed_guard = (
-                exit_.guard
-                if completed_guard is None
-                else _or_guards(completed_guard, exit_.guard)
-            )
 
         def falls_through(branch_exits):
             return any(
@@ -512,12 +479,32 @@ class IfSugar(Sugar):
             unconditional_entries=unconditional_entries,
             evaluations=_arm_evaluations((then_exits, else_exits), incoming),
         )
-        if not halted and not completed_owed:
+        if not exits.halts() and not exits.owed_items():
             return ExitSet.completed(faces)
-        if completed_guard is None:
-            return ExitSet(tuple(halted)).normalize()
-        # An owing completed face stays an arm under its own guard, carrying
-        # every debt of the arms it stands for.
-        return ExitSet(
-            (*halted, Completed(completed_guard, faces, owed=completed_owed))
-        ).normalize()
+
+        def halted_after_condition(halt):
+            # A halt in either suite stays a halted arm of the if (#7826): no
+            # completed record holds a halt.  The condition's own testimony
+            # (the branch-result slot's authentication) was established
+            # before either suite ran, so the halted arm's state carries it
+            # ahead of what the suite reached before halting.
+            inner = halt.state
+            if isinstance(inner, _ReducedBlock):
+                state = _replace(
+                    inner, entries=(*unconditional_entries, *inner.entries)
+                )
+            elif inner is None:
+                state = _ReducedBlock(tuple(unconditional_entries), True, ())
+            else:
+                state = inner
+            return ExitSet.halted(halt.effect, state=state)
+
+        # Every completed arm of both suites continues as the one completed
+        # face; ``normalize``'s join merges those continuations into one arm
+        # under the disjunction of their guards, owing every debt of the arms
+        # it stands for. Each halt continues as itself over the condition's
+        # testimony. Both compose through ``ExitSet.sequence``, so no guard,
+        # face or ``owed`` is restated by hand.
+        return exits.sequence(
+            lambda _suite: ExitSet.completed(faces), consume=halted_after_condition
+        )

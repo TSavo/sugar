@@ -58,13 +58,14 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
     # Truth before the first operand; afterwards the operands' completed path.
     prefix = ExitSet.completed(None)
     values = list(done)
+    # Each operand's halted face, in operand order: siblings of whatever the
+    # fold finally leaves through, joined once (``ExitSet.union``).
     halted: list = []
 
     def leave(following, *, prefix, halted):
         """The fold's exits: every collected halt, then ``following`` beneath
-        the prefix."""
-        beneath = prefix.sequence(lambda _last: following)
-        return ExitSet((*halted, *beneath.exits)).normalize()
+        the prefix, joined through the one join."""
+        return ExitSet(()).union(*halted, prefix.sequence(lambda _last: following))
 
     for index, sugar in enumerate(sugars):
         # A deferred native-operation operand is not an ExitSet. IfExp and
@@ -87,7 +88,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
             )
         factors = desugared.factor_completed()
         stepped = prefix.sequence(lambda _last, *, factors=factors: factors)
-        halted.extend(stepped.halts())
+        halted.append(ExitSet(stepped.halts()))
         completed = tuple(
             exit_ for exit_ in stepped.exits if isinstance(exit_, Completed)
         )
@@ -95,7 +96,7 @@ def _collect(sugars: tuple, ctx, done: tuple, finish):
             # Every path through this operand halts: there is no completed
             # continuation to hand to ``finish``, and the halted face is the
             # whole meaning.
-            return ExitSet(tuple(halted)).normalize()
+            return ExitSet(()).union(*halted)
         # ``factor_completed`` left one completed face.
         prefix = ExitSet(completed)
         values.append(completed[0].value)

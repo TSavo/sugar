@@ -268,7 +268,7 @@ def _after_refused_yield(machine, message: str, blame: str):
         GeneratorTerminationV1,
         GeneratorTransitionGapV1,
     )
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
     refusal = _refusal(message, blame=blame)
     closed = machine.close()
@@ -278,65 +278,31 @@ def _after_refused_yield(machine, message: str, blame: str):
         _loud(closed.observed, blame=blame)
     if not isinstance(closed, ExitSet):
         _loud(f"close returned {type(closed).__name__}", blame=blame)
-    exits = []
-    for face in closed.exits:
-        if isinstance(face, Halted):
-            # A raise from close() supersedes the RuntimeError in flight.
-            exits.append(face)
-            continue
-        exits.append(Halted(face.guard, refusal, None, face.faces, face.owed))
-    return ExitSet(tuple(exits)).normalize()
+    # The RuntimeError leaves beneath each completed close face
+    # (``ExitSet.sequence``), keeping its guard, faces and ``owed``. A raise
+    # from close() supersedes the RuntimeError in flight: that halt stands.
+    return closed.sequence(lambda _closed: ExitSet.halted(refusal))
 
 
 def _map_exits(exit_set, on_completed, blame: str, *, thrown=None):
-    """Map a machine ExitSet face by face, keeping every guard and face key."""
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    """Map a machine ExitSet face by face, keeping every guard and face key.
 
-    parts = []
-    for face in exit_set.exits:
-        if isinstance(face, Halted):
-            effect = face.effect
-            if thrown is not None and (effect is thrown or effect == thrown):
-                # ``exc is value``: the generator let the thrown exception out.
-                parts.append(_guard_with(_bool_exit(False), face))
-                continue
-            if _is_stop_iteration(effect):
-                effect = _pep479(effect, blame=blame)
-            parts.append(
-                ExitSet(
-                    (
-                        Halted(
-                            face.guard,
-                            effect,
-                            face.state,
-                            face.faces,
-                            face.owed,
-                        ),
-                    )
-                )
-            )
-            continue
-        if not isinstance(face, Completed):
-            _loud(type(face).__name__, blame=blame)
-        mapped = on_completed(face.value)
-        parts.append(_guard_with(mapped, face))
-    if not parts:
-        return ExitSet(())
-    result = parts[0]
-    for part in parts[1:]:
-        result = result.union(part)
-    return result.normalize()
-
-
-def _guard_with(exit_set, face):
-    """``exit_set`` continuing beneath the mapped ``face``, completed or halted.
-
-    Composed through ``ExitSet.sequence`` (``consume=`` for a halted face the
-    mapping owns): the face's guard and testimony ride onto every exit, and so
-    do its debts.
+    Composed through ``ExitSet.sequence``: ``on_completed`` runs beneath each
+    completed face, and a halt the mapping owns (the thrown exception let
+    out, a ``StopIteration`` PEP 479 turns into a ``RuntimeError``) is
+    consumed; every other halt stands. Whatever follows a face keeps its
+    guard, faces and ``owed``.
     """
-    from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-    return ExitSet((face,)).sequence(
-        lambda _value: exit_set, consume=lambda _halt: exit_set
-    )
+    def owned(face):
+        effect = face.effect
+        if thrown is not None and (effect is thrown or effect == thrown):
+            # ``exc is value``: the generator let the thrown exception out.
+            return _bool_exit(False)
+        if _is_stop_iteration(effect):
+            from sugar_lift_py_tests.outcome.exit_set import ExitSet
+
+            return ExitSet.halted(_pep479(effect, blame=blame), state=face.state)
+        return None
+
+    return exit_set.sequence(on_completed, consume=owned)

@@ -26,18 +26,22 @@ from sugar_lift_py_tests.sugar.sugar_base import Sugar
 
 @dataclass(frozen=True)
 class _StarFace:
-    """One except* routing face: residual + temporal state under one guard."""
+    """One except* routing face: residual + temporal state under one path."""
 
-    guard: object
+    # The path into this face: ONE completed arm whose value is the temporal
+    # state (a ``_ReducedBlock``). Its guard, faces and ``owed`` are what
+    # ``ExitSet.sequence`` composed from every handler arm the face ran
+    # through; everything emitted from the face runs beneath it, so nothing
+    # restates them by hand.
+    path: object  # ExitSet
     residual: object  # GroupedRaiseEffect
-    state: object  # _ReducedBlock
-    faces: frozenset
     # Exceptional raises collected on THIS face's guard path only.
     exceptional: tuple
-    # What the path into this face owes, as ``ExitSet.sequence`` composed it
-    # from every handler arm it ran through; every arm emitted from the face
-    # carries it.
-    owed: tuple
+
+    @property
+    def state(self):
+        (arm,) = self.path.exits
+        return arm.value
 
 
 def _matcher_value(matcher, ctx):
@@ -76,11 +80,9 @@ class TryStarSugar(Sugar):
         )
         from sugar_lift_py_tests.in_flight_effect import bind_in_flight_effect
         from sugar_lift_py_tests.outcome.exit_set import (
-            Completed,
             ExitSet,
             Halted,
             _require_exit_set,
-            true_guard,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
@@ -114,12 +116,9 @@ class TryStarSugar(Sugar):
             # Frontier: one face per body halt, then each handler branches it.
             frontier: list[_StarFace] = [
                 _StarFace(
-                    guard=true_guard(),
+                    path=ExitSet.completed(_seed_temporal(exit_.state, ctx)),
                     residual=original,
-                    state=_seed_temporal(exit_.state, ctx),
-                    faces=frozenset(),
                     exceptional=(),
-                    owed=(),
                 )
             ]
             # Faces that leave the residual walk (non-raise halts).
@@ -174,14 +173,11 @@ class TryStarSugar(Sugar):
                     # The handler runs beneath this face's path: ``sequence``
                     # conjoins the face's guard, faces and ``owed`` onto every
                     # handler arm. One next face per composed arm.
-                    path = ExitSet(
-                        (Completed(face.guard, face.state, face.faces, face.owed),)
-                    )
                     # The frontier is built from the handler's arms now: a
                     # handler still waiting on its caller's actuals, whose
                     # carrier ``sequence`` composed, is refused by name here.
                     composed = _require_exit_set(
-                        path.sequence(lambda _state, exits=handler_exits: exits),
+                        face.path.sequence(lambda _state, exits=handler_exits: exits),
                         owner="TryStarSugar.handler",
                     )
                     for arm in composed.exits:
@@ -192,7 +188,7 @@ class TryStarSugar(Sugar):
                             else:
                                 # Non-raise halt leaves the residual walk as
                                 # an exit.
-                                retained.append(arm)
+                                retained.append(ExitSet((arm,)))
                             next_state = (
                                 arm.state
                                 if isinstance(arm.state, _ReducedBlock)
@@ -209,14 +205,19 @@ class TryStarSugar(Sugar):
                                 if isinstance(arm.value, _ReducedBlock)
                                 else face.state
                             )
+                        # The next face's path is this arm continuing as its
+                        # temporal state (``sequence``; ``consume=`` for a
+                        # halted arm): the arm's guard, faces and ``owed``.
+                        def walk_on(_reached, state=next_state):
+                            return ExitSet.completed(state)
+
                         next_frontier.append(
                             _StarFace(
-                                guard=arm.guard,
+                                path=ExitSet((arm,)).sequence(
+                                    walk_on, consume=walk_on
+                                ),
                                 residual=handler_residual,
-                                state=next_state,
-                                faces=arm.faces,
                                 exceptional=exceptional,
-                                owed=arm.owed,
                             )
                         )
                 frontier = next_frontier
@@ -230,27 +231,24 @@ class TryStarSugar(Sugar):
                     effects.append(face.residual)
                 if effects:
                     # Never None: a face that owes a raise answers it (#7825).
+                    # It raises beneath its path, keeping the path's guard,
+                    # faces and ``owed``.
+                    raised = regroup_except_star(original, effects)
                     retained.append(
-                        Halted(
-                            face.guard,
-                            regroup_except_star(original, effects),
-                            face.state,
-                            face.faces,
-                            face.owed,
+                        face.path.sequence(
+                            lambda state, raised=raised: ExitSet.halted(
+                                raised, state=state
+                            )
                         )
                     )
                 else:
-                    retained.append(
-                        Completed(face.guard, face.state, face.faces, face.owed)
-                    )
+                    retained.append(face.path)
 
             # No arm is invented: when no path leaves the handlers (every arm
             # was unsatisfiable, so ``sequence`` dropped it), the continuation
             # is exactly the empty set ``sequence`` composed. A raise is never
-            # a completion (#7825).
-            # Not normalized here: ``sequence`` conjoins the body halt's guard
-            # first and normalizes the composed set once.
-            return ExitSet(tuple(retained))
+            # a completion (#7825). The leaving faces are siblings: one join.
+            return ExitSet(()).union(*retained)
 
         def close(result):
             """The ``finally`` over every arm the try* composed, then its own
@@ -387,44 +385,32 @@ def _reduce_one_from(state, statement):
 
 def _beneath_prefix(state, following):
     """``following``'s faces with ``state``'s entries and transforms before
-    their own; a halt that carries no state halts at ``state``."""
-    from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
+    their own; a halt that carries no state halts at ``state``.
+
+    Each face continues as its own record with the prefix spliced in,
+    composed through ``ExitSet.sequence`` (``consume=`` for the halts): its
+    guard, faces and ``owed`` ride on unchanged."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
     from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
-    out = []
-    for face in following.exits:
-        if isinstance(face, Completed) and isinstance(face.value, _ReducedBlock):
-            out.append(
-                Completed(
-                    face.guard,
-                    replace(
-                        face.value,
-                        entries=(*state.entries, *face.value.entries),
-                        transforms=(*state.transforms, *face.value.transforms),
-                    ),
-                    face.faces,
-                    face.owed,
-                )
-            )
-        elif isinstance(face, Halted):
-            halt_state = face.state
-            if isinstance(halt_state, _ReducedBlock):
-                halt_state = replace(
-                    halt_state,
-                    entries=(*state.entries, *halt_state.entries),
-                    transforms=(*state.transforms, *halt_state.transforms),
-                )
-            elif halt_state is None:
-                halt_state = state
-            out.append(
-                Halted(
-                    face.guard,
-                    face.effect,
-                    halt_state,
-                    face.faces,
-                    face.owed,
-                )
-            )
-        else:
-            out.append(face)
-    return ExitSet(tuple(out)).normalize()
+    def prefixed(record):
+        return replace(
+            record,
+            entries=(*state.entries, *record.entries),
+            transforms=(*state.transforms, *record.transforms),
+        )
+
+    def completed(value):
+        if isinstance(value, _ReducedBlock):
+            return ExitSet.completed(prefixed(value))
+        return ExitSet.completed(value)
+
+    def halted(halt):
+        halt_state = halt.state
+        if isinstance(halt_state, _ReducedBlock):
+            halt_state = prefixed(halt_state)
+        elif halt_state is None:
+            halt_state = state
+        return ExitSet.halted(halt.effect, state=halt_state)
+
+    return following.sequence(completed, consume=halted)

@@ -266,22 +266,18 @@ def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return")
     from sugar_lift_py_tests.gap.panic import construction_panic_gap
     from sugar_lift_py_tests.ir import and_
     from sugar_lift_py_tests.outcome.exit_set import (
-        Completed,
         ExitSet,
-        Halted,
         complement_guard,
         true_guard,
     )
 
-    results = []
-    for face in exit_es.exits:
-        if isinstance(face, Halted):
-            results.append(face)
-            continue
-        block = face.value
+    def returns(block):
+        """What one completed exit face returns, each return under its own
+        guard; ``sequence`` conjoins the face's guard, faces and ``owed``
+        onto every one. Halts bypass."""
         if not isinstance(block, BlockValue):
-            results.append(face)
-            continue
+            return ExitSet.completed(block)
+        rows = []
         authentication = {
             item.slot.slot_id: item.observed_guard
             for item in block.statements
@@ -310,13 +306,8 @@ def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return")
                     requested="native branch-result testimony",
                     fix="carry the branch producer's actual observed guard",
                 )
-            results.append(
-                Completed(
-                    _and(face.guard, _and(remaining, local_guard)),
-                    item.value,
-                    face.faces,
-                    face.owed,
-                )
+            rows.append(
+                ExitSet.completed(item.value, _and(remaining, local_guard))
             )
             remaining = _and(remaining, complement_guard(local_guard))
         if block.can_fall_through:
@@ -331,16 +322,12 @@ def _exit_return_values(exit_es, *, owner="WithSourceResourceSugar.exit-return")
                     requested="native branch-result testimony",
                     fix="carry the branch producer's actual observed guard",
                 )
-            results.append(
-                Completed(
-                    _and(face.guard, _and(remaining, fall_guard)),
-                    NoneValue(),
-                    face.faces,
-                    face.owed,
-                )
-            )
+            rows.append(ExitSet.completed(NoneValue(), _and(remaining, fall_guard)))
         # A terminal residue without a return contributes no completed result.
-    result = ExitSet(tuple(results)).normalize()
+        # The returns are siblings: one join.
+        return ExitSet(()).union(*rows)
+
+    result = exit_es.sequence(returns)
     if not result.exits:
         construction_panic_gap(
             owner=owner,

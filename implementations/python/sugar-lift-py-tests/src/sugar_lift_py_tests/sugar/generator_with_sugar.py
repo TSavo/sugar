@@ -105,7 +105,7 @@ class GeneratorWithSugar(Sugar):
         # The generator-backed manager's __exit__ per body exit: an
         # exception is thrown in at the yield, anything else resumes it.
         body_es = reduce_block_to_exitset(self.body, ctx)
-        exits = []
+        routed_faces = []
         for body_exit in body_es.exits:
             exit_es = generator_manager_exit(
                 entered.machine, body_exit, blame=str(self.site)
@@ -122,8 +122,9 @@ class GeneratorWithSugar(Sugar):
                 routed = ExitSet((body_exit,)).and_exit_truthiness(
                     exit_es, site=self.site
                 )
-            exits.extend(routed.exits)
-        result = ExitSet(tuple(exits)).normalize()
+            routed_faces.append(routed)
+        # The routed body faces are siblings: they join through the one join.
+        result = ExitSet(()).union(*routed_faces)
         facts = ()
         if self.enter_slot_id is not None:
             facts = EnterResultBinding(self.enter_slot_id, entered.value).to_facts(
@@ -208,12 +209,8 @@ class GeneratorObjectWithSugar(Sugar):
         manager_es = _require_exit_set(
             self.manager.desugar(ctx), owner="GeneratorObjectWithSugar.manager"
         )
-        exits = []
-        for manager_exit in manager_es.exits:
-            if isinstance(manager_exit, Halted):
-                exits.append(manager_exit)
-                continue
-            if not isinstance(manager_exit.value, GeneratorConstructionV1):
+        def refused(generator):
+            if not isinstance(generator, GeneratorConstructionV1):
                 from sugar_source_tree.panic import SugarNotWritten
 
                 raise SugarNotWritten(
@@ -221,7 +218,7 @@ class GeneratorObjectWithSugar(Sugar):
                     owner="GeneratorObjectWithSugar.desugar",
                     observed=(
                         "generator-function call completed with "
-                        f"{type(manager_exit.value).__name__}"
+                        f"{type(generator).__name__}"
                     ),
                     requested="GeneratorConstructionV1 (the generator object)",
                     fix="construct the generator object or keep the with loud",
@@ -236,16 +233,12 @@ class GeneratorObjectWithSugar(Sugar):
             # The with halts at its head: nothing was reached inside the
             # statement, so its state is the empty record the block reducer
             # splices its prefix onto.
-            exits.append(
-                Halted(
-                    manager_exit.guard,
-                    effect,
-                    _ReducedBlock((), True, ()),
-                    manager_exit.faces,
-                    manager_exit.owed,
-                )
-            )
-        return ExitSet(tuple(exits)).normalize()
+            return ExitSet.halted(effect, state=_ReducedBlock((), True, ()))
+
+        # The refusal runs beneath each completed manager face
+        # (``ExitSet.sequence``): it keeps the face's guard, faces and
+        # ``owed``. A halted manager face stands.
+        return manager_es.sequence(refused)
 
 
 @dataclass(frozen=True)
@@ -290,11 +283,7 @@ class NonManagerObjectWithSugar(Sugar):
         manager_es = _require_exit_set(
             self.manager.desugar(ctx), owner="NonManagerObjectWithSugar.manager"
         )
-        exits = []
-        for manager_exit in manager_es.exits:
-            if isinstance(manager_exit, Halted):
-                exits.append(manager_exit)
-                continue
+        def refused(_head):
             effect = RaiseEffect.for_builtin(
                 refusal.exception_name,
                 occurrence=f"non-manager-with-refusal:{blame}",
@@ -303,13 +292,9 @@ class NonManagerObjectWithSugar(Sugar):
                 producer_node_owner="NonManagerObjectWithSugar",
             )
             # Halted at the head: the empty record the reducer splices onto.
-            exits.append(
-                Halted(
-                    manager_exit.guard,
-                    effect,
-                    _ReducedBlock((), True, ()),
-                    manager_exit.faces,
-                    manager_exit.owed,
-                )
-            )
-        return ExitSet(tuple(exits)).normalize()
+            return ExitSet.halted(effect, state=_ReducedBlock((), True, ()))
+
+        # The refusal runs beneath each completed head face
+        # (``ExitSet.sequence``): it keeps the face's guard, faces and
+        # ``owed``. A halted head face stands.
+        return manager_es.sequence(refused)

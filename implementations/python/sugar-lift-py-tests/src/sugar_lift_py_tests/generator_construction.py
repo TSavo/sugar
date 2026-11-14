@@ -1809,7 +1809,7 @@ class GeneratorConstructionV1:
                 return self._gap(requested, f"assert returned {type(outcome).__name__}")
             if outcome.exits and outcome.halts() == outcome.exits:
                 return self._fold_pending_cited_opaque_exits(
-                    ExitSet(tuple(replace(h, state=self) for h in outcome.halts()))
+                    self._halted_here(outcome)
                 )
             if outcome.completed_value() is None or outcome.owed_items():
                 return self._gap(requested, f"assert returned {type(outcome).__name__}")
@@ -1843,9 +1843,7 @@ class GeneratorConstructionV1:
                 return self._gap(requested, "While guard is not ground")
             if guard_outcome.exits and guard_outcome.halts() == guard_outcome.exits:
                 return self._fold_pending_cited_opaque_exits(
-                    ExitSet(
-                        tuple(replace(h, state=self) for h in guard_outcome.halts())
-                    )
+                    self._halted_here(guard_outcome)
                 )
             if guard_outcome.completed_value() is None or guard_outcome.owed_items():
                 return self._gap(requested, "While guard is not ground")
@@ -1864,7 +1862,7 @@ class GeneratorConstructionV1:
                 and outcome.halts() == outcome.exits
             ):
                 return self._fold_pending_cited_opaque_exits(
-                    ExitSet(tuple(replace(h, state=self) for h in outcome.halts()))
+                    self._halted_here(outcome)
                 )
             return self._gap(
                 requested, f"raise did not halt ({type(outcome).__name__})"
@@ -1994,7 +1992,7 @@ class GeneratorConstructionV1:
                 # still runs any already-written cited exit (as the attribute
                 # store, assert and term steps do for their halts).
                 return self._fold_pending_cited_opaque_exits(
-                    ExitSet(tuple(replace(h, state=self) for h in value.halts()))
+                    self._halted_here(value)
                 )
             if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
                 return value.and_then(continue_return)
@@ -2047,7 +2045,7 @@ class GeneratorConstructionV1:
             # still runs any already-written cited exit (as the attribute
             # store, assert and term steps do for their halts).
             return self._fold_pending_cited_opaque_exits(
-                ExitSet(tuple(replace(h, state=self) for h in value.halts()))
+                self._halted_here(value)
             )
         if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
             return value.and_then(continue_yield)
@@ -2061,7 +2059,7 @@ class GeneratorConstructionV1:
             return self._gap(requested, type(iterable).__name__)
         if iterable.exits and iterable.halts() == iterable.exits:
             return self._fold_pending_cited_opaque_exits(
-                ExitSet(tuple(replace(h, state=self) for h in iterable.halts()))
+                self._halted_here(iterable)
             )
         if iterable.completed_value() is None or iterable.owed_items():
             return self._gap(requested, type(iterable).__name__)
@@ -2073,7 +2071,7 @@ class GeneratorConstructionV1:
             return self._gap(requested, type(iterator).__name__)
         if iterator.exits and iterator.halts() == iterator.exits:
             return self._fold_pending_cited_opaque_exits(
-                ExitSet(tuple(replace(h, state=self) for h in iterator.halts()))
+                self._halted_here(iterator)
             )
         if iterator.completed_value() is None or iterator.owed_items():
             return self._gap(requested, type(iterator).__name__)
@@ -2252,7 +2250,7 @@ class GeneratorConstructionV1:
             return self._gap(requested, type(iterable).__name__)
         if iterable.exits and iterable.halts() == iterable.exits:
             return self._fold_pending_cited_opaque_exits(
-                ExitSet(tuple(replace(h, state=self) for h in iterable.halts()))
+                self._halted_here(iterable)
             )
         if iterable.completed_value() is None or iterable.owed_items():
             return self._gap(requested, type(iterable).__name__)
@@ -2272,7 +2270,7 @@ class GeneratorConstructionV1:
             return self._gap(requested, type(iterator).__name__)
         if iterator.exits and iterator.halts() == iterator.exits:
             return self._fold_pending_cited_opaque_exits(
-                ExitSet(tuple(replace(h, state=self) for h in iterator.halts()))
+                self._halted_here(iterator)
             )
         if iterator.completed_value() is None or iterator.owed_items():
             return self._gap(requested, type(iterator).__name__)
@@ -2341,7 +2339,7 @@ class GeneratorConstructionV1:
                         callee="StopIteration.value", arg=step.iterator
                     )
                 return self._delegation_returned(returned, requested)
-            return ExitSet(tuple(replace(h, state=self) for h in halts))
+            return self._halted_here(outcome)
         if outcome.owed_items() or not isinstance(
             outcome.completed_value(), NextResult
         ):
@@ -2392,7 +2390,7 @@ class GeneratorConstructionV1:
         if isinstance(outcome, ExitSet):
             if outcome.exits and outcome.halts() == outcome.exits:
                 return self._fold_pending_cited_opaque_exits(
-                    ExitSet(tuple(replace(h, state=self) for h in outcome.halts()))
+                    self._halted_here(outcome)
                 )
             if outcome.completed_value() is None or outcome.owed_items():
                 return self._gap(
@@ -2472,7 +2470,7 @@ class GeneratorConstructionV1:
             ):
                 machine = replace(self, cursor=self.cursor + 1)
                 return machine._transition(requested)
-            return ExitSet(tuple(replace(h, state=self) for h in halts))
+            return self._halted_here(outcome)
         if outcome.owed_items() or not isinstance(
             outcome.completed_value(), NextResult
         ):
@@ -2676,10 +2674,7 @@ class GeneratorConstructionV1:
             if not isinstance(continued, ExitSet):
                 continued = ExitSet.completed(continued)
             parts.append(_guard_exits(continued, face))
-        result = parts[0]
-        for part in parts[1:]:
-            result = result.union(part)
-        return result.normalize()
+        return parts[0].union(*parts[1:])
 
 
     def _transition_term_exitset(
@@ -2712,7 +2707,7 @@ class GeneratorConstructionV1:
         if outcome.halts():
             parts.append(
                 self._fold_pending_cited_opaque_exits(
-                    ExitSet(tuple(replace(h, state=self) for h in outcome.halts()))
+                    self._halted_here(ExitSet(outcome.halts()))
                 )
             )
         if completed:
@@ -2819,8 +2814,6 @@ class GeneratorConstructionV1:
         """
         from sugar_lift_py_tests.outcome import ExitSet
 
-        from sugar_lift_py_tests.outcome.exit_set import Completed, Halted
-
         pending = []
         last = None
         for index, step in enumerate(
@@ -2846,12 +2839,7 @@ class GeneratorConstructionV1:
             # A halted edge leaves THIS machine at this cursor: whatever
             # internal state a reduced helper carried, the generator's
             # pre-halt state is the machine itself.
-            incoming = ExitSet(
-                tuple(
-                    replace(face, state=self) if isinstance(face, Halted) else face
-                    for face in outgoing.exits
-                )
-            )
+            incoming = self._halted_here(outgoing)
         else:
             incoming = ExitSet.completed(outgoing)
         result = incoming
@@ -2864,16 +2852,27 @@ class GeneratorConstructionV1:
         # A face the exit SUPPRESSED completes carrying the pre-halt state --
         # this machine, still poised on the raise. Python continues after the
         # ``with`` statement, so that face's successor is the machine past the
-        # last exit step, never the raise again.
+        # last exit step, never the raise again. It continues as that machine
+        # beneath itself (``sequence``), keeping its guard, faces and owed.
         after_with = replace(self, cursor=last + 1)
-        return ExitSet(
-            tuple(
-                # The suppressed face keeps its guard, faces and owed.
-                replace(face, value=after_with)
-                if isinstance(face, Completed) and face.value is self
-                else face
-                for face in result.exits
-            )
+        return result.sequence(
+            lambda value: ExitSet.completed(after_with if value is self else value)
+        )
+
+    def _halted_here(self, outcome):
+        """``outcome`` with every halt leaving the machine HERE.
+
+        A halted edge's pre-halt state is this machine at this cursor,
+        whatever internal state a reduced helper carried. Each halt continues
+        as itself from this state through ``ExitSet.sequence`` (``consume=``),
+        so its guard, faces and ``owed`` ride on; a completed arm continues as
+        itself.
+        """
+        from sugar_lift_py_tests.outcome import ExitSet
+
+        return outcome.sequence(
+            ExitSet.completed,
+            consume=lambda halt: ExitSet.halted(halt.effect, state=self),
         )
 
     def _transition_branch(self, step: "IfStepV1", requested: str):
@@ -2945,18 +2944,15 @@ class GeneratorConstructionV1:
             )
             from sugar_lift_py_tests.ir import not_
 
-            branches = ExitSet(
-                (
-                    Completed(
-                        guard_formula,
-                        self._spliced(step.then_steps),
-                        frozenset({then_face}),
-                    ),
-                    Completed(
-                        not_(guard_formula),
-                        self._spliced(step.else_steps),
-                        frozenset({else_face}),
-                    ),
+            # Each side is one fresh arm (``ExitSet.completed``) restricted to
+            # its face of the split; the two sides join through the one join.
+            branches = (
+                ExitSet.completed(self._spliced(step.then_steps))
+                .guarded(guard_formula, then_face)
+                .union(
+                    ExitSet.completed(self._spliced(step.else_steps)).guarded(
+                        not_(guard_formula), else_face
+                    )
                 )
             )
 
@@ -3010,7 +3006,7 @@ class GeneratorConstructionV1:
             and guard_outcome.halts() == guard_outcome.exits
         ):
             return self._fold_pending_cited_opaque_exits(
-                ExitSet(tuple(replace(h, state=self) for h in guard_outcome.halts()))
+                self._halted_here(guard_outcome)
             )
         if (
             isinstance(guard_outcome, ExitSet)
@@ -3297,7 +3293,7 @@ class GeneratorConstructionV1:
 
         if _halts_with_a_raise(value):
             return self._fold_pending_cited_opaque_exits(
-                ExitSet(tuple(replace(h, state=self) for h in value.halts()))
+                self._halted_here(value)
             )
         if isinstance(value, (ExitSet, NativeOperationExitCarrierV1)):
             return value.and_then(continue_step)
@@ -3417,12 +3413,7 @@ def _as_exit_set(transition) -> ExitSet:
 
 def _routed_union(routed: list) -> ExitSet:
     """The union of the exits a throw routed, face by face (none: no exit)."""
-    if not routed:
-        return ExitSet(())
-    result = routed[0]
-    for part in routed[1:]:
-        result = result.union(part)
-    return result.normalize()
+    return ExitSet(()).union(*routed)
 
 
 def _halts_with_a_raise(value) -> bool:

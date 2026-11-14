@@ -299,15 +299,24 @@ def test_a_generator_routing_face_debt_rides_every_exit_beneath_it() -> None:
 
 
 def test_a_generator_manager_mapped_face_debt_rides_every_exit_beneath_it() -> None:
-    from sugar_lift_py_tests.generator_manager_exit import _guard_with
+    from sugar_lift_py_tests.generator_manager_exit import _map_exits
 
     inner, completed_face, halted_face = _routing_faces()
-    assert [arm.owed for arm in _guard_with(inner, completed_face).exits] == [
-        ("debt:face", "debt:inner")
-    ]
-    assert [arm.owed for arm in _guard_with(inner, halted_face).exits] == [
-        ("debt:halt", "debt:inner")
-    ]
+    mapped = _map_exits(ExitSet((completed_face,)), lambda _value: inner, "test")
+    assert [arm.owed for arm in mapped.exits] == [("debt:face", "debt:inner")]
+    # The thrown exception let out is a halt the mapping owns: what follows
+    # it (``False``) owes the halt's debt.
+    let_out = _map_exits(
+        ExitSet((halted_face,)),
+        lambda _value: inner,
+        "test",
+        thrown=halted_face.effect,
+    )
+    assert [arm.owed for arm in let_out.exits] == [("debt:halt",)]
+    # A halt the mapping does not own stands, owing what it owed.
+    stands = _map_exits(ExitSet((halted_face,)), lambda _value: inner, "test")
+    assert stands.exits == (halted_face,)
+    assert [arm.owed for arm in stands.exits] == [("debt:halt",)]
 
 
 # --- owed_calls: a deferred carrier's reduced arms are read by the one reader
