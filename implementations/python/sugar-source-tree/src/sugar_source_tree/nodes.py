@@ -2143,6 +2143,10 @@ def exception_type_identity_of_import_target(target_symbol: str):
     return exception_type_identity_of_symbol(target_symbol)
 
 
+# ``SourceUnit._projected_manager_heads_memo`` while the projection runs.
+_PROJECTING_MANAGER_HEADS = object()
+
+
 @dataclass(frozen=True)
 class SourceUnit:
     """One parsed source: oracle-pinned text, its content address, its line table.
@@ -2260,6 +2264,12 @@ class SourceUnit:
     _class_namespace_stores_memo: object = field(
         init=False, default=None, repr=False, compare=False
     )
+    # ``(typed module, projected functions, {use-site span: provider Call})``:
+    # every function that writes a bare-Name ``with`` head, substituted once
+    # (``projected_manager_heads``), rebuilt if the typed root is replaced.
+    _projected_manager_heads_memo: object = field(
+        init=False, default=None, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "line_table", LineTable(self.source))
@@ -2297,6 +2307,7 @@ class SourceUnit:
         object.__setattr__(self, "_module_binding_states_memo", None)
         object.__setattr__(self, "_module_statement_starts_memo", None)
         object.__setattr__(self, "_class_namespace_stores_memo", None)
+        object.__setattr__(self, "_projected_manager_heads_memo", None)
 
     def _published_enrollment_decisions(
         self, occurrence: SourceOccurrenceIdentityV1
@@ -2691,6 +2702,85 @@ class SourceUnit:
                 fix="construct this SourceUnit only through SourceFile",
             )
         return self._constructed_module
+
+    def projected_manager_heads(self) -> tuple:
+        """``(projected functions, {use-site span: provider Call})``.
+
+        ``with m:`` enters the manager the Name reaches.  A function body
+        substituted under no outer binding (``substitute({})``) replaces the
+        Name with its reaching value while ``WithItem.substitute`` keeps the
+        item's immutable use coordinate, so the projection preserves
+        shadowing and undecided values with no second binding mechanism.
+        Only functions that write a bare-Name manager -- single-item
+        ``with m:`` and multi-item ``with m, n:`` alike -- are projected, so
+        unrelated frames demand nothing.
+
+        Read off this one opened file, once per typed root, and kept on the
+        unit.  Population reads its manager uses from the projected
+        functions (``_projected_manager_call_uses``); a bare-Name head reads
+        its provider Call from the index (``With._provider_manager_call``).
+        The index holds a Call borrowed from another locus at the use site it
+        was projected to, one use site per Call: a Call projected to two use
+        sites is held at the later one, as population's call-keyed uses hold
+        it.
+        """
+        module = self._require_typed_module(
+            "SourceUnit.projected_manager_heads", blame=self.filename
+        )
+        memo = self._projected_manager_heads_memo
+        if memo is _PROJECTING_MANAGER_HEADS:
+            raise BackendDefect(
+                blame=self.filename,
+                owner="SourceUnit.projected_manager_heads",
+                observed="the projection asked for itself while projecting",
+                requested="one projection of this file's bare-Name manager heads",
+                fix="a substituted item reads its own projected head, never the file's",
+            )
+        if memo is not None and memo[0] is module:
+            return memo[1], memo[2]
+        object.__setattr__(
+            self, "_projected_manager_heads_memo", _PROJECTING_MANAGER_HEADS
+        )
+        try:
+            projected = tuple(
+                function.substitute({})
+                for function in self.constructed_module.function_nodes
+                if any(
+                    isinstance(node, With)
+                    and any(item.context_expr.kind == "Name" for item in node.items)
+                    for node in function.walk()
+                )
+            )
+            by_call: dict = {}
+            for root in projected:
+                for node in root.walk():
+                    if not isinstance(node, (With, AsyncWith)):
+                        continue
+                    for item in node.items:
+                        expr = item.context_expr
+                        if not isinstance(expr, Call):
+                            continue
+                        span = expr.line_col_span()
+                        call_span = (
+                            span.start_line,
+                            span.start_col,
+                            span.end_line,
+                            span.end_col,
+                        )
+                        use_site = item._manager_use_site_span()
+                        if use_site == call_span:
+                            # The head is its own call: a direct-call manager,
+                            # not one borrowed from another locus.
+                            continue
+                        by_call[call_span] = (use_site, expr)
+        except BaseException:
+            object.__setattr__(self, "_projected_manager_heads_memo", None)
+            raise
+        providers = {use_site: call for use_site, call in by_call.values()}
+        object.__setattr__(
+            self, "_projected_manager_heads_memo", (module, projected, providers)
+        )
+        return projected, providers
 
     def _lexical_import_seat(self):
         """``(root, path)`` this unit's lexical import pass runs under: the
@@ -16511,41 +16601,36 @@ class With(Statement):
     def _provider_manager_call(self, item: WithItem):
         """The Call that authenticates this manager item, by binding not spelling.
 
-        A direct Call head is already the provider.  A bare Name head reaches
-        its provider only through the seat populate installed at the immutable
-        manager-use coordinate when projecting ordinary assignment testimony.
-        Same spelling elsewhere never authorizes a manager.
+        A direct Call head is already the provider, and so is the base Call of
+        a branch-selected arm's opaque call-result identity
+        (``selected_manager_calls``: it constructs as its base call).  A bare
+        Name head of this file's own ``with`` reaches its provider through the
+        file's one projection of ordinary assignment testimony, at the
+        immutable manager-use coordinate (``SourceUnit.projected_manager_heads``).
+        A substituted item's head is already its projection: a Name left there
+        reaches no Call.  Same spelling elsewhere never authorizes a manager.
         """
-        if isinstance(item.context_expr, Call):
-            return item.context_expr
-        context = self._require_construction_context(
-            owner="With._provider_manager_call"
-        )
-        from sugar_lift_py_tests.context_manager_resolution import (
-            SourceFragmentCoordinateV1,
-            TreeConstructionContextV1,
-        )
-
-        if not isinstance(context, TreeConstructionContextV1):
+        expr = item.context_expr
+        if isinstance(expr, Call):
+            return expr
+        if (
+            hasattr(item, "selected_arm_of_start_line")
+            and expr.kind == "OpaqueObjectStateV1"
+            and isinstance(expr.base, Call)
+        ):
+            return expr.base
+        if expr.kind != "Name" or hasattr(item, "manager_use_site_start_line"):
             return None
-        start_line, start_col, end_line, end_col = item._manager_use_site_span()
-        coordinate = SourceFragmentCoordinateV1(
-            self.unit.source_cid,
-            start_line,
-            start_col,
-            end_line,
-            end_col,
-        )
-        call = context.source_manager_provider_calls.get(coordinate)
-        return call if isinstance(call, Call) else None
+        _projected, providers = self.unit.projected_manager_heads()
+        return providers.get(item._manager_use_site_span())
 
     def _generator_manager_frame(self, item: WithItem):
-        call = self._provider_manager_call(item)
-        if call is None:
-            return None
         context = self._require_construction_context(
             owner="With._generator_manager_frame"
         )
+        call = self._provider_manager_call(item)
+        if call is None:
+            return None
         from sugar_lift_py_tests.context_manager_resolution import (
             SourceFragmentCoordinateV1,
             TreeConstructionContextV1,

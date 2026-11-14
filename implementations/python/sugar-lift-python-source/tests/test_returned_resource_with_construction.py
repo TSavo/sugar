@@ -70,6 +70,16 @@ def _with_statement(with_node):
     return substituted
 
 
+def _manager_use_sites(with_node):
+    """Each item's manager use-site coordinate, read off the tree."""
+    return tuple(
+        SourceFragmentCoordinateV1(
+            with_node.unit.source_cid, *item._manager_use_site_span()
+        )
+        for item in with_node.items
+    )
+
+
 _GUARD_SOURCE = (
     "class Guard:\n"
     "    def __init__(self, marker):\n"
@@ -376,8 +386,8 @@ def test_real_option_context_coordinates_drive_every_resource_lifecycle_face():
     )
     receivers = tuple(
         coordinate
-        for coordinate in context.source_manager_provider_calls
-        if coordinate.start_line == 25
+        for coordinate, item in zip(_manager_use_sites(with_node), with_node.items)
+        if with_node._provider_manager_call(item) is not None
     )
     assert len(receivers) == 1, (
         "authenticated pandas option_context use at line 25 must publish exactly "
@@ -509,11 +519,7 @@ def test_real_option_context_published_ref_selects_source_resource_at_constructi
         for node in tree.nodes()
         if node.kind == "With" and node.line_col_span().start_line == 25
     )
-    receiver = next(
-        coordinate
-        for coordinate in context.source_manager_provider_calls
-        if coordinate.start_line == 25
-    )
+    (receiver,) = _manager_use_sites(with_node)
     refs = context.contract_refs
     enter_definition = refs.require_native_definition(
         receiver, NativeProtocolSlot.CONTEXT_ENTER
@@ -587,11 +593,7 @@ def test_real_option_context_executes_its_source_body_and_exit():
         for node in tree.nodes()
         if node.kind == "With" and node.line_col_span().start_line == 25
     )
-    receiver = next(
-        coordinate
-        for coordinate in context.source_manager_provider_calls
-        if coordinate.start_line == 25
-    )
+    (receiver,) = _manager_use_sites(with_node)
     enter_definition = context.contract_refs.require_native_definition(
         receiver, NativeProtocolSlot.CONTEXT_ENTER
     )
@@ -635,7 +637,7 @@ def test_renamed_source_generator_resources_use_the_same_closed_factory_arm(
         artifact_graph_cache=_contextmanager_dependency_graphs(),
     )
     with_node = next(node for node in tree.nodes() if node.kind == "With")
-    receiver = next(iter(context.source_manager_provider_calls))
+    (receiver,) = _manager_use_sites(with_node)
 
     class RecordingDefinitionDoor:
         def __init__(self, delegate):
@@ -700,7 +702,7 @@ def test_renamed_pre_yield_branch_and_cleanup_spellings_share_one_resource_path(
         artifact_graph_cache=_contextmanager_dependency_graphs(),
     )
     with_node = next(node for node in tree.nodes() if node.kind == "With")
-    receiver = next(iter(context.source_manager_provider_calls))
+    (receiver,) = _manager_use_sites(with_node)
 
     class RecordingDefinitionDoor:
         def __init__(self, delegate):

@@ -1117,11 +1117,6 @@ class TreeConstructionContextV1:
     # construction consumes the testimony only when execution reaches the call.
     opaque_source_call_obligations: dict = field(default_factory=dict)
     source_derived_contract_refs: dict = field(default_factory=dict)
-    # Reaching provider Calls for bare-Name manager uses, keyed by the immutable
-    # manager-use coordinate.  Binding coordinates own identity: the Name at the
-    # With head is not the provider; this table seats the authenticated Call
-    # that the Name reaches so With construction never re-resolves by spelling.
-    source_manager_provider_calls: dict = field(default_factory=dict)
     # Manager uses whose head is proven, from source, not to be a context
     # manager (a class MRO without ``__enter__`` or ``__exit__``): keyed like
     # ``source_derived_contract_refs``; the With raises the interpreter's own

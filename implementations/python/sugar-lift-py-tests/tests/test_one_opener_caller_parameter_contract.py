@@ -33,7 +33,6 @@ _POPULATED_TABLES = (
     "source_derived_contract_refs",
     "source_call_frames",
     "opaque_source_call_obligations",
-    "source_manager_provider_calls",
     "source_non_manager_heads",
 )
 
