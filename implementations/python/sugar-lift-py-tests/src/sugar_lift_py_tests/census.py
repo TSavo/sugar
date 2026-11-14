@@ -55,7 +55,7 @@ def census(root: Path) -> int:
         open_source_file_for_construction,
         provisional_contract_refs_from_demands,
     )
-    from sugar_source_tree.panic import SugarNotWritten
+    from sugar_source_tree.panic import LifterRefusal, SugarNotWritten
     from sugar_source_tree.reporter import CollectingReporter
     from sugar_source_tree.tree import SourceTree
 
@@ -128,8 +128,21 @@ def census(root: Path) -> int:
         # row so the rest of the corpus is still measured. Advisor ruled
         # swallowed-throw an honest permanent membrane class for this reason.
         # Product construction paths must NOT copy this pattern.
+        #
+        # A refusal is a ``BaseException`` (``LifterRefusal``), so ``except
+        # Exception`` no longer sees a ``BackendDefect`` / ``VocabularyMissing``
+        # that escaped the walk. It is held here by name, on its own red row in
+        # the same crash ledger (the census exits 1); the sanctioned shape is
+        # enrolled in scripts/construction_panic_catch_law.py.
         try:
             _, panic_row = collect_construction_panic(rel, _measure_file)
+        except LifterRefusal as refusal:
+            crashes[f"REFUSAL:{type(refusal).__name__}"] += 1
+            print(
+                f"[{i + 1}/{len(files)}]  REFUSAL {type(refusal).__name__} {rel}",
+                flush=True,
+            )
+            continue
         except Exception as e:  # a crash is a DEFECT row, never silence
             crashes[type(e).__name__] += 1
             print(

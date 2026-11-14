@@ -77,6 +77,7 @@ def _link_unit_of_f(source: str):
         function_universe_outcome,
     )
     from sugar_source_tree import nodes
+    from sugar_source_tree.panic import LifterRefusal
 
     (fn,) = [
         node
@@ -85,7 +86,7 @@ def _link_unit_of_f(source: str):
     ]
     try:
         outcome = function_universe_outcome(fn)
-    except Exception:  # noqa: BLE001 - a refusal enrols no link unit, so owes nothing
+    except (Exception, LifterRefusal):  # noqa: BLE001 - a refusal owes nothing
         return None
     value = outcome.completed_value() if isinstance(outcome, ExitSet) else None
     if not isinstance(value, UniverseValue):

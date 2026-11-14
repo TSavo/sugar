@@ -356,6 +356,202 @@ def test_current_repository_construction_panic_catch_law() -> None:
     )
 
 
+def test_both_refusal_families_share_one_base_exception_root() -> None:
+    """One refusal: ``except Exception`` never holds either family."""
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
+    from sugar_source_tree.panic import (
+        BackendDefect,
+        LifterRefusal,
+        SourceTreePanic,
+        SugarNotWritten,
+    )
+
+    assert issubclass(ConstructionPanic, LifterRefusal)
+    assert issubclass(SourceTreePanic, LifterRefusal)
+    assert issubclass(SugarNotWritten, LifterRefusal)
+    assert issubclass(BackendDefect, LifterRefusal)
+    assert issubclass(LifterRefusal, BaseException)
+    assert not issubclass(LifterRefusal, Exception)
+
+
+def test_runtime_family_names_both_families_and_their_subclasses() -> None:
+    names = _SCANNER.runtime_refusal_names()
+
+    assert {
+        "LifterRefusal",
+        "ConstructionPanic",
+        "SourceTreePanic",
+        "SugarNotWritten",
+        "BackendDefect",
+        "VocabularyMissing",
+        "UnattributableRefusal",
+    } <= names
+
+
+def _write_package(tmp_path: Path, source: str) -> Path:
+    pkg = tmp_path / "sugar_lift_py_tests"
+    pkg.mkdir()
+    (pkg / "bad.py").write_text(source, encoding="utf-8")
+    return pkg
+
+
+def test_scanner_flags_soft_sugar_not_written_catch(tmp_path: Path) -> None:
+    pkg = _write_package(
+        tmp_path,
+        """
+from sugar_source_tree.panic import SugarNotWritten
+
+def dig(node):
+    try:
+        return node.sugar()
+    except SugarNotWritten:
+        return None
+""",
+    )
+
+    offenders = _SCANNER.scan_package(pkg)
+
+    assert [(row.path, row.kind) for row in offenders] == [
+        ("bad.py", "construction-panic-catch-outside-membrane")
+    ]
+
+
+def test_scanner_flags_a_refusal_inside_a_tuple_and_an_alias(tmp_path: Path) -> None:
+    pkg = _write_package(
+        tmp_path,
+        """
+from sugar_source_tree.panic import BackendDefect as Broken
+from sugar_source_tree import panic
+
+def tuple_catch(node):
+    try:
+        return node.sugar()
+    except (OSError, panic.SourceTreePanic):
+        return None
+
+def alias_catch(node):
+    try:
+        return node.sugar()
+    except Broken:
+        return None
+""",
+    )
+
+    offenders = _SCANNER.scan_package(pkg)
+
+    assert len(offenders) == 2
+    assert {row.kind for row in offenders} == {
+        "construction-panic-catch-outside-membrane"
+    }
+
+
+def test_scanner_flags_a_subclass_the_scanned_sources_define(tmp_path: Path) -> None:
+    pkg = _write_package(
+        tmp_path,
+        """
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+class LocalRefusal(ConstructionPanic):
+    pass
+
+class DeeperRefusal(LocalRefusal):
+    pass
+
+def dig(node):
+    try:
+        return node.sugar()
+    except DeeperRefusal:
+        return None
+""",
+    )
+
+    offenders = _SCANNER.scan_package(pkg)
+
+    assert [(row.path, row.kind) for row in offenders] == [
+        ("bad.py", "construction-panic-catch-outside-membrane")
+    ]
+
+
+def test_scanner_flags_a_soft_isinstance_on_a_tree_refusal(tmp_path: Path) -> None:
+    pkg = _write_package(
+        tmp_path,
+        """
+from sugar_source_tree.panic import SugarNotWritten
+
+def classify(error):
+    if isinstance(error, (KeyError, SugarNotWritten)):
+        return None
+    raise error
+""",
+    )
+
+    offenders = _SCANNER.scan_package(pkg)
+
+    assert [(row.path, row.kind) for row in offenders] == [
+        ("bad.py", "factory-panic-isinstance-soft-return")
+    ]
+
+
+def test_a_construction_panic_reraise_no_longer_shields_a_broad_catch(
+    tmp_path: Path,
+) -> None:
+    """Re-raising one family leaves the other family in the broad handler."""
+    pkg = _write_package(
+        tmp_path,
+        """
+from sugar_lift_py_tests.gap.panic import ConstructionPanic
+
+def dig(node):
+    try:
+        return node.sugar()
+    except ConstructionPanic:
+        raise
+    except BaseException:
+        return None
+""",
+    )
+
+    offenders = _SCANNER.scan_package(pkg)
+
+    assert [(row.path, row.kind) for row in offenders] == [
+        ("bad.py", "construction-panic-catch-outside-membrane")
+    ]
+
+
+def test_a_root_reraise_shields_a_later_broad_catch(tmp_path: Path) -> None:
+    pkg = _write_package(
+        tmp_path,
+        """
+from sugar_source_tree.panic import LifterRefusal
+
+def dig(node):
+    try:
+        return node.sugar()
+    except LifterRefusal:
+        raise
+    except BaseException:
+        return None
+""",
+    )
+
+    assert _SCANNER.scan_package(pkg) == []
+
+
+def test_except_exception_is_not_a_refusal_catch(tmp_path: Path) -> None:
+    pkg = _write_package(
+        tmp_path,
+        """
+def dig(node):
+    try:
+        return node.sugar()
+    except Exception:
+        return None
+""",
+    )
+
+    assert _SCANNER.scan_package(pkg) == []
+
+
 def test_scanner_reports_missing_root_as_auditor_error(tmp_path: Path) -> None:
     offenders = _SCANNER.scan_repository(tmp_path / "missing")
 

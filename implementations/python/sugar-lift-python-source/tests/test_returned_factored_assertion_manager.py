@@ -41,6 +41,7 @@ from sugar_lift_python_source.manager_summary_derivation import (
 )
 from sugar_lift_python_source.resolution_session import SourceResolutionSession
 from sugar_source_tree.nodes import With
+from sugar_source_tree.panic import LifterRefusal
 from sugar_source_tree.tree import SourceFile
 
 # Match sole-path dual-mode / as-binding fixtures that populate already seals.
@@ -495,7 +496,7 @@ def test_lying_wrapper_cannot_borrow_assertion_contract(tmp_path: Path):
     # Construction must not produce WithEffectBoundarySugar for the lie.
     try:
         sugar = node.sugar()
-    except Exception:
+    except (Exception, LifterRefusal):
         return
     assert not isinstance(sugar, WithEffectBoundarySugar), type(sugar)
 

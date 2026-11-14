@@ -20,7 +20,7 @@ import json
 import sys
 from pathlib import Path
 
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_source_tree.panic import LifterRefusal
 
 _SCRIPTS = Path(__file__).resolve().parent
 if str(_SCRIPTS) not in sys.path:
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
                 if line not in seen:
                     seen.add(line)
                     print("IDENT_FAULT " + line, flush=True)
-            except ConstructionPanic:
+            except LifterRefusal:
                 raise  # a construction refusal propagates by its own name
             except BaseException as error:  # noqa: BLE001 -- instrument, named
                 if isinstance(error, (KeyboardInterrupt, SystemExit, GeneratorExit)):

@@ -38,7 +38,7 @@ from pathlib import Path
 
 from sugar_lift_py_tests.measurement_ceiling import CEILING_ENV_VAR
 
-from sugar_lift_py_tests.gap.panic import ConstructionPanic
+from sugar_source_tree.panic import LifterRefusal
 
 _CORPUS_FILE = "core/groupby/generic.py"
 
@@ -250,7 +250,7 @@ def _timed_construct(module_source: str, bound_s: float) -> tuple[str, float]:
                 )
             else:
                 outcome = str(kind)
-        except ConstructionPanic:
+        except LifterRefusal:
             raise  # a construction refusal propagates by its own name
         except BaseException as error:  # noqa: BLE001 -- diagnosis, named
             # The MESSAGE, not just the type. A probe whose every arm returns

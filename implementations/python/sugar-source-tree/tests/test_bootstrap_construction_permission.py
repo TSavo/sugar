@@ -37,7 +37,7 @@ import sugar_source_tree.backend as backend_module
 from sugar_lift_py_tests.canonicalizer import blake3_512_of
 from sugar_lift_py_tests.import_binding import authenticated_import_uses
 from sugar_source_tree.nodes import Node
-from sugar_source_tree.panic import BareConstructionDoor
+from sugar_source_tree.panic import BareConstructionDoor, LifterRefusal
 
 # Module-level `with` and a module-level call: the two kinds that DO consult the
 # construction context. If the bootstrap ever reaches either, it constructs them
@@ -206,7 +206,7 @@ def test_bare_bootstrap_would_be_caught_if_it_reached_a_consulting_kind(
             node.sugar()
         except BareConstructionDoor as panic:
             refused.append(panic.kind)
-        except Exception:
+        except (Exception, LifterRefusal):
             pass
 
     assert set(refused) == {"With", "Call"}, (
