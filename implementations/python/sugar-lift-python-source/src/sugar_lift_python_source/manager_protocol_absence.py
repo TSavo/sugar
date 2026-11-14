@@ -13,9 +13,12 @@ requires every class on it to be either
 * a cited language base, ``object`` or ``abc.ABC``, whose attribute sets are
   read from the running interpreter (never transcribed).
 
-A base or a method decorator is recognised by its binding
-(``SourceUnit.language_callee_of``: the one import table, then the builtin
-namespace nothing rebinds), never by its spelling.
+A base is recognised by its binding (``SourceUnit.language_callee_of``: the
+one import table, then the builtin namespace nothing rebinds), never by its
+spelling.  A method decorator is admitted only where it leaves the method a
+plain function: a builtin method descriptor constructor, or a decorator the one
+decorator application answers as returning its argument
+(``sugar_source_tree.nodes.builtin_decorator_step``, #7757).
 
 Any base that is neither keeps the use a runtime-selected gap.  The defining
 module must also never store ``__enter__``/``__exit__``/``__class__`` as an
@@ -32,7 +35,6 @@ from dataclasses import dataclass
 
 from sugar_lift_py_tests.manager_protocol_absence_refusal import (
     PROTOCOL_NAMES,
-    cited_identity_decorator,
     cited_language_base,
 )
 
@@ -162,59 +164,6 @@ def _leaves_an_abstract_method(mro) -> bool:
     return False
 
 
-def prove_decorated_manager_absence(
-    function_def, decorator_function
-) -> ManagerProtocolAbsenceV1 | None:
-    """``@d async def g`` / ``@d def g``: the absence proof for what ``g()`` returns.
-
-    Only the strict shape is read: ``d``'s body is an optional docstring, one
-    nested ``helper`` definition (optionally decorated by calls whose callee
-    is bound to ``functools.wraps``, read by ``SourceUnit.language_callee_of``),
-    and ``return helper``; ``helper``'s body is one ``return C(...)`` where
-    ``C`` is a module class.  Then ``g(...)`` is ``C(...)`` and the proof is
-    ``C``'s.
-    """
-    from sugar_source_tree.nodes import (
-        Call,
-        ClassDef,
-        Constant,
-        Expr,
-        FunctionDef,
-        LanguageCallee,
-        Name,
-        Return,
-    )
-
-    del function_def
-    body = list(decorator_function.body)
-    if body and isinstance(body[0], Expr) and isinstance(body[0].value, Constant):
-        body = body[1:]
-    if len(body) != 2:
-        return None
-    helper, returned = body
-    if not isinstance(helper, FunctionDef) or not isinstance(returned, Return):
-        return None
-    if not (isinstance(returned.value, Name) and returned.value.id == helper.name):
-        return None
-    unit = decorator_function.unit
-    bindings = unit.module_direct_bindings or {}
-    for decorator in helper.decorators:
-        if not isinstance(decorator, Call):
-            return None
-        callee = unit.language_callee_of(decorator.func)
-        if callee is not LanguageCallee.FUNCTOOLS_WRAPS:
-            return None
-    if len(helper.body) != 1 or not isinstance(helper.body[0], Return):
-        return None
-    constructed = helper.body[0].value
-    if not isinstance(constructed, Call) or not isinstance(constructed.func, Name):
-        return None
-    binds = bindings.get(constructed.func.id, ())
-    if len(binds) != 1 or not isinstance(binds[0], ClassDef):
-        return None
-    return prove_manager_protocol_absence(binds[0])
-
-
 def _entry_name(entry) -> str:
     if entry.cited is not None:
         return entry.cited.qualified_name
@@ -318,7 +267,10 @@ def _class_statement_admits_absence_proof(class_def) -> bool:
         if isinstance(statement, (FunctionDef, AsyncFunctionDef)):
             if statement.name in _FORBIDDEN_CLASS_NAMES:
                 return False
-            if not all(_decorator_is_cited(d, unit) for d in statement.decorators):
+            if not all(
+                _decorator_keeps_the_function(statement, d)
+                for d in statement.decorators
+            ):
                 return False
             if not all(_expression_is_inert(d, unit) for d in statement.decorators):
                 return False
@@ -372,20 +324,26 @@ def _unshadowed_builtin(name: str, unit) -> bool:
     return not bindings.get(name) and hasattr(builtins, name)
 
 
-def _decorator_is_cited(decorator, unit) -> bool:
-    """A method decorator is admitted by its binding: a builtin method
-    descriptor constructor (``classmethod``, ``staticmethod``, ``property``)
-    or a cited identity decorator (``abc.abstractmethod``)."""
-    from sugar_source_tree.nodes import LanguageCallee
+def _decorator_keeps_the_function(method, decorator) -> bool:
+    """Whether ``decorator`` of the class-body ``method`` binds the method's
+    name to a function or a builtin method descriptor of it.
 
-    callee = unit.language_callee_of(decorator)
-    if callee in (
-        LanguageCallee.BUILTIN_CLASSMETHOD,
-        LanguageCallee.BUILTIN_STATICMETHOD,
-        LanguageCallee.BUILTIN_PROPERTY,
-    ):
+    A builtin method descriptor constructor (``classmethod``, ``staticmethod``,
+    ``property``, the class body's one descriptor table) is admitted by its
+    binding.  Any other decorator is the one decorator application's
+    (``builtin_decorator_step``): admitted only where that application
+    returns its argument (``typing.final``, ``abc.abstractmethod``).  A source
+    or imported decorator may return anything and is not admitted.
+    """
+    from sugar_source_tree.nodes import (
+        METHOD_DESCRIPTOR_KINDS,
+        builtin_decorator_step,
+    )
+
+    if method.unit.language_callee_of(decorator) in METHOD_DESCRIPTOR_KINDS:
         return True
-    return callee is not None and cited_identity_decorator(callee)
+    step = builtin_decorator_step(method, decorator)
+    return step is not None and step.kind == "identity"
 
 
 def _expression_is_inert(expression, unit) -> bool:

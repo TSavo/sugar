@@ -1,12 +1,15 @@
 """Publication of source-defined context protocol coordinates.
 
-Producer path: authenticated construction of the generator function's
-decorator/helper yields the exact returned generator-CM class; that class's
-constructed method frames publish CONTEXT_ENTER / CONTEXT_EXIT into
-ResolvedContractRefsV1.native_definitions. Builtin open publishes neither slot.
+A class resource publishes CONTEXT_ENTER / CONTEXT_EXIT from its own class
+source.  Builtin open publishes neither slot.
 
-No nodes.py / WithResourceSugar edits. No source scanning or first-candidate
-selection.
+A decorated generator function is never a manager by its decorator's body:
+its name is bound to the decorators' result, and what a call of it returns is
+the one decorator application's (``DecoratorApplicationSugar``, #7757).  No
+decorator body is read to name a returned manager class or its enter/exit
+definitions.
+
+No source scanning or first-candidate selection.
 """
 
 from __future__ import annotations
@@ -22,10 +25,6 @@ from sugar_lift_py_tests.context_manager_resolution import (
     TreeConstructionContextV1,
 )
 from sugar_lift_python_source.manager_summary_derivation import (
-    _classes_constructed_by_returns,
-    _enter_exit_sites_from_class_def,
-    _protocol_coords_from_generator_decorators,
-    _sole_returned_manager_class,
     populate_source_derived_resource_refs,
 )
 from sugar_lift_python_source.source_oracle import path_source
@@ -84,88 +83,30 @@ def _populate(tmp_path: Path, dist, package: str, consumer_source: str):
     return context
 
 
-def test_option_context_publishes_both_context_enter_and_exit_coordinates():
-    """Positive arm: seated generator manager publishes both protocol slots."""
-    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-
-    corpus = authenticated_pandas_corpus()
-    root = corpus.root.parent
-    path = root / "pandas/tests/io/formats/test_ipython_compat.py"
+def _populate_local(tmp_path: Path, source: str):
+    path = tmp_path / "local_consumer.py"
+    path.write_text(source, encoding="utf-8")
     context = TreeConstructionContextV1.for_source_call_construction()
-    tree = open_source_file_for_construction(
-        path, root=root, construction_context=context
+    tree = SourceFile(
+        path_source(str(path)),
+        construction_context=context,
     )
     populate_source_derived_resource_refs(
         tree,
-        root=root,
+        root=tmp_path,
         path=path,
-        session=SourceResolutionSession(
-            enrolled_distributions=frozenset({corpus.distribution})
-        ),
+        session=SourceResolutionSession(enrolled_distributions=frozenset()),
     )
+    return context
 
-    receivers = [
-        coordinate
-        for coordinate in context.source_manager_provider_calls
-        if coordinate.start_line == 25
+
+def _published_protocol_slots(context) -> list:
+    return [
+        (receiver, slot)
+        for (receiver, slot), value in context.contract_refs.native_definitions.items()
+        if slot in (NativeProtocolSlot.CONTEXT_ENTER, NativeProtocolSlot.CONTEXT_EXIT)
+        and not isinstance(value, NativeDefinitionCoordinateGapV1)
     ]
-    assert receivers, "expected seated option_context use at line 25"
-    receiver = receivers[0]
-    enter = context.contract_refs.require_native_definition(
-        receiver, NativeProtocolSlot.CONTEXT_ENTER
-    )
-    exit_ = context.contract_refs.require_native_definition(
-        receiver, NativeProtocolSlot.CONTEXT_EXIT
-    )
-    assert isinstance(enter, SourceFragmentCoordinateV1)
-    assert isinstance(exit_, SourceFragmentCoordinateV1)
-    assert enter != exit_
-    assert enter.source_cid == exit_.source_cid
-    assert enter.source_cid.startswith("blake3-512:")
-    assert (enter.start_line, enter.start_col) < (exit_.start_line, exit_.start_col)
-
-
-def test_option_context_publishes_at_every_seated_generator_use_site():
-    """Publication is keyed by use-site receiver, not a single global row."""
-    from sugar_lift_py_tests.authenticated_pytest import authenticated_pandas_corpus
-    from sugar_lift_py_tests.lift_rpc import open_source_file_for_construction
-
-    corpus = authenticated_pandas_corpus()
-    root = corpus.root.parent
-    path = root / "pandas/tests/io/formats/test_ipython_compat.py"
-    context = TreeConstructionContextV1.for_source_call_construction()
-    tree = open_source_file_for_construction(
-        path, root=root, construction_context=context
-    )
-    populate_source_derived_resource_refs(
-        tree,
-        root=root,
-        path=path,
-        session=SourceResolutionSession(
-            enrolled_distributions=frozenset({corpus.distribution})
-        ),
-    )
-
-    published = 0
-    sample = None
-    for receiver in context.source_manager_provider_calls:
-        enter = context.contract_refs.require_native_definition(
-            receiver, NativeProtocolSlot.CONTEXT_ENTER
-        )
-        exit_ = context.contract_refs.require_native_definition(
-            receiver, NativeProtocolSlot.CONTEXT_EXIT
-        )
-        if isinstance(enter, NativeDefinitionCoordinateGapV1):
-            continue
-        assert isinstance(exit_, SourceFragmentCoordinateV1)
-        if sample is None:
-            sample = (enter, exit_)
-        else:
-            assert enter == sample[0]
-            assert exit_ == sample[1]
-        published += 1
-    assert published >= 1
 
 
 def test_open_produces_no_source_definition(tmp_path: Path):
@@ -214,62 +155,16 @@ def test_open_produces_no_source_definition(tmp_path: Path):
             assert isinstance(exit_, NativeDefinitionCoordinateGapV1)
 
 
-def test_decorator_construction_yields_returned_class_method_coordinates(
+def test_a_source_decorated_generator_is_never_a_manager_by_its_decorator_body(
     tmp_path: Path,
 ):
-    """Authenticated decorator/helper construction owns enter/exit sites."""
-    dist = _write_package(
+    """``@resource_manager def make_resource(): yield 1`` binds
+    ``make_resource`` to ``resource_manager(make_resource)``.  The decorator's
+    body returns a helper constructing ``ResourceCM``, but nothing here reads
+    it: no frame is seated for the call and no enter/exit definition is
+    published.  What the call returns is the one decorator application's."""
+    context = _populate_local(
         tmp_path,
-        {
-            "__init__.py": "from deco_pkg.factory import make_resource\n",
-            "factory.py": (
-                "from deco_pkg.wrapper import resource_manager\n"
-                "\n"
-                "@resource_manager\n"
-                "def make_resource():\n"
-                "    yield 1\n"
-            ),
-            "wrapper.py": (
-                "class ResourceCM:\n"
-                "    def __init__(self, gen):\n"
-                "        self.gen = gen\n"
-                "    def __enter__(self):\n"
-                "        return next(self.gen)\n"
-                "    def __exit__(self, effect_type, effect, traceback):\n"
-                "        return False\n"
-                "\n"
-                "def resource_manager(func):\n"
-                "    def helper(*args, **kwargs):\n"
-                "        return ResourceCM(func(*args, **kwargs))\n"
-                "    return helper\n"
-            ),
-        },
-        "deco_pkg",
-    )
-    context = _populate(
-        tmp_path,
-        dist,
-        "deco_pkg",
-        "from deco_pkg import make_resource\n" "with make_resource():\n" "    pass\n",
-    )
-    receivers = list(context.source_manager_provider_calls)
-    assert receivers, "expected generator provider seat"
-    receiver = receivers[0]
-    enter = context.contract_refs.require_native_definition(
-        receiver, NativeProtocolSlot.CONTEXT_ENTER
-    )
-    exit_ = context.contract_refs.require_native_definition(
-        receiver, NativeProtocolSlot.CONTEXT_EXIT
-    )
-    assert isinstance(enter, SourceFragmentCoordinateV1)
-    assert isinstance(exit_, SourceFragmentCoordinateV1)
-    assert enter != exit_
-    assert enter.start_line < exit_.start_line
-
-
-def test_content_tampered_enter_source_changes_coordinate(tmp_path: Path):
-    """Acceptance: mutating enter definition changes its published coordinate."""
-    base_wrapper = (
         "class ResourceCM:\n"
         "    def __init__(self, gen):\n"
         "        self.gen = gen\n"
@@ -282,201 +177,17 @@ def test_content_tampered_enter_source_changes_coordinate(tmp_path: Path):
         "    def helper(*args, **kwargs):\n"
         "        return ResourceCM(func(*args, **kwargs))\n"
         "    return helper\n"
-    )
-    tampered_wrapper = (
-        "class ResourceCM:\n"
-        "    def __init__(self, gen):\n"
-        "        self.gen = gen\n"
-        "    def helper(self):\n"
-        "        return self\n"
-        "    def __enter__(self):\n"
-        "        return next(self.gen)\n"
-        "    def __exit__(self, effect_type, effect, traceback):\n"
-        "        return False\n"
-        "\n"
-        "def resource_manager(func):\n"
-        "    def helper(*args, **kwargs):\n"
-        "        return ResourceCM(func(*args, **kwargs))\n"
-        "    return helper\n"
-    )
-    factory = (
-        "from tamper_pkg.wrapper import resource_manager\n"
         "\n"
         "@resource_manager\n"
         "def make_resource():\n"
         "    yield 1\n"
-    )
-    first_root = tmp_path / "first"
-    first_root.mkdir()
-    first = _populate(
-        first_root,
-        _write_package(
-            first_root,
-            {
-                "__init__.py": "from tamper_pkg.factory import make_resource\n",
-                "factory.py": factory,
-                "wrapper.py": base_wrapper,
-            },
-            "tamper_pkg",
-        ),
-        "tamper_pkg",
-        "from tamper_pkg import make_resource\nwith make_resource():\n    pass\n",
-    )
-    second_root = tmp_path / "second"
-    second_root.mkdir()
-    second = _populate(
-        second_root,
-        _write_package(
-            second_root,
-            {
-                "__init__.py": "from tamper_pkg.factory import make_resource\n",
-                "factory.py": factory,
-                "wrapper.py": tampered_wrapper,
-            },
-            "tamper_pkg",
-        ),
-        "tamper_pkg",
-        "from tamper_pkg import make_resource\nwith make_resource():\n    pass\n",
-    )
-    first_receiver = next(iter(first.source_manager_provider_calls))
-    second_receiver = next(iter(second.source_manager_provider_calls))
-    first_enter = first.contract_refs.require_native_definition(
-        first_receiver, NativeProtocolSlot.CONTEXT_ENTER
-    )
-    second_enter = second.contract_refs.require_native_definition(
-        second_receiver, NativeProtocolSlot.CONTEXT_ENTER
-    )
-    assert isinstance(first_enter, SourceFragmentCoordinateV1)
-    assert isinstance(second_enter, SourceFragmentCoordinateV1)
-    assert first_enter != second_enter
-    assert first_enter.start_line != second_enter.start_line
-
-
-def test_two_plausible_returned_classes_refuse_first_candidate(tmp_path: Path):
-    """Discrimination: two return classes cannot select the first."""
-    from sugar_source_tree.nodes import FunctionDef
-
-    path = tmp_path / "ambiguous.py"
-    path.write_text(
-        "class AlphaCM:\n"
-        "    def __enter__(self):\n"
-        "        return self\n"
-        "    def __exit__(self, effect_type, effect, traceback):\n"
-        "        return False\n"
         "\n"
-        "class BetaCM:\n"
-        "    def __enter__(self):\n"
-        "        return self\n"
-        "    def __exit__(self, effect_type, effect, traceback):\n"
-        "        return False\n"
-        "\n"
-        "def resource_manager(func):\n"
-        "    def helper(*args, **kwargs):\n"
-        "        if args:\n"
-        "            return AlphaCM()\n"
-        "        return BetaCM()\n"
-        "    return helper\n",
-        encoding="utf-8",
+        "def exercise():\n"
+        "    with make_resource():\n"
+        "        pass\n",
     )
-    tree = SourceFile(path_source(str(path)))
-    decorator_fn = next(
-        node
-        for node in tree.root.body
-        if isinstance(node, FunctionDef) and node.name == "resource_manager"
-    )
-    assert _sole_returned_manager_class(decorator_fn) is None
-    classes = _classes_constructed_by_returns(
-        next(
-            node
-            for node in decorator_fn.body
-            if isinstance(node, FunctionDef) and node.name == "helper"
-        ).body
-    )
-    assert len(classes) == 2
-
-
-def test_separate_source_cids_do_not_share_coordinates(tmp_path: Path):
-    """Separate authenticated decorator modules cannot share coordinates."""
-    wrapper_a = (
-        "class ResourceCM:\n"
-        "    def __init__(self, gen):\n"
-        "        self.gen = gen\n"
-        "    def __enter__(self):\n"
-        "        return next(self.gen)\n"
-        "    def __exit__(self, effect_type, effect, traceback):\n"
-        "        return False\n"
-        "\n"
-        "def resource_manager(func):\n"
-        "    def helper(*args, **kwargs):\n"
-        "        return ResourceCM(func(*args, **kwargs))\n"
-        "    return helper\n"
-    )
-    # Different content → different source_cid even if spans align numerically.
-    wrapper_b = (
-        "class ResourceCM:\n"
-        "    def __init__(self, gen):\n"
-        "        self.gen = gen\n"
-        "    def __enter__(self):\n"
-        "        return next(self.gen)  # distinct body bytes\n"
-        "    def __exit__(self, effect_type, effect, traceback):\n"
-        "        return False\n"
-        "\n"
-        "def resource_manager(func):\n"
-        "    def helper(*args, **kwargs):\n"
-        "        return ResourceCM(func(*args, **kwargs))\n"
-        "    return helper\n"
-    )
-    factory = (
-        "from cid_pkg.wrapper import resource_manager\n"
-        "\n"
-        "@resource_manager\n"
-        "def make_resource():\n"
-        "    yield 1\n"
-    )
-    first_root = tmp_path / "cid_a"
-    first_root.mkdir()
-    first = _populate(
-        first_root,
-        _write_package(
-            first_root,
-            {
-                "__init__.py": "from cid_pkg.factory import make_resource\n",
-                "factory.py": factory,
-                "wrapper.py": wrapper_a,
-            },
-            "cid_pkg",
-        ),
-        "cid_pkg",
-        "from cid_pkg import make_resource\nwith make_resource():\n    pass\n",
-    )
-    second_root = tmp_path / "cid_b"
-    second_root.mkdir()
-    second = _populate(
-        second_root,
-        _write_package(
-            second_root,
-            {
-                "__init__.py": "from cid_pkg.factory import make_resource\n",
-                "factory.py": factory,
-                "wrapper.py": wrapper_b,
-            },
-            "cid_pkg",
-        ),
-        "cid_pkg",
-        "from cid_pkg import make_resource\nwith make_resource():\n    pass\n",
-    )
-    first_receiver = next(iter(first.source_manager_provider_calls))
-    second_receiver = next(iter(second.source_manager_provider_calls))
-    first_enter = first.contract_refs.require_native_definition(
-        first_receiver, NativeProtocolSlot.CONTEXT_ENTER
-    )
-    second_enter = second.contract_refs.require_native_definition(
-        second_receiver, NativeProtocolSlot.CONTEXT_ENTER
-    )
-    assert isinstance(first_enter, SourceFragmentCoordinateV1)
-    assert isinstance(second_enter, SourceFragmentCoordinateV1)
-    assert first_enter.source_cid != second_enter.source_cid
-    assert first_enter != second_enter
+    assert context.source_manager_provider_calls == {}
+    assert _published_protocol_slots(context) == []
 
 
 def test_class_resource_publishes_enter_exit_from_class_source(tmp_path: Path):
@@ -539,11 +250,7 @@ def test_lying_twin_spelling_without_binding_publishes_nothing(tmp_path: Path):
         session=SourceResolutionSession(enrolled_distributions=frozenset()),
     )
     assert context.source_manager_provider_calls == {}
-    assert not any(
-        slot in (NativeProtocolSlot.CONTEXT_ENTER, NativeProtocolSlot.CONTEXT_EXIT)
-        and not isinstance(value, NativeDefinitionCoordinateGapV1)
-        for (receiver, slot), value in context.contract_refs.native_definitions.items()
-    )
+    assert _published_protocol_slots(context) == []
 
 
 def test_publication_path_has_no_scan_or_vendor_literals():
@@ -574,6 +281,14 @@ def test_publication_path_has_no_scan_or_vendor_literals():
     )
     # No process-global unkeyed cache residual.
     assert not hasattr(derivation, "_GENERATOR_CM_PROTOCOL_COORDS")
+    # No decorator-body reader: a decorator's result is the one application's.
+    for deleted in (
+        "_protocol_coords_from_generator_decorators",
+        "_construct_decorator_function",
+        "_sole_returned_manager_class",
+        "_publish_decorated_non_manager_head",
+    ):
+        assert not hasattr(derivation, deleted), deleted
     # No ast.parse of dependency source in the publication path.
     assert "ast.parse" not in source
     assert "ast.walk" not in source

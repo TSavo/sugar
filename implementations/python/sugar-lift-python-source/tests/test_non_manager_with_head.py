@@ -7,10 +7,13 @@ the interpreter) and none binds ``__enter__`` (or ``__exit__``), the head is
 evaluated and then the ``with`` raises the interpreter's own ``TypeError``
 ("'X' object does not support the context manager protocol", or "... (missed
 __exit__ method)") before any enter and before the body.  This covers
-``@asynccontextmanager`` at a sync ``with`` (its ``_AsyncGeneratorContextManager``
-MRO is read from contextlib's source) and same-module classes.  Any base that
-is neither, a class decorator, a metaclass, or a module that could install the
-protocol keeps the runtime-selected gap.
+same-module classes.  Any base that is neither, a class decorator, a
+metaclass, or a module that could install the protocol keeps the gap.
+
+What a decorated function's call returns is the one decorator application's
+(``DecoratorApplicationSugar``, #7757): no proof is read from a decorator's
+body, and a method decorator is admitted only where that application returns
+its argument (``builtin_decorator_step``).
 """
 
 from __future__ import annotations
@@ -29,9 +32,6 @@ from sugar_source_tree.panic import SugarNotWritten
 from test_assignment_evaluates_rhs import _rows
 from test_contextlib_suppress_source_exit_faces import _corpus, _open
 from test_undetermined_raise_except_matching import _exits
-
-ACM = "import contextlib\n@contextlib.asynccontextmanager\nasync def cm(a):\n    yield a\n"
-
 
 def _split(tmp_path, source):
     rows = _rows(_exits(tmp_path, source))
@@ -78,37 +78,94 @@ def test_cited_bases_are_read_from_the_interpreter():
     assert cited_language_base(LanguageCallee.BUILTIN_LIST) is None
 
 
-def test_asynccontextmanager_at_a_sync_with_raises_type_error(tmp_path):
-    source = ACM + "def f():\n    with cm(1):\n        return 1\n"
-    _type_error_halt(tmp_path, source, "_AsyncGeneratorContextManager")
-
-
-def test_the_proof_reads_contextlibs_mro(tmp_path):
-    source = ACM + "def f():\n    with cm(1):\n        return 1\n"
+def test_a_decorated_async_def_head_is_the_decorator_application(tmp_path):
+    """``@d async def cm`` binds ``cm`` to ``d(cm)``: what ``cm(1)`` returns is
+    the one decorator application's.  Nothing reads ``d``'s body to prove the
+    class it constructs lacks the protocol, and ``cm``'s own frame is never
+    seated for the call (#7757)."""
+    source = (
+        "class Wrapper:\n"
+        "    def __init__(self, gen):\n"
+        "        self.gen = gen\n"
+        "def d(func):\n"
+        "    def helper(*args, **kwds):\n"
+        "        return Wrapper(func(*args, **kwds))\n"
+        "    return helper\n"
+        "@d\n"
+        "async def cm(a):\n"
+        "    yield a\n"
+        "def f():\n"
+        "    with cm(1):\n"
+        "        return 1\n"
+    )
     source_file = _open(_corpus(tmp_path, source))
     context = source_file.root.unit.construction_context
-    (proof,) = context.source_non_manager_heads.values()
-    import contextlib
+    assert not context.source_non_manager_heads
+    assert not context.source_manager_provider_calls
 
-    runtime_mro = tuple(
-        cls.__name__ for cls in contextlib._AsyncGeneratorContextManager.__mro__
+
+def _class(source, name):
+    from sugar_lift_python_source.canonical import blake3_512_of
+    from sugar_lift_py_tests.context_manager_resolution import (
+        TreeConstructionContextV1,
     )
-    assert tuple(name.rsplit(":", 1)[-1].rsplit(".", 1)[-1] for name in proof.linearization) == runtime_mro
+    from sugar_source_tree.nodes import ClassDef
+    from sugar_source_tree.tree import SourceFile
+
+    tree = SourceFile(
+        (source, "m.py", blake3_512_of(source.encode())),
+        construction_context=TreeConstructionContextV1.for_test_without_workspace(),
+    )
+    return next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, ClassDef) and node.name == name
+    )
+
+
+def test_a_method_decorator_the_application_returns_unchanged_is_admitted():
+    """``typing.final`` returns its argument (the one decorator application's
+    identity), so the method stays a plain function and the proof stands."""
+    from sugar_lift_python_source.manager_protocol_absence import (
+        prove_manager_protocol_absence,
+    )
+
+    source = (
+        "import typing\n"
+        "class M:\n"
+        "    @typing.final\n"
+        "    def g(self):\n"
+        "        return 1\n"
+    )
+    proof = prove_manager_protocol_absence(_class(source, "M"))
+    assert proof is not None
     assert proof.has_enter is False and proof.has_exit is False
 
 
-def test_the_type_error_reaches_an_except_arm_and_the_body_never_runs(tmp_path):
-    source = ACM + (
-        "def f():\n"
-        "    try:\n"
-        "        with cm(1):\n"
-        "            return 1\n"
-        "    except TypeError:\n"
-        "        return 2\n"
+@pytest.mark.parametrize(
+    ("header", "decorator"),
+    [
+        # a source decorator may return anything
+        ("def d(fn):\n    return fn\n", "@d"),
+        # a builtin the one application refuses by name
+        ("import functools\n", "@functools.lru_cache"),
+    ],
+    ids=["source-decorator", "refused-builtin"],
+)
+def test_a_method_decorator_the_application_does_not_return_unchanged_is_unproven(
+    header, decorator
+):
+    from sugar_lift_python_source.manager_protocol_absence import (
+        prove_manager_protocol_absence,
     )
-    returns, halts = _split(tmp_path, source)
-    assert returns == [TermValue(2)]
-    assert halts == []
+
+    source = header + (
+        "class M:\n"
+        f"    {decorator}\n"
+        "    def g(self):\n"
+        "        return 1\n"
+    )
+    assert prove_manager_protocol_absence(_class(source, "M")) is None
 
 
 def test_a_local_class_without_enter_raises_type_error(tmp_path):

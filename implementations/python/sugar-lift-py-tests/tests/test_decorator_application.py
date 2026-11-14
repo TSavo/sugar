@@ -280,6 +280,42 @@ def test_check():
     _only_raise(outcome, "ValueError")
 
 
+def test_a_builtin_decorator_is_decided_by_the_one_builtin_arm() -> None:
+    """Every reader of a builtin decorator's semantics (the statement's
+    application, an explicit ``final(f)`` through an import member, the
+    manager-protocol absence proof) asks ``builtin_decorator_step``: identity
+    where the application returns its argument, refused by name otherwise,
+    and None for a decorator whose binding is no builtin."""
+    from sugar_source_tree.nodes import builtin_decorator_step
+
+    tree = _tree(
+        """\
+import abc
+import functools
+import typing
+
+
+def d(fn):
+    return fn
+
+
+@typing.final
+@abc.abstractmethod
+@functools.lru_cache
+@d
+def g():
+    return 1
+"""
+    )
+    g = next(
+        node
+        for node in tree.nodes()
+        if isinstance(node, FunctionDef) and node.name == "g"
+    )
+    kinds = [getattr(builtin_decorator_step(g, d), "kind", None) for d in g.decorators]
+    assert kinds == ["identity", "identity", "refused", None]
+
+
 # ---------------------------------------------------------------------------
 # A module reader binds a decorated name to the application.
 # ---------------------------------------------------------------------------

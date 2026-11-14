@@ -1,11 +1,11 @@
 """A ``@contextlib.contextmanager`` generator constructs under contextlib's protocol.
 
-A same-module ``@contextmanager`` generator used as a With head had no import
-receipt, so resolution left it ``runtime-selected`` and the generator protocol
-was never applied. It now publishes through the same generator-backed door as
-an imported one, and every body exit runs ``_GeneratorContextManager.__exit__``
-(``generator_manager_exit``): a raise is thrown in at the yield and split by
-the generator's own ``except`` arms; completion resumes it and it must stop.
+A same-module ``@contextmanager`` generator used as a With head has no import
+receipt.  Its call keeps its own frame (the one decorated definition that does,
+``call_applies_own_frame``, #7757): the frame is seated at the head and every
+body exit runs ``_GeneratorContextManager.__exit__`` (``generator_manager_exit``):
+a raise is thrown in at the yield and split by the generator's own ``except``
+arms; completion resumes it and it must stop.
 """
 
 from __future__ import annotations
@@ -132,14 +132,21 @@ def _manager(header: str, body: str) -> str:
     return f"{header}def f():\n    with cm():\n        {body}\n    return 7\n"
 
 
-def test_local_contextmanager_publishes_the_generator_resource_ref(tmp_path):
+def test_local_contextmanager_seats_its_own_frame(tmp_path):
+    """``contextlib.contextmanager`` over a generator is the one decorated
+    definition whose call keeps its frame (``call_applies_own_frame``,
+    #7757): the frame is seated at the head and the With applies contextlib's
+    law to it.  No decorator body is read to name enter/exit definitions."""
     source_file, with_node = _with(
         tmp_path, _manager(_SUPPRESSES_VALUE_ERROR, "pass")
     )
-    refs = source_file.root.unit.construction_context.source_derived_contract_refs
-    (ref,) = refs.values()
-    assert type(ref) is SourceDerivedGeneratorResourceRefV1
-    assert type(with_node.sugar()) is WithSourceResourceSugar
+    context = source_file.root.unit.construction_context
+    assert not any(
+        isinstance(ref, SourceDerivedGeneratorResourceRefV1)
+        for ref in context.source_derived_contract_refs.values()
+    )
+    assert len(context.source_manager_provider_calls) == 1
+    assert type(with_node.sugar()) is GeneratorWithSugar
 
 
 def test_try_finally_runs_and_the_body_raise_propagates(tmp_path):
@@ -188,7 +195,9 @@ def _function_rows(source_file, with_node):
 @pytest.mark.parametrize(
     ("road", "consumer"),
     (
-        ("local", WithSourceResourceSugar),
+        # the kept frame of a local ``@contextmanager`` generator, under
+        # contextlib's law (#7757).
+        ("local", GeneratorWithSugar),
         ("imported", WithSourceResourceSugar),
         # contextlib's source off population: the import road seats the
         # generator frame and GeneratorWithSugar consumes it under the same law.
