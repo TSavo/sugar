@@ -39,7 +39,6 @@ class WithLanguageOwnedResourceSugar(Sugar):
             prepend_facts_to_exitset,
         )
         from sugar_lift_py_tests.sugar.exit_set_routing import (
-            promote_raise_halts,
             sugar_outcome_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -81,9 +80,7 @@ class WithLanguageOwnedResourceSugar(Sugar):
                     enter_facts = EnterResultBinding(
                         self.enter_slot_id, enter_value
                     ).to_facts(site=self.site)
-                body_es = promote_raise_halts(
-                    reduce_block_to_exitset(self.body, ctx)
-                ).guarded(guard)
+                body_es = reduce_block_to_exitset(self.body, ctx).guarded(guard)
                 exit_es = outcome_to_exitset(
                     self.protocol.exit_outcome_for(entered, ctx)
                 )

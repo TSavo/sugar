@@ -63,33 +63,15 @@ class UniverseValue(FloorValue):
             for formula in entry.post_contribution()
         )
         if not exits:
-            from sugar_lift_py_tests.sugar.exit_set_routing import is_hard_raise
+            # A universe is built only on a completed arm, and a completed
+            # record holds no halt (#7826): a raise-only body has no completed
+            # arm, so no universe ever answers for it.
+            from sugar_lift_py_tests.floor.none_value import NoneValue
+            from sugar_lift_py_tests.ir import eq, make_var
 
-            raises = tuple(
-                entry for entry in self.record.statements if is_hard_raise(entry)
-            )
-            if not raises:
-                from sugar_lift_py_tests.floor.none_value import NoneValue
-                from sugar_lift_py_tests.ir import eq, make_var
-
-                return eq(
-                    make_var("out"),
-                    NoneValue().to_term(owner="UniverseValue.post"),
-                )
-            from sugar_lift_py_tests.gap.panic import construction_panic_gap
-            from sugar_lift_py_tests.gap.info import GapKind, GapLocus
-
-            construction_panic_gap(
-                owner="UniverseValue",
-                blame=self.name,
-                observed="raise-only exits",
-                requested="a post slot",
-                fix=(
-                    "preserve the carried raise effect; do not fabricate an "
-                    "implicit None post for a raise-only body"
-                ),
-                gap_kind=GapKind.FLOOR,
-                gap_locus=GapLocus.CONSTRUCTION,
+            return eq(
+                make_var("out"),
+                NoneValue().to_term(owner="UniverseValue.post"),
             )
         post = exits[0] if len(exits) == 1 else None
         from sugar_lift_py_tests.ir import and_

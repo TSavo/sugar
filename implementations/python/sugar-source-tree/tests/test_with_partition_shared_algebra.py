@@ -82,7 +82,6 @@ from sugar_lift_py_tests.outcome.exit_set import (
     complement_guard,
 )
 from sugar_lift_py_tests.sugar.exit_set_routing import (
-    promote_raise_halts,
     sugar_outcome_to_exitset,
 )
 from sugar_lift_py_tests.sugar.function_universe_sugar import reduce_block_to_exitset
@@ -229,11 +228,11 @@ def _body_exitset(body):
     """THE body ExitSet: the exact expression both routers reduce their body by.
 
     ``WithResourceSugar.desugar`` and ``WithEffectBoundarySugar.desugar`` each
-    compute ``promote_raise_halts(reduce_block_to_exitset(self.body))``. Calling
-    it once here is what makes this an integration twin instead of two unit
-    twins: there is one body partition and it is fed to both contracts.
+    compute ``reduce_block_to_exitset(self.body)``. Calling it once here is
+    what makes this an integration twin instead of two unit twins: there is
+    one body partition and it is fed to both contracts.
     """
-    return promote_raise_halts(reduce_block_to_exitset(body))
+    return reduce_block_to_exitset(body)
 
 
 def _sole(exits, kind):

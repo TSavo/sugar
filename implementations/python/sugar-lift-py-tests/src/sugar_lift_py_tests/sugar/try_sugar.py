@@ -77,14 +77,9 @@ class TrySugar(Sugar):
 
     def _route_discharged_body(self, body_es, ctx):
         """Route one concrete body ExitSet; carriers enter only after discharge."""
-        from sugar_lift_py_tests.sugar.exit_set_routing import (
-            exitset_to_outcome,
-            promote_raise_halts,
-        )
-
         arm_effects: list = []
         pre_finally = _route_handlers_over_exits(
-            promote_raise_halts(body_es),
+            body_es,
             self.handlers,
             self.orelse,
             site=self.site,
@@ -113,24 +108,13 @@ class TrySugar(Sugar):
 def _try_outcome(exits):
     """The try's own faces, never a flattening that merges its routes.
 
-    One unguarded face is already linear, so it keeps the linear view.  More
-    than one face is a partition the try owns: each routed outcome keeps its
-    own temporal record (stores, receiver scope, fall-through), and the block
+    Every face is a route the try owns: each routed outcome keeps its own
+    temporal record (stores, receiver scope, fall-through), and the block
     reducer sequences the tail under each completed face.  Flattening merged
     every completed route into one record whose entries were merely guarded,
-    so a later reader saw a store made under ``call completed`` beside a
-    companion state under the opposite guard that no route produces -- an
-    uncaught halt read as a completed construction.
+    and put a halt inside a completed record (#7826).
     """
-    from sugar_lift_py_tests.outcome.exit_set import Completed, Halted, true_guard
-    from sugar_lift_py_tests.sugar.exit_set_routing import exitset_to_outcome
-
-    exits = exits.normalize()
-    if len(exits.exits) == 1 and exits.exits[0].guard == true_guard():
-        return exitset_to_outcome(exits)
-    if not exits.exits:
-        return exitset_to_outcome(exits)
-    return exits
+    return exits.normalize()
 
 
 def _finally_restores(value: object) -> bool:

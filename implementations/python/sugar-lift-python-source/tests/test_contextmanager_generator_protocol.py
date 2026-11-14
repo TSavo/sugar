@@ -98,11 +98,8 @@ def _exits(tmp_path: Path, source: str):
 
 
 def _faces(sugar):
-    # GeneratorWithSugar answers in the linear view (halts ride as Incomplete
-    # entries); promotion is how every consumer reads them back as faces.
-    from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
-
-    return promote_raise_halts(outcome_to_exitset(sugar.desugar()))
+    # GeneratorWithSugar hands back its own faces (#7826).
+    return outcome_to_exitset(sugar.desugar())
 
 
 def _halts(exits):

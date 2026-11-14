@@ -37,10 +37,10 @@ class GeneratorWithSugar(Sugar):
             prepend_facts_to_exitset,
         )
         from sugar_lift_py_tests.sugar.exit_set_routing import (
-            exitset_to_outcome,
             sugar_outcome_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
+            _ReducedBlock,
             reduce_block_to_exitset,
         )
 
@@ -61,11 +61,14 @@ class GeneratorWithSugar(Sugar):
             )
 
         if not routed:
-            return exitset_to_outcome(ExitSet(()))
+            # No manager face is reachable: the statement completes with an
+            # empty record and its tail is unreachable.
+            return ExitSet.completed(_ReducedBlock((), False, ()))
         result = routed[0]
         for part in routed[1:]:
             result = result.union(part)
-        return exitset_to_outcome(result)
+        # The with's own faces: a halt stays a halted arm (#7826).
+        return result.normalize()
 
     def _consume_enter_outcome(self, entered, manager_exit, ctx):
         """Route first-resume of a generator manager, including open enter faces."""
@@ -116,13 +119,9 @@ class GeneratorWithSugar(Sugar):
             generator_manager_exit,
             is_exception_effect,
         )
-        from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
-
         # The generator-backed manager's __exit__ per body exit: an
         # exception is thrown in at the yield, anything else resumes it.
-        body_es = promote_raise_halts(
-            reduce_block_to_exitset(self.body, ctx)
-        ).guarded(manager_exit.guard)
+        body_es = reduce_block_to_exitset(self.body, ctx).guarded(manager_exit.guard)
         exits = []
         for body_exit in body_es.exits:
             exit_es = generator_manager_exit(
@@ -229,9 +228,9 @@ class GeneratorObjectWithSugar(Sugar):
             observed_generator_object_with_refusal,
         )
         from sugar_lift_py_tests.sugar.exit_set_routing import (
-            exitset_to_outcome,
             sugar_outcome_to_exitset,
         )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
         refusal = observed_generator_object_with_refusal(self.object_kind)
         blame = str(self.site)
@@ -261,15 +260,18 @@ class GeneratorObjectWithSugar(Sugar):
                 raised_value=refusal.message,
                 producer_node_owner="GeneratorObjectWithSugar",
             )
+            # The with halts at its head: nothing was reached inside the
+            # statement, so its state is the empty record the block reducer
+            # splices its prefix onto.
             exits.append(
                 Halted(
                     manager_exit.guard,
                     effect,
-                    manager_exit.value,
+                    _ReducedBlock((), True, ()),
                     manager_exit.faces,
                 )
             )
-        return exitset_to_outcome(ExitSet(tuple(exits)).normalize())
+        return ExitSet(tuple(exits)).normalize()
 
 
 @dataclass(frozen=True)
@@ -306,9 +308,9 @@ class NonManagerObjectWithSugar(Sugar):
             observed_non_manager_with_refusal,
         )
         from sugar_lift_py_tests.sugar.exit_set_routing import (
-            exitset_to_outcome,
             sugar_outcome_to_exitset,
         )
+        from sugar_lift_py_tests.sugar.function_universe_sugar import _ReducedBlock
 
         refusal = observed_non_manager_with_refusal(
             self.type_name, has_enter=self.has_enter, has_exit=self.has_exit
@@ -327,12 +329,13 @@ class NonManagerObjectWithSugar(Sugar):
                 raised_value=refusal.message,
                 producer_node_owner="NonManagerObjectWithSugar",
             )
+            # Halted at the head: the empty record the reducer splices onto.
             exits.append(
                 Halted(
                     manager_exit.guard,
                     effect,
-                    manager_exit.value,
+                    _ReducedBlock((), True, ()),
                     manager_exit.faces,
                 )
             )
-        return exitset_to_outcome(ExitSet(tuple(exits)).normalize())
+        return ExitSet(tuple(exits)).normalize()

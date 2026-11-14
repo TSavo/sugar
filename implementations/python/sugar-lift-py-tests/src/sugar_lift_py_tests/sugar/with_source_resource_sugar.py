@@ -90,7 +90,6 @@ def _route_manager_faces(
         prepend_facts_to_exitset,
     )
     from sugar_lift_py_tests.sugar.exit_set_routing import (
-        promote_raise_halts,
         sugar_outcome_to_exitset,
     )
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -126,9 +125,7 @@ def _route_manager_faces(
                 enter_facts = EnterResultBinding(
                     resource.enter_slot_id, enter_value
                 ).to_facts(site=resource.site)
-            body_es = promote_raise_halts(
-                reduce_block_to_exitset(resource.body, ctx)
-            ).guarded(guard)
+            body_es = reduce_block_to_exitset(resource.body, ctx).guarded(guard)
             concrete_exit = getattr(resource.protocol, "exit_outcome_for_body", None)
             # Generator protocols have a linear resume: retain their single
             # existing exit reduction instead of resuming per body face.

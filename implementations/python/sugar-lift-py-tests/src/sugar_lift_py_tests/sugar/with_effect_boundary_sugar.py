@@ -46,7 +46,6 @@ class WithEffectBoundarySugar(Sugar):
         from sugar_lift_py_tests.floor.call_site_value import CallSiteValue
         from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
         from sugar_lift_py_tests.sugar.exit_set_routing import (
-            promote_raise_halts,
             sugar_outcome_to_exitset,
         )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
@@ -112,7 +111,7 @@ class WithEffectBoundarySugar(Sugar):
             # faces are alternative guards over the same body occurrence —
             # re-reducing would re-enter nested resources and invent a second
             # evaluation of the same source suite under each message face.
-            body_es_once = promote_raise_halts(reduce_block_to_exitset(self.body, ctx))
+            body_es_once = reduce_block_to_exitset(self.body, ctx)
             for face_guard, semantics in self._guarded_semantics():
                 expected = project_formal_selector_v1(
                     semantics.expected_type_operand,
@@ -481,9 +480,6 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
         complement_guard,
         partition,
     )
-    from sugar_lift_py_tests.sugar.exit_set_routing import (
-        promote_raise_halts,
-    )
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
@@ -500,9 +496,7 @@ def _route_warning_boundary(*, body, ctx, manager_exit, expected, pattern, mode,
             site=site,
         )
 
-    body_es = promote_raise_halts(reduce_block_to_exitset(body, ctx)).guarded(
-        manager_exit.guard
-    )
+    body_es = reduce_block_to_exitset(body, ctx).guarded(manager_exit.guard)
     exits = []
     for face in body_es.exits:
         record = face.value if isinstance(face, Completed) else face.state
@@ -657,15 +651,12 @@ def _route_no_warning_boundary(*, body, ctx, manager_exit, mode, site):
         WarningObservationValue,
     )
     from sugar_lift_py_tests.outcome.exit_set import Completed, ExitSet, Halted
-    from sugar_lift_py_tests.sugar.exit_set_routing import promote_raise_halts
     from sugar_lift_py_tests.sugar.function_universe_sugar import (
         reduce_block_to_exitset,
     )
     from sugar_source_tree.panic import SugarNotWritten
 
-    body_es = promote_raise_halts(reduce_block_to_exitset(body, ctx)).guarded(
-        manager_exit.guard
-    )
+    body_es = reduce_block_to_exitset(body, ctx).guarded(manager_exit.guard)
     # The inverted contract is proved by a POSITIVE completed edge whose
     # temporal record contains no matching warning observation.  An empty
     # ExitSet says the body never resolved; it is not a vacuous proof of

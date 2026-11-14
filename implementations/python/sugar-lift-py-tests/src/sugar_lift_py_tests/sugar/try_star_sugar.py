@@ -62,17 +62,13 @@ class TryStarSugar(Sugar):
             Halted,
             _and_guards,
         )
-        from sugar_lift_py_tests.sugar.exit_set_routing import (
-            exitset_to_outcome,
-            promote_raise_halts,
-        )
         from sugar_lift_py_tests.sugar.function_universe_sugar import (
             _ReducedBlock,
             reduce_block_to_exitset,
         )
         from sugar_source_tree.panic import SugarNotWritten
 
-        body = promote_raise_halts(reduce_block_to_exitset(self.body, ctx))
+        body = reduce_block_to_exitset(self.body, ctx)
         parts = []
         for exit_ in body.exits:
             if not isinstance(exit_, Halted):
@@ -147,9 +143,7 @@ class TryStarSugar(Sugar):
                         # Shared typed ReduceContext surface.
                         handler_ctx = handler_ctx.with_observed_effect(slot_id, matched)
                     seed = replace(face.state, context=handler_ctx)
-                    handler_exits = promote_raise_halts(
-                        _reduce_block_from_state(handler_body, seed)
-                    )
+                    handler_exits = _reduce_block_from_state(handler_body, seed)
                     # Branch the frontier: one next face per handler exit face.
                     for handler_exit in handler_exits.exits:
                         guard = _and_guards(face.guard, handler_exit.guard)
@@ -264,7 +258,11 @@ class TryStarSugar(Sugar):
                 )
             parts.append(ExitSet(tuple(retained)).normalize())
 
-        result = parts[0] if parts else ExitSet.completed(None)
+        result = (
+            parts[0]
+            if parts
+            else ExitSet.completed(_ReducedBlock((), True, ()))
+        )
         for part in parts[1:]:
             result = result.union(part)
         if self.finalbody:
@@ -282,7 +280,9 @@ class TryStarSugar(Sugar):
                 )
 
             result = result.and_finally(lambda: cleanup, cleanup_restores=restores)
-        return exitset_to_outcome(result)
+        # The try*'s own faces: a halt stays a halted arm, never an entry of a
+        # completed record (#7826).
+        return result.normalize()
 
 
 def _is_exceptional_raise(effect) -> bool:

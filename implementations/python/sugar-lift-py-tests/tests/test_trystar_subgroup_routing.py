@@ -739,23 +739,12 @@ def test_handler_terminal_return_face_is_retained_not_dropped():
 
 
 def _capture_trystar_exitset(sugar, ctx):
-    """Desugar TryStar but capture the ExitSet before exitset_to_outcome."""
-    import sugar_lift_py_tests.sugar.exit_set_routing as esr
+    """TryStar's own faces: it hands back the ExitSet it routed (#7826)."""
+    from sugar_lift_py_tests.outcome.exit_set import ExitSet
 
-    captured = {}
-    real = esr.exitset_to_outcome
-
-    def capture(es):
-        captured["es"] = es
-        return real(es)
-
-    esr.exitset_to_outcome = capture
-    try:
-        sugar.desugar(ctx)
-    finally:
-        esr.exitset_to_outcome = real
-    assert "es" in captured
-    return captured["es"]
+    es = sugar.desugar(ctx)
+    assert isinstance(es, ExitSet), es
+    return es
 
 
 def test_handler_pass_with_residual_is_not_a_completed_edge():

@@ -17,7 +17,6 @@ def project_authenticated_source_return(value: FloorValue) -> FloorValue:
     from sugar_lift_py_tests.floor.guarded_return import GuardedReturn
     from sugar_lift_py_tests.floor.loop_control_value import LoopControlValue
     from sugar_lift_py_tests.floor.return_value import ReturnValue
-    from sugar_lift_py_tests.outcome import Incomplete
     from sugar_lift_py_tests.outcome.exit_set import false_guard, true_guard
 
     returns = (
@@ -38,7 +37,6 @@ def project_authenticated_source_return(value: FloorValue) -> FloorValue:
                 (
                     GuardedFaces,
                     GuardedLoopControl,
-                    Incomplete,
                     LoopControlValue,
                 ),
             )
