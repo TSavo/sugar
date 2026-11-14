@@ -737,34 +737,34 @@ def exception_ancestry_rows(sf: SourceFile, file_rel: str) -> list:
     return rows
 
 
-def require_outcome_in_scope(outcome, owner) -> None:
-    """The scope law on an outcome that is not a set of arms (#7785).
+def as_its_own_proof_states(outcome, ctx):
+    """A function's outcome as its own proof states it: a set of arms (#7766).
 
-    One rule for every function's outcome, carrier or not. A deferred native
-    operation (``NativeOperationExitCarrierV1``) emits no row, but it carries
-    a formula: its guards and its demand, the antecedent of the only post it
-    can state. That formula goes through the same ``ScopedFormula`` over the
-    formals plus ``out`` the rows go through, so a carrier that names a
-    module-level name raises ``FreeVariableRefusal`` and the function is
-    refused by name. A carrier within scope passes and still emits nothing.
-    A bare effect carries no formula. A name read inside a deferred
-    continuation is not in the formula and is not seen here.
+    A body whose operation on a formal waits for the caller's actual reduces
+    to a deferred native operation (``NativeOperationExitCarrierV1``): the
+    one mechanism a caller applying the body in place discharges with its
+    actuals (``CallSiteValue``, ``SourceCallFrame.project_native_carrier``).
+    The function's own proof has no caller, so no formal has an actual: the
+    carrier discharges with none. Each such operation then stands at its
+    site as the two-faced arm the absence of an actual is
+    (``NativeOperationExitCarrierV1._unanswered_exits``): it completes only
+    under its own undecided guard, halts under the complement, and both
+    faces owe one ``undecided`` member (``reason: unanswered``) at its site.
+    Every continuation and composition enrolled on the carrier still runs,
+    so no arm beside it is dropped (#7825). Nothing is invented: no
+    completion is stated without its guard, and its halt is kept.
+
+    The result is a set of completed and halted arms (step 6), read by the
+    one row path every other function's outcome is read by (step 7).
+    ``ctx`` is the context the body entered under: no caller's.
     """
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
-        _conjoin_guards,
     )
 
-    if not isinstance(outcome, NativeOperationExitCarrierV1):
-        return
-    from sugar_lift_py_tests.proofir.formulas import formula_from_ir
-    from sugar_lift_py_tests.proofir.scope import ScopedFormula
-    from sugar_lift_py_tests.proofir.sorts import UnknownSort
-
-    sort = UnknownSort(reason="lift is sort-silent; the compiler decides")
-    allowed = {name: sort for name in (*owner.formals, "out")}
-    formula = _conjoin_guards((*outcome.guards, outcome.demand.demanded_formula))
-    ScopedFormula(formula_from_ir(formula, var_sorts=allowed), allowed_vars=allowed)
+    if isinstance(outcome, NativeOperationExitCarrierV1):
+        return outcome.discharge(ctx, {})
+    return outcome
 
 
 def function_universe_outcome(fn):
@@ -786,6 +786,10 @@ def function_universe_outcome(fn):
     runs, to the values the module body's run bound them to, each demanded
     only where its key is read (``call_site_sugar.
     with_module_final_globals``, ``module_end_contexts``).
+
+    The outcome is always a set of arms: an operation on a formal that waits
+    for a caller's actual is stated as its own proof states it, with none
+    (``as_its_own_proof_states``).
     """
     from sugar_lift_py_tests.sugar.call_site_sugar import with_module_final_globals
     from sugar_source_tree.nodes import current_module_execution_site
@@ -794,7 +798,8 @@ def function_universe_outcome(fn):
     site = current_module_execution_site()
     owner = fn._active_initializer_owner()
     if owner is None:
-        return sugar.desugar(with_module_final_globals(None, (fn,), site=site))
+        entry = with_module_final_globals(None, (fn,), site=site)
+        return as_its_own_proof_states(sugar.desugar(entry), entry)
 
     from sugar_lift_py_tests.context import ReduceContext
     from sugar_source_tree.panic import SugarNotWritten
@@ -821,7 +826,9 @@ def function_universe_outcome(fn):
         with_module_final_globals(
             ReduceContext.root(owner="function_universe_outcome"), (fn,), site=site
         ),
-        lambda _definition, initializer_ctx: sugar.desugar(initializer_ctx),
+        lambda _definition, initializer_ctx: as_its_own_proof_states(
+            sugar.desugar(initializer_ctx), initializer_ctx
+        ),
     )
 
 
@@ -901,24 +908,18 @@ def function_contract_rows(fn, file_rel: str):
     per halted arm (``halt_locus``), and one row per assertion site (see
     there). One completed arm under guard true is the one-arm case.
 
-    An outcome that is not a set of arms (a deferred native operation,
-    ``NativeOperationExitCarrierV1``, whose arms exist only once a caller
-    discharges it with actuals) emits no contract: the function is
-    (memento, None). Its carrier's own formula still meets the scope law
-    (``require_outcome_in_scope``). A halt is an arm: a body that only halts
-    states its halted arms like any other set. Every row is read off this one
-    reduction; no other lifter adds to it (#7767). A SugarNotWritten from an
-    unported body statement propagates (the whole function is a frontier gap).
+    A body whose operation on a formal waits for a caller's actual is read
+    the same way: its reduction is the set of arms its own proof states
+    (``as_its_own_proof_states``), each such operation the arm that owes
+    one ``undecided`` member at its site. A halt is an arm: a body that only
+    halts states its halted arms like any other set. Every row is read off
+    this one reduction; no other lifter adds to it (#7767). A SugarNotWritten
+    from an unported body statement propagates (the whole function is a
+    frontier gap).
     """
-    from sugar_lift_py_tests.outcome import ExitSet
-
     def_memento = function_def_memento(fn, file_rel)
-    outcome = owner_reduction(fn).outcome
-    if not isinstance(outcome, ExitSet):
-        require_outcome_in_scope(outcome, fn.sugar())
-        return def_memento, None
     return def_memento, reduction_rows(
-        outcome,
+        owner_reduction(fn).outcome,
         owner=fn.sugar(),
         blame=fn.fragment,
         def_memento=def_memento,

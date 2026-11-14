@@ -335,13 +335,18 @@ def test_a_generator_manager_mapped_face_debt_rides_every_exit_beneath_it() -> N
     assert [arm.owed for arm in stands.exits] == [("debt:halt",)]
 
 
-# --- owed_calls: a deferred carrier's reduced arms are read by the one reader
+# --- owed_calls: a deferred carrier is read once it is a set of arms (#7766)
 
 
 def test_a_deferred_carrier_owes_its_prefix_arms_debts() -> None:
+    """``owed_calls`` reads a set of arms and refuses a deferred carrier by
+    name. Discharged with no actual, as a function's own proof states it
+    (``tree_enumerate.as_its_own_proof_states``), the carrier owes its prefix
+    arms' debts and its own operation, at its site."""
     from sugar_lift_py_tests.caller_parameter_contract import (
         NativeOperationExitCarrierV1,
     )
+    from sugar_lift_py_tests.gap.panic import ConstructionPanic
 
     first = unanswered_calls.unanswered_call("python:first", None)
     second = unanswered_calls.unanswered_call("python:second", None)
@@ -360,8 +365,17 @@ def test_a_deferred_carrier_owes_its_prefix_arms_debts() -> None:
     )
     composed = prefix.sequence(lambda _value: carrier)
     assert isinstance(composed, NativeOperationExitCarrierV1)
-    # The resolved (halted) prefix arm first, then the deferred prefix arm.
-    assert unanswered_calls.owed_calls(composed) == (second, first)
+    try:
+        unanswered_calls.owed_calls(composed)
+    except ConstructionPanic as refused:
+        assert refused.info.owner == "unanswered_calls.owed_calls"
+    else:
+        raise AssertionError("a deferred carrier is not a set of arms")
+    owed = unanswered_calls.owed_calls(composed.discharge(None, {}))
+    assert len(owed) == 3
+    assert first in owed
+    assert second in owed
+    assert carrier.unanswered_call() in owed
 
 
 # --- match: patterns, equalities and guards are steps of one path

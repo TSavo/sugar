@@ -870,7 +870,6 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
     from sugar_lift_py_tests import tree_enumerate as _tree
     from sugar_lift_py_tests import unanswered_calls as _unanswered
     from sugar_lift_py_tests.floor.universe_value import UniverseValue
-    from sugar_lift_py_tests.outcome import NativeOperationExitCarrierV1
     from sugar_source_tree.reporter import CollectingReporter
 
     global _RETAINED_LINK_UNITS, _RETAINED_BY_MEMENTO
@@ -895,10 +894,9 @@ def _parameter_contract_link_unit_rows(root: Path) -> List[Dict[str, Any]]:
             # propagates by name; it never skips the function.
             outcome = _tree.owner_reduction(fn).outcome
             # One unconditional completed arm (``ExitSet.completed_value``),
-            # owing or not: what it owes is retained with the unit below. A
-            # deferred carrier or any other arm set enrolls nothing.
-            if isinstance(outcome, NativeOperationExitCarrierV1):
-                continue
+            # owing or not: what it owes is retained with the unit below. Any
+            # other arm set enrolls nothing. The outcome is always a set of
+            # arms (``tree_enumerate.as_its_own_proof_states``).
             universe = outcome.completed_value()
             if not isinstance(universe, UniverseValue):
                 continue
