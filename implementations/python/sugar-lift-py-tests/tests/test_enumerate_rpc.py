@@ -375,7 +375,7 @@ def test_double():
 
 
 @pytest.mark.parametrize(
-    "level", ["call_sites", "assertions", "implications", "universe", "facts"]
+    "level", ["call_sites", "assertions", "universe", "facts"]
 )
 def test_every_level_answers_the_same_when_asked_first(
     tmp_path: Path, level: str
@@ -403,7 +403,6 @@ def test_every_level_answers_the_same_when_asked_first(
     at, seek = {
         "call_sites": (functions["test_double"], False),
         "assertions": (call_site, True),
-        "implications": (call_site, True),
         "universe": (call_site, True),
         "facts": (assertion, True),
     }[level]
@@ -572,10 +571,6 @@ def test_universe_cue_rewrites_temporal_callee_alias(tmp_path: Path) -> None:
     assert len(universe["nodes"]) == 1
     assert universe["nodes"][0]["memento"]["source_function_name"] == "target"
 
-    implication = _enumerate("implications", tmp_path, at=call_site, seek=True)
-    assert implication["gaps"] == []
-    assert implication["nodes"][0]["audit"]["targetSymbol"] == "call:target"
-
 
 def test_every_formula_bearing_enumerate_level_is_closed(project: Path) -> None:
     def refs(value):
@@ -621,7 +616,7 @@ def test_every_formula_bearing_enumerate_level_is_closed(project: Path) -> None:
     callsite_result = _enumerate("call_sites", project, at=function_memento)
     assert_closed(callsite_result)
     callsite_memento = callsite_result["nodes"][0]["memento"]
-    for level in ("assertions", "implications", "universe"):
+    for level in ("assertions", "universe"):
         assert_closed(_enumerate(level, project, at=callsite_memento, seek=True))
     assertion = _enumerate("assertions", project, at=callsite_memento, seek=True)[
         "nodes"
@@ -1093,7 +1088,7 @@ def test_exact_seek_for_unknown_callsite_is_a_loud_gap_not_substitution(
     }
     forged["source_cid"] = "blake3-512:not-an-observed-callsite"
 
-    for level in ("call_sites", "implications", "universe"):
+    for level in ("call_sites", "universe"):
         result = _enumerate(level, project, at=forged, seek=True)
 
         assert result["nodes"] == []
@@ -1169,64 +1164,7 @@ def test_universe_seek_from_callsite_joins_by_bridge(project: Path) -> None:
     assert result["gaps"] == []
 
 
-def test_implication_seek_returns_one_linker_demand_for_resolved_call(
-    project: Path,
-) -> None:
-    file_memento = _enumerate("source_files", project)["nodes"][0]["memento"]
-    functions = {
-        n["memento"].get("function_name")
-        or n["memento"].get("source_function_name"): n["memento"]
-        for n in _enumerate("functions", project, at=file_memento)["nodes"]
-    }
-    call_site = _enumerate("call_sites", project, at=functions["test_add"])["nodes"][0][
-        "memento"
-    ]
-
-    result = _enumerate("implications", project, at=call_site, seek=True)
-
-    assert result["gaps"] == []
-    assert len(result["nodes"]) == 1
-    node = result["nodes"][0]
-    question = node["audit"]
-    demand = node["payload"]
-    assert question["kind"] == "implication-question"
-    assert question["targetSymbol"] == "call:add"
-    assert question["candidateCount"] == 1
-    assert demand["sourceContract"]["name"].startswith("add#euf#")
-    assert demand["sourceContract"]["name"].endswith("::assertion")
-    assert demand["callEdge"]["target_symbol"] == "call:add"
-    assert [
-        candidate["contract"]["name"] for candidate in demand["targetCandidates"]
-    ] == ["mathy.add"]
-    assert all("status" not in row for row in (question, demand))
-
-
-def test_implication_seek_returns_zero_candidate_demand_instead_of_false_empty(
-    tmp_path: Path,
-) -> None:
-    (tmp_path / "debt.py").write_text(
-        "def test_debt(x):\n    assert missing(x) == 1\n", encoding="utf-8"
-    )
-    file_memento = _enumerate("source_files", tmp_path)["nodes"][0]["memento"]
-    function = _enumerate("functions", tmp_path, at=file_memento)["nodes"][0]["memento"]
-    call_site = _enumerate("call_sites", tmp_path, at=function)["nodes"][0]["memento"]
-
-    result = _enumerate("implications", tmp_path, at=call_site, seek=True)
-
-    assert result["gaps"] == []
-    assert len(result["nodes"]) == 1
-    node = result["nodes"][0]
-    question = node["audit"]
-    demand = node["payload"]
-    assert question["kind"] == "implication-question"
-    assert question["candidateCount"] == 0
-    assert question["targetSymbol"] == "call:missing"
-    assert demand["targetCandidates"] == []
-    assert demand["callEdge"]["target_symbol"] == "call:missing"
-    assert "status" not in question
-
-
-def test_term_ref_bridge_recovery_is_shared_by_callsite_universe_and_implication(
+def test_term_ref_bridge_recovery_is_shared_by_callsite_and_universe(
     project: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The response-owned term table is the one bridge-recovery boundary.
@@ -1253,14 +1191,6 @@ def test_term_ref_bridge_recovery_is_shared_by_callsite_universe_and_implication
 
     assert call_site["audit"]["bridgeSourceSymbol"] == "call:add"
     assert callsite_result["termTable"]
-
-    implication = _enumerate(
-        "implications", project, at=call_site["memento"], seek=True
-    )
-    assert implication["gaps"] == []
-    assert implication["nodes"][0]["audit"]["targetSymbol"] == "call:add"
-    assert implication["nodes"][0]["audit"]["candidateCount"] == 1
-    assert implication["termTable"]
 
     universe = _enumerate("universe", project, at=call_site["memento"], seek=True)
     assert universe["gaps"] == []

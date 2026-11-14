@@ -256,12 +256,6 @@ def replace_imported_proof(project: Path, proof: Path) -> None:
     remove_direct_proofs(project)
 
 
-def lift_report(project: Path):
-    report = run([bin_path, "lift", "--report", "--json", project])
-    require_success(report, f"{project.name} wall")
-    return json.loads(report.stdout)
-
-
 def mint_and_prove(project: Path):
     remove_direct_proofs(project)
     mint = run([bin_path, "mint", "--project", project, "--out", project, "--quiet", "--json"])
@@ -283,10 +277,6 @@ def row_for(report, *, bridge=None, property_contains=None):
         if property_contains is not None and property_contains in row.get("property", ""):
             return row
     raise SystemExit(f"row not found bridge={bridge!r} property={property_contains!r}: {json.dumps(report, indent=2)}")
-
-
-def edge_for(report, target_symbol):
-    return next(e for e in report["callEdges"] if e["targetSymbol"] == target_symbol)
 
 
 def summarize(label, proof_cid, report, code):
@@ -323,34 +313,10 @@ def test_add():
 
 consumer = stage_consumer("consumer-vendor-update", consumer_source, proof_v1)
 
-v1_wall = lift_report(consumer)
-v1_edge = edge_for(v1_wall, "call:numpy.load")
-print(
-    "v1 wall edge:",
-    v1_edge["sourceContract"],
-    "->",
-    v1_edge["targetSymbol"],
-    "->",
-    v1_edge["targetContract"],
-    "origin",
-    v1_edge["targetProofCid"],
-)
 v1_code, v1_prove = mint_and_prove(consumer)
 v1_summary = summarize("v1", proof_v1_cid, v1_prove, v1_code)
 
 replace_imported_proof(consumer, proof_v2)
-v2_wall = lift_report(consumer)
-v2_edge = edge_for(v2_wall, "call:numpy.load")
-print(
-    "v2 wall edge:",
-    v2_edge["sourceContract"],
-    "->",
-    v2_edge["targetSymbol"],
-    "->",
-    v2_edge["targetContract"],
-    "origin",
-    v2_edge["targetProofCid"],
-)
 v2_code, v2_prove = mint_and_prove(consumer)
 v2_summary = summarize("v2", proof_v2_cid, v2_prove, v2_code)
 

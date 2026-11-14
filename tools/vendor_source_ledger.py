@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-"""Ad hoc wall-baseline runner (issue #3731 retry lane): run `sugar lift
---report --json` over a full installed vendor package and print the
-`sourceLedger` totals plus whether `lineAccounting` is present.
+"""Ad hoc wall-baseline runner (issue #3731 retry lane): run `sugar mint
+--json` over a full installed vendor package and print the mint receipt
+(the `.proof` written, its catalog CID and contract-set CID).
 
-This exists because criterion14_conservation.py needs `lineAccounting`
-(row-scoped, single-file schema from report_fmt::report_to_json), but the
-directory/wall lift path (cmd_lift.rs:3069) emits `sourceLedger`/
-`sourceAudits` only -- a distinct, coarser JSON shape with no
-`lineAccounting` field. This script measures what the wall path actually
-emits today so that gap is reported precisely instead of silently skipped.
+`sugar mint` is the one driver of a kit (step 1, #7806); this script no
+longer drives `sugar lift --report`. The 2026-07-06 wall-baselines audit
+pinned that path's `sourceLedger` output; those pins are history and are not
+re-produced here.
 
-Not wired into any test/gate; a one-shot measurement tool for the
-2026-07-06 wall-baselines audit.
+Not wired into any test/gate; a one-shot measurement tool.
 """
 from __future__ import annotations
 
@@ -85,61 +82,72 @@ def main(argv: list[str]) -> int:
     _prepare_audit_workspace(package_path, root, workspace, audit_only=False)
 
     env = os.environ.copy()
-    lift_result = subprocess.run(
-        [sugar_bin, "lift", "--report", "--json", str(workspace)],
+    proof_dir = output_dir / "proof"
+    proof_dir.mkdir(parents=True)
+    mint_result = subprocess.run(
+        [
+            sugar_bin,
+            "mint",
+            "--project",
+            str(workspace),
+            "--out",
+            str(proof_dir),
+            "--quiet",
+            "--json",
+        ],
         cwd=root,
         text=True,
         capture_output=True,
         env=env,
     )
-    report_path = output_dir / "report.json"
-    if lift_result.returncode == 0:
-        report_path.write_text(lift_result.stdout, encoding="utf-8")
+    receipt_path = output_dir / "mint.json"
+    if mint_result.returncode == 0:
+        receipt_path.write_text(mint_result.stdout, encoding="utf-8")
     else:
-        report_path.write_text(
-            (lift_result.stdout or "")
-            + ("\n" if lift_result.stdout and lift_result.stderr else "")
-            + (lift_result.stderr or ""),
+        receipt_path.write_text(
+            (mint_result.stdout or "")
+            + ("\n" if mint_result.stdout and mint_result.stderr else "")
+            + (mint_result.stderr or ""),
             encoding="utf-8",
         )
         print(
             json.dumps(
                 {
                     "package": package,
-                    "failure": "lift-nonzero-exit",
-                    "exitCode": lift_result.returncode,
-                    "detail": (lift_result.stderr or lift_result.stdout)[:4000],
-                    "reportPath": str(report_path),
+                    "failure": "mint-nonzero-exit",
+                    "exitCode": mint_result.returncode,
+                    "detail": (mint_result.stderr or mint_result.stdout)[:4000],
+                    "receiptPath": str(receipt_path),
                 }
             )
         )
         return 1
 
     try:
-        report_json = json.loads(lift_result.stdout)
+        receipt = json.loads(mint_result.stdout)
     except json.JSONDecodeError as exc:
         print(
             json.dumps(
                 {
                     "package": package,
-                    "failure": "lift-json-decode-error",
+                    "failure": "mint-json-decode-error",
                     "detail": str(exc),
-                    "reportPath": str(report_path),
+                    "receiptPath": str(receipt_path),
                 }
             )
         )
         return 1
 
-    ledger = report_json.get("sourceLedger")
-    has_line_accounting = "lineAccounting" in report_json
     print(
         json.dumps(
             {
                 "package": package,
                 "packagePath": str(package_path),
-                "sourceLedger": ledger,
-                "hasLineAccounting": has_line_accounting,
-                "reportPath": str(report_path),
+                "proofFile": receipt.get("proofFile"),
+                "filenameCid": receipt.get("filenameCid"),
+                "contractSetCid": receipt.get("contractSetCid"),
+                "bytesWritten": receipt.get("bytesWritten"),
+                "receiptPath": str(receipt_path),
             },
             indent=2,
         )

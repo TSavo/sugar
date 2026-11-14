@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Full pandas source-accounting report. The vendor fixed point is tiny on
-# purpose: it seeds one local source warrant and asks the package-accounting pass
-# to account for the installed pandas package source as inactive or unclassified
-# backlog.
+# Full pandas package mint. The vendor fixed point is tiny on purpose: it seeds
+# one local source warrant, and `sugar mint` (the one driver of the Python kit,
+# step 1) walks it into a `.proof`.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
@@ -23,57 +22,12 @@ cd "$HERE/good"
 rm -f blake3-512_*.proof .pandas-source-report.json .pandas-source-report.txt 2>/dev/null || true
 rm -rf .sugar/runs .sugar/witnesses __pycache__ 2>/dev/null || true
 
-echo "== sugar lift --report --json (full pandas package source accounting) =="
-"$BIN" lift --report --json --allow-failed-components . > .pandas-source-report.json
+echo "== sugar mint (pandas package) =="
+"$BIN" mint --out .
 
-"$VENV/bin/python" - <<'PY'
-import json
-from pathlib import Path
-
-doc = json.loads(Path(".pandas-source-report.json").read_text())
-ledger = doc["sourceLedger"]
-audits = doc["sourceAudits"]
-package = [
-    audit
-    for audit in audits
-    if audit.get("role") == "python.package-source"
-    and audit.get("package") == "pandas"
-]
-if len(package) != 1:
-    raise SystemExit(f"FAIL: expected one pandas package audit, got {len(package)}")
-package = package[0]
-totals = package["totals"]
-if package.get("accounting_mode") != "structural":
-    raise SystemExit(f"FAIL: expected structural package accounting, got {package.get('accounting_mode')!r}")
-if package.get("loci_elided") is not True or "loci" in package:
-    raise SystemExit("FAIL: pandas package audit should use compact elided loci")
-if package.get("package_file_count", 0) < 1000:
-    raise SystemExit(f"FAIL: package audit did not walk all pandas files: {package.get('package_file_count')}")
-if totals.get("source_loci", 0) < 1_000_000:
-    raise SystemExit(f"FAIL: pandas package source loci unexpectedly small: {totals}")
-if totals.get("unclassified_source", 0) <= 0:
-    raise SystemExit(f"FAIL: expected pandas unclassified source backlog: {totals}")
-if ledger.get("source_warranted", 0) <= 0:
-    raise SystemExit(f"FAIL: expected the local seeded source warrant in the ledger: {ledger}")
-counts = package.get("ast_type_counts", {}).get("unclassified", {})
-for kind in ("Name", "Call", "Assign"):
-    if counts.get(kind, 0) <= 0:
-        raise SystemExit(f"FAIL: missing unclassified AST bucket {kind}: {counts}")
-literal = [
-    audit
-    for audit in audits
-    if audit.get("role") == "python.literal-call-sugar"
-    and audit.get("file") == "test_pandas_source.py"
-]
-if len(literal) != 1:
-    raise SystemExit(f"FAIL: expected one local literal-call source warrant, got {len(literal)}")
-print("pandas source ledger:", ledger)
-print("pandas package totals:", totals)
-print(
-    "top unclassified AST buckets:",
-    sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:10],
-)
-PY
+have_proof=0
+for p in blake3-512_*.proof; do [ -e "$p" ] && have_proof=1; done
+[ "$have_proof" = 1 ] || { echo "FAIL: mint produced no .proof"; exit 1; }
 
 echo ""
 echo "==== pandas-source-accounting: PASS ===="
