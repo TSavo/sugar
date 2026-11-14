@@ -472,16 +472,17 @@ class SpreadCallSugar(ConstructedTermSugar):
         carries, so a formal the call omits binds what its ``def`` statement
         evaluated, never an undecided read.
 
-        A star operand projects only when it is a decided ``TupleValue``, and
-        a double-star binds only when it is a constructed DictValue
-        (``bind_actuals``); any other operand, and a call no frame is enrolled
-        for, is the one unanswered call (``unanswered``).
+        A star operand projects only when it is a decided ``TupleValue``; any
+        other star operand, and a call no frame is enrolled for, is the one
+        unanswered call (``unanswered``).  A double-star binds only when it is
+        a constructed DictValue (``bind_actuals``); actuals the binder does not
+        bind raise ``SugarNotWritten`` observing the binder's
+        ``SourceCallBindingGap``, as for ``f(...)``.
         """
         frame = self.source_call_frame
         if frame is None:
             return unanswered()
         from sugar_lift_py_tests.floor import TupleValue
-        from sugar_lift_py_tests.source_call_frame import SourceCallBindingGap
         from sugar_lift_py_tests.sugar.call_site_sugar import (
             bind_source_frame_call,
             enter_source_frame,
@@ -516,27 +517,21 @@ class SpreadCallSugar(ConstructedTermSugar):
         if module_halt is not None:
             return module_halt
 
-        def unbound(*, observed, **_testimony):
-            raise SourceCallBindingGap(observed)
-
         def apply(defaults, body) -> ExitSet:
-            # The one binder; actuals it cannot bind leave the call unanswered.
-            try:
-                callsite = bind_source_frame_call(
-                    self.callee_name or "python:call",
-                    tuple(positional),
-                    tuple(keywords),
-                    frame=frame,
-                    ctx=ctx,
-                    owner="SpreadCallSugar._finish",
-                    blame=self.site,
-                    term=term,
-                    refuse=unbound,
-                    body=body,
-                    defaults=defaults,
-                )
-            except SourceCallBindingGap:
-                return unanswered()
+            # The one binder; actuals it cannot bind raise ``SugarNotWritten``
+            # by name, as they do for ``f(...)``.
+            callsite = bind_source_frame_call(
+                self.callee_name or "python:call",
+                tuple(positional),
+                tuple(keywords),
+                frame=frame,
+                ctx=ctx,
+                owner="SpreadCallSugar._finish",
+                blame=self.site,
+                term=term,
+                body=body,
+                defaults=defaults,
+            )
             return callsite.producer_outcome(ctx)
 
         body = source_frame_body(

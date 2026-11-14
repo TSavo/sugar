@@ -429,10 +429,10 @@ class SubstitutionTraceBuilderV1:
         )
         if testimony_source is None:
             return runtime
-        try:
-            return runtime.project()
-        except BindingProvenanceGap:
-            return runtime
+        # A loop consumer asked for the sealed projection: a projection that
+        # cannot seal raises here, by name, never served as the unsealed
+        # runtime trace.
+        return runtime.project()
 
     def projected_snapshots_for(
         self,
@@ -1012,16 +1012,11 @@ def _callee_definition_by_name_in_its_unit(definition: object):
 
 def _testimony_blame(node: object) -> str:
     """The node's site, by the same projection ``Node.sugar`` uses."""
-    from sugar_source_tree.panic import SourceTreePanic
-
     unit = getattr(node, "unit", None)
     where = getattr(unit, "filename", None)
     if not isinstance(where, str):
         return str(type(node).__name__)
-    try:
-        lc = node.line_col_span()
-    except SourceTreePanic:
-        return where
+    lc = node.line_col_span()
     return f"{where}:{lc.start_line}:{lc.start_col}"
 
 

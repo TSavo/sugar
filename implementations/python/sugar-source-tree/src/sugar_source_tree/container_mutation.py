@@ -603,10 +603,7 @@ def _read_of(value):
 
     if isinstance(value, BindingEntryV1):
         value = value.state
-    try:
-        value = unwrap_binding_state(value)
-    except Exception:  # pragma: no cover - defensive: not a node state
-        return None
+    value = unwrap_binding_state(value)
     return value if isinstance(value, Node) else None
 
 
@@ -2496,17 +2493,14 @@ class _Reach(NamedTuple):
 def _source_callee(call, scope):
     """The source ``def`` a call by name runs: the one the unit's lexical
     rows (or the module) resolve it to, or the local ``def`` ``scope`` binds
-    the name to (``Call._closure_definition``); None otherwise."""
+    the name to (``Call._closure_definition``); None otherwise.  A unit whose
+    resolution of the call raises ``SugarNotWritten`` raises it here."""
     from .binding_state import unwrap_binding_state
     from .nodes import AsyncFunctionDef, Call, FunctionDef, Name
-    from .panic import SugarNotWritten
 
     if not isinstance(call, Call) or not isinstance(call.func, Name):
         return None
-    try:
-        definition = call.unit.source_function_definition_for_call(call)
-    except SugarNotWritten:
-        return None
+    definition = call.unit.source_function_definition_for_call(call)
     if definition is not None:
         return definition
     bound = scope.get(call.func.id)
@@ -2624,16 +2618,10 @@ def _module_reads(functions):
     each of ``functions`` reads where it is called
     (``FunctionDef._module_global_references``); ``reader`` the function
     that reads it.  A function whose module read the module body does not
-    decide is refused by name where its body is reduced; it adds nothing
-    here."""
-    from .panic import SugarNotWritten
-
+    decide raises its ``SugarNotWritten`` here."""
     found = []
     for current in functions:
-        try:
-            references = current._module_global_references()
-        except SugarNotWritten:
-            references = {}
+        references = current._module_global_references()
         found.extend((current, name, references[name]) for name in sorted(references))
     return found
 
@@ -3065,7 +3053,7 @@ def _import_member(node) -> bool:
     """``node`` is an attribute read the unit's import receipt names a
     module's member (``import_value_use_receipt``): a module binding read
     by name, which runs nothing.  Only a dotted read of a name can be one;
-    a unit whose receipts are refused has none (the read is an operation)."""
+    a unit whose receipt read raises ``SugarNotWritten`` raises it here."""
     if node.kind != "Attribute":
         return False
     root = node.value
@@ -3075,15 +3063,10 @@ def _import_member(node) -> bool:
         return False
     from sugar_lift_py_tests.import_binding import AuthenticatedImportUseV1
 
-    from .panic import SugarNotWritten
-
     span = node.line_col_span()
-    try:
-        receipt = node.unit.import_value_use_receipt(
-            (span.start_line, span.start_col, span.end_line, span.end_col)
-        )
-    except SugarNotWritten:
-        return False
+    receipt = node.unit.import_value_use_receipt(
+        (span.start_line, span.start_col, span.end_line, span.end_col)
+    )
     return type(receipt) is AuthenticatedImportUseV1
 
 
