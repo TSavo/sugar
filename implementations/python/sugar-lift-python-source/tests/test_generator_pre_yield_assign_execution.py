@@ -22,7 +22,7 @@ from sugar_lift_py_tests.generator_construction import (
     YieldEffect,
     YieldStepV1,
 )
-from sugar_lift_py_tests.outcome import Complete, Halted
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.sugar.sugar_base import ConstructedTermSugar
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.source_oracle import workspace_path_source
@@ -55,7 +55,7 @@ class _CountingValue(ConstructedTermSugar):
     def desugar(self, ctx=None):
         del ctx
         self.events.append(self.label)
-        return Complete(self.value)
+        return ExitSet.completed(self.value)
 
     def to_term(self, *, owner: str):
         return self.value.to_term(owner=owner)

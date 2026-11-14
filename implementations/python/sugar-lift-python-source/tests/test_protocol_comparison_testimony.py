@@ -11,13 +11,12 @@ from sugar_lift_py_tests.floor import (
 from sugar_lift_py_tests.floor.ground_exit import ground_exceptional_exit
 from sugar_lift_py_tests.effect.raise_effect import UndeterminedRaiseEffect
 from sugar_lift_py_tests.ir import atomic, make_var
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.sugar.comparison_op_sugar import (
     publish_undecided_comparison_edges,
 )
 from sugar_source_tree.tree import SourceFile
 from sugar_lift_py_tests.context_manager_resolution import TreeConstructionContextV1
-from sugar_lift_py_tests.outcome import Incomplete
 from sugar_lift_py_tests.effect import RaiseEffect
 
 
@@ -42,10 +41,12 @@ def test_native_comparison_exception_testimony_survives_undecided_operands(
     native = ground_exceptional_exit(
         exception_name=exception, site=site, owner="NativeComparison"
     )
-    assert isinstance(native, Incomplete) and isinstance(native.effect, RaiseEffect)
+    assert native.halts() == native.exits
+    (native_halt,) = native.halts()
+    assert isinstance(native_halt.effect, RaiseEffect)
     # This seam receives an already-constructed outcome from the native Floor.
     # Operand undecidability must not erase its authenticated type/occurrence.
-    effect = native.effect
+    effect = native_halt.effect
     if shape == "exit-set":
         state = object()
         guard = atomic("native.comparison.raises", ())
@@ -57,7 +58,8 @@ def test_native_comparison_exception_testimony_survives_undecided_operands(
         assert result.exits[0].guard is guard
         assert result.exits[0].state is state
     else:
-        assert result.effect is effect
+        (result_halt,) = result.halts()
+        assert result_halt.effect is effect
     assert effect.exception_type_coordinate is not None
     assert effect.occurrence is not None
     assert effect.exception_name == exception
@@ -67,7 +69,7 @@ def test_native_comparison_exception_testimony_survives_undecided_operands(
 def test_undecided_comparison_predicate_is_not_native_completion_testimony(op):
     site = _comparison(op)
     left, right = SymbolicValue(make_var("left")), StringValue("needle")
-    unproven = Complete(
+    unproven = ExitSet.completed(
         PredicateValue(atomic("py.eq", (left.term, right.to_term(owner="right"))), site)
     )
     # The predicate alone is not testimony that dispatch completes: the
@@ -78,7 +80,7 @@ def test_undecided_comparison_predicate_is_not_native_completion_testimony(op):
     assert isinstance(result, ExitSet)
     (completed,) = [face for face in result.exits if not isinstance(face, Halted)]
     (halted,) = [face for face in result.exits if isinstance(face, Halted)]
-    assert completed.value is unproven.value
+    assert completed.value is unproven.completed_value()
     assert completed.guard.name == "python:compare.completes"
     assert isinstance(halted.effect, UndeterminedRaiseEffect)
     assert halted.effect.exception_name is None
@@ -108,4 +110,6 @@ def test_comparison_sugar_preserves_native_raise_without_negating_or_retyping(op
     right = NativeOperand(make_var("right"))
     result = comparison.sugar().apply_reduced(left, right)
     assert result is native
-    assert result.effect.exception_name == "LookupError"
+    assert result.halts() == result.exits
+    (halt,) = result.halts()
+    assert halt.effect.exception_name == "LookupError"

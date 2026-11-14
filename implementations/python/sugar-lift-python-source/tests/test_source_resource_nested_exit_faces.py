@@ -20,7 +20,7 @@ from sugar_lift_py_tests.context_manager_resolution import SourceFragmentCoordin
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.floor import BlockValue, ReturnValue, TermValue
 from sugar_lift_py_tests.ir import _Atomic
-from sugar_lift_py_tests.outcome import Complete, Completed, Halted, Incomplete
+from sugar_lift_py_tests.outcome import Completed, Halted
 from sugar_lift_py_tests.outcome.exit_set import ExitSet, true_guard
 from sugar_lift_py_tests.outcome.resource_bindings import ExitFaceBinding
 from sugar_lift_py_tests.sugar.method_call_sugar import MethodCallSugar
@@ -62,7 +62,7 @@ class _RecordingProtocol:
     def enter_resource_outcome(self, ctx=None):
         del ctx
         self.enter_calls += 1
-        return Complete(SimpleNamespace(enter_value=self.enter_value))
+        return ExitSet.completed(SimpleNamespace(enter_value=self.enter_value))
 
     def exit_outcome_for(self, entered, ctx=None):
         del ctx
@@ -70,7 +70,7 @@ class _RecordingProtocol:
         self.exit_entered.append(entered)
         if self._exit_outcome is not None:
             return self._exit_outcome
-        return Complete(self.exit_value)
+        return ExitSet.completed(self.exit_value)
 
 
 def _protocol_calls(face_id: str = "exit-face"):
@@ -100,7 +100,7 @@ def _protocol_calls(face_id: str = "exit-face"):
 def _source_resource(*, protocol, summary, body, face_id="exit-face", slot=None):
     enter, exit_, enter_definition, exit_definition = _protocol_calls(face_id)
     return WithSourceResourceSugar(
-        manager=_FixedSugar(Complete(TermValue(1))),
+        manager=_FixedSugar(ExitSet.completed(TermValue(1))),
         enter=enter,
         exit=exit_,
         enter_definition=enter_definition,
@@ -293,7 +293,7 @@ def test_exit_halt_supersedes_every_incoming_body_face():
         occurrence="exit.py:1:0",
         blame="exit.py:1:0",
     )
-    protocol = _RecordingProtocol(exit_outcome=Incomplete(exit_halt))
+    protocol = _RecordingProtocol(exit_outcome=ExitSet.halted(exit_halt))
     sugar = _source_resource(
         protocol=protocol,
         summary=_never_summary(),

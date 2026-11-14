@@ -45,7 +45,7 @@ from sugar_lift_py_tests.generator_construction import (
     GeneratorConstructionV1,
     ReturnStepV1,
 )
-from sugar_lift_py_tests.outcome import Incomplete, outcome_to_exitset
+from sugar_lift_py_tests.outcome import outcome_to_exitset
 from sugar_lift_py_tests.sugar.string_literal_sugar import StringLiteralSugar
 from sugar_lift_python_source.canonical import cid_of_json
 from sugar_lift_python_source.manager_protocol_construction import (

@@ -28,7 +28,7 @@ from sugar_lift_py_tests.floor.branch_result_coordinate import (
 )
 from sugar_lift_py_tests.floor.guarded_value import GuardedValue
 from sugar_lift_py_tests.ir import _Atomic, _Connective, and_, implies, not_
-from sugar_lift_py_tests.outcome import Completed, Halted
+from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
 from test_undetermined_raise_except_matching import _exits
 
@@ -87,10 +87,11 @@ class _Lift:
                     self.returns.append(
                         (and_([face.guard, *entry.guards]), entry.value)
                     )
-                elif name == "Incomplete":
-                    self.halts.append(
-                        (and_([face.guard, *entry.branch_conditions]), entry.effect)
-                    )
+                elif isinstance(entry, ExitSet) and entry.halts() == entry.exits:
+                    for halt in entry.halts():
+                        self.halts.append(
+                            (and_([face.guard, halt.guard]), halt.effect)
+                        )
 
     def _facts(self, guard, entries):
         for entry in entries:

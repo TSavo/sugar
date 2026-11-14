@@ -7,7 +7,7 @@ import pytest
 from sugar_lift_py_tests.floor import BlockValue, NoneValue, ObjectValue, StringValue
 from sugar_lift_py_tests.floor.object_field import ObjectField
 from sugar_lift_py_tests.gap import ConstructionGap, ConstructionPanic
-from sugar_lift_py_tests.outcome import Complete, ExitSet, Halted
+from sugar_lift_py_tests.outcome import ExitSet, Halted
 from sugar_lift_py_tests.outcome.exit_set import true_guard
 from sugar_lift_py_tests.effect import RaiseEffect
 from sugar_lift_py_tests.temporal import builtin_name_temporal
@@ -78,7 +78,7 @@ def test_exception_formals_do_not_seal_an_unconstructed_protocol(phase, refusal)
         )
 
     def completed():
-        return Complete(BlockValue(()))
+        return ExitSet.completed(BlockValue(()))
 
     protocol = SimpleNamespace(
         protocol_construction_cid="constructed-protocol",
@@ -111,8 +111,8 @@ def test_exception_formals_do_not_change_a_constructed_constant_exit(result):
         enter_frame_cid="constructed-enter",
         exit_frame_cid="constructed-exit",
         exit_face_id="native-exit",
-        enter_outcome=lambda: Complete(BlockValue(())),
-        exit_outcome=lambda: Complete(
+        enter_outcome=lambda: ExitSet.completed(BlockValue(())),
+        exit_outcome=lambda: ExitSet.completed(
             BlockValue(
                 (ReturnValue(TermValue(result)),),
                 can_fall_through=False,

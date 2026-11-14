@@ -61,6 +61,7 @@ def test_an_imported_undecorated_generator_halts_with_type_error(
 
 
 def _halt_effects(source_file):
+    from sugar_lift_py_tests.outcome import ExitSet
     from sugar_source_tree.nodes import FunctionDef
 
     func = next(
@@ -72,8 +73,8 @@ def _halt_effects(source_file):
             effects.append(face.effect)
             continue
         for entry in getattr(getattr(face.value, "record", None), "statements", ()):
-            if type(entry).__name__ == "Incomplete":
-                effects.append(entry.effect)
+            if isinstance(entry, ExitSet) and entry.halts() == entry.exits:
+                effects.extend(halt.effect for halt in entry.halts())
     return effects
 
 

@@ -80,10 +80,17 @@ def test_the_completed_face_still_runs_the_body_and_the_halt_skips_it(tmp_path):
             effects.append(face.effect)
             continue
         # A completed arm that cannot fall through carries its raise as an
-        # Incomplete entry (the linear view); it never returns.
+        # all-halting entry of its record; it never returns.
+        from sugar_lift_py_tests.outcome import ExitSet
+
         statements = face.value.record.statements
         assert not any(type(e).__name__ in ("ReturnValue", "GuardedReturn") for e in statements)
-        effects.extend(e.effect for e in statements if type(e).__name__ == "Incomplete")
+        effects.extend(
+            halt.effect
+            for e in statements
+            if isinstance(e, ExitSet) and e.halts() == e.exits
+            for halt in e.halts()
+        )
     kinds = sorted(
         type(e).__name__ + ":" + str(getattr(e, "exception_name", None)) for e in effects
     )

@@ -74,12 +74,13 @@ def _function(source: str, name: str = "test_f"):
 
 def _faces(outcome) -> tuple[int, tuple[str, ...]]:
     """(completed faces, the effect type of each halted face)."""
-    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet, Halted
+    from sugar_lift_py_tests.outcome import Completed, ExitSet, Halted
 
-    if isinstance(outcome, Complete):
-        assert outcome.follow().continues, outcome
-        return 1, ()
     assert isinstance(outcome, ExitSet), outcome
+    value = outcome.completed_value()
+    if value is not None:
+        assert value.follow_rest().continues, outcome
+        return 1, ()
     return (
         sum(isinstance(face, Completed) for face in outcome.exits),
         tuple(
@@ -123,13 +124,10 @@ def test_guarded_value_twin_through_the_solver_is_open_on_both_halves(
 
 def _completed_returns(outcome) -> list:
     from sugar_lift_py_tests.floor.return_value import ReturnValue
-    from sugar_lift_py_tests.outcome import Complete, Completed, ExitSet
+    from sugar_lift_py_tests.outcome import Completed, ExitSet
 
-    if isinstance(outcome, Complete):
-        records = [outcome.value]
-    else:
-        assert isinstance(outcome, ExitSet), outcome
-        records = [face.value for face in outcome.exits if isinstance(face, Completed)]
+    assert isinstance(outcome, ExitSet), outcome
+    records = [face.value for face in outcome.exits if isinstance(face, Completed)]
     return [
         statement
         for record in records
