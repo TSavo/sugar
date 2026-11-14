@@ -45,7 +45,24 @@ class MappingObjectValue(ObjectValue):
         return DictValue(self.entries).contains(item, site)
 
     def subscript(self, index, site):
-        return DictValue(self.entries).subscript(index, site)
+        return self._mapping_read(index, site, None)
+
+    def _mapping_read(self, index, site, ctx):
+        """The authenticated builtin-dict read of ``self[index]``: the shadow
+        ``dict`` answers through the one subscript door
+        (``discharge_subscript``), so a parameter index defers to the caller
+        as a source subscript's does."""
+        from sugar_lift_py_tests.operations.subscript_operation import (
+            discharge_subscript,
+        )
+
+        return discharge_subscript(
+            DictValue(self.entries),
+            index,
+            site,
+            ctx,
+            owner="MappingObjectValue.__getitem__",
+        )
 
     def setitem(self, index, value, site, ctx):
         # One store door: the store statement's context reaches a source
@@ -161,7 +178,7 @@ class MappingObjectValue(ObjectValue):
         """Dispatch authenticated builtin-dict protocol before source methods."""
         if required_frame is None and not keywords:
             if name == "__getitem__" and len(arguments) == 1:
-                return self.subscript(arguments[0], blame)
+                return self._mapping_read(arguments[0], blame, ctx)
             if (
                 name == "__setitem__"
                 and len(arguments) == 2

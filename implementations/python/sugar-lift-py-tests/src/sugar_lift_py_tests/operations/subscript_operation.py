@@ -1,8 +1,15 @@
 """Subscript operation: one demand against one reduced receiver + index.
 
-Floors that implement ``subscript_with`` re-dispatch here. Floors that only
-implement legacy ``subscript`` stay on that path via
-``SubscriptSugar`` fallback — this module does not own those floors.
+``discharge_subscript`` is the one door for ``receiver[index]``.  Floors that
+implement ``subscript_with`` re-dispatch here; floors that only implement
+``subscript`` answer through ``subscript_with_occurrence``.  No module outside
+this one calls a floor's ``subscript`` / ``subscript_with`` /
+``subscript_with_occurrence`` on another value, and a floor calls its own only
+inside those protocol methods (``test_subscript_one_door_7757``): every read
+(a source subscript, a pattern's projection, a walrus's presented value, a
+mapping object's ``__getitem__``, an opaque operation's downstream value)
+reaches the receiver through the door, so a parameter in either operand
+defers to the caller wherever the read is made.
 """
 
 from __future__ import annotations
@@ -96,7 +103,10 @@ def defer_formal_subscript(receiver, index, site):
     The one mint of the ``subscript`` demand.  A formal receiver (``p[0]``)
     and a formal index on any receiver (``[1, 2][i]``) defer alike, one
     coordinate slot per ordered operand; ``None`` when neither operand is a
-    formal, and the receiver answers the read itself.
+    formal, and the receiver answers the read itself.  A parameter inside a
+    slice bound (``xs[start:]``) never reaches here as a formal: the slice it
+    bounds is itself deferred (``construct_slice``, the ``slice`` carrier), and
+    the read runs on the slice the caller's actual decides.
     """
     coordinates = (
         getattr(receiver, "formal_coordinate", None),

@@ -630,48 +630,31 @@ def test_per_phase_occurrence_identity_setitem_vs_delitem() -> None:
         assert set_e.producer_node_owner == del_e.producer_node_owner
 
 
-def test_formal_bound_demand_gap_is_executable_red_law() -> None:
-    """Formal bounds nested in a slice remain an undischarged red law.
-
-    Literal bounds complete into ground SliceValue on the setitem index slot.
-    A formal bound inside the slice must not fabricate a completed store — the
-    demand gap stays executable (carrier / incomplete / construction red), not
-    a silent green.
-    """
+def test_a_formal_slice_bound_defers_the_slice_to_the_caller() -> None:
+    """A parameter bound (``obj[lo:3] = value``) defers the slice itself: the
+    ``slice`` carrier, the bound's coordinate in its slot (#7757).  The helper
+    alone is the cited unanswered face, never a fabricated store."""
     function, pending = _helper("def helper(obj, lo, value):\n    obj[lo:3] = value\n")
-    # Whatever shell production chooses today must not be a fabricated sole
-    # completed list store — formal lower bound is still open work.
-    if isinstance(pending, NativeOperationExitCarrierV1):
-        # If a setitem carrier mints, the index formal must appear or the
-        # demand must retain the bound coordinate — not a ground-only index.
-        cids = pending.demand.operand_coordinate_cids
-        # receiver + value formals present; index may carry the formal bound
-        # or the whole demand stays undischarged without green list post-state.
-        assert pending.demand.operator == "setitem"
-        _unanswered(pending, {})
-        formals = function.formal_coordinates()
-        assert len(formals) >= 2
-    elif (
-        isinstance(pending, ExitSet)
-        and pending.exits
-        and pending.halts() == pending.exits
-    ):
-        assert all(halt.effect is not None for halt in pending.halts())
-    elif isinstance(pending, ExitSet):
-        # No sole Completed face that silently stored.
-        completed = [e for e in pending.exits if isinstance(e, Completed)]
-        assert not (
-            len(pending.exits) == 1
-            and completed
-            and isinstance(getattr(completed[0].value, "force_floor", None), type(None))
-            is False
-            and False  # never treat ExitSet alone as proof of green store
-        )
-        # Executable red: not a sole fabricated unconditional completion.
-        with pytest.raises(AssertionError):
-            assert pending.completed_value() is not None
-    else:
-        raise AssertionError(f"unexpected outcome {type(pending).__name__}")
+    lo = next(
+        coordinate
+        for coordinate in function.sugar().formal_coordinates
+        if coordinate.declared_name == "lo"
+    )
+
+    assert isinstance(pending, NativeOperationExitCarrierV1), type(pending)
+    assert pending.demand.operator == "slice"
+    assert pending.demand.operand_coordinate_cids == (lo.coordinate_cid, None, None)
+    _unanswered(pending, {})
+
+
+def test_a_caller_completes_a_store_through_a_formal_slice_bound() -> None:
+    outcome = _call_outcome(
+        "obj, lo, value",
+        "obj[lo:3] = value",
+        "[0, 1, 2, 3], 1, [9]",
+    )
+    stored = _stored_list(outcome)
+    assert stored == ListValue((TermValue(0), TermValue(9), TermValue(3)))
 
 
 def test_slice_assign_iterable_door_not_getattr_probe() -> None:

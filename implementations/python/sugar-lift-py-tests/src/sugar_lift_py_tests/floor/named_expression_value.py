@@ -175,7 +175,20 @@ class NamedExpressionValue(FloorValue):
         return left.is_identical(self.presented_value, site).and_then(self._carry)
 
     def subscript(self, index, site):
-        return self.presented_value.subscript(index, site).and_then(self._carry)
+        # The presented value is read through the one subscript door
+        # (``discharge_subscript``): a parameter in either operand defers to
+        # the caller, and the walrus bind rides the deferred read.
+        from sugar_lift_py_tests.operations.subscript_operation import (
+            discharge_subscript,
+        )
+
+        return discharge_subscript(
+            self.presented_value,
+            index,
+            site,
+            None,
+            owner="NamedExpressionValue.subscript",
+        ).and_then(self._carry)
 
     def setitem(self, index, value, site, ctx):
         return self.presented_value.setitem(index, value, site, ctx).and_then(

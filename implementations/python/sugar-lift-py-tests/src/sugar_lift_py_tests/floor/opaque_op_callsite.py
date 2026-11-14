@@ -141,8 +141,15 @@ class OpaqueOpCallsite(FloorValue):
     def subscript(self, index, site):
         # Preserve a computed operator value when one exists; otherwise the
         # operator coordinate is the symbolic receiver.  Both paths retain the
-        # lookup rather than inventing an element.
-        return self._downstream().subscript(index, site)
+        # lookup rather than inventing an element, through the one subscript
+        # door (``discharge_subscript``).
+        from sugar_lift_py_tests.operations.subscript_operation import (
+            discharge_subscript,
+        )
+
+        return discharge_subscript(
+            self._downstream(), index, site, None, owner="OpaqueOpCallsite.subscript"
+        )
 
     def floor_divide(self, other, site, ctx):
         return self._arithmetic("floor_divide", other, site, ctx)
@@ -188,7 +195,20 @@ class OpaqueOpCallsite(FloorValue):
         return self._downstream().next_with(operation, ctx)
 
     def subscript_with(self, operation: Any, ctx: Any) -> Any:
-        return self._downstream().subscript_with(operation, ctx)
+        # The downstream value answers the same demand through the one
+        # subscript door, as a source subscript of it would.
+        from sugar_lift_py_tests.operations.subscript_operation import (
+            discharge_subscript,
+        )
+
+        return discharge_subscript(
+            self._downstream(),
+            operation.index,
+            operation.blame,
+            ctx,
+            owner=operation.owner,
+            use_occurrence=operation.use_occurrence,
+        )
 
     def append_with(self, value, site):
         """``.append(v)`` on a ``str.split`` result: the ``py.list_append`` rebind.
