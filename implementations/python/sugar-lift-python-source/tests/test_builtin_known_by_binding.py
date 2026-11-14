@@ -24,11 +24,11 @@ from sugar_lift_py_tests.floor import (
 )
 from sugar_lift_py_tests.ir import make_var
 from sugar_lift_py_tests.source_call_resolution import (
-    BuiltinValueCallV1,
     UnknownCalleeCallV1,
     builtin_call_total,
     builtin_dunder_call,
     builtin_list_construct,
+    cpython_cited_fold,
 )
 from sugar_lift_py_tests.sugar.call_site_sugar import (
     CallSiteSugar,
@@ -75,9 +75,29 @@ def _shadowed(name: str) -> list[str]:
 def test_len_bound_to_the_builtin_is_the_dunder_builtin():
     call = _call("def f(o):\n    return len(o)\n", "len")
     assert call.language_callee() is LanguageCallee.BUILTIN_LEN
+    # #7757: ``len(1)`` is not a shape CPython documents as total: the one
+    # unanswered form, which ``cpython_cited_fold`` decides over ground
+    # operands.
     assert builtin_dunder_call(call.language_callee(), (TermValue(1),)) == (
-        BuiltinValueCallV1("len")
+        UnknownCalleeCallV1("len")
     )
+
+
+def test_a_builtin_over_an_operand_known_only_by_type_is_not_folded():
+    # #7757: no ground value to apply the builtin to, so nothing is decided
+    # here and the call stays the one unanswered call.
+    call = _call("def f(o):\n    return int(o)\n", "int")
+    operand = SymbolicValue(make_var("o"))
+    unanswered = builtin_dunder_call(call.language_callee(), (operand,))
+    assert unanswered == UnknownCalleeCallV1("int")
+    folded = cpython_cited_fold(
+        unanswered,
+        (operand,),
+        (),
+        site=call.fragment,
+        language_callee=call.language_callee(),
+    )
+    assert folded is None
 
 
 def test_len_over_an_undecided_operand_is_the_one_unanswered_call():

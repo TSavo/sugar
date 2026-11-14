@@ -890,20 +890,6 @@ class CallSiteSugar(ConstructedTermSugar):
             unprojected = _import_bound_unanswered_call(self)
             if unprojected is None:
                 unprojected = _off_population_unanswered_call(self)
-            if unprojected is not None:
-                from sugar_lift_py_tests.source_call_resolution import (
-                    cpython_cited_fold,
-                )
-
-                folded = cpython_cited_fold(
-                    unprojected,
-                    callsite.arg_values,
-                    getattr(callsite, "keyword_names", ()) or (),
-                    site=self.site,
-                    language_callee=self.language_callee,
-                )
-                if folded is not None:
-                    return folded
             if unprojected is None and self.contract_resolution_gap is None:
                 from sugar_lift_py_tests.source_call_resolution import (
                     builtin_dunder_call,
@@ -926,6 +912,25 @@ class CallSiteSugar(ConstructedTermSugar):
                     )
                     if constructed is not None:
                         return constructed
+            if unprojected is not None:
+                # What CPython's own source decides: an import-bound stdlib
+                # call, or a builtin over ground operands (``int('3')`` is
+                # ``3``, ``int('x')`` the one ``ValueError`` halt).  Anything
+                # else stays the one unanswered call.
+                from sugar_lift_py_tests.source_call_resolution import (
+                    cpython_cited_fold,
+                )
+
+                folded = cpython_cited_fold(
+                    unprojected,
+                    callsite.arg_values,
+                    getattr(callsite, "keyword_names", ()) or (),
+                    site=self.site,
+                    language_callee=self.language_callee,
+                    callsite=callsite,
+                )
+                if folded is not None:
+                    return folded
             if unprojected is None:
                 unprojected = _unknown_callee_call(self, source_call_frame, callsite)
             if unprojected is not None:
