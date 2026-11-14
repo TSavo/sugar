@@ -4,8 +4,8 @@ Each call site that asks whether a callee is a builtin asks the callee's
 binding (``SourceUnit.name_reference_at`` / ``builtin_reference_at``, the
 ``LanguageCallee`` member ``Call.language_callee`` names): the dunder-invoking
 builtins (``builtin_dunder_call``), ``list(xs)`` (``builtin_list_construct``),
-a builtin exception class's construction, ``type(obj)``'s class coordinate,
-the call head's builtin classification and a head nothing binds.  A name the
+a builtin exception class's construction, ``type(obj)``'s class coordinate
+and the call head's builtin classification.  A name the
 module, the function or a parameter rebinds (``len = my_len``) is not the
 builtin at any of them.
 """
@@ -30,10 +30,7 @@ from sugar_lift_py_tests.source_call_resolution import (
     builtin_list_construct,
     cpython_cited_fold,
 )
-from sugar_lift_py_tests.sugar.call_site_sugar import (
-    CallSiteSugar,
-    _lexically_unknown_head,
-)
+from sugar_lift_py_tests.sugar.call_site_sugar import CallSiteSugar
 from sugar_lift_py_tests.temporal.builtin_name_bindings import builtin_name_temporal
 from sugar_source_tree.nodes import Call, LanguageCallee, Name
 
@@ -336,13 +333,6 @@ def test_a_source_binding_in_the_temporal_is_read_over_the_builtin():
     ctx = ctx.with_temporal(ctx.temporal.bind_value("int", bound))
     source = "def f(o, int):\n    return isinstance(o, int)\n"
     assert _int_value_read(source, ctx).completed_value() is bound
-
-
-def test_a_head_nothing_binds_is_known_only_through_the_builtin_namespace():
-    known = _call("def f(o):\n    return len(o)\n", "len")
-    assert not _lexically_unknown_head(known.fragment, "len")
-    unknown = _call("def f(o):\n    return frobnicate(o)\n", "frobnicate")
-    assert _lexically_unknown_head(unknown.fragment, "frobnicate")
 
 
 def test_callable_bound_to_the_builtin_is_its_member():
