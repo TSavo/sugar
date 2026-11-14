@@ -2,7 +2,7 @@
   "identity": "path + normalized text digest + duplicate ordinal; line is display only",
   "issue": "#3632",
   "law": "REFUSE is the verifier verb; lift outputs are reduced meaning or typed effects.",
-  "lift_output_backlog": 2206,
+  "lift_output_backlog": 2205,
   "occurrences": [
     {
       "key": "implementations/python/sugar-build-witness/src/sugar_build_witness/discharge_cli.py:523c0ad6c899be9b:1",
@@ -2492,16 +2492,6 @@
       "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
       "speaker": "lift-output-backlog",
       "text": "# FunctionBindingMiss is named refuse (gap above); unfinished",
-      "wire_marker": "wire-protocol:rpc-dto"
-    },
-    {
-      "key": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py:f77a51a32018af76:1",
-      "line": 2632,
-      "path": "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",
-      "reason": "lifter-side output/status/effect vocabulary still uses the verifier verb",
-      "replacement": "rename to typed effect/incomplete vocabulary with dual-read compatibility for wire strings",
-      "speaker": "lift-output-backlog",
-      "text": "# applied callee after its abstract universe refused.",
       "wire_marker": "wire-protocol:rpc-dto"
     },
     {
@@ -23119,10 +23109,10 @@
   "speaker_counts": {
     "emitter-provenance-guard": 3,
     "instrument-prose": 10,
-    "lift-output-backlog": 2206,
+    "lift-output-backlog": 2205,
     "provenance-oracle-guard": 57,
     "vendor-language-identifier": 2,
     "verifier-verdict-quote": 33
   },
-  "total_occurrences": 2311
+  "total_occurrences": 2310
 }

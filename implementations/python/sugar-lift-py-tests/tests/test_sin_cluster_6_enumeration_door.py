@@ -2,18 +2,16 @@
 
 Coordinates under sugar-lift-py-tests:
 
-1. applied_contract_rows binds through SourceCallFrame.bind_node_actuals
-   (not ad-hoc zip of flat params). ``f(a, *rest)`` called ``f(1, 2)`` packs
-   ``rest=(2,)``; a lying twin asserting ``rest=2`` must fail.
-2. No second bare FunctionUniverseSugar mint — formal coordinates come from
-   the frame produced by the construction door.
-3. Function resolution is binding/coordinate, not first-match-by-spelling;
+1. A call binds through SourceCallFrame.bind_node_actuals (not ad-hoc zip
+   of flat params). ``f(a, *rest)`` called ``f(1, 2)`` packs ``rest=(2,)``;
+   a lying twin asserting ``rest=2`` must fail. (The seek path's own
+   application, ``applied_contract_rows``, is deleted: a contract is applied
+   in one place, at prove; #7757 item 12.)
+2. Function resolution is binding/coordinate, not first-match-by-spelling;
    a miss THROWS FunctionBindingMiss (named), never soft None.
 """
 
 from __future__ import annotations
-
-import inspect
 
 import pytest
 
@@ -39,7 +37,7 @@ def _module_fn(source: str, name: str) -> tuple[SourceFile, FunctionDef]:
     return tree, fn
 
 
-# --- 1 + 2: bind_node_actuals door; no second bare FunctionUniverseSugar -----
+# --- 1: bind_node_actuals door ------------------------------------------------
 
 
 def test_variadic_applied_binds_rest_as_tuple_truthful_twin() -> None:
@@ -71,11 +69,6 @@ def test_variadic_applied_binds_rest_as_tuple_truthful_twin() -> None:
     assert len(rest.elts) == 1
     assert rest.elts[0].kind == "Constant"
     assert rest.elts[0].value == 2
-
-    # Applied contract path uses the same door and publishes without minting a
-    # coordinate-free FunctionUniverseSugar.
-    _memento, rows = te.applied_contract_rows(fn, tuple(call.args), "cluster6.py")
-    assert rows is not None
 
 
 def test_variadic_applied_lying_twin_rest_is_not_scalar_must_fail() -> None:
@@ -111,21 +104,10 @@ def test_variadic_applied_lying_twin_rest_is_not_scalar_must_fail() -> None:
         assert rest.kind == "Constant" and rest.value == 2
 
 
-def test_applied_contract_rows_does_not_mint_bare_function_universe_sugar() -> None:
-    """Coordinate 2: source must not construct FunctionUniverseSugar inline."""
-    src = inspect.getsource(te.applied_contract_rows)
-    assert "FunctionUniverseSugar(" not in src
-    assert "bind_node_actuals" in src
-    assert "formal_coordinates" in src
-
-
-def test_ad_hoc_zip_binder_is_absent_from_applied_contract_rows() -> None:
-    """Coordinate 1 instrument: the flat param/actual zip binder is gone."""
-    src = inspect.getsource(te.applied_contract_rows)
-    # Executable body only — docstring may name the retired shape.
-    body = src.split('"""', 2)[-1] if '"""' in src else src
-    assert "zip(fn.params" not in body
-    assert "{p.name: a for p, a in zip" not in body
+def test_seek_path_has_no_application_of_its_own() -> None:
+    """#7757 item 12: enumerate does not bind and reduce a callee body itself."""
+    assert not hasattr(te, "applied_contract_rows")
+    assert not hasattr(te, "_args_are_ground")
 
 
 def test_bind_actuals_floor_packs_rest_as_tuple_value() -> None:
@@ -153,7 +135,7 @@ def test_binding_gap_is_loud_on_arity_mismatch() -> None:
         frame.bind_node_actuals((), ())
 
 
-# --- 3: binding/coordinate resolution; named throw on miss -------------------
+# --- 2: binding/coordinate resolution; named throw on miss -------------------
 
 
 def test_find_function_by_name_module_binding_truthful_twin() -> None:
@@ -253,34 +235,3 @@ def test_spelling_first_match_over_methods_is_not_authority() -> None:
     fn = te.find_function_by_name(tree, "pack")
     # Module def has formals (a, *rest); method has (self, *items).
     assert [p.name for p in fn.params] == ["a", "rest"]
-
-
-def test_applied_contract_ground_list_fold_truthful_twin() -> None:
-    """Unit twin of dig-with-args: ground list folds through bind_node_actuals door."""
-    source = (
-        "def A(xs):\n"
-        "    total = 0\n"
-        "    for x in xs:\n"
-        "        total = total + x\n"
-        "    return total\n"
-        "\n"
-        "def test_a():\n"
-        "    assert A([1, 2, 3]) == 6\n"
-    )
-    tree, fn = _module_fn(source, "A")
-    call = next(
-        node
-        for node in tree.nodes()
-        if isinstance(node, Call)
-        and isinstance(node.func, Name)
-        and node.func.id == "A"
-    )
-    _memento, rows = te.applied_contract_rows(fn, tuple(call.args), "fold.py")
-    assert rows is not None
-    post = rows[0].post
-    assert post is not None
-    # out == 6 after the fold collapses under applied actuals.
-    formula = post.ir_formula
-    # Formula is (= out 6) or equivalent tree; walk for the literal 6.
-    text = str(formula)
-    assert "6" in text
