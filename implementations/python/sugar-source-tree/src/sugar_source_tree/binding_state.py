@@ -1059,19 +1059,22 @@ def _testify_snapshot(
     snapshot: tuple[tuple[str, BindingEntryV1], ...],
     testimony_source: ConstructionTestimonyReporterV1 | None,
 ) -> tuple[tuple[str, BindingEntryV1], ...]:
+    """Seal every entry of one trace snapshot, for a loop consumer's roll.
+
+    Through the ONE runtime-state sealer (``live_loop_construction._testified``
+    / ``_seal_runtime_state``), the same one a live loop's own records seal
+    through. This used to seal a Node only when the roll had heard it, and no
+    other state at all, so a loop target nothing read (an ``EvaluationRef``)
+    or a branch join (``GuardedBinding``) left the projection unsealed and
+    ``wire()`` refused it. Every state now seals or refuses by its own name.
+    """
     if testimony_source is None:
         return snapshot
-    testified: list[tuple[str, BindingEntryV1]] = []
-    for name, entry in snapshot:
-        testimony = entry.constructed_value_testimony
-        if testimony is None:
-            from sugar_source_tree.nodes import Node
+    from .live_loop_construction import _testified
 
-            if isinstance(entry.state, Node):
-                testimony = testimony_source.testimony_for(entry.state)
-        runtime = entry if testimony is None else entry.with_testimony(testimony)
-        testified.append((name, runtime))
-    return tuple(testified)
+    return tuple(
+        (name, _testified(entry, testimony_source)) for name, entry in snapshot
+    )
 
 
 class _ResolvedSourceFragment:
