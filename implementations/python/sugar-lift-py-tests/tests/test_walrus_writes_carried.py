@@ -165,6 +165,7 @@ def test_the_latch_is_the_items_walrus_write() -> None:
         target_cid=LOOP,
         loop_construction_cid="blake3-512:test-walrus-construction",
         binding_coordinate_cids=(),
+        post_binding_keys=(),
         outward_faces=(),
         construction=None,
         site="walrus-latch",

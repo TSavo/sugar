@@ -21801,13 +21801,17 @@ class EvaluationRef(Expression):
 
 class LoopBindingRef(Expression):
     """Construction-owned reference to one guarded loop post-binding face:
-    the read of ``name`` after the loop, through the binding coordinate the
-    loop publishes it under (``LoopBindingRefSugar``)."""
+    the read of ``name`` after the loop, through the loop's own key of it
+    (``post_key``, ``live_loop_construction.loop_post_binding_key``), which
+    the loop publishes it under (``LoopBindingRefSugar``).  The binding
+    coordinate names the binding the loop carries; two loops writing one
+    name carry it under one coordinate, so the read never goes through it."""
 
     target_cid: str
     binding_coordinate_cid: str
     completion_kind: str
     name: str
+    post_key: str
 
     def substitute(self, scope):
         del scope
@@ -21823,17 +21827,24 @@ class LoopBindingRef(Expression):
             self.binding_coordinate_cid,
             self.completion_kind,
             self.name,
+            self.post_key,
             self.fragment,
         )
 
 
 class LoopRecurrenceStatement(Statement):
-    """A decoded live LoopConstructionV1 enrolled in the source statement list."""
+    """A decoded live LoopConstructionV1 enrolled in the source statement list.
+
+    ``post_binding_keys`` (``binding_coordinate_cids`` order) are the keys
+    the loop publishes the names it carries under binding coordinates under
+    (``live_loop_construction.loop_post_binding_key``): its own, one per
+    name."""
 
     loop: Statement
     construction: object
     target_cid: str
     binding_coordinate_cids: tuple[str, ...]
+    post_binding_keys: tuple[str, ...]
     outward_faces: tuple[object, ...]
     _child_fields = ("loop",)
 
@@ -21850,6 +21861,7 @@ class LoopRecurrenceStatement(Statement):
             self.target_cid,
             self.construction.loop_construction_cid,
             self.binding_coordinate_cids,
+            self.post_binding_keys,
             self.outward_faces,
             self.construction,
             self.fragment,

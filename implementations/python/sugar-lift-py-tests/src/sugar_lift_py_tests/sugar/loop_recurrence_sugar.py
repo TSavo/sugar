@@ -42,10 +42,18 @@ class LoopBindingRefSugar(ConstructedTermSugar):
     its binding coordinate: one face (``completion_kind``) of the loop's
     post-binding projection (``project_loop_post_binding``).
 
-    The read resolves through the coordinate only.  The loop binds it on
-    every exit it leaves by, concrete or symbolic, guarded or not
+    The read resolves through the loop's own key of the name only
+    (``post_key``, ``live_loop_construction.loop_post_binding_key``), never
+    through the binding coordinate: two loops writing one name carry it
+    under one coordinate, and a read after the later one must never find the
+    earlier one's value there.  The loop binds the key on every exit it
+    leaves by, concrete or symbolic, guarded or not
     (``LoopRecurrenceSugar._publication``), so a read reduced after the loop
-    in the block that ran it finds it bound.  Unbound -- no context, or a
+    in the block that ran it finds it bound, and an ``if`` carries it out of
+    the arm the loop sits in as it carries any evaluation
+    (``if_sugar._arm_evaluations``).  The key is an evaluation key, read
+    where the reduction runs (``evaluation_read_here``): inside the item of a
+    live loop around the write, that item's.  Unbound -- no context, or a
     context the loop's publication never reached -- the read is refused by
     name (``_unbound``): no value is made up in its place."""
 
@@ -53,6 +61,7 @@ class LoopBindingRefSugar(ConstructedTermSugar):
     binding_coordinate_cid: str
     completion_kind: str
     name: str
+    post_key: str
     site: object = field(compare=False)
 
     @classmethod
@@ -72,21 +81,25 @@ class LoopBindingRefSugar(ConstructedTermSugar):
         )
 
     def desugar(self, ctx=None):
-        temporal = getattr(ctx, "temporal", None)
-        bound = (
-            None
-            if temporal is None
-            else temporal.value_if_bound(self.binding_coordinate_cid)
+        from sugar_lift_py_tests.sugar.evaluation_ref_sugar import (
+            evaluation_read_here,
         )
+
+        temporal = getattr(ctx, "temporal", None)
+        bound = None
+        if temporal is not None:
+            key = evaluation_read_here(temporal, self.post_key)
+            bound = temporal.value_if_bound(key)
         if bound is None:
             self._unbound()
         return ExitSet.completed(bound)
 
     def _unbound(self):
-        """A read whose binding coordinate the loop's publication never
-        reached here.  Refused by name, naming the coordinate: the name is
-        never read in its place, and the loop is never assumed to have left
-        some value nobody bound."""
+        """A read whose key the loop's publication never reached here.
+        Refused by name, naming the key and the binding coordinate: the name
+        is never read in its place, the coordinate is never read in its
+        place either (another loop writing the name binds the same one), and
+        the loop is never assumed to have left some value nobody bound."""
         from sugar_lift_py_tests.gap.panic import construction_panic_gap
 
         construction_panic_gap(
@@ -94,13 +107,14 @@ class LoopBindingRefSugar(ConstructedTermSugar):
             blame=self.site,
             observed=(
                 f"read of `{self.name}` after loop {self.target_cid} "
-                f"({self.completion_kind} face) with its binding coordinate "
+                f"({self.completion_kind} face) with the loop's key "
+                f"{self.post_key} of binding coordinate "
                 f"{self.binding_coordinate_cid} unbound"
             ),
             requested=(
-                "the loop's publication of the name under its binding "
-                "coordinate (LoopRecurrenceSugar._publication) on the exit "
-                "the read follows"
+                "the loop's publication of the name under its own key "
+                "(LoopRecurrenceSugar._publication) on the exit the read "
+                "follows"
             ),
             fix=(
                 "reduce the read after the loop in the block that ran it, "
@@ -115,6 +129,11 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     target_cid: str
     loop_construction_cid: str
     binding_coordinate_cids: tuple[str, ...]
+    # The loop's own key of each name it carries under a binding coordinate
+    # (``binding_coordinate_cids`` order,
+    # ``live_loop_construction.loop_post_binding_key``): what it publishes
+    # the name under as it leaves (``_publication``).
+    post_binding_keys: tuple[str, ...]
     outward_faces: tuple[object, ...]
     construction: object = field(compare=False)
     site: object = field(compare=False)
@@ -1124,8 +1143,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         of every write of it in the body (``x += e``, a walrus ``(x := e)``,
         an assignment, a nested loop's publication) and this item's header
         (``_latest_written``).  Read inside item ``index``, so each key is
-        that item's.  The loop publishes the last item's latch under the
-        name's binding coordinate, which is what a read after the loop reads
+        that item's.  The loop publishes the last item's latch under its own
+        key of the name (``post_binding_keys``), which is what a read after
+        the loop reads
         (a walrus's included: ``_substitute_body_tracked``)."""
         from sugar_lift_py_tests.occurrence import entered, loop_iteration_segment
 
@@ -1345,11 +1365,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         (``_coordinate_names``) as the loop leaves: ``carried``,
         what the leaving item (``_latched``) or the ``else`` suite
         (``_after_else``) left it with; handed nothing, refused by name
-        (``_require_carried``).  The value is published under the name's
-        binding coordinate only: every read after the loop is a
-        ``LoopBindingRef`` to it (``project_loop_post_binding``), and the
-        name is never written nor read.  The iterable's walrus writes of the
-        names the loop does not carry (``iterable_writes``) are published
+        (``_require_carried``).  The value is published under the loop's own
+        key of the name only (``post_binding_keys``): every read after the
+        loop is a ``LoopBindingRef`` to it (``project_loop_post_binding``),
+        and neither the name nor its binding coordinate is written or read.
+        The iterable's walrus writes of the names the loop does not carry
+        (``iterable_writes``) are published
         first, under their keys: the iterable ran before every item.  Each
         name the items write that the loop does not carry under a binding
         coordinate (a name first bound in the loop, a module binding) is
@@ -1402,9 +1423,12 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
     def _publication(self, coordinate_values, posted):
         """What the loop leaves bound for a read after it, on every exit it
         publishes on, concrete or symbolic: each coordinate name's value
-        (``coordinate_values``, ``binding_coordinate_cids`` order) under its
-        binding coordinate -- every read after the loop is a ``LoopBindingRef``
-        to it (``project_loop_post_binding``) -- then, per name published
+        (``coordinate_values``, ``binding_coordinate_cids`` order) under the
+        loop's own key of it (``post_binding_keys``), bound outside every
+        item of this loop (``evaluation_here``) -- every read after the loop
+        is a ``LoopBindingRef`` to it (``project_loop_post_binding``), and
+        no other loop binds it, so a read after this loop never finds another
+        loop's value of the name -- then, per name published
         through its post-loop key, ``(post_key, value, wrote)``
         (``_post_loop_writes``): the post-loop key bound outside every item
         (``evaluation_here``) to ``value`` where ``value`` is not None, and
@@ -1425,9 +1449,9 @@ class LoopRecurrenceSugar(ConstructedTermSugar):
         from sugar_source_tree.binding_state import loop_write_slot
 
         published = [
-            ScopeRebind(coordinate_cid, value)
-            for coordinate_cid, value in zip(
-                self.binding_coordinate_cids, coordinate_values, strict=True
+            ScopeRebind(evaluation_here(post_key), value)
+            for post_key, value in zip(
+                self.post_binding_keys, coordinate_values, strict=True
             )
         ]
         for post_key, value, wrote in posted:

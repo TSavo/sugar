@@ -242,7 +242,7 @@ def test_live_item_reads_what_it_carries_with_the_name_unbound() -> None:
     [published] = [
         entry for entry in block.statements if isinstance(entry, ScopeRebind)
     ]
-    assert published.name == recurrence.binding_coordinate_cids[0]
+    assert published.name == recurrence.post_binding_keys[0]
 
 
 def test_live_item_handed_nothing_it_carries_is_refused_by_name() -> None:

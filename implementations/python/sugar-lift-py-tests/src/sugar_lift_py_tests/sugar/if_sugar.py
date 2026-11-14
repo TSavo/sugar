@@ -138,7 +138,11 @@ def _arm_evaluations(arms, incoming) -> tuple:
     guard.  A walrus in the condition (``if (n := e):``) is evaluated before
     either suite: its key is in every arm with the one value, and a read
     after the ``if`` is no phi's arm.  ``incoming`` is the context before
-    the condition, so that key is carried too.  The ``if`` carries those
+    the condition, so that key is carried too.  A live loop in a suite
+    publishes each name it carries under a binding coordinate under its own
+    key (``live_loop_construction.loop_post_binding_key``), an evaluation
+    key too: it is carried out the same way, and the phi's arm for that
+    suite reads it (``LoopBindingRefSugar``).  The ``if`` carries those
     values out; it carries no name.  A key that two completed faces bound to
     different values has no one value: it is left out, and its read is the
     read it was before (a walrus's is refused, ``EvaluationRefSugar``).
