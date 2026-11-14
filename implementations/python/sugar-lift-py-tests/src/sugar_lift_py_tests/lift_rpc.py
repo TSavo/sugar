@@ -59,7 +59,6 @@ COMPONENT_PLAN_RPC_METHOD = "sugar.component.plan"
 RESOLVE_SOURCE_MEMENTO_RPC_METHOD = "sugar.plugin.resolve_source_memento"
 ENUMERATE_RPC_METHOD = "sugar.enumerate"
 BIND_CONTRACT_REFS_RPC_METHOD = "sugar.plugin.bind_contract_refs"
-BIND_CALL_CONTRACT_REFS_RPC_METHOD = "sugar.plugin.bind_call_contract_refs"
 COMPONENT_PROTOCOL_VERSION = "sugar-component/1"
 LIFT_PROTOCOL_VERSION = "pep/1.7.0"
 PYTHON_SURFACE = "python"
@@ -72,11 +71,6 @@ _ENUMERATION_PHASES: Dict[str, tuple[int, float, float]] = {}
 _ENUMERATION_REQUEST_COUNT = 0
 _ENUMERATION_ACTIVE = False
 _BOUND_CONTRACT_REFS = None
-_BOUND_CALL_CONTRACT_REFS = None
-# The target symbol of every call-contract demand this resident served, by use
-# site. The edge of a call carries the DEMAND's symbol; the bound table gets
-# this map at bind, so no reader takes a symbol from the linker's answer.
-_SERVED_CALL_DEMAND_SYMBOLS: Dict[Any, str] = {}
 # Phase-1->3 cross-request continuation: retained immutable universes keyed
 # by linkUnitCid, and a def-memento index so resume reuses the SAME universe
 # object (materialize-once) instead of reconstructing the function.
@@ -377,7 +371,6 @@ def tree_construction_context_for_workspace(
     root: Path,
     *,
     contract_refs=None,
-    call_contract_refs=None,
 ):
     """Tree handle for construction: bound refs, or provisional demand gaps.
 
@@ -391,11 +384,7 @@ def tree_construction_context_for_workspace(
         if contract_refs is not None
         else provisional_contract_refs_from_demands(root)
     )
-    return TreeConstructionContextV1(
-        refs,
-        call_contract_refs=call_contract_refs,
-        workspace_root=str(root),
-    )
+    return TreeConstructionContextV1(refs, workspace_root=str(root))
 
 
 def open_source_file_for_construction(
@@ -404,7 +393,6 @@ def open_source_file_for_construction(
     root: Path,
     reporter=None,
     contract_refs=None,
-    call_contract_refs=None,
     construction_context=None,
     populate_derived: bool = True,
     resolution_session=None,
@@ -437,7 +425,6 @@ def open_source_file_for_construction(
         construction_context = tree_construction_context_for_workspace(
             root,
             contract_refs=contract_refs,
-            call_contract_refs=call_contract_refs,
         )
     # TWO ROOTS, not one. `root` is the WORKSPACE authority: which tree this
     # open belongs to, what `file_rel` resolves against, which walk session and
@@ -1246,7 +1233,6 @@ def _kit_declaration_result() -> Dict[str, Any]:
                 {"name": RESOLVE_SOURCE_MEMENTO_RPC_METHOD, "required": False},
                 {"name": ENUMERATE_RPC_METHOD, "required": False},
                 {"name": BIND_CONTRACT_REFS_RPC_METHOD, "required": False},
-                {"name": BIND_CALL_CONTRACT_REFS_RPC_METHOD, "required": False},
                 # lift is not a kit method: full-tree construction is sugar.enumerate only
                 # {"name": "lift", "required": True},
                 {"name": "sugar.plugin.lift_implications", "required": False},
@@ -1993,14 +1979,9 @@ def enumerate_construction_context(root: Path):
         TreeConstructionContextV1,
     )
 
-    if _BOUND_CONTRACT_REFS is not None or _BOUND_CALL_CONTRACT_REFS is not None:
+    if _BOUND_CONTRACT_REFS is not None:
         return TreeConstructionContextV1(
-            (
-                _BOUND_CONTRACT_REFS
-                if _BOUND_CONTRACT_REFS is not None
-                else provisional_contract_refs_from_demands(root)
-            ),
-            call_contract_refs=_BOUND_CALL_CONTRACT_REFS,
+            _BOUND_CONTRACT_REFS,
             workspace_root=str(root),
         )
     return tree_construction_context_for_workspace(root)
@@ -2240,22 +2221,6 @@ def _roll_call_audit_leaf(
     ).to_rpc()
 
 
-def _remember_call_demand_symbols(root) -> list:
-    """The preconstruction demand rows, with each call demand's own target
-    symbol kept by use site for the table that will be bound back."""
-    from sugar_lift_py_tests.context_manager_resolution import (
-        SourceFragmentCoordinateV1,
-    )
-
-    rows = _preconstruction_demand_rows(root)
-    for row in rows:
-        if isinstance(row, dict) and row.get("kind") == "call-contract-demand":
-            _SERVED_CALL_DEMAND_SYMBOLS[
-                SourceFragmentCoordinateV1.decode(row["useSite"])
-            ] = row["targetSymbol"]
-    return rows
-
-
 def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
     """`sugar.enumerate`: the ONE wire method behind the Rust `tree` module's
     lazy accessors (Part 6 Phase 2,
@@ -2278,17 +2243,6 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
         }:
             raise ValueError(
                 "semantic construction request has a stale contract-ref generation"
-            )
-    if _BOUND_CALL_CONTRACT_REFS is not None:
-        generation = options.get("callContractRefs")
-        if generation != {
-            "catalogCid": _BOUND_CALL_CONTRACT_REFS.catalog_cid,
-            "tableCid": _BOUND_CALL_CONTRACT_REFS.table_cid,
-        }:
-            raise ValueError(
-                "semantic construction request has a stale call-contract-ref generation: "
-                f"expected catalog={_BOUND_CALL_CONTRACT_REFS.catalog_cid} "
-                f"table={_BOUND_CALL_CONTRACT_REFS.table_cid}, got {generation!r}"
             )
     # The audit frontier's factory census is deleted; auditFrontier now short-
     # circuits to an empty frontier (its R census re-homes onto the source
@@ -2321,7 +2275,7 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                 {
                     "jsonrpc": "2.0",
                     "id": msg_id,
-                    "result": {"rows": _remember_call_demand_symbols(root)},
+                    "result": {"rows": _preconstruction_demand_rows(root)},
                 }
             )
             return
@@ -2819,9 +2773,8 @@ def _handle_enumerate(msg_id: Any, params: Dict[str, Any]) -> None:
                         # is served (#7785). What the function sees of the name
                         # is not decided here.
                         if seek:
-                            # A seek is the linker round's preliminary fold
-                            # (mint's import round), which packages nothing: it
-                            # sees what it sees for any refused callee, a gap.
+                            # A seek packages nothing: it sees what it sees
+                            # for any refused callee, a gap.
                             gaps.append(
                                 {
                                     "memento": _tree.function_def_memento(
@@ -3276,33 +3229,6 @@ def _dispatch_request(msg: Dict[str, Any]) -> bool:
                 "result": {
                     "tableCid": installed.table_cid,
                 },
-            }
-        )
-    elif method == BIND_CALL_CONTRACT_REFS_RPC_METHOD:
-        from sugar_lift_py_tests.call_contract_resolution import (
-            decode_resolved_call_contract_refs,
-        )
-
-        global _BOUND_CALL_CONTRACT_REFS
-        installed = decode_resolved_call_contract_refs(params)
-        import dataclasses as _dataclasses
-        from types import MappingProxyType as _MappingProxyType
-
-        installed = _dataclasses.replace(
-            installed,
-            demand_target_symbols=_MappingProxyType(dict(_SERVED_CALL_DEMAND_SYMBOLS)),
-        )
-        if (
-            _BOUND_CALL_CONTRACT_REFS is not None
-            and _BOUND_CALL_CONTRACT_REFS.table_cid != installed.table_cid
-        ):
-            raise ValueError("call-contract-ref generation is already frozen")
-        _BOUND_CALL_CONTRACT_REFS = installed
-        _send(
-            {
-                "jsonrpc": "2.0",
-                "id": msg_id,
-                "result": {"tableCid": installed.table_cid},
             }
         )
     elif method == ENUMERATE_RPC_METHOD:

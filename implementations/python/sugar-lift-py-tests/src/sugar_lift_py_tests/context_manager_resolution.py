@@ -1185,7 +1185,6 @@ class TreeConstructionContextV1:
     """
 
     contract_refs: ResolvedContractRefsV1
-    call_contract_refs: object | None = None
     workspace_root: str | None = None
     # Mutable frame table held by reference; the context object itself is frozen.
     source_call_frames: dict = field(default_factory=dict)
@@ -1234,13 +1233,11 @@ class TreeConstructionContextV1:
         *,
         source_call_frames: dict | None = None,
         opaque_source_call_obligations: dict | None = None,
-        call_contract_refs: object | None = None,
         workspace_root: str | None = None,
     ) -> "TreeConstructionContextV1":
         """Construction context for sole-path source-call frames without CM enrollment."""
         return cls(
             contract_refs=empty_resolved_contract_refs(),
-            call_contract_refs=call_contract_refs,
             workspace_root=workspace_root,
             source_call_frames={} if source_call_frames is None else source_call_frames,
             opaque_source_call_obligations=(

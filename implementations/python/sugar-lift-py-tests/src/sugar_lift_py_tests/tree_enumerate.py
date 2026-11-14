@@ -477,8 +477,9 @@ def refused_function_row(fn, file_rel: str, refusal) -> UndecidedRow:
 def unanswered_call_row(symbol, coordinate, file_rel: str) -> UndecidedRow:
     """The ``undecided`` row for one call nothing in this proof answers.
 
-    ``symbol`` is the import door's target symbol (an enrolled imported call)
-    or ``None`` (Q5); ``coordinate`` is the call's ``SourceFragmentCoordinateV1``.
+    ``symbol`` is the one import table's target symbol (an import-bound
+    callee) or ``None`` (Q5); ``coordinate`` is the call's
+    ``SourceFragmentCoordinateV1``.
     The row records the call, never what answers it: the join to an imported
     contract is prove's (step 9), so the row is the same staged or unstaged.
     """

@@ -495,8 +495,6 @@ def _default_roots(repo: Path) -> tuple[Path, ...]:
         repo
         / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/context_manager_resolution.py",
         repo
-        / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/call_contract_resolution.py",
-        repo
         / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/import_binding.py",
         repo
         / "implementations/python/sugar-lift-py-tests/src/sugar_lift_py_tests/lift_rpc.py",

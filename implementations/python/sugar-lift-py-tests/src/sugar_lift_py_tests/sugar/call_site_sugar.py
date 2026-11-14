@@ -208,11 +208,11 @@ class CallSiteSugar(ConstructedTermSugar):
     site: object = dataclass_field(compare=False)
     keywords: tuple[tuple[str, ConstructedTermSugar], ...] = ()
     contract_resolution_gap: str | None = dataclass_field(default=None, compare=False)
-    # The import door's receipt for this call when nothing answers its symbol
-    # (#7762): the linker's gap is "target not in corpus" or "no authenticated
-    # contract", and it names ONE definite target, `python:<module>.<name>`.
-    # The call is not bridged: it stands as its coordinate, and its edge
-    # carries this symbol, unbound. The symbol has one source, the receipt.
+    # The target symbol of an import-bound callee, `python:<module>.<name>`,
+    # as the one import table (#7837) holds it at the callee's coordinate.
+    # The call stands as its coordinate, and its edge (and its `undecided`
+    # member when nothing here answers it) carries this symbol, unbound;
+    # prove's join binds it (step 9). The symbol has one source, the table.
     import_target_symbol: str | None = dataclass_field(default=None, compare=False)
     # The import reference table's target symbol for an import-bound callee
     # (#7837): ``idn.ident`` for ``from idn import ident``, ``numpy.add`` for

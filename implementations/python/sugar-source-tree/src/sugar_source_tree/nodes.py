@@ -13978,9 +13978,11 @@ class Call(Expression):
             # discharge; without it the Name registers and never answers.
             self.func.discharge_by_substitution()
 
-            import_target_symbol, contract_resolution_gap = self._import_call_edge(
-                context, coordinate
-            )
+            # The call's edge symbol, and the unanswered-call member's, is the
+            # one import table's target symbol at the callee's own coordinate
+            # (#7837). Nothing is bound into the kit to supply it.
+            import_target_symbol = self.unit.import_reference_of(self.func)
+            contract_resolution_gap = None
 
             source_call_frame = None
             formal_function_sugar = None
@@ -14162,19 +14164,15 @@ class Call(Expression):
                     args_sugar, keyword_sugars = self._authenticate_warning_category(
                         args_sugar, keyword_sugars
                     )
-                # The same call form as a Name callee: its coordinate, and the
-                # edge and gap kind the call-contract table holds there.
-                import_target_symbol, contract_resolution_gap = (
-                    self._import_call_edge(context, coordinate)
-                )
+                # The same call form as a Name callee: its coordinate, and an
+                # edge carrying the one import table's target symbol.
                 return CallSiteSugar(
                     target_name=closed_symbol,
                     args=args_sugar,
                     site=self.fragment,
                     call_occurrence=coordinate,
                     keywords=keyword_sugars,
-                    contract_resolution_gap=contract_resolution_gap,
-                    import_target_symbol=import_target_symbol,
+                    import_target_symbol=self.unit.import_reference_of(self.func),
                     reference_symbol=closed_symbol,
                     language_callee=language_callee,
                 )
@@ -14213,73 +14211,6 @@ class Call(Expression):
             keywords=keyword_sugars,
             source_call_frame=source_call_frame,
         )
-
-    def _import_call_edge(self, context, coordinate):
-        """The edge symbol and gap kind of this call, one form for every
-        callee shape (#7837): ``(import_target_symbol, contract_resolution_gap)``.
-
-        Read from the call-contract table at the call's own coordinate. A call
-        the import door did not enroll has neither.
-        """
-        from sugar_lift_py_tests.call_contract_resolution import (
-            CallContractRefProtocolError,
-            CallContractResolutionGapV1,
-        )
-
-        contract_resolution_gap = None
-        resolution = None
-        call_refs = getattr(context, "call_contract_refs", None)
-        if call_refs is not None:
-            if coordinate in call_refs.enrolled_use_sites:
-                try:
-                    resolution = call_refs.require(coordinate)
-                except CallContractRefProtocolError as exc:
-                    from sugar_source_tree.panic import BackendDefect
-
-                    raise BackendDefect(
-                        owner="Call._construct_sugar",
-                        blame=self.fragment,
-                        observed="enrolled call demand missing from resolution table",
-                        requested="one typed resolution row for every enrolled imported call",
-                        fix="repair call-contract preconstruction; never fall through to an ordinary call",
-                    ) from exc
-        import_target_symbol = None
-        if isinstance(resolution, CallContractResolutionGapV1):
-            # Step 6: a call stands as coordinate plus edge, bound or not.
-            # A gap that names ONE definite target is that state, whether
-            # nothing answers it or something answers it wrongly: the
-            # receipt's symbol rides to the edge, and prove's join refuses
-            # a wrong answer (step 9). Only a gap with no definite import
-            # target stays a refusal here.
-            if resolution.names_a_definite_target():
-                # The gap row echoes the demand's symbol; the demand
-                # itself is the source when the kit served one.
-                import_target_symbol = (
-                    call_refs.demand_target_symbol(coordinate)
-                    or resolution.target_symbol
-                )
-            else:
-                contract_resolution_gap = resolution.kind.value
-        elif resolution is not None:
-            # A contract answers the symbol. The call has the SAME form:
-            # its coordinate, and an edge carrying the DEMAND's symbol,
-            # the one this source imported as written. Never the
-            # answering contract's: the consumer cannot know what answers
-            # its symbol, and its rows must not change when something
-            # does. The kit applies no contract; step 9 joins the edge to
-            # the contract whose `bridgeSourceSymbol` is the same string.
-            import_target_symbol = call_refs.demand_target_symbol(coordinate)
-            if import_target_symbol is None:
-                from sugar_source_tree.panic import BackendDefect
-
-                raise BackendDefect(
-                    owner="Call._construct_sugar",
-                    blame=self.fragment,
-                    observed="a resolved call contract with no demand of this kit behind it",
-                    requested="the target symbol of the demand the kit made at this call",
-                    fix="bind the table through the round that served the demands",
-                )
-        return import_target_symbol, contract_resolution_gap
 
     def language_callee(self) -> Optional[LanguageCallee]:
         """The language-fixed callee this call applies, read from its binding.

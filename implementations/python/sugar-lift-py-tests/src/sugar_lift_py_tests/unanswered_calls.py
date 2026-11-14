@@ -2,16 +2,17 @@
 
 Step 8 (PR B on #7766): a Python call whose callee nothing here resolved is
 recorded once, as an ``undecided`` member with ``reason: unanswered``. Its
-``symbol`` is the import door's target symbol when the call is an enrolled
-imported call, else ``None`` (Q5: a call with no symbol is still a member).
-Its ``site`` is the call's ``SourceFragmentCoordinateV1``.
+``symbol`` is the target symbol the one import table (#7837) holds at the
+callee's own coordinate when the callee is import-bound, else ``None`` (Q5: a
+call with no symbol is still a member). Its ``site`` is the call's
+``SourceFragmentCoordinateV1``.
 
 There is one place a call is left unanswered: ``UnknownCalleeCallV1.faces``,
 the two-faced call to a callee the lifter does not have (#7585). It records
 the call here when a collector is active. Only the universe full scan that
-mint packages opens a collector, so the preliminary fold and every seek see
-exactly what they saw before. The member records the call and nothing about
-what answers it, so it is the same staged or unstaged (row 0a.4).
+mint packages opens a collector, so every seek sees exactly what it saw
+before. The member records the call and nothing about what answers it, so it
+is the same staged or unstaged (row 0a.4).
 """
 
 from __future__ import annotations
